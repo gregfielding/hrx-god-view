@@ -419,6 +419,7 @@ export const submitWorkerAiPrescreenInterview = onCall(
       categoryScores,
       categoryEvidence,
       categoryConfidence,
+      operationalOverride,
     } = bundle;
 
     const assignmentReadiness = aiBlockCore.assignmentReadiness as { status?: string };
@@ -430,8 +431,9 @@ export const submitWorkerAiPrescreenInterview = onCall(
       prescreenInterviewMode: applicationId ? 'application' : 'profile_first',
       applicationId,
       entry: entrySource ?? null,
-      overallScore: scored.overallScore,
-      recommendation: scored.recommendation,
+      overallScore: operationalOverride.adjustedScore,
+      baseInterviewScore: scored.overallScore,
+      recommendation: operationalOverride.recommendedRecommendation,
       flags: aiFlags,
       confidenceScore,
       assignmentReadiness: assignmentReadiness?.status,
@@ -495,7 +497,8 @@ export const submitWorkerAiPrescreenInterview = onCall(
       priorityBucket,
       recommendedActions,
       reasonCodes: hiringResult.reasonCodes,
-      score: scored.overallScore,
+      score: operationalOverride.adjustedScore,
+      baseInterviewScore: scored.overallScore,
     });
 
     const jobIdFromContext =
@@ -609,7 +612,10 @@ export const submitWorkerAiPrescreenInterview = onCall(
               priorityBucket,
               recommendedActions,
               reasonCodes: hiringResult.reasonCodes,
-              score: scored.overallScore,
+              score: operationalOverride.adjustedScore,
+              baseInterviewScore: scored.overallScore,
+              overrideAdjustedScore: operationalOverride.adjustedScore,
+              overrideScoreDelta: operationalOverride.scoreDelta,
               categoryScores,
               categoryEvidence,
               categoryConfidence,
@@ -641,7 +647,7 @@ export const submitWorkerAiPrescreenInterview = onCall(
               applicationId,
               userId: auth.uid,
               interviewId,
-              score: scored.overallScore,
+              score: operationalOverride.adjustedScore,
               hiringResult,
               resolvedPolicy: interviewContext.hiringPolicy.resolvedAiHiring,
               container: interviewContext.hiringPolicy.container,
@@ -730,8 +736,9 @@ export const submitWorkerAiPrescreenInterview = onCall(
     return {
       ok: true,
       interviewId,
-      overallScore: scored.overallScore,
-      recommendation: scored.recommendation,
+      overallScore: operationalOverride.adjustedScore,
+      baseInterviewScore: scored.overallScore,
+      recommendation: operationalOverride.recommendedRecommendation,
       assignmentReadiness: aiBlockCore.assignmentReadiness,
       alternatePaths: aiBlockCore.alternatePaths,
       hiringDecision: {

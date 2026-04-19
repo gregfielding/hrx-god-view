@@ -17,11 +17,12 @@ export type { ActionItemsV1Input } from './actionItemsV1Input';
 export function deriveActionItemsV1(input: ActionItemsV1Input): ActionItem[] {
   if (!input.enabled) return [];
 
+  /** Priority order: live assignment/application → entity path → profile/compliance → watchouts */
   const combined: ActionItem[] = [
-    ...runProfileRules(input),
+    ...runApplicationsAssignmentsRules(input),
     ...runEntityOnboardingRules(input),
     ...runComplianceRules(input),
-    ...runApplicationsAssignmentsRules(input),
+    ...runProfileRules(input),
     ...runWatchoutRules(input),
   ];
 

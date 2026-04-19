@@ -107,7 +107,9 @@ export type AiHiringReasonCode =
   | 'recommendation_decline'
   | 'gig_path_eligible'
   | 'below_job_fit_threshold'
-  | 'no_show_overlay_review';
+  | 'no_show_overlay_review'
+  | 'operational_hard_block'
+  | 'operational_soft_block';
 
 export type AiHiringDecisionResultLike = {
   decision: AiHiringDecision;

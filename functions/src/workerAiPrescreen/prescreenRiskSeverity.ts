@@ -4,6 +4,13 @@
  */
 
 import type { ComplianceConcernLevel } from './prescreenComplianceSemantics';
+import {
+  isExplicitComplianceAnswer,
+  isExplicitDrugBackgroundPassSignal,
+  isExplicitBackgroundPassSignal,
+  isExplicitUncertaintySignal,
+  isLikelyComplianceAdmission,
+} from './prescreenBlueCollarHelpers';
 
 /** Four-band model used in penalties + riskSummary. */
 export type PrescreenRiskSeverity = 'low' | 'moderate' | 'high' | 'unknown';
@@ -96,10 +103,10 @@ export function classifyDrugRiskSeverity(args: DrugSeverityArgs): PrescreenRiskS
     };
   }
 
-  if (!detail || detail.length < 4) {
+  if (isExplicitUncertaintySignal(detail)) {
     return {
-      level: 'moderate',
-      reason: 'Disclosed concern without enough detail to classify severity; defaulting to moderate review.',
+      level: 'unknown',
+      reason: 'Drug screening follow-up was uncertain; treat as mild unknown until clarified.',
     };
   }
 
@@ -121,6 +128,26 @@ export function classifyDrugRiskSeverity(args: DrugSeverityArgs): PrescreenRiskS
     return {
       level: 'moderate',
       reason: 'Disclosure suggests prescription or mixed substance concerns; needs recruiter context.',
+    };
+  }
+
+  if (isExplicitDrugBackgroundPassSignal(detail) && !isLikelyComplianceAdmission(detail)) {
+    return {
+      level: 'low',
+      reason: 'Short answer reads as able to pass / clean for screening purposes.',
+    };
+  }
+
+  if (!detail || detail.length < 4) {
+    if (detail && isExplicitComplianceAnswer(detail) && !isLikelyComplianceAdmission(detail)) {
+      return {
+        level: 'unknown',
+        reason: 'Brief screening follow-up; severity unclear—mild unknown (not moderate) for plain one-word replies.',
+      };
+    }
+    return {
+      level: 'moderate',
+      reason: 'Disclosed concern without enough detail to classify severity; defaulting to moderate review.',
     };
   }
 
@@ -199,7 +226,32 @@ export function classifyBackgroundRiskSeverity(args: BackgroundSeverityArgs): Pr
     };
   }
 
+  if (isExplicitUncertaintySignal(detail)) {
+    return {
+      level: 'unknown',
+      reason: 'Background follow-up was uncertain; treat as mild unknown until clarified.',
+    };
+  }
+
+  if (
+    isExplicitBackgroundPassSignal(detail) &&
+    !BG_HIGH_PATTERNS.test(detail) &&
+    !BG_THEFT_FRAUD.test(detail) &&
+    !isLikelyComplianceAdmission(detail)
+  ) {
+    return {
+      level: 'low',
+      reason: 'Short answer reads as clean / no record for screening purposes.',
+    };
+  }
+
   if (!detail || detail.length < 4) {
+    if (detail && isExplicitComplianceAnswer(detail) && !isLikelyComplianceAdmission(detail)) {
+      return {
+        level: 'unknown',
+        reason: 'Brief background follow-up; severity unclear—mild unknown (not moderate) for plain short replies.',
+      };
+    }
     return {
       level: 'moderate',
       reason: 'Disclosed concern without enough detail to classify severity; defaulting to moderate review.',

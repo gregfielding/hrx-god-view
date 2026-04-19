@@ -3,6 +3,10 @@
  * Keep in sync with `src/shared/prescreenAnswerQuality.ts` (web app copy; functions bundle mirrors this file).
  */
 
+import {
+  isShortButOperationallyValidAnswer,
+} from './prescreenBlueCollarHelpers';
+
 /** Minimal shape for quality checks (no import from scoring — avoids circular deps). */
 export type PrescreenAnswersForQuality = {
   motivation?: string;
@@ -135,18 +139,31 @@ export function evaluatePrescreenAnswerQuality(answers: PrescreenAnswersForQuali
 
   const flagSet = new Set<string>();
 
-  const short = (s: string) => wordCount(s) < PRESCREEN_MIN_SUBSTANTIVE_WORDS;
-  /** Core narrative fields only — require ≥2 short before global low_effort (reduces single-field false positives). */
+  /** "Short" for penalty purposes: below word guidance AND no blue-collar operational signal. */
+  const shortWeak = (s: string) => {
+    const t = s.trim();
+    if (!t) return false;
+    return wordCount(t) < PRESCREEN_MIN_SUBSTANTIVE_WORDS && !isShortButOperationallyValidAnswer(t);
+  };
+  /** Core narrative fields only — require ≥2 weak-short fields before global low_effort. */
   const coreNarratives = [motivation, experience, pressure, supervisor];
-  const coreShortCount = coreNarratives.filter((s) => short(s)).length;
-  if (coreShortCount >= 2) {
+  const coreWeakShortCount = coreNarratives.filter((s) => shortWeak(s)).length;
+  if (coreWeakShortCount >= 2) {
     flagSet.add('low_effort_response');
   }
 
-  const vagueOk = (s: string) =>
-    wordCount(s) >= PRESCREEN_MIN_SUBSTANTIVE_WORDS && !prescreenTextHasConcreteDetail(s);
+  /** Wordy but thin: not short-but-valid, not concrete — classic vague narrative. */
+  const vagueOk = (s: string) => {
+    const t = s.trim();
+    if (!t) return false;
+    return (
+      wordCount(t) >= PRESCREEN_MIN_SUBSTANTIVE_WORDS &&
+      !prescreenTextHasConcreteDetail(t) &&
+      !isShortButOperationallyValidAnswer(t)
+    );
+  };
   const coreVagueCount = coreNarratives.filter((s) => vagueOk(s)).length;
-  /** Require ≥3 thin narrative fields before global `vague_response` (reduces false positives). */
+  /** Require ≥3 thin narrative fields before global `vague_response`. */
   if (coreVagueCount >= 3) {
     flagSet.add('vague_response');
   }

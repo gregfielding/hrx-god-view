@@ -12,6 +12,15 @@ const MAX_BLOCKING = 3;
 const MAX_NEXT = 4;
 const MAX_WATCH = 2;
 
+/** Pre-cap counts for header summaries and QA/debug. */
+export function countActionItemsByBlockingKind(items: ActionItem[]) {
+  return {
+    blocking: items.filter((i) => i.blocking === 'hard').length,
+    nextSteps: items.filter((i) => i.blocking === 'soft').length,
+    watchouts: items.filter((i) => i.blocking === 'informational').length,
+  };
+}
+
 export function mapActionItemsToSections(items: ActionItem[]): ActionItemsSections {
   const blocking = items.filter((i) => i.blocking === 'hard');
   const nextSteps = items.filter((i) => i.blocking === 'soft');

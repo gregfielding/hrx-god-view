@@ -1,5 +1,5 @@
 import type { ScoreSummary } from '../../scoreSummary';
-import { getCanonicalStoredAiScore } from '../../scoreSummary';
+import { getRecruiterPrimaryScore100FromSummary } from '../../scoring/recruiterOperationalScore';
 import type { ActionItem } from '../../../types/actionItems';
 import { makeActionItem } from '../actionItemFactory';
 import type { ActionItemsV1Input } from '../actionItemsV1Input';
@@ -28,7 +28,8 @@ export function runProfileRules(input: ActionItemsV1Input): ActionItem[] {
     );
   }
 
-  if (input.enabled && !input.hasInterview) {
+  const signalsReady = input.actionSignalsReady !== false;
+  if (input.enabled && signalsReady && !input.hasInterview) {
     out.push(
       makeActionItem({
         dedupeKey: 'user:interview',
@@ -36,8 +37,8 @@ export function runProfileRules(input: ActionItemsV1Input): ActionItem[] {
         category: 'profile',
         severity: 'high',
         actor: 'recruiter',
-        title: 'No interview on file',
-        shortDescription: 'Schedule or record an interview to stabilize readiness and scoring.',
+        title: 'Interview missing',
+        shortDescription: 'Schedule or record an interview when one is required for this role or pipeline.',
         scope: { kind: 'global' },
         blocking: 'hard',
         sourceType: 'derived',
@@ -49,8 +50,8 @@ export function runProfileRules(input: ActionItemsV1Input): ActionItem[] {
     );
   }
 
-  const ai = getCanonicalStoredAiScore(input.scoreSummary as ScoreSummary | null | undefined);
-  if (input.enabled && ai != null && ai < 60) {
+  const operational = getRecruiterPrimaryScore100FromSummary(input.scoreSummary as ScoreSummary | null | undefined);
+  if (input.enabled && operational != null && operational < 60) {
     out.push(
       makeActionItem({
         dedupeKey: 'user:score_low',
@@ -58,8 +59,8 @@ export function runProfileRules(input: ActionItemsV1Input): ActionItem[] {
         category: 'watchout',
         severity: 'medium',
         actor: 'recruiter',
-        title: 'Low AI score — review profile gaps',
-        shortDescription: `Stored AI score is ${Math.round(ai)}. Review Score tab for missing fields and next actions.`,
+        title: 'Operational score suggests review',
+        shortDescription: `Operational score is ${Math.round(operational)}/100 (prescreen trust when available). Spot-check the Score tab before the next candidate-facing step.`,
         scope: { kind: 'global' },
         blocking: 'informational',
         sourceType: 'derived',

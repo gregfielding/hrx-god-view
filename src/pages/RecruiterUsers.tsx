@@ -55,6 +55,7 @@ import {
   getRelativeAiScore,
   getCanonicalStoredAiScore,
 } from '../utils/scoreSummary';
+import { getRecruiterPrimaryScore100FromSummary } from '../utils/scoring/recruiterOperationalScore';
 import type { ScoreSummary } from '../utils/scoreSummary';
 import { useScoringDistribution } from '../hooks/useScoringDistribution';
 import { getWorkAuthorizedStatus, compareWorkAuthorized } from '../utils/workAuthorizedDisplay';
@@ -846,7 +847,8 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
 
   const renderAiScore = (user: RecruiterUser) => {
     /** Canonical field only — matches profile header (no local substitute from aiProfileScore). */
-    const rawScore = getCanonicalStoredAiScore(user.scoreSummary);
+    const rawScore = getRecruiterPrimaryScore100FromSummary(user.scoreSummary);
+    const compositeScore = getCanonicalStoredAiScore(user.scoreSummary);
     const categoryPreview = formatCategoryScoresCompactPreview(categoryScoresByUserId[user.id] ?? null);
     const categoryLine1 = categoryPreview.slice(0, 3).join(' · ');
     const categoryLine2 = categoryPreview.slice(3).join(' · ');
@@ -895,13 +897,36 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
               Score Summary
             </Typography>
             <Typography variant="caption" color="inherit" sx={{ display: 'block', mb: 0.5, opacity: 0.9 }}>
-              Stored field: scoreSummary.aiScore
+              Primary display uses operational score when prescreen trust is stored; otherwise composite Hiring Score.
             </Typography>
             <Stack spacing={0.25}>
               <Typography variant="body2">
-                AI: <strong>{Math.round(rawScore)}</strong>
+                Operational / primary: <strong>{Math.round(rawScore)}</strong>
                 {showRelative ? ` (relative: ${displayScore})` : ''}
               </Typography>
+              {compositeScore != null && compositeScore !== rawScore ? (
+                <Typography variant="caption" color="inherit" sx={{ opacity: 0.9 }}>
+                  Composite Hiring Score: <strong>{Math.round(compositeScore)}</strong>
+                </Typography>
+              ) : null}
+              {typeof user.scoreSummary?.overrideAdjustedScore === 'number' && (
+                <>
+                  <Typography variant="caption" color="inherit" sx={{ display: 'block', opacity: 0.95 }}>
+                    Prescreen trust: <strong>{Math.round(user.scoreSummary.overrideAdjustedScore)}</strong>
+                    {typeof user.scoreSummary.baseInterviewScore === 'number'
+                      ? ` — base ${Math.round(user.scoreSummary.baseInterviewScore)}`
+                      : ''}
+                    {typeof user.scoreSummary.overrideScoreDelta === 'number'
+                      ? ` (Δ ${user.scoreSummary.overrideScoreDelta >= 0 ? '+' : ''}${user.scoreSummary.overrideScoreDelta})`
+                      : ''}
+                  </Typography>
+                  {typeof user.scoreSummary.autoAdvanceEligible === 'boolean' && (
+                    <Typography variant="caption" color="inherit" sx={{ display: 'block', opacity: 0.9 }}>
+                      Auto-advance: {user.scoreSummary.autoAdvanceEligible ? 'Yes' : 'No'}
+                    </Typography>
+                  )}
+                </>
+              )}
               <Typography variant="body2">
                 Interview: <strong>{formatOneDecimal(user.scoreSummary?.interviewAvg)}</strong>/10
                 {user.scoreSummary?.interviewCount ? ` (${user.scoreSummary.interviewCount})` : ''}
@@ -1932,8 +1957,8 @@ function sortRecruiterUserRows(
         return sortDirection === 'asc' ? nameCompare : -nameCompare;
       }
       case 'aiScore': {
-        const aScore = getCanonicalStoredAiScore(a.scoreSummary);
-        const bScore = getCanonicalStoredAiScore(b.scoreSummary);
+        const aScore = getRecruiterPrimaryScore100FromSummary(a.scoreSummary);
+        const bScore = getRecruiterPrimaryScore100FromSummary(b.scoreSummary);
         const av = aScore ?? -1;
         const bv = bScore ?? -1;
         const diff = bv - av;

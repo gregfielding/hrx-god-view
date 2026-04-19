@@ -91,6 +91,7 @@ import { logProfileUpdateActivity, logSecurityChangeActivity } from '../../../ut
 import { persistScoreSummaryFromProfile } from '../../../utils/persistScoreSummaryFromProfile';
 import { useAuth } from '../../../contexts/AuthContext';
 import { UserProfileForm, EmergencyContact } from '../../../types/UserProfile';
+import type { ActionItem } from '../../../types/actionItems';
 
 import AddressFormFields, { type AddressFormFieldsHandle } from './AddressTab/AddressFormFields';
 import MapWithMarkers from './AddressTab/MapWithMarkers';
@@ -375,6 +376,8 @@ const ProfileOverview: React.FC<Props> = ({
   });
 
   const [scoreSummaryFromUser, setScoreSummaryFromUser] = useState<ScoreSummary | undefined>(undefined);
+  /** First Firestore `users/{uid}` snapshot received — prevents false “interview missing” before scoreSummary hydrates. */
+  const [userDocHydratedForActionItems, setUserDocHydratedForActionItems] = useState(false);
   const [riskProfileRaw, setRiskProfileRaw] = useState<unknown>(null);
   const [overviewQualifications, setOverviewQualifications] = useState<OverviewQualificationsData>(() =>
     buildOverviewQualificationsFromUserDoc({}),
@@ -423,6 +426,7 @@ const ProfileOverview: React.FC<Props> = ({
         entitySignals: entityEmploymentSignals,
         backgroundCheckOrders: Array.isArray(actionItemsBackgroundCheckOrders) ? actionItemsBackgroundCheckOrders : [],
         certifications: Array.isArray(actionItemsCertifications) ? actionItemsCertifications : [],
+        actionSignalsReady: userDocHydratedForActionItems,
       }),
     [
       uid,
@@ -437,6 +441,7 @@ const ProfileOverview: React.FC<Props> = ({
       entityEmploymentSignals,
       actionItemsBackgroundCheckOrders,
       actionItemsCertifications,
+      userDocHydratedForActionItems,
     ],
   );
 
@@ -496,11 +501,16 @@ const transportOptions: Array<{
   };
 
   useEffect(() => {
+    setUserDocHydratedForActionItems(false);
+  }, [uid]);
+
+  useEffect(() => {
     const userRef = doc(db, 'users', uid);
     const unsubscribe =
       onSnapshot(
         userRef,
         async (snapshot) => {
+          setUserDocHydratedForActionItems(true);
           if (snapshot.exists()) {
             const data = snapshot.data();
             
@@ -1201,8 +1211,18 @@ const transportOptions: Array<{
             <Grid item xs={12}>
               <OverviewActionItemsCard
                 items={actionItems}
-                loading={entityEmploymentChipsLoading}
+                loading={entityEmploymentChipsLoading || !userDocHydratedForActionItems}
                 onOpenEmploymentTab={onTabChange ? () => onTabChange('Employment') : undefined}
+                onNavigateCta={
+                  onTabChange
+                    ? (item: ActionItem) => {
+                        const t = item.ctaTarget;
+                        if (t.kind === 'profileTab') onTabChange(t.tab);
+                        else if (t.kind === 'anchor') onTabChange(t.tab ?? 'Employment');
+                        else if (t.kind === 'route') window.location.assign(t.path);
+                      }
+                    : undefined
+                }
               />
             </Grid>
           )}

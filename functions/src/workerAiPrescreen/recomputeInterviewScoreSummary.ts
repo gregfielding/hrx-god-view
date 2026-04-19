@@ -110,6 +110,36 @@ export async function recomputeUserInterviewScoreSummary(
     'scoreSummary.interviewLastAt': lastResolved ?? null,
     'scoreSummary.interviewLastScore10': lastScore10,
   };
+
+  const lastKind = lastInterview && String((lastInterview as Record<string, unknown>).interviewKind ?? '');
+  if (lastKind === 'worker_ai_prescreen' && lastInterview) {
+    const ai = (lastInterview as Record<string, unknown>).ai as Record<string, unknown> | undefined;
+    if (ai && typeof ai === 'object') {
+      const base =
+        typeof ai.baseInterviewScore === 'number'
+          ? ai.baseInterviewScore
+          : typeof ai.overallScore === 'number'
+            ? ai.overallScore
+            : null;
+      const adj = typeof ai.overrideAdjustedScore === 'number' ? ai.overrideAdjustedScore : base;
+      const delta = typeof ai.overrideScoreDelta === 'number' ? ai.overrideScoreDelta : null;
+      if (base != null) update['scoreSummary.baseInterviewScore'] = base;
+      if (adj != null) update['scoreSummary.overrideAdjustedScore'] = adj;
+      if (delta != null) update['scoreSummary.overrideScoreDelta'] = delta;
+      if (typeof ai.overrideBand === 'string') update['scoreSummary.overrideBand'] = ai.overrideBand;
+      if (typeof ai.recruiterTrustLevel === 'string') update['scoreSummary.recruiterTrustLevel'] = ai.recruiterTrustLevel;
+      const hd = ai.hiringDecision as Record<string, unknown> | undefined;
+      if (hd && typeof hd.eligibleForAutoAdvance === 'boolean') {
+        update['scoreSummary.autoAdvanceEligible'] = hd.eligibleForAutoAdvance;
+      }
+      if (typeof ai.overrideRulesVersion === 'string') {
+        update['scoreSummary.overrideRulesVersion'] = ai.overrideRulesVersion;
+      }
+      if (typeof ai.scoreComputationVersion === 'string') {
+        update['scoreSummary.scoreComputationVersion'] = ai.scoreComputationVersion;
+      }
+    }
+  }
   if (qualityScore !== null) update['scoreSummary.qualityScore'] = qualityScore;
   if (newAiScore !== null) {
     update['scoreSummary.aiScore'] = newAiScore;

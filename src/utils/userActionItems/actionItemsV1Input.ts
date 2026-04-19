@@ -20,4 +20,9 @@ export type ActionItemsV1Input = {
   backgroundCheckOrders: Array<{ id: string; status: string; result?: string; typeLabel?: string }>;
   /** Raw certification entries from user doc */
   certifications: unknown[];
+  /**
+   * Set false until the user doc has hydrated (first snapshot). Avoids “missing interview”
+   * before scoreSummary / header interview signals exist.
+   */
+  actionSignalsReady?: boolean;
 };

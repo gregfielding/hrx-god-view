@@ -8,14 +8,18 @@
  * Updates: `users/{uid}/interviews/{id}` (`score`, `score10`, `ai.*`), linked `applications.aiAutomation` when guards pass,
  * and `recomputeUserInterviewScoreSummary` for the user (includes `riskProfile` when interview AI data / compliance inputs change; signature-guarded).
  *
- * Usage (from `functions/`):
+ * Usage (from repo root):
+ *   npm run prescreen:rescore -- --dry-run --source=system --limit=50
+ *   npm run prescreen:rescore -- --all --source=system --dry-run   # scan cap removed (very large limit)
+ *   npm run prescreen:rescore -- --source=system --limit=500
+ *   npm run prescreen:rescore -- --tenantId=TENANT_ID --source=system --limit=500
+ *   npm run prescreen:rescore -- --dry-run --limit=10
+ *
+ * From `functions/`:
  *   npx ts-node src/scripts/rescoreWorkerAiPrescreenInterviews.ts --dry-run --limit=10
- *   npx ts-node src/scripts/rescoreWorkerAiPrescreenInterviews.ts --limit=10
- *   npx ts-node src/scripts/rescoreWorkerAiPrescreenInterviews.ts --limit=500
- *   npx ts-node src/scripts/rescoreWorkerAiPrescreenInterviews.ts --after=2025-01-01T00:00:00.000Z --limit=100
- *   npx ts-node src/scripts/rescoreWorkerAiPrescreenInterviews.ts --start-after-user-id=UID --limit=50
- *   npx ts-node src/scripts/rescoreWorkerAiPrescreenInterviews.ts --tenantId=T --userId=UID --limit=20
- *   npx ts-node src/scripts/rescoreWorkerAiPrescreenInterviews.ts --tenantId=T --applicationId=A
+ *
+ * `--source=system` keeps interviews scored with `ai.model === rules_v1` (standard rules pipeline).
+ * `--source=all` (default) processes every `worker_ai_prescreen` interview.
  *
  * After `npm run build` in functions:
  *   node lib/scripts/rescoreWorkerAiPrescreenInterviews.js --dry-run --limit=10
@@ -42,6 +46,10 @@ type Args = {
   after: Date | null;
   /** Resume global user scan after this user document id (Firestore `users` orderBy documentId). */
   startAfterUserId: string | null;
+  /** `all` | `system` — see file header. */
+  source: 'all' | 'system';
+  /** When true, effectively no interview cap (uses a very large limit). */
+  all: boolean;
 };
 
 function parseArgs(argv: string[]): Args {
@@ -53,10 +61,15 @@ function parseArgs(argv: string[]): Args {
   let applicationId: string | null = null;
   let after: Date | null = null;
   let startAfterUserId: string | null = null;
+  let source: 'all' | 'system' = 'all';
+  let all = false;
 
   for (const a of argv) {
     if (a === '--dry-run') dryRun = true;
+    else if (a === '--all') all = true;
     else if (a === '--print-changed') printChanged = true;
+    else if (a === '--source=system') source = 'system';
+    else if (a === '--source=all') source = 'all';
     else if (a.startsWith('--tenantId=')) tenantId = a.slice('--tenantId='.length).trim() || null;
     else if (a.startsWith('--limit=')) limit = Math.max(1, parseInt(a.slice('--limit='.length), 10) || 100);
     else if (a.startsWith('--userId=')) userId = a.slice('--userId='.length).trim() || null;
@@ -69,7 +82,18 @@ function parseArgs(argv: string[]): Args {
       startAfterUserId = a.slice('--start-after-user-id='.length).trim() || null;
     }
   }
-  return { dryRun, printChanged, tenantId, limit, userId, applicationId, after, startAfterUserId };
+  if (all) {
+    limit = Number.MAX_SAFE_INTEGER;
+  }
+  return { dryRun, printChanged, tenantId, limit, userId, applicationId, after, startAfterUserId, source, all };
+}
+
+/** `system` = rules_v1 pipeline interviews (safe filter when no dedicated submissionSource field exists). */
+function interviewMatchesSourceFilter(data: Record<string, unknown>, source: 'all' | 'system'): boolean {
+  if (source === 'all') return true;
+  const ai = data.ai as Record<string, unknown> | undefined;
+  const model = String(ai?.model ?? '').trim();
+  return model === 'rules_v1';
 }
 
 function tenantFromInterviewData(data: Record<string, unknown>): string | null {
@@ -198,6 +222,13 @@ async function run(): Promise<void> {
     applicationsSyncSkippedNoTenant: 0,
     applicationsSyncSkippedSourceInterviewGuard: 0,
     transitionLabels: {} as Record<string, number>,
+    recommendationChanges: 0,
+    hiringDecisionChanges: 0,
+    autoAdvanceChanges: 0,
+    deltaSum: 0,
+    deltaCount: 0,
+    maxPositiveDelta: null as number | null,
+    maxNegativeDelta: null as number | null,
     usersPagesScanned: 0 as number,
     usersDocsVisited: 0 as number,
   };
@@ -238,6 +269,7 @@ async function run(): Promise<void> {
       if (!snap.exists) continue;
       const data = snap.data() as Record<string, unknown>;
       if (data.interviewKind !== WORKER_AI_PRESCREEN) continue;
+      if (!interviewMatchesSourceFilter(data, args.source)) continue;
 
       if (args.after) {
         const ca = interviewCreatedAt(data);
@@ -307,15 +339,25 @@ async function run(): Promise<void> {
       const oldAi = (data.ai || {}) as Record<string, unknown>;
       const oldFlags = JSON.stringify([...((oldAi.flags as string[]) || [])].sort());
       const newFlags = JSON.stringify([...(bundle.aiFlags || [])].sort());
-      const oldScore = oldAi.overallScore;
-      const newScore = bundle.scored.overallScore;
+      const oldBase =
+        typeof oldAi.baseInterviewScore === 'number' ? oldAi.baseInterviewScore : oldAi.overallScore;
+      const newBase = bundle.scored.overallScore;
+      const oldAdj =
+        typeof oldAi.overrideAdjustedScore === 'number' ? oldAi.overrideAdjustedScore : oldBase;
+      const newAdj = bundle.operationalOverride.adjustedScore;
       const oldRec = summarizeRecommendation(oldAi.recommendation);
-      const newRec = summarizeRecommendation(bundle.scored.recommendation);
+      const newRec = summarizeRecommendation(bundle.operationalOverride.recommendedRecommendation);
       const oldDec = summarizeDecision((oldAi.hiringDecision as Record<string, unknown> | undefined)?.decision);
       const newDec = summarizeDecision(bundle.hiringResult.decision);
+      const oldAa = Boolean((oldAi.hiringDecision as Record<string, unknown> | undefined)?.eligibleForAutoAdvance);
+      const newAa = Boolean(bundle.hiringResult.eligibleForAutoAdvance);
 
       const changed =
-        oldFlags !== newFlags || oldScore !== newScore || oldRec !== newRec || oldDec !== newDec;
+        oldFlags !== newFlags ||
+        oldBase !== newBase ||
+        oldAdj !== newAdj ||
+        oldRec !== newRec ||
+        oldDec !== newDec;
 
       const tid = tenantHint || interviewContext?.businessRules?.tenant || null;
 
@@ -327,6 +369,16 @@ async function run(): Promise<void> {
         stats.interviewsChanged += 1;
         const key = `${oldDec}->${newDec}`;
         stats.transitionLabels[key] = (stats.transitionLabels[key] || 0) + 1;
+        if (oldRec !== newRec) stats.recommendationChanges += 1;
+        if (oldDec !== newDec) stats.hiringDecisionChanges += 1;
+        if (oldAa !== newAa) stats.autoAdvanceChanges += 1;
+        const d = Number(newAdj) - Number(oldAdj);
+        if (Number.isFinite(d)) {
+          stats.deltaSum += d;
+          stats.deltaCount += 1;
+          if (stats.maxPositiveDelta == null || d > stats.maxPositiveDelta) stats.maxPositiveDelta = d;
+          if (stats.maxNegativeDelta == null || d < stats.maxNegativeDelta) stats.maxNegativeDelta = d;
+        }
       }
 
       if (changed && args.printChanged) {
@@ -352,7 +404,7 @@ async function run(): Promise<void> {
               kind: 'print-changed',
               interviewPath: ref.path,
               applicationPath,
-              score: { old: oldScore, new: newScore },
+              score: { oldBase, newBase, oldAdjusted: oldAdj, newAdjusted: newAdj },
               recommendation: { old: oldRec, new: newRec },
               decision: { old: oldDec, new: newDec },
               flags: { old: oldAi.flags ?? [], new: bundle.aiFlags ?? [] },
@@ -367,8 +419,10 @@ async function run(): Promise<void> {
       if (args.dryRun) {
         if (changed && !args.printChanged) {
           console.log('[dry-run] would update', ref.path, {
-            oldScore,
-            newScore,
+            oldBase,
+            newBase,
+            oldAdj,
+            newAdj,
             oldFlags: oldAi.flags,
             newFlags: bundle.aiFlags,
           });
@@ -413,7 +467,10 @@ async function run(): Promise<void> {
                 priorityBucket: bundle.priorityBucket,
                 recommendedActions: bundle.recommendedActions,
                 reasonCodes: bundle.hiringResult.reasonCodes,
-                score: bundle.scored.overallScore,
+                score: bundle.operationalOverride.adjustedScore,
+                baseInterviewScore: bundle.scored.overallScore,
+                overrideAdjustedScore: bundle.operationalOverride.adjustedScore,
+                overrideScoreDelta: bundle.operationalOverride.scoreDelta,
                 categoryScores: bundle.categoryScores,
                 categoryEvidence: bundle.categoryEvidence,
                 noShowRisk: {
@@ -442,7 +499,22 @@ async function run(): Promise<void> {
     }
   }
 
-  console.log(JSON.stringify({ ok: true, args, stats }, null, 2));
+  const avgDelta =
+    stats.deltaCount > 0 ? Math.round((stats.deltaSum / stats.deltaCount) * 100) / 100 : null;
+  console.log(
+    JSON.stringify(
+      {
+        ok: true,
+        args,
+        stats: {
+          ...stats,
+          averageAdjustedDelta: avgDelta,
+        },
+      },
+      null,
+      2,
+    ),
+  );
 }
 
 run().catch((e) => {

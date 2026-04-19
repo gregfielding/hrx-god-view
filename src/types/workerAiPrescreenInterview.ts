@@ -35,6 +35,18 @@ export interface WorkerInterviewHiringDecisionBlock {
 
 export interface WorkerInterviewAiBlock {
   overallScore: number;
+  /** Raw interview score (same as overallScore before overrides; both kept for audit). */
+  baseInterviewScore?: number;
+  /** Recruiter-trust score after `applyRecruiterOperationalOverrides` — primary display score. */
+  overrideAdjustedScore?: number;
+  overrideScoreDelta?: number;
+  overrideBand?: string;
+  overrideRulesVersion?: string;
+  overrideInputSignature?: string;
+  recruiterTrustLevel?: 'high' | 'medium' | 'low';
+  softBlocks?: string[];
+  hardBlocks?: string[];
+  scoreComputationVersion?: string;
   recommendation: WorkerAiPrescreenRecommendation;
   flags: string[];
   subScores?: {

@@ -7,6 +7,7 @@ import {
   type ScoreSummary,
   type ScoringDistribution,
 } from '../../../utils/scoreSummary';
+import { getRecruiterPrimaryScore100FromSummary } from '../../../utils/scoring/recruiterOperationalScore';
 import { recruiterTableLetterGrade } from '../../../utils/recruiterUsersReadinessDisplay';
 import { recordHeaderTooltipComponentsProps } from './recordHeaderStyles';
 
@@ -19,7 +20,8 @@ export type AiScoreGradeDisplayProps = {
  * Letter grade + numeric score — same visual logic as {@link RecruiterUsers} `renderAiScore` (Score column).
  */
 const AiScoreGradeDisplay: React.FC<AiScoreGradeDisplayProps> = ({ scoreSummary, scoringDistribution }) => {
-  const rawScore = getCanonicalStoredAiScore(scoreSummary);
+  const rawScore = getRecruiterPrimaryScore100FromSummary(scoreSummary);
+  const compositeScore = getCanonicalStoredAiScore(scoreSummary);
   if (rawScore === null || Number.isNaN(rawScore)) {
     return (
       <Tooltip
@@ -60,13 +62,18 @@ const AiScoreGradeDisplay: React.FC<AiScoreGradeDisplayProps> = ({ scoreSummary,
             Score Summary
           </Typography>
           <Typography variant="caption" color="inherit" sx={{ display: 'block', mb: 0.5, opacity: 0.9 }}>
-            Stored field: scoreSummary.aiScore
+            Primary: operational score (prescreen trust when present), else composite Hiring Score.
           </Typography>
           <Stack spacing={0.25}>
             <Typography variant="body2">
-              AI: <strong>{Math.round(rawScore)}</strong>
+              Operational / primary: <strong>{Math.round(rawScore)}</strong>
               {showRelative ? ` (relative: ${displayScore})` : ''}
             </Typography>
+            {compositeScore != null && compositeScore !== rawScore ? (
+              <Typography variant="caption" color="inherit" sx={{ opacity: 0.85 }}>
+                Composite Hiring Score (scoreSummary.aiScore): <strong>{Math.round(compositeScore)}</strong>
+              </Typography>
+            ) : null}
             <Typography variant="body2">
               Interview: <strong>{formatOneDecimal(scoreSummary?.interviewAvg)}</strong>/10
               {scoreSummary?.interviewCount ? ` (${scoreSummary.interviewCount})` : ''}

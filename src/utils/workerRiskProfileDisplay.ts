@@ -35,9 +35,11 @@ export function fallbackRiskSummaryFromItem(item: Pick<WorkerRiskItemV1, 'type' 
   const sev = String(item.severity || '').toLowerCase();
   const t = String(item.type || '').toLowerCase();
   if (t === 'transportation' && (sev === 'moderate' || sev === 'high')) return 'Transportation concern';
-  if (t === 'background' && (sev === 'moderate' || sev === 'high')) return 'Background review needed';
+  if (t === 'background' && sev === 'moderate') return 'Background-check response needs review';
+  if (t === 'background' && sev === 'high') return 'Background review needed';
   if (t === 'compliance' && sev === 'high') return 'Compliance issue';
   if (t === 'attendance' && sev === 'moderate') return 'Attendance concern';
+  if (t === 'drug' && sev === 'moderate') return 'Drug-screen response needs review';
   if (t === 'drug') return 'Drug screening attention';
   if (t === 'documentation') return 'Documentation incomplete';
   return `${item.type} ${item.severity} (${item.source})`;

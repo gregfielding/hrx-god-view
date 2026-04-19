@@ -415,9 +415,12 @@ export function buildWorkerRiskProfileFromBundleWithAnswers(
     dynamicAnswers,
   );
   const scored = bundle.scored;
+  const trustOverall = bundle.operationalOverride?.adjustedScore ?? scored.overallScore;
   const flags = bundle.aiFlags;
   const categoryScores = bundle.categoryScores;
   const dims = computeInterviewRiskDimensions(answersEffective, drugBackgroundMeta);
+  const reviewTriageForRisk =
+    (bundle.aiBlockCore as { reviewTriage?: typeof scored.reviewTriage }).reviewTriage ?? scored.reviewTriage ?? null;
 
   const complianceGaps = complianceGapsFromUser(userDoc);
   const gapItems: WorkerRiskItemDraft[] = complianceGaps.map((g) => ({
@@ -433,7 +436,7 @@ export function buildWorkerRiskProfileFromBundleWithAnswers(
     scored,
     flags,
     riskSummary: scored.riskSummary,
-    reviewTriage: scored.reviewTriage ?? null,
+    reviewTriage: reviewTriageForRisk,
     answersEffective,
     drugBackgroundMeta,
     interviewId,
@@ -447,7 +450,7 @@ export function buildWorkerRiskProfileFromBundleWithAnswers(
   const topRisks = normalizeRiskItemSummariesInDraft(topRisksPicked);
 
   const overallRiskScore = overallRiskScoreFromSignals({
-    prescreenOverall: scored.overallScore,
+    prescreenOverall: trustOverall,
     interviewRiskDims: dims,
     categoryScores: mergedCategory,
     complianceUserGaps: complianceGaps,
@@ -463,7 +466,7 @@ export function buildWorkerRiskProfileFromBundleWithAnswers(
   };
 
   const fp = buildInputFingerprint({
-    prescreenOverall: scored.overallScore,
+    prescreenOverall: trustOverall,
     flags,
     category: mergedCategory,
     userCompliance: userComplianceSnap,
@@ -534,7 +537,12 @@ export async function buildWorkerRiskProfileFromLatestInterview(
   const ai = prescreen.data.ai as Record<string, unknown> | undefined;
   if (!ai) return null;
 
-  const overallScore = typeof ai.overallScore === 'number' ? ai.overallScore : null;
+  const overallScore =
+    typeof ai.overrideAdjustedScore === 'number'
+      ? ai.overrideAdjustedScore
+      : typeof ai.overallScore === 'number'
+        ? ai.overallScore
+        : null;
   if (overallScore == null) return null;
 
   const flags = (Array.isArray(ai.flags) ? ai.flags : []) as string[];

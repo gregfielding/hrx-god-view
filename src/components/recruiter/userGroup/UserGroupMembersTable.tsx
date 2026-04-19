@@ -46,6 +46,7 @@ import {
   getCanonicalStoredAiScore,
   getRelativeAiScore,
 } from '../../../utils/scoreSummary';
+import { getRecruiterPrimaryScore100FromSummary } from '../../../utils/scoring/recruiterOperationalScore';
 import {
   getBackgroundBreakdownRows,
   getReadinessBreakdownRows,
@@ -146,7 +147,7 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
   };
 
   const getScoreNumber = (u: any): number => {
-    const n = getCanonicalStoredAiScore(normalizeScoreSummary(u.scoreSummary));
+    const n = getRecruiterPrimaryScore100FromSummary(normalizeScoreSummary(u.scoreSummary));
     return n != null && !Number.isNaN(n) ? n : -1;
   };
 
@@ -363,7 +364,8 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
   };
 
   const renderAiScore = (u: any) => {
-    const rawScore = getCanonicalStoredAiScore(normalizeScoreSummary(u.scoreSummary));
+    const rawScore = getRecruiterPrimaryScore100FromSummary(normalizeScoreSummary(u.scoreSummary));
+    const compositeScore = getCanonicalStoredAiScore(normalizeScoreSummary(u.scoreSummary));
     const categoryPreview = formatCategoryScoresCompactPreview(categoryScoresByUserId[u.id] ?? null);
     const categoryLine1 = categoryPreview.slice(0, 3).join(' · ');
     const categoryLine2 = categoryPreview.slice(3).join(' · ');
@@ -412,13 +414,18 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
               Score Summary
             </Typography>
             <Typography variant="caption" color="inherit" sx={{ display: 'block', mb: 0.5, opacity: 0.9 }}>
-              Stored field: scoreSummary.aiScore
+              Primary: operational score when prescreen trust is stored.
             </Typography>
             <Stack spacing={0.25}>
               <Typography variant="body2">
-                AI: <strong>{Math.round(rawScore)}</strong>
+                Operational / primary: <strong>{Math.round(rawScore)}</strong>
                 {showRelative ? ` (relative: ${displayScore})` : ''}
               </Typography>
+              {compositeScore != null && compositeScore !== rawScore ? (
+                <Typography variant="caption" color="inherit" sx={{ opacity: 0.9 }}>
+                  Composite Hiring Score: <strong>{Math.round(compositeScore)}</strong>
+                </Typography>
+              ) : null}
               <Typography variant="body2">
                 Interview: <strong>{formatOneDecimal(u.scoreSummary?.interviewAvg)}</strong>/10
                 {u.scoreSummary?.interviewCount ? ` (${u.scoreSummary.interviewCount})` : ''}

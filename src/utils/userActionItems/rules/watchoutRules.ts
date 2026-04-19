@@ -17,7 +17,7 @@ export function runWatchoutRules(input: ActionItemsV1Input): ActionItem[] {
         category: 'watchout',
         severity: 'medium',
         actor: 'recruiter',
-        title: 'Risk signal',
+        title: 'Risk or mismatch to review',
         shortDescription: line,
         scope: { kind: 'global' },
         blocking: 'informational',

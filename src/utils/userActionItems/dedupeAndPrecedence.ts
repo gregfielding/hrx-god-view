@@ -1,4 +1,4 @@
-import type { ActionItem, ActionSeverity } from '../../types/actionItems';
+import type { ActionItem, ActionItemType, ActionSeverity } from '../../types/actionItems';
 
 const SEVERITY_RANK: Record<ActionSeverity, number> = {
   critical: 0,
@@ -21,8 +21,40 @@ function specificityRank(t: ActionItem['type']): number {
   if (t === 'i9_incomplete' || t === 'everify_action_required') return 0;
   if (t.startsWith('everify_')) return 1;
   if (t === 'payroll_or_tax_or_deposit_incomplete') return 2;
-  if (t === GENERIC_ONBOARDING) return 4;
-  return 3;
+  if (t === 'background_review_required' || t === 'background_pending' || t === 'cert_required_missing') return 3;
+  if (t === GENERIC_ONBOARDING) return 5;
+  return 4;
+}
+
+/**
+ * Recruiter display order: live assignment → entity path → interview → compliance → watchouts → profile polish.
+ */
+function displayTier(t: ActionItemType): number {
+  switch (t) {
+    case 'assignment_readiness_blocked':
+    case 'assignment_action_required':
+      return 0;
+    case 'onboarding_incomplete_entity':
+    case 'payroll_or_tax_or_deposit_incomplete':
+      return 1;
+    case 'interview_missing':
+      return 2;
+    case 'i9_incomplete':
+    case 'everify_not_started':
+    case 'everify_pending':
+    case 'everify_action_required':
+    case 'background_pending':
+    case 'background_review_required':
+    case 'cert_required_missing':
+      return 3;
+    case 'risk_watchout':
+    case 'score_review_recommended':
+      return 4;
+    case 'phone_verification_required':
+      return 5;
+    default:
+      return 50;
+  }
 }
 
 /**
@@ -72,6 +104,21 @@ export function dedupeActionItems(items: ActionItem[]): ActionItem[] {
   });
   toDelete.forEach((k) => byKey.delete(k));
 
+  /** If payroll/tax is already called out for an entity, drop generic “onboarding open” for that entity. */
+  const entityPayroll = new Set<string>();
+  byKey.forEach((v) => {
+    if (v.type === 'payroll_or_tax_or_deposit_incomplete' && v.scope.kind === 'entity') {
+      entityPayroll.add(String(v.scope.entityId).toLowerCase());
+    }
+  });
+  const dropGenericForPayroll = new Set<string>();
+  byKey.forEach((v, k) => {
+    if (v.type !== GENERIC_ONBOARDING || v.scope.kind !== 'entity') return;
+    const id = String(v.scope.entityId).toLowerCase();
+    if (entityPayroll.has(id)) dropGenericForPayroll.add(k);
+  });
+  dropGenericForPayroll.forEach((k) => byKey.delete(k));
+
   /** background_review beats background_pending for same id */
   const bgReview = new Set<string>();
   byKey.forEach((v) => {
@@ -91,6 +138,9 @@ export function sortActionItemsForDisplay(items: ActionItem[]): ActionItem[] {
     const ba = BLOCKING_RANK[a.blocking];
     const bb = BLOCKING_RANK[b.blocking];
     if (ba !== bb) return ba - bb;
+    const ta = displayTier(a.type);
+    const tb = displayTier(b.type);
+    if (ta !== tb) return ta - tb;
     if (SEVERITY_RANK[a.severity] !== SEVERITY_RANK[b.severity]) {
       return SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
     }

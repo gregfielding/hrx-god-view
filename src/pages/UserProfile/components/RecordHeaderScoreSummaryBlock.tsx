@@ -7,6 +7,7 @@ import {
   type ScoreSummary,
   type ScoringDistribution,
 } from '../../../utils/scoreSummary';
+import { getRecruiterPrimaryScore100FromSummary } from '../../../utils/scoring/recruiterOperationalScore';
 import type { PrescreenCategoryScoresV1 } from '../../../types/prescreenCategoryScores';
 import type { WorkerRiskProfileV1 } from '../../../types/workerRiskProfile';
 import { recruiterTableLetterGrade } from '../../../utils/recruiterUsersReadinessDisplay';
@@ -36,7 +37,8 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
   riskProfile,
   interviewSummaryLine,
 }) => {
-  const rawScore = getCanonicalStoredAiScore(scoreSummary);
+  const rawScore = getRecruiterPrimaryScore100FromSummary(scoreSummary);
+  const compositeScore = getCanonicalStoredAiScore(scoreSummary);
   const hasScore = rawScore !== null && !Number.isNaN(rawScore);
   const relativeScore = hasScore ? getRelativeAiScore(rawScore!, scoringDistribution) : null;
   const displayScore = relativeScore != null ? relativeScore : hasScore ? Math.round(rawScore!) : null;
@@ -71,18 +73,44 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
       <Stack spacing={0.25}>
             {hasScore ? (
           <Typography variant="body2">
-            Stored AI: <strong>{Math.round(rawScore!)}</strong>
+            Operational / primary: <strong>{Math.round(rawScore!)}</strong>
             {relativeScore != null && displayScore != null ? ` (relative ${displayScore})` : ''}
           </Typography>
         ) : (
-          <Typography variant="body2">No stored AI score yet</Typography>
+          <Typography variant="body2">No stored score yet</Typography>
         )}
+        {compositeScore != null && hasScore && compositeScore !== rawScore ? (
+          <Typography variant="caption" color="inherit" sx={{ opacity: 0.9 }}>
+            Composite Hiring Score: <strong>{Math.round(compositeScore)}</strong>
+          </Typography>
+        ) : null}
         <Typography variant="body2">
           Interview avg: <strong>{formatOneDecimal(scoreSummary?.interviewAvg)}</strong>/10
         </Typography>
         <Typography variant="body2">
           Reviews: <strong>{formatOneDecimal(scoreSummary?.reviewAvg)}</strong>/5
         </Typography>
+        {typeof scoreSummary?.overrideAdjustedScore === 'number' && (
+          <>
+            <Typography variant="body2" sx={{ mt: 0.5 }}>
+              Prescreen trust: <strong>{Math.round(scoreSummary.overrideAdjustedScore)}</strong>
+              {typeof scoreSummary.baseInterviewScore === 'number' ? (
+                <Typography component="span" variant="caption" display="block" color="inherit">
+                  Base {Math.round(scoreSummary.baseInterviewScore)}
+                  {typeof scoreSummary.overrideScoreDelta === 'number'
+                    ? ` → Δ ${scoreSummary.overrideScoreDelta >= 0 ? '+' : ''}${scoreSummary.overrideScoreDelta}`
+                    : ''}
+                  {scoreSummary.recruiterTrustLevel ? ` · ${scoreSummary.recruiterTrustLevel}` : ''}
+                </Typography>
+              ) : null}
+            </Typography>
+            {typeof scoreSummary.autoAdvanceEligible === 'boolean' && (
+              <Typography variant="caption" display="block" color="inherit">
+                Auto-advance: {scoreSummary.autoAdvanceEligible ? 'Yes' : 'No'}
+              </Typography>
+            )}
+          </>
+        )}
         {riskProfile && (
           <Typography variant="caption" color="inherit" sx={{ display: 'block', mt: 0.5, opacity: 0.9 }}>
             Risk index: {riskProfile.overallRiskScore}

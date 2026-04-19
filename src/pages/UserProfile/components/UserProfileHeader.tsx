@@ -41,6 +41,7 @@ import CompactProfileQualityBar from './CompactProfileQualityBar';
 import RecordHeaderActionIcon from './RecordHeaderActionIcon';
 import { recordHeaderActionIconButtonSx, recordHeaderTooltipComponentsProps } from './recordHeaderStyles';
 import { getCanonicalStoredAiScore, type ScoreSummary, type ScoringDistribution } from '../../../utils/scoreSummary';
+import { getRecruiterPrimaryScore100FromSummary } from '../../../utils/scoring/recruiterOperationalScore';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { detectMissingItems } from '../utils/detectMissingItems';
 import AddUserNoteDialog from './AddUserNoteDialog';
@@ -888,13 +889,14 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               )}
 
               {isAdminView && (() => {
-                const canonical = getCanonicalStoredAiScore(scoreSummary);
-                if (canonical === null) {
+                const primary = getRecruiterPrimaryScore100FromSummary(scoreSummary);
+                const composite = getCanonicalStoredAiScore(scoreSummary);
+                if (primary === null) {
                   return (
-                    <Tooltip title="No stored AI score (scoreSummary.aiScore) — same field as All Users table.">
+                    <Tooltip title="No stored score yet — same precedence as All Users table (operational prescreen when present).">
                       <Chip
                         icon={<InsightsIcon sx={{ fontSize: 18 }} />}
-                        label="AI Score —"
+                        label="Score —"
                         size="small"
                         variant="outlined"
                         sx={{ fontWeight: 600, flexShrink: 0, opacity: 0.85 }}
@@ -902,12 +904,16 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                     </Tooltip>
                   );
                 }
-                const display = Math.round(canonical);
+                const display = Math.round(primary);
+                const tip =
+                  composite != null && composite !== primary
+                    ? `Operational / primary: ${display}. Composite Hiring Score: ${Math.round(composite)}.`
+                    : `Operational / primary score: ${display}`;
                 return (
-                  <Tooltip title={`Stored AI score: ${display} (scoreSummary.aiScore)`}>
+                  <Tooltip title={tip}>
                     <Chip
                       icon={<InsightsIcon sx={{ fontSize: 18 }} />}
-                      label={`AI Score ${display}`}
+                      label={`Score ${display}`}
                       size="small"
                       variant="outlined"
                       sx={{ fontWeight: 700, flexShrink: 0 }}
@@ -1504,16 +1510,17 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               )}
 
               {isAdminView && (() => {
-                const canonical = getCanonicalStoredAiScore(scoreSummary);
-                if (canonical === null) {
+                const primary = getRecruiterPrimaryScore100FromSummary(scoreSummary);
+                const composite = getCanonicalStoredAiScore(scoreSummary);
+                if (primary === null) {
                   return (
                     <Tooltip
-                      title="No stored AI score (scoreSummary.aiScore) — same field as All Users table."
+                      title="No stored score yet — same precedence as All Users table (operational prescreen when present)."
                       componentsProps={recordHeaderTooltipComponentsProps}
                     >
                       <Chip
                         icon={<InsightsIcon sx={{ fontSize: 18 }} />}
-                        label="AI Score —"
+                        label="Score —"
                         size="small"
                         variant="outlined"
                         sx={{
@@ -1525,15 +1532,16 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                     </Tooltip>
                   );
                 }
-                const display = Math.round(canonical);
+                const display = Math.round(primary);
+                const tip =
+                  composite != null && composite !== primary
+                    ? `Operational / primary: ${display}. Composite Hiring Score: ${Math.round(composite)}.`
+                    : `Operational / primary score: ${display}`;
                 return (
-                  <Tooltip
-                    title={`Stored AI score: ${display} (scoreSummary.aiScore)`}
-                    componentsProps={recordHeaderTooltipComponentsProps}
-                  >
+                  <Tooltip title={tip} componentsProps={recordHeaderTooltipComponentsProps}>
                     <Chip
                       icon={<InsightsIcon sx={{ fontSize: 18 }} />}
-                      label={`AI Score ${display}`}
+                      label={`Score ${display}`}
                       size="small"
                       variant="outlined"
                       sx={{

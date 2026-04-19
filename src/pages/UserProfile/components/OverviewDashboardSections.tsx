@@ -31,11 +31,8 @@ import {
   Notifications as NotificationsIcon,
   Info as InfoIcon,
 } from '@mui/icons-material';
-import {
-  formatOneDecimal,
-  getCanonicalStoredAiScore,
-  type ScoreSummary,
-} from '../../../utils/scoreSummary';
+import { formatOneDecimal, type ScoreSummary } from '../../../utils/scoreSummary';
+import { getRecruiterPrimaryScore100FromSummary } from '../../../utils/scoring/recruiterOperationalScore';
 import { recruiterTableLetterGrade } from '../../../utils/recruiterUsersReadinessDisplay';
 import { overallRiskBandLabel } from '../utils/recordHeaderScoreHelpers';
 import {
@@ -457,7 +454,7 @@ export type OverviewScoringCardProps = {
 export function OverviewScoringCard({ scoreSummary, riskProfileRaw, onOpenScoreTab }: OverviewScoringCardProps) {
   const cardSx = { borderRadius: 1, borderColor: 'divider', ...overviewCardFlatSx } as const;
 
-  const rawScore = getCanonicalStoredAiScore(scoreSummary);
+  const rawScore = getRecruiterPrimaryScore100FromSummary(scoreSummary);
   const hasStoredAi = rawScore !== null && !Number.isNaN(rawScore);
   const displayScore = hasStoredAi ? Math.round(rawScore!) : null;
   const grade = displayScore != null ? recruiterTableLetterGrade(displayScore) : '—';
@@ -559,6 +556,22 @@ export function OverviewScoringCard({ scoreSummary, riskProfileRaw, onOpenScoreT
                 {hasInterviewAvg ? <>Interview avg: {formatOneDecimal(scoreSummary!.interviewAvg)}/10</> : null}
                 {hasInterviewAvg && hasReviewAvg ? ' · ' : null}
                 {hasReviewAvg ? <>Reviews: {formatOneDecimal(scoreSummary!.reviewAvg)}/5</> : null}
+              </Typography>
+            )}
+
+            {typeof scoreSummary?.overrideAdjustedScore === 'number' && (
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem', lineHeight: 1.4 }}>
+                Prescreen trust score: <strong>{Math.round(scoreSummary.overrideAdjustedScore)}</strong>
+                {typeof scoreSummary.baseInterviewScore === 'number'
+                  ? ` — base ${Math.round(scoreSummary.baseInterviewScore)}`
+                  : ''}
+                {typeof scoreSummary.overrideScoreDelta === 'number'
+                  ? ` (Δ ${scoreSummary.overrideScoreDelta >= 0 ? '+' : ''}${scoreSummary.overrideScoreDelta})`
+                  : ''}
+                {scoreSummary.recruiterTrustLevel ? ` · Trust: ${scoreSummary.recruiterTrustLevel}` : ''}
+                {typeof scoreSummary.autoAdvanceEligible === 'boolean'
+                  ? ` · Auto-advance: ${scoreSummary.autoAdvanceEligible ? 'yes' : 'no'}`
+                  : ''}
               </Typography>
             )}
 

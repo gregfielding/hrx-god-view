@@ -19,6 +19,8 @@ export const AI_REASON_CODE_TO_BLOCKER: Readonly<Partial<Record<string, string>>
   critical_flag_background: 'COMPLIANCE_HOLD',
   critical_flag_physical: 'COMPLIANCE_HOLD',
   no_show_overlay_review: 'RECRUITER_REVIEW_REQUIRED',
+  operational_hard_block: 'COMPLIANCE_HOLD',
+  operational_soft_block: 'RECRUITER_REVIEW_REQUIRED',
 };
 
 /**

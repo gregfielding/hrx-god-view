@@ -4,7 +4,7 @@
  */
 
 import type { ScoreSummary } from '../../../utils/scoreSummary';
-import { getCanonicalStoredAiScore } from '../../../utils/scoreSummary';
+import { getRecruiterPrimaryScore100FromSummary } from '../../../utils/scoring/recruiterOperationalScore';
 import type { WorkerRiskProfileV1 } from '../../../types/workerRiskProfile';
 
 export function letterGradeFromAiScore(score: number | null | undefined): string {
@@ -104,7 +104,7 @@ export function formatOverviewInterviewLine(summary?: ScoreSummary | null): stri
 }
 
 export function canonicalAiDisplay(summary?: ScoreSummary | null): { grade: string; numeric: string } {
-  const n = getCanonicalStoredAiScore(summary ?? undefined);
+  const n = getRecruiterPrimaryScore100FromSummary(summary ?? undefined);
   return {
     grade: letterGradeFromAiScore(n),
     numeric: n == null ? '—' : String(Math.round(n)),

@@ -14,6 +14,16 @@ export interface ScoreSummaryExplainabilityV1 {
 export type ScoreSummary = {
   aiScore?: number;
   aiScoreUpdatedAt?: any;
+  /** Latest prescreen raw score (0–100) when operational overrides exist. */
+  baseInterviewScore?: number;
+  /** Recruiter-trust adjusted score from `applyRecruiterOperationalOverrides`. */
+  overrideAdjustedScore?: number;
+  overrideScoreDelta?: number;
+  overrideBand?: string;
+  overrideRulesVersion?: string;
+  recruiterTrustLevel?: string;
+  autoAdvanceEligible?: boolean;
+  scoreComputationVersion?: string;
   interviewAvg?: number;
   interviewCount?: number;
   interviewLastAt?: any;
@@ -55,6 +65,15 @@ export function normalizeScoreSummary(raw: any): ScoreSummary | undefined {
   return {
     aiScore: toNumberOrUndefined(raw.aiScore),
     aiScoreUpdatedAt: raw.aiScoreUpdatedAt,
+
+    baseInterviewScore: toNumberOrUndefined(raw.baseInterviewScore),
+    overrideAdjustedScore: toNumberOrUndefined(raw.overrideAdjustedScore),
+    overrideScoreDelta: toNumberOrUndefined(raw.overrideScoreDelta),
+    overrideBand: typeof raw.overrideBand === 'string' ? raw.overrideBand : undefined,
+    overrideRulesVersion: typeof raw.overrideRulesVersion === 'string' ? raw.overrideRulesVersion : undefined,
+    recruiterTrustLevel: typeof raw.recruiterTrustLevel === 'string' ? raw.recruiterTrustLevel : undefined,
+    autoAdvanceEligible: typeof raw.autoAdvanceEligible === 'boolean' ? raw.autoAdvanceEligible : undefined,
+    scoreComputationVersion: typeof raw.scoreComputationVersion === 'string' ? raw.scoreComputationVersion : undefined,
 
     interviewAvg: toNumberOrUndefined(raw.interviewAvg),
     interviewCount: toNumberOrUndefined(raw.interviewCount),
@@ -208,9 +227,12 @@ export function getRelativeAiScore(
 }
 
 // ─── Canonical stored AI / Hiring score ───────────────────────────────────
-// **Display (users table, profile header):** use only `users/{uid}.scoreSummary.aiScore` via
-// `getCanonicalStoredAiScore` / `getCanonicalStoredAiScoreFromUserDoc`. Do not substitute
-// `qualityScore` or `profileScore` for those surfaces — they are not the same snapshot.
+// **Recruiter operational score (prescreen trust):** prefer `resolveRecruiterOperationalScore100` /
+// `getRecruiterPrimaryScore100FromSummary` in `utils/scoring/recruiterOperationalScore.ts`:
+// interview `ai.overrideAdjustedScore` → `scoreSummary.overrideAdjustedScore` → interview base scores →
+// composite `scoreSummary.aiScore`.
+// **Legacy composite only:** `getCanonicalStoredAiScore` / `getCanonicalStoredAiScoreFromUserDoc` read
+// `scoreSummary.aiScore` (Hiring Score blend). Do not substitute `qualityScore` or `profileScore`.
 // **Writes:** Hiring Score v1.1 recomputes via `getScoreSummaryUpdateFromHiringScoreV1` + optional
 // `persistScoreSummaryFromProfile` after real profile edits (signature-guarded). Interview submit
 // and Cloud Functions update `scoreSummary` on the server. Profile **page load** does not write scores.

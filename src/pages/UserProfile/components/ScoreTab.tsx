@@ -31,6 +31,10 @@ import { useCategoryScoresCurrent } from '../../../hooks/useCategoryScoresCurren
 import type { ScoreSummary, ScoringDistribution } from '../../../utils/scoreSummary';
 import { formatOneDecimal } from '../../../utils/scoreSummary';
 import ReviewsTab from './ReviewsTab';
+import ScoreIntelligencePanel from '../../../components/scoring/ScoreIntelligencePanel';
+import { deriveScoreIntelligence } from '../../../utils/scoring/scoreIntelligence';
+import type { ScoreIntelligenceInterviewInput } from '../../../utils/scoring/scoreIntelligence';
+import { resolveRecruiterOperationalScore100 } from '../../../utils/scoring/recruiterOperationalScore';
 
 type Props = {
   uid: string;
@@ -118,6 +122,8 @@ export default function ScoreTab({ uid, scoreSummary, fallbackAiScore, fallbackC
   }, [scoreSummary, fallbackCompleteness]);
 
   const [recentInterviews, setRecentInterviews] = useState<InterviewRow[]>([]);
+  const [latestPrescreenFull, setLatestPrescreenFull] = useState<ScoreIntelligenceInterviewInput | null>(null);
+  const [prescreenIntelLoading, setPrescreenIntelLoading] = useState(true);
   const [scoreEvents, setScoreEvents] = useState<CategoryScoreEventRow[]>([]);
   const [scoreEventsLoading, setScoreEventsLoading] = useState(true);
   const [scoreEventsError, setScoreEventsError] = useState<string | null>(null);
@@ -160,29 +166,74 @@ export default function ScoreTab({ uid, scoreSummary, fallbackAiScore, fallbackC
         const ref = collection(db, 'users', uid, 'interviews');
         let snap;
         try {
-          snap = await getDocs(query(ref, orderBy('createdAt', 'desc'), limit(5)));
+          snap = await getDocs(query(ref, orderBy('createdAt', 'desc'), limit(20)));
         } catch {
-          snap = await getDocs(query(ref, orderBy('timestamp', 'desc'), limit(5)));
+          snap = await getDocs(query(ref, orderBy('timestamp', 'desc'), limit(20)));
         }
-        const rows: InterviewRow[] = snap.docs.map((d) => {
-          const data = d.data() as any;
-          return {
+        const rows: InterviewRow[] = [];
+        let prescreenFull: ScoreIntelligenceInterviewInput | null = null;
+        for (const d of snap.docs) {
+          const data = d.data() as Record<string, unknown>;
+          rows.push({
             id: d.id,
             createdAt: data.createdAt ?? data.timestamp,
-            createdByName: data.createdByName ?? data.submittedBy,
-            score10: typeof data.score10 === 'number' ? data.score10 : typeof data.score === 'number' ? data.score : undefined,
-          };
-        });
-        if (mounted) setRecentInterviews(rows);
+            createdByName: (data.createdByName ?? data.submittedBy) as string | undefined,
+            score10:
+              typeof data.score10 === 'number'
+                ? data.score10
+                : typeof data.score === 'number'
+                  ? data.score
+                  : undefined,
+          });
+          if (!prescreenFull && data.interviewKind === 'worker_ai_prescreen') {
+            prescreenFull = { ...data, id: d.id } as ScoreIntelligenceInterviewInput;
+          }
+        }
+        if (mounted) {
+          setRecentInterviews(rows.slice(0, 5));
+          setLatestPrescreenFull(prescreenFull);
+        }
       } catch {
-        if (mounted) setRecentInterviews([]);
+        if (mounted) {
+          setRecentInterviews([]);
+          setLatestPrescreenFull(null);
+        }
+      } finally {
+        if (mounted) setPrescreenIntelLoading(false);
       }
     };
-    load();
+    if (uid) {
+      setPrescreenIntelLoading(true);
+      load();
+    } else {
+      setPrescreenIntelLoading(false);
+    }
     return () => {
       mounted = false;
     };
   }, [uid]);
+
+  const scoreIntelligence = useMemo(
+    () => deriveScoreIntelligence(latestPrescreenFull, scoreSummary),
+    [latestPrescreenFull, scoreSummary],
+  );
+
+  const scoreIntelRawDebug = useMemo(
+    () =>
+      latestPrescreenFull
+        ? {
+            interviewKind: latestPrescreenFull.interviewKind,
+            score10: latestPrescreenFull.score10,
+            ai: latestPrescreenFull.ai,
+            questionIds: Array.isArray(latestPrescreenFull.questions)
+              ? latestPrescreenFull.questions.map((q) => ({ id: q.id }))
+              : [],
+            scoreSummarySnapshot: scoreSummary ?? null,
+            derived: scoreIntelligence,
+          }
+        : { scoreSummarySnapshot: scoreSummary ?? null, derived: scoreIntelligence },
+    [latestPrescreenFull, scoreSummary, scoreIntelligence],
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -218,6 +269,15 @@ export default function ScoreTab({ uid, scoreSummary, fallbackAiScore, fallbackC
   }, [uid]);
 
   const scoreEventsSummary = useMemo(() => summarizeRecentCategoryScoreEventDeltas(scoreEvents), [scoreEvents]);
+
+  const operationalVsBase = useMemo(
+    () =>
+      resolveRecruiterOperationalScore100({
+        interviewAi: latestPrescreenFull?.ai as ScoreIntelligenceInterviewInput['ai'] | undefined,
+        scoreSummary,
+      }),
+    [latestPrescreenFull, scoreSummary],
+  );
 
   const interviewSummary = useMemo(() => {
     const avg = scoreSummary?.interviewAvg;
@@ -261,6 +321,12 @@ export default function ScoreTab({ uid, scoreSummary, fallbackAiScore, fallbackC
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <ScoreIntelligencePanel
+        intelligence={scoreIntelligence}
+        loading={prescreenIntelLoading}
+        rawDebugPayload={scoreIntelRawDebug}
+      />
+
       {/* A — Current category scores (primary) */}
       <Card
         variant="outlined"
@@ -416,12 +482,31 @@ export default function ScoreTab({ uid, scoreSummary, fallbackAiScore, fallbackC
         <CardContent sx={{ pt: 0 }}>
           <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" sx={{ mb: 2 }}>
             {typeof aiScore === 'number' && !Number.isNaN(aiScore) ? (
-              <Tooltip title={`Stored AI Score: ${Math.round(aiScore)} (same as header / users table when present)`}>
-                <Chip color="default" variant="outlined" label={`AI Score: ${Math.round(aiScore)}`} size="small" />
+              <Tooltip
+                title={`Composite Hiring Score (scoreSummary.aiScore): ${Math.round(aiScore)}. Header / table use operational score when prescreen trust is stored.`}
+              >
+                <Chip color="default" variant="outlined" label={`Composite Hiring Score: ${Math.round(aiScore)}`} size="small" />
               </Tooltip>
             ) : (
-              <Chip variant="outlined" label="AI Score: N/A" size="small" />
+              <Chip variant="outlined" label="Composite Hiring Score: N/A" size="small" />
             )}
+            {operationalVsBase.baseScore != null ? (
+              <Tooltip title="Interview / base prescreen score (how answers scored)">
+                <Chip variant="outlined" color="default" size="small" label={`Interview score (base): ${operationalVsBase.baseScore}`} />
+              </Tooltip>
+            ) : null}
+            {operationalVsBase.adjustedScore != null &&
+            (operationalVsBase.adjustedSource === 'interview_override' ||
+              operationalVsBase.adjustedSource === 'summary_override' ||
+              operationalVsBase.adjustedScore !== operationalVsBase.baseScore) ? (
+              <Tooltip title="Operational score — recruiter trust (adjusted / overrides)">
+                <Chip variant="outlined" color="primary" size="small" label={`Operational score: ${operationalVsBase.adjustedScore}`} />
+              </Tooltip>
+            ) : operationalVsBase.adjustedScore != null && operationalVsBase.baseScore === operationalVsBase.adjustedScore ? (
+              <Tooltip title="No separate operational override; base and operational match.">
+                <Chip variant="outlined" size="small" label={`Operational score: ${operationalVsBase.adjustedScore}`} />
+              </Tooltip>
+            ) : null}
           </Stack>
 
           <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>

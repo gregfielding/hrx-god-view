@@ -56,6 +56,8 @@ import {
   readDynamicAnswersFromAiContext,
   WORKER_AI_INTERVIEW_REC_VS_HIRING_DECISION_HELP,
 } from '../../../utils/workerAiHiringDecisionDisplay';
+import { buildRecruiterDecisionSummary } from '../../../utils/scoring/recruiterDecisionSummary';
+import { formatPrescreenAnswerForRecruiter } from '../../../utils/scoring/prescreenAnswerDisplay';
 import {
   RecruiterCategoryScoresInlineChip,
   RecruiterCategoryScoresPanel,
@@ -68,6 +70,8 @@ interface InterviewQuestion {
   question: string;
   answer: string;
   type: 'text' | 'single_select' | 'multi_select' | string;
+  /** Raw value when answer is not a plain string (multi-select, etc.) */
+  rawAnswer?: unknown;
 }
 
 interface Interview {
@@ -150,8 +154,19 @@ function parseInterviewAi(raw: unknown): WorkerInterviewAiBlock | undefined {
 
   const parsedCats = parsePrescreenCategoryScoresFromFirestore(o);
 
+  const baseInterviewScore = typeof o.baseInterviewScore === 'number' ? o.baseInterviewScore : undefined;
+  const overrideAdjustedScore = typeof o.overrideAdjustedScore === 'number' ? o.overrideAdjustedScore : undefined;
+  const overrideScoreDelta = typeof o.overrideScoreDelta === 'number' ? o.overrideScoreDelta : undefined;
+  const softBlocks = Array.isArray(o.softBlocks) ? o.softBlocks.map((x) => String(x)) : undefined;
+  const hardBlocks = Array.isArray(o.hardBlocks) ? o.hardBlocks.map((x) => String(x)) : undefined;
+
   return {
     overallScore,
+    baseInterviewScore,
+    overrideAdjustedScore,
+    overrideScoreDelta,
+    softBlocks,
+    hardBlocks,
     recommendation,
     flags,
     subScores,
@@ -190,6 +205,13 @@ function historyFlagsSummary(interview: Interview): string {
 
 interface InterviewTabProps {
   uid: string;
+}
+
+function prescreenAnswerDisplayLine(q: InterviewQuestion): string {
+  const raw = q.rawAnswer !== undefined ? q.rawAnswer : q.answer;
+  const t = formatPrescreenAnswerForRecruiter(raw);
+  if (t === '—' && (!q.answer || !String(q.answer).trim())) return 'No answer provided';
+  return t;
 }
 
 const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
@@ -286,18 +308,27 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
             : undefined;
         const ai = parseInterviewAi(data.ai);
 
+        const rawQs = Array.isArray(data.questions) ? data.questions : [];
+        const questionsNorm: InterviewQuestion[] = rawQs.map((q: Record<string, unknown>) => ({
+          id: String(q.id ?? ''),
+          question: String(q.question ?? ''),
+          type: (typeof q.type === 'string' ? q.type : 'text') as InterviewQuestion['type'],
+          answer: typeof q.answer === 'string' ? q.answer : '',
+          rawAnswer: q.answer,
+        }));
+
         interviewsData.push({
           id: doc.id,
           createdByName,
           createdByUid,
           createdAt,
-          questions: Array.isArray(data.questions) ? data.questions : [],
+          questions: questionsNorm,
           notes: data.notes,
           score10,
           interviewKind,
           applicationId: applicationId ?? undefined,
           ai,
-        } as Interview);
+        });
       });
       
       setInterviews(interviewsData);
@@ -587,12 +618,28 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                   Score
                 </Typography>
                 <Typography variant="h6" fontWeight={700} color="primary">
-                  {latestWorkerAiPrescreen.ai.overallScore}/100
+                  {(typeof latestWorkerAiPrescreen.ai.overrideAdjustedScore === 'number'
+                    ? latestWorkerAiPrescreen.ai.overrideAdjustedScore
+                    : latestWorkerAiPrescreen.ai.overallScore) ?? '—'}
+                  /100
                 </Typography>
                 {latestWorkerAiPrescreen.score10 !== undefined && (
                   <Chip size="small" label={`${latestWorkerAiPrescreen.score10}/10 (mapped)`} variant="outlined" />
                 )}
               </Stack>
+              {typeof latestWorkerAiPrescreen.ai.overrideAdjustedScore === 'number' &&
+              typeof latestWorkerAiPrescreen.ai.baseInterviewScore === 'number' &&
+              latestWorkerAiPrescreen.ai.overrideAdjustedScore !== latestWorkerAiPrescreen.ai.baseInterviewScore ? (
+                <Typography variant="caption" color="text.secondary" display="block">
+                  Base {latestWorkerAiPrescreen.ai.baseInterviewScore} → Adjusted {latestWorkerAiPrescreen.ai.overrideAdjustedScore}
+                  {typeof latestWorkerAiPrescreen.ai.overrideScoreDelta === 'number'
+                    ? ` (${latestWorkerAiPrescreen.ai.overrideScoreDelta >= 0 ? '+' : ''}${latestWorkerAiPrescreen.ai.overrideScoreDelta})`
+                    : ''}
+                  {latestWorkerAiPrescreen.ai.recruiterTrustLevel
+                    ? ` · Trust: ${latestWorkerAiPrescreen.ai.recruiterTrustLevel}`
+                    : ''}
+                </Typography>
+              ) : null}
 
               <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center">
                 <Typography variant="body2" color="text.secondary">
@@ -850,9 +897,26 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                         </Box>
                       </TableCell>
                       <TableCell>
-                        <Typography variant="body2" fontWeight={600} color="primary">
-                          {interview.score10 !== undefined ? `${interview.score10}/10` : 'N/A'}
-                        </Typography>
+                        {interview.interviewKind === 'worker_ai_prescreen' && interview.ai ? (
+                          <Box>
+                            <Typography variant="body2" fontWeight={600} color="primary">
+                              {typeof interview.ai.overrideAdjustedScore === 'number'
+                                ? `${Math.round(interview.ai.overrideAdjustedScore)}/100`
+                                : interview.score10 !== undefined
+                                  ? `${interview.score10}/10`
+                                  : 'N/A'}
+                            </Typography>
+                            {typeof interview.ai.overrideAdjustedScore === 'number' && interview.score10 !== undefined ? (
+                              <Typography variant="caption" color="text.secondary" display="block">
+                                Scale {interview.score10}/10
+                              </Typography>
+                            ) : null}
+                          </Box>
+                        ) : (
+                          <Typography variant="body2" fontWeight={600} color="primary">
+                            {interview.score10 !== undefined ? `${interview.score10}/10` : 'N/A'}
+                          </Typography>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Typography variant="body2" color="text.secondary">
@@ -934,187 +998,182 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
               </Box>
             </DialogTitle>
             <DialogContent>
-              <Box mb={2}>
-                <Stack direction="row" flexWrap="wrap" spacing={1} alignItems="center" sx={{ mb: 1 }}>
-                  <Chip
-                    size="small"
-                    label={interviewSourceLabel(viewInterviewDialog.interview.interviewKind)}
-                    color={viewInterviewDialog.interview.interviewKind === 'worker_ai_prescreen' ? 'secondary' : 'default'}
-                    variant="outlined"
-                  />
-                </Stack>
-                <Box display="flex" alignItems="center" gap={1} mb={2}>
-                  <PersonIcon fontSize="small" color="action" />
-                  <Typography variant="body2" fontWeight="medium">
-                    Completed by: {viewInterviewDialog.interview.createdByName}
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+                {/* A — Interview summary */}
+                <Box>
+                  <Typography variant="overline" color="text.secondary">
+                    Interview summary
                   </Typography>
+                  <Stack direction="row" flexWrap="wrap" spacing={1} alignItems="center" sx={{ mt: 0.5, mb: 1 }}>
+                    <Chip
+                      size="small"
+                      label={interviewSourceLabel(viewInterviewDialog.interview.interviewKind)}
+                      color={viewInterviewDialog.interview.interviewKind === 'worker_ai_prescreen' ? 'secondary' : 'default'}
+                      variant="outlined"
+                    />
+                    {viewInterviewDialog.interview.score10 !== undefined ? (
+                      <Chip size="small" variant="outlined" label={`Recorded ${viewInterviewDialog.interview.score10}/10`} />
+                    ) : null}
+                  </Stack>
+                  <Box display="flex" alignItems="center" gap={1}>
+                    <PersonIcon fontSize="small" color="action" />
+                    <Typography variant="body2" fontWeight="medium">
+                      Completed by {viewInterviewDialog.interview.createdByName}
+                    </Typography>
+                  </Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                    {formatDate(viewInterviewDialog.interview.createdAt)}
+                  </Typography>
+                  {viewInterviewDialog.interview.applicationId ? (
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                      Application reference: {viewInterviewDialog.interview.applicationId}
+                    </Typography>
+                  ) : null}
                 </Box>
-                {viewInterviewDialog.interview.applicationId ? (
-                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-                    Application ID: {viewInterviewDialog.interview.applicationId}
-                  </Typography>
-                ) : null}
+
                 <Divider />
-              </Box>
 
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                {viewInterviewDialog.interview.ai && (
-                  <Box>
-                    <Typography variant="subtitle2" fontWeight={600} gutterBottom>
-                      Hiring decision
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
-                      {WORKER_AI_INTERVIEW_REC_VS_HIRING_DECISION_HELP}
-                    </Typography>
-                    {viewInterviewDialog.interview.ai.hiringDecision ? (
-                      <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center" sx={{ mb: 1 }}>
-                        <Chip
-                          size="small"
-                          label={formatHiringDecisionLabel(viewInterviewDialog.interview.ai.hiringDecision.decision)}
-                          color={hiringDecisionChipColor(viewInterviewDialog.interview.ai.hiringDecision.decision)}
-                          variant={hiringDecisionChipVariant(viewInterviewDialog.interview.ai.hiringDecision.decision)}
-                        />
-                        <Typography variant="caption" color="text.secondary">
-                          Eligible for auto-advance (rules):{' '}
-                          {viewInterviewDialog.interview.ai.hiringDecision.eligibleForAutoAdvance ? 'Yes' : 'No'}
-                        </Typography>
-                      </Stack>
-                    ) : (
-                      <Chip size="small" label="Not evaluated" variant="outlined" sx={{ mb: 1 }} />
-                    )}
-                    {viewInterviewDialog.interview.ai.hiringDecision &&
-                    viewInterviewDialog.interview.ai.hiringDecision.reasonCodes.length > 0 ? (
-                      <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mb: 1 }}>
-                        {viewInterviewDialog.interview.ai.hiringDecision.reasonCodes.map((code) => (
-                          <Chip key={code} size="small" label={labelForAiHiringReasonCode(code)} variant="outlined" />
-                        ))}
-                      </Stack>
-                    ) : null}
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                      {viewInterviewDialog.interview.ai.hiringDecision
+                {/* B — Decision summary + C — Why (worker AI) */}
+                {viewInterviewDialog.interview.ai ? (
+                  <>
+                    {(() => {
+                      const summary = buildRecruiterDecisionSummary({ ai: viewInterviewDialog.interview.ai! });
+                      const ai = viewInterviewDialog.interview.ai!;
+                      const plainWhy = ai.hiringDecision
                         ? explanationLineForHiringDecision({
-                            decision: viewInterviewDialog.interview.ai.hiringDecision.decision,
-                            reasonCodes: viewInterviewDialog.interview.ai.hiringDecision.reasonCodes,
+                            decision: ai.hiringDecision.decision,
+                            reasonCodes: ai.hiringDecision.reasonCodes,
                           })
-                        : 'Hiring decision has not been computed for this record yet.'}
-                    </Typography>
-                    <Divider sx={{ mt: 1, mb: 2 }} />
-                  </Box>
-                )}
+                        : null;
+                      return (
+                        <>
+                          <Box>
+                            <Typography variant="overline" color="text.secondary">
+                              Decision summary
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5, mb: 1 }}>
+                              {WORKER_AI_INTERVIEW_REC_VS_HIRING_DECISION_HELP}
+                            </Typography>
+                            <Stack spacing={0.75} sx={{ mt: 0.5 }}>
+                              <Typography variant="body2">
+                                <strong>Interview score (base):</strong> {summary.baseScoreLabel}
+                              </Typography>
+                              <Typography variant="body2" color="primary">
+                                <strong>Operational score (adjusted):</strong> {summary.adjustedScoreLabel}
+                              </Typography>
+                              <Typography variant="body2">
+                                <strong>Recommendation:</strong> {summary.recommendationLabel}
+                              </Typography>
+                              <Typography variant="body2">
+                                <strong>Hiring decision:</strong> {summary.hiringDecisionLabel}
+                              </Typography>
+                              <Typography variant="body2">
+                                <strong>Auto-advance eligible:</strong> {summary.autoAdvanceLabel}
+                              </Typography>
+                              {summary.confidenceLabel ? (
+                                <Typography variant="caption" color="text.secondary">
+                                  {summary.confidenceLabel}
+                                </Typography>
+                              ) : null}
+                              {plainWhy ? (
+                                <Alert severity="info" sx={{ mt: 1 }}>
+                                  {plainWhy}
+                                </Alert>
+                              ) : null}
+                            </Stack>
+                          </Box>
 
-                {viewInterviewDialog.interview.ai && (
-                  <Box>
-                    <Typography variant="subtitle2" fontWeight={600} gutterBottom>
-                      Interview recommendation and score
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-                      From rules-based scoring (answers, sub-scores, flags). This is not the same as hiring decision
-                      above.
-                    </Typography>
-                    <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center" sx={{ mb: 1 }}>
-                      <Typography variant="body2">
-                        Overall: <strong>{viewInterviewDialog.interview.ai.overallScore}/100</strong>
-                      </Typography>
-                      <Chip
-                        size="small"
-                        label={formatScoreRecommendationLabel(viewInterviewDialog.interview.ai.recommendation)}
-                        color={recommendationChipColor(viewInterviewDialog.interview.ai.recommendation)}
-                      />
-                      {viewInterviewDialog.interview.ai.model ? (
-                        <Typography variant="caption" color="text.secondary">
-                          Model: {viewInterviewDialog.interview.ai.model}
-                        </Typography>
-                      ) : null}
-                    </Stack>
-                    {viewInterviewDialog.interview.ai.summary ? (
-                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1, whiteSpace: 'pre-wrap' }}>
-                        {viewInterviewDialog.interview.ai.summary}
-                      </Typography>
-                    ) : null}
-                    {viewInterviewDialog.interview.ai.flags.length > 0 ? (
-                      <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mb: 1 }}>
-                        {viewInterviewDialog.interview.ai.flags.map((f) => (
-                          <Chip key={f} size="small" label={labelForInterviewFlag(f)} variant="outlined" />
-                        ))}
-                      </Stack>
-                    ) : null}
-                    {viewInterviewDialog.interview.ai.subScores &&
-                    Object.values(viewInterviewDialog.interview.ai.subScores).some((n) => typeof n === 'number') ? (
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        Sub-scores:{' '}
-                        {[
-                          viewInterviewDialog.interview.ai.subScores.experience != null
-                            ? `experience ${viewInterviewDialog.interview.ai.subScores.experience}`
-                            : null,
-                          viewInterviewDialog.interview.ai.subScores.reliability != null
-                            ? `reliability ${viewInterviewDialog.interview.ai.subScores.reliability}`
-                            : null,
-                          viewInterviewDialog.interview.ai.subScores.transportation != null
-                            ? `transportation ${viewInterviewDialog.interview.ai.subScores.transportation}`
-                            : null,
-                          viewInterviewDialog.interview.ai.subScores.risk != null
-                            ? `risk ${viewInterviewDialog.interview.ai.subScores.risk}`
-                            : null,
-                          viewInterviewDialog.interview.ai.subScores.physical != null
-                            ? `physical ${viewInterviewDialog.interview.ai.subScores.physical}`
-                            : null,
-                          viewInterviewDialog.interview.ai.subScores.fit != null
-                            ? `fit ${viewInterviewDialog.interview.ai.subScores.fit}`
-                            : null,
-                          viewInterviewDialog.interview.ai.subScores.compliance != null
-                            ? `compliance ${viewInterviewDialog.interview.ai.subScores.compliance}`
-                            : null,
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </Typography>
-                    ) : null}
-                    <Divider sx={{ mt: 2 }} />
-                  </Box>
-                )}
+                          <Box>
+                            <Typography variant="overline" color="text.secondary">
+                              Why
+                            </Typography>
+                            <Typography variant="subtitle2" sx={{ mt: 1, fontWeight: 700 }}>
+                              Strengths
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
+                              {ai.summary ? ai.summary : 'No narrative summary stored for this interview.'}
+                            </Typography>
+                            <Typography variant="subtitle2" sx={{ mt: 1.5, fontWeight: 700 }}>
+                              Risks / concerns
+                            </Typography>
+                            {ai.flags.length > 0 ? (
+                              <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mt: 0.5 }}>
+                                {ai.flags.map((f) => (
+                                  <Chip key={f} size="small" label={labelForInterviewFlag(f)} variant="outlined" />
+                                ))}
+                              </Stack>
+                            ) : (
+                              <Typography variant="body2" color="text.secondary">
+                                None flagged.
+                              </Typography>
+                            )}
+                            <Typography variant="subtitle2" sx={{ mt: 1.5, fontWeight: 700 }}>
+                              Override / gate reasons
+                            </Typography>
+                            {(ai.hiringDecision?.reasonCodes?.length &&
+                              ai.hiringDecision.reasonCodes.length > 0) ||
+                            (ai.softBlocks ?? []).length ||
+                            (ai.hardBlocks ?? []).length ? (
+                              <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mt: 0.5 }}>
+                                {ai.hiringDecision?.reasonCodes?.map((code) => (
+                                  <Chip key={code} size="small" label={labelForAiHiringReasonCode(code)} variant="outlined" />
+                                ))}
+                                {(ai.softBlocks ?? []).map((b) => (
+                                  <Chip key={`s-${b}`} size="small" label={b.replace(/_/g, ' ')} variant="outlined" />
+                                ))}
+                                {(ai.hardBlocks ?? []).map((b) => (
+                                  <Chip key={`h-${b}`} size="small" color="warning" label={b.replace(/_/g, ' ')} variant="outlined" />
+                                ))}
+                              </Stack>
+                            ) : (
+                              <Typography variant="body2" color="text.secondary">
+                                None listed.
+                              </Typography>
+                            )}
+                          </Box>
+                        </>
+                      );
+                    })()}
+                  </>
+                ) : null}
 
+                {/* D — Category snapshot */}
                 {viewInterviewDialog.interview.ai?.categoryScores ? (
                   <Box>
+                    <Typography variant="overline" color="text.secondary">
+                      Category snapshot
+                    </Typography>
                     <RecruiterCategoryScoresPanel
                       scores={viewInterviewDialog.interview.ai.categoryScores}
                       evidence={viewInterviewDialog.interview.ai.categoryEvidence ?? null}
                       scoreKind="interview_snapshot"
+                      showHeading={false}
+                      description={null}
+                      collapsibleEvidence
                     />
-                    <Divider sx={{ mt: 2 }} />
                   </Box>
                 ) : null}
 
-                {viewInterviewDialog.interview.questions.map((q) => (
-                  <Box key={q.id}>
-                    <Typography variant="subtitle2" fontWeight={600} gutterBottom>
-                      {q.question}
-                      {q.type && q.type !== 'text'
-                        ? ` (${String(q.type).replace(/_/g, '-')})`
-                        : ''}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
-                      {q.answer || 'No answer provided'}
-                    </Typography>
-                    {q.id !== viewInterviewDialog.interview!.questions[viewInterviewDialog.interview!.questions.length - 1].id && (
-                      <Divider sx={{ mt: 2 }} />
-                    )}
-                  </Box>
-                ))}
-                
-                {/* Display Score in Dialog */}
-                {viewInterviewDialog.interview.score10 !== undefined && (
-                  <>
-                    <Divider sx={{ my: 2 }} />
-                    <Box>
-                      <Typography variant="subtitle2" fontWeight={600} gutterBottom>
-                        Score (0–10 scale)
-                      </Typography>
-                      <Typography variant="h5" color="primary" fontWeight={700}>
-                        {viewInterviewDialog.interview.score10}/10
-                      </Typography>
-                    </Box>
-                  </>
-                )}
+                <Divider />
+
+                {/* E — Answers */}
+                <Box>
+                  <Typography variant="overline" color="text.secondary">
+                    Answers
+                  </Typography>
+                  <Stack spacing={2} sx={{ mt: 1 }}>
+                    {viewInterviewDialog.interview.questions.map((q) => (
+                      <Box key={q.id}>
+                        <Typography variant="subtitle2" fontWeight={600} gutterBottom>
+                          {q.question}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
+                          {prescreenAnswerDisplayLine(q)}
+                        </Typography>
+                      </Box>
+                    ))}
+                  </Stack>
+                </Box>
               </Box>
             </DialogContent>
             <DialogActions>

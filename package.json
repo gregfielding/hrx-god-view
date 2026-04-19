@@ -74,6 +74,7 @@
     "export:prescreen-interviews": "ts-node --project scripts/tsconfig.json scripts/exportLastWorkerAiPrescreenInterviews.ts",
     "qa:prescreen-review": "ts-node --project scripts/tsconfig.json scripts/reviewPrescreenInterviewBatch.ts",
     "prescreen:rescore": "cd functions && npx ts-node src/scripts/rescoreWorkerAiPrescreenInterviews.ts",
+    "qa:prescreen-integrity": "cd functions && npx ts-node src/scripts/qaPrescreenDecisionIntegrity.ts",
     "qa:prescreen-dedupe": "ts-node --project scripts/tsconfig.json scripts/prescreenDynamicDedupeQa.ts",
     "consolidation:dry-run": "ts-node --project scripts/tsconfig.consolidation.json scripts/applicationConsolidationDryRun.ts",
     "consolidation:execute": "ts-node --project scripts/tsconfig.consolidation.json scripts/applicationConsolidationExecute.ts",

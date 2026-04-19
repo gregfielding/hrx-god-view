@@ -3,6 +3,8 @@
  * **Keep in sync** with `functions/src/workerAiPrescreen/prescreenTextAnswerQuality.ts`.
  */
 
+import { isShortButOperationallyValidAnswer } from './prescreenBlueCollarHelpers';
+
 /** Minimal shape for quality checks (no import from scoring — avoids circular deps). */
 export type PrescreenAnswersForQuality = {
   motivation?: string;
@@ -130,18 +132,27 @@ export function evaluatePrescreenAnswerQuality(answers: PrescreenAnswersForQuali
 
   const flagSet = new Set<string>();
 
-  const short = (s: string) => wordCount(s) < PRESCREEN_MIN_SUBSTANTIVE_WORDS;
-  /** Core narrative fields only — require ≥2 short before global low_effort (reduces single-field false positives). */
+  const shortWeak = (s: string) => {
+    const t = s.trim();
+    if (!t) return false;
+    return wordCount(t) < PRESCREEN_MIN_SUBSTANTIVE_WORDS && !isShortButOperationallyValidAnswer(t);
+  };
   const coreNarratives = [motivation, experience, pressure, supervisor];
-  const coreShortCount = coreNarratives.filter((s) => short(s)).length;
-  if (coreShortCount >= 2) {
+  const coreWeakShortCount = coreNarratives.filter((s) => shortWeak(s)).length;
+  if (coreWeakShortCount >= 2) {
     flagSet.add('low_effort_response');
   }
 
-  const vagueOk = (s: string) =>
-    wordCount(s) >= PRESCREEN_MIN_SUBSTANTIVE_WORDS && !prescreenTextHasConcreteDetail(s);
+  const vagueOk = (s: string) => {
+    const t = s.trim();
+    if (!t) return false;
+    return (
+      wordCount(t) >= PRESCREEN_MIN_SUBSTANTIVE_WORDS &&
+      !prescreenTextHasConcreteDetail(t) &&
+      !isShortButOperationallyValidAnswer(t)
+    );
+  };
   const coreVagueCount = coreNarratives.filter((s) => vagueOk(s)).length;
-  /** Require ≥3 thin narrative fields before global `vague_response` (reduces false positives). */
   if (coreVagueCount >= 3) {
     flagSet.add('vague_response');
   }

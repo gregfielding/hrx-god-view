@@ -9,6 +9,7 @@ import {
   type AiHiringReasonCode,
   type ApplicationContextInput,
   type ContainerStatsInput,
+  type EvaluateAiHiringDecisionParams,
   type InterviewResultInput,
   type JobFitGateInput,
   type RankingContextInput,
@@ -28,6 +29,8 @@ export type RunAiHiringOrchestratorV1Params = {
   applicationNoShowBand?: string | null;
   assignmentNoShowBand?: string | null;
   assignmentIdUsed?: string | null;
+  /** Optional — same as {@link EvaluateAiHiringDecisionParams.operationalTrust}. */
+  operationalTrust?: EvaluateAiHiringDecisionParams['operationalTrust'];
 };
 
 function applyNoShowOverlay(
@@ -82,6 +85,7 @@ export function runAiHiringOrchestratorV1(
     ranking: params.ranking,
     jobFitGate,
     includeGigFallback: false,
+    operationalTrust: params.operationalTrust,
   });
 
   const afterNoShow = applyNoShowOverlay(

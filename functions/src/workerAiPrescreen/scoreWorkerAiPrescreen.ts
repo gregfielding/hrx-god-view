@@ -24,6 +24,7 @@ import {
   hasHighScoreReviewDrivers,
   type PrescreenReviewTriage,
 } from './prescreenReviewTriage';
+import { computeOperationalTrustPromoteDeclineToReview } from './operationalTrustOverride';
 
 export type WorkerAiPrescreenAnswers = {
   opening_target_work_types?: string[];
@@ -151,6 +152,28 @@ const FLAG_SCORE_PENALTIES: Record<string, number> = {
 
 /** Max total points subtracted from flag penalties (sum of per-flag penalties can exceed this). */
 const MAX_FLAG_PENALTY_TOTAL = 48;
+
+/**
+ * Penalty buckets — prevent related flags from stacking into an automatic collapse.
+ * See `applyBucketedFlagPenalties`.
+ */
+const MAX_COMMUNICATION_BUCKET = 12;
+/** drug/bg low + moderate + unknown combined (excludes high — those stay full weight via unbucketed path). */
+const MAX_COMPLIANCE_SCREENING_BUCKET = 12;
+/** When the only compliance flags are unknown-axis, cap lower than moderate mixes. */
+const MAX_COMPLIANCE_UNKNOWN_ONLY_BUCKET = 8;
+const MAX_LOGISTICS_BUCKET = 10;
+
+const COMMUNICATION_FLAGS = new Set(['vague_response', 'low_effort_response']);
+const COMPLIANCE_SCREENING_FLAGS = new Set([
+  'drug_risk_low',
+  'background_risk_low',
+  'drug_risk_moderate',
+  'background_risk_moderate',
+  'drug_unknown',
+  'background_unknown',
+]);
+const LOGISTICS_FLAGS = new Set(['transportation_risk', 'no_backup_transport']);
 
 function norm(s: unknown): string {
   return String(s ?? '').trim();
@@ -381,7 +404,18 @@ function scorePhysical(answers: WorkerAiPrescreenAnswers): { pts: number; flags:
   return { pts, flags };
 }
 
-function applyFlagPenalties(baseScore: number, flags: string[]): Omit<PrescreenScoreBreakdown, 'subScoreSum' | 'qualityAdjustment'> {
+function sumPenaltyPoints(items: Array<{ flag: string; points: number }>): number {
+  return items.reduce((a, b) => a + b.points, 0);
+}
+
+/**
+ * Apply per-bucket caps so communication + compliance uncertainty + logistics do not triple-hit the same candidate.
+ * Raw audit lines stay per-flag; `flagPenaltyTotalApplied` reflects capped totals.
+ */
+function applyBucketedFlagPenalties(
+  baseScore: number,
+  flags: string[],
+): Omit<PrescreenScoreBreakdown, 'subScoreSum' | 'qualityAdjustment'> {
   const seen = new Set<string>();
   const flagPenalties: Array<{ flag: string; points: number }> = [];
   for (const f of flags) {
@@ -392,8 +426,27 @@ function applyFlagPenalties(baseScore: number, flags: string[]): Omit<PrescreenS
       flagPenalties.push({ flag: f, points: pts });
     }
   }
-  const flagPenaltyTotalRaw = flagPenalties.reduce((a, b) => a + b.points, 0);
-  const flagPenaltyTotalApplied = Math.min(flagPenaltyTotalRaw, MAX_FLAG_PENALTY_TOTAL);
+
+  const commItems = flagPenalties.filter((e) => COMMUNICATION_FLAGS.has(e.flag));
+  const compItems = flagPenalties.filter((e) => COMPLIANCE_SCREENING_FLAGS.has(e.flag));
+  const logItems = flagPenalties.filter((e) => LOGISTICS_FLAGS.has(e.flag));
+  const otherItems = flagPenalties.filter(
+    (e) => !COMMUNICATION_FLAGS.has(e.flag) && !COMPLIANCE_SCREENING_FLAGS.has(e.flag) && !LOGISTICS_FLAGS.has(e.flag),
+  );
+
+  const commApplied = Math.min(sumPenaltyPoints(commItems), MAX_COMMUNICATION_BUCKET);
+  const onlyUnknown =
+    compItems.length > 0 && compItems.every((e) => e.flag === 'drug_unknown' || e.flag === 'background_unknown');
+  const compCap = onlyUnknown ? MAX_COMPLIANCE_UNKNOWN_ONLY_BUCKET : MAX_COMPLIANCE_SCREENING_BUCKET;
+  const compApplied = Math.min(sumPenaltyPoints(compItems), compCap);
+  const logApplied = Math.min(sumPenaltyPoints(logItems), MAX_LOGISTICS_BUCKET);
+  const otherApplied = sumPenaltyPoints(otherItems);
+
+  const flagPenaltyTotalRaw = sumPenaltyPoints(flagPenalties);
+  const flagPenaltyTotalApplied = Math.min(
+    commApplied + compApplied + logApplied + otherApplied,
+    MAX_FLAG_PENALTY_TOTAL,
+  );
   const finalScore = Math.max(0, Math.min(100, Math.round(baseScore - flagPenaltyTotalApplied)));
   return {
     baseScoreBeforePenalties: baseScore,
@@ -430,6 +483,17 @@ function applyRecruiterTrustScoreCaps(score: number, flags: string[]): number {
  * **80+ with only low-severity drug/bg disclosures** (no unknown, elevated, attendance, physical, quality, transport)
  * → **proceed** — minor disclosures alone are not a high-review catch-all.
  */
+/**
+ * Derive proceed/review/decline from **adjusted** 0–100 score and flags (same thresholds as raw interview scoring).
+ * Used after operational overrides — does not re-run trust promote; caller applies {@link computeOperationalTrustPromoteDeclineToReview}.
+ */
+export function derivePrescreenRecommendationFromScore(
+  overallScore: number,
+  flags: string[],
+): { recommendation: AiPrescreenScoreResult['recommendation']; reviewKind: PrescreenReviewKind | undefined } {
+  return recommendationFromScoreAndFlags(overallScore, flags);
+}
+
 function recommendationFromScoreAndFlags(
   overallScore: number,
   flags: string[],
@@ -466,7 +530,7 @@ function recommendationFromScoreAndFlags(
   return { recommendation: 'review', reviewKind };
 }
 
-function buildRecruiterSummaryLine(
+export function buildRecruiterSummaryLine(
   overallScore: number,
   recommendation: AiPrescreenScoreResult['recommendation'],
   flags: string[],
@@ -550,10 +614,28 @@ export function scoreWorkerAiPrescreen(
   const subScoreSum = exp.pts + rel.pts + trans.pts + risk.pts + phys.pts;
   const qualityAdjustment = opts?.scoreAdjustment ?? 0;
   const baseScoreBeforePenalties = Math.max(0, Math.min(100, Math.round(subScoreSum + qualityAdjustment)));
-  const penaltyBlock = applyFlagPenalties(baseScoreBeforePenalties, flags);
+  const penaltyBlock = applyBucketedFlagPenalties(baseScoreBeforePenalties, flags);
   const overallScore = applyRecruiterTrustScoreCaps(penaltyBlock.finalScore, flags);
 
-  const { recommendation, reviewKind } = recommendationFromScoreAndFlags(overallScore, flags);
+  let { recommendation, reviewKind } = recommendationFromScoreAndFlags(overallScore, flags);
+  const subScoresForTrust = {
+    experience: exp.pts,
+    reliability: rel.pts,
+    transportation: trans.pts,
+    risk: risk.pts,
+    physical: phys.pts,
+  };
+  if (
+    computeOperationalTrustPromoteDeclineToReview({
+      recommendation,
+      overallScore,
+      flags,
+      subScores: subScoresForTrust,
+    })
+  ) {
+    recommendation = 'review';
+    reviewKind = 'review_quality';
+  }
   const reviewTriage =
     recommendation === 'review'
       ? computePrescreenReviewTriage({
@@ -587,13 +669,7 @@ export function scoreWorkerAiPrescreen(
     summary,
     riskSummary: risk.riskSummary,
     reviewTriage,
-    subScores: {
-      experience: exp.pts,
-      reliability: rel.pts,
-      transportation: trans.pts,
-      risk: risk.pts,
-      physical: phys.pts,
-    },
+    subScores: subScoresForTrust,
     scoreBreakdown,
   };
 }

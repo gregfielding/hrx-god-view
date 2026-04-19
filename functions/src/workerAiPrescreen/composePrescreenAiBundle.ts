@@ -6,6 +6,7 @@ import * as admin from 'firebase-admin';
 import type { Firestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions/v2';
 import {
+  buildRecruiterSummaryLine,
   prescreenLetterGrade,
   scoreWorkerAiPrescreen,
   type AiPrescreenScoreResult,
@@ -33,11 +34,25 @@ import {
 import { runAiHiringOrchestratorV1 } from './runAiHiringOrchestratorV1';
 import { mergeDynamicDrugBackgroundIntoCoreAnswers } from './prescreenAnswerMerge';
 import {
+  applyRecruiterOperationalOverrides,
+  mergeOperationalBlocksIntoHiringResult,
+} from './applyRecruiterOperationalOverrides';
+import type { OperationalOverrideResult } from './operationalOverrideTypes';
+import { computePrescreenReviewTriage } from './prescreenReviewTriage';
+import {
   computePrescreenCategoryScores,
   type PrescreenCategoryEvidenceV1,
   type PrescreenCategoryConfidenceV1,
   type PrescreenCategoryScoresV1,
 } from './prescreenCategoryScores';
+
+function certificationsMetaFromUserDoc(ud: Record<string, unknown>): { count: number; loaded: boolean } {
+  const skills = ud.skillsData;
+  if (!skills || typeof skills !== 'object') return { count: 0, loaded: false };
+  const c = (skills as Record<string, unknown>).certifications;
+  if (!Array.isArray(c)) return { count: 0, loaded: true };
+  return { count: c.length, loaded: true };
+}
 
 export function priorityBucketForDecision(d: HiringDecision): string {
   switch (d) {
@@ -84,6 +99,7 @@ export type ComposedPrescreenAiBundle = {
   categoryScores: PrescreenCategoryScoresV1;
   categoryEvidence: PrescreenCategoryEvidenceV1;
   categoryConfidence: PrescreenCategoryConfidenceV1;
+  operationalOverride: OperationalOverrideResult;
 };
 
 /**
@@ -117,23 +133,7 @@ export async function composePrescreenAiBundle(args: {
     drugBackgroundMergeMeta: drugBackgroundMergeMeta,
     extraPenaltyFlags: attendanceAdmission ? ['risk_admission_detected'] : [],
   });
-  if (scored.overallScore >= 80 && scored.recommendation === 'decline') {
-    logger.warn('composePrescreenAiBundle.qa_high_score_with_decline', {
-      userId: args.userId,
-      interviewId: args.interviewId,
-      applicationId: args.applicationId,
-      overallScore: scored.overallScore,
-      flags: scored.flags,
-    });
-  }
   const aiFlags = [...new Set([...scored.flags])];
-  const confidenceScore = computeConfidenceScore({
-    overallScore: scored.overallScore,
-    answerQuality: answerQualityEval.answerQuality,
-    riskProfile,
-    flags: aiFlags,
-  });
-  const score10 = Math.max(0, Math.min(10, Math.round(scored.overallScore / 10)));
 
   let dynamicSteps: ReturnType<typeof buildDynamicPrescreenSteps> = [];
   if (interviewContext) {
@@ -160,45 +160,61 @@ export async function composePrescreenAiBundle(args: {
     dynamicAnswers,
   });
 
-  const aiBlockCore: Record<string, unknown> = {
-    overallScore: scored.overallScore,
-    letterGrade: prescreenLetterGrade(scored.overallScore),
-    recommendation: scored.recommendation,
-    reviewKind: scored.reviewKind ?? null,
-    reviewTriage: scored.reviewTriage ?? null,
-    reviewLane: scored.reviewTriage?.lane ?? null,
-    reviewSubtype: scored.reviewTriage?.subtype ?? null,
-    reviewReasons: scored.reviewTriage?.reasons ?? [],
-    reviewSummaryShort: scored.reviewTriage?.summaryShort ?? null,
+  const certMeta = certificationsMetaFromUserDoc(userDoc);
+  const operationalOverride = applyRecruiterOperationalOverrides({
+    baseInterviewScore: scored.overallScore,
     flags: aiFlags,
-    answerQuality: answerQualityEval.answerQuality,
-    confidenceScore,
-    riskProfile,
     subScores: scored.subScores,
-    scoreBreakdown: scored.scoreBreakdown,
-    riskSummary: scored.riskSummary ?? null,
-    summary: scored.summary,
-    assignmentReadiness,
-    alternatePaths,
-    debug: complianceDebug,
+    answers: answersEffective,
+    dynamicAnswers,
     categoryScores,
-    categoryEvidence,
-    categoryConfidence,
-    prescreenOpeningPreferences: {
-      targetWorkTypes: answers.opening_target_work_types ?? [],
-      schedulePreferences: answers.opening_schedule_preferences ?? [],
-      experienceIndustrial: answers.opening_experience_industrial ?? [],
-      experienceHospitality: answers.opening_experience_hospitality ?? [],
-      experienceEvents: answers.opening_experience_events ?? [],
-      experienceClerical: answers.opening_experience_clerical ?? [],
-      experienceHealthcare: answers.opening_experience_healthcare ?? [],
-      gigWorkInterestCategories: answers.opening_gig_types ?? [],
-    },
-  };
+    assignmentReadiness,
+    userDoc,
+    scoreSummary: userDoc.scoreSummary as Record<string, unknown> | undefined,
+    certificationsCount: certMeta.count,
+    certificationsLoaded: certMeta.loaded,
+  });
 
-  if (interviewContext) {
-    aiBlockCore.aiInterviewContext = JSON.parse(JSON.stringify(interviewContext)) as Record<string, unknown>;
+  const adjustedScore = operationalOverride.adjustedScore;
+  const score10 = Math.max(0, Math.min(10, Math.round(adjustedScore / 10)));
+
+  if (adjustedScore >= 80 && operationalOverride.recommendedRecommendation === 'decline') {
+    logger.warn('composePrescreenAiBundle.qa_high_score_with_decline', {
+      userId: args.userId,
+      interviewId: args.interviewId,
+      applicationId: args.applicationId,
+      overallScore: adjustedScore,
+      baseInterviewScore: scored.overallScore,
+      flags: scored.flags,
+    });
   }
+
+  const confidenceScore = computeConfidenceScore({
+    overallScore: adjustedScore,
+    answerQuality: answerQualityEval.answerQuality,
+    riskProfile,
+    flags: aiFlags,
+  });
+
+  const reviewTriageAdjusted =
+    operationalOverride.recommendedRecommendation === 'review'
+      ? computePrescreenReviewTriage({
+          overallScore: adjustedScore,
+          flags: aiFlags,
+          reviewKind: operationalOverride.prescreenReviewKind,
+          riskSummary: scored.riskSummary,
+        })
+      : null;
+
+  const summaryAdjusted =
+    operationalOverride.recommendedRecommendation === 'review' && reviewTriageAdjusted?.summaryShort
+      ? reviewTriageAdjusted.summaryShort
+      : buildRecruiterSummaryLine(
+          adjustedScore,
+          operationalOverride.recommendedRecommendation,
+          aiFlags,
+          operationalOverride.prescreenReviewKind,
+        );
 
   const hiringPolicyInput = interviewContext?.hiringPolicy
     ? toAiHiringPolicyDecisionInput(interviewContext.hiringPolicy.resolvedAiHiring)
@@ -228,23 +244,85 @@ export async function composePrescreenAiBundle(args: {
     applicationCtx.groupId = interviewContext.hiringPolicy.container.groupId;
   }
 
-  const hiringResult = evaluateAiHiringDecision({
+  /** Trust promote already applied inside operational overrides — do not double-apply in hiring engine. */
+  const operationalTrustForEngine = { promoteDeclineToReview: false };
+
+  const hiringResultRaw = evaluateAiHiringDecision({
     interviewResult: {
-      overallScore: scored.overallScore,
+      overallScore: adjustedScore,
       score10,
       flags: aiFlags,
-      recommendation: scored.recommendation,
+      recommendation: operationalOverride.recommendedRecommendation,
       dynamicAnswers: dynamicAnswers as Record<string, DynamicAnswerValue>,
     },
     hiringPolicy: hiringPolicyInput,
     application: applicationCtx,
+    operationalTrust: operationalTrustForEngine,
   });
+
+  const hiringResult = mergeOperationalBlocksIntoHiringResult(
+    hiringResultRaw,
+    operationalOverride.softBlocks,
+    operationalOverride.hardBlocks,
+  );
+
+  const aiBlockCore: Record<string, unknown> = {
+    overallScore: scored.overallScore,
+    baseInterviewScore: scored.overallScore,
+    overrideAdjustedScore: operationalOverride.adjustedScore,
+    overrideScoreDelta: operationalOverride.scoreDelta,
+    overrideBand: operationalOverride.finalBand,
+    overrideRulesVersion: operationalOverride.rulesVersion,
+    overridesApplied: operationalOverride.overridesApplied,
+    overrideInputSignature: operationalOverride.overrideInputSignature,
+    recruiterTrustLevel: operationalOverride.recruiterTrustLevel,
+    softBlocks: operationalOverride.softBlocks,
+    hardBlocks: operationalOverride.hardBlocks,
+    letterGrade: prescreenLetterGrade(adjustedScore),
+    recommendation: operationalOverride.recommendedRecommendation,
+    reviewKind: operationalOverride.prescreenReviewKind ?? null,
+    reviewTriage: reviewTriageAdjusted,
+    reviewLane: reviewTriageAdjusted?.lane ?? null,
+    reviewSubtype: reviewTriageAdjusted?.subtype ?? null,
+    reviewReasons: reviewTriageAdjusted?.reasons ?? [],
+    reviewSummaryShort: reviewTriageAdjusted?.summaryShort ?? null,
+    flags: aiFlags,
+    answerQuality: answerQualityEval.answerQuality,
+    confidenceScore,
+    riskProfile,
+    subScores: scored.subScores,
+    scoreBreakdown: scored.scoreBreakdown,
+    riskSummary: scored.riskSummary ?? null,
+    summary: summaryAdjusted,
+    assignmentReadiness,
+    alternatePaths,
+    debug: complianceDebug,
+    categoryScores,
+    categoryEvidence,
+    categoryConfidence,
+    prescreenOpeningPreferences: {
+      targetWorkTypes: answers.opening_target_work_types ?? [],
+      schedulePreferences: answers.opening_schedule_preferences ?? [],
+      experienceIndustrial: answers.opening_experience_industrial ?? [],
+      experienceHospitality: answers.opening_experience_hospitality ?? [],
+      experienceEvents: answers.opening_experience_events ?? [],
+      experienceClerical: answers.opening_experience_clerical ?? [],
+      experienceHealthcare: answers.opening_experience_healthcare ?? [],
+      gigWorkInterestCategories: answers.opening_gig_types ?? [],
+    },
+  };
+
+  if (interviewContext) {
+    aiBlockCore.aiInterviewContext = JSON.parse(JSON.stringify(interviewContext)) as Record<string, unknown>;
+  }
 
   aiBlockCore.hiringDecision = {
     decision: hiringResult.decision,
     eligibleForAutoAdvance: hiringResult.eligibleForAutoAdvance,
     reasonCodes: hiringResult.reasonCodes,
   };
+
+  aiBlockCore.scoreComputationVersion = 'prescreen_ops_override_v1';
 
   const priorityBucket = priorityBucketForDecision(hiringResult.decision);
   const gigPathEligible = hiringResult.reasonCodes.includes('gig_path_eligible');
@@ -291,10 +369,10 @@ export async function composePrescreenAiBundle(args: {
       }
       const orch = runAiHiringOrchestratorV1({
         interviewResult: {
-          overallScore: scored.overallScore,
+          overallScore: adjustedScore,
           score10,
           flags: aiFlags,
-          recommendation: scored.recommendation,
+          recommendation: operationalOverride.recommendedRecommendation,
           dynamicAnswers: dynamicAnswers as Record<string, DynamicAnswerValue>,
         },
         resolvedPolicy: hp.resolvedAiHiring,
@@ -304,7 +382,13 @@ export async function composePrescreenAiBundle(args: {
         applicationNoShowBand: applicationNoShowRisk.band,
         assignmentNoShowBand: assignNs.band,
         assignmentIdUsed: assignNs.assignmentId,
+        operationalTrust: operationalTrustForEngine,
       });
+      const orchFinalMerged = mergeOperationalBlocksIntoHiringResult(
+        orch.finalResult,
+        operationalOverride.softBlocks,
+        operationalOverride.hardBlocks,
+      );
       orchestratorV1Firestore = stripUndefinedDeep({
         version: orch.version,
         evaluatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -315,8 +399,8 @@ export async function composePrescreenAiBundle(args: {
         steps: orch.steps,
         policyEngineResult: orch.policyEngineResult,
         afterNoShowOverlay: orch.afterNoShowOverlay,
-        finalResult: orch.finalResult,
-        finalEligibleForAutoAdvance: orch.finalEligibleForAutoAdvance,
+        finalResult: orchFinalMerged,
+        finalEligibleForAutoAdvance: orchFinalMerged.eligibleForAutoAdvance,
       });
     } catch (e) {
       logger.warn('composePrescreenAiBundle.orchestratorV1_failed', {
@@ -343,5 +427,6 @@ export async function composePrescreenAiBundle(args: {
     categoryScores,
     categoryEvidence,
     categoryConfidence,
+    operationalOverride,
   };
 }

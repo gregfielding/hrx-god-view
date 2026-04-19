@@ -1,7 +1,9 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Box,
+  Button,
   Chip,
+  Collapse,
   LinearProgress,
   Stack,
   Tooltip,
@@ -192,6 +194,8 @@ export type RecruiterCategoryScoresPanelProps = {
    * When `title` / `description` are omitted, sets recruiter-facing defaults for snapshot vs current profile.
    */
   scoreKind?: RecruiterCategoryScoreContext;
+  /** When true, evidence tags are hidden behind a collapsed "Show scoring evidence" control. */
+  collapsibleEvidence?: boolean;
 };
 
 const defaultInterviewSnapshotCaption = (
@@ -219,7 +223,9 @@ export const RecruiterCategoryScoresPanel: React.FC<RecruiterCategoryScoresPanel
   description,
   footnote,
   scoreKind = 'interview_snapshot',
+  collapsibleEvidence = false,
 }) => {
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   const defaultTitle =
     scoreKind === 'profile_current' ? 'Current category scores (worker profile)' : 'Interview category snapshot';
   const resolvedTitle = title ?? defaultTitle;
@@ -265,25 +271,54 @@ export const RecruiterCategoryScoresPanel: React.FC<RecruiterCategoryScoresPanel
         })}
       </Stack>
       {evidence && CATEGORY_ORDER.some(({ key }) => (evidence[key]?.length ?? 0) > 0) ? (
-        <Box sx={{ mt: 2, p: 1.5, bgcolor: 'action.hover', borderRadius: 1 }}>
-          <Typography variant="caption" fontWeight={700} display="block" sx={{ mb: 1 }}>
-            Evidence tags
-          </Typography>
-          {CATEGORY_ORDER.map(({ key, label }) => {
-            const lines = evidence[key];
-            if (!lines?.length) return null;
-            return (
-              <Box key={key} sx={{ mb: 1 }}>
-                <Typography variant="caption" fontWeight={600} display="block" color="text.secondary">
-                  {label}
+        collapsibleEvidence ? (
+          <Box sx={{ mt: 1.5 }}>
+            <Button size="small" variant="text" onClick={() => setEvidenceOpen((v) => !v)} sx={{ textTransform: 'none' }}>
+              {evidenceOpen ? 'Hide scoring evidence' : 'Show scoring evidence'}
+            </Button>
+            <Collapse in={evidenceOpen}>
+              <Box sx={{ mt: 1, p: 1.5, bgcolor: 'action.hover', borderRadius: 1 }}>
+                <Typography variant="caption" fontWeight={700} display="block" sx={{ mb: 1 }}>
+                  Evidence tags
                 </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem', whiteSpace: 'pre-wrap' }}>
-                  {lines.join(' · ')}
-                </Typography>
+                {CATEGORY_ORDER.map(({ key, label }) => {
+                  const lines = evidence[key];
+                  if (!lines?.length) return null;
+                  return (
+                    <Box key={key} sx={{ mb: 1 }}>
+                      <Typography variant="caption" fontWeight={600} display="block" color="text.secondary">
+                        {label}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem', whiteSpace: 'pre-wrap' }}>
+                        {lines.join(' · ')}
+                      </Typography>
+                    </Box>
+                  );
+                })}
               </Box>
-            );
-          })}
-        </Box>
+            </Collapse>
+          </Box>
+        ) : (
+          <Box sx={{ mt: 2, p: 1.5, bgcolor: 'action.hover', borderRadius: 1 }}>
+            <Typography variant="caption" fontWeight={700} display="block" sx={{ mb: 1 }}>
+              Evidence tags
+            </Typography>
+            {CATEGORY_ORDER.map(({ key, label }) => {
+              const lines = evidence[key];
+              if (!lines?.length) return null;
+              return (
+                <Box key={key} sx={{ mb: 1 }}>
+                  <Typography variant="caption" fontWeight={600} display="block" color="text.secondary">
+                    {label}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem', whiteSpace: 'pre-wrap' }}>
+                    {lines.join(' · ')}
+                  </Typography>
+                </Box>
+              );
+            })}
+          </Box>
+        )
       ) : (
         <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
           No evidence tags on this record.

@@ -75,7 +75,9 @@ export type AiHiringReasonCode =
   | 'recommendation_decline'
   | 'gig_path_eligible'
   | 'below_job_fit_threshold'
-  | 'no_show_overlay_review';
+  | 'no_show_overlay_review'
+  | 'operational_hard_block'
+  | 'operational_soft_block';
 
 export type AiHiringDecisionResult = {
   decision: HiringDecision;
@@ -100,6 +102,11 @@ export type EvaluateAiHiringDecisionParams = {
   jobFitGate?: JobFitGateInput;
   /** Default true. Set false when orchestrator applies no-show overlay before gig fallback. */
   includeGigFallback?: boolean;
+  /**
+   * When true, a score-engine `decline` is treated as `review` for automation (no auto-reject).
+   * Mirrors `computeOperationalTrustPromoteDeclineToReview` — callers that already lifted recommendation can omit.
+   */
+  operationalTrust?: { promoteDeclineToReview: boolean };
 };
 
 export type WorkerAiHiringDecisionLogPayload = {
@@ -178,9 +185,15 @@ function isInTopPercentBucket(rank: number, total: number, topPercent: number): 
  * Does not trigger onboarding or mutate application state.
  */
 export function evaluateAiHiringDecision(params: EvaluateAiHiringDecisionParams): AiHiringDecisionResult {
-  const { interviewResult, hiringPolicy, containerStats, ranking, jobFitGate, includeGigFallback } = params;
+  const { interviewResult, hiringPolicy, containerStats, ranking, jobFitGate, includeGigFallback, operationalTrust } =
+    params;
   const applyGig = includeGigFallback !== false;
   const { overallScore, flags, recommendation, dynamicAnswers } = interviewResult;
+
+  let effectiveRecommendation = recommendation;
+  if (operationalTrust?.promoteDeclineToReview && recommendation === 'decline') {
+    effectiveRecommendation = 'review';
+  }
 
   const minScore =
     typeof hiringPolicy.minimumScoreToAdvance === 'number' && Number.isFinite(hiringPolicy.minimumScoreToAdvance)
@@ -188,7 +201,7 @@ export function evaluateAiHiringDecision(params: EvaluateAiHiringDecisionParams)
       : DEFAULT_MIN_SCORE;
 
   // STEP 1 — Recommendation-driven reject (numeric score already reflects compliance/risk penalties).
-  if (recommendation === 'decline') {
+  if (effectiveRecommendation === 'decline') {
     return finalize(
       'reject',
       hiringPolicy,
@@ -199,7 +212,7 @@ export function evaluateAiHiringDecision(params: EvaluateAiHiringDecisionParams)
   }
 
   // STEP 1b — Interview recommendation `review` must align with hiring decision (no Review + Advance).
-  if (recommendation === 'review') {
+  if (effectiveRecommendation === 'review') {
     return finalize(
       'review',
       hiringPolicy,
