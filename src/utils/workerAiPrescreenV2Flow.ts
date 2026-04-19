@@ -88,7 +88,12 @@ export function buildPrescreenNavEntries(params: {
 
   const out: PrescreenNavEntry[] = [];
 
+  if (byId.confirm_legal_first_name) {
+    out.push({ kind: 'core', step: byId.confirm_legal_first_name });
+  }
+
   for (const s of visibleCoreSteps) {
+    if (s.id === 'confirm_legal_first_name') continue;
     if (String(s.id).startsWith('opening_')) out.push({ kind: 'core', step: s });
   }
 
@@ -164,6 +169,7 @@ export function prescreenUiSectionForNavEntry(entry: PrescreenNavEntry): import(
     return 'experience';
   }
   const id = entry.step.id;
+  if (id === 'confirm_legal_first_name') return 'preferences';
   if (id.startsWith('opening_')) return 'preferences';
   if (['work_confidence', 'motivation', 'experience_details', 'pressure_situation'].includes(id)) return 'experience';
   if (
@@ -281,6 +287,9 @@ export function validatePrescreenNavEntry(
   switch (step.type) {
     case 'text': {
       const v = String((answers as Record<string, unknown>)[step.id] ?? '').trim();
+      if (step.id === 'confirm_legal_first_name') {
+        return v.length >= 2 && v.length <= 80 && /[a-zA-Z\u00C0-\u024F]/.test(v);
+      }
       if (step.id === 'additional_notes') return true;
       if (step.id === 'experience_details' && isFastPath) {
         const wc = wordCountAnswer(v);

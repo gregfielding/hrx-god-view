@@ -99,7 +99,9 @@
     "deploy:functions:assignment-emails": "npx firebase deploy --only functions:logAssignmentUpdated,functions:logAssignmentCreated,functions:previewAssignmentDetailsEmail",
     "deploy:functions:hiring-score-scheduler": "npx firebase deploy --only functions:scheduledRefreshStaleHiringScores",
     "deploy:hosting": "node scripts/hostingPredeploy.js && npm run firebase -- deploy --only hosting",
-    "score:refresh": "cd functions && npx ts-node --project tsconfig.scripts.json src/scripts/refreshHiringScores.ts"
+    "score:refresh": "cd functions && npx ts-node --project tsconfig.scripts.json src/scripts/refreshHiringScores.ts",
+    "scores:backfill": "cd functions && npx ts-node --project tsconfig.scripts.json src/scripts/backfillRecruiterScoreSnapshots.ts",
+    "qa:score-consistency": "cd functions && npx ts-node --project tsconfig.scripts.json src/scripts/qaRecruiterScoreConsistency.ts"
   },
   "eslintConfig": {
     "extends": [

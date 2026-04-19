@@ -28,7 +28,11 @@ import {
   Chip,
   Stack,
   Collapse,
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
 } from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import {
   Add as AddIcon,
   Schedule as ScheduleIcon,
@@ -70,6 +74,10 @@ import {
   RecruiterCategoryScoresPanel,
 } from '../../../components/recruiter/RecruiterCategoryScoresReadOnly';
 import { useCategoryScoresCurrent } from '../../../hooks/useCategoryScoresCurrent';
+import {
+  WorkerAiPrescreenInterviewCardContent,
+  type WorkerAiPrescreenInterviewCardModel,
+} from './WorkerAiPrescreenInterviewCardContent';
 
 interface InterviewQuestion {
   id: string;
@@ -97,14 +105,6 @@ function interviewSourceLabel(kind: Interview['interviewKind']): string {
   return kind === 'worker_ai_prescreen' ? 'Worker AI pre-screen' : 'Recruiter (live)';
 }
 
-function recommendationChipColor(
-  r: WorkerInterviewAiBlock['recommendation'],
-): 'success' | 'warning' | 'error' {
-  if (r === 'proceed') return 'success';
-  if (r === 'caution' || r === 'decline') return 'error';
-  return 'warning';
-}
-
 function historyFlagsSummary(interview: Interview): string {
   if (interview.interviewKind !== 'worker_ai_prescreen' || !interview.ai) return '—';
   const flags = interview.ai.flags;
@@ -123,6 +123,10 @@ interface InterviewTabProps {
     riskProfileLastUpdatedAt?: unknown;
     complianceTouchAt?: unknown;
   };
+  /** Recruiter / internal view: show Overview scoring guidance and de-emphasize duplicate score blocks. */
+  recruiterTrustUi?: boolean;
+  /** Navigate to Overview tab where the primary Scoring card lives. */
+  onOpenOverviewScore?: () => void;
 }
 
 function interviewDocToIntelInput(interview: Interview): ScoreIntelligenceInterviewInput | null {
@@ -145,7 +149,13 @@ function prescreenAnswerDisplayLine(q: InterviewQuestion): string {
   return t;
 }
 
-const InterviewTab: React.FC<InterviewTabProps> = ({ uid, scoreSummary, scoreFreshnessMeta }) => {
+const InterviewTab: React.FC<InterviewTabProps> = ({
+  uid,
+  scoreSummary,
+  scoreFreshnessMeta,
+  recruiterTrustUi,
+  onOpenOverviewScore,
+}) => {
   const { currentUser } = useAuth();
   const { scores: profileCategoryScores, userDocReady: profileScoresReady } = useCategoryScoresCurrent(uid);
   const [interviews, setInterviews] = useState<Interview[]>([]);
@@ -538,6 +548,24 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid, scoreSummary, scoreFre
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {recruiterTrustUi && onOpenOverviewScore ? (
+        <Alert severity="info" sx={{ alignItems: 'flex-start' }}>
+          <Stack spacing={1}>
+            <Typography variant="body2" fontWeight={600}>
+              Scoring summary lives on the Overview tab
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Use this tab for raw interview answers, interview history, and full interview detail.
+            </Typography>
+            <Box>
+              <Button variant="outlined" size="small" onClick={onOpenOverviewScore}>
+                Open Overview score
+              </Button>
+            </Box>
+          </Stack>
+        </Alert>
+      ) : null}
+
       <Card variant="outlined">
         <CardHeader
           title="Current category scores (worker profile)"
@@ -566,162 +594,52 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid, scoreSummary, scoreFre
         </CardContent>
       </Card>
 
-      {latestWorkerAiPrescreen?.ai && (
-        <Card variant="outlined" sx={{ borderColor: 'secondary.light' }}>
-          <CardHeader
-            title={
-              <Stack direction="row" alignItems="center" flexWrap="wrap" gap={1}>
-                <Typography component="span" variant="h6" fontWeight={700}>
-                  AI pre-screen
+      {latestWorkerAiPrescreen?.ai &&
+        (() => {
+          const prescreenCardModel = latestWorkerAiPrescreen as WorkerAiPrescreenInterviewCardModel;
+          return recruiterTrustUi ? (
+          <Accordion
+            defaultExpanded={false}
+            disableGutters
+            elevation={0}
+            sx={{
+              border: '1px solid',
+              borderColor: 'divider',
+              borderRadius: 1,
+              bgcolor: 'background.paper',
+              '&:before': { display: 'none' },
+            }}
+          >
+            <AccordionSummary expandIcon={<ExpandMoreIcon fontSize="small" />} sx={{ px: 2 }}>
+              <Stack spacing={0.25} sx={{ pr: 1 }}>
+                <Typography variant="subtitle2" fontWeight={600}>
+                  Interview-scoped scoring details
                 </Typography>
-                <Chip size="small" label="Worker AI" color="secondary" variant="outlined" />
-                {latestWorkerAiPrescreen.applicationId ? (
-                  <Chip size="small" label={`Application ${latestWorkerAiPrescreen.applicationId}`} variant="outlined" />
-                ) : null}
+                <Typography variant="caption" color="text.secondary">
+                  Latest Worker AI pre-screen · {formatDate(latestWorkerAiPrescreen.createdAt)}
+                </Typography>
               </Stack>
-            }
-            subheader={formatDate(latestWorkerAiPrescreen.createdAt)}
-          />
-          <CardContent sx={{ pt: 0 }}>
-            <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
-              {WORKER_AI_INTERVIEW_REC_VS_HIRING_DECISION_HELP}
-            </Typography>
-
-            <Stack spacing={1.25} sx={{ mb: 1.5 }}>
-              <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center">
-                <Typography variant="body2" color="text.secondary">
-                  Score
-                </Typography>
-                <Typography variant="h6" fontWeight={700} color="primary">
-                  {(typeof latestWorkerAiPrescreen.ai.overrideAdjustedScore === 'number'
-                    ? latestWorkerAiPrescreen.ai.overrideAdjustedScore
-                    : latestWorkerAiPrescreen.ai.overallScore) ?? '—'}
-                  /100
-                </Typography>
-                {latestWorkerAiPrescreen.score10 !== undefined && (
-                  <Chip size="small" label={`${latestWorkerAiPrescreen.score10}/10 (mapped)`} variant="outlined" />
-                )}
-              </Stack>
-              {typeof latestWorkerAiPrescreen.ai.overrideAdjustedScore === 'number' &&
-              typeof latestWorkerAiPrescreen.ai.baseInterviewScore === 'number' &&
-              latestWorkerAiPrescreen.ai.overrideAdjustedScore !== latestWorkerAiPrescreen.ai.baseInterviewScore ? (
-                <Typography variant="caption" color="text.secondary" display="block">
-                  Base {latestWorkerAiPrescreen.ai.baseInterviewScore} → Adjusted {latestWorkerAiPrescreen.ai.overrideAdjustedScore}
-                  {typeof latestWorkerAiPrescreen.ai.overrideScoreDelta === 'number'
-                    ? ` (${latestWorkerAiPrescreen.ai.overrideScoreDelta >= 0 ? '+' : ''}${latestWorkerAiPrescreen.ai.overrideScoreDelta})`
-                    : ''}
-                  {latestWorkerAiPrescreen.ai.recruiterTrustLevel
-                    ? ` · Trust: ${latestWorkerAiPrescreen.ai.recruiterTrustLevel}`
-                    : ''}
-                </Typography>
-              ) : null}
-
-              <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center">
-                <Typography variant="body2" color="text.secondary">
-                  Interview recommendation
-                </Typography>
-                <Chip
-                  size="small"
-                  label={formatScoreRecommendationLabel(latestWorkerAiPrescreen.ai.recommendation)}
-                  color={recommendationChipColor(latestWorkerAiPrescreen.ai.recommendation)}
+            </AccordionSummary>
+            <AccordionDetails sx={{ px: 1, pt: 0 }}>
+              <Card variant="outlined" sx={{ border: 'none', boxShadow: 'none' }}>
+                <WorkerAiPrescreenInterviewCardContent
+                  interview={prescreenCardModel}
+                  demoted
+                  formatDateFn={formatDate}
                 />
-              </Stack>
-
-              <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center">
-                <Typography variant="body2" color="text.secondary">
-                  Hiring decision
-                </Typography>
-                {latestWorkerAiPrescreen.ai.hiringDecision ? (
-                  <Chip
-                    size="small"
-                    label={formatHiringDecisionLabel(latestWorkerAiPrescreen.ai.hiringDecision.decision)}
-                    color={hiringDecisionChipColor(latestWorkerAiPrescreen.ai.hiringDecision.decision)}
-                    variant={hiringDecisionChipVariant(latestWorkerAiPrescreen.ai.hiringDecision.decision)}
-                  />
-                ) : (
-                  <Chip size="small" label="Not evaluated" variant="outlined" />
-                )}
-                {latestWorkerAiPrescreen.ai.hiringDecision?.eligibleForAutoAdvance ? (
-                  <Chip size="small" label="Eligible for auto-advance (rules)" color="info" variant="outlined" />
-                ) : null}
-              </Stack>
-            </Stack>
-
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-              {latestWorkerAiPrescreen.ai.hiringDecision
-                ? explanationLineForHiringDecision({
-                    decision: latestWorkerAiPrescreen.ai.hiringDecision.decision,
-                    reasonCodes: latestWorkerAiPrescreen.ai.hiringDecision.reasonCodes,
-                  })
-                : 'Hiring decision has not been computed for this record yet.'}
-            </Typography>
-
-            {latestWorkerAiPrescreen.ai.hiringDecision && latestWorkerAiPrescreen.ai.hiringDecision.reasonCodes.length > 0 ? (
-              <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mb: 1.5 }}>
-                {latestWorkerAiPrescreen.ai.hiringDecision.reasonCodes.map((code) => (
-                  <Chip
-                    key={code}
-                    size="small"
-                    label={labelForAiHiringReasonCode(code)}
-                    variant="outlined"
-                    color="default"
-                  />
-                ))}
-              </Stack>
-            ) : null}
-
-            {latestWorkerAiPrescreen.ai.summary ? (
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, whiteSpace: 'pre-wrap' }}>
-                {latestWorkerAiPrescreen.ai.summary}
-              </Typography>
-            ) : null}
-
-            {latestWorkerAiPrescreen.ai.flags.length > 0 ? (
-              <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mb: 1 }}>
-                {latestWorkerAiPrescreen.ai.flags.map((f) => (
-                  <Chip key={f} size="small" label={labelForInterviewFlag(f)} variant="outlined" />
-                ))}
-              </Stack>
-            ) : (
-              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-                No risk flags
-              </Typography>
-            )}
-
-            {(() => {
-              const dyn = readDynamicAnswersFromAiContext(latestWorkerAiPrescreen.ai.aiInterviewContext);
-              if (!dyn) return null;
-              return (
-                <Box sx={{ mb: 1 }}>
-                  <Typography variant="caption" color="text.secondary" fontWeight={600} display="block" sx={{ mb: 0.5 }}>
-                    Job-specific answers
-                  </Typography>
-                  <Stack spacing={0.25}>
-                    {Object.entries(dyn).map(([k, v]) => (
-                      <Typography key={k} variant="caption" color="text.secondary">
-                        {labelForDynamicAnswerKey(k)}: <strong>{v}</strong>
-                      </Typography>
-                    ))}
-                  </Stack>
-                </Box>
-              );
-            })()}
-
-            {(latestWorkerAiPrescreen.ai.hiringDecision?.reasonCodes.includes('gig_path_eligible') ||
-              latestWorkerAiPrescreen.ai.alternatePaths?.gigEligible) && (
-              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-                Gig path may be available as an alternate path when the primary role is not a fit.
-              </Typography>
-            )}
-
-            {latestWorkerAiPrescreen.applicationId ? (
-              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
-                Application ID: {latestWorkerAiPrescreen.applicationId}
-              </Typography>
-            ) : null}
-          </CardContent>
-        </Card>
-      )}
+              </Card>
+            </AccordionDetails>
+          </Accordion>
+        ) : (
+          <Card variant="outlined" sx={{ borderColor: 'secondary.light' }}>
+            <WorkerAiPrescreenInterviewCardContent
+              interview={prescreenCardModel}
+              demoted={false}
+              formatDateFn={formatDate}
+            />
+          </Card>
+        );
+        })()}
 
       {/* Interview Form Card */}
       <Card variant="outlined">

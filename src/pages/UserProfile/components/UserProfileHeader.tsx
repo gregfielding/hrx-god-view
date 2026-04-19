@@ -42,6 +42,8 @@ import RecordHeaderActionIcon from './RecordHeaderActionIcon';
 import { recordHeaderActionIconButtonSx, recordHeaderTooltipComponentsProps } from './recordHeaderStyles';
 import type { ScoreSummary, ScoringDistribution } from '../../../utils/scoreSummary';
 import { resolveRecruiterPrimaryDisplay } from '../../../utils/scoring/recruiterPrimaryDisplay';
+import { getRecruiterScoreDisplayForAdminUi } from '../../../utils/scoring/recruiterScoreSnapshot';
+import { recruiterTableLetterGrade } from '../../../utils/recruiterUsersReadinessDisplay';
 import type { WorkerInterviewAiBlock } from '../../../types/workerAiPrescreenInterview';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { detectMissingItems } from '../utils/detectMissingItems';
@@ -87,6 +89,8 @@ interface UserProfileHeaderProps {
   scoreSummary?: ScoreSummary;
   /** Latest worker AI prescreen `ai` from parent — keeps header aligned with interview operational score */
   latestPrescreenInterviewAi?: WorkerInterviewAiBlock | null;
+  /** Canonical recruiter score on user doc — primary for admin view when present */
+  recruiterScoreSnapshot?: unknown;
   scoringDistribution?: ScoringDistribution | null;
   // New props for document access and additional data
   resume?: {
@@ -177,6 +181,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   profileScore,
   scoreSummary,
   latestPrescreenInterviewAi,
+  recruiterScoreSnapshot,
   scoringDistribution,
   resume,
   certifications = [],
@@ -269,14 +274,32 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
     return null;
   }, [createdAt]);
 
-  const recruiterPrimary = useMemo(
-    () =>
-      resolveRecruiterPrimaryDisplay({
-        scoreSummary,
-        latestPrescreenInterviewAi: latestPrescreenInterviewAi ?? null,
-      }),
-    [scoreSummary, latestPrescreenInterviewAi],
-  );
+  const adminSnap = useMemo(() => getRecruiterScoreDisplayForAdminUi(recruiterScoreSnapshot), [recruiterScoreSnapshot]);
+
+  const recruiterPrimary = useMemo(() => {
+    if (isAdminView) {
+      if (adminSnap.hasSnapshot && adminSnap.score100 != null) {
+        return {
+          primaryScore100: adminSnap.score100,
+          primaryGrade: adminSnap.grade ?? recruiterTableLetterGrade(Math.round(adminSnap.score100)),
+          secondaryProfileComposite100: null,
+          hasConflict: false,
+          conflictHint: null as string | null,
+        };
+      }
+      return {
+        primaryScore100: null,
+        primaryGrade: '—',
+        secondaryProfileComposite100: null,
+        hasConflict: false,
+        conflictHint: null as string | null,
+      };
+    }
+    return resolveRecruiterPrimaryDisplay({
+      scoreSummary,
+      latestPrescreenInterviewAi: latestPrescreenInterviewAi ?? null,
+    });
+  }, [isAdminView, adminSnap, scoreSummary, latestPrescreenInterviewAi]);
 
   const [gmailConnected, setGmailConnected] = useState<boolean>(false);
   const [hasTwilioNumber, setHasTwilioNumber] = useState<boolean>(false);

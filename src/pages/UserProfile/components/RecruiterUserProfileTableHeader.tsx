@@ -102,6 +102,8 @@ export type RecruiterUserProfileTableHeaderProps = {
   scoreSummary: ScoreSummary | undefined;
   /** Latest prescreen `ai` block — aligns record header score with Interview tab */
   latestPrescreenInterviewAi?: WorkerInterviewAiBlock | null;
+  /** Canonical recruiter score on user doc */
+  recruiterScoreSnapshot?: unknown;
   scoringDistribution: ScoringDistribution | null;
   categoryScores: PrescreenCategoryScoresV1 | null;
   riskProfile: WorkerRiskProfileV1 | null;
@@ -171,6 +173,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
   toggleFavorite,
   scoreSummary,
   latestPrescreenInterviewAi,
+  recruiterScoreSnapshot,
   scoringDistribution,
   categoryScores,
   riskProfile,
@@ -927,6 +930,8 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                   <RecordHeaderScoreSummaryBlock
                     scoreSummary={scoreSummary}
                     latestPrescreenInterviewAi={latestPrescreenInterviewAi ?? null}
+                    recruiterScoreSnapshot={recruiterScoreSnapshot}
+                    useRecruiterSnapshotOnly
                     scoringDistribution={scoringDistribution}
                     categoryScores={categoryScores}
                     riskProfile={riskProfile}

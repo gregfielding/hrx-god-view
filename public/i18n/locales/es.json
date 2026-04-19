@@ -430,6 +430,9 @@
       "serverDetail": "{detail}"
     },
     "steps": {
+      "confirm_legal_first_name": {
+        "prompt": "Tu perfil muestra un número donde debería ir tu nombre. ¿Cuál es tu nombre legal de pila tal como aparece en tu identificación?"
+      },
       "opening_target_work_types": {
         "prompt": "¿Qué tipo de trabajo te interesa?",
         "opt_hospitality": "Hostelería",

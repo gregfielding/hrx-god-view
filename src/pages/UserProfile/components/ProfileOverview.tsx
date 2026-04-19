@@ -386,6 +386,7 @@ const ProfileOverview: React.FC<Props> = ({
   });
 
   const [scoreSummaryFromUser, setScoreSummaryFromUser] = useState<ScoreSummary | undefined>(undefined);
+  const [recruiterScoreSnapshotFromUser, setRecruiterScoreSnapshotFromUser] = useState<unknown>(undefined);
   /** First Firestore `users/{uid}` snapshot received — prevents false “interview missing” before scoreSummary hydrates. */
   const [userDocHydratedForActionItems, setUserDocHydratedForActionItems] = useState(false);
   const [riskProfileRaw, setRiskProfileRaw] = useState<unknown>(null);
@@ -588,6 +589,7 @@ const transportOptions: Array<{
             setOriginalForm(newForm);
 
             setScoreSummaryFromUser(normalizeScoreSummary(data.scoreSummary));
+            setRecruiterScoreSnapshotFromUser(data.recruiterScoreSnapshot ?? undefined);
             setRiskProfileRaw(data.riskProfile ?? null);
             setOverviewQualifications(buildOverviewQualificationsFromUserDoc(data as Record<string, unknown>));
 
@@ -1976,12 +1978,17 @@ const transportOptions: Array<{
               </Grid>
               <Grid item xs={12}>
                 <OverviewScoringCard
+                  uid={uid}
                   scoreSummary={scoreSummaryFromUser}
                   riskProfileRaw={riskProfileRaw}
+                  recruiterScoreSnapshot={recruiterScoreSnapshotFromUser}
+                  useRecruiterSnapshotOnly={showReviewRescore}
+                  latestPrescreenInterviewAi={actionItemsPrescreenAi ?? null}
                   onOpenScoreTab={onOpenScoreTab}
                   headerActionsRight={
                     showReviewRescore ? (
                       <UserScoreRefreshButton
+                        compact
                         targetUserId={uid}
                         tenantId={activeTenant?.id || activeTenantId || null}
                         onAfterSuccess={onAfterRecruiterRescore}

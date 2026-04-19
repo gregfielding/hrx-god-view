@@ -3,6 +3,7 @@ import { Alert, Box, Stack, Typography } from '@mui/material';
 import type { ScoreSummary } from '../../utils/scoreSummary';
 import type { WorkerInterviewAiBlock } from '../../types/workerAiPrescreenInterview';
 import { resolveRecruiterPrimaryDisplay } from '../../utils/scoring/recruiterPrimaryDisplay';
+import { getRecruiterScoreDisplayForAdminUi } from '../../utils/scoring/recruiterScoreSnapshot';
 
 function formatFirestoreTime(ts: unknown): string {
   try {
@@ -30,6 +31,9 @@ export type ScorePrimarySourceStripProps = {
     riskProfileLastUpdatedAt?: unknown;
     complianceTouchAt?: unknown;
   };
+  /** Canonical recruiter snapshot on user doc — when `useRecruiterSnapshotOnly`, strip ignores legacy primary resolution. */
+  recruiterScoreSnapshot?: unknown;
+  useRecruiterSnapshotOnly?: boolean;
 };
 
 /**
@@ -39,8 +43,67 @@ export default function ScorePrimarySourceStrip({
   scoreSummary,
   latestPrescreenInterviewAi,
   scoreFreshnessMeta,
+  recruiterScoreSnapshot,
+  useRecruiterSnapshotOnly = false,
 }: ScorePrimarySourceStripProps) {
+  const snap = getRecruiterScoreDisplayForAdminUi(recruiterScoreSnapshot);
   const d = resolveRecruiterPrimaryDisplay({ scoreSummary, latestPrescreenInterviewAi });
+  if (useRecruiterSnapshotOnly) {
+    const primary = snap.hasSnapshot && snap.score100 != null ? `${Math.round(snap.score100)}/100` : '—';
+    const grade = snap.hasSnapshot && snap.grade ? snap.grade : '—';
+    const lastUpdated =
+      formatFirestoreTime(
+        (recruiterScoreSnapshot as { updatedAt?: unknown } | null | undefined)?.updatedAt,
+      ) !== '—'
+        ? formatFirestoreTime((recruiterScoreSnapshot as { updatedAt?: unknown })?.updatedAt)
+        : formatFirestoreTime(scoreFreshnessMeta?.userUpdatedAt);
+
+    return (
+      <Box
+        sx={{
+          p: 1.5,
+          borderRadius: 1,
+          border: '1px solid',
+          borderColor: 'divider',
+          bgcolor: 'background.paper',
+        }}
+      >
+        <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>
+          Recruiter score (canonical)
+        </Typography>
+        <Stack spacing={0.75}>
+          <Typography variant="body2" color="text.primary">
+            <strong>Primary score (shown everywhere):</strong> {primary} · grade {grade}
+          </Typography>
+          <Typography variant="caption" color="text.secondary" display="block">
+            Recruiter score shown everywhere is based on this snapshot. Supporting values below are components, not alternate
+            primaries.
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            <strong>Operational (component):</strong>{' '}
+            {snap.operationalScore100 != null ? `${Math.round(snap.operationalScore100)}/100` : '—'}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            <strong>Composite (component):</strong>{' '}
+            {snap.compositeScore100 != null ? `${Math.round(snap.compositeScore100)}/100` : '—'}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            <strong>Interview base (component):</strong>{' '}
+            {snap.interviewScoreBase100 != null ? `${Math.round(snap.interviewScoreBase100)}/100` : '—'}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            <strong>Last updated:</strong> {lastUpdated}
+          </Typography>
+          {!snap.hasSnapshot ? (
+            <Alert severity="warning" sx={{ py: 0.5 }}>
+              <Typography variant="body2">No snapshot on file yet — run backfill or Review &amp; rescore.</Typography>
+            </Alert>
+          ) : null}
+        </Stack>
+      </Box>
+    );
+  }
+
   const op = d.primaryScore100 != null ? `${Math.round(d.primaryScore100)}/100` : '—';
   const base = scoreSummary?.baseInterviewScore;
   const interviewBase =

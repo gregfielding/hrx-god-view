@@ -47,6 +47,7 @@ import { calculateProfileScore } from '../utils/applicantScoring';
 import { formatPhoneNumber } from '../utils/formatPhone';
 import { normalizeUsStateCode } from '../utils/usStateNormalize';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
+import { sanitizeWorkerNameParts } from '../utils/profileDisplayName';
 import RecruiterUserTableContactBlock from '../components/tables/RecruiterUserTableContactBlock';
 import type { RecruiterOutletContext } from './RecruiterDashboard';
 import {
@@ -56,6 +57,7 @@ import {
   getCanonicalStoredAiScore,
 } from '../utils/scoreSummary';
 import { getRecruiterPrimaryScore100FromSummary } from '../utils/scoring/recruiterOperationalScore';
+import { getRecruiterScoreDisplayForAdminUi } from '../utils/scoring/recruiterScoreSnapshot';
 import type { ScoreSummary } from '../utils/scoreSummary';
 import { useScoringDistribution } from '../hooks/useScoringDistribution';
 import { getWorkAuthorizedStatus, compareWorkAuthorized } from '../utils/workAuthorizedDisplay';
@@ -81,7 +83,10 @@ import {
   workerRiskPrimaryLine,
   workerRiskTooltipContent,
 } from '../utils/workerRiskProfileDisplay';
-import { formatCategoryScoresCompactPreview } from '../utils/parseRecruiterCategoryScores';
+import {
+  formatCategoryScoresCompactPreview,
+  formatCategoryScoresCompactPreviewFromPartial,
+} from '../utils/parseRecruiterCategoryScores';
 import { useCategoryScoresCurrentMap } from '../hooks/useCategoryScoresCurrentMap';
 import { useRecruiterUsersRowExtras } from '../hooks/useRecruiterUsersRowExtras';
 import { useRecruiterUsersLatestBackgroundChecks } from '../hooks/useRecruiterUsersLatestBackgroundChecks';
@@ -147,6 +152,8 @@ interface RecruiterUser {
   }>;
   /** Structured AI + compliance risk layer */
   riskProfile?: unknown;
+  /** Canonical recruiter score — single UI source when present */
+  recruiterScoreSnapshot?: unknown;
 }
 
 interface TenantUserGroup {
@@ -205,10 +212,20 @@ function mapUserDocToRecruiterUser(userDoc: { id: string; data: () => any }, ten
     }
   }
 
-  return {
-    id: userDoc.id,
+  const phoneForSanitize = String(userData.phone || userData.phoneE164 || '');
+  const nameSanitized = sanitizeWorkerNameParts({
     firstName,
     lastName,
+    preferredName: userData.preferredName,
+    displayName: rawDisplay || undefined,
+    email: resolvedEmail,
+    phone: phoneForSanitize,
+  });
+
+  return {
+    id: userDoc.id,
+    firstName: nameSanitized.firstName,
+    lastName: nameSanitized.lastName,
     displayName: rawDisplay || undefined,
     email: String(resolvedEmail).trim(),
     phone: userData.phone || '',
@@ -246,6 +263,7 @@ function mapUserDocToRecruiterUser(userDoc: { id: string; data: () => any }, ten
     eVerifyOrders: Array.isArray(userData.eVerifyOrders) ? userData.eVerifyOrders : undefined,
     backgroundCheckOrders: Array.isArray(userData.backgroundCheckOrders) ? userData.backgroundCheckOrders : undefined,
     riskProfile: userData.riskProfile ?? undefined,
+    recruiterScoreSnapshot: userData.recruiterScoreSnapshot ?? undefined,
   };
 }
 
@@ -846,10 +864,14 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   };
 
   const renderAiScore = (user: RecruiterUser) => {
-    /** Canonical field only — matches profile header (no local substitute from aiProfileScore). */
-    const rawScore = getRecruiterPrimaryScore100FromSummary(user.scoreSummary);
-    const compositeScore = getCanonicalStoredAiScore(user.scoreSummary);
-    const categoryPreview = formatCategoryScoresCompactPreview(categoryScoresByUserId[user.id] ?? null);
+    const snapDisp = getRecruiterScoreDisplayForAdminUi(user.recruiterScoreSnapshot);
+    /** Canonical: snapshot only — no fallback to scoreSummary in recruiter table. */
+    const rawScore = snapDisp.hasSnapshot ? snapDisp.score100 : null;
+    const compositeScore = snapDisp.hasSnapshot ? snapDisp.compositeScore100 : null;
+    const categoryPreview =
+      snapDisp.hasSnapshot && Object.keys(snapDisp.categoryScores || {}).length > 0
+        ? formatCategoryScoresCompactPreviewFromPartial(snapDisp.categoryScores)
+        : formatCategoryScoresCompactPreview(categoryScoresByUserId[user.id] ?? null);
     const categoryLine1 = categoryPreview.slice(0, 3).join(' · ');
     const categoryLine2 = categoryPreview.slice(3).join(' · ');
     if (rawScore === null || Number.isNaN(rawScore)) {
@@ -1628,7 +1650,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                   <TableCell
                     padding="checkbox"
                     onClick={(e) => e.stopPropagation()}
-                    sx={{ width: 48, py: 0.75, px: 1 }}
+                    sx={{ width: 48, py: 0.5, px: 1 }}
                   >
                     <Checkbox
                       size="small"
@@ -1638,7 +1660,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                       aria-label={`Select ${user.firstName} ${user.lastName}`}
                     />
                   </TableCell>
-                  <TableCell sx={{ minWidth: 260, maxWidth: 380, verticalAlign: 'top', py: 0.75, px: 1 }}>
+                  <TableCell sx={{ minWidth: 260, maxWidth: 380, verticalAlign: 'top', py: 0.5, px: 1 }}>
                     <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75, minWidth: 0 }}>
                       <Avatar
                         src={user.avatar}
@@ -1700,7 +1722,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                       </Box>
                     </Box>
                   </TableCell>
-                  <TableCell sx={{ verticalAlign: 'top', py: 0.75, px: 1, maxWidth: 140 }}>
+                  <TableCell sx={{ verticalAlign: 'top', py: 0.5, px: 1, maxWidth: 140 }}>
                     {(() => {
                       const entityItems = entityEmploymentChipsByUser.get(user.id);
                       const chips = getWorkReadinessEntityChipsDisplay(entityItems);
@@ -1741,7 +1763,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                       );
                     })()}
                   </TableCell>
-                  <TableCell sx={{ verticalAlign: 'top', py: 0.75, px: 1, maxWidth: 280 }}>
+                  <TableCell sx={{ verticalAlign: 'top', py: 0.5, px: 1, maxWidth: 280 }}>
                     <Stack spacing={0.15}>
                       {getReadinessBreakdownRows(
                         user,
@@ -1784,7 +1806,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                       ))}
                     </Stack>
                   </TableCell>
-                  <TableCell sx={{ verticalAlign: 'top', py: 0.75, px: 1, maxWidth: 260 }}>
+                  <TableCell sx={{ verticalAlign: 'top', py: 0.5, px: 1, maxWidth: 260 }}>
                     <Stack spacing={0.15}>
                       {getBackgroundBreakdownRows(user, entityEmploymentChipsByUser.get(user.id), {
                         latestAccusourceBackground: latestBackgroundByUserId.get(user.id) ?? null,
@@ -1817,8 +1839,8 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                       ))}
                     </Stack>
                   </TableCell>
-                  <TableCell sx={{ verticalAlign: 'top', py: 0.75, px: 1 }}>{renderAiScore(user)}</TableCell>
-                  <TableCell sx={{ verticalAlign: 'top', py: 0.75, px: 1 }}>
+                  <TableCell sx={{ verticalAlign: 'top', py: 0.5, px: 1 }}>{renderAiScore(user)}</TableCell>
+                  <TableCell sx={{ verticalAlign: 'top', py: 0.5, px: 1 }}>
                     {(() => {
                       const entityItems = entityEmploymentChipsByUser.get(user.id);
                       const rp = normalizeRiskProfileFromUserDoc(user.riskProfile);
@@ -1849,7 +1871,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                       );
                     })()}
                   </TableCell>
-                  <TableCell sx={{ minWidth: 120, verticalAlign: 'top', py: 0.75, px: 1 }}>
+                  <TableCell sx={{ minWidth: 120, verticalAlign: 'top', py: 0.5, px: 1 }}>
                     <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem', lineHeight: 1.3 }}>
                       {formatDate(user.lastLoginAt)}
                     </Typography>
@@ -1957,8 +1979,8 @@ function sortRecruiterUserRows(
         return sortDirection === 'asc' ? nameCompare : -nameCompare;
       }
       case 'aiScore': {
-        const aScore = getRecruiterPrimaryScore100FromSummary(a.scoreSummary);
-        const bScore = getRecruiterPrimaryScore100FromSummary(b.scoreSummary);
+        const aScore = getRecruiterScoreDisplayForAdminUi(a.recruiterScoreSnapshot).score100;
+        const bScore = getRecruiterScoreDisplayForAdminUi(b.recruiterScoreSnapshot).score100;
         const av = aScore ?? -1;
         const bv = bScore ?? -1;
         const diff = bv - av;

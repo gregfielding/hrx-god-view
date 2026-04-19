@@ -33,6 +33,9 @@ export type MessageStatus =
   | 'ai_draft_approved';
 export type MessageLanguage = 'en' | 'es' | null;
 
+/** Statuses that count as a successful outbound delivery for activity log mirroring. */
+const OUTBOUND_ACTIVITY_STATUSES: MessageStatus[] = ['sent', 'delivered'];
+
 export interface MessageLog {
   id?: string;
   tenantId: string;                // Required even though path encodes it
@@ -56,6 +59,119 @@ export interface MessageLog {
   createdAt: admin.firestore.Timestamp | admin.firestore.FieldValue;
 }
 
+/** Optional fields for `logMessage` only (stripped before writing messageLogs). */
+export type LogMessageInput = Omit<MessageLog, 'id' | 'createdAt'> & {
+  /** Actor (e.g. recruiter) shown on the recipient's activity log for bulk sends. */
+  activityActorUserId?: string;
+  activityActorUserName?: string;
+  /** Use "Bulk email sent" / "Bulk SMS sent" action labels. */
+  activityBulkSend?: boolean;
+  /** Merged into activity `metadata` (e.g. bulk email `subject`). */
+  activityMetadata?: Record<string, unknown>;
+};
+
+export type MirrorOutboundActivityOptions = {
+  actorUserId?: string;
+  actorUserName?: string;
+  bulkSend?: boolean;
+  extraMetadata?: Record<string, unknown>;
+};
+
+/** Recipient must be a real Firebase user doc id (not an email placeholder). */
+export function isRecipientUserIdForActivity(userId: string): boolean {
+  if (!userId || userId === 'system') return false;
+  if (userId.includes('@')) return false;
+  if (userId.length < 10 || userId.length > 128) return false;
+  return /^[A-Za-z0-9]+$/.test(userId);
+}
+
+/**
+ * Writes `users/{recipientUid}/activityLogs` for a successful outbound message log.
+ * Idempotent via `metadata.messageLogId`.
+ */
+export async function mirrorOutboundMessageLogToActivityLog(
+  tenantId: string,
+  messageLogId: string,
+  options: MirrorOutboundActivityOptions = {},
+): Promise<void> {
+  try {
+    const ref = db.collection('tenants').doc(tenantId).collection('messageLogs').doc(messageLogId);
+    const snap = await ref.get();
+    if (!snap.exists) return;
+    const log = { id: snap.id, ...snap.data() } as MessageLog;
+    if (log.direction !== 'outbound') return;
+    if (!OUTBOUND_ACTIVITY_STATUSES.includes(log.status)) return;
+    if (!isRecipientUserIdForActivity(log.userId)) return;
+
+    const dup = await db
+      .collection('users')
+      .doc(log.userId)
+      .collection('activityLogs')
+      .where('metadata.messageLogId', '==', messageLogId)
+      .limit(1)
+      .get();
+    if (!dup.empty) return;
+
+    const body = String(log.contentSent || '');
+    const preview = body.length > 200 ? `${body.slice(0, 200)}…` : body;
+    const ch = log.channel;
+    const bulk = options.bulkSend === true;
+    let action: string;
+    if (bulk && ch === 'email') action = 'Bulk email sent';
+    else if (bulk && ch === 'sms') action = 'Bulk SMS sent';
+    else if (ch === 'email') action = 'Email sent';
+    else if (ch === 'sms') action = 'SMS sent';
+    else if (ch === 'push') action = 'Push notification sent';
+    else action = 'Message sent';
+
+    const actionType: 'email_sent' | 'sms_sent' | 'notification' | 'other' =
+      ch === 'email' ? 'email_sent' : ch === 'sms' ? 'sms_sent' : ch === 'push' ? 'notification' : 'other';
+
+    const description = bulk
+      ? body.slice(0, 50) + (body.length > 50 ? '…' : '')
+      : log.fromIdentity === 'recruiter' && log.fromUserId
+        ? `${action} (recruiter)`
+        : action;
+
+    const meta: Record<string, unknown> = {
+      messageLogId,
+      tenantId,
+      channel: log.channel,
+      messageTypeId: log.messageTypeId,
+      messageBody: body,
+      contentSent: body,
+      messagePreview: preview,
+      fromUserId: log.fromUserId,
+      providerMessageId: log.providerMessageId,
+      threadId: log.threadId,
+      recipientEmail: log.recipientEmail,
+      recipientPhoneE164: log.recipientPhoneE164,
+      ...options.extraMetadata,
+    };
+
+    const payload: Record<string, unknown> = {
+      action,
+      actionType,
+      description,
+      severity: 'low',
+      source: 'system',
+      metadata: meta,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (options.actorUserId) {
+      payload.userId = options.actorUserId;
+      if (options.actorUserName) payload.userName = options.actorUserName;
+    }
+
+    await db.collection('users').doc(log.userId).collection('activityLogs').add(payload);
+    logger.info(`Activity log mirrored for messageLog ${messageLogId} → user ${log.userId}`);
+  } catch (error: any) {
+    logger.warn('mirrorOutboundMessageLogToActivityLog failed', { messageLogId, message: error?.message });
+  }
+}
+
 export interface PreferenceChangeLog {
   id?: string;
   userId: string;
@@ -73,25 +189,49 @@ export interface PreferenceChangeLog {
  * Log a message to the unified message log
  * 
  * Implements: HRX Firestore Collections Spec §3 - /tenants/{tenantId}/messageLogs/{logId}
+ *
+ * Successful outbound logs (`sent` / `delivered`) are mirrored to `users/{recipientUid}/activityLogs`
+ * unless the recipient `userId` is not a real profile id (e.g. email placeholder).
  */
-export async function logMessage(messageLog: Omit<MessageLog, 'id' | 'createdAt'>): Promise<string> {
+export async function logMessage(messageLog: LogMessageInput): Promise<string> {
   try {
-    if (!messageLog.tenantId) {
+    const {
+      activityActorUserId,
+      activityActorUserName,
+      activityBulkSend,
+      activityMetadata,
+      ...rest
+    } = messageLog;
+    if (!rest.tenantId) {
       logger.error('Message log missing tenantId');
       return '';
     }
-    
+
     const logData: Omit<MessageLog, 'id'> = {
-      ...messageLog,
+      ...rest,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     };
-    
+
     const logRef = await db
       .collection('tenants')
-      .doc(messageLog.tenantId)
+      .doc(rest.tenantId)
       .collection('messageLogs')
       .add(logData);
-    logger.info(`Message logged: ${logRef.id} for user ${messageLog.userId} via ${messageLog.channel}`);
+    logger.info(`Message logged: ${logRef.id} for user ${rest.userId} via ${rest.channel}`);
+
+    if (
+      rest.direction === 'outbound' &&
+      OUTBOUND_ACTIVITY_STATUSES.includes(rest.status) &&
+      isRecipientUserIdForActivity(rest.userId)
+    ) {
+      await mirrorOutboundMessageLogToActivityLog(rest.tenantId, logRef.id, {
+        actorUserId: activityActorUserId,
+        actorUserName: activityActorUserName,
+        bulkSend: activityBulkSend,
+        extraMetadata: activityMetadata,
+      });
+    }
+
     return logRef.id;
   } catch (error: any) {
     logger.error('Error logging message:', error);
@@ -146,13 +286,24 @@ export async function updateMessageLogStatus(
       logger.error(`Could not determine tenantId for message log ${messageLogId}`);
       return;
     }
+
+    const logRef = db.collection('tenants').doc(tenantId).collection('messageLogs').doc(messageLogId);
+    const beforeSnap = await logRef.get();
+    const prevStatus = beforeSnap.exists ? (beforeSnap.data() as MessageLog).status : undefined;
     
-    await db
-      .collection('tenants')
-      .doc(tenantId)
-      .collection('messageLogs')
-      .doc(messageLogId)
-      .update(updateData);
+    await logRef.update(updateData);
+
+    if (
+      OUTBOUND_ACTIVITY_STATUSES.includes(status) &&
+      prevStatus !== 'sent' &&
+      prevStatus !== 'delivered' &&
+      beforeSnap.exists
+    ) {
+      const before = beforeSnap.data() as MessageLog;
+      if (before.direction === 'outbound' && isRecipientUserIdForActivity(before.userId)) {
+        await mirrorOutboundMessageLogToActivityLog(tenantId, messageLogId);
+      }
+    }
   } catch (error: any) {
     logger.error(`Error updating message log ${messageLogId}:`, error);
     // Don't throw - logging failure shouldn't break operations

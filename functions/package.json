@@ -32,7 +32,9 @@
     "prescreen:rescore": "npx ts-node src/scripts/rescoreWorkerAiPrescreenInterviews.ts",
     "risk:refresh": "npx ts-node src/scripts/refreshWorkerRiskProfiles.ts",
     "risk:qa": "npx ts-node src/scripts/qaRiskProfileReport.ts",
-    "score:refresh": "npx ts-node --project tsconfig.scripts.json src/scripts/refreshHiringScores.ts"
+    "score:refresh": "npx ts-node --project tsconfig.scripts.json src/scripts/refreshHiringScores.ts",
+    "scores:backfill": "npx ts-node --project tsconfig.scripts.json src/scripts/backfillRecruiterScoreSnapshots.ts",
+    "qa:score-consistency": "npx ts-node --project tsconfig.scripts.json src/scripts/qaRecruiterScoreConsistency.ts"
   },
   "engines": {
     "node": "20"

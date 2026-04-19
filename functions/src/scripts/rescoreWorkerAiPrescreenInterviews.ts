@@ -466,7 +466,9 @@ async function run(): Promise<void> {
       }
 
       try {
-        await recomputeUserInterviewScoreSummary(db, userId);
+        await recomputeUserInterviewScoreSummary(db, userId, {
+          recruiterSnapshotGeneratedBy: 'rescore_script',
+        });
       } catch (e) {
         console.warn('recomputeUserInterviewScoreSummary failed', userId, e instanceof Error ? e.message : e);
       }

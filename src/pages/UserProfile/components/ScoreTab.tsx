@@ -32,7 +32,7 @@ import type { ScoreSummary, ScoringDistribution } from '../../../utils/scoreSumm
 import type { WorkerInterviewAiBlock } from '../../../types/workerAiPrescreenInterview';
 import ScorePrimarySourceStrip from '../../../components/scoring/ScorePrimarySourceStrip';
 import { formatOneDecimal } from '../../../utils/scoreSummary';
-import ReviewsTab from './ReviewsTab';
+// import ReviewsTab from './ReviewsTab';
 import ScoreIntelligencePanel from '../../../components/scoring/ScoreIntelligencePanel';
 import { deriveScoreIntelligence } from '../../../utils/scoring/scoreIntelligence';
 import type { ScoreIntelligenceInterviewInput } from '../../../utils/scoring/scoreIntelligence';
@@ -55,6 +55,9 @@ type Props = {
   scoringDistribution?: ScoringDistribution | null;
   /** Same source as profile header — avoids stale mismatch vs interview tab */
   latestPrescreenInterviewAi?: WorkerInterviewAiBlock | null;
+  /** Canonical recruiter snapshot — Score tab hero strip uses this when `useRecruiterSnapshotOnly`. */
+  recruiterScoreSnapshot?: unknown;
+  useRecruiterSnapshotOnly?: boolean;
   onGoToInterview?: () => void;
 };
 
@@ -115,6 +118,8 @@ export default function ScoreTab({
   fallbackCompleteness,
   scoringDistribution,
   latestPrescreenInterviewAi,
+  recruiterScoreSnapshot,
+  useRecruiterSnapshotOnly = false,
   onGoToInterview,
 }: Props) {
   const aiScore = scoreSummary?.aiScore ?? fallbackAiScore;
@@ -361,6 +366,8 @@ export default function ScoreTab({
         scoreSummary={scoreSummary}
         latestPrescreenInterviewAi={latestPrescreenInterviewAi ?? null}
         scoreFreshnessMeta={scoreFreshnessMeta}
+        recruiterScoreSnapshot={recruiterScoreSnapshot}
+        useRecruiterSnapshotOnly={useRecruiterSnapshotOnly}
       />
       <ScoreIntelligencePanel
         intelligence={scoreIntelligence}
@@ -666,7 +673,9 @@ export default function ScoreTab({
         </CardContent>
       </Card>
 
+      {/* Reviews card (Score tab) — hidden for now
       <ReviewsTab uid={uid} />
+      */}
     </Box>
   );
 }

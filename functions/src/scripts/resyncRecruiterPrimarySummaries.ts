@@ -43,7 +43,9 @@ async function main(): Promise<void> {
       return;
     }
     try {
-      await recomputeUserInterviewScoreSummary(db, userId);
+      await recomputeUserInterviewScoreSummary(db, userId, {
+        recruiterSnapshotGeneratedBy: 'rescore_script',
+      });
       updated += 1;
       console.log('ok', userId);
     } catch (e) {

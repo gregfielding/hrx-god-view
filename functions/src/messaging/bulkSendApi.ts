@@ -2,7 +2,7 @@
  * Bulk Send API
  *
  * HTTP endpoints for bulk email (SendGrid) and bulk SMS (Twilio) using system sender only.
- * Each sent message is logged to messageLogs and to the recipient's activityLogs.
+ * Each sent message is logged to messageLogs; `messageLogging.logMessage` mirrors successful sends to activityLogs.
  */
 
 import { onRequest } from 'firebase-functions/v2/https';
@@ -250,8 +250,7 @@ export const bulkSendEmailApi = onRequest(
 
           const result = await emailProvider.sendEmail(emailOptions);
 
-          const status = result.success ? 'sent' : 'failed';
-          const messageLogId = await logMessage({
+          await logMessage({
             tenantId,
             userId,
             messageTypeId: BULK_MESSAGE_TYPE_EMAIL,
@@ -264,25 +263,14 @@ export const bulkSendEmailApi = onRequest(
             status: result.success ? 'sent' : 'failed',
             failureReason: result.success ? undefined : (result.errorMessage || result.errorCode),
             providerMessageId: result.providerMessageId,
+            activityActorUserId: auth.uid,
+            activityActorUserName: auth.userName,
+            activityBulkSend: true,
+            activityMetadata: { subject, messageBody: renderedTextBody },
           });
 
           if (result.success) {
             sent++;
-            try {
-              await db.collection('users').doc(userId).collection('activityLogs').add({
-                userId: auth.uid,
-                userName: auth.userName,
-                action: 'Bulk email sent',
-                actionType: 'email_sent',
-                description: renderedTextBody.slice(0, 50) + (renderedTextBody.length > 50 ? '…' : ''),
-                timestamp: admin.firestore.FieldValue.serverTimestamp(),
-                metadata: { messageLogId, channel: 'email', subject, messageBody: renderedTextBody },
-                severity: 'low',
-                source: 'system',
-              });
-            } catch (activityErr: any) {
-              logger.warn(`Failed to write activityLog for ${userId}`, { error: activityErr.message });
-            }
           } else {
             errors.push({ userId, error: result.errorMessage || result.errorCode || 'Send failed' });
           }
@@ -448,7 +436,7 @@ export const bulkSendSmsApi = onRequest(
             providerMessageId: result.providerMessageId,
           });
 
-          const messageLogId = await logMessage({
+          await logMessage({
             tenantId,
             userId,
             messageTypeId: BULK_MESSAGE_TYPE_SMS,
@@ -461,25 +449,13 @@ export const bulkSendSmsApi = onRequest(
             status: result.success ? 'sent' : 'failed',
             failureReason: result.success ? undefined : (result.errorMessage || result.errorCode),
             providerMessageId: result.providerMessageId,
+            activityActorUserId: auth.uid,
+            activityActorUserName: auth.userName,
+            activityBulkSend: true,
           });
 
           if (result.success) {
             sent++;
-            try {
-              await db.collection('users').doc(userId).collection('activityLogs').add({
-                userId: auth.uid,
-                userName: auth.userName,
-                action: 'Bulk SMS sent',
-                actionType: 'sms_sent',
-                description: renderedBody.trim().slice(0, 50) + (renderedBody.length > 50 ? '…' : ''),
-                timestamp: admin.firestore.FieldValue.serverTimestamp(),
-                metadata: { messageLogId, channel: 'sms', messageBody: renderedBody.trim() },
-                severity: 'low',
-                source: 'system',
-              });
-            } catch (activityErr: any) {
-              logger.warn(`Failed to write activityLog for ${userId}`, { error: activityErr.message });
-            }
           } else {
             errors.push({ userId, error: result.errorMessage || result.errorCode || 'Send failed' });
           }

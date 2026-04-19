@@ -63,7 +63,7 @@ import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 import UserTableResumeIcon from '../components/tables/UserTableResumeIcon';
 import UserTableIndeedFlexBadge from '../components/tables/UserTableIndeedFlexBadge';
 import { formatOneDecimal, normalizeScoreSummary } from '../utils/scoreSummary';
-import { getRecruiterPrimaryScore100FromSummary } from '../utils/scoring/recruiterOperationalScore';
+import { getRecruiterScoreDisplayForAdminUi } from '../utils/scoring/recruiterScoreSnapshot';
 import { getWorkAuthorizedStatus } from '../utils/workAuthorizedDisplay';
 import { getEVerifyComfortStatusFromUserData } from '../utils/eVerifyComfortDisplay';
 import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
@@ -112,6 +112,7 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
     createdAt?: any;
     resume?: Record<string, unknown> | null;
     scoreSummary?: { aiScore?: number; interviewLastAt?: any; interviewLastScore10?: number };
+    recruiterScoreSnapshot?: unknown;
     securityLevel?: string;
     skills?: string[];
     comfortableEVerify?: string;
@@ -250,6 +251,7 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
           createdAt?: any;
           resume?: Record<string, unknown> | null;
           scoreSummary?: any;
+          recruiterScoreSnapshot?: unknown;
           securityLevel?: string;
           skills?: string[];
           comfortableEVerify?: string;
@@ -277,6 +279,7 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
               createdAt: d?.createdAt,
               resume: d?.resume ?? null,
               scoreSummary: d?.scoreSummary,
+              recruiterScoreSnapshot: d?.recruiterScoreSnapshot,
               securityLevel: String(tenantData?.securityLevel ?? d?.securityLevel ?? '0'),
               skills: Array.isArray(d?.skills) ? d.skills : [],
               comfortableEVerify: d?.comfortableEVerify,
@@ -399,6 +402,7 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
         createdAt?: any;
         resume?: Record<string, unknown> | null;
         scoreSummary?: any;
+        recruiterScoreSnapshot?: unknown;
         securityLevel?: string;
         skills?: string[];
         comfortableEVerify?: string;
@@ -425,6 +429,7 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
             createdAt: d?.createdAt,
             resume: d?.resume ?? null,
             scoreSummary: d?.scoreSummary,
+            recruiterScoreSnapshot: d?.recruiterScoreSnapshot,
             securityLevel: String(tenantData?.securityLevel ?? d?.securityLevel ?? '0'),
             skills: Array.isArray(d?.skills) ? d.skills : [],
             comfortableEVerify: d?.comfortableEVerify,
@@ -529,6 +534,7 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
         createdAt?: any;
         resume?: Record<string, unknown> | null;
         scoreSummary?: any;
+        recruiterScoreSnapshot?: unknown;
         securityLevel?: string;
         skills?: string[];
         comfortableEVerify?: string;
@@ -555,6 +561,7 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
             createdAt: d?.createdAt,
             resume: d?.resume ?? null,
             scoreSummary: d?.scoreSummary,
+            recruiterScoreSnapshot: d?.recruiterScoreSnapshot,
             securityLevel: String(tenantData?.securityLevel ?? d?.securityLevel ?? '0'),
             skills: Array.isArray(d?.skills) ? d.skills : [],
             comfortableEVerify: d?.comfortableEVerify,
@@ -678,10 +685,11 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
     getWorkStatusColumnDisplay(m, { hasActiveAssignment: activeAssignmentUserIds.has(m.id) });
 
   const renderAiScore = (m: (typeof membersData)[0]) => {
-    const sum = normalizeScoreSummary(m.scoreSummary);
-    const score = getRecruiterPrimaryScore100FromSummary(sum);
+    const snapDisp = getRecruiterScoreDisplayForAdminUi(m.recruiterScoreSnapshot);
+    const score =
+      snapDisp.hasSnapshot && snapDisp.score100 != null && !Number.isNaN(snapDisp.score100) ? snapDisp.score100 : null;
     if (score === undefined || score === null || Number.isNaN(score)) {
-      return <Typography variant="body2" color="text.secondary">N/A</Typography>;
+      return <Typography variant="body2" color="text.secondary">—</Typography>;
     }
     const color: 'default' | 'success' | 'warning' | 'error' = score >= 80 ? 'success' : score >= 60 ? 'warning' : 'default';
     return (

@@ -5,7 +5,7 @@
  */
 import * as admin from 'firebase-admin';
 import { getScoreSummaryUpdateFromHiringScoreV1 } from '../shared/hiringScoreFirestoreUpdate';
-import { computeHiringScoreStaleness } from '../shared/hiringScoreStaleness';
+import { computeHiringScoreStaleness } from '../utils/hiringScoreStaleness';
 
 export type RefreshHiringScoresModeArgs = {
   onlyMissing: boolean;

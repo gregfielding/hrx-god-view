@@ -2,7 +2,8 @@
  * Operational staleness for `users.{uid}.scoreSummary.aiScore` (mirror of riskProfile staleness pattern).
  * Compares meaningful input timestamps vs `scoreSummary.aiScoreUpdatedAt`.
  *
- * Canonical copy for the web app (CRA bundle). Cloud Functions use `functions/src/utils/hiringScoreStaleness.ts` (keep in sync).
+ * Kept in `functions/src/utils/` so Cloud Functions `tsc` (rootDir: src) resolves without importing the web app tree.
+ * Align with `src/utils/hiringScoreStaleness.ts` in the repo root when changing logic.
  */
 
 export type HiringScoreStalenessLabel = 'missing' | 'stale' | 'fresh';

@@ -49,6 +49,7 @@ import type {
 } from '../../../types/workerAiPrescreenDynamic';
 import WorkerAiPrescreenStrengthenPanel from '../../../components/worker/WorkerAiPrescreenStrengthenPanel';
 import { buildPrescreenSessionProfileEnhancements } from '../../../utils/workerAiPrescreenSubmitProfileSnapshot';
+import { userDocNeedsLegalFirstNameConfirm } from '../../../utils/profileDisplayName';
 import type { WorkerAiPrescreenUiSection } from '../../../utils/workerAiPrescreenUiFlow';
 import {
   buildPrescreenNavEntries,
@@ -114,6 +115,7 @@ function progressiveLeadI18nKeyForDynamicStepId(stepId: string): string | null {
 
 function emptyAnswers(): WorkerAiPrescreenAnswers {
   return {
+    confirm_legal_first_name: '',
     opening_target_work_types: [],
     opening_schedule_preferences: [],
     opening_experience_industrial: [],
@@ -172,7 +174,9 @@ function isCoreStepIncluded(
   step: WorkerAiPrescreenStep,
   a: WorkerAiPrescreenAnswers,
   dynamicSteps: WorkerAiPrescreenDynamicStep[],
+  needsLegalNameConfirm: boolean,
 ): boolean {
+  if (step.id === 'confirm_legal_first_name') return needsLegalNameConfirm;
   const tw = openingTargetsSelected(a);
   const sp = openingSchedulesSelected(a);
   if (step.id === 'opening_experience_industrial' && !tw.has('industrial')) return false;
@@ -240,6 +244,9 @@ function stepValid(step: WorkerAiPrescreenStep, a: WorkerAiPrescreenAnswers): bo
   switch (step.type) {
     case 'text': {
       const v = String((a as Record<string, unknown>)[step.id] ?? '').trim();
+      if (step.id === 'confirm_legal_first_name') {
+        return v.length >= 2 && v.length <= 80 && /[a-zA-Z\u00C0-\u024F]/.test(v);
+      }
       if (step.id === 'additional_notes') return true;
       if (SUBSTANTIVE_TEXT_STEP_IDS.has(step.id)) {
         return wordCountAnswer(v) >= PRESCREEN_MIN_SUBSTANTIVE_WORDS;
@@ -462,6 +469,9 @@ const WorkerAiPrescreenPage: React.FC = () => {
 
   // `t` is a stable function ref; depend on a resolved string so this memo recomputes after locale JSON loads (otherwise step prompts stay as raw keys).
   const i18nWorkerPrescreenReady = t('workerAiPrescreen.title');
+
+  const needsLegalNameConfirm = useMemo(() => userDocNeedsLegalFirstNameConfirm(userDoc), [userDoc]);
+
   const localizedCoreSteps = useMemo(() => {
     return WORKER_AI_PRESCREEN_STEPS.map((step) => {
       const prompt = t(`workerAiPrescreen.steps.${step.id}.prompt`);
@@ -476,7 +486,10 @@ const WorkerAiPrescreenPage: React.FC = () => {
   }, [t, i18nWorkerPrescreenReady]);
 
   const visibleCoreSteps = useMemo(
-    () => localizedCoreSteps.filter((step) => isCoreStepIncluded(step, answers, dynamicSteps)),
+    () =>
+      localizedCoreSteps.filter((step) =>
+        isCoreStepIncluded(step, answers, dynamicSteps, needsLegalNameConfirm),
+      ),
     [
       localizedCoreSteps,
       answers,
@@ -484,6 +497,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
       answers.opening_target_work_types,
       answers.opening_schedule_preferences,
       dynamicSteps,
+      needsLegalNameConfirm,
     ],
   );
 

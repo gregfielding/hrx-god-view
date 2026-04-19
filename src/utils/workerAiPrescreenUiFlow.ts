@@ -4,6 +4,7 @@ import type { WorkerAiPrescreenStepId } from '../constants/workerAiPrescreenQues
 export type WorkerAiPrescreenUiSection = 'preferences' | 'experience' | 'reliability' | 'wrapUp' | 'job_fit';
 
 export function prescreenUiSectionForCoreStepId(id: WorkerAiPrescreenStepId): WorkerAiPrescreenUiSection {
+  if (id === 'confirm_legal_first_name') return 'preferences';
   if (id.startsWith('opening_')) return 'preferences';
   if (['work_confidence', 'motivation', 'experience_details', 'pressure_situation'].includes(id)) {
     return 'experience';

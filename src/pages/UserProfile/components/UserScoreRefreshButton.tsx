@@ -18,6 +18,8 @@ export type UserScoreRefreshButtonProps = {
   tenantId?: string | null;
   /** Optional hook to refetch dependent profile signals (e.g. interview-derived action items). */
   onAfterSuccess?: () => void;
+  /** Tighter padding and type for the Scoring card header. */
+  compact?: boolean;
 };
 
 type ReviewAndRescoreResponse = {
@@ -36,7 +38,12 @@ const reviewAndRescoreUser = httpsCallable(functions, 'reviewAndRescoreUser');
 /**
  * Recruiter-only manual action: confirm → callable rescore for one user (no page-load triggers).
  */
-export default function UserScoreRefreshButton({ targetUserId, tenantId, onAfterSuccess }: UserScoreRefreshButtonProps) {
+export default function UserScoreRefreshButton({
+  targetUserId,
+  tenantId,
+  onAfterSuccess,
+  compact = false,
+}: UserScoreRefreshButtonProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [snackbar, setSnackbar] = useState<{ severity: 'success' | 'error'; message: string } | null>(null);
@@ -72,14 +79,17 @@ export default function UserScoreRefreshButton({ targetUserId, tenantId, onAfter
       <Button
         size="small"
         variant="outlined"
-        startIcon={isSubmitting ? <CircularProgress color="inherit" size={14} /> : undefined}
+        startIcon={isSubmitting ? <CircularProgress color="inherit" size={compact ? 12 : 14} /> : undefined}
         sx={{
           ...overviewCardHeaderTextButtonSx,
           borderColor: 'divider',
-          px: 0.75,
-          py: 0.25,
+          px: compact ? 0.5 : 0.75,
+          py: compact ? 0.125 : 0.25,
           lineHeight: 1.2,
           fontWeight: 600,
+          ...(compact
+            ? { fontSize: '0.68rem', minHeight: 26, textTransform: 'none' as const }
+            : {}),
         }}
         disabled={isSubmitting}
         onClick={() => setConfirmOpen(true)}

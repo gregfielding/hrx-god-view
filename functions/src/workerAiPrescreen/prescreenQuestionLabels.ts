@@ -3,6 +3,8 @@
  */
 
 export const WORKER_AI_PRESCREEN_PROMPTS: Record<string, string> = {
+  confirm_legal_first_name:
+    'Your profile shows a number where your first name should be. What is your legal first name as it appears on your ID?',
   opening_target_work_types: 'What type of work are you interested in?',
   opening_schedule_preferences: 'What kind of schedule are you open to?',
   opening_experience_industrial: 'Which types of industrial work have you done before?',

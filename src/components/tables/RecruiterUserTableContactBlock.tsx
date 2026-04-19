@@ -30,6 +30,9 @@ const copyIconButtonSx = {
 
 const copyIconGlyphSx = { fontSize: 11 } as const;
 
+/** Tighter than default caption line boxes — keeps phone / joined / groups visually compact in table Person column. */
+const tightCaptionSx = { lineHeight: 1.2, fontSize: '0.7rem' } as const;
+
 const compactSignalScaleSx = {
   display: 'inline-flex',
   alignItems: 'center',
@@ -95,7 +98,7 @@ const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockPro
   const noteMeta = [latestNote?.timestamp?.toLocaleString(), latestNote?.authorName].filter(Boolean).join(' · ');
 
   return (
-    <>
+    <Stack spacing={0.125} alignItems="stretch" sx={{ width: '100%' }}>
       {emailRaw ? (
         <Stack
           direction="row"
@@ -103,7 +106,7 @@ const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockPro
           spacing={0}
           sx={{ alignSelf: 'flex-start', minWidth: 0, maxWidth: '100%', gap: 0.25 }}
         >
-          <Typography variant="caption" color="text.secondary" noWrap display="block" sx={{ lineHeight: 1.35, fontSize: '0.7rem', minWidth: 0 }}>
+          <Typography variant="caption" color="text.secondary" noWrap display="block" sx={{ ...tightCaptionSx, minWidth: 0 }}>
             {emailRaw}
           </Typography>
           <Tooltip title="Copy email" arrow placement="top" componentsProps={recordHeaderTooltipComponentsProps}>
@@ -118,13 +121,13 @@ const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockPro
           </Tooltip>
         </Stack>
       ) : (
-        <Typography variant="caption" color="text.secondary" noWrap display="block" sx={{ lineHeight: 1.35, fontSize: '0.7rem' }}>
+        <Typography variant="caption" color="text.secondary" noWrap display="block" sx={tightCaptionSx}>
           —
         </Typography>
       )}
 
       {(user.city || user.state || (user.address && (user.address as { city?: string }).city)) && (
-        <Typography variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.35, fontSize: '0.7rem' }}>
+        <Typography variant="caption" color="text.secondary" display="block" sx={tightCaptionSx}>
           {[user.city ?? (user.address as { city?: string })?.city, user.state ?? (user.address as { state?: string })?.state]
             .filter(Boolean)
             .join(', ')}
@@ -138,7 +141,7 @@ const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockPro
           spacing={0}
           sx={{ alignSelf: 'flex-start', minWidth: 0, maxWidth: '100%', gap: 0.25 }}
         >
-          <Typography variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.35, fontSize: '0.7rem', minWidth: 0 }}>
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ ...tightCaptionSx, minWidth: 0 }}>
             {phoneDisplay}
           </Typography>
           <Tooltip title="Copy phone number" arrow placement="top" componentsProps={recordHeaderTooltipComponentsProps}>
@@ -154,9 +157,9 @@ const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockPro
         </Stack>
       ) : null}
 
-      <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.5, mt: 0.125 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.35, rowGap: 0.125 }}>
         {user.createdAt && (
-          <Typography variant="caption" color="text.secondary" component="span" sx={{ lineHeight: 1.2, fontSize: '0.7rem' }}>
+          <Typography variant="caption" color="text.secondary" component="span" sx={tightCaptionSx}>
             Joined {formatDate(user.createdAt)}
           </Typography>
         )}
@@ -249,7 +252,7 @@ const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockPro
             color="text.secondary"
             noWrap
             onClick={(e) => e.stopPropagation()}
-            sx={{ display: 'block', mt: 0.25, fontSize: '0.7rem', cursor: 'default' }}
+            sx={{ display: 'block', ...tightCaptionSx, cursor: 'default' }}
           >
             {groupTitleLookup.get(userGroupIds[0]) || userGroupIds[0]}
             {userGroupIds.length > 1 ? ` +${userGroupIds.length - 1}` : ''}
@@ -261,11 +264,11 @@ const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockPro
         component="span"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}
-        sx={{ display: 'block', mt: userGroupIds.length > 0 ? 0.25 : 0.125 }}
+        sx={{ display: 'block' }}
       >
         <UserTableIndeedFlexBadge user={user as Record<string, unknown>} compact />
       </Box>
-    </>
+    </Stack>
   );
 };
 

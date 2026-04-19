@@ -168,3 +168,17 @@ export function formatCategoryScoresCompactPreview(scores: PrescreenCategoryScor
   if (!scores) return [];
   return CATEGORY_PREVIEW_KEYS.map((k) => `${CATEGORY_PREVIEW_ABBREV[k]} ${scores[k]}`);
 }
+
+/** Same labels as {@link formatCategoryScoresCompactPreview}, for partial maps (e.g. `recruiterScoreSnapshot.categoryScores`). */
+export function formatCategoryScoresCompactPreviewFromPartial(
+  partial: Partial<Record<(typeof CATEGORY_PREVIEW_KEYS)[number], number | null | undefined>> | null | undefined,
+): string[] {
+  if (!partial || typeof partial !== 'object') return [];
+  const out: string[] = [];
+  for (const k of CATEGORY_PREVIEW_KEYS) {
+    const v = partial[k];
+    if (v == null || !Number.isFinite(v)) continue;
+    out.push(`${CATEGORY_PREVIEW_ABBREV[k]} ${Math.round(v)}`);
+  }
+  return out;
+}

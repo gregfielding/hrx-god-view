@@ -130,7 +130,9 @@ export const reviewAndRescoreUser = onCall(
     }
 
     try {
-      await recomputeUserInterviewScoreSummary(db, userId);
+      await recomputeUserInterviewScoreSummary(db, userId, {
+        recruiterSnapshotGeneratedBy: 'manual_review',
+      });
     } catch (e) {
       logger.error('reviewAndRescoreUser.recompute_failed', {
         userId,

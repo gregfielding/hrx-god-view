@@ -690,42 +690,7 @@ export async function sendWorkerMessageInternal(
       });
     }
 
-    // Log to user's activity log if user exists
-    if (recipientUserId) {
-      try {
-        const activityLogData = {
-          action: 'SMS Sent',
-          actionType: 'sms_sent' as const,
-          description: context?.source 
-            ? `SMS sent via ${context.source}` 
-            : 'SMS notification received',
-          severity: 'medium' as const,
-          source: 'system' as const,
-          metadata: {
-            messageId: messageResult.sid,
-            phoneNumber: to,
-            /** Full outbound copy for recruiter activity log (same as sent to device). */
-            messageBody: messageContent,
-            messagePreview:
-              messageContent.length > 200 ? `${messageContent.substring(0, 200)}…` : messageContent,
-            source: context?.source || 'system',
-            sourceId: context?.sourceId || null,
-            targetType: 'sms',
-          },
-          timestamp: admin.firestore.FieldValue.serverTimestamp(),
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        };
-
-        await db.collection('users').doc(recipientUserId)
-          .collection('activityLogs')
-          .add(activityLogData);
-        
-        logger.info(`Activity log created for SMS to user ${recipientUserId}`);
-      } catch (activityLogError: any) {
-        // Don't fail SMS send if activity log fails
-        logger.warn(`Failed to create activity log for SMS: ${activityLogError.message}`);
-      }
-    }
+    // Activity log: mirrored from messageLogs when status moves queued → sent (messageLogging.updateMessageLogStatus).
 
     logger.info(`SMS sent internally: ${messageResult.sid} to ${to}`);
 

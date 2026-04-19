@@ -31,6 +31,11 @@ import {
 import { PRESCREEN_OPENING_MULTI_SELECT_KEYS } from './prescreenOpeningKeys';
 import { buildPrescreenOpeningProfilePatch } from './prescreenOpeningProfileWrite';
 import { maybeEmitInterviewCompletedCategoryScores } from '../categoryScoreEvolution/activityCategoryScoreEmit';
+import {
+  capitalizeFirstLetterName,
+  isValidConfirmedLegalFirstName,
+  userDocNeedsLegalFirstNameConfirm,
+} from './legalFirstNameConfirm';
 
 const REQUIRED_KEYS = [
   ...PRESCREEN_OPENING_MULTI_SELECT_KEYS,
@@ -51,6 +56,7 @@ const REQUIRED_KEYS = [
 
 /** Optional core rows persisted when present / applicable. */
 const OPTIONAL_CORE_STORED_KEYS = [
+  'confirm_legal_first_name',
   'drug_screen_detail',
   'background_check_detail',
   'background_offense_class',
@@ -157,6 +163,18 @@ function parseAnswers(raw: unknown): WorkerAiPrescreenAnswers {
     if (s) (out as Record<string, string>)[k] = s;
   }
 
+  const rawConfirm = o['confirm_legal_first_name'];
+  if (rawConfirm !== undefined && rawConfirm !== null) {
+    if (typeof rawConfirm !== 'string') {
+      throw new HttpsError('invalid-argument', 'confirm_legal_first_name must be a string');
+    }
+    const s = String(rawConfirm).trim();
+    if (s.length > 200) {
+      throw new HttpsError('invalid-argument', 'confirm_legal_first_name is too long');
+    }
+    if (s) (out as Record<string, string>).confirm_legal_first_name = s;
+  }
+
   return out;
 }
 
@@ -226,6 +244,7 @@ function parseDynamicAnswers(raw: unknown, allowedIds: Set<string>): Record<stri
 }
 
 function questionTypeForKey(key: string): 'text' | 'single_select' | 'multi_select' {
+  if (key === 'confirm_legal_first_name') return 'text';
   if (MULTI_SELECT_ANSWER_KEYS.has(key)) return 'multi_select';
   if (
     key === 'attendance_issues' ||
@@ -275,6 +294,7 @@ function shouldOmitCoreQuestionFromStoredInterview(
   key: string,
   answers: WorkerAiPrescreenAnswers,
   dynamicStepIds: Set<string>,
+  hadLegalNameConfirmStep: boolean,
 ): boolean {
   if (shouldOmitOpeningStoredQuestion(key, answers)) return true;
   if (key === 'attendance_explanation' && normLower(answers.attendance_issues) !== 'yes') return true;
@@ -296,6 +316,7 @@ function shouldOmitCoreQuestionFromStoredInterview(
   ) {
     return true;
   }
+  if (key === 'confirm_legal_first_name' && !hadLegalNameConfirmStep) return true;
   return false;
 }
 
@@ -334,10 +355,24 @@ export const submitWorkerAiPrescreenInterview = onCall(
     const db = admin.firestore();
     const userRef = db.collection('users').doc(auth.uid);
     const freshUserSnap = await userRef.get();
-    const enrichedUd = mergeEnrichedUserDocForPrescreenSubmit(
+    let enrichedUd = mergeEnrichedUserDocForPrescreenSubmit(
       (freshUserSnap.data() || {}) as Record<string, unknown>,
       sessionProfileEnhancements,
     );
+
+    const needsLegalFirstNameConfirm = userDocNeedsLegalFirstNameConfirm(enrichedUd);
+    let legalFirstNameToPersist: string | null = null;
+    if (needsLegalFirstNameConfirm) {
+      const c = String((answers as Record<string, unknown>).confirm_legal_first_name ?? '').trim();
+      if (!isValidConfirmedLegalFirstName(c)) {
+        throw new HttpsError(
+          'invalid-argument',
+          'Please enter your legal first name using letters (not only numbers).',
+        );
+      }
+      legalFirstNameToPersist = capitalizeFirstLetterName(c);
+      enrichedUd = { ...enrichedUd, firstName: legalFirstNameToPersist };
+    }
 
     let interviewContext: AiInterviewContext | null = null;
     if (applicationId) {
@@ -445,9 +480,12 @@ export const submitWorkerAiPrescreenInterview = onCall(
 
     try {
       const openingPatch = buildPrescreenOpeningProfilePatch(answers);
+      const namePatch =
+        legalFirstNameToPersist != null ? { firstName: legalFirstNameToPersist } : {};
       await userRef.set(
         {
           ...openingPatch,
+          ...namePatch,
           interviewStatus: 'completed',
           hasWorkerAiPrescreenInterview: true,
           lastInterviewCompletedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -465,7 +503,7 @@ export const submitWorkerAiPrescreenInterview = onCall(
 
     const questions = [
       ...[...REQUIRED_KEYS, ...OPTIONAL_CORE_STORED_KEYS].filter(
-        (id) => !shouldOmitCoreQuestionFromStoredInterview(id, answers, dynamicStepIds),
+        (id) => !shouldOmitCoreQuestionFromStoredInterview(id, answers, dynamicStepIds, needsLegalFirstNameConfirm),
       ).map((id) => ({
         id,
         question: WORKER_AI_PRESCREEN_PROMPTS[id] || id,
@@ -725,6 +763,7 @@ export const submitWorkerAiPrescreenInterview = onCall(
         prescreenDynamicAnswers: dynamicAnswers,
         submitInterviewId: interviewId,
         interviewCreatedAt: prescreenInterviewCreatedAtForRisk,
+        recruiterSnapshotGeneratedBy: 'interview_submit',
       });
     } catch (e) {
       logger.warn('submitWorkerAiPrescreenInterview.scoreSummary_failed', {

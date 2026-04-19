@@ -17,6 +17,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { calculateProfileScore } from '../utils/applicantScoring';
 import { normalizeScoreSummary } from '../utils/scoreSummary';
+import { sanitizeWorkerNameParts } from '../utils/profileDisplayName';
 import PageHeader from '../components/PageHeader';
 import InboxSearchBar from '../components/InboxSearchBar';
 import UserGroupHiringControlPanel from '../components/recruiter/userGroup/UserGroupHiringControlPanel';
@@ -139,8 +140,20 @@ const RecruiterUserGroupDetails: React.FC = () => {
           })
           .filter((skill: any) => typeof skill === 'string' && skill.trim().length > 0);
 
+        const phoneRow = String(u.phone || u.phoneE164 || '');
+        const nameSanitized = sanitizeWorkerNameParts({
+          firstName: u.firstName,
+          lastName: u.lastName,
+          preferredName: u.preferredName,
+          displayName: u.displayName,
+          email: u.email,
+          phone: phoneRow,
+        });
+
         return {
           ...u,
+          firstName: nameSanitized.firstName,
+          lastName: nameSanitized.lastName,
           securityLevel,
           avatar: u.avatar || tenantData.avatar,
           phone: u.phone || '',

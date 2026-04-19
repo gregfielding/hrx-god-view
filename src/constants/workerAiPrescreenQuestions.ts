@@ -7,6 +7,7 @@ import { WORKER_AI_PRESCREEN_OPENING_STEPS } from './workerAiPrescreenOpeningSte
 export type WorkerAiPrescreenQuestionType = 'text' | 'single_select' | 'multi_select';
 
 export type WorkerAiPrescreenStepId =
+  | 'confirm_legal_first_name'
   | 'opening_target_work_types'
   | 'opening_schedule_preferences'
   | 'opening_experience_industrial'
@@ -42,6 +43,13 @@ export interface WorkerAiPrescreenStep {
 }
 
 export const WORKER_AI_PRESCREEN_STEPS: WorkerAiPrescreenStep[] = [
+  /** Shown only when profile `firstName` looks like numbers; see `userDocNeedsLegalFirstNameConfirm`. */
+  {
+    id: 'confirm_legal_first_name',
+    type: 'text',
+    prompt:
+      'Your profile shows a number where your first name should be. What is your legal first name as it appears on your ID?',
+  },
   ...(WORKER_AI_PRESCREEN_OPENING_STEPS as unknown as WorkerAiPrescreenStep[]),
   /** Structured multi-select before first long text — reduces early “essay” friction (order is UI-only; same answer keys). */
   {

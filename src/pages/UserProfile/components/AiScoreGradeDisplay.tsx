@@ -7,6 +7,7 @@ import {
   type ScoringDistribution,
 } from '../../../utils/scoreSummary';
 import { resolveRecruiterPrimaryDisplay } from '../../../utils/scoring/recruiterPrimaryDisplay';
+import { getRecruiterScoreDisplayForAdminUi, RECRUITER_SNAPSHOT_MISSING_LABEL } from '../../../utils/scoring/recruiterScoreSnapshot';
 import type { WorkerInterviewAiBlock } from '../../../types/workerAiPrescreenInterview';
 import { recruiterTableLetterGrade } from '../../../utils/recruiterUsersReadinessDisplay';
 import { recordHeaderTooltipComponentsProps } from './recordHeaderStyles';
@@ -16,6 +17,9 @@ export type AiScoreGradeDisplayProps = {
   scoringDistribution: ScoringDistribution | null;
   /** When set (profile page), matches header / interview operational layer */
   latestPrescreenInterviewAi?: WorkerInterviewAiBlock | null;
+  recruiterScoreSnapshot?: unknown;
+  /** Internal recruiters — primary score from snapshot only (no legacy / relative fallback). */
+  useRecruiterSnapshotOnly?: boolean;
 };
 
 /**
@@ -25,7 +29,80 @@ const AiScoreGradeDisplay: React.FC<AiScoreGradeDisplayProps> = ({
   scoreSummary,
   scoringDistribution,
   latestPrescreenInterviewAi,
+  recruiterScoreSnapshot,
+  useRecruiterSnapshotOnly = false,
 }) => {
+  const snapDisp = getRecruiterScoreDisplayForAdminUi(recruiterScoreSnapshot);
+  if (useRecruiterSnapshotOnly) {
+    if (!snapDisp.hasSnapshot || snapDisp.score100 == null || Number.isNaN(snapDisp.score100)) {
+      return (
+        <Tooltip title={RECRUITER_SNAPSHOT_MISSING_LABEL} componentsProps={recordHeaderTooltipComponentsProps}>
+          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem' }}>
+            —
+          </Typography>
+        </Tooltip>
+      );
+    }
+    const rawSnap = Math.round(snapDisp.score100);
+    const gradeSnap = snapDisp.grade ?? recruiterTableLetterGrade(rawSnap);
+    let scoreColor: 'success.main' | 'warning.main' | 'text.primary' = 'text.primary';
+    if (rawSnap >= 80) scoreColor = 'success.main';
+    else if (rawSnap >= 60) scoreColor = 'warning.main';
+    return (
+      <Tooltip
+        arrow
+        componentsProps={{
+          ...recordHeaderTooltipComponentsProps,
+          tooltip: {
+            sx: {
+              ...recordHeaderTooltipComponentsProps.tooltip.sx,
+              maxWidth: 360,
+            },
+          },
+        }}
+        title={
+          <Box sx={{ p: 0.5 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+              Recruiter score snapshot
+            </Typography>
+            <Typography variant="caption" color="inherit" sx={{ display: 'block', mb: 0.5, opacity: 0.9 }}>
+              Canonical score for all recruiter views — components listed for context only.
+            </Typography>
+            <Stack spacing={0.25}>
+              <Typography variant="body2">
+                Primary: <strong>{rawSnap}</strong> (grade {gradeSnap})
+              </Typography>
+              <Typography variant="caption" color="inherit" sx={{ opacity: 0.85 }}>
+                Operational {snapDisp.operationalScore100 ?? '—'} · Composite {snapDisp.compositeScore100 ?? '—'} · Base{' '}
+                {snapDisp.interviewScoreBase100 ?? '—'}
+              </Typography>
+            </Stack>
+          </Box>
+        }
+      >
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.25, flexShrink: 0 }}>
+          <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75 }}>
+            <Typography
+              component="span"
+              variant="body2"
+              sx={{
+                fontWeight: 700,
+                color: scoreColor,
+                fontSize: '0.8125rem',
+                minWidth: 14,
+              }}
+            >
+              {gradeSnap}
+            </Typography>
+            <Typography variant="body2" color="text.primary" sx={{ fontVariantNumeric: 'tabular-nums', fontSize: '0.8125rem' }}>
+              {rawSnap}
+            </Typography>
+          </Box>
+        </Box>
+      </Tooltip>
+    );
+  }
+
   const displayPack = resolveRecruiterPrimaryDisplay({
     scoreSummary,
     latestPrescreenInterviewAi: latestPrescreenInterviewAi ?? null,

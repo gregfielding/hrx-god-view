@@ -53,8 +53,7 @@ import StandardTablePagination from '../components/StandardTablePagination';
 import { formatPhoneNumber } from '../utils/formatPhone';
 import { toChipLabel } from '../utils/chipLabel';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
-import { formatOneDecimal, getRelativeAiScore, normalizeScoreSummary } from '../utils/scoreSummary';
-import { getRecruiterPrimaryScore100FromSummary } from '../utils/scoring/recruiterOperationalScore';
+import { getRecruiterScoreDisplayForAdminUi } from '../utils/scoring/recruiterScoreSnapshot';
 import { useScoringDistribution } from '../hooks/useScoringDistribution';
 import type { SmartGroupData, SmartGroupEntry, JobCategory } from '../services/smartGroupService';
 import {
@@ -148,6 +147,7 @@ interface ResidenceRow {
   skills?: string[];
   certifications?: string[];
   scoreSummary?: { aiScore?: number; interviewAvg?: number; interviewCount?: number; interviewLastAt?: any; interviewLastScore10?: number };
+  recruiterScoreSnapshot?: unknown;
   securityLevel?: string;
   employeeOnboardStatus?: string;
   contractorOnboardStatus?: string;
@@ -394,8 +394,11 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
         const userName = [userData?.firstName, userData?.lastName].filter(Boolean).join(' ') || uid;
         const scoreSummary = userData?.scoreSummary;
         const interviewScore = scoreSummary?.interviewAvg != null ? Number(scoreSummary.interviewAvg) : undefined;
-        const aiScoreRaw = getRecruiterPrimaryScore100FromSummary(normalizeScoreSummary(scoreSummary));
-        const aiScore = aiScoreRaw != null && !Number.isNaN(aiScoreRaw) ? aiScoreRaw : undefined;
+        const snapDisp = getRecruiterScoreDisplayForAdminUi(userData?.recruiterScoreSnapshot);
+        const aiScore =
+          snapDisp.hasSnapshot && snapDisp.score100 != null && !Number.isNaN(snapDisp.score100)
+            ? snapDisp.score100
+            : undefined;
 
         for (const [applicationId, entry] of Object.entries(smartGroupData.byApplication)) {
           flatRows.push({
@@ -504,6 +507,7 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
             skills,
             certifications,
             scoreSummary: userData?.scoreSummary,
+            recruiterScoreSnapshot: userData?.recruiterScoreSnapshot,
             securityLevel: userData?.tenantIds?.[tenantId]?.securityLevel ?? userData?.securityLevel,
             employeeOnboardStatus: userData?.employeeOnboardStatus,
             contractorOnboardStatus: userData?.contractorOnboardStatus,
@@ -555,6 +559,7 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
             skills,
             certifications,
             scoreSummary: userData?.scoreSummary,
+            recruiterScoreSnapshot: userData?.recruiterScoreSnapshot,
             securityLevel: userData?.tenantIds?.[tenantId]?.securityLevel ?? userData?.securityLevel,
             employeeOnboardStatus: userData?.employeeOnboardStatus,
             contractorOnboardStatus: userData?.contractorOnboardStatus,
@@ -994,15 +999,16 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
     getWorkStatusColumnDisplay(row, { hasActiveAssignment: activeAssignmentUserIds.has(row.userId) });
 
   const renderResidenceAiScore = (row: ResidenceRow) => {
-    const rawScore = getRecruiterPrimaryScore100FromSummary(normalizeScoreSummary(row.scoreSummary));
-    if (rawScore === undefined || rawScore === null || Number.isNaN(rawScore)) {
-      return <Typography variant="body2" color="text.secondary">N/A</Typography>;
+    const snapDisp = getRecruiterScoreDisplayForAdminUi(row.recruiterScoreSnapshot);
+    const rawScore =
+      snapDisp.hasSnapshot && snapDisp.score100 != null && !Number.isNaN(snapDisp.score100) ? snapDisp.score100 : null;
+    if (rawScore === null) {
+      return <Typography variant="body2" color="text.secondary">—</Typography>;
     }
-    const relativeScore = getRelativeAiScore(rawScore, scoringDistribution);
-    const displayScore = relativeScore != null ? relativeScore : Math.round(rawScore);
+    const displayScore = Math.round(rawScore);
     const color: 'default' | 'success' | 'warning' | 'error' = displayScore >= 80 ? 'success' : displayScore >= 60 ? 'warning' : 'default';
     return (
-      <Tooltip title={relativeScore != null ? `Raw: ${Math.round(rawScore)} (relative: ${displayScore})` : `AI: ${Math.round(rawScore)}`}>
+      <Tooltip title={`Recruiter score (snapshot): ${displayScore}`}>
         <Chip
           icon={<InsightsIcon sx={{ fontSize: 16 }} />}
           label={`${displayScore}`}
@@ -1952,16 +1958,12 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
                         </TableCell>
                         <TableCell align="right">
                           {row.aiScore != null ? (
-                            (() => {
-                              const rel = getRelativeAiScore(row.aiScore!, scoringDistribution);
-                              const display = rel != null ? rel : Math.round(row.aiScore!);
-                              return (
-                                <Tooltip title={rel != null ? `Raw: ${Math.round(row.aiScore!)} (relative: ${display})` : `AI: ${Math.round(row.aiScore!)}`}>
-                                  <span>{display}</span>
-                                </Tooltip>
-                              );
-                            })()
-                          ) : '—'}
+                            <Tooltip title={`Recruiter score (snapshot): ${Math.round(row.aiScore!)}`}>
+                              <span>{Math.round(row.aiScore!)}</span>
+                            </Tooltip>
+                          ) : (
+                            '—'
+                          )}
                         </TableCell>
                       </TableRow>
                     ))

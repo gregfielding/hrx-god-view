@@ -12,6 +12,8 @@ import {
   buildWorkerRiskProfileFromLatestInterview,
   mergeRiskProfileIntoUserUpdateIfChanged,
 } from './workerRiskProfile';
+import { refreshRecruiterScoreSnapshotForUser } from '../scoring/refreshRecruiterScoreSnapshot';
+import type { RecruiterScoreSnapshotGeneratedBy } from '../scoring/buildRecruiterScoreSnapshot';
 
 const RECRUITER_PRIMARY_SCORE_SOURCE_VERSION = 'recruiter_primary_v1';
 
@@ -40,6 +42,8 @@ export type RecomputeUserInterviewScoreSummaryOpts = {
    * the same way as `buildWorkerRiskProfileFromLatestInterview` reading the stored interview doc.
    */
   interviewCreatedAt?: admin.firestore.Timestamp | null;
+  /** Stored on `recruiterScoreSnapshot.generatedBy` after canonical snapshot refresh. */
+  recruiterSnapshotGeneratedBy?: RecruiterScoreSnapshotGeneratedBy;
 };
 
 export async function recomputeUserInterviewScoreSummary(
@@ -203,4 +207,17 @@ export async function recomputeUserInterviewScoreSummary(
   }
 
   await db.collection('users').doc(uid).update(update);
+
+  try {
+    await refreshRecruiterScoreSnapshotForUser(
+      db,
+      uid,
+      opts?.recruiterSnapshotGeneratedBy ?? 'system',
+    );
+  } catch (e) {
+    logger.warn('recomputeUserInterviewScoreSummary.recruiterScoreSnapshot_failed', {
+      uid,
+      message: e instanceof Error ? e.message : String(e),
+    });
+  }
 }

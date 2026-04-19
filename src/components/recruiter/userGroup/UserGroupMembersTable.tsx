@@ -40,13 +40,8 @@ import { useFavorites } from '../../../hooks/useFavorites';
 import StandardTablePagination from '../../StandardTablePagination';
 import { TABLE_AVATAR_SIZE } from '../../../utils/uiConstants';
 import RecruiterUserTableContactBlock from '../../tables/RecruiterUserTableContactBlock';
-import {
-  formatOneDecimal,
-  normalizeScoreSummary,
-  getCanonicalStoredAiScore,
-  getRelativeAiScore,
-} from '../../../utils/scoreSummary';
-import { getRecruiterPrimaryScore100FromSummary } from '../../../utils/scoring/recruiterOperationalScore';
+import { formatOneDecimal, getRelativeAiScore } from '../../../utils/scoreSummary';
+import { getRecruiterScoreDisplayForAdminUi } from '../../../utils/scoring/recruiterScoreSnapshot';
 import {
   getBackgroundBreakdownRows,
   getReadinessBreakdownRows,
@@ -62,7 +57,10 @@ import {
   workerRiskPrimaryLine,
   workerRiskTooltipContent,
 } from '../../../utils/workerRiskProfileDisplay';
-import { formatCategoryScoresCompactPreview } from '../../../utils/parseRecruiterCategoryScores';
+import {
+  formatCategoryScoresCompactPreview,
+  formatCategoryScoresCompactPreviewFromPartial,
+} from '../../../utils/parseRecruiterCategoryScores';
 import { useCategoryScoresCurrentMap } from '../../../hooks/useCategoryScoresCurrentMap';
 import { useRecruiterUsersRowExtras } from '../../../hooks/useRecruiterUsersRowExtras';
 import { useRecruiterUsersLatestBackgroundChecks } from '../../../hooks/useRecruiterUsersLatestBackgroundChecks';
@@ -147,8 +145,9 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
   };
 
   const getScoreNumber = (u: any): number => {
-    const n = getRecruiterPrimaryScore100FromSummary(normalizeScoreSummary(u.scoreSummary));
-    return n != null && !Number.isNaN(n) ? n : -1;
+    const snapDisp = getRecruiterScoreDisplayForAdminUi(u.recruiterScoreSnapshot);
+    if (snapDisp.hasSnapshot && snapDisp.score100 != null && !Number.isNaN(snapDisp.score100)) return snapDisp.score100;
+    return -1;
   };
 
   const getNameKey = (u: any): string => {
@@ -364,9 +363,13 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
   };
 
   const renderAiScore = (u: any) => {
-    const rawScore = getRecruiterPrimaryScore100FromSummary(normalizeScoreSummary(u.scoreSummary));
-    const compositeScore = getCanonicalStoredAiScore(normalizeScoreSummary(u.scoreSummary));
-    const categoryPreview = formatCategoryScoresCompactPreview(categoryScoresByUserId[u.id] ?? null);
+    const snapDisp = getRecruiterScoreDisplayForAdminUi(u.recruiterScoreSnapshot);
+    const rawScore = snapDisp.hasSnapshot ? snapDisp.score100 : null;
+    const compositeScore = snapDisp.hasSnapshot ? snapDisp.compositeScore100 : null;
+    const categoryPreview =
+      snapDisp.hasSnapshot && Object.keys(snapDisp.categoryScores || {}).length > 0
+        ? formatCategoryScoresCompactPreviewFromPartial(snapDisp.categoryScores)
+        : formatCategoryScoresCompactPreview(categoryScoresByUserId[u.id] ?? null);
     const categoryLine1 = categoryPreview.slice(0, 3).join(' · ');
     const categoryLine2 = categoryPreview.slice(3).join(' · ');
     if (rawScore === null || Number.isNaN(rawScore)) {
@@ -719,7 +722,7 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
                           }}
                           onClick={() => navigate(`/users/${u.id}`)}
                         >
-                          <TableCell padding="checkbox" onClick={(e) => e.stopPropagation()} sx={{ py: 0.75, px: 1 }}>
+                          <TableCell padding="checkbox" onClick={(e) => e.stopPropagation()} sx={{ py: 0.5, px: 1 }}>
                             <Checkbox
                               size="small"
                               checked={selectAllResults || selectedIds.has(u.id)}
@@ -727,7 +730,7 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
                               aria-label={`Select ${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || 'Select member'}
                             />
                           </TableCell>
-                          <TableCell sx={{ minWidth: 260, maxWidth: 380, verticalAlign: 'top', py: 0.75, px: 1 }}>
+                          <TableCell sx={{ minWidth: 260, maxWidth: 380, verticalAlign: 'top', py: 0.5, px: 1 }}>
                             <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75, minWidth: 0 }}>
                               <Avatar
                                 src={u.avatar}
@@ -765,7 +768,7 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
                               </Box>
                             </Box>
                           </TableCell>
-                          <TableCell sx={{ verticalAlign: 'top', py: 0.75, px: 1, maxWidth: 140 }}>
+                          <TableCell sx={{ verticalAlign: 'top', py: 0.5, px: 1, maxWidth: 140 }}>
                             {wrChips.length === 0 ? null : (
                               <Stack spacing={0.35} alignItems="flex-start">
                                 {wrChips.map((c) => {
@@ -794,7 +797,7 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
                               </Stack>
                             )}
                           </TableCell>
-                          <TableCell sx={{ verticalAlign: 'top', py: 0.75, px: 1, maxWidth: 280 }}>
+                          <TableCell sx={{ verticalAlign: 'top', py: 0.5, px: 1, maxWidth: 280 }}>
                             <Stack spacing={0.15}>
                               {getReadinessBreakdownRows(
                                 u,
@@ -825,7 +828,7 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
                               ))}
                             </Stack>
                           </TableCell>
-                          <TableCell sx={{ verticalAlign: 'top', py: 0.75, px: 1, maxWidth: 260 }}>
+                          <TableCell sx={{ verticalAlign: 'top', py: 0.5, px: 1, maxWidth: 260 }}>
                             <Stack spacing={0.15}>
                               {getBackgroundBreakdownRows(u, entityItems, {
                                 latestAccusourceBackground: latestBackgroundByUserId.get(u.id) ?? null,
@@ -848,8 +851,8 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
                               ))}
                             </Stack>
                           </TableCell>
-                          <TableCell sx={{ verticalAlign: 'top', py: 0.75, px: 1 }}>{renderAiScore(u)}</TableCell>
-                          <TableCell sx={{ verticalAlign: 'top', py: 0.75, px: 1 }}>
+                          <TableCell sx={{ verticalAlign: 'top', py: 0.5, px: 1 }}>{renderAiScore(u)}</TableCell>
+                          <TableCell sx={{ verticalAlign: 'top', py: 0.5, px: 1 }}>
                             {concernTip ? (
                               <Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{concernTip}</span>} placement="top" enterDelay={350}>
                                 <Typography
@@ -870,7 +873,7 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
                               </Typography>
                             )}
                           </TableCell>
-                          <TableCell sx={{ minWidth: 120, verticalAlign: 'top', py: 0.75, px: 1 }}>
+                          <TableCell sx={{ minWidth: 120, verticalAlign: 'top', py: 0.5, px: 1 }}>
                             <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem', lineHeight: 1.3 }}>
                               {formatDate(u.lastLoginAt)}
                             </Typography>

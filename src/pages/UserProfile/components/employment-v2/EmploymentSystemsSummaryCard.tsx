@@ -151,8 +151,8 @@ const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> 
                         </Typography>
                       ) : (
                         <Typography variant="caption" color="text.secondary">
-                          Same payroll message type and channel rules as automation. New sends appear under Messages and
-                          in Employment timelines.
+                          Same payroll message type and channel rules as automation. New sends appear in tenant message
+                          logs and in Employment timelines.
                         </Typography>
                       )}
                     </Stack>

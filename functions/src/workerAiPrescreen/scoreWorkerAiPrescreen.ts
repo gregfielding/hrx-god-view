@@ -27,6 +27,7 @@ import {
 import { computeOperationalTrustPromoteDeclineToReview } from './operationalTrustOverride';
 
 export type WorkerAiPrescreenAnswers = {
+  confirm_legal_first_name?: string;
   opening_target_work_types?: string[];
   opening_schedule_preferences?: string[];
   opening_experience_industrial?: string[];

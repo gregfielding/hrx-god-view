@@ -65,6 +65,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { calculateProfileScore, calculateCompletenessScore } from '../../utils/applicantScoring';
 import { userProfileBatcher, flushProfileUpdates } from '../../utils/userProfileBatching';
 import { toSafeHref } from '../../utils/urlUtils';
+import { sanitizeWorkerNameParts } from '../../utils/profileDisplayName';
 import { getActiveOnboardingType, isOnboardingInProgress } from './utils/onboardingHelpers';
 import { getTaskCompletionPercentage, initializeOnboardingTasks } from './utils/onboardingTasks';
 import FavoriteButton from '../../components/FavoriteButton';
@@ -563,8 +564,17 @@ const UserProfilePage = () => {
         const userSnap = await getDoc(userRef);
         if (userSnap.exists()) {
           const data = userSnap.data();
-          setFirstName(data.firstName || '');
-          setLastName(data.lastName || '');
+          const _phoneRaw = String(data.phone || (data as { phoneE164?: string }).phoneE164 || '');
+          const _sanitized = sanitizeWorkerNameParts({
+            firstName: data.firstName,
+            lastName: data.lastName,
+            preferredName: data.preferredName,
+            displayName: (data as { displayName?: string }).displayName,
+            email: data.email,
+            phone: _phoneRaw,
+          });
+          setFirstName(_sanitized.firstName);
+          setLastName(_sanitized.lastName);
           setPreferredName(data.preferredName || '');
           setAvatarUrl(data.avatar || '');
           // Get effective tenant ID first (target user's tenant, if present)
@@ -903,6 +913,7 @@ const UserProfilePage = () => {
           preferredLanguage:
             String(data.preferredLanguage || '').toLowerCase() === 'es' ? 'es' : 'en',
           last4SSN: normalizeLast4SsnDigits(data.last4SSN ?? ''),
+          recruiterScoreSnapshot: data.recruiterScoreSnapshot ?? null,
         });
 
         setProfileOnboardingType(typeof data.onboardingType === 'string' ? data.onboardingType : undefined);
@@ -1115,7 +1126,7 @@ const UserProfilePage = () => {
       { label: 'Certifications', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Backgrounds', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Notes', available: canViewAdminContent && !isWorkforceInternalTeamView, count: notesCount },
-      { label: 'Messages', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Messages', available: false, count: undefined },
       { label: 'Activity Log', available: false, count: undefined },
       { label: 'Reports & Insights', available: false, count: undefined },
       { label: 'Settings', available: (isAdminViewer && !isWorkerRoute) || isWorkforceInternalTeamView, count: undefined },
@@ -1894,6 +1905,7 @@ const UserProfilePage = () => {
           profileScore={profileScore}
           scoreSummary={scoreSummary}
           latestPrescreenInterviewAi={latestWorkerPrescreenAi}
+          recruiterScoreSnapshot={skillsData?.recruiterScoreSnapshot}
           scoringDistribution={scoringDistribution}
           resume={skillsData?.resume || null}
           certifications={skillsData?.certifications || []}
@@ -2078,6 +2090,7 @@ const UserProfilePage = () => {
                   toggleFavorite={toggleFavorite}
                   scoreSummary={scoreSummary}
                   latestPrescreenInterviewAi={latestWorkerPrescreenAi}
+                  recruiterScoreSnapshot={skillsData?.recruiterScoreSnapshot}
                   scoringDistribution={scoringDistribution}
                   categoryScores={categoryScoresCurrent}
                   riskProfile={recordHeaderRiskProfile}
@@ -2334,6 +2347,8 @@ const UserProfilePage = () => {
                             scoreSummary={scoreSummary}
                             scoringDistribution={scoringDistribution}
                             latestPrescreenInterviewAi={latestWorkerPrescreenAi}
+                            recruiterScoreSnapshot={skillsData?.recruiterScoreSnapshot}
+                            useRecruiterSnapshotOnly={viewerSecurityLevel >= 5}
                           />
                         )}
                       </Stack>
@@ -2941,7 +2956,13 @@ const UserProfilePage = () => {
                 );
               case 'Interview':
                 return (
-                  <InterviewTab uid={uid} scoreSummary={scoreSummary} scoreFreshnessMeta={scoreFreshnessMeta} />
+                  <InterviewTab
+                    uid={uid}
+                    scoreSummary={scoreSummary}
+                    scoreFreshnessMeta={scoreFreshnessMeta}
+                    recruiterTrustUi
+                    onOpenOverviewScore={() => handleTabChange({} as React.SyntheticEvent, 'Overview')}
+                  />
                 );
               case 'Score':
                 return (
@@ -2950,6 +2971,8 @@ const UserProfilePage = () => {
                     scoreSummary={scoreSummary}
                     scoreFreshnessMeta={scoreFreshnessMeta}
                     latestPrescreenInterviewAi={latestWorkerPrescreenAi}
+                    recruiterScoreSnapshot={skillsData?.recruiterScoreSnapshot}
+                    useRecruiterSnapshotOnly={canViewAdminContent && viewerSecurityLevel >= 5}
                     fallbackAiScore={profileScore}
                     fallbackCompleteness={profileCompletenessScore}
                     scoringDistribution={scoringDistribution}

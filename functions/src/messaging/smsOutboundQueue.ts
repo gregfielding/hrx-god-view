@@ -17,7 +17,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { getTenantSmsConsent, updateTenantSmsConsent } from './tenantConsent';
 import { getSmsProvider } from './smsProviderFactory';
 import { createInboundMessage, SmsThread, SmsMessage } from './twoWayMessaging';
-import { logMessage } from './messageLogging';
+import { logMessage, mirrorOutboundMessageLogToActivityLog } from './messageLogging';
 import { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN } from './twilioSecrets';
 
 if (!admin.apps.length) {
@@ -746,6 +746,7 @@ export const processSmsOutbound = onRequest(
             },
             { merge: true }
           );
+        await mirrorOutboundMessageLogToActivityLog(tenantId, requestData.messageLogId);
       } else {
         await logMessage({
           userId: resolvedRecipientUserId || 'system',
