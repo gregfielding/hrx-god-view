@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useUserProfileEntityEmploymentChips } from '../../../hooks/useUserProfileEntityEmploymentChips';
+import { useLatestWorkerAiPrescreenInterview } from '../../../hooks/useLatestWorkerAiPrescreenInterview';
 import { normalizeScoreSummary, type ScoreSummary } from '../../../utils/scoreSummary';
 import {
   OverviewQualificationsCard,
@@ -140,6 +141,7 @@ const ProfileOverview: React.FC<Props> = ({
   actionItemsPrescreenAi,
   onAfterRecruiterRescore,
 }) => {
+  const { latestPrescreenAi: scoringPrescreenAiFromInterview } = useLatestWorkerAiPrescreenInterview(uid);
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const sectionSpacing = isMobile ? 1.25 : 1.25;
@@ -387,6 +389,7 @@ const ProfileOverview: React.FC<Props> = ({
 
   const [scoreSummaryFromUser, setScoreSummaryFromUser] = useState<ScoreSummary | undefined>(undefined);
   const [recruiterScoreSnapshotFromUser, setRecruiterScoreSnapshotFromUser] = useState<unknown>(undefined);
+  const [recruiterMasterScoreFromUser, setRecruiterMasterScoreFromUser] = useState<unknown>(undefined);
   /** First Firestore `users/{uid}` snapshot received — prevents false “interview missing” before scoreSummary hydrates. */
   const [userDocHydratedForActionItems, setUserDocHydratedForActionItems] = useState(false);
   const [riskProfileRaw, setRiskProfileRaw] = useState<unknown>(null);
@@ -421,6 +424,21 @@ const ProfileOverview: React.FC<Props> = ({
       (Boolean(coerceToDate(scoreSummaryFromUser?.interviewLastAt)) &&
         typeof scoreSummaryFromUser?.interviewLastScore10 === 'number' &&
         !Number.isNaN(scoreSummaryFromUser.interviewLastScore10)));
+
+  const backgroundCheckPending = useMemo(() => {
+    const orders = actionItemsBackgroundCheckOrders ?? [];
+    return orders.some((o) => {
+      const s = String(o.status || '').toLowerCase();
+      return (
+        s === 'pending' ||
+        s === 'processing' ||
+        s === 'ordered' ||
+        s === 'in_progress' ||
+        s === 'submitted' ||
+        s === 'requested'
+      );
+    });
+  }, [actionItemsBackgroundCheckOrders]);
 
   const actionItems = useMemo(
     () =>
@@ -590,6 +608,7 @@ const transportOptions: Array<{
 
             setScoreSummaryFromUser(normalizeScoreSummary(data.scoreSummary));
             setRecruiterScoreSnapshotFromUser(data.recruiterScoreSnapshot ?? undefined);
+            setRecruiterMasterScoreFromUser(data.recruiterMasterScore ?? undefined);
             setRiskProfileRaw(data.riskProfile ?? null);
             setOverviewQualifications(buildOverviewQualificationsFromUserDoc(data as Record<string, unknown>));
 
@@ -1982,18 +2001,35 @@ const transportOptions: Array<{
                   scoreSummary={scoreSummaryFromUser}
                   riskProfileRaw={riskProfileRaw}
                   recruiterScoreSnapshot={recruiterScoreSnapshotFromUser}
+                  recruiterMasterScore={recruiterMasterScoreFromUser}
                   useRecruiterSnapshotOnly={showReviewRescore}
-                  latestPrescreenInterviewAi={actionItemsPrescreenAi ?? null}
+                  latestPrescreenInterviewAi={scoringPrescreenAiFromInterview ?? actionItemsPrescreenAi ?? null}
                   onOpenScoreTab={onOpenScoreTab}
-                  headerActionsRight={
-                    showReviewRescore ? (
-                      <UserScoreRefreshButton
-                        compact
-                        targetUserId={uid}
-                        tenantId={activeTenant?.id || activeTenantId || null}
-                        onAfterSuccess={onAfterRecruiterRescore}
-                      />
-                    ) : null
+                  headerActionsRight={null}
+                  scoringDecisionControls={
+                    showReviewRescore
+                      ? {
+                          onViewInterview: () => onTabChange?.('Interview'),
+                          onPrimaryAction: (intent) => {
+                            if (intent === 'review_decision') onOpenScoreTab?.();
+                            else onTabChange?.('Interview');
+                          },
+                          onOpenScoreTab: () => onOpenScoreTab?.(),
+                          reviewRescoreSlot: (
+                            <UserScoreRefreshButton
+                              compact
+                              targetUserId={uid}
+                              tenantId={activeTenant?.id || activeTenantId || null}
+                              onAfterSuccess={onAfterRecruiterRescore}
+                            />
+                          ),
+                          onOverrideDecision: () => onOpenScoreTab?.(),
+                          showOverrideDecision: true,
+                          phoneVerified,
+                          backgroundCheckPending,
+                          manualOverrideLabel: null,
+                        }
+                      : undefined
                   }
                 />
               </Grid>

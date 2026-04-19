@@ -244,10 +244,10 @@ export function getRelativeAiScore(
 }
 
 // ─── Canonical stored AI / Hiring score ───────────────────────────────────
-// **Recruiter operational score (prescreen trust):** prefer `resolveRecruiterOperationalScore100` /
-// `getRecruiterPrimaryScore100FromSummary` in `utils/scoring/recruiterOperationalScore.ts`:
-// interview `ai.overrideAdjustedScore` → `scoreSummary.overrideAdjustedScore` → interview base scores →
-// composite `scoreSummary.aiScore`.
+// **Recruiter primary score:** `resolveRecruiterPrimaryScore100` — if latest prescreen `ai` exists,
+// `overrideAdjustedScore ?? overallScore` (`prescreen_operational`); else `scoreSummary.aiScore` (`profile_composite`).
+// `resolveRecruiterOperationalScore100` / `getRecruiterPrimaryScore100` use that for adjusted score; tables without
+// interview `ai` use `getRecruiterPrimaryScore100FromSummary` (composite only).
 // **Legacy composite only:** `getCanonicalStoredAiScore` / `getCanonicalStoredAiScoreFromUserDoc` read
 // `scoreSummary.aiScore` (Hiring Score blend). Do not substitute `qualityScore` or `profileScore`.
 // **Writes:** Hiring Score v1.1 recomputes via `getScoreSummaryUpdateFromHiringScoreV1` + optional

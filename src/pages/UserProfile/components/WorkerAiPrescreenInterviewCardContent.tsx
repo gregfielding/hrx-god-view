@@ -90,14 +90,20 @@ export function WorkerAiPrescreenInterviewCardContent({
               {scoreLabel}
             </Typography>
             <Typography
-              variant={demoted ? 'subtitle1' : 'h6'}
+              variant={demoted ? 'body2' : 'h6'}
               fontWeight={700}
               color={demoted ? 'text.primary' : 'primary'}
+              sx={demoted ? { fontSize: '1.05rem', fontVariantNumeric: 'tabular-nums' } : undefined}
             >
               {primaryNum ?? '—'}/100
             </Typography>
             {interview.score10 !== undefined && (
-              <Chip size="small" label={`${interview.score10}/10 (mapped)`} variant="outlined" />
+              <Chip
+                size="small"
+                label={`${interview.score10}/10 (mapped)`}
+                variant="outlined"
+                sx={demoted ? { height: 22, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } } : undefined}
+              />
             )}
           </Stack>
           {typeof ai.overrideAdjustedScore === 'number' &&
@@ -143,14 +149,20 @@ export function WorkerAiPrescreenInterviewCardContent({
           </Stack>
         </Stack>
 
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-          {ai.hiringDecision
-            ? explanationLineForHiringDecision({
-                decision: ai.hiringDecision.decision,
-                reasonCodes: ai.hiringDecision.reasonCodes,
-              })
-            : 'Hiring decision has not been computed for this record yet.'}
-        </Typography>
+        {!demoted ? (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+            {ai.hiringDecision
+              ? explanationLineForHiringDecision({
+                  decision: ai.hiringDecision.decision,
+                  reasonCodes: ai.hiringDecision.reasonCodes,
+                })
+              : 'Hiring decision has not been computed for this record yet.'}
+          </Typography>
+        ) : (
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+            See Overview for the primary hiring summary. Details below are interview-record context.
+          </Typography>
+        )}
 
         {ai.hiringDecision && ai.hiringDecision.reasonCodes.length > 0 ? (
           <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mb: 1.5 }}>
@@ -169,7 +181,7 @@ export function WorkerAiPrescreenInterviewCardContent({
               ...(demoted
                 ? {
                     display: '-webkit-box',
-                    WebkitLineClamp: 4,
+                    WebkitLineClamp: 3,
                     WebkitBoxOrient: 'vertical' as const,
                     overflow: 'hidden',
                   }

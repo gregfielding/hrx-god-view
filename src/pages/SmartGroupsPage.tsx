@@ -53,7 +53,7 @@ import StandardTablePagination from '../components/StandardTablePagination';
 import { formatPhoneNumber } from '../utils/formatPhone';
 import { toChipLabel } from '../utils/chipLabel';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
-import { getRecruiterScoreDisplayForAdminUi } from '../utils/scoring/recruiterScoreSnapshot';
+import { getRecruiterMasterDisplayForAdminUi } from '../utils/scoring/recruiterMasterScoreDisplay';
 import { useScoringDistribution } from '../hooks/useScoringDistribution';
 import type { SmartGroupData, SmartGroupEntry, JobCategory } from '../services/smartGroupService';
 import {
@@ -148,6 +148,8 @@ interface ResidenceRow {
   certifications?: string[];
   scoreSummary?: { aiScore?: number; interviewAvg?: number; interviewCount?: number; interviewLastAt?: any; interviewLastScore10?: number };
   recruiterScoreSnapshot?: unknown;
+  recruiterMasterScore?: unknown;
+  riskProfile?: unknown;
   securityLevel?: string;
   employeeOnboardStatus?: string;
   contractorOnboardStatus?: string;
@@ -394,11 +396,14 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
         const userName = [userData?.firstName, userData?.lastName].filter(Boolean).join(' ') || uid;
         const scoreSummary = userData?.scoreSummary;
         const interviewScore = scoreSummary?.interviewAvg != null ? Number(scoreSummary.interviewAvg) : undefined;
-        const snapDisp = getRecruiterScoreDisplayForAdminUi(userData?.recruiterScoreSnapshot);
+        const m = getRecruiterMasterDisplayForAdminUi({
+          recruiterMasterScoreRaw: userData?.recruiterMasterScore,
+          recruiterScoreSnapshotRaw: userData?.recruiterScoreSnapshot,
+          userData: userData as Record<string, unknown>,
+          latestPrescreenInterviewAi: null,
+        });
         const aiScore =
-          snapDisp.hasSnapshot && snapDisp.score100 != null && !Number.isNaN(snapDisp.score100)
-            ? snapDisp.score100
-            : undefined;
+          m.score100 != null && !Number.isNaN(m.score100) ? m.score100 : undefined;
 
         for (const [applicationId, entry] of Object.entries(smartGroupData.byApplication)) {
           flatRows.push({
@@ -508,6 +513,8 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
             certifications,
             scoreSummary: userData?.scoreSummary,
             recruiterScoreSnapshot: userData?.recruiterScoreSnapshot,
+            recruiterMasterScore: userData?.recruiterMasterScore,
+            riskProfile: userData?.riskProfile,
             securityLevel: userData?.tenantIds?.[tenantId]?.securityLevel ?? userData?.securityLevel,
             employeeOnboardStatus: userData?.employeeOnboardStatus,
             contractorOnboardStatus: userData?.contractorOnboardStatus,
@@ -560,6 +567,8 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
             certifications,
             scoreSummary: userData?.scoreSummary,
             recruiterScoreSnapshot: userData?.recruiterScoreSnapshot,
+            recruiterMasterScore: userData?.recruiterMasterScore,
+            riskProfile: userData?.riskProfile,
             securityLevel: userData?.tenantIds?.[tenantId]?.securityLevel ?? userData?.securityLevel,
             employeeOnboardStatus: userData?.employeeOnboardStatus,
             contractorOnboardStatus: userData?.contractorOnboardStatus,
@@ -999,16 +1008,23 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
     getWorkStatusColumnDisplay(row, { hasActiveAssignment: activeAssignmentUserIds.has(row.userId) });
 
   const renderResidenceAiScore = (row: ResidenceRow) => {
-    const snapDisp = getRecruiterScoreDisplayForAdminUi(row.recruiterScoreSnapshot);
-    const rawScore =
-      snapDisp.hasSnapshot && snapDisp.score100 != null && !Number.isNaN(snapDisp.score100) ? snapDisp.score100 : null;
+    const m = getRecruiterMasterDisplayForAdminUi({
+      recruiterMasterScoreRaw: row.recruiterMasterScore,
+      recruiterScoreSnapshotRaw: row.recruiterScoreSnapshot,
+      userData: {
+        scoreSummary: row.scoreSummary,
+        riskProfile: row.riskProfile,
+      },
+      latestPrescreenInterviewAi: null,
+    });
+    const rawScore = m.score100 != null && !Number.isNaN(m.score100) ? m.score100 : null;
     if (rawScore === null) {
       return <Typography variant="body2" color="text.secondary">—</Typography>;
     }
     const displayScore = Math.round(rawScore);
     const color: 'default' | 'success' | 'warning' | 'error' = displayScore >= 80 ? 'success' : displayScore >= 60 ? 'warning' : 'default';
     return (
-      <Tooltip title={`Recruiter score (snapshot): ${displayScore}`}>
+      <Tooltip title={`Master Recruiter Score: ${displayScore}`}>
         <Chip
           icon={<InsightsIcon sx={{ fontSize: 16 }} />}
           label={`${displayScore}`}

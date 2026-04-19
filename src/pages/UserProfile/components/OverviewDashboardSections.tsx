@@ -40,6 +40,7 @@ import {
   getRecruiterScoreDisplayForAdminUi,
   RECRUITER_SNAPSHOT_MISSING_LABEL,
 } from '../../../utils/scoring/recruiterScoreSnapshot';
+import { getRecruiterMasterDisplayForAdminUi } from '../../../utils/scoring/recruiterMasterScoreDisplay';
 import { recruiterTableLetterGrade } from '../../../utils/recruiterUsersReadinessDisplay';
 import { overallRiskBandLabel } from '../utils/recordHeaderScoreHelpers';
 import {
@@ -48,7 +49,7 @@ import {
 } from '../../../utils/workerRiskProfileDisplay';
 import WorkAuthorizedChip from '../../../components/WorkAuthorizedChip';
 import type { WorkerInterviewAiBlock } from '../../../types/workerAiPrescreenInterview';
-import { OverviewScoringCardRecruiterTrust } from './OverviewScoringCardRecruiterTrust';
+import { OverviewScoringCardRecruiterTrust, type OverviewScoringDecisionControls } from './OverviewScoringCardRecruiterTrust';
 import ShiftPreferencesCard from './ShiftPreferencesCard';
 import type { OverviewQualificationsData } from '../utils/overviewQualificationsSnapshot';
 import ResumeUpload from '../../../components/ResumeUpload';
@@ -463,10 +464,14 @@ export type OverviewScoringCardProps = {
   latestPrescreenInterviewAi?: WorkerInterviewAiBlock | null;
   /** e.g. recruiter-only “Review & rescore” — top-right of the Scoring card header (with “Scoring” title). */
   headerActionsRight?: React.ReactNode;
-  /** `users/{uid}.recruiterScoreSnapshot` — canonical recruiter score (when viewer is internal). */
+  /** `users/{uid}.recruiterScoreSnapshot` — supporting legacy snapshot fields. */
   recruiterScoreSnapshot?: unknown;
+  /** `users/{uid}.recruiterMasterScore` — canonical blended headline score. */
+  recruiterMasterScore?: unknown;
   /** When true, primary score/risk lines come only from snapshot (no legacy fallback). */
   useRecruiterSnapshotOnly?: boolean;
+  /** Condensed recruiter-trust card: next action, CTAs, system confidence (internal viewers). */
+  scoringDecisionControls?: OverviewScoringDecisionControls;
 };
 
 /** Hiring score snapshot (grade, interviews, reviews, risk, recommendations) — opens Score tab for detail. */
@@ -478,32 +483,43 @@ export function OverviewScoringCard({
   latestPrescreenInterviewAi,
   headerActionsRight,
   recruiterScoreSnapshot,
+  recruiterMasterScore,
   useRecruiterSnapshotOnly = false,
+  scoringDecisionControls,
 }: OverviewScoringCardProps) {
   const cardSx = { borderRadius: 1, borderColor: 'divider', ...overviewCardFlatSx } as const;
 
   const adminSnap = useRecruiterSnapshotOnly ? getRecruiterScoreDisplayForAdminUi(recruiterScoreSnapshot) : null;
+  const masterDisp = useRecruiterSnapshotOnly
+    ? getRecruiterMasterDisplayForAdminUi({
+        recruiterMasterScoreRaw: recruiterMasterScore,
+        recruiterScoreSnapshotRaw: recruiterScoreSnapshot,
+        userData: {
+          scoreSummary,
+          riskProfile: riskProfileRaw,
+        },
+        latestPrescreenInterviewAi: latestPrescreenInterviewAi ?? null,
+      })
+    : null;
   const condensedRecruiterTrust =
-    Boolean(useRecruiterSnapshotOnly && adminSnap?.hasSnapshot && uid && String(uid).length > 0);
+    Boolean(useRecruiterSnapshotOnly && masterDisp?.score100 != null && uid && String(uid).length > 0);
 
   const rawScore = getRecruiterPrimaryScore100FromSummary(scoreSummary);
   const hasStoredAi = rawScore !== null && !Number.isNaN(rawScore);
   const displayScoreLegacy = hasStoredAi ? Math.round(rawScore!) : null;
   const displayScore =
-    useRecruiterSnapshotOnly && adminSnap?.hasSnapshot
-      ? adminSnap.score100 != null
-        ? Math.round(adminSnap.score100)
-        : null
+    useRecruiterSnapshotOnly && masterDisp?.score100 != null
+      ? Math.round(masterDisp.score100)
       : displayScoreLegacy;
   const grade =
-    useRecruiterSnapshotOnly && adminSnap?.hasSnapshot
-      ? adminSnap.grade ?? (displayScore != null ? recruiterTableLetterGrade(displayScore) : '—')
+    useRecruiterSnapshotOnly && masterDisp?.score100 != null
+      ? masterDisp.grade ?? (displayScore != null ? recruiterTableLetterGrade(displayScore) : '—')
       : displayScoreLegacy != null
         ? recruiterTableLetterGrade(displayScoreLegacy)
         : '—';
   const hasStoredAiEffective =
-    useRecruiterSnapshotOnly && adminSnap
-      ? adminSnap.hasSnapshot && displayScore != null
+    useRecruiterSnapshotOnly && masterDisp
+      ? masterDisp.score100 != null && displayScore != null
       : hasStoredAi;
 
   let scoreColor: 'success.main' | 'warning.main' | 'text.primary' = 'text.primary';
@@ -516,14 +532,14 @@ export function OverviewScoringCard({
   const riskBandLegacy = overallRiskBandLabel(risk);
   const topConcernLineLegacy = workerRiskPrimaryLine(risk);
   const riskBand =
-    useRecruiterSnapshotOnly && adminSnap?.hasSnapshot
-      ? adminSnap.riskLevel
-        ? adminSnap.riskLevel.charAt(0).toUpperCase() + adminSnap.riskLevel.slice(1)
+    useRecruiterSnapshotOnly && masterDisp?.score100 != null
+      ? masterDisp.riskLevel
+        ? masterDisp.riskLevel.charAt(0).toUpperCase() + masterDisp.riskLevel.slice(1)
         : '—'
       : riskBandLegacy;
   const topConcernLine =
-    useRecruiterSnapshotOnly && adminSnap?.hasSnapshot
-      ? adminSnap.riskSummary?.trim() || null
+    useRecruiterSnapshotOnly && masterDisp?.score100 != null
+      ? adminSnap?.riskSummary?.trim() || null
       : topConcernLineLegacy;
 
   const nextActions = (scoreSummary?.explainability?.nextActions ?? [])
@@ -535,16 +551,32 @@ export function OverviewScoringCard({
   if (recommendationLinesLegacy.length < 3 && firstGap) {
     recommendationLinesLegacy.push(`Profile: add ${firstGap}`);
   }
-  const recommendationLinesSnapshot =
-    useRecruiterSnapshotOnly && adminSnap?.hasSnapshot && adminSnap.reasoningSummary?.trim()
-      ? adminSnap.reasoningSummary
+  const masterSummaryLines =
+    useRecruiterSnapshotOnly && masterDisp?.master?.summary?.trim()
+      ? masterDisp.master.summary
           .split(/\n+/)
           .map((s) => s.trim())
           .filter(Boolean)
           .slice(0, 4)
       : [];
+  const recommendationLinesSnapshot =
+    useRecruiterSnapshotOnly && masterDisp?.score100 != null && masterSummaryLines.length > 0
+      ? masterSummaryLines
+      : useRecruiterSnapshotOnly && adminSnap?.hasSnapshot && adminSnap.reasoningSummary?.trim()
+        ? adminSnap.reasoningSummary
+            .split(/\n+/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .slice(0, 4)
+        : [];
   const recommendationLines =
-    useRecruiterSnapshotOnly && adminSnap?.hasSnapshot ? recommendationLinesSnapshot : recommendationLinesLegacy;
+    useRecruiterSnapshotOnly && masterDisp?.score100 != null
+      ? recommendationLinesSnapshot.length
+        ? recommendationLinesSnapshot
+        : recommendationLinesLegacy
+      : useRecruiterSnapshotOnly && adminSnap?.hasSnapshot
+        ? recommendationLinesSnapshot
+        : recommendationLinesLegacy;
 
   const comps = scoreSummary?.components;
   const componentsLine =
@@ -557,7 +589,7 @@ export function OverviewScoringCard({
   const hasReviewAvg = scoreSummary?.reviewAvg != null && !Number.isNaN(scoreSummary.reviewAvg!);
 
   const hasAny =
-    (useRecruiterSnapshotOnly && adminSnap?.hasSnapshot) ||
+    (useRecruiterSnapshotOnly && masterDisp?.score100 != null) ||
     (!useRecruiterSnapshotOnly &&
       (hasStoredAi ||
         hasInterviewAvg ||
@@ -566,7 +598,7 @@ export function OverviewScoringCard({
         riskBandLegacy !== '—' ||
         Boolean(topConcernLineLegacy) ||
         recommendationLines.length > 0)) ||
-    (useRecruiterSnapshotOnly && !adminSnap?.hasSnapshot);
+    (useRecruiterSnapshotOnly && masterDisp?.score100 == null);
 
   return (
     <Card variant="outlined" sx={cardSx}>
@@ -585,12 +617,12 @@ export function OverviewScoringCard({
           )}
         </Stack>
 
-        {useRecruiterSnapshotOnly && !adminSnap?.hasSnapshot ? (
+        {useRecruiterSnapshotOnly && masterDisp?.score100 == null ? (
           <Typography variant="body2" sx={overviewProfileFieldValueSx}>
             {RECRUITER_SNAPSHOT_MISSING_LABEL}. Use Review &amp; rescore after deploy, or wait for the next interview
             / server refresh.
           </Typography>
-        ) : useRecruiterSnapshotOnly && adminSnap?.hasSnapshot && !uid ? (
+        ) : useRecruiterSnapshotOnly && masterDisp?.score100 != null && !uid ? (
           <Typography variant="body2" sx={overviewProfileFieldValueSx}>
             Unable to load condensed scoring (missing user id).
           </Typography>
@@ -598,8 +630,11 @@ export function OverviewScoringCard({
           <OverviewScoringCardRecruiterTrust
             uid={uid}
             scoreSummary={scoreSummary}
+            riskProfileRaw={riskProfileRaw}
             recruiterScoreSnapshotRaw={recruiterScoreSnapshot}
+            recruiterMasterScoreRaw={recruiterMasterScore}
             latestPrescreenInterviewAi={latestPrescreenInterviewAi ?? null}
+            decisionControls={scoringDecisionControls}
           />
         ) : !hasAny ? (
           <Typography variant="body2" sx={overviewProfileFieldValueSx}>
@@ -636,13 +671,17 @@ export function OverviewScoringCard({
               </Box>
             )}
 
-            {useRecruiterSnapshotOnly && adminSnap?.hasSnapshot ? (
+            {useRecruiterSnapshotOnly && masterDisp?.score100 != null ? (
               <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.62rem', lineHeight: 1.35 }}>
-                Recruiter score shown everywhere is based on this snapshot.
+                Master Recruiter Score — blended category, interview, and profile Hiring Score.
               </Typography>
             ) : null}
 
-            {adminSnap?.hasSnapshot && adminSnap.reasoningSummary ? (
+            {useRecruiterSnapshotOnly && masterDisp?.master?.summary ? (
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.68rem', lineHeight: 1.35 }}>
+                {masterDisp.master.summary}
+              </Typography>
+            ) : !useRecruiterSnapshotOnly && adminSnap?.hasSnapshot && adminSnap.reasoningSummary ? (
               <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.68rem', lineHeight: 1.35 }}>
                 {adminSnap.reasoningSummary}
               </Typography>
@@ -654,10 +693,20 @@ export function OverviewScoringCard({
               </Typography>
             ) : null}
 
-            {useRecruiterSnapshotOnly && adminSnap?.hasSnapshot ? (
+            {useRecruiterSnapshotOnly && masterDisp?.master?.components && masterDisp.master.effectiveWeights ? (
               <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem', lineHeight: 1.4 }}>
-                Components: operational {adminSnap.operationalScore100 ?? '—'} · composite {adminSnap.compositeScore100 ?? '—'}{' '}
-                · interview base {adminSnap.interviewScoreBase100 ?? '—'}
+                Breakdown: category {masterDisp.master.components.categoryScore ?? '—'} (
+                {Math.round(masterDisp.master.effectiveWeights.categoryScore * 100)}%) · interview{' '}
+                {masterDisp.master.components.interviewScore ?? '—'} ({Math.round(masterDisp.master.effectiveWeights.interviewScore * 100)}%) ·
+                profile {masterDisp.master.components.profileScore ?? '—'} (
+                {Math.round(masterDisp.master.effectiveWeights.profileScore * 100)}%)
+              </Typography>
+            ) : null}
+
+            {useRecruiterSnapshotOnly && adminSnap?.hasSnapshot ? (
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6rem', lineHeight: 1.35, opacity: 0.85 }}>
+                Supporting: operational {adminSnap.operationalScore100 ?? '—'} · composite {adminSnap.compositeScore100 ?? '—'} · base{' '}
+                {adminSnap.interviewScoreBase100 ?? '—'}
               </Typography>
             ) : null}
 

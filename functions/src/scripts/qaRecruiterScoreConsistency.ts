@@ -12,6 +12,7 @@
 import * as admin from 'firebase-admin';
 import { FieldPath } from 'firebase-admin/firestore';
 import { buildRecruiterScoreSnapshotForUserDoc } from '../scoring/buildRecruiterScoreSnapshot';
+import { buildRecruiterMasterScoreForUserDoc } from '../scoring/buildRecruiterMasterScore';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -45,7 +46,7 @@ function tenantMatches(data: Record<string, unknown>, tenantId: string | null): 
 
 type Flag = {
   uid: string;
-  kind: 'stale_or_drift' | 'missing_snapshot' | 'broken_source_interview' | 'decision_gap';
+  kind: 'stale_or_drift' | 'missing_snapshot' | 'broken_source_interview' | 'decision_gap' | 'master_drift';
   detail: string;
 };
 
@@ -75,6 +76,18 @@ async function main(): Promise<void> {
         uid,
         kind: 'stale_or_drift',
         detail: `stored score100=${sScore} built=${bScore} (re-run backfill)`,
+      });
+    }
+
+    const storedMaster = data.recruiterMasterScore as { score100?: unknown; version?: unknown } | undefined;
+    const builtMaster = await buildRecruiterMasterScoreForUserDoc(db, uid, 'system');
+    const sm = typeof storedMaster?.score100 === 'number' && Number.isFinite(storedMaster.score100) ? Math.round(storedMaster.score100) : null;
+    const bm = builtMaster.score100 != null ? Math.round(builtMaster.score100) : null;
+    if (storedMaster && storedMaster.version === 'v1' && sm !== bm) {
+      flags.push({
+        uid,
+        kind: 'master_drift',
+        detail: `stored recruiterMasterScore.score100=${sm} built=${bm} (re-run npm run scores:backfill)`,
       });
     }
 

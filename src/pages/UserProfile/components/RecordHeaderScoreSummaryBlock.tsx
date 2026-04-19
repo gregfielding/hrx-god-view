@@ -12,6 +12,7 @@ import {
   getRecruiterScoreDisplayForAdminUi,
   RECRUITER_SNAPSHOT_MISSING_LABEL,
 } from '../../../utils/scoring/recruiterScoreSnapshot';
+import { getRecruiterMasterDisplayForAdminUi } from '../../../utils/scoring/recruiterMasterScoreDisplay';
 import { formatCategoryScoresCompactPreviewFromPartial } from '../../../utils/parseRecruiterCategoryScores';
 import type { WorkerInterviewAiBlock } from '../../../types/workerAiPrescreenInterview';
 import type { PrescreenCategoryScoresV1 } from '../../../types/prescreenCategoryScores';
@@ -33,6 +34,7 @@ export type RecordHeaderScoreSummaryBlockProps = {
   interviewSummaryLine?: string | null;
   latestPrescreenInterviewAi?: WorkerInterviewAiBlock | null;
   recruiterScoreSnapshot?: unknown;
+  recruiterMasterScore?: unknown;
   /** Recruiter record header — canonical snapshot only (no legacy primary fallback). */
   useRecruiterSnapshotOnly?: boolean;
 };
@@ -48,14 +50,25 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
   interviewSummaryLine,
   latestPrescreenInterviewAi,
   recruiterScoreSnapshot,
+  recruiterMasterScore,
   useRecruiterSnapshotOnly = false,
 }) => {
   const snapDisp = getRecruiterScoreDisplayForAdminUi(recruiterScoreSnapshot);
+  const masterDisp = getRecruiterMasterDisplayForAdminUi({
+    recruiterMasterScoreRaw: recruiterMasterScore,
+    recruiterScoreSnapshotRaw: recruiterScoreSnapshot,
+    userData: {
+      scoreSummary,
+      riskProfile,
+      ...(categoryScores ? { categoryScoresCurrent: categoryScores } : {}),
+    },
+    latestPrescreenInterviewAi: latestPrescreenInterviewAi ?? null,
+  });
   const displayPack = useRecruiterSnapshotOnly
-    ? snapDisp.hasSnapshot && snapDisp.score100 != null
+    ? masterDisp.score100 != null
       ? {
-          primaryScore100: snapDisp.score100,
-          primaryGrade: snapDisp.grade ?? recruiterTableLetterGrade(Math.round(snapDisp.score100)),
+          primaryScore100: masterDisp.score100,
+          primaryGrade: masterDisp.grade ?? recruiterTableLetterGrade(Math.round(masterDisp.score100)),
           secondaryProfileComposite100: null as number | null,
           hasConflict: false,
           conflictHint: null as string | null,
@@ -78,7 +91,7 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
   const displayScore = relativeScore != null ? relativeScore : hasScore ? Math.round(rawScore!) : null;
   const grade = useRecruiterSnapshotOnly
     ? hasScore
-      ? snapDisp.grade ?? recruiterTableLetterGrade(Math.round(rawScore!))
+      ? masterDisp.grade ?? recruiterTableLetterGrade(Math.round(rawScore!))
       : '—'
     : displayScore != null
       ? recruiterTableLetterGrade(displayScore)
@@ -99,13 +112,13 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
         ? strengths.join(' · ')
         : null;
   const riskBand =
-    useRecruiterSnapshotOnly && snapDisp.hasSnapshot
-      ? snapDisp.riskLevel
-        ? snapDisp.riskLevel.charAt(0).toUpperCase() + snapDisp.riskLevel.slice(1)
+    useRecruiterSnapshotOnly && masterDisp.score100 != null
+      ? masterDisp.riskLevel
+        ? masterDisp.riskLevel.charAt(0).toUpperCase() + masterDisp.riskLevel.slice(1)
         : '—'
       : overallRiskBandLabel(riskProfile);
   const topConcernLine =
-    useRecruiterSnapshotOnly && snapDisp.hasSnapshot
+    useRecruiterSnapshotOnly && masterDisp.score100 != null
       ? snapDisp.riskSummary?.trim() || null
       : workerRiskPrimaryLine(riskProfile);
 
@@ -118,33 +131,49 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
   if (recommendationLinesLegacy.length < 2 && firstGap) {
     recommendationLinesLegacy.push(`Profile: add ${firstGap}`);
   }
+  const masterSummary = masterDisp.master?.summary?.trim();
   const recommendationLinesSnapshot =
-    useRecruiterSnapshotOnly && snapDisp.hasSnapshot && snapDisp.reasoningSummary?.trim()
-      ? snapDisp.reasoningSummary
-          .split(/\n+/)
-          .map((s) => s.trim())
-          .filter(Boolean)
-          .slice(0, 4)
-      : [];
+    useRecruiterSnapshotOnly && masterDisp.score100 != null && masterSummary
+      ? masterSummary.split(/\n+/).map((s) => s.trim()).filter(Boolean).slice(0, 4)
+      : useRecruiterSnapshotOnly && snapDisp.hasSnapshot && snapDisp.reasoningSummary?.trim()
+        ? snapDisp.reasoningSummary
+            .split(/\n+/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .slice(0, 4)
+        : [];
   const recommendationLines =
-    useRecruiterSnapshotOnly && snapDisp.hasSnapshot ? recommendationLinesSnapshot : recommendationLinesLegacy;
+    useRecruiterSnapshotOnly && masterDisp.score100 != null
+      ? recommendationLinesSnapshot.length
+        ? recommendationLinesSnapshot
+        : recommendationLinesLegacy
+      : useRecruiterSnapshotOnly && snapDisp.hasSnapshot
+        ? recommendationLinesSnapshot
+        : recommendationLinesLegacy;
 
-  const tooltipTitle = useRecruiterSnapshotOnly && snapDisp.hasSnapshot ? (
+  const m = masterDisp.master;
+  const c = m?.components;
+  const ew = m?.effectiveWeights;
+
+  const tooltipTitle = useRecruiterSnapshotOnly && masterDisp.score100 != null ? (
     <Box sx={{ p: 0.5 }}>
       <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
-        Recruiter score snapshot
+        Master Recruiter Score
       </Typography>
       <Stack spacing={0.25}>
         <Typography variant="body2">
-          Canonical score (0–100): <strong>{hasScore ? Math.round(rawScore!) : '—'}</strong>
+          Master (0–100): <strong>{hasScore ? Math.round(rawScore!) : '—'}</strong>
         </Typography>
-        <Typography variant="caption" color="inherit" sx={{ opacity: 0.9 }}>
-          Components: operational {snapDisp.operationalScore100 ?? '—'} · composite {snapDisp.compositeScore100 ?? '—'} ·
-          interview base {snapDisp.interviewScoreBase100 ?? '—'}
-        </Typography>
-        {snapDisp.reasoningSummary?.trim() ? (
-          <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
-            {snapDisp.reasoningSummary.trim()}
+        {c && ew ? (
+          <Typography variant="caption" color="inherit" sx={{ opacity: 0.9 }}>
+            Category {c.categoryScore ?? '—'} × {Math.round(ew.categoryScore * 100)}% · Interview {c.interviewScore ?? '—'} ×{' '}
+            {Math.round(ew.interviewScore * 100)}% · Profile {c.profileScore ?? '—'} × {Math.round(ew.profileScore * 100)}%
+          </Typography>
+        ) : null}
+        {snapDisp.hasSnapshot ? (
+          <Typography variant="caption" color="inherit" sx={{ opacity: 0.75, display: 'block', mt: 0.5 }}>
+            Supporting: operational {snapDisp.operationalScore100 ?? '—'} · composite {snapDisp.compositeScore100 ?? '—'} · base{' '}
+            {snapDisp.interviewScoreBase100 ?? '—'}
           </Typography>
         ) : null}
         {riskProfile && (
@@ -209,7 +238,7 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
     </Box>
   );
 
-  if (useRecruiterSnapshotOnly && !snapDisp.hasSnapshot) {
+  if (useRecruiterSnapshotOnly && masterDisp.score100 == null) {
     return (
       <Box sx={{ width: '100%', minWidth: 0 }}>
         <Stack spacing={0.35} alignItems="flex-start">
@@ -266,9 +295,9 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
               </Typography>
             ) : null}
           </Box>
-          {useRecruiterSnapshotOnly && snapDisp.hasSnapshot ? (
+          {useRecruiterSnapshotOnly && masterDisp.score100 != null ? (
             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.62rem', lineHeight: 1.35 }}>
-              Recruiter score shown everywhere is based on this snapshot.
+              Master Recruiter Score — same blend as Users table and Overview.
             </Typography>
           ) : null}
           {!useRecruiterSnapshotOnly &&
@@ -279,10 +308,17 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
               Profile {Math.round(compositeScore)} (secondary)
             </Typography>
           ) : null}
-          {useRecruiterSnapshotOnly && snapDisp.hasSnapshot ? (
+          {useRecruiterSnapshotOnly && snapDisp.hasSnapshot && m?.components && ew ? (
             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem', lineHeight: 1.4 }}>
-              Components: operational {snapDisp.operationalScore100 ?? '—'} · composite {snapDisp.compositeScore100 ?? '—'}{' '}
-              · interview base {snapDisp.interviewScoreBase100 ?? '—'}
+              Breakdown: category {m.components.categoryScore ?? '—'} ({Math.round(ew.categoryScore * 100)}%) · interview{' '}
+              {m.components.interviewScore ?? '—'} ({Math.round(ew.interviewScore * 100)}%) · profile{' '}
+              {m.components.profileScore ?? '—'} ({Math.round(ew.profileScore * 100)}%)
+            </Typography>
+          ) : null}
+          {useRecruiterSnapshotOnly && snapDisp.hasSnapshot ? (
+            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6rem', lineHeight: 1.35, opacity: 0.85 }}>
+              Supporting metrics: op {snapDisp.operationalScore100 ?? '—'} · composite {snapDisp.compositeScore100 ?? '—'} · base{' '}
+              {snapDisp.interviewScoreBase100 ?? '—'}
             </Typography>
           ) : null}
           {strengthsLine && (
@@ -305,7 +341,11 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
               fontSize: '0.68rem',
               fontWeight: 600,
               color:
-                riskBand === 'High' ? 'error.main' : riskBand === 'Medium' ? 'warning.dark' : 'text.secondary',
+                riskBand === 'High'
+                  ? 'error.main'
+                  : riskBand === 'Medium' || riskBand === 'Moderate'
+                    ? 'warning.dark'
+                    : 'text.secondary',
             }}
           >
             Risk: {riskBand}

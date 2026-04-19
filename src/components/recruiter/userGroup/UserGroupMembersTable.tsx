@@ -40,7 +40,8 @@ import { useFavorites } from '../../../hooks/useFavorites';
 import StandardTablePagination from '../../StandardTablePagination';
 import { TABLE_AVATAR_SIZE } from '../../../utils/uiConstants';
 import RecruiterUserTableContactBlock from '../../tables/RecruiterUserTableContactBlock';
-import { formatOneDecimal, getRelativeAiScore } from '../../../utils/scoreSummary';
+import { formatOneDecimal } from '../../../utils/scoreSummary';
+import { getRecruiterMasterDisplayForAdminUi } from '../../../utils/scoring/recruiterMasterScoreDisplay';
 import { getRecruiterScoreDisplayForAdminUi } from '../../../utils/scoring/recruiterScoreSnapshot';
 import {
   getBackgroundBreakdownRows,
@@ -64,7 +65,6 @@ import {
 import { useCategoryScoresCurrentMap } from '../../../hooks/useCategoryScoresCurrentMap';
 import { useRecruiterUsersRowExtras } from '../../../hooks/useRecruiterUsersRowExtras';
 import { useRecruiterUsersLatestBackgroundChecks } from '../../../hooks/useRecruiterUsersLatestBackgroundChecks';
-import { useScoringDistribution } from '../../../hooks/useScoringDistribution';
 import { useRecruiterUsersEntityEmploymentChips } from '../../../hooks/useRecruiterUsersEntityEmploymentChips';
 export type MemberPreferenceStatus = 'preferred' | 'member' | 'not_preferred';
 
@@ -145,8 +145,16 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
   };
 
   const getScoreNumber = (u: any): number => {
-    const snapDisp = getRecruiterScoreDisplayForAdminUi(u.recruiterScoreSnapshot);
-    if (snapDisp.hasSnapshot && snapDisp.score100 != null && !Number.isNaN(snapDisp.score100)) return snapDisp.score100;
+    const m = getRecruiterMasterDisplayForAdminUi({
+      recruiterMasterScoreRaw: u.recruiterMasterScore,
+      recruiterScoreSnapshotRaw: u.recruiterScoreSnapshot,
+      userData: {
+        scoreSummary: u.scoreSummary,
+        riskProfile: u.riskProfile,
+      },
+      latestPrescreenInterviewAi: null,
+    });
+    if (m.score100 != null && !Number.isNaN(m.score100)) return m.score100;
     return -1;
   };
 
@@ -230,8 +238,6 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
     tenantId,
     paginatedMemberIds,
   );
-  const { distribution: scoringDistribution } = useScoringDistribution(tenantId);
-
   const selectedCount = selectAllResults ? sortedMembers.length : selectedIds.size;
   const allOnPageSelected =
     paginatedMembers.length > 0 &&
@@ -363,8 +369,19 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
   };
 
   const renderAiScore = (u: any) => {
+    const cat = categoryScoresByUserId[u.id];
+    const masterDisp = getRecruiterMasterDisplayForAdminUi({
+      recruiterMasterScoreRaw: u.recruiterMasterScore,
+      recruiterScoreSnapshotRaw: u.recruiterScoreSnapshot,
+      userData: {
+        scoreSummary: u.scoreSummary,
+        riskProfile: u.riskProfile,
+        ...(cat ? { categoryScoresCurrent: cat } : {}),
+      },
+      latestPrescreenInterviewAi: null,
+    });
     const snapDisp = getRecruiterScoreDisplayForAdminUi(u.recruiterScoreSnapshot);
-    const rawScore = snapDisp.hasSnapshot ? snapDisp.score100 : null;
+    const rawScore = masterDisp.score100;
     const compositeScore = snapDisp.hasSnapshot ? snapDisp.compositeScore100 : null;
     const categoryPreview =
       snapDisp.hasSnapshot && Object.keys(snapDisp.categoryScores || {}).length > 0
@@ -399,10 +416,8 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
         </Box>
       );
     }
-    const relativeScore = getRelativeAiScore(rawScore, scoringDistribution);
-    const displayScore = relativeScore != null ? relativeScore : Math.round(rawScore);
-    const showRelative = relativeScore != null;
-    const grade = recruiterTableLetterGrade(displayScore);
+    const displayScore = Math.round(rawScore);
+    const grade = masterDisp.grade ?? recruiterTableLetterGrade(displayScore);
 
     let scoreColor: 'success.main' | 'warning.main' | 'text.primary' = 'text.primary';
     if (displayScore >= 80) scoreColor = 'success.main';
@@ -414,19 +429,18 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
         title={
           <Box sx={{ p: 0.5 }}>
             <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
-              Score Summary
+              Master Recruiter Score
             </Typography>
             <Typography variant="caption" color="inherit" sx={{ display: 'block', mb: 0.5, opacity: 0.9 }}>
-              Primary: operational score when prescreen trust is stored.
+              Blended category (50%) · interview (35%) · profile Hiring Score (15%).
             </Typography>
             <Stack spacing={0.25}>
               <Typography variant="body2">
-                Operational / primary: <strong>{Math.round(rawScore)}</strong>
-                {showRelative ? ` (relative: ${displayScore})` : ''}
+                Master: <strong>{Math.round(rawScore)}</strong>
               </Typography>
-              {compositeScore != null && compositeScore !== rawScore ? (
+              {compositeScore != null ? (
                 <Typography variant="caption" color="inherit" sx={{ opacity: 0.9 }}>
-                  Composite Hiring Score: <strong>{Math.round(compositeScore)}</strong>
+                  Composite Hiring Score (supporting): <strong>{Math.round(compositeScore)}</strong>
                 </Typography>
               ) : null}
               <Typography variant="body2">

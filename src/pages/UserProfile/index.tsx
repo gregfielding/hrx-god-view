@@ -914,6 +914,8 @@ const UserProfilePage = () => {
             String(data.preferredLanguage || '').toLowerCase() === 'es' ? 'es' : 'en',
           last4SSN: normalizeLast4SsnDigits(data.last4SSN ?? ''),
           recruiterScoreSnapshot: data.recruiterScoreSnapshot ?? null,
+          recruiterMasterScore: data.recruiterMasterScore ?? null,
+          categoryScoresCurrent: data.categoryScoresCurrent ?? null,
         });
 
         setProfileOnboardingType(typeof data.onboardingType === 'string' ? data.onboardingType : undefined);
@@ -1906,6 +1908,9 @@ const UserProfilePage = () => {
           scoreSummary={scoreSummary}
           latestPrescreenInterviewAi={latestWorkerPrescreenAi}
           recruiterScoreSnapshot={skillsData?.recruiterScoreSnapshot}
+          recruiterMasterScore={skillsData?.recruiterMasterScore}
+          riskProfile={skillsData?.riskProfile}
+          categoryScoresCurrent={skillsData?.categoryScoresCurrent}
           scoringDistribution={scoringDistribution}
           resume={skillsData?.resume || null}
           certifications={skillsData?.certifications || []}
@@ -2091,6 +2096,7 @@ const UserProfilePage = () => {
                   scoreSummary={scoreSummary}
                   latestPrescreenInterviewAi={latestWorkerPrescreenAi}
                   recruiterScoreSnapshot={skillsData?.recruiterScoreSnapshot}
+                  recruiterMasterScore={skillsData?.recruiterMasterScore}
                   scoringDistribution={scoringDistribution}
                   categoryScores={categoryScoresCurrent}
                   riskProfile={recordHeaderRiskProfile}
@@ -2348,6 +2354,9 @@ const UserProfilePage = () => {
                             scoringDistribution={scoringDistribution}
                             latestPrescreenInterviewAi={latestWorkerPrescreenAi}
                             recruiterScoreSnapshot={skillsData?.recruiterScoreSnapshot}
+                            recruiterMasterScore={skillsData?.recruiterMasterScore}
+                            riskProfile={skillsData?.riskProfile}
+                            categoryScoresCurrent={skillsData?.categoryScoresCurrent}
                             useRecruiterSnapshotOnly={viewerSecurityLevel >= 5}
                           />
                         )}

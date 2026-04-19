@@ -7,7 +7,8 @@ import {
   type ScoringDistribution,
 } from '../../../utils/scoreSummary';
 import { resolveRecruiterPrimaryDisplay } from '../../../utils/scoring/recruiterPrimaryDisplay';
-import { getRecruiterScoreDisplayForAdminUi, RECRUITER_SNAPSHOT_MISSING_LABEL } from '../../../utils/scoring/recruiterScoreSnapshot';
+import { getRecruiterMasterDisplayForAdminUi } from '../../../utils/scoring/recruiterMasterScoreDisplay';
+import { RECRUITER_SNAPSHOT_MISSING_LABEL } from '../../../utils/scoring/recruiterScoreSnapshot';
 import type { WorkerInterviewAiBlock } from '../../../types/workerAiPrescreenInterview';
 import { recruiterTableLetterGrade } from '../../../utils/recruiterUsersReadinessDisplay';
 import { recordHeaderTooltipComponentsProps } from './recordHeaderStyles';
@@ -18,7 +19,10 @@ export type AiScoreGradeDisplayProps = {
   /** When set (profile page), matches header / interview operational layer */
   latestPrescreenInterviewAi?: WorkerInterviewAiBlock | null;
   recruiterScoreSnapshot?: unknown;
-  /** Internal recruiters — primary score from snapshot only (no legacy / relative fallback). */
+  recruiterMasterScore?: unknown;
+  riskProfile?: unknown;
+  categoryScoresCurrent?: unknown;
+  /** Internal recruiters — Master Recruiter Score (persisted or computed). */
   useRecruiterSnapshotOnly?: boolean;
 };
 
@@ -30,11 +34,23 @@ const AiScoreGradeDisplay: React.FC<AiScoreGradeDisplayProps> = ({
   scoringDistribution,
   latestPrescreenInterviewAi,
   recruiterScoreSnapshot,
+  recruiterMasterScore,
+  riskProfile,
+  categoryScoresCurrent,
   useRecruiterSnapshotOnly = false,
 }) => {
-  const snapDisp = getRecruiterScoreDisplayForAdminUi(recruiterScoreSnapshot);
   if (useRecruiterSnapshotOnly) {
-    if (!snapDisp.hasSnapshot || snapDisp.score100 == null || Number.isNaN(snapDisp.score100)) {
+    const masterDisp = getRecruiterMasterDisplayForAdminUi({
+      recruiterMasterScoreRaw: recruiterMasterScore,
+      recruiterScoreSnapshotRaw: recruiterScoreSnapshot,
+      userData: {
+        scoreSummary,
+        riskProfile,
+        ...(categoryScoresCurrent != null ? { categoryScoresCurrent } : {}),
+      },
+      latestPrescreenInterviewAi: latestPrescreenInterviewAi ?? null,
+    });
+    if (masterDisp.score100 == null || Number.isNaN(masterDisp.score100)) {
       return (
         <Tooltip title={RECRUITER_SNAPSHOT_MISSING_LABEL} componentsProps={recordHeaderTooltipComponentsProps}>
           <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem' }}>
@@ -43,8 +59,11 @@ const AiScoreGradeDisplay: React.FC<AiScoreGradeDisplayProps> = ({
         </Tooltip>
       );
     }
-    const rawSnap = Math.round(snapDisp.score100);
-    const gradeSnap = snapDisp.grade ?? recruiterTableLetterGrade(rawSnap);
+    const rawSnap = Math.round(masterDisp.score100);
+    const gradeSnap = masterDisp.grade ?? recruiterTableLetterGrade(rawSnap);
+    const m = masterDisp.master;
+    const c = m?.components;
+    const ew = m?.effectiveWeights;
     let scoreColor: 'success.main' | 'warning.main' | 'text.primary' = 'text.primary';
     if (rawSnap >= 80) scoreColor = 'success.main';
     else if (rawSnap >= 60) scoreColor = 'warning.main';
@@ -63,19 +82,21 @@ const AiScoreGradeDisplay: React.FC<AiScoreGradeDisplayProps> = ({
         title={
           <Box sx={{ p: 0.5 }}>
             <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
-              Recruiter score snapshot
+              Master Recruiter Score
             </Typography>
             <Typography variant="caption" color="inherit" sx={{ display: 'block', mb: 0.5, opacity: 0.9 }}>
-              Canonical score for all recruiter views — components listed for context only.
+              Category · interview · profile blend (weights renormalize when a part is missing).
             </Typography>
             <Stack spacing={0.25}>
               <Typography variant="body2">
-                Primary: <strong>{rawSnap}</strong> (grade {gradeSnap})
+                Master: <strong>{rawSnap}</strong> (grade {gradeSnap})
               </Typography>
-              <Typography variant="caption" color="inherit" sx={{ opacity: 0.85 }}>
-                Operational {snapDisp.operationalScore100 ?? '—'} · Composite {snapDisp.compositeScore100 ?? '—'} · Base{' '}
-                {snapDisp.interviewScoreBase100 ?? '—'}
-              </Typography>
+              {c && ew ? (
+                <Typography variant="caption" color="inherit" sx={{ opacity: 0.85 }}>
+                  Category {c.categoryScore ?? '—'} × {Math.round(ew.categoryScore * 100)}% · Interview {c.interviewScore ?? '—'} ×{' '}
+                  {Math.round(ew.interviewScore * 100)}% · Profile {c.profileScore ?? '—'} × {Math.round(ew.profileScore * 100)}%
+                </Typography>
+              ) : null}
             </Stack>
           </Box>
         }

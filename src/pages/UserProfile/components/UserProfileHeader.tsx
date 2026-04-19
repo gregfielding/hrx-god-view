@@ -42,7 +42,7 @@ import RecordHeaderActionIcon from './RecordHeaderActionIcon';
 import { recordHeaderActionIconButtonSx, recordHeaderTooltipComponentsProps } from './recordHeaderStyles';
 import type { ScoreSummary, ScoringDistribution } from '../../../utils/scoreSummary';
 import { resolveRecruiterPrimaryDisplay } from '../../../utils/scoring/recruiterPrimaryDisplay';
-import { getRecruiterScoreDisplayForAdminUi } from '../../../utils/scoring/recruiterScoreSnapshot';
+import { getRecruiterMasterDisplayForAdminUi } from '../../../utils/scoring/recruiterMasterScoreDisplay';
 import { recruiterTableLetterGrade } from '../../../utils/recruiterUsersReadinessDisplay';
 import type { WorkerInterviewAiBlock } from '../../../types/workerAiPrescreenInterview';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
@@ -89,8 +89,14 @@ interface UserProfileHeaderProps {
   scoreSummary?: ScoreSummary;
   /** Latest worker AI prescreen `ai` from parent — keeps header aligned with interview operational score */
   latestPrescreenInterviewAi?: WorkerInterviewAiBlock | null;
-  /** Canonical recruiter score on user doc — primary for admin view when present */
+  /** Canonical recruiter score on user doc — supporting detail + category fallback */
   recruiterScoreSnapshot?: unknown;
+  /** Master Recruiter Score — preferred headline for admin/recruiter views */
+  recruiterMasterScore?: unknown;
+  /** Risk profile map — needed for master score client fallback */
+  riskProfile?: unknown;
+  /** Live category scores on user doc — improves master client fallback */
+  categoryScoresCurrent?: unknown;
   scoringDistribution?: ScoringDistribution | null;
   // New props for document access and additional data
   resume?: {
@@ -182,6 +188,9 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   scoreSummary,
   latestPrescreenInterviewAi,
   recruiterScoreSnapshot,
+  recruiterMasterScore,
+  riskProfile,
+  categoryScoresCurrent,
   scoringDistribution,
   resume,
   certifications = [],
@@ -274,14 +283,34 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
     return null;
   }, [createdAt]);
 
-  const adminSnap = useMemo(() => getRecruiterScoreDisplayForAdminUi(recruiterScoreSnapshot), [recruiterScoreSnapshot]);
+  const adminMaster = useMemo(
+    () =>
+      getRecruiterMasterDisplayForAdminUi({
+        recruiterMasterScoreRaw: recruiterMasterScore,
+        recruiterScoreSnapshotRaw: recruiterScoreSnapshot,
+        userData: {
+          scoreSummary,
+          riskProfile,
+          ...(categoryScoresCurrent != null ? { categoryScoresCurrent } : {}),
+        },
+        latestPrescreenInterviewAi: latestPrescreenInterviewAi ?? undefined,
+      }),
+    [
+      recruiterMasterScore,
+      recruiterScoreSnapshot,
+      scoreSummary,
+      riskProfile,
+      categoryScoresCurrent,
+      latestPrescreenInterviewAi,
+    ],
+  );
 
   const recruiterPrimary = useMemo(() => {
     if (isAdminView) {
-      if (adminSnap.hasSnapshot && adminSnap.score100 != null) {
+      if (adminMaster.score100 != null) {
         return {
-          primaryScore100: adminSnap.score100,
-          primaryGrade: adminSnap.grade ?? recruiterTableLetterGrade(Math.round(adminSnap.score100)),
+          primaryScore100: adminMaster.score100,
+          primaryGrade: adminMaster.grade ?? recruiterTableLetterGrade(Math.round(adminMaster.score100)),
           secondaryProfileComposite100: null,
           hasConflict: false,
           conflictHint: null as string | null,
@@ -299,7 +328,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
       scoreSummary,
       latestPrescreenInterviewAi: latestPrescreenInterviewAi ?? null,
     });
-  }, [isAdminView, adminSnap, scoreSummary, latestPrescreenInterviewAi]);
+  }, [isAdminView, adminMaster, scoreSummary, latestPrescreenInterviewAi]);
 
   const [gmailConnected, setGmailConnected] = useState<boolean>(false);
   const [hasTwilioNumber, setHasTwilioNumber] = useState<boolean>(false);

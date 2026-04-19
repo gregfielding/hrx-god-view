@@ -149,6 +149,39 @@ function prescreenAnswerDisplayLine(q: InterviewQuestion): string {
   return t;
 }
 
+function InterviewAnswersSection({
+  interview,
+  recruiterTrustUi,
+}: {
+  interview: Interview;
+  recruiterTrustUi?: boolean;
+}) {
+  return (
+    <Box>
+      <Typography variant="overline" color="text.secondary">
+        Interview answers
+      </Typography>
+      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+        {recruiterTrustUi
+          ? 'Raw responses from this interview record.'
+          : 'Historical responses — supporting detail for the summary above.'}
+      </Typography>
+      <Stack spacing={2} sx={{ mt: 0.5 }}>
+        {interview.questions.map((q) => (
+          <Box key={q.id}>
+            <Typography variant="subtitle2" fontWeight={600} gutterBottom>
+              {q.question}
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
+              {prescreenAnswerDisplayLine(q)}
+            </Typography>
+          </Box>
+        ))}
+      </Stack>
+    </Box>
+  );
+}
+
 const InterviewTab: React.FC<InterviewTabProps> = ({
   uid,
   scoreSummary,
@@ -566,11 +599,18 @@ const InterviewTab: React.FC<InterviewTabProps> = ({
         </Alert>
       ) : null}
 
-      <Card variant="outlined">
+      <Box sx={{ order: recruiterTrustUi ? 3 : 1 }}>
+      <Card variant="outlined" sx={recruiterTrustUi ? { bgcolor: 'action.hover', borderStyle: 'dashed' } : undefined}>
         <CardHeader
-          title="Current category scores (worker profile)"
-          subheader="Evolving scores on this worker profile — not the same as historical interview rows below."
-          titleTypographyProps={{ variant: 'h6', fontWeight: 700 }}
+          title={
+            recruiterTrustUi ? 'Live profile category scores' : 'Current category scores (worker profile)'
+          }
+          subheader={
+            recruiterTrustUi
+              ? 'Same six dimensions as Overview — profile state at a glance.'
+              : 'Evolving scores on this worker profile — not the same as historical interview rows below.'
+          }
+          titleTypographyProps={{ variant: recruiterTrustUi ? 'subtitle1' : 'h6', fontWeight: 700 }}
           subheaderTypographyProps={{ variant: 'caption', color: 'text.secondary' }}
         />
         <CardContent sx={{ pt: 0 }}>
@@ -593,7 +633,9 @@ const InterviewTab: React.FC<InterviewTabProps> = ({
           )}
         </CardContent>
       </Card>
+      </Box>
 
+      <Box sx={{ order: recruiterTrustUi ? 4 : 2 }}>
       {latestWorkerAiPrescreen?.ai &&
         (() => {
           const prescreenCardModel = latestWorkerAiPrescreen as WorkerAiPrescreenInterviewCardModel;
@@ -640,8 +682,10 @@ const InterviewTab: React.FC<InterviewTabProps> = ({
           </Card>
         );
         })()}
+      </Box>
 
       {/* Interview Form Card */}
+      <Box sx={{ order: recruiterTrustUi ? 2 : 3 }}>
       <Card variant="outlined">
         <CardHeader 
           title="Conduct Interview" 
@@ -710,8 +754,10 @@ const InterviewTab: React.FC<InterviewTabProps> = ({
           </Grid>
         </CardContent>
       </Card>
+      </Box>
 
       {/* Interviews History Card */}
+      <Box sx={{ order: recruiterTrustUi ? 1 : 4 }}>
       <Card variant="outlined">
         <CardHeader 
           title={`Interview History (${interviews.length})`}
@@ -732,7 +778,15 @@ const InterviewTab: React.FC<InterviewTabProps> = ({
                     <TableCell sx={{ fontWeight: 600 }}>Date</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>Source</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>Completed By</TableCell>
-                    <TableCell sx={{ fontWeight: 600 }}>Score</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>
+                      {recruiterTrustUi ? (
+                        <Tooltip title="Operational or base score from this interview record. Primary hiring score is on Overview.">
+                          <span>Record score</span>
+                        </Tooltip>
+                      ) : (
+                        'Score'
+                      )}
+                    </TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>
                       <Tooltip title="Interview recommendation (answer quality & scoring signals)">
                         <span>Interview rec.</span>
@@ -867,6 +921,7 @@ const InterviewTab: React.FC<InterviewTabProps> = ({
           )}
         </CardContent>
       </Card>
+      </Box>
 
       {/* View Interview Dialog */}
       <Dialog
@@ -906,207 +961,384 @@ const InterviewTab: React.FC<InterviewTabProps> = ({
             </DialogTitle>
             <DialogContent>
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
-                {viewInterviewDialog.interview.ai && viewModalSummary && viewScoreIntelligence ? (
+                {recruiterTrustUi ? (
                   <>
-                    {/* 1 — Interview summary */}
-                    <Box>
-                      <Typography variant="overline" color="text.secondary">
-                        Interview summary
-                      </Typography>
-                      {viewInterviewDialog.interview.ai.summary ? (
-                        <Typography variant="body2" sx={{ mt: 1, whiteSpace: 'pre-wrap' }}>
-                          {viewInterviewDialog.interview.ai.summary}
+                    {viewInterviewDialog.interview.ai?.categoryScores ? (
+                      <Box>
+                        <Typography variant="overline" color="text.secondary">
+                          Category snapshot
                         </Typography>
-                      ) : null}
-                      <Typography variant="subtitle2" sx={{ mt: 1.5, fontWeight: 700 }}>
-                        Strengths
-                      </Typography>
-                      {viewScoreIntelligence.strengths.length > 0 ? (
-                        <Stack component="ul" spacing={0.35} sx={{ m: 0, pl: 2, mt: 0.5 }}>
-                          {viewScoreIntelligence.strengths.map((s) => (
-                            <Typography key={s} component="li" variant="body2">
-                              {s}
+                        <RecruiterCategoryScoresPanel
+                          scores={viewInterviewDialog.interview.ai.categoryScores}
+                          evidence={viewInterviewDialog.interview.ai.categoryEvidence ?? null}
+                          scoreKind="interview_snapshot"
+                          showHeading={false}
+                          description={null}
+                          collapsibleEvidence
+                        />
+                      </Box>
+                    ) : null}
+                    <InterviewAnswersSection
+                      interview={viewInterviewDialog.interview}
+                      recruiterTrustUi
+                    />
+                    {viewInterviewDialog.interview.ai && viewModalSummary && viewScoreIntelligence ? (
+                      <Accordion
+                        defaultExpanded={false}
+                        disableGutters
+                        elevation={0}
+                        sx={{
+                          border: '1px solid',
+                          borderColor: 'divider',
+                          borderRadius: 1,
+                          bgcolor: 'background.paper',
+                          '&:before': { display: 'none' },
+                        }}
+                      >
+                        <AccordionSummary expandIcon={<ExpandMoreIcon fontSize="small" />} sx={{ px: 1.5 }}>
+                          <Typography variant="subtitle2" fontWeight={600}>
+                            Interview-scoped scoring details
+                          </Typography>
+                        </AccordionSummary>
+                        <AccordionDetails sx={{ pt: 0 }}>
+                          <Stack spacing={2}>
+                            <Box>
+                              <Typography variant="overline" color="text.secondary">
+                                Interview summary
+                              </Typography>
+                              {viewInterviewDialog.interview.ai.summary ? (
+                                <Typography variant="body2" sx={{ mt: 1, whiteSpace: 'pre-wrap' }}>
+                                  {viewInterviewDialog.interview.ai.summary}
+                                </Typography>
+                              ) : null}
+                              <Typography variant="subtitle2" sx={{ mt: 1.5, fontWeight: 700 }}>
+                                Strengths
+                              </Typography>
+                              {viewScoreIntelligence.strengths.length > 0 ? (
+                                <Stack component="ul" spacing={0.35} sx={{ m: 0, pl: 2, mt: 0.5 }}>
+                                  {viewScoreIntelligence.strengths.map((s) => (
+                                    <Typography key={s} component="li" variant="body2">
+                                      {s}
+                                    </Typography>
+                                  ))}
+                                </Stack>
+                              ) : (
+                                <Typography variant="body2" color="text.secondary">
+                                  No strengths extracted.
+                                </Typography>
+                              )}
+                              <Typography variant="subtitle2" sx={{ mt: 1.5, fontWeight: 700 }}>
+                                Risks / review reasons
+                              </Typography>
+                              {viewScoreIntelligence.risks.length > 0 ? (
+                                <Stack component="ul" spacing={0.35} sx={{ m: 0, pl: 2, mt: 0.5 }}>
+                                  {viewScoreIntelligence.risks.map((r) => (
+                                    <Typography key={r} component="li" variant="body2">
+                                      {r}
+                                    </Typography>
+                                  ))}
+                                </Stack>
+                              ) : (
+                                <Typography variant="body2" color="text.secondary">
+                                  No structured risk lines — see flags on file if any.
+                                </Typography>
+                              )}
+                              <Typography variant="subtitle2" sx={{ mt: 1.5, fontWeight: 700 }}>
+                                Next recruiter step
+                              </Typography>
+                              {viewScoreIntelligence.improvements.length > 0 ? (
+                                <Stack component="ul" spacing={0.35} sx={{ m: 0, pl: 2, mt: 0.5 }}>
+                                  {viewScoreIntelligence.improvements.map((x) => (
+                                    <Typography key={x} component="li" variant="body2">
+                                      {x}
+                                    </Typography>
+                                  ))}
+                                </Stack>
+                              ) : (
+                                <Typography variant="body2" color="text.secondary">
+                                  Follow hiring decision and Score tab intelligence for next actions.
+                                </Typography>
+                              )}
+                            </Box>
+                            <Divider />
+                            <Box>
+                              <Typography variant="overline" color="text.secondary">
+                                Decision summary
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5, mb: 1 }}>
+                                {WORKER_AI_INTERVIEW_REC_VS_HIRING_DECISION_HELP}
+                              </Typography>
+                              <Stack spacing={0.75} sx={{ mt: 1 }}>
+                                <Typography variant="body2">
+                                  <strong>Recommendation:</strong> {viewModalSummary.recommendationLabel}
+                                </Typography>
+                                <Typography variant="body2">
+                                  <strong>Hiring decision:</strong> {viewModalSummary.hiringDecisionLabel}
+                                </Typography>
+                                <Typography variant="body2">
+                                  <strong>Auto-advance eligible:</strong> {viewModalSummary.autoAdvanceLabel}
+                                </Typography>
+                                {viewModalSummary.autoAdvanceBlockedReasons.length > 0 ? (
+                                  <Alert severity="info" sx={{ mt: 0.5 }}>
+                                    <Typography variant="caption" fontWeight={700}>
+                                      Why not auto-advance?
+                                    </Typography>
+                                    <Stack component="ul" spacing={0.25} sx={{ m: 0, mt: 0.5, pl: 2 }}>
+                                      {viewModalSummary.autoAdvanceBlockedReasons.map((line) => (
+                                        <Typography key={line} component="li" variant="body2">
+                                          {line}
+                                        </Typography>
+                                      ))}
+                                    </Stack>
+                                  </Alert>
+                                ) : null}
+                                {viewModalSummary.confidenceLabel ? (
+                                  <Typography variant="caption" color="text.secondary">
+                                    {viewModalSummary.confidenceLabel}
+                                  </Typography>
+                                ) : null}
+                              </Stack>
+                              {viewModalSummary.adjustmentSummaryLines.length > 0 ? (
+                                <Box sx={{ mt: 1.5 }}>
+                                  <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 0.5 }}>
+                                    Adjustment summary
+                                  </Typography>
+                                  <Stack component="ul" spacing={0.25} sx={{ m: 0, pl: 2 }}>
+                                    {viewModalSummary.adjustmentSummaryLines.map((line) => (
+                                      <Typography key={line} component="li" variant="body2">
+                                        {line}
+                                      </Typography>
+                                    ))}
+                                  </Stack>
+                                </Box>
+                              ) : null}
+                              {viewInterviewDialog.interview.ai.hiringDecision
+                                ? (() => {
+                                    const line = explanationLineForHiringDecision({
+                                      decision: viewInterviewDialog.interview.ai!.hiringDecision!.decision,
+                                      reasonCodes: viewInterviewDialog.interview.ai!.hiringDecision!.reasonCodes,
+                                    });
+                                    return line ? (
+                                      <Alert severity="info" sx={{ mt: 1 }} variant="outlined">
+                                        {line}
+                                      </Alert>
+                                    ) : null;
+                                  })()
+                                : null}
+                            </Box>
+                            <Divider />
+                            <Box>
+                              <Typography variant="overline" color="text.secondary">
+                                Score source
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5, mb: 1 }}>
+                                Operational score (adjusted) is the interview-record signal; hiring score (primary) lives on
+                                Overview.
+                              </Typography>
+                              <ScoreProvenanceSummary
+                                operationalScore100={viewScoreIntelligence.summary.operationalScore}
+                                interviewScore100={viewScoreIntelligence.summary.interviewScore}
+                                profileComposite100={viewScoreIntelligence.summary.compositeHiringScore100}
+                                showComposite={Boolean(viewScoreIntelligence.summary.compositeHiringScoreLabel)}
+                                decisionSourceLabel={viewScoreIntelligence.summary.decisionSourceLabel}
+                                lastUpdatedLabel={viewScoreIntelligence.summary.lastUpdatedLabel}
+                                correctionApplied={viewScoreIntelligence.summary.correctionAppliedDisplay}
+                              />
+                              {viewModalFreshness ? (
+                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                                  Score freshness: <strong>{viewModalFreshness.headline}</strong>
+                                  {viewModalFreshness.interviewHistoricalHint
+                                    ? ` · ${viewModalFreshness.interviewHistoricalHint}`
+                                    : ''}
+                                </Typography>
+                              ) : null}
+                            </Box>
+                          </Stack>
+                        </AccordionDetails>
+                      </Accordion>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    {viewInterviewDialog.interview.ai && viewModalSummary && viewScoreIntelligence ? (
+                      <>
+                        <Box>
+                          <Typography variant="overline" color="text.secondary">
+                            Interview summary
+                          </Typography>
+                          {viewInterviewDialog.interview.ai.summary ? (
+                            <Typography variant="body2" sx={{ mt: 1, whiteSpace: 'pre-wrap' }}>
+                              {viewInterviewDialog.interview.ai.summary}
                             </Typography>
-                          ))}
-                        </Stack>
-                      ) : (
-                        <Typography variant="body2" color="text.secondary">
-                          No strengths extracted.
-                        </Typography>
-                      )}
-                      <Typography variant="subtitle2" sx={{ mt: 1.5, fontWeight: 700 }}>
-                        Risks / review reasons
-                      </Typography>
-                      {viewScoreIntelligence.risks.length > 0 ? (
-                        <Stack component="ul" spacing={0.35} sx={{ m: 0, pl: 2, mt: 0.5 }}>
-                          {viewScoreIntelligence.risks.map((r) => (
-                            <Typography key={r} component="li" variant="body2">
-                              {r}
-                            </Typography>
-                          ))}
-                        </Stack>
-                      ) : (
-                        <Typography variant="body2" color="text.secondary">
-                          No structured risk lines — see flags on file if any.
-                        </Typography>
-                      )}
-                      <Typography variant="subtitle2" sx={{ mt: 1.5, fontWeight: 700 }}>
-                        Next recruiter step
-                      </Typography>
-                      {viewScoreIntelligence.improvements.length > 0 ? (
-                        <Stack component="ul" spacing={0.35} sx={{ m: 0, pl: 2, mt: 0.5 }}>
-                          {viewScoreIntelligence.improvements.map((x) => (
-                            <Typography key={x} component="li" variant="body2">
-                              {x}
-                            </Typography>
-                          ))}
-                        </Stack>
-                      ) : (
-                        <Typography variant="body2" color="text.secondary">
-                          Follow hiring decision and Score tab intelligence for next actions.
-                        </Typography>
-                      )}
-                    </Box>
-
-                    <Divider />
-
-                    {/* 2 — Decision summary */}
-                    <Box>
-                      <Typography variant="overline" color="text.secondary">
-                        Decision summary
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5, mb: 1 }}>
-                        {WORKER_AI_INTERVIEW_REC_VS_HIRING_DECISION_HELP}
-                      </Typography>
-                      <Stack spacing={0.75} sx={{ mt: 1 }}>
-                        <Typography variant="body2">
-                          <strong>Recommendation:</strong> {viewModalSummary.recommendationLabel}
-                        </Typography>
-                        <Typography variant="body2">
-                          <strong>Hiring decision:</strong> {viewModalSummary.hiringDecisionLabel}
-                        </Typography>
-                        <Typography variant="body2">
-                          <strong>Auto-advance eligible:</strong> {viewModalSummary.autoAdvanceLabel}
-                        </Typography>
-                        {viewModalSummary.autoAdvanceBlockedReasons.length > 0 ? (
-                          <Alert severity="info" sx={{ mt: 0.5 }}>
-                            <Typography variant="caption" fontWeight={700}>
-                              Why not auto-advance?
-                            </Typography>
-                            <Stack component="ul" spacing={0.25} sx={{ m: 0, mt: 0.5, pl: 2 }}>
-                              {viewModalSummary.autoAdvanceBlockedReasons.map((line) => (
-                                <Typography key={line} component="li" variant="body2">
-                                  {line}
+                          ) : null}
+                          <Typography variant="subtitle2" sx={{ mt: 1.5, fontWeight: 700 }}>
+                            Strengths
+                          </Typography>
+                          {viewScoreIntelligence.strengths.length > 0 ? (
+                            <Stack component="ul" spacing={0.35} sx={{ m: 0, pl: 2, mt: 0.5 }}>
+                              {viewScoreIntelligence.strengths.map((s) => (
+                                <Typography key={s} component="li" variant="body2">
+                                  {s}
                                 </Typography>
                               ))}
                             </Stack>
-                          </Alert>
-                        ) : null}
-                        {viewModalSummary.confidenceLabel ? (
-                          <Typography variant="caption" color="text.secondary">
-                            {viewModalSummary.confidenceLabel}
+                          ) : (
+                            <Typography variant="body2" color="text.secondary">
+                              No strengths extracted.
+                            </Typography>
+                          )}
+                          <Typography variant="subtitle2" sx={{ mt: 1.5, fontWeight: 700 }}>
+                            Risks / review reasons
                           </Typography>
-                        ) : null}
-                      </Stack>
-                      {viewModalSummary.adjustmentSummaryLines.length > 0 ? (
-                        <Box sx={{ mt: 1.5 }}>
-                          <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 0.5 }}>
-                            Adjustment summary
+                          {viewScoreIntelligence.risks.length > 0 ? (
+                            <Stack component="ul" spacing={0.35} sx={{ m: 0, pl: 2, mt: 0.5 }}>
+                              {viewScoreIntelligence.risks.map((r) => (
+                                <Typography key={r} component="li" variant="body2">
+                                  {r}
+                                </Typography>
+                              ))}
+                            </Stack>
+                          ) : (
+                            <Typography variant="body2" color="text.secondary">
+                              No structured risk lines — see flags on file if any.
+                            </Typography>
+                          )}
+                          <Typography variant="subtitle2" sx={{ mt: 1.5, fontWeight: 700 }}>
+                            Next recruiter step
                           </Typography>
-                          <Stack component="ul" spacing={0.25} sx={{ m: 0, pl: 2 }}>
-                            {viewModalSummary.adjustmentSummaryLines.map((line) => (
-                              <Typography key={line} component="li" variant="body2">
-                                {line}
-                              </Typography>
-                            ))}
-                          </Stack>
+                          {viewScoreIntelligence.improvements.length > 0 ? (
+                            <Stack component="ul" spacing={0.35} sx={{ m: 0, pl: 2, mt: 0.5 }}>
+                              {viewScoreIntelligence.improvements.map((x) => (
+                                <Typography key={x} component="li" variant="body2">
+                                  {x}
+                                </Typography>
+                              ))}
+                            </Stack>
+                          ) : (
+                            <Typography variant="body2" color="text.secondary">
+                              Follow hiring decision and Score tab intelligence for next actions.
+                            </Typography>
+                          )}
                         </Box>
-                      ) : null}
-                      {viewInterviewDialog.interview.ai.hiringDecision
-                        ? (() => {
-                            const line = explanationLineForHiringDecision({
-                              decision: viewInterviewDialog.interview.ai!.hiringDecision!.decision,
-                              reasonCodes: viewInterviewDialog.interview.ai!.hiringDecision!.reasonCodes,
-                            });
-                            return line ? (
-                              <Alert severity="info" sx={{ mt: 1 }} variant="outlined">
-                                {line}
+
+                        <Divider />
+
+                        <Box>
+                          <Typography variant="overline" color="text.secondary">
+                            Decision summary
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5, mb: 1 }}>
+                            {WORKER_AI_INTERVIEW_REC_VS_HIRING_DECISION_HELP}
+                          </Typography>
+                          <Stack spacing={0.75} sx={{ mt: 1 }}>
+                            <Typography variant="body2">
+                              <strong>Recommendation:</strong> {viewModalSummary.recommendationLabel}
+                            </Typography>
+                            <Typography variant="body2">
+                              <strong>Hiring decision:</strong> {viewModalSummary.hiringDecisionLabel}
+                            </Typography>
+                            <Typography variant="body2">
+                              <strong>Auto-advance eligible:</strong> {viewModalSummary.autoAdvanceLabel}
+                            </Typography>
+                            {viewModalSummary.autoAdvanceBlockedReasons.length > 0 ? (
+                              <Alert severity="info" sx={{ mt: 0.5 }}>
+                                <Typography variant="caption" fontWeight={700}>
+                                  Why not auto-advance?
+                                </Typography>
+                                <Stack component="ul" spacing={0.25} sx={{ m: 0, mt: 0.5, pl: 2 }}>
+                                  {viewModalSummary.autoAdvanceBlockedReasons.map((line) => (
+                                    <Typography key={line} component="li" variant="body2">
+                                      {line}
+                                    </Typography>
+                                  ))}
+                                </Stack>
                               </Alert>
-                            ) : null;
-                          })()
-                        : null}
-                    </Box>
+                            ) : null}
+                            {viewModalSummary.confidenceLabel ? (
+                              <Typography variant="caption" color="text.secondary">
+                                {viewModalSummary.confidenceLabel}
+                              </Typography>
+                            ) : null}
+                          </Stack>
+                          {viewModalSummary.adjustmentSummaryLines.length > 0 ? (
+                            <Box sx={{ mt: 1.5 }}>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 0.5 }}>
+                                Adjustment summary
+                              </Typography>
+                              <Stack component="ul" spacing={0.25} sx={{ m: 0, pl: 2 }}>
+                                {viewModalSummary.adjustmentSummaryLines.map((line) => (
+                                  <Typography key={line} component="li" variant="body2">
+                                    {line}
+                                  </Typography>
+                                ))}
+                              </Stack>
+                            </Box>
+                          ) : null}
+                          {viewInterviewDialog.interview.ai.hiringDecision
+                            ? (() => {
+                                const line = explanationLineForHiringDecision({
+                                  decision: viewInterviewDialog.interview.ai!.hiringDecision!.decision,
+                                  reasonCodes: viewInterviewDialog.interview.ai!.hiringDecision!.reasonCodes,
+                                });
+                                return line ? (
+                                  <Alert severity="info" sx={{ mt: 1 }} variant="outlined">
+                                    {line}
+                                  </Alert>
+                                ) : null;
+                              })()
+                            : null}
+                        </Box>
 
-                    <Divider />
+                        <Divider />
 
-                    {/* 3 — Score source */}
-                    <Box>
-                      <Typography variant="overline" color="text.secondary">
-                        Score source
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5, mb: 1 }}>
-                        Operational score is the primary recruiter signal for this pre-screen; profile/composite is
-                        secondary when shown.
-                      </Typography>
-                      <ScoreProvenanceSummary
-                        operationalScore100={viewScoreIntelligence.summary.operationalScore}
-                        interviewScore100={viewScoreIntelligence.summary.interviewScore}
-                        profileComposite100={viewScoreIntelligence.summary.compositeHiringScore100}
-                        showComposite={Boolean(viewScoreIntelligence.summary.compositeHiringScoreLabel)}
-                        decisionSourceLabel={viewScoreIntelligence.summary.decisionSourceLabel}
-                        lastUpdatedLabel={viewScoreIntelligence.summary.lastUpdatedLabel}
-                        correctionApplied={viewScoreIntelligence.summary.correctionAppliedDisplay}
-                      />
-                      {viewModalFreshness ? (
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                          Score freshness: <strong>{viewModalFreshness.headline}</strong>
-                          {viewModalFreshness.interviewHistoricalHint
-                            ? ` · ${viewModalFreshness.interviewHistoricalHint}`
-                            : ''}
+                        <Box>
+                          <Typography variant="overline" color="text.secondary">
+                            Score source
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5, mb: 1 }}>
+                            Operational score is the primary recruiter signal for this pre-screen; profile/composite is
+                            secondary when shown.
+                          </Typography>
+                          <ScoreProvenanceSummary
+                            operationalScore100={viewScoreIntelligence.summary.operationalScore}
+                            interviewScore100={viewScoreIntelligence.summary.interviewScore}
+                            profileComposite100={viewScoreIntelligence.summary.compositeHiringScore100}
+                            showComposite={Boolean(viewScoreIntelligence.summary.compositeHiringScoreLabel)}
+                            decisionSourceLabel={viewScoreIntelligence.summary.decisionSourceLabel}
+                            lastUpdatedLabel={viewScoreIntelligence.summary.lastUpdatedLabel}
+                            correctionApplied={viewScoreIntelligence.summary.correctionAppliedDisplay}
+                          />
+                          {viewModalFreshness ? (
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                              Score freshness: <strong>{viewModalFreshness.headline}</strong>
+                              {viewModalFreshness.interviewHistoricalHint
+                                ? ` · ${viewModalFreshness.interviewHistoricalHint}`
+                                : ''}
+                            </Typography>
+                          ) : null}
+                        </Box>
+                      </>
+                    ) : null}
+
+                    {viewInterviewDialog.interview.ai?.categoryScores ? (
+                      <Box>
+                        <Typography variant="overline" color="text.secondary">
+                          Category snapshot
                         </Typography>
-                      ) : null}
-                    </Box>
-                  </>
-                ) : null}
-
-                {/* 4 — Category snapshot */}
-                {viewInterviewDialog.interview.ai?.categoryScores ? (
-                  <Box>
-                    <Typography variant="overline" color="text.secondary">
-                      Category snapshot
-                    </Typography>
-                    <RecruiterCategoryScoresPanel
-                      scores={viewInterviewDialog.interview.ai.categoryScores}
-                      evidence={viewInterviewDialog.interview.ai.categoryEvidence ?? null}
-                      scoreKind="interview_snapshot"
-                      showHeading={false}
-                      description={null}
-                      collapsibleEvidence
-                    />
-                  </Box>
-                ) : null}
-
-                {/* 5 — Interview answers */}
-                <Box>
-                  <Typography variant="overline" color="text.secondary">
-                    Interview answers
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-                    Historical responses — supporting detail for the summary above.
-                  </Typography>
-                  <Stack spacing={2} sx={{ mt: 0.5 }}>
-                    {viewInterviewDialog.interview.questions.map((q) => (
-                      <Box key={q.id}>
-                        <Typography variant="subtitle2" fontWeight={600} gutterBottom>
-                          {q.question}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
-                          {prescreenAnswerDisplayLine(q)}
-                        </Typography>
+                        <RecruiterCategoryScoresPanel
+                          scores={viewInterviewDialog.interview.ai.categoryScores}
+                          evidence={viewInterviewDialog.interview.ai.categoryEvidence ?? null}
+                          scoreKind="interview_snapshot"
+                          showHeading={false}
+                          description={null}
+                          collapsibleEvidence
+                        />
                       </Box>
-                    ))}
-                  </Stack>
-                </Box>
+                    ) : null}
+
+                    <InterviewAnswersSection interview={viewInterviewDialog.interview} />
+                  </>
+                )}
 
                 {/* 6 — Raw category evidence (collapsed) */}
                 {viewInterviewDialog.interview.ai?.categoryEvidence ? (

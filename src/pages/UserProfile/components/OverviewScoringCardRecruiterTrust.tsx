@@ -7,6 +7,7 @@ import {
   AccordionDetails,
   AccordionSummary,
   Box,
+  Button,
   Chip,
   Divider,
   LinearProgress,
@@ -16,10 +17,7 @@ import {
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import type { ScoreSummary } from '../../../utils/scoreSummary';
 import { formatOneDecimal } from '../../../utils/scoreSummary';
-import {
-  parseRecruiterScoreSnapshot,
-  getRecruiterScoreDisplayForAdminUi,
-} from '../../../utils/scoring/recruiterScoreSnapshot';
+import { parseRecruiterScoreSnapshot } from '../../../utils/scoring/recruiterScoreSnapshot';
 import type { RecruiterScoreSnapshot } from '../../../types/recruiterScoreSnapshot';
 import type { WorkerInterviewAiBlock } from '../../../types/workerAiPrescreenInterview';
 import { useCategoryScoresCurrent } from '../../../hooks/useCategoryScoresCurrent';
@@ -33,6 +31,25 @@ import {
   formatCategoryScoreEventSourceLabel,
   type CategoryScoreEventRow,
 } from '../../../utils/categoryScoreEvolution';
+import { deriveSystemDecisionConfidence } from '../../../utils/scoring/deriveSystemDecisionConfidence';
+import { deriveNextBestAction, deriveWhyThisDecision, type NextBestActionIntent } from '../../../utils/scoring/deriveNextBestAction';
+import { getRecruiterMasterDisplayForAdminUi } from '../../../utils/scoring/recruiterMasterScoreDisplay';
+
+export type OverviewScoringDecisionControls = {
+  onViewInterview: () => void;
+  /** If omitted, primary CTA falls back to onViewInterview / onOpenScoreTab-style behavior via handlers passed. */
+  onPrimaryAction?: (intent: NextBestActionIntent) => void;
+  reviewRescoreSlot?: React.ReactNode;
+  onOverrideDecision?: () => void;
+  showOverrideDecision?: boolean;
+  /** From user doc — drives “verify phone” path when false */
+  phoneVerified?: boolean | null;
+  /** True when a screening / BG order is still in flight */
+  backgroundCheckPending?: boolean;
+  /** Display name when snapshot was produced in manual review */
+  manualOverrideLabel?: string | null;
+  onOpenScoreTab?: () => void;
+};
 const overviewProfileFieldValueSxLocal = {
   fontSize: '0.78rem',
   lineHeight: 1.45,
@@ -100,11 +117,6 @@ function recommendationLabel(r: RecruiterScoreSnapshot['recommendation']): strin
   }
 }
 
-function confidenceLabel(c: RecruiterScoreSnapshot['confidence']): string {
-  if (!c) return '—';
-  return c.charAt(0).toUpperCase() + c.slice(1);
-}
-
 function riskLabel(r: RecruiterScoreSnapshot['riskLevel']): string {
   if (!r) return '—';
   return r.charAt(0).toUpperCase() + r.slice(1);
@@ -129,17 +141,18 @@ function mergeCategoryScores(
   };
 }
 
-function interviewSignalWord(params: {
+/** Interview signal strip — bands from primary hiring score (0–100), not generic adjectives. */
+function interviewSignalLabel(params: {
   hiringScore: number | null;
   recommendation: RecruiterScoreSnapshot['recommendation'];
 }): string {
   const { hiringScore, recommendation } = params;
+  if (recommendation === 'decline') return 'Needs review';
+  if (recommendation === 'caution' || recommendation === 'review') return 'Needs review';
   if (hiringScore == null) return '—';
-  if (recommendation === 'decline') return 'Needs attention';
-  if (recommendation === 'caution' || recommendation === 'review') return 'Mixed';
-  if (hiringScore >= 82) return 'Strong';
-  if (hiringScore >= 68) return 'Solid';
-  return 'Developing';
+  if (hiringScore >= 80) return 'Strong';
+  if (hiringScore >= 60) return 'Moderate';
+  return 'Needs review';
 }
 
 function formatInterviewDate(scoreSummary: ScoreSummary | undefined, ai?: WorkerInterviewAiBlock | null): string {
@@ -197,22 +210,48 @@ function MiniSparkline({ values }: { values: number[] }) {
 export type OverviewScoringCardRecruiterTrustProps = {
   uid: string;
   scoreSummary: ScoreSummary | undefined;
+  riskProfileRaw?: unknown;
   recruiterScoreSnapshotRaw: unknown;
+  recruiterMasterScoreRaw?: unknown;
   latestPrescreenInterviewAi?: WorkerInterviewAiBlock | null;
+  decisionControls?: OverviewScoringDecisionControls;
 };
 
 export function OverviewScoringCardRecruiterTrust({
   uid,
   scoreSummary,
+  riskProfileRaw,
   recruiterScoreSnapshotRaw,
+  recruiterMasterScoreRaw,
   latestPrescreenInterviewAi,
+  decisionControls,
 }: OverviewScoringCardRecruiterTrustProps) {
-  const adminUi = getRecruiterScoreDisplayForAdminUi(recruiterScoreSnapshotRaw);
   const snap = parseRecruiterScoreSnapshot(recruiterScoreSnapshotRaw);
   const { scores: profileCategoryScores } = useCategoryScoresCurrent(uid);
 
-  const hiringScore =
-    adminUi.score100 != null && Number.isFinite(adminUi.score100) ? Math.round(adminUi.score100) : null;
+  const masterDisp = useMemo(
+    () =>
+      getRecruiterMasterDisplayForAdminUi({
+        recruiterMasterScoreRaw: recruiterMasterScoreRaw,
+        recruiterScoreSnapshotRaw,
+        userData: {
+          scoreSummary,
+          riskProfile: riskProfileRaw,
+          ...(profileCategoryScores ? { categoryScoresCurrent: profileCategoryScores } : {}),
+        },
+        latestPrescreenInterviewAi: latestPrescreenInterviewAi ?? null,
+      }),
+    [
+      recruiterMasterScoreRaw,
+      recruiterScoreSnapshotRaw,
+      scoreSummary,
+      riskProfileRaw,
+      profileCategoryScores,
+      latestPrescreenInterviewAi,
+    ],
+  );
+
+  const hiringScore = masterDisp.score100;
 
   const decision =
     snap?.decision ??
@@ -222,12 +261,6 @@ export function OverviewScoringCardRecruiterTrust({
     snap?.recommendation ?? latestPrescreenInterviewAi?.recommendation ?? null;
 
   const headline = decisionHeadline(decision, recommendation);
-  const subNarrative =
-    snap?.reasoningSummary?.trim() ||
-    latestPrescreenInterviewAi?.summary?.trim() ||
-    'Profile and interview signals inform this view.';
-  /** Single plain-language line for the decision block (avoid stacking multiple narrative lines). */
-  const decisionPlainSentence = subNarrative.split('\n')[0]?.trim() || subNarrative;
 
   const mergedCats = useMemo(
     () => mergeCategoryScores(profileCategoryScores, snap?.categoryScores),
@@ -236,7 +269,7 @@ export function OverviewScoringCardRecruiterTrust({
   const categoryScoresFromSnapshotFallback = Boolean(!profileCategoryScores && snap?.categoryScores);
 
   const categoryAvg = mergedCats ? averageCategoryScore(mergedCats) : null;
-  const signalWord = interviewSignalWord({
+  const signalWord = interviewSignalLabel({
     hiringScore,
     recommendation: snap?.recommendation ?? null,
   });
@@ -324,15 +357,152 @@ export function OverviewScoringCardRecruiterTrust({
     typeof scoreSummary?.overrideScoreDelta === 'number' &&
     scoreSummary.overrideScoreDelta !== 0;
 
+  const systemOperationalAdjustment =
+    (typeof latestPrescreenInterviewAi?.overrideAdjustedScore === 'number' &&
+      typeof latestPrescreenInterviewAi?.baseInterviewScore === 'number' &&
+      latestPrescreenInterviewAi.overrideAdjustedScore !== latestPrescreenInterviewAi.baseInterviewScore) ||
+    overrideApplied;
+
+  const snapshotGeneratedBy = snap?.generatedBy ?? null;
+  const manualSnapshotOverride = snapshotGeneratedBy === 'manual_review';
+
+  const systemConfidence = useMemo(
+    () =>
+      deriveSystemDecisionConfidence({
+        hiringScore,
+        riskLevel: snap?.riskLevel ?? null,
+        decision,
+        recommendation,
+        hardBlockCount: latestPrescreenInterviewAi?.hardBlocks?.length ?? 0,
+        overrideApplied,
+        scoreConflictDetected: scoreSummary?.scoreConflictDetected === true,
+      }),
+    [hiringScore, snap?.riskLevel, decision, recommendation, latestPrescreenInterviewAi?.hardBlocks, overrideApplied, scoreSummary?.scoreConflictDetected],
+  );
+
+  const nextBest = useMemo(
+    () =>
+      deriveNextBestAction({
+        hiringScore,
+        decision,
+        recommendation,
+        riskLevel: snap?.riskLevel ?? null,
+        interviewCount,
+        hardBlocks: latestPrescreenInterviewAi?.hardBlocks?.map(String) ?? [],
+        softBlocks: latestPrescreenInterviewAi?.softBlocks?.map(String) ?? [],
+        autoAdvanceEligible: scoreSummary?.autoAdvanceEligible,
+        assignmentReadiness: latestPrescreenInterviewAi?.assignmentReadiness,
+        phoneVerified: decisionControls?.phoneVerified,
+        backgroundCheckPending: decisionControls?.backgroundCheckPending === true,
+      }),
+    [
+      hiringScore,
+      decision,
+      recommendation,
+      snap?.riskLevel,
+      interviewCount,
+      latestPrescreenInterviewAi?.hardBlocks,
+      latestPrescreenInterviewAi?.softBlocks,
+      latestPrescreenInterviewAi?.assignmentReadiness,
+      scoreSummary?.autoAdvanceEligible,
+      decisionControls?.phoneVerified,
+      decisionControls?.backgroundCheckPending,
+    ],
+  );
+
+  const whyThisDecision = useMemo(
+    () =>
+      deriveWhyThisDecision({
+        reasoningSummary: snap?.reasoningSummary ?? null,
+        riskLevel: snap?.riskLevel ?? null,
+        hardBlocks: latestPrescreenInterviewAi?.hardBlocks?.map(String) ?? [],
+        strengths,
+        risks,
+      }),
+    [snap?.reasoningSummary, snap?.riskLevel, latestPrescreenInterviewAi?.hardBlocks, strengths, risks],
+  );
+
+  const handlePrimaryCta = () => {
+    const intent = nextBest.intent;
+    if (decisionControls?.onPrimaryAction) {
+      decisionControls.onPrimaryAction(intent);
+      return;
+    }
+    if (intent === 'review_decision') {
+      decisionControls?.onOpenScoreTab?.();
+      return;
+    }
+    decisionControls?.onViewInterview();
+  };
+
   let scoreColor: 'success.main' | 'warning.main' | 'text.primary' = 'text.primary';
   if (hiringScore != null) {
     if (hiringScore >= 80) scoreColor = 'success.main';
     else if (hiringScore >= 60) scoreColor = 'warning.main';
   }
 
+  const automationChipColor =
+    nextBest.automationState === 'ready' ? 'success' : nextBest.automationState === 'blocked' ? 'error' : 'warning';
+  const automationChipLabel =
+    nextBest.automationState === 'ready' ? 'READY' : nextBest.automationState === 'blocked' ? 'BLOCKED' : 'NEEDS ACTION';
+
   return (
     <Stack spacing={1.25} alignItems="stretch">
-      {/* 1. Decision-first: Decision → Hiring score → Confidence → Risk → one sentence */}
+      <Stack direction="row" flexWrap="wrap" useFlexGap gap={0.75} alignItems="center">
+        <Chip size="small" color={automationChipColor} label={automationChipLabel} sx={{ fontWeight: 800, letterSpacing: '0.06em' }} />
+        {systemOperationalAdjustment ? (
+          <Chip size="small" variant="outlined" label="Adjusted by system based on operational signals" sx={{ maxWidth: '100%' }} />
+        ) : null}
+        {manualSnapshotOverride ? (
+          <Chip
+            size="small"
+            variant="outlined"
+            color="info"
+            label={
+              decisionControls?.manualOverrideLabel
+                ? `Manually overridden by ${decisionControls.manualOverrideLabel}`
+                : 'Manually overridden (recruiter review)'
+            }
+            sx={{ maxWidth: '100%' }}
+          />
+        ) : null}
+      </Stack>
+
+      {decisionControls ? (
+        <Box>
+          <Typography variant="caption" sx={{ fontWeight: 700, letterSpacing: '0.06em', color: 'text.secondary' }}>
+            Next best action
+          </Typography>
+          <Typography variant="body2" sx={{ ...overviewProfileFieldValueSxLocal, mt: 0.35, fontWeight: 500, color: 'text.primary' }}>
+            {nextBest.sentence}
+          </Typography>
+          <Button variant="contained" size="small" sx={{ mt: 1, alignSelf: 'flex-start', textTransform: 'none', fontWeight: 700 }} onClick={handlePrimaryCta}>
+            {nextBest.primaryButtonLabel}
+          </Button>
+          <Stack direction="row" flexWrap="wrap" useFlexGap gap={0.75} sx={{ mt: 1.25 }} alignItems="center">
+            <Button variant="outlined" size="small" sx={{ textTransform: 'none' }} onClick={decisionControls.onViewInterview}>
+              View Interview
+            </Button>
+            {decisionControls.reviewRescoreSlot}
+            {decisionControls.showOverrideDecision && decisionControls.onOverrideDecision ? (
+              <Button variant="text" size="small" sx={{ textTransform: 'none' }} onClick={decisionControls.onOverrideDecision}>
+                Override decision
+              </Button>
+            ) : null}
+          </Stack>
+        </Box>
+      ) : null}
+
+      <Box>
+        <Typography variant="caption" sx={{ fontWeight: 700, letterSpacing: '0.06em', color: 'text.secondary' }}>
+          Why this decision?
+        </Typography>
+        <Typography variant="body2" sx={{ ...overviewProfileFieldValueSxLocal, mt: 0.35, color: 'text.primary', fontWeight: 500 }}>
+          {whyThisDecision}
+        </Typography>
+      </Box>
+
+      {/* Decision + primary hiring score + model confidence + risk + system confidence */}
       <Box>
         <Typography variant="caption" sx={{ fontWeight: 700, letterSpacing: '0.08em', color: 'text.secondary' }}>
           Decision
@@ -344,7 +514,7 @@ export function OverviewScoringCardRecruiterTrust({
           {headline}
         </Typography>
         <Typography variant="caption" sx={{ fontWeight: 700, letterSpacing: '0.06em', color: 'text.secondary', mt: 1.25, display: 'block' }}>
-          Hiring score (primary)
+          Master Recruiter Score
         </Typography>
         <Stack direction="row" alignItems="baseline" gap={1} sx={{ mt: 0.5, flexWrap: 'wrap' }}>
           <Typography
@@ -360,16 +530,29 @@ export function OverviewScoringCardRecruiterTrust({
             {hiringScore ?? '—'}
           </Typography>
         </Stack>
+        {masterDisp.master?.components && masterDisp.master.effectiveWeights ? (
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
+            Category {masterDisp.master.components.categoryScore ?? '—'} × {Math.round(masterDisp.master.effectiveWeights.categoryScore * 100)}% ·
+            Interview {masterDisp.master.components.interviewScore ?? '—'} × {Math.round(masterDisp.master.effectiveWeights.interviewScore * 100)}% ·
+            Profile {masterDisp.master.components.profileScore ?? '—'} × {Math.round(masterDisp.master.effectiveWeights.profileScore * 100)}% →{' '}
+            <Box component="span" sx={{ fontWeight: 700, color: 'text.primary' }}>
+              {hiringScore ?? '—'}
+            </Box>
+          </Typography>
+        ) : null}
         <Typography variant="body2" sx={{ ...overviewProfileFieldValueSxLocal, mt: 0.75 }}>
           <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>Confidence: </Box>
-          {confidenceLabel(snap?.confidence ?? null)}
+          {masterDisp.confidence ? masterDisp.confidence.charAt(0).toUpperCase() + masterDisp.confidence.slice(1) : '—'}
         </Typography>
         <Typography variant="body2" sx={{ ...overviewProfileFieldValueSxLocal, mt: 0.25 }}>
           <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>Risk: </Box>
-          {riskLabel(snap?.riskLevel ?? null)}
+          {masterDisp.riskLevel
+            ? masterDisp.riskLevel.charAt(0).toUpperCase() + masterDisp.riskLevel.slice(1)
+            : riskLabel(snap?.riskLevel ?? null)}
         </Typography>
-        <Typography variant="body2" sx={{ ...overviewProfileFieldValueSxLocal, mt: 0.75 }}>
-          {decisionPlainSentence}
+        <Typography variant="body2" sx={{ ...overviewProfileFieldValueSxLocal, mt: 0.5 }}>
+          <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>System confidence: </Box>
+          {systemConfidence.message}
         </Typography>
       </Box>
 
@@ -557,8 +740,8 @@ export function OverviewScoringCardRecruiterTrust({
             typeof hiringScore === 'number' &&
             Math.round(latestPrescreenInterviewAi.overallScore) !== hiringScore ? (
               <Typography variant="caption" color="text.secondary">
-                <strong>Legacy composite / model score</strong> may differ from the hiring score when older blending logic is present on
-                the interview record — trust the hiring score for recruiter decisions.
+                <strong>Legacy composite score</strong> on the interview record may differ from the primary hiring score when older
+                blending logic is present — use the hiring score for recruiter decisions.
               </Typography>
             ) : null}
             {typeof scoreSummary?.interviewAvg === 'number' && (

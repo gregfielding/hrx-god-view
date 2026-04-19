@@ -62,8 +62,9 @@ import { useFavorites } from '../../../hooks/useFavorites';
 import { TABLE_AVATAR_SIZE } from '../../../utils/uiConstants';
 import { sanitizeWorkerNameParts } from '../../../utils/profileDisplayName';
 import RecruiterUserTableContactBlock from '../../../components/tables/RecruiterUserTableContactBlock';
-import { formatOneDecimal, normalizeScoreSummary, getRelativeAiScore } from '../../../utils/scoreSummary';
+import { formatOneDecimal, normalizeScoreSummary } from '../../../utils/scoreSummary';
 import { getRecruiterScoreDisplayForAdminUi } from '../../../utils/scoring/recruiterScoreSnapshot';
+import { getRecruiterMasterDisplayForAdminUi } from '../../../utils/scoring/recruiterMasterScoreDisplay';
 import { calculateProfileScore } from '../../../utils/applicantScoring';
 import {
   getBackgroundBreakdownRows,
@@ -87,7 +88,6 @@ import {
 import { useCategoryScoresCurrentMap } from '../../../hooks/useCategoryScoresCurrentMap';
 import { useRecruiterUsersRowExtras } from '../../../hooks/useRecruiterUsersRowExtras';
 import { useRecruiterUsersLatestBackgroundChecks } from '../../../hooks/useRecruiterUsersLatestBackgroundChecks';
-import { useScoringDistribution } from '../../../hooks/useScoringDistribution';
 import { useRecruiterUsersEntityEmploymentChips } from '../../../hooks/useRecruiterUsersEntityEmploymentChips';
 import UserGroupHiringControlPanel from '../../../components/recruiter/userGroup/UserGroupHiringControlPanel';
 import {
@@ -497,6 +497,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   }, [tenantId, groupId, memberIds]);
 
   const members = membersData;
+  const { scoresByUserId: categoryScoresByUserId } = useCategoryScoresCurrentMap(memberIds);
   const availableWorkers = allWorkers.filter((w) => !memberIds.includes(w.id));
   const toMillis = (input: any): number => {
     if (!input) return 0;
@@ -514,8 +515,18 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   };
 
   const getScoreNumber = (u: any): number => {
-    const snapDisp = getRecruiterScoreDisplayForAdminUi(u.recruiterScoreSnapshot);
-    if (snapDisp.hasSnapshot && snapDisp.score100 != null && !Number.isNaN(snapDisp.score100)) return snapDisp.score100;
+    const cat = categoryScoresByUserId[u.id];
+    const masterDisp = getRecruiterMasterDisplayForAdminUi({
+      recruiterMasterScoreRaw: u.recruiterMasterScore,
+      recruiterScoreSnapshotRaw: u.recruiterScoreSnapshot,
+      userData: {
+        scoreSummary: u.scoreSummary,
+        riskProfile: u.riskProfile,
+        ...(cat ? { categoryScoresCurrent: cat } : {}),
+      },
+      latestPrescreenInterviewAi: null,
+    });
+    if (masterDisp.score100 != null && !Number.isNaN(masterDisp.score100)) return masterDisp.score100;
     return -1;
   };
 
@@ -594,6 +605,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
     membersSortDirection,
     entityEmploymentChipsByUser,
     group,
+    categoryScoresByUserId,
   ]);
 
   const paginatedMembers = useMemo(
@@ -607,14 +619,11 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
 
   const paginatedMemberIds = useMemo(() => paginatedMembers.map((m) => m.id), [paginatedMembers]);
 
-  const { scoresByUserId: categoryScoresByUserId } = useCategoryScoresCurrentMap(paginatedMemberIds);
   const { latestNoteByUserId, latestInterviewByUserId } = useRecruiterUsersRowExtras(paginatedMemberIds);
   const { latestByUserId: latestBackgroundByUserId } = useRecruiterUsersLatestBackgroundChecks(
     tenantId,
     paginatedMemberIds,
   );
-  const { distribution: scoringDistribution } = useScoringDistribution(tenantId);
-
   const selectedCount = selectAllResults ? sortedMembers.length : selectedIds.size;
   const allOnPageSelected =
     paginatedMembers.length > 0 &&
@@ -846,8 +855,19 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   };
 
   const renderAiScore = (u: any) => {
+    const cat = categoryScoresByUserId[u.id];
+    const masterDisp = getRecruiterMasterDisplayForAdminUi({
+      recruiterMasterScoreRaw: u.recruiterMasterScore,
+      recruiterScoreSnapshotRaw: u.recruiterScoreSnapshot,
+      userData: {
+        scoreSummary: u.scoreSummary,
+        riskProfile: u.riskProfile,
+        ...(cat ? { categoryScoresCurrent: cat } : {}),
+      },
+      latestPrescreenInterviewAi: null,
+    });
     const snapDisp = getRecruiterScoreDisplayForAdminUi(u.recruiterScoreSnapshot);
-    const rawScore = snapDisp.hasSnapshot ? snapDisp.score100 : null;
+    const rawScore = masterDisp.score100;
     const compositeScore = snapDisp.hasSnapshot ? snapDisp.compositeScore100 : null;
     const categoryPreview =
       snapDisp.hasSnapshot && Object.keys(snapDisp.categoryScores || {}).length > 0
@@ -882,10 +902,8 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
         </Box>
       );
     }
-    const relativeScore = getRelativeAiScore(rawScore, scoringDistribution);
-    const displayScore = relativeScore != null ? relativeScore : Math.round(rawScore);
-    const showRelative = relativeScore != null;
-    const grade = recruiterTableLetterGrade(displayScore);
+    const displayScore = Math.round(rawScore);
+    const grade = masterDisp.grade ?? recruiterTableLetterGrade(displayScore);
 
     let scoreColor: 'success.main' | 'warning.main' | 'text.primary' = 'text.primary';
     if (displayScore >= 80) scoreColor = 'success.main';
@@ -897,19 +915,18 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
         title={
           <Box sx={{ p: 0.5 }}>
             <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
-              Score Summary
+              Master Recruiter Score
             </Typography>
             <Typography variant="caption" color="inherit" sx={{ display: 'block', mb: 0.5, opacity: 0.9 }}>
-              Primary uses operational score when prescreen trust is stored.
+              Blended category (50%) · interview (35%) · profile Hiring Score (15%).
             </Typography>
             <Stack spacing={0.25}>
               <Typography variant="body2">
-                Operational / primary: <strong>{Math.round(rawScore)}</strong>
-                {showRelative ? ` (relative: ${displayScore})` : ''}
+                Master: <strong>{Math.round(rawScore)}</strong>
               </Typography>
-              {compositeScore != null && compositeScore !== rawScore ? (
+              {compositeScore != null ? (
                 <Typography variant="caption" color="inherit" sx={{ opacity: 0.9 }}>
-                  Composite Hiring Score: <strong>{Math.round(compositeScore)}</strong>
+                  Composite Hiring Score (supporting): <strong>{Math.round(compositeScore)}</strong>
                 </Typography>
               ) : null}
               <Typography variant="body2">

@@ -11720,12 +11720,7 @@ export { runProspecting, saveProspectingSearch, addProspectsToCRM, createCallLis
 } from './recruiter'; */
 
 // Twilio SMS Functions
-export {
-  sendOtp,
-  checkOtp,
-  sendWorkerMessage,
-  sendWorkerMessageInternal
-} from './twilio';
+export { sendOtp, checkOtp, sendWorkerMessage } from './twilio';
 
 // Application SMS Triggers
 export { onApplicationCreated, onApplicationStatusChanged } from './applicationSmsTriggers';

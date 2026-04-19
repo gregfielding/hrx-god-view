@@ -1,5 +1,5 @@
 /**
- * Single write path for `users/{uid}.recruiterScoreSnapshot`.
+ * Single write path for `users/{uid}.recruiterScoreSnapshot` and `users/{uid}.recruiterMasterScore`.
  */
 import * as admin from 'firebase-admin';
 import type { Firestore } from 'firebase-admin/firestore';
@@ -8,6 +8,7 @@ import {
   buildRecruiterScoreSnapshotForUserDoc,
   type RecruiterScoreSnapshotGeneratedBy,
 } from './buildRecruiterScoreSnapshot';
+import { buildRecruiterMasterScoreForUserDoc } from './buildRecruiterMasterScore';
 
 export async function refreshRecruiterScoreSnapshotForUser(
   db: Firestore,
@@ -15,11 +16,20 @@ export async function refreshRecruiterScoreSnapshotForUser(
   generatedBy: RecruiterScoreSnapshotGeneratedBy,
 ): Promise<{ updated: boolean; signature: string | null }> {
   const nextSnap = await buildRecruiterScoreSnapshotForUserDoc(db, uid, generatedBy);
+  const nextMaster = await buildRecruiterMasterScoreForUserDoc(db, uid, generatedBy);
   const userRef = db.collection('users').doc(uid);
   const cur = await userRef.get();
-  const existing = (cur.data()?.recruiterScoreSnapshot as { inputSignature?: string } | undefined)?.inputSignature;
+  const data = cur.data() || {};
+  const existingSnap = (data.recruiterScoreSnapshot as { inputSignature?: string } | undefined)?.inputSignature;
+  const existingMaster = (data.recruiterMasterScore as { inputSignature?: string } | undefined)?.inputSignature;
 
-  if (existing === nextSnap.inputSignature && nextSnap.inputSignature != null) {
+  const unchanged =
+    existingSnap === nextSnap.inputSignature &&
+    existingMaster === nextMaster.inputSignature &&
+    nextSnap.inputSignature != null &&
+    nextMaster.inputSignature != null;
+
+  if (unchanged) {
     return { updated: false, signature: nextSnap.inputSignature };
   }
 
@@ -28,6 +38,10 @@ export async function refreshRecruiterScoreSnapshotForUser(
       {
         recruiterScoreSnapshot: {
           ...nextSnap,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        } as Record<string, unknown>,
+        recruiterMasterScore: {
+          ...nextMaster,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         } as Record<string, unknown>,
       },

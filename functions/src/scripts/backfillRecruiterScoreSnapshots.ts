@@ -13,6 +13,7 @@
 import * as admin from 'firebase-admin';
 import { FieldPath } from 'firebase-admin/firestore';
 import { buildRecruiterScoreSnapshotForUserDoc } from '../scoring/buildRecruiterScoreSnapshot';
+import { buildRecruiterMasterScoreForUserDoc } from '../scoring/buildRecruiterMasterScore';
 import { refreshRecruiterScoreSnapshotForUser } from '../scoring/refreshRecruiterScoreSnapshot';
 
 if (!admin.apps.length) admin.initializeApp();
@@ -74,10 +75,16 @@ async function main(): Promise<void> {
     if (args.dryRun) {
       try {
         const nextSnap = await buildRecruiterScoreSnapshotForUserDoc(db, uid, 'system');
+        const nextMaster = await buildRecruiterMasterScoreForUserDoc(db, uid, 'system');
         const existingSig = (data.recruiterScoreSnapshot as { inputSignature?: string | null } | undefined)
           ?.inputSignature;
+        const existingMasterSig = (data.recruiterMasterScore as { inputSignature?: string | null } | undefined)
+          ?.inputSignature;
         const wouldSkip =
-          existingSig === nextSnap.inputSignature && nextSnap.inputSignature != null;
+          existingSig === nextSnap.inputSignature &&
+          existingMasterSig === nextMaster.inputSignature &&
+          nextSnap.inputSignature != null &&
+          nextMaster.inputSignature != null;
         if (wouldSkip) dryRunWouldSkip += 1;
         else dryRunWouldWrite += 1;
         console.log(
@@ -88,6 +95,8 @@ async function main(): Promise<void> {
             previousScore100: prevScore,
             projectedScore100: nextSnap.score100 ?? null,
             projectedScoreKind: nextSnap.scoreKind ?? null,
+            projectedMasterScore100: nextMaster.score100 ?? null,
+            projectedMasterGrade: nextMaster.grade ?? null,
             wouldWrite: !wouldSkip,
           }),
         );
