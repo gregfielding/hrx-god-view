@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Box, Stack, Tooltip, Typography } from '@mui/material';
 import {
   formatOneDecimal,
@@ -10,18 +10,29 @@ import {
 import { resolveRecruiterPrimaryDisplay } from '../../../utils/scoring/recruiterPrimaryDisplay';
 import {
   getRecruiterScoreDisplayForAdminUi,
+  parseRecruiterScoreSnapshot,
   RECRUITER_SNAPSHOT_MISSING_LABEL,
 } from '../../../utils/scoring/recruiterScoreSnapshot';
+import type { RecruiterScoreSnapshot } from '../../../types/recruiterScoreSnapshot';
+import {
+  deriveWhyThisDecision,
+  reasoningSummaryLinesForUi,
+  recruiterDecisionHeadline,
+} from '../../../utils/scoring/deriveNextBestAction';
 import { getRecruiterMasterDisplayForAdminUi } from '../../../utils/scoring/recruiterMasterScoreDisplay';
-import { formatCategoryScoresCompactPreviewFromPartial } from '../../../utils/parseRecruiterCategoryScores';
 import type { WorkerInterviewAiBlock } from '../../../types/workerAiPrescreenInterview';
 import type { PrescreenCategoryScoresV1 } from '../../../types/prescreenCategoryScores';
 import type { WorkerRiskProfileV1 } from '../../../types/workerRiskProfile';
 import { recruiterTableLetterGrade } from '../../../utils/recruiterUsersReadinessDisplay';
-import { recordHeaderTooltipComponentsProps } from './recordHeaderStyles';
+import {
+  recordHeaderBodyTextSx,
+  recordHeaderColumnTitleSx,
+  recordHeaderTooltipComponentsProps,
+} from './recordHeaderStyles';
 import {
   overallRiskBandLabel,
-  topCategoryLabelsForRecordHeader,
+  riskBandLineWithIndex,
+  riskSummaryLineAfterIndexConsolidation,
 } from '../utils/recordHeaderScoreHelpers';
 import { workerRiskPrimaryLine } from '../../../utils/workerRiskProfileDisplay';
 
@@ -39,8 +50,15 @@ export type RecordHeaderScoreSummaryBlockProps = {
   useRecruiterSnapshotOnly?: boolean;
 };
 
+/** "ADVANCE" → "Advance" for single-line recommendation label. */
+function recruiterHeadlineToSentenceCase(headline: string): string {
+  const t = headline.trim();
+  if (!t) return '—';
+  return t.charAt(0) + t.slice(1).toLowerCase();
+}
+
 /**
- * Score + category strengths + risk band + top concern + hiring-score recommendations (record header column).
+ * Score + risk band + top concern + hiring-score recommendations (record header column).
  */
 const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps> = ({
   scoreSummary,
@@ -64,6 +82,56 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
     },
     latestPrescreenInterviewAi: latestPrescreenInterviewAi ?? null,
   });
+
+  const snapParsed = useMemo(() => parseRecruiterScoreSnapshot(recruiterScoreSnapshot), [recruiterScoreSnapshot]);
+
+  const strengthsForWhy = useMemo(() => {
+    const out: string[] = [];
+    const adj = latestPrescreenInterviewAi?.scoreAdjustmentReasons;
+    const dec = latestPrescreenInterviewAi?.decisionAdjustmentReasons;
+    if (Array.isArray(adj)) out.push(...adj.map((s) => String(s).trim()).filter(Boolean));
+    if (out.length < 5 && Array.isArray(dec)) out.push(...dec.map((s) => String(s).trim()).filter(Boolean));
+    return [...new Set(out)].slice(0, 5);
+  }, [latestPrescreenInterviewAi]);
+
+  const risksForWhy = useMemo(() => {
+    const out: string[] = [];
+    const ai = latestPrescreenInterviewAi;
+    if (ai?.hardBlocks?.length) out.push(...ai.hardBlocks.map(String));
+    if (ai?.softBlocks?.length) out.push(...ai.softBlocks.slice(0, 2).map(String));
+    const rs = ai?.riskSummary;
+    if (rs?.drug?.reason) out.push(`Drug: ${rs.drug.reason}`);
+    if (rs?.background?.reason) out.push(`Background: ${rs.background.reason}`);
+    return [...new Set(out)].slice(0, 3);
+  }, [latestPrescreenInterviewAi]);
+
+  const decisionForHeader =
+    snapParsed?.decision ??
+    (latestPrescreenInterviewAi?.hiringDecision?.decision as RecruiterScoreSnapshot['decision'] | undefined) ??
+    null;
+  const recommendationForHeader = snapParsed?.recommendation ?? latestPrescreenInterviewAi?.recommendation ?? null;
+  const decisionHeadlineText = recruiterDecisionHeadline(decisionForHeader, recommendationForHeader);
+
+  const whyThisDecisionLine = useMemo(
+    () =>
+      deriveWhyThisDecision({
+        reasoningSummary: snapParsed?.reasoningSummary ?? null,
+        riskLevel: snapParsed?.riskLevel ?? null,
+        hardBlocks: latestPrescreenInterviewAi?.hardBlocks?.map(String) ?? [],
+        strengths: strengthsForWhy,
+        risks: risksForWhy,
+      }),
+    [
+      snapParsed?.reasoningSummary,
+      snapParsed?.riskLevel,
+      latestPrescreenInterviewAi?.hardBlocks,
+      strengthsForWhy,
+      risksForWhy,
+    ],
+  );
+
+  const showMasterRecommendationBlock = useRecruiterSnapshotOnly && masterDisp.score100 != null;
+
   const displayPack = useRecruiterSnapshotOnly
     ? masterDisp.score100 != null
       ? {
@@ -103,14 +171,6 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
     else if (displayScore >= 60) scoreColor = 'warning.main';
   }
 
-  const strengths = topCategoryLabelsForRecordHeader(categoryScores, 3);
-  const snapPreview = formatCategoryScoresCompactPreviewFromPartial(snapDisp.categoryScores);
-  const strengthsLine =
-    useRecruiterSnapshotOnly && snapDisp.hasSnapshot && snapPreview.length > 0
-      ? snapPreview.slice(0, 3).join(' · ')
-      : strengths.length > 0
-        ? strengths.join(' · ')
-        : null;
   const riskBand =
     useRecruiterSnapshotOnly && masterDisp.score100 != null
       ? masterDisp.riskLevel
@@ -119,7 +179,7 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
       : overallRiskBandLabel(riskProfile);
   const topConcernLine =
     useRecruiterSnapshotOnly && masterDisp.score100 != null
-      ? snapDisp.riskSummary?.trim() || null
+      ? riskSummaryLineAfterIndexConsolidation(snapDisp.riskSummary)
       : workerRiskPrimaryLine(riskProfile);
 
   const nextActions = (scoreSummary?.explainability?.nextActions ?? [])
@@ -132,15 +192,12 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
     recommendationLinesLegacy.push(`Profile: add ${firstGap}`);
   }
   const masterSummary = masterDisp.master?.summary?.trim();
+  const snapReasoningLinesForUi = reasoningSummaryLinesForUi(snapDisp.reasoningSummary);
   const recommendationLinesSnapshot =
     useRecruiterSnapshotOnly && masterDisp.score100 != null && masterSummary
       ? masterSummary.split(/\n+/).map((s) => s.trim()).filter(Boolean).slice(0, 4)
-      : useRecruiterSnapshotOnly && snapDisp.hasSnapshot && snapDisp.reasoningSummary?.trim()
-        ? snapDisp.reasoningSummary
-            .split(/\n+/)
-            .map((s) => s.trim())
-            .filter(Boolean)
-            .slice(0, 4)
+      : useRecruiterSnapshotOnly && snapDisp.hasSnapshot && snapReasoningLinesForUi.length > 0
+        ? snapReasoningLinesForUi.slice(0, 4)
         : [];
   const recommendationLines =
     useRecruiterSnapshotOnly && masterDisp.score100 != null
@@ -242,10 +299,10 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
     return (
       <Box sx={{ width: '100%', minWidth: 0 }}>
         <Stack spacing={0.35} alignItems="flex-start">
-          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem', lineHeight: 1.35 }}>
+          <Typography variant="body2" sx={recordHeaderBodyTextSx}>
             {RECRUITER_SNAPSHOT_MISSING_LABEL}
           </Typography>
-          <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem', lineHeight: 1.35 }}>
+          <Typography variant="body2" sx={recordHeaderBodyTextSx}>
             Needs review/rescore or next interview / server refresh.
           </Typography>
         </Stack>
@@ -290,85 +347,49 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
               {displayScore ?? '—'}
             </Typography>
             {!useRecruiterSnapshotOnly && displayPack.hasConflict ? (
-              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem', maxWidth: 200 }}>
+              <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, maxWidth: 200 }}>
                 Using operational interview score
               </Typography>
             ) : null}
           </Box>
-          {useRecruiterSnapshotOnly && masterDisp.score100 != null ? (
-            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.62rem', lineHeight: 1.35 }}>
-              Master Recruiter Score — same blend as Users table and Overview.
-            </Typography>
-          ) : null}
           {!useRecruiterSnapshotOnly &&
           compositeScore != null &&
           hasScore &&
           Math.round(compositeScore) !== Math.round(rawScore!) ? (
-            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.68rem' }}>
+            <Typography variant="body2" sx={recordHeaderBodyTextSx}>
               Profile {Math.round(compositeScore)} (secondary)
             </Typography>
           ) : null}
-          {useRecruiterSnapshotOnly && snapDisp.hasSnapshot && m?.components && ew ? (
-            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem', lineHeight: 1.4 }}>
-              Breakdown: category {m.components.categoryScore ?? '—'} ({Math.round(ew.categoryScore * 100)}%) · interview{' '}
-              {m.components.interviewScore ?? '—'} ({Math.round(ew.interviewScore * 100)}%) · profile{' '}
-              {m.components.profileScore ?? '—'} ({Math.round(ew.profileScore * 100)}%)
-            </Typography>
-          ) : null}
-          {useRecruiterSnapshotOnly && snapDisp.hasSnapshot ? (
-            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6rem', lineHeight: 1.35, opacity: 0.85 }}>
-              Supporting metrics: op {snapDisp.operationalScore100 ?? '—'} · composite {snapDisp.compositeScore100 ?? '—'} · base{' '}
-              {snapDisp.interviewScoreBase100 ?? '—'}
-            </Typography>
-          ) : null}
-          {strengthsLine && (
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{
-                fontSize: '0.68rem',
-                fontWeight: 500,
-                lineHeight: 1.35,
-                display: 'block',
-              }}
-            >
-              {strengthsLine}
-            </Typography>
-          )}
           <Typography
-            variant="caption"
+            variant="body2"
             sx={{
-              fontSize: '0.68rem',
-              fontWeight: 600,
-              color:
-                riskBand === 'High'
-                  ? 'error.main'
-                  : riskBand === 'Medium' || riskBand === 'Moderate'
-                    ? 'warning.dark'
-                    : 'text.secondary',
+              ...recordHeaderBodyTextSx,
+              ...(riskBand === 'High'
+                ? { color: 'error.main' }
+                : riskBand === 'Medium' || riskBand === 'Moderate'
+                  ? { color: 'warning.dark' }
+                  : {}),
             }}
           >
-            Risk: {riskBand}
+            {riskBandLineWithIndex(riskBand, riskProfile, riskProfile)}
           </Typography>
           {topConcernLine ? (
-            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.74rem', lineHeight: 1.4 }}>
+            <Typography variant="body2" sx={recordHeaderBodyTextSx}>
               {topConcernLine}
             </Typography>
           ) : null}
-          {recommendationLines.length > 0 && (
+          {showMasterRecommendationBlock ? (
             <Box sx={{ pt: 0.25 }}>
-              <Typography
-                variant="caption"
-                sx={{
-                  fontSize: '0.6rem',
-                  fontWeight: 700,
-                  letterSpacing: '0.06em',
-                  textTransform: 'uppercase',
-                  color: 'text.secondary',
-                  display: 'block',
-                  mb: 0.35,
-                }}
-              >
+              <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                Recommendation: {recruiterHeadlineToSentenceCase(decisionHeadlineText)}
+              </Typography>
+              <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, display: 'block', mt: 0.5 }}>
+                {whyThisDecisionLine}
+              </Typography>
+            </Box>
+          ) : recommendationLines.length > 0 ? (
+            <Box sx={{ pt: 0.25 }}>
+              <Typography variant="body2" sx={{ ...recordHeaderColumnTitleSx, mb: 0.35 }}>
                 Recommendations
               </Typography>
               <Stack spacing={0.35} component="ul" sx={{ m: 0, pl: 2 }}>
@@ -377,32 +398,23 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
                     key={i}
                     component="li"
                     variant="body2"
-                    color="text.secondary"
-                    sx={{ fontSize: '0.72rem', lineHeight: 1.4, display: 'list-item' }}
+                    sx={{ ...recordHeaderBodyTextSx, display: 'list-item' }}
                   >
                     {line}
                   </Typography>
                 ))}
               </Stack>
             </Box>
-          )}
+          ) : null}
           {interviewSummaryLine ? (
             <Box
               sx={{
                 pt: '2px',
-                mt: recommendationLines.length > 0 ? 1.25 : 0.75,
+                mt: showMasterRecommendationBlock || recommendationLines.length > 0 ? 1.25 : 0.75,
                 width: '100%',
               }}
             >
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                sx={{
-                  fontSize: '0.72rem',
-                  lineHeight: 1.4,
-                  fontWeight: 400,
-                }}
-              >
+              <Typography variant="body2" sx={recordHeaderBodyTextSx}>
                 {interviewSummaryLine}
               </Typography>
             </Box>

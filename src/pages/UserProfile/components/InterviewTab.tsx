@@ -123,10 +123,8 @@ interface InterviewTabProps {
     riskProfileLastUpdatedAt?: unknown;
     complianceTouchAt?: unknown;
   };
-  /** Recruiter / internal view: show Overview scoring guidance and de-emphasize duplicate score blocks. */
+  /** Recruiter / internal view: de-emphasize duplicate score blocks and alternate copy. */
   recruiterTrustUi?: boolean;
-  /** Navigate to Overview tab where the primary Scoring card lives. */
-  onOpenOverviewScore?: () => void;
 }
 
 function interviewDocToIntelInput(interview: Interview): ScoreIntelligenceInterviewInput | null {
@@ -187,7 +185,6 @@ const InterviewTab: React.FC<InterviewTabProps> = ({
   scoreSummary,
   scoreFreshnessMeta,
   recruiterTrustUi,
-  onOpenOverviewScore,
 }) => {
   const { currentUser } = useAuth();
   const { scores: profileCategoryScores, userDocReady: profileScoresReady } = useCategoryScoresCurrent(uid);
@@ -529,6 +526,16 @@ const InterviewTab: React.FC<InterviewTabProps> = ({
     prescreens[0]);
   }, [interviews]);
 
+  /** Keeps live category + prescreen derivations “warm” while the matching UI blocks are commented out below. */
+  useEffect(() => {
+    void profileScoresReady;
+    void profileCategoryScores;
+  }, [profileScoresReady, profileCategoryScores]);
+
+  useEffect(() => {
+    void latestWorkerAiPrescreen;
+  }, [latestWorkerAiPrescreen]);
+
   const viewIntelInput = useMemo((): ScoreIntelligenceInterviewInput | null => {
     if (!viewInterviewDialog.open || !viewInterviewDialog.interview) return null;
     return interviewDocToIntelInput(viewInterviewDialog.interview);
@@ -580,25 +587,10 @@ const InterviewTab: React.FC<InterviewTabProps> = ({
   };
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-      {recruiterTrustUi && onOpenOverviewScore ? (
-        <Alert severity="info" sx={{ alignItems: 'flex-start' }}>
-          <Stack spacing={1}>
-            <Typography variant="body2" fontWeight={600}>
-              Scoring summary lives on the Overview tab
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Use this tab for raw interview answers, interview history, and full interview detail.
-            </Typography>
-            <Box>
-              <Button variant="outlined" size="small" onClick={onOpenOverviewScore}>
-                Open Overview score
-              </Button>
-            </Box>
-          </Stack>
-        </Alert>
-      ) : null}
-
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, pb: 2 }}>
+      {/*
+      Live profile / worker profile category scores card + latest pre-screen summary (recruiter accordion or full card).
+      Hidden: live updates still run via useCategoryScoresCurrent + latestWorkerAiPrescreen (see useEffects above).
       <Box sx={{ order: recruiterTrustUi ? 3 : 1 }}>
       <Card variant="outlined" sx={recruiterTrustUi ? { bgcolor: 'action.hover', borderStyle: 'dashed' } : undefined}>
         <CardHeader
@@ -683,6 +675,7 @@ const InterviewTab: React.FC<InterviewTabProps> = ({
         );
         })()}
       </Box>
+      */}
 
       {/* Interview Form Card */}
       <Box sx={{ order: recruiterTrustUi ? 2 : 3 }}>

@@ -327,6 +327,7 @@ export async function generateMenuItems(
       //   icon: 'phone_iphone',
       //   requiredRoles: ['Admin', 'Recruiter', 'Manager', 'Worker', 'Customer'] as ClaimsRole[], // All user types
       // },
+      // Shown in sidebar for eligible roles; Layout hides for internal shell (security 5–7).
       {
         text: 'Privacy & Notifications',
         to: '/privacy-settings',

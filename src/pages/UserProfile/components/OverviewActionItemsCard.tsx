@@ -18,11 +18,7 @@ import {
   countActionItemsByBlockingKind,
   type ActionItemsSections,
 } from '../../../utils/userActionItems/mapToSections';
-import {
-  actorLabel,
-  anyActionItemSuggestsEmploymentTab,
-  scopeBadgeLabelForActionItem,
-} from '../../../utils/userActionItems/actionItemPresentation';
+import { actorLabel, scopeBadgeLabelForActionItem } from '../../../utils/userActionItems/actionItemPresentation';
 import {
   overviewCardFlatSx,
   overviewSectionTitleTypographyProps,
@@ -33,7 +29,6 @@ import {
 export type OverviewActionItemsCardProps = {
   items: ActionItem[];
   loading?: boolean;
-  onOpenEmploymentTab?: () => void;
   onNavigateCta?: (item: ActionItem) => void;
 };
 
@@ -184,14 +179,11 @@ function ActionRows({
 const OverviewActionItemsCard: React.FC<OverviewActionItemsCardProps> = ({
   items,
   loading,
-  onOpenEmploymentTab,
   onNavigateCta,
 }) => {
   const sections: ActionItemsSections = useMemo(() => mapActionItemsToSections(items), [items]);
   const counts = useMemo(() => countActionItemsByBlockingKind(items), [items]);
   const total = counts.blocking + counts.nextSteps + counts.watchouts;
-
-  const showEmploymentLink = Boolean(onOpenEmploymentTab && anyActionItemSuggestsEmploymentTab(items));
 
   const [debugOpen, setDebugOpen] = useState(false);
   const isDev = process.env.NODE_ENV === 'development';
@@ -209,32 +201,7 @@ const OverviewActionItemsCard: React.FC<OverviewActionItemsCardProps> = ({
       }}
     >
       <CardContent sx={{ py: 1, px: 1.25, '&:last-child': { pb: 1 } }}>
-        <Stack direction="row" alignItems="flex-start" justifyContent="space-between" gap={1} flexWrap="wrap">
-          <Box sx={{ minWidth: 0, flex: 1 }}>
-            <Typography {...overviewSectionTitleTypographyProps}>Action items</Typography>
-          </Box>
-          {!loading && total > 0 ? (
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ fontSize: '0.68rem', textAlign: 'right', whiteSpace: 'nowrap', mt: 0.1 }}
-            >
-              {counts.blocking} {counts.blocking === 1 ? 'blocker' : 'blockers'} · {counts.nextSteps}{' '}
-              {counts.nextSteps === 1 ? 'next step' : 'next steps'} · {counts.watchouts}{' '}
-              {counts.watchouts === 1 ? 'watchout' : 'watchouts'}
-            </Typography>
-          ) : null}
-          {showEmploymentLink ? (
-            <Button
-              size="small"
-              variant="text"
-              sx={{ ...overviewCardHeaderTextButtonSx, fontSize: '0.72rem', flexShrink: 0 }}
-              onClick={onOpenEmploymentTab}
-            >
-              Employment
-            </Button>
-          ) : null}
-        </Stack>
+        <Typography {...overviewSectionTitleTypographyProps}>Action items</Typography>
 
         {loading ? (
           <Stack spacing={0.75} sx={{ mt: 1 }}>

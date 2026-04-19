@@ -75,10 +75,6 @@ export default function ScorePrimarySourceStrip({
           <Typography variant="body2" color="text.primary">
             <strong>Primary score (shown everywhere):</strong> {primary} · grade {grade}
           </Typography>
-          <Typography variant="caption" color="text.secondary" display="block">
-            Recruiter score shown everywhere is based on this snapshot. Supporting values below are components, not alternate
-            primaries.
-          </Typography>
           <Typography variant="body2" color="text.secondary">
             <strong>Operational (component):</strong>{' '}
             {snap.operationalScore100 != null ? `${Math.round(snap.operationalScore100)}/100` : '—'}

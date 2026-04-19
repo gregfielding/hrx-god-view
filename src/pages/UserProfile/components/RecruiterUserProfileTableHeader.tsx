@@ -30,12 +30,17 @@ import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import AddIcon from '@mui/icons-material/Add';
 import FavoriteButton from '../../../components/FavoriteButton';
+import { PhoneVerifiedInlineCheck } from '../../../components/PhoneVerifiedInlineCheck';
 import UserTableIndeedFlexBadge from '../../../components/tables/UserTableIndeedFlexBadge';
 import { pickResumeFromUserDoc } from '../../../utils/userResumeOpen';
 import { formatPhoneNumber } from '../../../utils/formatPhone';
 import type { ReadinessBreakdownRow } from '../../../utils/recruiterUsersReadinessDisplay';
 import type { RecordHeaderEntitySlot } from '../../../utils/recruiterUsersEntityWorkReadiness';
-import { recordHeaderTooltipComponentsProps } from './recordHeaderStyles';
+import {
+  recordHeaderBodyTextSx,
+  recordHeaderColumnTitleSx,
+  recordHeaderTooltipComponentsProps,
+} from './recordHeaderStyles';
 import RecordHeaderScoreSummaryBlock from './RecordHeaderScoreSummaryBlock';
 import type { ScoreSummary, ScoringDistribution } from '../../../utils/scoreSummary';
 import type { WorkerInterviewAiBlock } from '../../../types/workerAiPrescreenInterview';
@@ -50,23 +55,6 @@ import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../../../firebase';
 
 type TenantUserGroupOption = { id: string; title: string };
-
-const colTitleSx = {
-  fontSize: '0.65rem',
-  fontWeight: 700,
-  letterSpacing: '0.08em',
-  textTransform: 'uppercase' as const,
-  color: 'text.secondary',
-  mb: 0.65,
-  display: 'block',
-};
-
-const bodySx = {
-  fontSize: '0.78rem',
-  lineHeight: 1.45,
-  color: 'text.secondary',
-  display: 'block',
-};
 
 /** Inline copy control: tiny icon, tucked next to value (no flex-grow on text). */
 const copyIconButtonSx = {
@@ -91,6 +79,8 @@ export type RecruiterUserProfileTableHeaderProps = {
   /** Two-line home address (street + city/state/zip); built from user doc in parent */
   recordHeaderAddressLines?: { line1: string; line2: string } | null;
   phone: string;
+  /** Twilio / Firestore `phoneVerified` */
+  phoneVerified?: boolean;
   avatarUrl: string;
   onboardingInProgress: boolean;
   onboardingAccent: string;
@@ -164,6 +154,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
   email,
   recordHeaderAddressLines,
   phone,
+  phoneVerified,
   avatarUrl,
   onboardingInProgress,
   onboardingAccent,
@@ -469,7 +460,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                   mb: 0.65,
                 }}
               >
-                <Typography component="span" sx={{ ...colTitleSx, mb: 0 }}>
+                <Typography component="span" sx={{ ...recordHeaderColumnTitleSx, mb: 0 }}>
                   Contact
                 </Typography>
                 {onContactEditClick ? (
@@ -497,7 +488,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                     variant="body2"
                     noWrap
                     component="span"
-                    sx={{ ...bodySx, minWidth: 0, flex: '0 1 auto' }}
+                    sx={{ ...recordHeaderBodyTextSx, minWidth: 0, flex: '0 1 auto' }}
                   >
                     {email}
                   </Typography>
@@ -521,9 +512,10 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                   spacing={0}
                   sx={{ alignSelf: 'flex-start', minWidth: 0, maxWidth: '100%', mt: 0.35, gap: 0.25 }}
                 >
-                  <Typography variant="body2" noWrap component="span" sx={{ ...bodySx, minWidth: 0, flex: '0 1 auto' }}>
+                  <Typography variant="body2" noWrap component="span" sx={{ ...recordHeaderBodyTextSx, minWidth: 0, flex: '0 1 auto' }}>
                     {phoneDisplay}
                   </Typography>
+                  <PhoneVerifiedInlineCheck verified={phoneVerified === true} />
                   <Tooltip title="Copy phone number" arrow placement="top" componentsProps={recordHeaderTooltipComponentsProps}>
                     <IconButton
                       size="small"
@@ -546,7 +538,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                 >
                   <Box sx={{ minWidth: 0, flex: '0 1 auto' }}>
                     {addr1 ? (
-                      <Typography variant="body2" sx={{ ...bodySx, lineHeight: 1.45, display: 'block' }}>
+                      <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, display: 'block' }}>
                         {addr1}
                       </Typography>
                     ) : null}
@@ -554,8 +546,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                       <Typography
                         variant="body2"
                         sx={{
-                          ...bodySx,
-                          lineHeight: 1.45,
+                          ...recordHeaderBodyTextSx,
                           display: 'block',
                           mt: addr1 ? 0.2 : 0,
                         }}
@@ -592,8 +583,8 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                   spacing={0}
                   sx={{ alignSelf: 'flex-start', minWidth: 0, maxWidth: '100%', mt: 0.35, gap: 0.25 }}
                 >
-                  <Typography variant="body2" noWrap component="span" sx={{ ...bodySx, minWidth: 0, flex: '0 1 auto' }}>
-                    <Box component="span" sx={{ color: 'text.secondary', mr: 0.35 }}>
+                  <Typography variant="body2" noWrap component="span" sx={{ ...recordHeaderBodyTextSx, minWidth: 0, flex: '0 1 auto' }}>
+                    <Box component="span" sx={{ mr: 0.35 }}>
                       DOB
                     </Box>
                     {dobDisplay}
@@ -618,8 +609,8 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                   spacing={0}
                   sx={{ alignSelf: 'flex-start', minWidth: 0, maxWidth: '100%', mt: 0.35, gap: 0.25 }}
                 >
-                  <Typography variant="body2" noWrap component="span" sx={{ ...bodySx, minWidth: 0, flex: '0 1 auto' }}>
-                    <Box component="span" sx={{ color: 'text.secondary', mr: 0.35 }}>
+                  <Typography variant="body2" noWrap component="span" sx={{ ...recordHeaderBodyTextSx, minWidth: 0, flex: '0 1 auto' }}>
+                    <Box component="span" sx={{ mr: 0.35 }}>
                       Last 4 (SSN)
                     </Box>
                     {lastFourDisplay}
@@ -637,26 +628,26 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                 </Stack>
               ) : null}
               {showEmergencyLine ? (
-                <Typography variant="body2" sx={{ ...bodySx, mt: 0.35 }}>
-                  <Box component="span" sx={{ color: 'text.secondary', mr: 0.35 }}>
+                <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, mt: 0.35 }}>
+                  <Box component="span" sx={{ mr: 0.35 }}>
                     Emergency
                   </Box>
                   {emergencyLineText}
                 </Typography>
               ) : null}
               {recordHeaderCreatedLabel ? (
-                <Typography variant="body2" sx={{ ...bodySx, mt: 0.35 }}>
+                <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, mt: 0.35 }}>
                   Created {recordHeaderCreatedLabel}
                 </Typography>
               ) : null}
             </Grid>
 
             <Grid item xs={12} md={gridColMd}>
-              <Typography component="span" sx={colTitleSx}>
+              <Typography component="span" sx={recordHeaderColumnTitleSx}>
                 Readiness
               </Typography>
               {!canViewAdminContent && interviewSummaryLine ? (
-                <Typography variant="body2" sx={{ ...bodySx, fontWeight: 500, color: 'text.primary', mb: 0.5 }}>
+                <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, mb: 0.5 }}>
                   {interviewSummaryLine}
                 </Typography>
               ) : null}
@@ -664,15 +655,14 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                 <Stack spacing={0.2}>
                   {readinessRows.map((row) => (
                     <Box key={row.key} component="span">
-                      <Typography variant="body2" sx={{ ...bodySx, fontSize: '0.74rem', fontWeight: 500 }}>
+                      <Typography variant="body2" sx={recordHeaderBodyTextSx}>
                         {row.text}
                       </Typography>
                       {row.sublines?.map((line, i) => (
                         <Typography
                           key={i}
-                          variant="caption"
-                          color="text.secondary"
-                          sx={{ display: 'block', pl: 0.5, fontSize: '0.68rem', lineHeight: 1.25 }}
+                          variant="body2"
+                          sx={{ ...recordHeaderBodyTextSx, display: 'block', pl: 0.5 }}
                         >
                           {line}
                         </Typography>
@@ -691,9 +681,10 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                   ml: -0.75,
                   alignItems: 'center',
                   '& .MuiFormControlLabel-label': {
-                    fontSize: '0.72rem',
-                    color: 'text.secondary',
-                    fontWeight: 500,
+                    fontSize: '0.74rem',
+                    fontWeight: 400,
+                    lineHeight: 1.45,
+                    color: (theme) => (theme.palette.mode === 'dark' ? theme.palette.text.secondary : '#5A6372'),
                   },
                 }}
                 control={
@@ -715,19 +706,19 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
             </Grid>
 
             <Grid item xs={12} md={gridColMd}>
-              <Typography component="span" sx={colTitleSx}>
+              <Typography component="span" sx={recordHeaderColumnTitleSx}>
                 Screening
               </Typography>
               {screeningPackageHint ? (
-                <Typography variant="body2" sx={{ ...bodySx, fontSize: '0.72rem', mb: 0.5 }}>
+                <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, mb: 0.5 }}>
                   {screeningPackageHint}
                 </Typography>
               ) : null}
               {screeningLines.length > 0 ? (
                 <Stack spacing={0.35}>
                   {screeningLines.map((line) => (
-                    <Typography key={line.id} variant="body2" sx={{ ...bodySx, fontSize: '0.74rem' }}>
-                      <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>
+                    <Typography key={line.id} variant="body2" sx={recordHeaderBodyTextSx}>
+                      <Box component="span">
                         {line.name}
                         {line.type ? ` (${line.type})` : ''}:
                       </Box>{' '}
@@ -736,20 +727,20 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                   ))}
                 </Stack>
               ) : (
-                <Typography variant="body2" sx={{ ...bodySx, fontSize: '0.74rem' }}>
+                <Typography variant="body2" sx={recordHeaderBodyTextSx}>
                   {screeningPackageHint ? '—' : 'No active screening package on file'}
                 </Typography>
               )}
-              <Typography component="span" sx={{ ...colTitleSx, mt: 1.25 }}>
+              <Typography component="span" sx={{ ...recordHeaderColumnTitleSx, mt: 1.25 }}>
                 Certifications
               </Typography>
-              <Typography variant="body2" sx={{ ...bodySx, fontSize: '0.72rem', fontStyle: 'italic' }}>
+              <Typography variant="body2" sx={recordHeaderBodyTextSx}>
                 —
               </Typography>
             </Grid>
 
             <Grid item xs={12} md={gridColMd}>
-              <Typography component="span" sx={colTitleSx}>
+              <Typography component="span" sx={recordHeaderColumnTitleSx}>
                 Employment
               </Typography>
               {entitySlots.length > 0 ? (
@@ -766,44 +757,31 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                         sx={{
                           height: 24,
                           maxWidth: '100%',
-                          '& .MuiChip-label': { px: 0.75, fontSize: '0.68rem', fontWeight: 600 },
+                          '& .MuiChip-label': { px: 0.75, fontSize: '0.74rem', fontWeight: 400 },
                         }}
                       />
                     );
                   })}
                 </Stack>
               ) : (
-                <Typography variant="body2" sx={{ ...bodySx, fontSize: '0.74rem' }}>
+                <Typography variant="body2" sx={recordHeaderBodyTextSx}>
                   —
                 </Typography>
               )}
 
               {assignmentLines.length > 0 ? (
                 <Box sx={{ mt: 1.25 }}>
-                  <Typography component="span" sx={colTitleSx}>
+                  <Typography component="span" sx={recordHeaderColumnTitleSx}>
                     Assignments
                   </Typography>
                   <Stack spacing={0.4} sx={{ mt: 0.35 }}>
                     {assignmentLines.map((line) => (
                       <Box key={line.id || line.primary}>
-                        <Typography
-                          variant="body2"
-                          sx={{
-                            ...bodySx,
-                            fontWeight: 500,
-                            color: 'text.primary',
-                            fontSize: '0.74rem',
-                            lineHeight: 1.35,
-                          }}
-                        >
+                        <Typography variant="body2" sx={recordHeaderBodyTextSx}>
                           {line.primary}
                         </Typography>
                         {line.secondary ? (
-                          <Typography
-                            variant="caption"
-                            color="text.secondary"
-                            sx={{ display: 'block', fontSize: '0.68rem', lineHeight: 1.3, mt: 0.1 }}
-                          >
+                          <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, display: 'block', mt: 0.1 }}>
                             {line.secondary}
                           </Typography>
                         ) : null}
@@ -828,7 +806,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                     <Typography
                       component="span"
                       sx={{
-                        ...colTitleSx,
+                        ...recordHeaderColumnTitleSx,
                         mb: 0,
                         lineHeight: 1.15,
                         display: 'inline-flex',
@@ -879,8 +857,8 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                             underline="hover"
                             variant="body2"
                             sx={{
-                              ...bodySx,
-                              fontWeight: 500,
+                              ...recordHeaderBodyTextSx,
+                              fontWeight: 400,
                               color: 'primary.main',
                               wordBreak: 'break-word',
                               flex: 1,
@@ -925,7 +903,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
 
             {canViewAdminContent && (
               <Grid item xs={12} md={gridColMd}>
-                <Typography component="span" sx={colTitleSx}>
+                <Typography component="span" sx={recordHeaderColumnTitleSx}>
                   Risk &amp; recommendations
                 </Typography>
                 <Box sx={{ mt: 0.35 }}>

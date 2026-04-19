@@ -136,6 +136,7 @@ import AssociationsAdmin from './pages/Admin/AssociationsAdmin';
 import SetupPassword from './pages/SetupPassword';
 import MobileApp from './pages/MobileApp';
 import PrivacySettings from './pages/PrivacySettings';
+import PrivacySettingsAdminShellGate from './components/PrivacySettingsAdminShellGate';
 import WorkerAssignments from './pages/WorkerAssignments';
 import FlexSettings from './pages/FlexSettings';
 import RecruiterSettings from './pages/RecruiterSettings';
@@ -1308,11 +1309,16 @@ function App() {
         
         {/* Worker-specific routes */}
         <Route path="mobile-app" element={<MobileApp />} />
-        <Route path="privacy-settings" element={
-          <ProtectedRoute requiredSecurityLevel="5">
-            <PrivacySettings />
-          </ProtectedRoute>
-        } />
+        <Route
+          path="privacy-settings"
+          element={
+            <ProtectedRoute>
+              <PrivacySettingsAdminShellGate>
+                <PrivacySettings />
+              </PrivacySettingsAdminShellGate>
+            </ProtectedRoute>
+          }
+        />
         {/* Recruiter hub links (e.g. profile Assignments tab) use /assignments/:id — must be before static /assignments */}
         <Route
           path="assignments/:assignmentId"

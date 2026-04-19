@@ -155,6 +155,8 @@ interface RecruiterUser {
   recruiterScoreSnapshot?: unknown;
   /** Blended Master Recruiter Score (preferred headline). */
   recruiterMasterScore?: unknown;
+  /** Twilio / Firestore verification */
+  phoneVerified?: boolean;
 }
 
 interface TenantUserGroup {
@@ -266,6 +268,7 @@ function mapUserDocToRecruiterUser(userDoc: { id: string; data: () => any }, ten
     riskProfile: userData.riskProfile ?? undefined,
     recruiterScoreSnapshot: userData.recruiterScoreSnapshot ?? undefined,
     recruiterMasterScore: userData.recruiterMasterScore ?? undefined,
+    phoneVerified: userData.phoneVerified === true,
   };
 }
 

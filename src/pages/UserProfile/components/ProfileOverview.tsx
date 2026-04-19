@@ -95,6 +95,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { UserProfileForm, EmergencyContact } from '../../../types/UserProfile';
 import type { ActionItem } from '../../../types/actionItems';
 import type { WorkerInterviewAiBlock } from '../../../types/workerAiPrescreenInterview';
+import type { ProfileUpdateReminderControls } from './MessagesTab';
 
 import AddressFormFields, { type AddressFormFieldsHandle } from './AddressTab/AddressFormFields';
 import MapWithMarkers from './AddressTab/MapWithMarkers';
@@ -127,6 +128,8 @@ type Props = {
   actionItemsPrescreenAi?: WorkerInterviewAiBlock | null;
   /** After manual recruiter rescore (callable), bump parent refresh for interview-derived signals. */
   onAfterRecruiterRescore?: () => void;
+  /** Recruiter-only: SMS profile update reminder (Qualifications card header). */
+  profileUpdateReminder?: ProfileUpdateReminderControls;
 };
 
 const ProfileOverview: React.FC<Props> = ({
@@ -140,6 +143,7 @@ const ProfileOverview: React.FC<Props> = ({
   actionItemsCertifications,
   actionItemsPrescreenAi,
   onAfterRecruiterRescore,
+  profileUpdateReminder,
 }) => {
   const { latestPrescreenAi: scoringPrescreenAiFromInterview } = useLatestWorkerAiPrescreenInterview(uid);
   const theme = useTheme();
@@ -1245,7 +1249,6 @@ const transportOptions: Array<{
               <OverviewActionItemsCard
                 items={actionItems}
                 loading={entityEmploymentChipsLoading || !userDocHydratedForActionItems}
-                onOpenEmploymentTab={onTabChange ? () => onTabChange('Employment') : undefined}
                 onNavigateCta={
                   onTabChange
                     ? (item: ActionItem) => {
@@ -1993,6 +1996,7 @@ const transportOptions: Array<{
                   qualifications={overviewQualifications}
                   allowResumeUpload={canEditProfile()}
                   tenantId={activeTenantId || tenantId || activeTenant?.id || null}
+                  profileUpdateReminder={embeddedMode === 'full' ? profileUpdateReminder : undefined}
                 />
               </Grid>
               <Grid item xs={12}>
@@ -2009,12 +2013,6 @@ const transportOptions: Array<{
                   scoringDecisionControls={
                     showReviewRescore
                       ? {
-                          onViewInterview: () => onTabChange?.('Interview'),
-                          onPrimaryAction: (intent) => {
-                            if (intent === 'review_decision') onOpenScoreTab?.();
-                            else onTabChange?.('Interview');
-                          },
-                          onOpenScoreTab: () => onOpenScoreTab?.(),
                           reviewRescoreSlot: (
                             <UserScoreRefreshButton
                               compact
@@ -2023,10 +2021,6 @@ const transportOptions: Array<{
                               onAfterSuccess={onAfterRecruiterRescore}
                             />
                           ),
-                          onOverrideDecision: () => onOpenScoreTab?.(),
-                          showOverrideDecision: true,
-                          phoneVerified,
-                          backgroundCheckPending,
                           manualOverrideLabel: null,
                         }
                       : undefined

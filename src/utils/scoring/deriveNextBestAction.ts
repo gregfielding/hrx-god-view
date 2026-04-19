@@ -163,6 +163,20 @@ export function deriveNextBestAction(input: {
   };
 }
 
+/** Snapshot lines hidden from “Why this decision?” / recommendation bullets (product). */
+export const SUPPRESSED_RECRUITER_REASONING_SUMMARY_LINES = new Set([
+  'Primary score uses profile/composite hiring score (no operational prescreen layer).',
+]);
+
+export function reasoningSummaryLinesForUi(raw: string | null | undefined): string[] {
+  if (raw == null || typeof raw !== 'string') return [];
+  return raw
+    .split(/\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter((l) => !SUPPRESSED_RECRUITER_REASONING_SUMMARY_LINES.has(l));
+}
+
 /** Short trust-building lines (max ~2 lines) — not the full accordion narrative. */
 export function deriveWhyThisDecision(input: {
   reasoningSummary?: string | null;
@@ -171,7 +185,7 @@ export function deriveWhyThisDecision(input: {
   strengths: string[];
   risks: string[];
 }): string {
-  const lines = input.reasoningSummary?.split(/\n+/).map((s) => s.trim()).filter(Boolean) ?? [];
+  const lines = reasoningSummaryLinesForUi(input.reasoningSummary);
   if (lines.length > 0) {
     const two = lines.slice(0, 2).join(' ');
     return two.length > 220 ? `${two.slice(0, 217)}…` : two;
@@ -187,4 +201,28 @@ export function deriveWhyThisDecision(input: {
   }
   const out = parts.join(' ');
   return out.length > 220 ? `${out.slice(0, 217)}…` : out || 'Signals from the latest interview and profile inform this decision.';
+}
+
+/** Uppercase headline for recruiter UI (ADVANCE / REVIEW / …) — Overview card + record header. */
+export function recruiterDecisionHeadline(
+  d: RecruiterScoreSnapshot['decision'] | null | undefined,
+  recommendation: RecruiterScoreSnapshot['recommendation'] | null | undefined,
+): string {
+  if (d) {
+    switch (d) {
+      case 'advance':
+        return 'ADVANCE';
+      case 'review':
+        return 'REVIEW';
+      case 'reject':
+        return 'REJECT';
+      case 'hold':
+        return 'HOLD';
+      default:
+        break;
+    }
+  }
+  if (recommendation === 'proceed') return 'ADVANCE';
+  if (recommendation === 'decline') return 'REJECT';
+  return 'REVIEW';
 }

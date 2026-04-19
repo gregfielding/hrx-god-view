@@ -15,6 +15,7 @@ import { formatPhoneNumber } from '../../utils/formatPhone';
 import RecordHeaderLanguagePreferenceBadge from '../../pages/UserProfile/components/RecordHeaderLanguagePreferenceBadge';
 import RecordHeaderTransportMethodIcon from '../../pages/UserProfile/components/RecordHeaderTransportMethodIcon';
 import { recordHeaderTooltipComponentsProps } from '../../pages/UserProfile/components/recordHeaderStyles';
+import { PhoneVerifiedInlineCheck } from '../PhoneVerifiedInlineCheck';
 
 const copyIconButtonSx = {
   p: 0.125,
@@ -62,6 +63,7 @@ export type RecruiterUserTableContactBlockProps = {
     userGroupIds?: string[];
     preferredLanguage?: string;
     transportMethod?: string;
+    phoneVerified?: boolean;
   };
   latestNote: RecruiterUserTableLatestNote;
   groupTitleLookup: Map<string, string>;
@@ -78,6 +80,7 @@ const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockPro
   const emailRaw = typeof user.email === 'string' ? user.email.trim() : '';
   const phoneRaw = user.phone || user.phoneE164;
   const phoneDisplay = phoneRaw ? formatPhoneNumber(String(phoneRaw)) : '';
+  const phoneVerified = user.phoneVerified === true;
 
   const handleCopy = async (text: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -144,6 +147,7 @@ const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockPro
           <Typography variant="caption" color="text.secondary" display="block" sx={{ ...tightCaptionSx, minWidth: 0 }}>
             {phoneDisplay}
           </Typography>
+          <PhoneVerifiedInlineCheck verified={phoneVerified} />
           <Tooltip title="Copy phone number" arrow placement="top" componentsProps={recordHeaderTooltipComponentsProps}>
             <IconButton
               size="small"

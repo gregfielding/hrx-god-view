@@ -87,7 +87,8 @@ import SkillsOnlyTab from './components/SkillsOnlyTab';
 import WorkEligibilityTab from './components/WorkEligibilityTab';
 import QualificationsTab from './components/QualificationsTab';
 import InterviewTab from './components/InterviewTab';
-import ScoreTab from './components/ScoreTab';
+// Score tab hidden from user record layout (restore import + tab entry + case 'Score' below to re-enable).
+// import ScoreTab from './components/ScoreTab';
 import ReportsAndInsightsTab from './components/ReportsAndInsightsTab';
 import NotesTab from './components/NotesTab';
 import UserAssignmentsTab from './components/UserAssignmentsTab';
@@ -916,6 +917,7 @@ const UserProfilePage = () => {
           recruiterScoreSnapshot: data.recruiterScoreSnapshot ?? null,
           recruiterMasterScore: data.recruiterMasterScore ?? null,
           categoryScoresCurrent: data.categoryScoresCurrent ?? null,
+          phoneVerified: data.phoneVerified === true,
         });
 
         setProfileOnboardingType(typeof data.onboardingType === 'string' ? data.onboardingType : undefined);
@@ -1117,7 +1119,7 @@ const UserProfilePage = () => {
     const tabs = [
       { label: 'Overview', available: true, count: undefined },
       { label: 'Interview', available: canViewAdminContent && !isWorkforceInternalTeamView, count: interviewsCount },
-      { label: 'Score', available: canViewAdminContent && !isWorkforceInternalTeamView },
+      // { label: 'Score', available: canViewAdminContent && !isWorkforceInternalTeamView },
       { label: 'Qualifications', available: false, count: undefined },
       { label: 'Applications', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: activeApplicationsCount },
       { label: 'Assignments', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: assignmentsCount },
@@ -2085,6 +2087,7 @@ const UserProfilePage = () => {
                   email={email}
                   recordHeaderAddressLines={recordHeaderAddressLines}
                   phone={phone}
+                  phoneVerified={skillsData?.phoneVerified === true}
                   avatarUrl={avatarUrl}
                   onboardingInProgress={onboardingInProgress}
                   onboardingAccent={onboardingAccent}
@@ -2960,6 +2963,16 @@ const UserProfilePage = () => {
                       actionItemsCertifications={skillsData?.certifications || []}
                       actionItemsPrescreenAi={latestWorkerPrescreenAi}
                       onAfterRecruiterRescore={bumpAfterRecruiterRescore}
+                      profileUpdateReminder={
+                        canSendProfileUpdateReminder
+                          ? {
+                              sending: sendingProfileUpdateReminder,
+                              lastSentAt: profileUpdateReminderLastSentAt,
+                              error: profileUpdateReminderSendError,
+                              onSend: handleSendProfileUpdateReminder,
+                            }
+                          : undefined
+                      }
                     />
                   </>
                 );
@@ -2970,24 +2983,23 @@ const UserProfilePage = () => {
                     scoreSummary={scoreSummary}
                     scoreFreshnessMeta={scoreFreshnessMeta}
                     recruiterTrustUi
-                    onOpenOverviewScore={() => handleTabChange({} as React.SyntheticEvent, 'Overview')}
                   />
                 );
-              case 'Score':
-                return (
-                  <ScoreTab
-                    uid={uid}
-                    scoreSummary={scoreSummary}
-                    scoreFreshnessMeta={scoreFreshnessMeta}
-                    latestPrescreenInterviewAi={latestWorkerPrescreenAi}
-                    recruiterScoreSnapshot={skillsData?.recruiterScoreSnapshot}
-                    useRecruiterSnapshotOnly={canViewAdminContent && viewerSecurityLevel >= 5}
-                    fallbackAiScore={profileScore}
-                    fallbackCompleteness={profileCompletenessScore}
-                    scoringDistribution={scoringDistribution}
-                    onGoToInterview={() => handleTabChange({} as React.SyntheticEvent, 'Interview')}
-                  />
-                );
+              // case 'Score':
+              //   return (
+              //     <ScoreTab
+              //       uid={uid}
+              //       scoreSummary={scoreSummary}
+              //       scoreFreshnessMeta={scoreFreshnessMeta}
+              //       latestPrescreenInterviewAi={latestWorkerPrescreenAi}
+              //       recruiterScoreSnapshot={skillsData?.recruiterScoreSnapshot}
+              //       useRecruiterSnapshotOnly={canViewAdminContent && viewerSecurityLevel >= 5}
+              //       fallbackAiScore={profileScore}
+              //       fallbackCompleteness={profileCompletenessScore}
+              //       scoringDistribution={scoringDistribution}
+              //       onGoToInterview={() => handleTabChange({} as React.SyntheticEvent, 'Interview')}
+              //     />
+              //   );
               case 'Qualifications':
                 return <QualificationsTab uid={uid} />;
               case 'Applications':

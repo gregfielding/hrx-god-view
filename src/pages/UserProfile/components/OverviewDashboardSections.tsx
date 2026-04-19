@@ -41,8 +41,13 @@ import {
   RECRUITER_SNAPSHOT_MISSING_LABEL,
 } from '../../../utils/scoring/recruiterScoreSnapshot';
 import { getRecruiterMasterDisplayForAdminUi } from '../../../utils/scoring/recruiterMasterScoreDisplay';
+import { reasoningSummaryLinesForUi } from '../../../utils/scoring/deriveNextBestAction';
 import { recruiterTableLetterGrade } from '../../../utils/recruiterUsersReadinessDisplay';
-import { overallRiskBandLabel } from '../utils/recordHeaderScoreHelpers';
+import {
+  overallRiskBandLabel,
+  riskBandLineWithIndex,
+  riskSummaryLineAfterIndexConsolidation,
+} from '../utils/recordHeaderScoreHelpers';
 import {
   normalizeRiskProfileFromUserDoc,
   workerRiskPrimaryLine,
@@ -54,6 +59,7 @@ import ShiftPreferencesCard from './ShiftPreferencesCard';
 import type { OverviewQualificationsData } from '../utils/overviewQualificationsSnapshot';
 import ResumeUpload from '../../../components/ResumeUpload';
 import { useAuth } from '../../../contexts/AuthContext';
+import type { ProfileUpdateReminderControls } from './MessagesTab';
 
 /** User-record overview only: flat cards, no hover elevation (jobs board etc. unchanged). */
 export const overviewCardFlatSx = {
@@ -139,44 +145,27 @@ export const overviewInlineTextActionButtonSx = {
   },
 } as const;
 
-/** Skill chips — smaller, regular weight, secondary color (subtle vs section headings). */
-export const overviewBodyChipSx = {
-  height: 'auto',
-  fontWeight: 400,
-  color: 'text.secondary',
-  bgcolor: 'transparent',
-  borderColor: 'divider',
-  py: 0.2,
-  fontSize: '0.65rem',
-  lineHeight: 1.35,
-  '& .MuiChip-label': {
-    px: 0.55,
-    py: 0.1,
-    fontWeight: 400,
-    fontSize: '0.65rem',
-    lineHeight: 1.35,
-    whiteSpace: 'normal',
-    color: 'text.secondary',
-  },
-} as const;
+import { overviewBodyChipSx } from './overviewBodyChipSx';
+export { overviewBodyChipSx };
 
 export type OverviewQualificationsCardProps = {
   uid: string;
   qualifications: OverviewQualificationsData;
-  onOpenQualificationsTab?: () => void;
   /** When false, hide resume upload (read-only viewers). Default false. */
   allowResumeUpload?: boolean;
   /** Same as other profile surfaces — used by resume parser / admin checks. */
   tenantId?: string | null;
+  /** Recruiter SMS nudge (same as Messages tab) — top-right of card header. */
+  profileUpdateReminder?: ProfileUpdateReminderControls;
 };
 
 /** Section 4: Full Qualifications snapshot (same sections as Qualifications tab, flat — no accordions). */
 export function OverviewQualificationsCard({
   uid,
   qualifications: q,
-  onOpenQualificationsTab,
   allowResumeUpload = false,
   tenantId: tenantIdProp,
+  profileUpdateReminder,
 }: OverviewQualificationsCardProps) {
   const { tenantId: authTenantId, activeTenant } = useAuth();
   const effectiveTenantId = tenantIdProp ?? authTenantId ?? activeTenant?.id ?? undefined;
@@ -263,15 +252,43 @@ export function OverviewQualificationsCard({
   return (
     <Card variant="outlined" sx={cardSx}>
       <CardContent sx={{ py: 1.25, px: 1.25, '&:last-child': { pb: 1.25 } }}>
-        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 1.25 }} flexWrap="wrap" gap={0.75}>
+        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.25 }} flexWrap="wrap" gap={0.75}>
           <Typography {...overviewSectionTitleTypographyProps}>Qualifications</Typography>
-          <Stack direction="row" spacing={0} sx={{ gap: 0.25 }} alignItems="center">
-            {onOpenQualificationsTab && (
-              <Button size="small" variant="text" sx={overviewCardHeaderTextButtonSx} onClick={onOpenQualificationsTab}>
-                More
+          {profileUpdateReminder ? (
+            <Stack alignItems="flex-end" spacing={0.15} sx={{ maxWidth: 260, ml: 'auto' }}>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={profileUpdateReminder.onSend}
+                disabled={profileUpdateReminder.sending}
+                startIcon={
+                  profileUpdateReminder.sending ? <CircularProgress color="inherit" size={12} /> : undefined
+                }
+                sx={{
+                  ...overviewCardHeaderTextButtonSx,
+                  borderColor: 'divider',
+                  px: 0.5,
+                  py: 0.125,
+                  lineHeight: 1.2,
+                  fontWeight: 600,
+                  fontSize: '0.68rem',
+                  minHeight: 26,
+                  textTransform: 'none',
+                }}
+              >
+                Profile Update Reminder
               </Button>
-            )}
-          </Stack>
+              {profileUpdateReminder.error ? (
+                <Typography sx={{ fontSize: '0.6rem', lineHeight: 1.3, color: 'error.main', textAlign: 'right' }}>
+                  {profileUpdateReminder.error}
+                </Typography>
+              ) : profileUpdateReminder.lastSentAt ? (
+                <Typography sx={{ fontSize: '0.6rem', lineHeight: 1.3, color: 'text.secondary', textAlign: 'right' }}>
+                  Sent {profileUpdateReminder.lastSentAt.toLocaleString()}
+                </Typography>
+              ) : null}
+            </Stack>
+          ) : null}
         </Stack>
 
         {!hasSubstance ? (
@@ -470,7 +487,7 @@ export type OverviewScoringCardProps = {
   recruiterMasterScore?: unknown;
   /** When true, primary score/risk lines come only from snapshot (no legacy fallback). */
   useRecruiterSnapshotOnly?: boolean;
-  /** Condensed recruiter-trust card: next action, CTAs, system confidence (internal viewers). */
+  /** Condensed recruiter-trust card: optional Review & rescore slot + manual-override labels (internal viewers). */
   scoringDecisionControls?: OverviewScoringDecisionControls;
 };
 
@@ -539,7 +556,7 @@ export function OverviewScoringCard({
       : riskBandLegacy;
   const topConcernLine =
     useRecruiterSnapshotOnly && masterDisp?.score100 != null
-      ? adminSnap?.riskSummary?.trim() || null
+      ? riskSummaryLineAfterIndexConsolidation(adminSnap?.riskSummary)
       : topConcernLineLegacy;
 
   const nextActions = (scoreSummary?.explainability?.nextActions ?? [])
@@ -559,15 +576,12 @@ export function OverviewScoringCard({
           .filter(Boolean)
           .slice(0, 4)
       : [];
+  const adminSnapReasoningLinesForUi = reasoningSummaryLinesForUi(adminSnap?.reasoningSummary);
   const recommendationLinesSnapshot =
     useRecruiterSnapshotOnly && masterDisp?.score100 != null && masterSummaryLines.length > 0
       ? masterSummaryLines
-      : useRecruiterSnapshotOnly && adminSnap?.hasSnapshot && adminSnap.reasoningSummary?.trim()
-        ? adminSnap.reasoningSummary
-            .split(/\n+/)
-            .map((s) => s.trim())
-            .filter(Boolean)
-            .slice(0, 4)
+      : useRecruiterSnapshotOnly && adminSnap?.hasSnapshot && adminSnapReasoningLinesForUi.length > 0
+        ? adminSnapReasoningLinesForUi.slice(0, 4)
         : [];
   const recommendationLines =
     useRecruiterSnapshotOnly && masterDisp?.score100 != null
@@ -600,21 +614,29 @@ export function OverviewScoringCard({
         recommendationLines.length > 0)) ||
     (useRecruiterSnapshotOnly && masterDisp?.score100 == null);
 
+  const reviewRescoreInHeader =
+    condensedRecruiterTrust && scoringDecisionControls?.reviewRescoreSlot ? scoringDecisionControls.reviewRescoreSlot : null;
+  const showScoringHeaderRight =
+    headerActionsRight != null ||
+    reviewRescoreInHeader != null ||
+    (!condensedRecruiterTrust && onOpenScoreTab);
+
   return (
     <Card variant="outlined" sx={cardSx}>
       <CardContent sx={{ py: 1, px: 1.25, '&:last-child': { pb: 1 } }}>
-        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 1 }} flexWrap="wrap" gap={0.75}>
+        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }} flexWrap="wrap" gap={0.75}>
           <Typography {...overviewSectionTitleTypographyProps}>Scoring</Typography>
-          {(headerActionsRight != null || (!condensedRecruiterTrust && onOpenScoreTab)) && (
+          {showScoringHeaderRight ? (
             <Stack direction="row" alignItems="center" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ ml: 'auto' }}>
               {headerActionsRight}
+              {reviewRescoreInHeader}
               {!condensedRecruiterTrust && onOpenScoreTab && (
                 <Button size="small" variant="text" sx={overviewCardHeaderTextButtonSx} onClick={onOpenScoreTab}>
                   Score
                 </Button>
               )}
             </Stack>
-          )}
+          ) : null}
         </Stack>
 
         {useRecruiterSnapshotOnly && masterDisp?.score100 == null ? (
@@ -681,9 +703,9 @@ export function OverviewScoringCard({
               <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.68rem', lineHeight: 1.35 }}>
                 {masterDisp.master.summary}
               </Typography>
-            ) : !useRecruiterSnapshotOnly && adminSnap?.hasSnapshot && adminSnap.reasoningSummary ? (
+            ) : !useRecruiterSnapshotOnly && adminSnap?.hasSnapshot && adminSnapReasoningLinesForUi.length > 0 ? (
               <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.68rem', lineHeight: 1.35 }}>
-                {adminSnap.reasoningSummary}
+                {adminSnapReasoningLinesForUi.join(' ')}
               </Typography>
             ) : null}
 
@@ -743,7 +765,7 @@ export function OverviewScoringCard({
                   riskBand === 'High' ? 'error.main' : riskBand === 'Medium' ? 'warning.dark' : 'text.secondary',
               }}
             >
-              Risk: {riskBand}
+              {riskBandLineWithIndex(riskBand, risk, riskProfileRaw)}
             </Typography>
 
             {topConcernLine ? (

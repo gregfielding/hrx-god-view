@@ -7,9 +7,7 @@ import {
   AccordionDetails,
   AccordionSummary,
   Box,
-  Button,
   Chip,
-  Divider,
   LinearProgress,
   Stack,
   Typography,
@@ -32,30 +30,18 @@ import {
   type CategoryScoreEventRow,
 } from '../../../utils/categoryScoreEvolution';
 import { deriveSystemDecisionConfidence } from '../../../utils/scoring/deriveSystemDecisionConfidence';
-import { deriveNextBestAction, deriveWhyThisDecision, type NextBestActionIntent } from '../../../utils/scoring/deriveNextBestAction';
+import { deriveWhyThisDecision, recruiterDecisionHeadline } from '../../../utils/scoring/deriveNextBestAction';
 import { getRecruiterMasterDisplayForAdminUi } from '../../../utils/scoring/recruiterMasterScoreDisplay';
+import { normalizeRiskProfileFromUserDoc } from '../../../utils/workerRiskProfileDisplay';
+import { riskBandLineWithIndex } from '../utils/recordHeaderScoreHelpers';
+import { overviewBodyChipSx } from './overviewBodyChipSx';
 
 export type OverviewScoringDecisionControls = {
-  onViewInterview: () => void;
-  /** If omitted, primary CTA falls back to onViewInterview / onOpenScoreTab-style behavior via handlers passed. */
-  onPrimaryAction?: (intent: NextBestActionIntent) => void;
+  /** Shown in the Scoring card header (e.g. Review & rescore). Consumed by parent `OverviewScoringCard`. */
   reviewRescoreSlot?: React.ReactNode;
-  onOverrideDecision?: () => void;
-  showOverrideDecision?: boolean;
-  /** From user doc — drives “verify phone” path when false */
-  phoneVerified?: boolean | null;
-  /** True when a screening / BG order is still in flight */
-  backgroundCheckPending?: boolean;
   /** Display name when snapshot was produced in manual review */
   manualOverrideLabel?: string | null;
-  onOpenScoreTab?: () => void;
 };
-const overviewProfileFieldValueSxLocal = {
-  fontSize: '0.78rem',
-  lineHeight: 1.45,
-  color: 'text.secondary',
-} as const;
-
 const CATEGORY_ROWS: { key: keyof PrescreenCategoryScoresV1; label: string }[] = [
   { key: 'reliability', label: 'Reliability' },
   { key: 'punctuality', label: 'Punctuality' },
@@ -100,6 +86,15 @@ function decisionHeadline(
   if (recommendation === 'proceed') return 'ADVANCE';
   if (recommendation === 'decline') return 'REJECT';
   return 'REVIEW';
+}
+
+/** Title case for compact summary lines (ADVANCE → Advance). */
+function decisionHeadlineTitleCase(
+  d: RecruiterScoreSnapshot['decision'],
+  recommendation: RecruiterScoreSnapshot['recommendation'],
+): string {
+  const h = decisionHeadline(d, recommendation);
+  return h.charAt(0) + h.slice(1).toLowerCase();
 }
 
 function recommendationLabel(r: RecruiterScoreSnapshot['recommendation']): string {
@@ -193,7 +188,7 @@ function MiniSparkline({ values }: { values: number[] }) {
     return `${x},${y}`;
   });
   return (
-    <Box sx={{ mt: 0.5, opacity: 0.85 }} aria-hidden>
+    <Box sx={{ mt: 0.25, opacity: 0.85 }} aria-hidden>
       <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
         <polyline
           fill="none"
@@ -252,6 +247,7 @@ export function OverviewScoringCardRecruiterTrust({
   );
 
   const hiringScore = masterDisp.score100;
+  const risk = normalizeRiskProfileFromUserDoc(riskProfileRaw);
 
   const decision =
     snap?.decision ??
@@ -260,14 +256,12 @@ export function OverviewScoringCardRecruiterTrust({
   const recommendation =
     snap?.recommendation ?? latestPrescreenInterviewAi?.recommendation ?? null;
 
-  const headline = decisionHeadline(decision, recommendation);
+  const headline = recruiterDecisionHeadline(decision, recommendation);
 
   const mergedCats = useMemo(
     () => mergeCategoryScores(profileCategoryScores, snap?.categoryScores),
     [profileCategoryScores, snap?.categoryScores],
   );
-  const categoryScoresFromSnapshotFallback = Boolean(!profileCategoryScores && snap?.categoryScores);
-
   const categoryAvg = mergedCats ? averageCategoryScore(mergedCats) : null;
   const signalWord = interviewSignalLabel({
     hiringScore,
@@ -380,36 +374,6 @@ export function OverviewScoringCardRecruiterTrust({
     [hiringScore, snap?.riskLevel, decision, recommendation, latestPrescreenInterviewAi?.hardBlocks, overrideApplied, scoreSummary?.scoreConflictDetected],
   );
 
-  const nextBest = useMemo(
-    () =>
-      deriveNextBestAction({
-        hiringScore,
-        decision,
-        recommendation,
-        riskLevel: snap?.riskLevel ?? null,
-        interviewCount,
-        hardBlocks: latestPrescreenInterviewAi?.hardBlocks?.map(String) ?? [],
-        softBlocks: latestPrescreenInterviewAi?.softBlocks?.map(String) ?? [],
-        autoAdvanceEligible: scoreSummary?.autoAdvanceEligible,
-        assignmentReadiness: latestPrescreenInterviewAi?.assignmentReadiness,
-        phoneVerified: decisionControls?.phoneVerified,
-        backgroundCheckPending: decisionControls?.backgroundCheckPending === true,
-      }),
-    [
-      hiringScore,
-      decision,
-      recommendation,
-      snap?.riskLevel,
-      interviewCount,
-      latestPrescreenInterviewAi?.hardBlocks,
-      latestPrescreenInterviewAi?.softBlocks,
-      latestPrescreenInterviewAi?.assignmentReadiness,
-      scoreSummary?.autoAdvanceEligible,
-      decisionControls?.phoneVerified,
-      decisionControls?.backgroundCheckPending,
-    ],
-  );
-
   const whyThisDecision = useMemo(
     () =>
       deriveWhyThisDecision({
@@ -422,317 +386,239 @@ export function OverviewScoringCardRecruiterTrust({
     [snap?.reasoningSummary, snap?.riskLevel, latestPrescreenInterviewAi?.hardBlocks, strengths, risks],
   );
 
-  const handlePrimaryCta = () => {
-    const intent = nextBest.intent;
-    if (decisionControls?.onPrimaryAction) {
-      decisionControls.onPrimaryAction(intent);
-      return;
-    }
-    if (intent === 'review_decision') {
-      decisionControls?.onOpenScoreTab?.();
-      return;
-    }
-    decisionControls?.onViewInterview();
-  };
-
   let scoreColor: 'success.main' | 'warning.main' | 'text.primary' = 'text.primary';
   if (hiringScore != null) {
     if (hiringScore >= 80) scoreColor = 'success.main';
     else if (hiringScore >= 60) scoreColor = 'warning.main';
   }
 
-  const automationChipColor =
-    nextBest.automationState === 'ready' ? 'success' : nextBest.automationState === 'blocked' ? 'error' : 'warning';
-  const automationChipLabel =
-    nextBest.automationState === 'ready' ? 'READY' : nextBest.automationState === 'blocked' ? 'BLOCKED' : 'NEEDS ACTION';
+  const confidenceLabel = masterDisp.confidence
+    ? masterDisp.confidence.charAt(0).toUpperCase() + masterDisp.confidence.slice(1)
+    : '—';
+  const riskInline = riskBandLineWithIndex(
+    masterDisp.riskLevel
+      ? masterDisp.riskLevel.charAt(0).toUpperCase() + masterDisp.riskLevel.slice(1)
+      : riskLabel(snap?.riskLevel ?? null),
+    risk,
+    riskProfileRaw,
+  );
 
   return (
-    <Stack spacing={1.25} alignItems="stretch">
-      <Stack direction="row" flexWrap="wrap" useFlexGap gap={0.75} alignItems="center">
-        <Chip size="small" color={automationChipColor} label={automationChipLabel} sx={{ fontWeight: 800, letterSpacing: '0.06em' }} />
-        {systemOperationalAdjustment ? (
-          <Chip size="small" variant="outlined" label="Adjusted by system based on operational signals" sx={{ maxWidth: '100%' }} />
-        ) : null}
-        {manualSnapshotOverride ? (
-          <Chip
-            size="small"
-            variant="outlined"
-            color="info"
-            label={
-              decisionControls?.manualOverrideLabel
-                ? `Manually overridden by ${decisionControls.manualOverrideLabel}`
-                : 'Manually overridden (recruiter review)'
-            }
-            sx={{ maxWidth: '100%' }}
-          />
-        ) : null}
-      </Stack>
-
-      {decisionControls ? (
-        <Box>
-          <Typography variant="caption" sx={{ fontWeight: 700, letterSpacing: '0.06em', color: 'text.secondary' }}>
-            Next best action
-          </Typography>
-          <Typography variant="body2" sx={{ ...overviewProfileFieldValueSxLocal, mt: 0.35, fontWeight: 500, color: 'text.primary' }}>
-            {nextBest.sentence}
-          </Typography>
-          <Button variant="contained" size="small" sx={{ mt: 1, alignSelf: 'flex-start', textTransform: 'none', fontWeight: 700 }} onClick={handlePrimaryCta}>
-            {nextBest.primaryButtonLabel}
-          </Button>
-          <Stack direction="row" flexWrap="wrap" useFlexGap gap={0.75} sx={{ mt: 1.25 }} alignItems="center">
-            <Button variant="outlined" size="small" sx={{ textTransform: 'none' }} onClick={decisionControls.onViewInterview}>
-              View Interview
-            </Button>
-            {decisionControls.reviewRescoreSlot}
-            {decisionControls.showOverrideDecision && decisionControls.onOverrideDecision ? (
-              <Button variant="text" size="small" sx={{ textTransform: 'none' }} onClick={decisionControls.onOverrideDecision}>
-                Override decision
-              </Button>
-            ) : null}
-          </Stack>
-        </Box>
+    <Stack spacing={1} alignItems="stretch">
+      {systemOperationalAdjustment || manualSnapshotOverride ? (
+        <Stack direction="row" flexWrap="wrap" useFlexGap gap={0.75} alignItems="center">
+          {systemOperationalAdjustment ? (
+            <Chip size="small" variant="outlined" label="Adjusted by system based on operational signals" sx={{ maxWidth: '100%' }} />
+          ) : null}
+          {manualSnapshotOverride ? (
+            <Chip
+              size="small"
+              variant="outlined"
+              color="info"
+              label={
+                decisionControls?.manualOverrideLabel
+                  ? `Manually overridden by ${decisionControls.manualOverrideLabel}`
+                  : 'Manually overridden (recruiter review)'
+              }
+              sx={{ maxWidth: '100%' }}
+            />
+          ) : null}
+        </Stack>
       ) : null}
 
-      <Box>
-        <Typography variant="caption" sx={{ fontWeight: 700, letterSpacing: '0.06em', color: 'text.secondary' }}>
-          Why this decision?
-        </Typography>
-        <Typography variant="body2" sx={{ ...overviewProfileFieldValueSxLocal, mt: 0.35, color: 'text.primary', fontWeight: 500 }}>
-          {whyThisDecision}
-        </Typography>
+      <Box mb={1}>
+        <Typography variant="subtitle2">Why this decision?</Typography>
+        <Typography variant="body2" sx={{ mt: 0.25 }}>{whyThisDecision}</Typography>
       </Box>
 
-      {/* Decision + primary hiring score + model confidence + risk + system confidence */}
-      <Box>
-        <Typography variant="caption" sx={{ fontWeight: 700, letterSpacing: '0.08em', color: 'text.secondary' }}>
+      <Box mb={1}>
+        <Typography variant="overline" color="text.secondary" display="block">
           Decision
         </Typography>
-        <Typography
-          variant="h6"
-          sx={{ fontWeight: 800, letterSpacing: '0.06em', mt: 0.25, lineHeight: 1.2 }}
-        >
+        <Typography variant="h6" sx={{ fontWeight: 800, letterSpacing: '0.04em', lineHeight: 1.2, mt: 0.25 }}>
           {headline}
-        </Typography>
-        <Typography variant="caption" sx={{ fontWeight: 700, letterSpacing: '0.06em', color: 'text.secondary', mt: 1.25, display: 'block' }}>
-          Master Recruiter Score
-        </Typography>
-        <Stack direction="row" alignItems="baseline" gap={1} sx={{ mt: 0.5, flexWrap: 'wrap' }}>
-          <Typography
-            component="span"
-            sx={{
-              fontWeight: 800,
-              fontSize: '2rem',
-              lineHeight: 1,
-              fontVariantNumeric: 'tabular-nums',
-              color: scoreColor,
-            }}
-          >
-            {hiringScore ?? '—'}
-          </Typography>
-        </Stack>
-        {masterDisp.master?.components && masterDisp.master.effectiveWeights ? (
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
-            Category {masterDisp.master.components.categoryScore ?? '—'} × {Math.round(masterDisp.master.effectiveWeights.categoryScore * 100)}% ·
-            Interview {masterDisp.master.components.interviewScore ?? '—'} × {Math.round(masterDisp.master.effectiveWeights.interviewScore * 100)}% ·
-            Profile {masterDisp.master.components.profileScore ?? '—'} × {Math.round(masterDisp.master.effectiveWeights.profileScore * 100)}% →{' '}
-            <Box component="span" sx={{ fontWeight: 700, color: 'text.primary' }}>
-              {hiringScore ?? '—'}
-            </Box>
-          </Typography>
-        ) : null}
-        <Typography variant="body2" sx={{ ...overviewProfileFieldValueSxLocal, mt: 0.75 }}>
-          <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>Confidence: </Box>
-          {masterDisp.confidence ? masterDisp.confidence.charAt(0).toUpperCase() + masterDisp.confidence.slice(1) : '—'}
-        </Typography>
-        <Typography variant="body2" sx={{ ...overviewProfileFieldValueSxLocal, mt: 0.25 }}>
-          <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>Risk: </Box>
-          {masterDisp.riskLevel
-            ? masterDisp.riskLevel.charAt(0).toUpperCase() + masterDisp.riskLevel.slice(1)
-            : riskLabel(snap?.riskLevel ?? null)}
-        </Typography>
-        <Typography variant="body2" sx={{ ...overviewProfileFieldValueSxLocal, mt: 0.5 }}>
-          <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>System confidence: </Box>
-          {systemConfidence.message}
         </Typography>
       </Box>
 
-      {/* 2. Quick signal strip — words + one derived ~avg only as supporting chip */}
-      <Stack direction="row" flexWrap="wrap" useFlexGap gap={0.75}>
-        <Chip size="small" variant="outlined" label={`Interview signal: ${signalWord}`} sx={{ fontWeight: 600 }} />
+      <Box mb={1}>
+        <Typography variant="overline" color="text.secondary" display="block">
+          Master Recruiter Score
+        </Typography>
+        <Typography variant="h4" sx={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums', color: scoreColor, mt: 0.25, lineHeight: 1.15 }}>
+          {hiringScore ?? '—'}
+        </Typography>
+      </Box>
+
+      {masterDisp.master?.components && masterDisp.master.effectiveWeights ? (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+          Category · Interview · Profile weighted
+        </Typography>
+      ) : null}
+
+      <Typography variant="body2" color="text.secondary">
+        Confidence: {confidenceLabel} • {riskInline}
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+        System confidence: {systemConfidence.message}
+      </Typography>
+
+      {/* Quick signal strip — same chip styling as Overview Qualifications skills (do not change sx) */}
+      <Box display="flex" gap={1} flexWrap="wrap" mt={1}>
+        <Chip size="small" variant="outlined" label={`Interview signal: ${signalWord}`} sx={overviewBodyChipSx} />
         {categoryAvg != null ? (
-          <Chip size="small" variant="outlined" label={`Category avg ~${categoryAvg}`} sx={{ fontWeight: 500 }} />
+          <Chip size="small" variant="outlined" label={`Category avg ~${categoryAvg}`} sx={overviewBodyChipSx} />
         ) : (
-          <Chip size="small" variant="outlined" label="Category avg —" />
+          <Chip size="small" variant="outlined" label="Category avg —" sx={overviewBodyChipSx} />
         )}
-        <Chip size="small" variant="outlined" label={`Interviews: ${interviewCount}`} />
-        <Chip size="small" variant="outlined" label={`Last interview: ${lastInterviewLabel}`} />
-      </Stack>
+        <Chip size="small" variant="outlined" label={`Interviews: ${interviewCount}`} sx={overviewBodyChipSx} />
+        <Chip size="small" variant="outlined" label={`Last interview: ${lastInterviewLabel}`} sx={overviewBodyChipSx} />
+      </Box>
 
-      <Divider flexItem sx={{ my: 0.25 }} />
+      {/* Category + interview / qualification bars — single row */}
+      <Box display="flex" flexDirection={{ xs: 'column', sm: 'row' }} gap={3} mt={2} alignItems="flex-start">
+        <Box flex={1} minWidth={0}>
+          <Typography variant="subtitle2">Category scores</Typography>
+          {mergedCats ? (
+            <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+              {CATEGORY_ROWS.map(({ key, label }) => {
+                const v = mergedCats[key];
+                const band = categoryScoreBand(v);
+                return (
+                  <Stack key={key} direction="row" alignItems="center" spacing={1}>
+                    <Typography variant="caption" sx={{ width: 100, flexShrink: 0, color: 'text.secondary' }}>
+                      {label}
+                    </Typography>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <LinearProgress
+                        variant="determinate"
+                        value={Math.max(0, Math.min(100, v))}
+                        sx={{
+                          height: 6,
+                          borderRadius: 3,
+                          bgcolor: 'action.hover',
+                          '& .MuiLinearProgress-bar': { ...bandSx(band), borderRadius: 3 },
+                        }}
+                      />
+                    </Box>
+                    <Typography variant="caption" sx={{ width: 28, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                      {v}
+                    </Typography>
+                  </Stack>
+                );
+              })}
+            </Stack>
+          ) : (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              No category profile scores yet.
+            </Typography>
+          )}
+        </Box>
 
-      {/* 3. Category scores */}
-      <Box>
-        <Typography variant="caption" sx={{ fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'text.secondary' }}>
-          Category scores
-        </Typography>
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.35, fontSize: '0.72rem' }}>
-          Live profile-level category scores
-        </Typography>
-        {categoryScoresFromSnapshotFallback ? (
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25, fontSize: '0.7rem', fontStyle: 'italic' }}>
-            Using latest interview snapshot
-          </Typography>
-        ) : null}
-        {mergedCats ? (
-          <Stack spacing={0.35} sx={{ mt: 0.75 }}>
-            {CATEGORY_ROWS.map(({ key, label }) => {
-              const v = mergedCats[key];
-              const band = categoryScoreBand(v);
+        <Box flex={1} minWidth={0}>
+          <Typography variant="subtitle2">Interview / qualification scores</Typography>
+          <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+            {SUB_KEYS.map(({ key, label }) => {
+              const raw = sub?.[key];
+              let n: number | null =
+                typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+              if (n != null && n <= 10 && n >= 0) n = Math.round(n * 10);
+              if (n != null) n = Math.max(0, Math.min(100, n));
               return (
                 <Stack key={key} direction="row" alignItems="center" spacing={1}>
-                  <Typography variant="caption" sx={{ width: 108, flexShrink: 0, color: 'text.secondary' }}>
+                  <Typography variant="caption" sx={{ width: 72, flexShrink: 0, color: 'text.secondary' }}>
                     {label}
                   </Typography>
                   <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <LinearProgress
-                      variant="determinate"
-                      value={Math.max(0, Math.min(100, v))}
-                      sx={{
-                        height: 6,
-                        borderRadius: 1,
-                        bgcolor: 'action.hover',
-                        '& .MuiLinearProgress-bar': { ...bandSx(band), borderRadius: 1 },
-                      }}
-                    />
+                    {n != null ? (
+                      <LinearProgress
+                        variant="determinate"
+                        value={n}
+                        sx={{
+                          height: 6,
+                          borderRadius: 3,
+                          bgcolor: 'action.hover',
+                          '& .MuiLinearProgress-bar': { bgcolor: 'primary.main', borderRadius: 3 },
+                        }}
+                      />
+                    ) : null}
                   </Box>
-                  <Typography variant="caption" sx={{ width: 28, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                    {v}
+                  <Typography
+                    variant="caption"
+                    sx={{ width: 28, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+                    color={n == null ? 'text.disabled' : 'text.primary'}
+                  >
+                    {n != null ? n : '—'}
                   </Typography>
                 </Stack>
               );
             })}
           </Stack>
-        ) : (
-          <Typography variant="body2" sx={{ ...overviewProfileFieldValueSxLocal, mt: 0.5 }}>
-            No category profile scores yet.
-          </Typography>
-        )}
+        </Box>
       </Box>
 
-      <Divider flexItem sx={{ my: 0.25 }} />
-
-      {/* 4. Interview summary (compact) */}
-      <Box>
-        <Typography variant="caption" sx={{ fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'text.secondary' }}>
-          Interview summary (latest)
+      <Box mt={2}>
+        <Typography variant="subtitle2">Interview summary</Typography>
+        <Typography variant="body2" sx={{ mt: 0.25 }}>
+          Recommendation: {recommendationLabel(recommendation)} • Decision: {decisionHeadlineTitleCase(decision, recommendation)}
         </Typography>
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mt: 0.75 }} alignItems="flex-start">
-          <Stack spacing={0.35} sx={{ flex: 1, minWidth: 0 }}>
-            <Typography variant="body2" sx={overviewProfileFieldValueSxLocal}>
-              <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>Recommendation: </Box>
-              {recommendationLabel(recommendation)}
-            </Typography>
-            <Typography variant="body2" sx={overviewProfileFieldValueSxLocal}>
-              <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>Hiring decision: </Box>
-              {decisionHeadline(decision, recommendation)}
-            </Typography>
-            <Typography variant="body2" sx={{ ...overviewProfileFieldValueSxLocal, fontStyle: 'italic' }}>
-              {passedChecks ? 'No hard blocks on latest interview.' : 'Caution — review flags or blocks on the Interview tab.'}
-            </Typography>
-          </Stack>
-          <Box sx={{ flex: 1, minWidth: 0, maxWidth: 280 }}>
-            <Stack spacing={0.35}>
-              {SUB_KEYS.map(({ key, label }) => {
-                const raw = sub?.[key];
-                let n: number | null =
-                  typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
-                if (n != null && n <= 10 && n >= 0) n = Math.round(n * 10);
-                if (n != null) n = Math.max(0, Math.min(100, n));
-                return (
-                  <Stack key={key} direction="row" alignItems="center" spacing={0.75}>
-                    <Typography variant="caption" sx={{ width: 72, flexShrink: 0, color: 'text.secondary', fontSize: '0.65rem' }}>
-                      {label}
-                    </Typography>
-                    <Box sx={{ flex: 1 }}>
-                      {n != null ? (
-                        <LinearProgress
-                          variant="determinate"
-                          value={n}
-                          sx={{
-                            height: 5,
-                            borderRadius: 1,
-                            bgcolor: 'action.hover',
-                            '& .MuiLinearProgress-bar': { bgcolor: 'primary.main', borderRadius: 1 },
-                          }}
-                        />
-                      ) : (
-                        <Typography variant="caption" color="text.disabled">
-                          —
-                        </Typography>
-                      )}
-                    </Box>
-                  </Stack>
-                );
-              })}
-            </Stack>
-          </Box>
-        </Stack>
-        {strengths.length > 0 && (
-          <Box sx={{ mt: 1 }}>
-            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
-              Strengths
-            </Typography>
-            <Stack component="ul" sx={{ m: 0, pl: 2, mt: 0.25 }} spacing={0.25}>
-              {strengths.map((s, i) => (
-                <Typography key={i} component="li" variant="body2" sx={{ ...overviewProfileFieldValueSxLocal, display: 'list-item' }}>
-                  {s}
-                </Typography>
-              ))}
-            </Stack>
-          </Box>
-        )}
-        {risks.length > 0 && (
-          <Box sx={{ mt: 0.75 }}>
-            <Typography variant="caption" color="error.main" sx={{ fontWeight: 600 }}>
-              Risks
-            </Typography>
-            <Stack component="ul" sx={{ m: 0, pl: 2, mt: 0.25 }} spacing={0.25}>
-              {risks.map((s, i) => (
-                <Typography key={i} component="li" variant="body2" sx={{ ...overviewProfileFieldValueSxLocal, display: 'list-item' }}>
-                  {s}
-                </Typography>
-              ))}
-            </Stack>
-          </Box>
-        )}
+        <Typography variant="body2" color="text.secondary">
+          {passedChecks ? 'No hard blocks' : 'Caution — review flags or blocks on the Interview tab.'}
+        </Typography>
       </Box>
 
-      {/* 5. Score explanation (collapsed by default) */}
+      {strengths.length > 0 && (
+        <Box sx={{ mt: 1 }}>
+          <Typography variant="overline" color="text.secondary">
+            Strengths
+          </Typography>
+          <Stack component="ul" sx={{ m: 0, pl: 2, mt: 0.25 }} spacing={0.25}>
+            {strengths.map((s, i) => (
+              <Typography key={i} component="li" variant="body2" color="text.secondary" sx={{ display: 'list-item' }}>
+                {s}
+              </Typography>
+            ))}
+          </Stack>
+        </Box>
+      )}
+      {risks.length > 0 && (
+        <Box sx={{ mt: 0.5 }}>
+          <Typography variant="overline" color="error">
+            Risks
+          </Typography>
+          <Stack component="ul" sx={{ m: 0, pl: 2, mt: 0.25 }} spacing={0.25}>
+            {risks.map((s, i) => (
+              <Typography key={i} component="li" variant="body2" color="text.secondary" sx={{ display: 'list-item' }}>
+                {s}
+              </Typography>
+            ))}
+          </Stack>
+        </Box>
+      )}
+
+      {/* Score explanation (collapsed by default) */}
       <Accordion
         defaultExpanded={false}
         disableGutters
         elevation={0}
-        sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, '&:before': { display: 'none' } }}
+        sx={{ mt: 1, border: '1px solid', borderColor: 'divider', borderRadius: 1, '&:before': { display: 'none' } }}
       >
-        <AccordionSummary expandIcon={<ExpandMoreIcon fontSize="small" />} sx={{ minHeight: 40, py: 0 }}>
-          <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.78rem' }}>
-            How these scores relate
-          </Typography>
+        <AccordionSummary expandIcon={<ExpandMoreIcon fontSize="small" />} sx={{ minHeight: 36, py: 0 }}>
+          <Typography variant="subtitle2">How these scores relate</Typography>
         </AccordionSummary>
-        <AccordionDetails sx={{ pt: 0 }}>
-          <Stack spacing={0.75}>
-            <Typography variant="body2" sx={overviewProfileFieldValueSxLocal}>
+        <AccordionDetails sx={{ pt: 0, pb: 1 }}>
+          <Stack spacing={0.5}>
+            <Typography variant="body2" color="text.secondary">
               <strong>Hiring score</strong> is the recruiter-facing primary number (0–100) shown above.
             </Typography>
-            <Typography variant="body2" sx={overviewProfileFieldValueSxLocal}>
+            <Typography variant="body2" color="text.secondary">
               <strong>Interview score (base)</strong> is the raw output from the interview scoring model before operational rules.
             </Typography>
-            <Typography variant="body2" sx={overviewProfileFieldValueSxLocal}>
+            <Typography variant="body2" color="text.secondary">
               <strong>Operational score (adjusted)</strong> applies recruiter-trust and policy signals (e.g. compliance, reliability) to
               produce the hiring score when overrides are in play.
             </Typography>
             {overrideApplied ? (
-              <Typography variant="body2" sx={{ ...overviewProfileFieldValueSxLocal, fontStyle: 'italic' }}>
+              <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
                 An <strong>override</strong> changed the operational score from the base interview score (see interview record for deltas).
               </Typography>
             ) : null}
@@ -753,24 +639,21 @@ export function OverviewScoringCardRecruiterTrust({
         </AccordionDetails>
       </Accordion>
 
-      {/* 6. Score history mini */}
-      <Box>
-        <Typography variant="caption" sx={{ fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'text.secondary' }}>
-          Recent score changes
-        </Typography>
+      <Box mt={2}>
+        <Typography variant="subtitle2">Recent score changes</Typography>
         {historyError ? (
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
             Recent score history is unavailable for this viewer.
           </Typography>
         ) : historyLines.length === 0 ? (
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-            No recent category adjustments recorded.
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+            No recent category adjustments
           </Typography>
         ) : (
           <>
-            <Stack spacing={0.35} sx={{ mt: 0.5 }}>
+            <Stack spacing={0.5} sx={{ mt: 0.25 }}>
               {historyLines.map((line, i) => (
-                <Typography key={i} variant="body2" sx={{ ...overviewProfileFieldValueSxLocal, fontSize: '0.74rem' }}>
+                <Typography key={i} variant="body2" color="text.secondary">
                   {line}
                 </Typography>
               ))}

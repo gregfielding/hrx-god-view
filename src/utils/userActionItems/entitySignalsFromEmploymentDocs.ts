@@ -30,6 +30,8 @@ function everifyBucketFromDoc(d: Record<string, unknown>): EntityEmploymentActio
   const raw = String(d.everifyStatus || '').trim().toLowerCase();
   if (!required && !raw) return 'ok';
   if (!raw || raw === 'not_started' || raw === 'none') return 'not_started';
+  /** Matches readiness / ComplianceTab — completed in HRX or confirmed outside (no “in progress” action item). */
+  if (raw === 'employment_authorized' || raw === 'manual_outside_hrx') return 'ok';
   if (raw.includes('action') || raw.includes('tnc') || raw.includes('refer') || raw === 'action_required') {
     return 'action_required';
   }

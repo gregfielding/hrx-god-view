@@ -1,5 +1,30 @@
 import type { SxProps, Theme } from '@mui/material/styles';
 
+/**
+ * Section column titles in the recruiter record header (CONTACT, SCREENING, …).
+ * Single scale — all-caps, tight tracking.
+ */
+export const recordHeaderColumnTitleSx: SxProps<Theme> = {
+  fontSize: '0.65rem',
+  fontWeight: 700,
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase',
+  color: 'text.secondary',
+  mb: 0.65,
+  display: 'block',
+};
+
+/**
+ * Default body copy in the record header (matches Screening empty state / devtools reference).
+ * 0.74rem · 400 · #5A6372 (light) — same rhythm everywhere below column titles.
+ */
+export const recordHeaderBodyTextSx: SxProps<Theme> = {
+  fontSize: '0.74rem',
+  fontWeight: 400,
+  lineHeight: 1.45,
+  color: (theme: Theme) => (theme.palette.mode === 'dark' ? theme.palette.text.secondary : '#5A6372'),
+};
+
 /** Compact utility-strip icon shells — lighter than primary buttons, still tappable. */
 export const recordHeaderActionIconButtonSx: SxProps<Theme> = (theme) => ({
   p: 0.3125,

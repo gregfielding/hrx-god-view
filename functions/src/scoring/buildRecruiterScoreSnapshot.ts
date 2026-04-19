@@ -188,7 +188,8 @@ export function buildRecruiterScoreSnapshotV1(input: BuildRecruiterScoreSnapshot
   if (scoreKind === 'operational') {
     reasoningSummary = 'Primary score uses operational prescreen rules (trust-adjusted interview score).';
   } else if (scoreKind === 'composite') {
-    reasoningSummary = 'Primary score uses profile/composite hiring score (no operational prescreen layer).';
+    // Suppressed in UI — see SUPPRESSED_RECRUITER_REASONING_SUMMARY_LINES / reasoningSummaryLinesForUi (client).
+    // reasoningSummary = 'Primary score uses profile/composite hiring score (no operational prescreen layer).';
   } else if (scoreKind === 'base_interview') {
     reasoningSummary = 'Primary score uses raw interview model score (operational/composite unavailable).';
   } else {

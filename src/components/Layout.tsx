@@ -77,6 +77,7 @@ import { GoogleStatusProvider } from '../contexts/GoogleStatusContext';
 import MessengerIconButton from './messenger/MessengerIconButton';
 import MessengerDrawer from './messenger/MessengerDrawer';
 import { useUnreadMentionsCount } from '../hooks/useUnreadMentionsCount';
+import { useEffectiveSecurityLevel, useIsAdminShell } from '../hooks/useEffectiveSecurityLevel';
 import { useChatGPT } from '../contexts/ChatGPTContext';
 import ChatGPTDrawer from './chatgpt/ChatGPTDrawer';
 
@@ -868,41 +869,27 @@ const Layout: React.FC = function Layout() {
     generateBaseMenu();
   }, [userAccessRole, activeTenant, flexModuleEnabled, recruiterModuleEnabled, customersModuleEnabled, jobsBoardModuleEnabled, crmModuleEnabled, staffingModuleEnabled, isHRX, currentClaimsRole, claimsRoles, jobsBoardEnabled, currentClaimsSecurityLevel]);
 
-  // Get effective security level - prioritize tenant-specific over global
-  const getEffectiveSecurityLevel = useMemo(() => {
-    // First check claims (most authoritative)
-    if (currentClaimsSecurityLevel && ['5', '6', '7'].includes(currentClaimsSecurityLevel)) {
-      return currentClaimsSecurityLevel;
-    }
-    // Then check tenant-specific security level
-    if (activeTenant?.id && tenantIds && typeof tenantIds === 'object' && !Array.isArray(tenantIds)) {
-      const tenantRole = tenantIds[activeTenant.id] as any;
-      if (tenantRole && typeof tenantRole === 'object' && tenantRole.securityLevel) {
-        const tenantSecLevel = String(tenantRole.securityLevel);
-        if (['5', '6', '7'].includes(tenantSecLevel)) {
-          return tenantSecLevel;
-        }
-      }
-    }
-    // Fallback to global security level
-    return securityLevel;
-  }, [currentClaimsSecurityLevel, activeTenant?.id, tenantIds, securityLevel]);
+  const getEffectiveSecurityLevel = useEffectiveSecurityLevel();
+  const hasAdminLevel = useIsAdminShell();
 
   // Filter menu items based on user flags without regenerating the entire menu
   const filteredMenuItems = useMemo(() => {
     // Get effective security level for filtering
     const secLevel = getEffectiveSecurityLevel;
     const isLowLevel = secLevel && ['0', '1', '2', '3', '4'].includes(String(secLevel));
-    
+    const hideWorkerPrivacyForAdminShell = hasAdminLevel;
+
     return menuItems.filter((mi) => {
       if (mi.text === 'Sales CRM' && !crmSalesEnabled) return false;
       if (mi.text === 'Recruiter' && !recruiterEnabled) return false;
       if (mi.text === 'Jobs Board' && !jobsBoardEnabled) return false;
       // Hide "Jobs Board" from menu items if user is low level (0-4) - it's shown as a shortcut instead
       if (mi.text === 'Jobs Board' && isLowLevel) return false;
+      // Worker privacy / notifications — not for internal shell (5–7)
+      if (hideWorkerPrivacyForAdminShell && mi.text === 'Privacy & Notifications') return false;
       return true;
     });
-  }, [menuItems, crmSalesEnabled, recruiterEnabled, jobsBoardEnabled, getEffectiveSecurityLevel]);
+  }, [menuItems, crmSalesEnabled, recruiterEnabled, jobsBoardEnabled, getEffectiveSecurityLevel, hasAdminLevel]);
 
   const menuItemsWithIcons = filteredMenuItems.map(item => {
     const iconMap: Record<string, React.ReactNode> = {
@@ -990,11 +977,6 @@ const Layout: React.FC = function Layout() {
   const safeDevRole = allowedRoles.includes(devRole) ? devRole : '';
   const safeDevSecurityLevel = allowedSecurityLevels.includes(devSecurityLevel) ? devSecurityLevel : '';
 
-  // Check if user has admin level (5, 6, or 7) for top bar items
-  const hasAdminLevel = useMemo(() => {
-    const secLevel = getEffectiveSecurityLevel;
-    return !!(secLevel && ['5', '6', '7'].includes(String(secLevel)));
-  }, [getEffectiveSecurityLevel]);
   // Staff (0-4) see white shell + charcoal icons; admins (5-7) see dark shell + white icons
   const isStaffShell = !hasAdminLevel;
 
@@ -1908,13 +1890,19 @@ const Layout: React.FC = function Layout() {
               }}>
                 My Account
               </MenuItem>
-              <Divider />
-              <MenuItem onClick={() => {
-                navigateSafe('/privacy-settings');
-                setAvatarMenuAnchorEl(null);
-              }}>
-                Settings
-              </MenuItem>
+              {!hasAdminLevel ? (
+                <>
+                  <Divider />
+                  <MenuItem
+                    onClick={() => {
+                      navigateSafe('/privacy-settings');
+                      setAvatarMenuAnchorEl(null);
+                    }}
+                  >
+                    Settings
+                  </MenuItem>
+                </>
+              ) : null}
               <Divider />
               <MenuItem onClick={async () => {
                 setAvatarMenuAnchorEl(null);
