@@ -47,8 +47,6 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import EmailIcon from '@mui/icons-material/Email';
 import SmsIcon from '@mui/icons-material/Sms';
 import MessageDrawer, { type MessageRecipient } from '../../../components/MessageDrawer';
-import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
-import StickyNote2OutlinedIcon from '@mui/icons-material/StickyNote2Outlined';
 import IconButton from '@mui/material/IconButton';
 import PersonIcon from '@mui/icons-material/Person';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -59,19 +57,16 @@ import ImageCropDialog from '../../../components/common/ImageCropDialog';
 import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import PageHeader from '../../../components/PageHeader';
 import StandardTablePagination from '../../../components/StandardTablePagination';
-import { formatPhoneNumber } from '../../../utils/formatPhone';
 import FavoriteButton from '../../../components/FavoriteButton';
 import { useFavorites } from '../../../hooks/useFavorites';
 import { TABLE_AVATAR_SIZE } from '../../../utils/uiConstants';
-import UserTableResumeIcon from '../../../components/tables/UserTableResumeIcon';
-import UserTableIndeedFlexBadge from '../../../components/tables/UserTableIndeedFlexBadge';
+import RecruiterUserTableContactBlock from '../../../components/tables/RecruiterUserTableContactBlock';
 import {
   formatOneDecimal,
   normalizeScoreSummary,
   getCanonicalStoredAiScore,
   getRelativeAiScore,
 } from '../../../utils/scoreSummary';
-import { pickResumeFromUserDoc } from '../../../utils/userResumeOpen';
 import { calculateProfileScore } from '../../../utils/applicantScoring';
 import {
   getBackgroundBreakdownRows,
@@ -1502,121 +1497,12 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                                     />
                                   </Box>
                                 </Box>
-                                <Typography variant="caption" color="text.secondary" noWrap display="block" sx={{ lineHeight: 1.35, fontSize: '0.7rem' }}>
-                                  {u.email || '—'}
-                                </Typography>
-                                {(u.city || u.state || (u.address && (u.address as { city?: string }).city)) && (
-                                  <Typography variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.35, fontSize: '0.7rem' }}>
-                                    {[u.city ?? (u.address as { city?: string })?.city, u.state ?? (u.address as { state?: string })?.state].filter(Boolean).join(', ')}
-                                  </Typography>
-                                )}
-                                {(u.phone || u.phoneE164) && (
-                                  <Typography variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.35, fontSize: '0.7rem' }}>
-                                    {formatPhoneNumber(String(u.phone || u.phoneE164))}
-                                  </Typography>
-                                )}
-                                {(() => {
-                                  const latestNote = latestNoteByUserId.get(u.id);
-                                  const hasResume = Boolean(pickResumeFromUserDoc(u as Record<string, unknown>));
-                                  const skillsArr = Array.isArray(u.skills) ? u.skills : [];
-                                  const hasSkills = skillsArr.length > 0;
-                                  const hasNote = Boolean(latestNote?.content);
-                                  if (!u.createdAt && !hasResume && !hasSkills && !hasNote) {
-                                    return (
-                                      <Box component="span" onClick={(e) => e.stopPropagation()} sx={{ display: 'inline-flex', mt: 0.125, alignItems: 'center' }}>
-                                        <UserTableIndeedFlexBadge user={u as Record<string, unknown>} compact />
-                                      </Box>
-                                    );
-                                  }
-                                  const noteMeta = [latestNote?.timestamp?.toLocaleString(), latestNote?.authorName].filter(Boolean).join(' · ');
-                                  return (
-                                    <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.5, mt: 0.125 }}>
-                                      {u.createdAt && (
-                                        <Typography variant="caption" color="text.secondary" component="span" sx={{ lineHeight: 1.2, fontSize: '0.7rem' }}>
-                                          Joined {formatDate(u.createdAt)}
-                                        </Typography>
-                                      )}
-                                      <Box component="span" onClick={(e) => e.stopPropagation()} sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.25, flexWrap: 'wrap' }}>
-                                        {hasResume && <UserTableResumeIcon user={u as Record<string, unknown>} />}
-                                        {hasSkills && (
-                                          <Tooltip
-                                            title={
-                                              <Box sx={{ py: 0.25, maxWidth: 320 }}>
-                                                <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
-                                                  Skills
-                                                </Typography>
-                                                {skillsArr.map((s: string) => (
-                                                  <Typography key={s} variant="body2" sx={{ display: 'block' }}>
-                                                    {s}
-                                                  </Typography>
-                                                ))}
-                                              </Box>
-                                            }
-                                            placement="top"
-                                            enterDelay={400}
-                                          >
-                                            <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', color: 'text.secondary', cursor: 'default', verticalAlign: 'middle' }}>
-                                              <BuildOutlinedIcon sx={{ fontSize: 12, opacity: 0.72 }} />
-                                            </Box>
-                                          </Tooltip>
-                                        )}
-                                        {hasNote && latestNote && (
-                                          <Tooltip
-                                            title={
-                                              <Box sx={{ py: 0.25, maxWidth: 320 }}>
-                                                {noteMeta ? (
-                                                  <Typography variant="caption" color="inherit" sx={{ display: 'block', mb: 0.5 }}>
-                                                    {noteMeta}
-                                                  </Typography>
-                                                ) : null}
-                                                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                                                  {latestNote.content}
-                                                </Typography>
-                                              </Box>
-                                            }
-                                            placement="top"
-                                            enterDelay={400}
-                                          >
-                                            <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', color: 'text.secondary', cursor: 'default', verticalAlign: 'middle' }}>
-                                              <StickyNote2OutlinedIcon sx={{ fontSize: 12, opacity: 0.72 }} />
-                                            </Box>
-                                          </Tooltip>
-                                        )}
-                                        <UserTableIndeedFlexBadge user={u as Record<string, unknown>} compact />
-                                      </Box>
-                                    </Box>
-                                  );
-                                })()}
-                                {userGroupIds.length > 0 && (
-                                  <Tooltip
-                                    title={
-                                      userGroupIds.length <= 1 ? (
-                                        groupTitleLookup.get(userGroupIds[0]) || userGroupIds[0]
-                                      ) : (
-                                        <Box component="span" sx={{ display: 'block', maxHeight: 320, overflowY: 'auto', py: 0.5 }}>
-                                          {userGroupIds.map((id) => (
-                                            <Typography key={id} component="span" variant="body2" sx={{ display: 'block' }}>
-                                              {groupTitleLookup.get(id) || id}
-                                            </Typography>
-                                          ))}
-                                        </Box>
-                                      )
-                                    }
-                                    placement="top"
-                                    enterDelay={300}
-                                  >
-                                    <Typography
-                                      variant="caption"
-                                      color="text.secondary"
-                                      noWrap
-                                      onClick={(e) => e.stopPropagation()}
-                                      sx={{ display: 'block', mt: 0.25, fontSize: '0.7rem', cursor: 'default' }}
-                                    >
-                                      {groupTitleLookup.get(userGroupIds[0]) || userGroupIds[0]}
-                                      {userGroupIds.length > 1 ? ` +${userGroupIds.length - 1}` : ''}
-                                    </Typography>
-                                  </Tooltip>
-                                )}
+                                <RecruiterUserTableContactBlock
+                                  user={u as Record<string, unknown>}
+                                  latestNote={latestNoteByUserId.get(u.id) ?? null}
+                                  groupTitleLookup={groupTitleLookup}
+                                  formatDate={formatDate}
+                                />
                               </Box>
                             </Box>
                           </TableCell>

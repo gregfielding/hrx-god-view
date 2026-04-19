@@ -1999,7 +1999,7 @@ const ContactDetails: React.FC = () => {
                     variant="h6"
                     sx={{
                       fontSize: { xs: '20px', md: '24px' },
-                      fontWeight: 600,
+                      fontWeight: 700,
                       lineHeight: 1.2,
                     }}
                   >

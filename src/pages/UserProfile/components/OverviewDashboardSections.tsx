@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   Box,
   Card,
@@ -16,6 +16,9 @@ import {
   TableHead,
   TableRow,
   CircularProgress,
+  Dialog,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import {
   Login as LoginIcon,
@@ -28,8 +31,6 @@ import {
   Notifications as NotificationsIcon,
   Info as InfoIcon,
 } from '@mui/icons-material';
-import WarningAmberOutlinedIcon from '@mui/icons-material/WarningAmberOutlined';
-import GppMaybeOutlinedIcon from '@mui/icons-material/GppMaybeOutlined';
 import {
   formatOneDecimal,
   getCanonicalStoredAiScore,
@@ -37,24 +38,18 @@ import {
 } from '../../../utils/scoreSummary';
 import { recruiterTableLetterGrade } from '../../../utils/recruiterUsersReadinessDisplay';
 import { overallRiskBandLabel } from '../utils/recordHeaderScoreHelpers';
-import UserEntityOnboardingStatusCell from '../../../components/tables/UserEntityOnboardingStatusCell';
-import type { UserListEntityOnboardingItem } from '../../../utils/userListEntityEmploymentStatus';
-import {
-  composeOverviewBlockersOperational,
-  riskSeverityChipColor,
-} from '../utils/overviewDashboardComposer';
 import {
   normalizeRiskProfileFromUserDoc,
   workerRiskPrimaryLine,
-  workerRiskTooltipContent,
 } from '../../../utils/workerRiskProfileDisplay';
-import { recordHeaderTooltipComponentsProps } from './recordHeaderStyles';
 import WorkAuthorizedChip from '../../../components/WorkAuthorizedChip';
 import ShiftPreferencesCard from './ShiftPreferencesCard';
 import type { OverviewQualificationsData } from '../utils/overviewQualificationsSnapshot';
+import ResumeUpload from '../../../components/ResumeUpload';
+import { useAuth } from '../../../contexts/AuthContext';
 
 /** User-record overview only: flat cards, no hover elevation (jobs board etc. unchanged). */
-const overviewCardFlatSx = {
+export const overviewCardFlatSx = {
   boxShadow: 'none',
   transition: 'none',
   '&:hover': { boxShadow: 'none' },
@@ -106,13 +101,13 @@ export const overviewProfileFieldValueSx = {
   color: 'text.secondary',
 } as const;
 
-/** Semibold label prefix on the same line as body copy (same font size as {@link overviewProfileFieldValueSx}). */
+/** Label prefix on the same line as body copy (same font size and weight as {@link overviewProfileFieldValueSx}). */
 export const overviewInlineLabelSx = {
-  fontWeight: 600,
-  color: 'text.primary',
+  fontWeight: 400,
+  color: 'text.secondary',
 } as const;
 
-/** Text actions in card headers (More, Resume, Score) — same type scale as body, no extra font size tier. */
+/** Text actions in card headers (More, Score) — same type scale as body, no extra font size tier. */
 export const overviewCardHeaderTextButtonSx = {
   ...overviewProfileFieldValueSx,
   minWidth: 0,
@@ -122,195 +117,66 @@ export const overviewCardHeaderTextButtonSx = {
   fontWeight: 500,
 } as const;
 
-/** Skill / language chips aligned to overview body size (one visual rhythm with {@link overviewProfileFieldValueSx}). */
-export const overviewBodyChipSx = {
-  height: 'auto',
-  fontSize: '0.78rem',
-  lineHeight: 1.45,
-  py: 0.35,
-  '& .MuiChip-label': {
-    px: 0.75,
-    whiteSpace: 'normal',
+/** Small inline control next to overview body links (e.g. resume upload) — subtle vs primary links. */
+export const overviewInlineTextActionButtonSx = {
+  ...overviewProfileFieldValueSx,
+  minWidth: 0,
+  minHeight: 0,
+  textTransform: 'none' as const,
+  fontWeight: 400,
+  '&.MuiButton-sizeSmall': {
+    py: 0,
+    px: 0.35,
+    fontSize: '0.78rem',
+    lineHeight: 1.45,
   },
 } as const;
 
-export type OverviewDeploymentSnapshotProps = {
-  showRecruiterOps: boolean;
-  scoreSummary?: ScoreSummary | null;
-  riskProfileRaw: unknown;
-  workAuthorized: boolean;
-  entityItems: UserListEntityOnboardingItem[];
-  entityLoading: boolean;
-  onOpenEmploymentTab?: () => void;
-};
-
-/**
- * Section 1: Deployment snapshot — readiness, risk, blockers (score/interview live on record header).
- */
-export function OverviewDeploymentSnapshotCard({
-  showRecruiterOps,
-  scoreSummary,
-  riskProfileRaw,
-  workAuthorized,
-  entityItems,
-  entityLoading,
-  onOpenEmploymentTab,
-}: OverviewDeploymentSnapshotProps) {
-  if (!showRecruiterOps) return null;
-
-  const risk = normalizeRiskProfileFromUserDoc(riskProfileRaw);
-  const riskLine = workerRiskPrimaryLine(risk);
-  const riskTip = workerRiskTooltipContent(risk);
-  const blockers = composeOverviewBlockersOperational({
-    workAuthorized,
-    scoreSummary,
-  });
-
-  return (
-    <Card
-      variant="outlined"
-      sx={{
-        borderRadius: 1,
-        borderColor: 'divider',
-        bgcolor: 'background.paper',
-        ...overviewCardFlatSx,
-      }}
-    >
-      <CardContent sx={{ py: 1, px: 1.25, '&:last-child': { pb: 1 } }}>
-        <Stack direction="row" alignItems="flex-start" justifyContent="space-between" gap={1} flexWrap="wrap">
-          <Box sx={{ minWidth: 0 }}>
-            <Typography {...overviewSectionTitleTypographyProps}>Deployment snapshot</Typography>
-          </Box>
-          {onOpenEmploymentTab && (
-            <Button
-              size="small"
-              variant="text"
-              sx={{ minWidth: 0, fontSize: '0.68rem', py: 0.125, px: 0.4, color: 'text.secondary', fontWeight: 500 }}
-              onClick={onOpenEmploymentTab}
-            >
-              Employment
-            </Button>
-          )}
-        </Stack>
-
-        <Stack spacing={0.75} sx={{ mt: 0.75 }}>
-          {/* Readiness */}
-          <Box>
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.35, fontSize: '0.65rem', fontWeight: 600, letterSpacing: '0.06em' }}>
-              Readiness
-            </Typography>
-            <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.5 }}>
-              {entityLoading ? (
-                <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem' }}>
-                  Loading…
-                </Typography>
-              ) : entityItems.length === 0 ? (
-                <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem' }}>
-                  No active entity employment on file
-                </Typography>
-              ) : (
-                <UserEntityOnboardingStatusCell
-                  items={entityItems}
-                  loading={false}
-                  emptyDisplay="hidden"
-                  density="compact"
-                />
-              )}
-            </Box>
-          </Box>
-
-          {/* Risk + blockers — operational column */}
-          {(riskLine || blockers.length > 0) && (
-            <Box
-              sx={{
-                pl: 1.25,
-                borderLeft: '2px solid',
-                borderColor: 'divider',
-                py: 0.25,
-              }}
-            >
-              {riskLine && (
-                <Box sx={{ mb: blockers.length > 0 ? 0.75 : 0 }}>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.35, fontSize: '0.65rem', fontWeight: 600, letterSpacing: '0.06em' }}>
-                    Top concern
-                  </Typography>
-                  <Tooltip title={riskTip || ''} arrow placement="top" componentsProps={recordHeaderTooltipComponentsProps}>
-                    <Chip
-                      size="small"
-                      icon={<WarningAmberOutlinedIcon sx={{ fontSize: 14 }} />}
-                      label={riskLine}
-                      color={riskSeverityChipColor(risk)}
-                      variant="outlined"
-                      sx={{
-                        maxWidth: '100%',
-                        height: 'auto',
-                        py: 0.125,
-                        fontSize: '0.75rem',
-                        '& .MuiChip-label': { whiteSpace: 'normal', lineHeight: 1.25 },
-                      }}
-                    />
-                  </Tooltip>
-                </Box>
-              )}
-              {blockers.length > 0 && (
-                <Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.35, fontSize: '0.65rem', fontWeight: 600, letterSpacing: '0.06em' }}>
-                    Attention
-                  </Typography>
-                  <Stack direction="row" flexWrap="wrap" gap={0.35}>
-                    {blockers.map((b, i) => (
-                      <Chip
-                        key={i}
-                        size="small"
-                        label={b.label}
-                        color={b.severity === 'error' ? 'error' : b.severity === 'warning' ? 'warning' : 'default'}
-                        variant={b.severity === 'info' ? 'outlined' : 'filled'}
-                        sx={{ height: 22, fontSize: '0.7rem', fontWeight: 600 }}
-                      />
-                    ))}
-                  </Stack>
-                </Box>
-              )}
-            </Box>
-          )}
-
-          {/* Work auth — compact */}
-          <Stack direction="row" alignItems="flex-start" spacing={0.75} flexWrap="wrap" sx={{ pt: 0.25 }}>
-            <GppMaybeOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary', mt: 0.15 }} />
-            <Typography variant="body2" sx={{ fontSize: '0.78rem', lineHeight: 1.4, color: 'text.secondary' }}>
-              Work authorization: <strong style={{ color: 'inherit', fontWeight: 600 }}>{workAuthorized ? 'Yes' : 'No'}</strong>
-              {' · '}
-              <Link
-                component="button"
-                type="button"
-                variant="body2"
-                onClick={() => onOpenEmploymentTab?.()}
-                sx={{ fontSize: '0.78rem', verticalAlign: 'baseline', fontWeight: 500 }}
-              >
-                Compliance detail
-              </Link>
-            </Typography>
-          </Stack>
-        </Stack>
-      </CardContent>
-    </Card>
-  );
-}
+/** Skill chips — smaller, regular weight, secondary color (subtle vs section headings). */
+export const overviewBodyChipSx = {
+  height: 'auto',
+  fontWeight: 400,
+  color: 'text.secondary',
+  bgcolor: 'transparent',
+  borderColor: 'divider',
+  py: 0.2,
+  fontSize: '0.65rem',
+  lineHeight: 1.35,
+  '& .MuiChip-label': {
+    px: 0.55,
+    py: 0.1,
+    fontWeight: 400,
+    fontSize: '0.65rem',
+    lineHeight: 1.35,
+    whiteSpace: 'normal',
+    color: 'text.secondary',
+  },
+} as const;
 
 export type OverviewQualificationsCardProps = {
   uid: string;
   qualifications: OverviewQualificationsData;
-  onOpenResumeTab?: () => void;
   onOpenQualificationsTab?: () => void;
+  /** When false, hide resume upload (read-only viewers). Default false. */
+  allowResumeUpload?: boolean;
+  /** Same as other profile surfaces — used by resume parser / admin checks. */
+  tenantId?: string | null;
 };
 
 /** Section 4: Full Qualifications snapshot (same sections as Qualifications tab, flat — no accordions). */
 export function OverviewQualificationsCard({
   uid,
   qualifications: q,
-  onOpenResumeTab,
   onOpenQualificationsTab,
+  allowResumeUpload = false,
+  tenantId: tenantIdProp,
 }: OverviewQualificationsCardProps) {
+  const { tenantId: authTenantId, activeTenant } = useAuth();
+  const effectiveTenantId = tenantIdProp ?? authTenantId ?? activeTenant?.id ?? undefined;
+  const [resumeUploadOpen, setResumeUploadOpen] = useState(false);
+  const handleResumeParsed = useCallback(() => {
+    setResumeUploadOpen(false);
+  }, []);
   const cardSx = {
     borderRadius: 1,
     borderColor: 'divider',
@@ -398,16 +264,6 @@ export function OverviewQualificationsCard({
                 More
               </Button>
             )}
-            {onOpenQualificationsTab && onOpenResumeTab ? (
-              <Typography component="span" sx={{ ...overviewProfileFieldValueSx, userSelect: 'none', color: 'text.disabled' }}>
-                ·
-              </Typography>
-            ) : null}
-            {onOpenResumeTab && (
-              <Button size="small" variant="text" sx={overviewCardHeaderTextButtonSx} onClick={onOpenResumeTab}>
-                Resume
-              </Button>
-            )}
           </Stack>
         </Stack>
 
@@ -420,7 +276,7 @@ export function OverviewQualificationsCard({
         <Stack spacing={1.5}>
           <Box>
             <Typography {...overviewSubsectionHeadingTypographyProps}>Resume</Typography>
-            <Box sx={{ mt: 0.5 }}>
+            <Stack direction="row" alignItems="center" flexWrap="wrap" gap={1} sx={{ mt: 0.5 }}>
               {q.hasResume && q.resumeUrl ? (
                 <Link
                   href={q.resumeUrl}
@@ -432,15 +288,41 @@ export function OverviewQualificationsCard({
                   View resume
                 </Link>
               ) : q.hasResume ? (
-                <Typography variant="body2" component="p" sx={{ ...overviewProfileFieldValueSx, m: 0 }}>
+                <Typography variant="body2" component="span" sx={{ ...overviewProfileFieldValueSx, m: 0 }}>
                   Resume on file.
                 </Typography>
               ) : (
-                <Typography variant="body2" component="p" sx={{ ...overviewProfileFieldValueSx, m: 0 }}>
+                <Typography variant="body2" component="span" sx={{ ...overviewProfileFieldValueSx, m: 0 }}>
                   No resume on file.
                 </Typography>
               )}
-            </Box>
+              {allowResumeUpload ? (
+                <Button
+                  variant="text"
+                  size="small"
+                  onClick={() => setResumeUploadOpen(true)}
+                  sx={overviewInlineTextActionButtonSx}
+                >
+                  Upload
+                </Button>
+              ) : null}
+            </Stack>
+            {allowResumeUpload ? (
+              <Dialog open={resumeUploadOpen} onClose={() => setResumeUploadOpen(false)} maxWidth="sm" fullWidth>
+                <DialogContent sx={{ pt: 2 }}>
+                  <ResumeUpload
+                    userId={uid}
+                    tenantId={effectiveTenantId}
+                    onResumeParsed={handleResumeParsed}
+                    hideTitle
+                    hideStoredResumeAlert
+                  />
+                </DialogContent>
+                <DialogActions>
+                  <Button onClick={() => setResumeUploadOpen(false)}>Close</Button>
+                </DialogActions>
+              </Dialog>
+            ) : null}
           </Box>
 
           <Box>

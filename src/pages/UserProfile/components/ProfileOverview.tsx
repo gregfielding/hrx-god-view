@@ -1,8 +1,7 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useUserProfileEntityEmploymentChips } from '../../../hooks/useUserProfileEntityEmploymentChips';
 import { normalizeScoreSummary, type ScoreSummary } from '../../../utils/scoreSummary';
 import {
-  OverviewDeploymentSnapshotCard,
   OverviewQualificationsCard,
   OverviewScoringCard,
   OverviewRecentActivityCard,
@@ -10,6 +9,8 @@ import {
   overviewProfileFieldValueSx,
   type OverviewActivityLogEntry,
 } from './OverviewDashboardSections';
+import OverviewActionItemsCard from './OverviewActionItemsCard';
+import { deriveActionItemsV1 } from '../../../utils/userActionItems/deriveActionItemsV1';
 import { buildOverviewQualificationsFromUserDoc } from '../utils/overviewQualificationsSnapshot';
 import type { OverviewQualificationsData } from '../utils/overviewQualificationsSnapshot';
 import { toChipLabel } from '../../../utils/chipLabel';
@@ -104,6 +105,20 @@ type Props = {
    * Loads the same user doc and edit controls as the Overview tab.
    */
   embeddedMode?: 'full' | 'quickProfileOnly';
+  /**
+   * Header-grade interview signal from parent (scoreSummary + interview subcollection).
+   * When omitted, Action Items falls back to scoreSummary on this tab only.
+   */
+  actionItemsHasInterview?: boolean;
+  /** Same `users/{uid}` screening orders as the record header — no extra read. */
+  actionItemsBackgroundCheckOrders?: Array<{
+    id: string;
+    status: string;
+    result?: string;
+    typeLabel?: string;
+  }>;
+  /** Raw certification entries from the user doc (e.g. `skillsData.certifications`). */
+  actionItemsCertifications?: unknown[];
 };
 
 const ProfileOverview: React.FC<Props> = ({
@@ -112,6 +127,9 @@ const ProfileOverview: React.FC<Props> = ({
   onOpenScoreTab,
   autoOpenHomeAddress = false,
   embeddedMode = 'full',
+  actionItemsHasInterview,
+  actionItemsBackgroundCheckOrders,
+  actionItemsCertifications,
 }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -373,10 +391,53 @@ const ProfileOverview: React.FC<Props> = ({
 
   const showRecruiterDeployment =
     viewerSecurityLevel >= 5 && viewerSecurityLevel <= 7 && !isOwnProfile;
-  const { items: entityEmploymentChipItems, loading: entityEmploymentChipsLoading } = useUserProfileEntityEmploymentChips(
+  const {
+    items: entityEmploymentChipItems,
+    loading: entityEmploymentChipsLoading,
+    entitySignals: entityEmploymentSignals,
+  } = useUserProfileEntityEmploymentChips(
     activeTenantId || tenantId || undefined,
     uid,
     showRecruiterDeployment && Boolean((activeTenantId || tenantId || '').trim()),
+  );
+
+  const hasInterviewForActionItems =
+    actionItemsHasInterview ??
+    ((scoreSummaryFromUser?.interviewCount ?? 0) > 0 ||
+      (Boolean(coerceToDate(scoreSummaryFromUser?.interviewLastAt)) &&
+        typeof scoreSummaryFromUser?.interviewLastScore10 === 'number' &&
+        !Number.isNaN(scoreSummaryFromUser.interviewLastScore10)));
+
+  const actionItems = useMemo(
+    () =>
+      deriveActionItemsV1({
+        uid,
+        enabled: showRecruiterDeployment,
+        phoneVerified,
+        phone: (form.phone || '').trim(),
+        hasInterview: hasInterviewForActionItems,
+        workAuthorized: workEligibilityData.workAuthorized,
+        scoreSummary: scoreSummaryFromUser,
+        riskProfileRaw,
+        entityItems: entityEmploymentChipItems,
+        entitySignals: entityEmploymentSignals,
+        backgroundCheckOrders: Array.isArray(actionItemsBackgroundCheckOrders) ? actionItemsBackgroundCheckOrders : [],
+        certifications: Array.isArray(actionItemsCertifications) ? actionItemsCertifications : [],
+      }),
+    [
+      uid,
+      showRecruiterDeployment,
+      phoneVerified,
+      form.phone,
+      hasInterviewForActionItems,
+      workEligibilityData.workAuthorized,
+      scoreSummaryFromUser,
+      riskProfileRaw,
+      entityEmploymentChipItems,
+      entityEmploymentSignals,
+      actionItemsBackgroundCheckOrders,
+      actionItemsCertifications,
+    ],
   );
 
   // Language options for autocomplete
@@ -1135,16 +1196,12 @@ const transportOptions: Array<{
           }
         >
         <Grid container spacing={sectionSpacing} sx={{ alignItems: 'stretch', pb: 2 }}>
-          {/* Section 1: Deployment snapshot */}
+          {/* Section 1: Action items (recruiter overview) */}
           {showRecruiterDeployment && !hideNonQuickSections && (
             <Grid item xs={12}>
-              <OverviewDeploymentSnapshotCard
-                showRecruiterOps={showRecruiterDeployment}
-                scoreSummary={scoreSummaryFromUser}
-                riskProfileRaw={riskProfileRaw}
-                workAuthorized={workEligibilityData.workAuthorized}
-                entityItems={entityEmploymentChipItems}
-                entityLoading={entityEmploymentChipsLoading}
+              <OverviewActionItemsCard
+                items={actionItems}
+                loading={entityEmploymentChipsLoading}
                 onOpenEmploymentTab={onTabChange ? () => onTabChange('Employment') : undefined}
               />
             </Grid>
@@ -1485,7 +1542,10 @@ const transportOptions: Array<{
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                     {/* Personal Information Section */}
                     <Box>
-                      <Typography {...overviewSubsectionHeadingTypographyProps}>
+                      <Typography
+                        {...overviewSubsectionHeadingTypographyProps}
+                        sx={{ ...overviewSubsectionHeadingTypographyProps.sx, fontWeight: 700 }}
+                      >
                         Contact & identity
                       </Typography>
                       <Grid container spacing={1.25}>
@@ -1878,7 +1938,8 @@ const transportOptions: Array<{
                 <OverviewQualificationsCard
                   uid={uid}
                   qualifications={overviewQualifications}
-                  onOpenResumeTab={onTabChange ? () => onTabChange('Resume Upload') : undefined}
+                  allowResumeUpload={canEditProfile()}
+                  tenantId={activeTenantId || tenantId || activeTenant?.id || null}
                 />
               </Grid>
               <Grid item xs={12}>

@@ -98,7 +98,6 @@ import EmploymentV2Tab from './components/employment-v2/EmploymentV2Tab';
 import ComplianceTab from './components/ComplianceTab';
 import UserApplicationsTab from './components/UserApplicationsTab';
 import MessagesTab from './components/MessagesTab';
-import ResumeTab from './components/ResumeTab';
 import StartOnboardingDialog from './components/StartOnboardingDialog';
 import MessageDrawer, { MessageRecipient } from '../../components/MessageDrawer';
 import AddUserNoteDialog from './components/AddUserNoteDialog';
@@ -1042,7 +1041,7 @@ const UserProfilePage = () => {
     fetchCounts();
   }, [uid, securityLevel, tabValue]);
 
-  // Tab list — memoized so child updates (e.g. resume upload) do not recreate arrays every render and retrigger tab sync effects.
+  // Tab list — memoized so child updates do not recreate arrays every render and retrigger tab sync effects.
   const availableTabs = useMemo(() => {
     const viewerSecurityLevel = parseInt(securityLevel);
     const isAdminViewer = viewerSecurityLevel >= 5;
@@ -1064,7 +1063,6 @@ const UserProfilePage = () => {
       { label: 'Interview', available: canViewAdminContent && !isWorkforceInternalTeamView, count: interviewsCount },
       { label: 'Score', available: canViewAdminContent && !isWorkforceInternalTeamView },
       { label: 'Qualifications', available: false, count: undefined },
-      { label: 'Resume Upload', available: !isWorkforceInternalTeamView, count: undefined },
       { label: 'Applications', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: activeApplicationsCount },
       { label: 'Assignments', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: assignmentsCount },
       { label: 'Readiness', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: undefined },
@@ -1682,21 +1680,28 @@ const UserProfilePage = () => {
 
   const initials = `${firstName[0] ?? ''}${lastName[0] ?? ''}`.toUpperCase();
 
-  const interviewLine = (() => {
-    const fromSummary = coerceToDate(scoreSummary?.interviewLastAt) && typeof scoreSummary?.interviewLastScore10 === 'number' && !Number.isNaN(scoreSummary.interviewLastScore10);
-    const lastAt = fromSummary ? coerceToDate(scoreSummary?.interviewLastAt) : (latestInterviewFromSubcollection?.lastAt ?? null);
-    const lastScore = fromSummary ? scoreSummary?.interviewLastScore10 : latestInterviewFromSubcollection?.lastScore10;
-    const hasInterview = !!lastAt && typeof lastScore === 'number' && !Number.isNaN(lastScore);
-
-    if (!hasInterview) {
-      return { text: 'Not Interviewed', color: '#D32F2F' };
-    }
-
-    return {
-      text: `Interviewed ${formatShortDate(lastAt)} · ${formatOneDecimal(lastScore)}/10`,
-      color: 'rgba(0, 0, 0, 0.55)',
-    };
+  const interviewPresence = (() => {
+    const fromSummary =
+      coerceToDate(scoreSummary?.interviewLastAt) &&
+      typeof scoreSummary?.interviewLastScore10 === 'number' &&
+      !Number.isNaN(scoreSummary.interviewLastScore10);
+    const lastAt = fromSummary
+      ? coerceToDate(scoreSummary?.interviewLastAt)
+      : latestInterviewFromSubcollection?.lastAt ?? null;
+    const lastScore = fromSummary
+      ? scoreSummary?.interviewLastScore10
+      : latestInterviewFromSubcollection?.lastScore10;
+    const hasInterview =
+      !!lastAt && typeof lastScore === 'number' && !Number.isNaN(lastScore);
+    return { hasInterview, lastAt, lastScore };
   })();
+
+  const interviewLine = interviewPresence.hasInterview
+    ? {
+        text: `Interviewed ${formatShortDate(interviewPresence.lastAt!)} · ${formatOneDecimal(interviewPresence.lastScore!)}/10`,
+        color: 'rgba(0, 0, 0, 0.55)',
+      }
+    : { text: 'Not Interviewed', color: '#D32F2F' };
 
   const toStringList = (raw: any, opts?: { limit?: number; mapper?: (v: any) => string | null }) => {
     const limit = opts?.limit ?? 12;
@@ -2872,6 +2877,14 @@ const UserProfilePage = () => {
                           : undefined
                       }
                       autoOpenHomeAddress={shouldAutoOpenHomeAddress}
+                      actionItemsHasInterview={interviewPresence.hasInterview}
+                      actionItemsBackgroundCheckOrders={backgroundCheckOrders.map((o) => ({
+                        id: o.id,
+                        status: o.status,
+                        result: o.result,
+                        typeLabel: o.typeLabel,
+                      }))}
+                      actionItemsCertifications={skillsData?.certifications || []}
                     />
                   </>
                 );
@@ -2890,13 +2903,6 @@ const UserProfilePage = () => {
                 );
               case 'Qualifications':
                 return <QualificationsTab uid={uid} />;
-              case 'Resume Upload':
-                return (
-                  <ResumeTab
-                    uid={uid}
-                    tenantId={tenantId || authTenantId || activeTenant?.id || undefined}
-                  />
-                );
               case 'Applications':
                 return <UserApplicationsTab userId={uid} />;
               case 'Assignments':
@@ -3101,6 +3107,14 @@ const UserProfilePage = () => {
                 setQuickProfileDialogOpen(false);
                 handleTabChange({} as React.SyntheticEvent, tab);
               }}
+              actionItemsHasInterview={interviewPresence.hasInterview}
+              actionItemsBackgroundCheckOrders={backgroundCheckOrders.map((o) => ({
+                id: o.id,
+                status: o.status,
+                result: o.result,
+                typeLabel: o.typeLabel,
+              }))}
+              actionItemsCertifications={skillsData?.certifications || []}
             />
           </DialogContent>
         </Dialog>

@@ -5,6 +5,10 @@ import type { EmploymentAssignmentSummary, EmploymentEntityKey } from '../pages/
 import type { UserListEntityOnboardingItem } from '../utils/userListEntityEmploymentStatus';
 import { chipItemsFromDedupeMap, mergeEntityEmploymentDocIntoChipMap } from '../utils/userListEntityEmploymentStatus';
 import { loadWorkerAssignmentsByEntityKey } from '../utils/loadWorkerAssignmentsByEntityKey';
+import {
+  buildEntityEmploymentActionSignals,
+  type EntityEmploymentActionSignal,
+} from '../utils/userActionItems/entitySignalsFromEmploymentDocs';
 
 function assignmentsForEntityEmploymentDoc(
   byKey: Record<EmploymentEntityKey, EmploymentAssignmentSummary[]>,
@@ -22,13 +26,15 @@ export function useUserProfileEntityEmploymentChips(
   tenantId: string | undefined,
   userId: string | undefined,
   enabled: boolean
-): { items: UserListEntityOnboardingItem[]; loading: boolean } {
+): { items: UserListEntityOnboardingItem[]; loading: boolean; entitySignals: EntityEmploymentActionSignal[] } {
   const [items, setItems] = useState<UserListEntityOnboardingItem[]>([]);
+  const [entitySignals, setEntitySignals] = useState<EntityEmploymentActionSignal[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!enabled || !tenantId || !userId) {
       setItems([]);
+      setEntitySignals([]);
       setLoading(false);
       return;
     }
@@ -52,10 +58,17 @@ export function useUserProfileEntityEmploymentChips(
           });
         });
         const next = chipItemsFromDedupeMap(map);
-        if (!cancelled) setItems(next);
+        const signals = buildEntityEmploymentActionSignals(snap.docs, assignmentsByKey);
+        if (!cancelled) {
+          setItems(next);
+          setEntitySignals(signals);
+        }
       } catch (e) {
         console.error('useUserProfileEntityEmploymentChips: fetch failed', e);
-        if (!cancelled) setItems([]);
+        if (!cancelled) {
+          setItems([]);
+          setEntitySignals([]);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -66,5 +79,5 @@ export function useUserProfileEntityEmploymentChips(
     };
   }, [tenantId, userId, enabled]);
 
-  return { items, loading };
+  return { items, loading, entitySignals };
 }

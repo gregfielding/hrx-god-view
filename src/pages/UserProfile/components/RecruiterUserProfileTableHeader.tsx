@@ -488,7 +488,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                     variant="body2"
                     noWrap
                     component="span"
-                    sx={{ ...bodySx, fontWeight: 500, color: 'text.primary', minWidth: 0, flex: '0 1 auto' }}
+                    sx={{ ...bodySx, minWidth: 0, flex: '0 1 auto' }}
                   >
                     {email}
                   </Typography>
@@ -584,7 +584,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                   sx={{ alignSelf: 'flex-start', minWidth: 0, maxWidth: '100%', mt: 0.35, gap: 0.25 }}
                 >
                   <Typography variant="body2" noWrap component="span" sx={{ ...bodySx, minWidth: 0, flex: '0 1 auto' }}>
-                    <Box component="span" sx={{ fontWeight: 600, color: 'text.secondary', mr: 0.35 }}>
+                    <Box component="span" sx={{ color: 'text.secondary', mr: 0.35 }}>
                       DOB
                     </Box>
                     {dobDisplay}
@@ -610,7 +610,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                   sx={{ alignSelf: 'flex-start', minWidth: 0, maxWidth: '100%', mt: 0.35, gap: 0.25 }}
                 >
                   <Typography variant="body2" noWrap component="span" sx={{ ...bodySx, minWidth: 0, flex: '0 1 auto' }}>
-                    <Box component="span" sx={{ fontWeight: 600, color: 'text.secondary', mr: 0.35 }}>
+                    <Box component="span" sx={{ color: 'text.secondary', mr: 0.35 }}>
                       Last 4 (SSN)
                     </Box>
                     {lastFourDisplay}
@@ -629,7 +629,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
               ) : null}
               {showEmergencyLine ? (
                 <Typography variant="body2" sx={{ ...bodySx, mt: 0.35 }}>
-                  <Box component="span" sx={{ fontWeight: 600, color: 'text.secondary', mr: 0.35 }}>
+                  <Box component="span" sx={{ color: 'text.secondary', mr: 0.35 }}>
                     Emergency
                   </Box>
                   {emergencyLineText}
