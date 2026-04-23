@@ -139,14 +139,14 @@ export async function generateMenuItems(
       });
     }
 
-    // Messages (canonical conversations / SMS) - only for security levels 5-7 (internal team)
-    if (effectiveSecurityLevel && ['5', '6', '7'].includes(String(effectiveSecurityLevel))) {
-      menuItems.push({
-        text: 'Messages',
-        to: '/text-messages',
-        icon: 'sms',
-      });
-    }
+    // Messages → /text-messages — hidden from sidebar (restore block to re-enable).
+    // if (effectiveSecurityLevel && ['5', '6', '7'].includes(String(effectiveSecurityLevel))) {
+    //   menuItems.push({
+    //     text: 'Messages',
+    //     to: '/text-messages',
+    //     icon: 'sms',
+    //   });
+    // }
 
     // Slack Channels removed - now combined with Mentions in top bar
 
@@ -260,13 +260,13 @@ export async function generateMenuItems(
         icon: 'attach_money',
         accessRoles: ['tenant_7'],
       }]),
-      // Workers Comp: central management of WC codes/rates by state and job title; visible to levels 5, 6, 7
-      ...([{
-        text: 'Workers Comp',
-        to: '/workers-comp',
-        icon: 'health_and_safety',
-        accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
-      }]),
+      // Workers Comp (hidden from main sidebar — still under Settings → Operations → Workers Comp)
+      // ...([{
+      //   text: 'Workers Comp',
+      //   to: '/settings?tab=workers-comp',
+      //   icon: 'health_and_safety',
+      //   accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
+      // }]),
       // Sales CRM (role-gated; no module gate)
       ...([{
         text: 'Sales CRM',
