@@ -64,7 +64,7 @@ Sort all candidates by **priority score** (higher first), then take **3**.
 
 ### Compliance (explicit signals only)
 
-- **Background applicant:** `backgroundChecks` row `hrxStatus === 'awaiting_applicant'` (and not `error` on that row).
+- **Background applicant:** AccuSource partial-profile nudge — **`shouldShowApplicantPortalCta`** from `backgroundCheckApplicantPortal.ts` (same gate as recruiter “Open / Copy” on User → Backgrounds). Roughly `hrxStatus === 'awaiting_applicant'` plus a portal URL, and **not** already advanced (`orderCompleted` / `finalReportReady` / terminal `hrxStatus`, etc.). Drug-line `awaiting_applicant` still maps to drug schedule, not this card.
 - **Background issue:** `hrxStatus === 'error'`.
 - **Drug schedule / reschedule:** drug-related `lastServiceComponent` / `providerServiceOrderStatus` lines + status substring rules in `deriveWorkerComplianceSignals` (conservative).
 - **E-Verify worker action:** `everify_cases.status` in `tnc` | `further_action_required`.

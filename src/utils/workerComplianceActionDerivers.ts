@@ -3,6 +3,9 @@
  * Only explicit statuses / structured vendor lines — no vague inference.
  */
 
+import type { BackgroundCheckRecord } from '../types/backgroundCheck';
+import { shouldShowApplicantPortalCta } from './backgroundCheckApplicantPortal';
+
 const EVERIFY_WORKER_ACTION_STATUSES = new Set(['tnc', 'further_action_required']);
 
 function serviceLineLooksDrug(name: unknown): boolean {
@@ -89,7 +92,10 @@ export function deriveWorkerComplianceSignals(
 
     if (hrx === 'awaiting_applicant') {
       if (lineDrug) drugScheduleRequired = true;
-      else backgroundApplicantAction = true;
+      /** Match recruiter portal CTA: hide once applicant finished partial profile / HRX advanced (e.g. profileCompleted, order completed). */
+      else if (shouldShowApplicantPortalCta(c as unknown as BackgroundCheckRecord)) {
+        backgroundApplicantAction = true;
+      }
     }
 
     const svcMap = (c.providerServiceOrderStatus || null) as Record<string, Record<string, unknown>> | null;

@@ -2,6 +2,7 @@ import { serverTimestamp } from 'firebase/firestore';
 import {
   scheduleIntentOptionsToSchedulePreferences,
 } from './workerPreferencesCanonical';
+import { warnLegacyCertUsageDetected } from './certifications/certificationsLogging';
 
 type AnyMap = Record<string, unknown>;
 
@@ -63,6 +64,10 @@ export function buildCanonicalWorkerProfileWritePatch(partial: AnyMap): AnyMap {
   }
 
   if (partial.certifications !== undefined) {
+    warnLegacyCertUsageDetected({
+      surface: 'buildCanonicalWorkerProfileWritePatch',
+      field: 'workerProfile.credentials.certifications',
+    });
     setIfDefined(patch, 'workerProfile.credentials.certifications', partial.certifications);
   }
 
@@ -196,6 +201,10 @@ export function buildReadinessResponseWritePatch(requirementId: string, value: s
 }
 
 export function buildCertificationUploadWritePatch(unionValue: unknown): AnyMap {
+  warnLegacyCertUsageDetected({
+    surface: 'buildCertificationUploadWritePatch',
+    field: 'user.certifications + workerProfile.credentials.certifications',
+  });
   return {
     certifications: unionValue,
     'workerProfile.credentials.certifications': unionValue,

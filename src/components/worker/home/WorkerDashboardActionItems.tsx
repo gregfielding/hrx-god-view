@@ -20,6 +20,7 @@ import type {
   WorkerDashboardPriorityTier,
 } from '../../../utils/workerDashboardActionItems';
 import { persistWorkerDashboardActionDismiss } from '../../../utils/workerDashboardDismissals';
+import { formatHeadshotGateError } from '../../../utils/avatarVerification/formatHeadshotGateError';
 
 const SMS_SNOOZE_MS = 24 * 60 * 60 * 1000;
 
@@ -57,6 +58,14 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
   const [enableError, setEnableError] = useState<string | null>(null);
   const [assignmentBusyId, setAssignmentBusyId] = useState<string | null>(null);
   const [assignmentError, setAssignmentError] = useState<string | null>(null);
+  /**
+   * When the Accept-flow server gate rejects the worker's headshot, we surface a Retake CTA
+   * alongside the localized error. `retakeLabel` + visible retake button are only shown while
+   * this is non-null; clearing happens implicitly on the next Accept attempt.
+   */
+  const [assignmentHeadshotRetake, setAssignmentHeadshotRetake] = useState<
+    { retakeLabel: string } | null
+  >(null);
 
   const snoozeSms = useCallback(() => {
     try {
@@ -111,16 +120,26 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
       const assignmentId = item.qaEvaluatedFields.assignmentId as string | undefined;
       if (!tenantId || !assignmentId) return;
       setAssignmentError(null);
+      setAssignmentHeadshotRetake(null);
       setAssignmentBusyId(assignmentId);
       try {
         await respondToAssignmentCallable({ tenantId, assignmentId, decision });
         onAfterFirestoreChange?.();
       } catch (e: unknown) {
-        const msg =
-          e && typeof e === 'object' && 'message' in e
-            ? String((e as { message?: string }).message)
-            : 'Could not update assignment. Try again.';
-        setAssignmentError(msg);
+        // Headshot gate: show the localized retake nudge + surface a Retake CTA so the
+        // worker can get to their profile camera in one tap. Any other error falls through
+        // to the generic message-extraction path below.
+        const gate = formatHeadshotGateError(e);
+        if (gate) {
+          setAssignmentError(gate.message);
+          setAssignmentHeadshotRetake({ retakeLabel: gate.retakeLabel });
+        } else {
+          const msg =
+            e && typeof e === 'object' && 'message' in e
+              ? String((e as { message?: string }).message)
+              : 'Could not update assignment. Try again.';
+          setAssignmentError(msg);
+        }
       } finally {
         setAssignmentBusyId(null);
       }
@@ -317,9 +336,21 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
                       {t(item.descriptionKey)}
                     </Typography>
                     {assignmentError ? (
-                      <Typography variant="body2" color="error" sx={{ fontWeight: 600 }}>
-                        {assignmentError}
-                      </Typography>
+                      <Stack spacing={0.75} alignItems="flex-start">
+                        <Typography variant="body2" color="error" sx={{ fontWeight: 600 }}>
+                          {assignmentError}
+                        </Typography>
+                        {assignmentHeadshotRetake ? (
+                          <Button
+                            variant="outlined"
+                            color="primary"
+                            size="small"
+                            onClick={() => onNavigate('/c1/workers/profile')}
+                          >
+                            {assignmentHeadshotRetake.retakeLabel}
+                          </Button>
+                        ) : null}
+                      </Stack>
                     ) : null}
                     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} useFlexGap flexWrap="wrap" sx={{ pt: 0.5 }}>
                       <Button
