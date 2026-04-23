@@ -69,6 +69,13 @@ service cloud.firestore {
         allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
         allow create, update, delete: if request.auth != null && (isTenantAdmin(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role == 'Recruiter'));
       }
+
+      // Messaging Sequences — per-sequence targeting config (label, active, accounts, worker types, occurrence).
+      // Written from Settings → Messaging Sequences; read by the cloud-function dispatcher (Phase 2) plus the UI.
+      match /messagingSequences/{doc} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId));
+        allow create, update, delete: if request.auth != null && (isTenantAdmin(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager']));
+      }
       
       match /job_postings/{doc} {
         // Allow anyone to read job postings (client-side filtering handles visibility)
