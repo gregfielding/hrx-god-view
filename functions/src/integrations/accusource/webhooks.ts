@@ -444,17 +444,19 @@ function applyServiceLineUpdatesFromPayload(
   for (const linePayload of linePayloads) {
     const key = computeServiceLineKey(linePayload);
 
-    // Skip bare order-level events that aren't attributable to a catalog line,
-    // except LabCorp drug registration (initial row) or Follow-ups to a drug
-    // `order:*` line already in Firestore / accumulated this batch.
-    if (key.startsWith('order:')) {
-      const isDrugLab =
-        typeof linePayload.lab === 'string' &&
-        (linePayload.reg_id != null || linePayload.regId != null);
-      const existingRow = lineAcc[key] ?? existingMap[key];
-      const followUpDrug = isExistingDrugOrderLineRow(existingRow);
-      if (!isDrugLab && !followUpDrug) continue;
-    }
+    // Persist ALL order-level events (including bare `order_status_change` without a
+    // matching `service_status_change`). Services like per-county criminal searches only
+    // report via order_status_change — we were previously dropping them here. Named services
+    // still get their canonical `<service_id>` row; duplicate `order:<id>` rows are collapsed
+    // at display time by `accusourceScreeningLineItems` via status + timestamp proximity.
+    //
+    // The old filter was:
+    //   if (key.startsWith('order:')) {
+    //     const isDrugLab = ...; const followUpDrug = ...;
+    //     if (!isDrugLab && !followUpDrug) continue;
+    //   }
+    // Drug-lab rows still flow through this same path; the dedup in the UI preserves them
+    // because they have labName / labCode fields that the named service rows don't.
 
     const patch = extractServiceLinePatch(linePayload);
     const prev = lineAcc[key] ?? null;

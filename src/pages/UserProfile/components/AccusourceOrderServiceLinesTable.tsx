@@ -349,8 +349,14 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
             {lines.map((line) => (
               <TableRow key={line.id} hover>
                 <TableCell sx={{ whiteSpace: 'nowrap', verticalAlign: 'top' }}>
+                  {/* Prefer the per-line vendor order id (e.g. AU-xxxx / DR-xxxx / CR-xxxx) so
+                      each row matches what AccuSource's portal shows; fall back to the parent
+                      profile number when the webhook didn't include a per-line id. */}
                   <Typography variant="body2" component="span">
-                    {orderRef}
+                    {line.providerOrderId != null &&
+                    String(line.providerOrderId).trim() !== ''
+                      ? String(line.providerOrderId)
+                      : orderRef}
                   </Typography>
                 </TableCell>
                 <TableCell sx={{ verticalAlign: 'top', maxWidth: 220 }}>
