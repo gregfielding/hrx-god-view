@@ -1,5 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
+  Alert,
   Box,
   Typography,
   Button,
@@ -9,7 +11,6 @@ import {
   useTheme,
   useMediaQuery,
 } from '@mui/material';
-import SettingsIcon from '@mui/icons-material/Settings';
 import BusinessIcon from '@mui/icons-material/Business';
 import EmailIcon from '@mui/icons-material/Email';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
@@ -18,7 +19,6 @@ import PeopleIcon from '@mui/icons-material/People';
 import GroupWorkIcon from '@mui/icons-material/GroupWork';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 import LibraryBooksIcon from '@mui/icons-material/LibraryBooks';
-import PageHeader from '../../components/PageHeader';
 import CompanySetup from './CompanySetup';
 import EntitiesPage from './settings/EntitiesPage';
 import OnboardingLibraryPage from './settings/OnboardingLibraryPage';
@@ -38,26 +38,41 @@ import SecurityIcon from '@mui/icons-material/Security';
 import LocalHospitalIcon from '@mui/icons-material/LocalHospital';
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 import PsychologyIcon from '@mui/icons-material/Psychology';
+import AutoAwesomeMotionIcon from '@mui/icons-material/AutoAwesomeMotion';
 import ComplianceLibraryPlaceholder from './settings/ComplianceLibraryPlaceholder';
 import CredentialTypesPlaceholder from './settings/CredentialTypesPlaceholder';
 import ScreeningTypesPlaceholder from './settings/ScreeningTypesPlaceholder';
 import BenefitsProgramsPlaceholder from './settings/BenefitsProgramsPlaceholder';
 import PayrollProvidersPlaceholder from './settings/PayrollProvidersPlaceholder';
+import MessagingSequencesPlaceholder from './settings/MessagingSequencesPlaceholder';
 import AISignalsSettings from './settings/AISignalsSettings';
+import WorkersCompRatesPage from './settings/WorkersCompRatesPage';
+import ApiServiceDetailContent from './settings/ApisAndServicesPage';
+import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
+import ApiOutlinedIcon from '@mui/icons-material/ApiOutlined';
+import {
+  APIS_SERVICES_TAB_PREFIX,
+  getApisServiceCatalogEntry,
+  parseApisServicesTab,
+} from '../../config/apisAndServicesCatalog';
 import {
   SETTINGS_NAV_GROUPS,
   findGroupForTab,
+  findNavItemLabel,
+  SETTINGS_TAB_KEYS,
+  type CoreSettingsTab,
   type SettingsTab,
 } from '../../config/settingsNavigation';
 
 const TAB_ICON_SX = { fontSize: 20 };
 
-const TAB_ICONS: Record<SettingsTab, React.ReactNode> = {
+const CORE_TAB_ICONS: Record<CoreSettingsTab, React.ReactNode> = {
   'company-setup': <BusinessIcon sx={TAB_ICON_SX} />,
   entities: <AccountBalanceIcon sx={TAB_ICON_SX} />,
   'onboarding-library': <LibraryBooksIcon sx={TAB_ICON_SX} />,
   documents: <DescriptionIcon sx={TAB_ICON_SX} />,
   messaging: <EmailIcon sx={TAB_ICON_SX} />,
+  'messaging-sequences': <AutoAwesomeMotionIcon sx={TAB_ICON_SX} />,
   senders: <PhoneAndroidIcon sx={TAB_ICON_SX} />,
   slack: <ChatIcon sx={TAB_ICON_SX} />,
   workforce: <PeopleIcon sx={TAB_ICON_SX} />,
@@ -68,19 +83,89 @@ const TAB_ICONS: Record<SettingsTab, React.ReactNode> = {
   'screening-types': <SecurityIcon sx={TAB_ICON_SX} />,
   'benefits-programs': <LocalHospitalIcon sx={TAB_ICON_SX} />,
   'payroll-providers': <AccountBalanceWalletIcon sx={TAB_ICON_SX} />,
+  'workers-comp': <HealthAndSafetyIcon sx={TAB_ICON_SX} />,
   'ai-signals': <PsychologyIcon sx={TAB_ICON_SX} />,
 };
+
+function settingsNavIcon(tab: SettingsTab): React.ReactNode {
+  if (typeof tab === 'string' && tab.startsWith('apis-services__')) {
+    return <ApiOutlinedIcon sx={TAB_ICON_SX} />;
+  }
+  return CORE_TAB_ICONS[tab as CoreSettingsTab];
+}
+
+function isSettingsTabKey(s: string | null): s is SettingsTab {
+  return s != null && (SETTINGS_TAB_KEYS as string[]).includes(s);
+}
 
 const SettingsLanding: React.FC = () => {
   const theme = useTheme();
   const isDesktopNav = useMediaQuery(theme.breakpoints.up('md'));
-  const { tenantId, activeTenant } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabFromUrl = searchParams.get('tab');
+  const { tenantId, activeTenant, recruiterEnabled, currentClaimsSecurityLevel, securityLevel } = useAuth();
   const effectiveTenantId = activeTenant?.id || tenantId;
+
+  const canWorkersComp = useMemo(() => {
+    const sec = parseInt(String(currentClaimsSecurityLevel ?? securityLevel ?? '0'), 10);
+    return Boolean(recruiterEnabled && sec >= 5);
+  }, [recruiterEnabled, currentClaimsSecurityLevel, securityLevel]);
+
+  const navGroups = useMemo(() => {
+    if (canWorkersComp) return SETTINGS_NAV_GROUPS;
+    return SETTINGS_NAV_GROUPS.map((g) => ({
+      ...g,
+      items: g.items.filter((i) => i.key !== 'workers-comp'),
+    }));
+  }, [canWorkersComp]);
+
   const [activeTab, setActiveTab] = useState<SettingsTab>('company-setup');
+
+  useEffect(() => {
+    if (tabFromUrl === 'workers-comp' && !canWorkersComp) {
+      setSearchParams({}, { replace: true });
+      setActiveTab('company-setup');
+      return;
+    }
+    if (isSettingsTabKey(tabFromUrl)) {
+      setActiveTab(tabFromUrl);
+    }
+  }, [tabFromUrl, canWorkersComp, setSearchParams]);
+
+  const selectTab = useCallback(
+    (key: SettingsTab) => {
+      setActiveTab(key);
+      if (key === 'company-setup') {
+        setSearchParams({}, { replace: true });
+      } else {
+        setSearchParams({ tab: key }, { replace: true });
+      }
+    },
+    [setSearchParams],
+  );
 
   const activeGroup = useMemo(() => findGroupForTab(activeTab), [activeTab]);
 
   const renderTabContent = () => {
+    if (typeof activeTab === 'string' && activeTab.startsWith(APIS_SERVICES_TAB_PREFIX)) {
+      const apiServiceId = parseApisServicesTab(activeTab);
+      if (apiServiceId) {
+        const entry = getApisServiceCatalogEntry(apiServiceId);
+        return entry ? (
+          <ApiServiceDetailContent entry={entry} />
+        ) : (
+          <Box sx={{ px: { xs: 2, md: 3 }, py: 2 }}>
+            <Alert severity="warning">Unknown APIs &amp; Services entry.</Alert>
+          </Box>
+        );
+      }
+      return (
+        <Box sx={{ px: { xs: 2, md: 3 }, py: 2 }}>
+          <Alert severity="warning">Unknown or removed APIs &amp; Services entry.</Alert>
+        </Box>
+      );
+    }
+
     switch (activeTab) {
       case 'company-setup':
         return <CompanySetup />;
@@ -92,6 +177,8 @@ const SettingsLanding: React.FC = () => {
         return effectiveTenantId ? <SignaturesDocumentsPage /> : null;
       case 'messaging':
         return effectiveTenantId ? <MessagingTab tenantId={effectiveTenantId} /> : null;
+      case 'messaging-sequences':
+        return <MessagingSequencesPlaceholder />;
       case 'senders':
         return <SenderManagementPage />;
       case 'slack':
@@ -112,6 +199,20 @@ const SettingsLanding: React.FC = () => {
         return <BenefitsProgramsPlaceholder />;
       case 'payroll-providers':
         return <PayrollProvidersPlaceholder />;
+      case 'workers-comp':
+        if (!canWorkersComp) {
+          return (
+            <Box sx={{ px: { xs: 2, md: 3 }, py: 2 }}>
+              <Alert severity="warning">
+                You don&apos;t have permission to manage Workers Comp settings (recruiting access and security level 5+
+                required).
+              </Alert>
+            </Box>
+          );
+        }
+        return effectiveTenantId ? (
+          <WorkersCompRatesPage tenantId={effectiveTenantId} embeddedInSettings />
+        ) : null;
       case 'ai-signals':
         return <AISignalsSettings />;
       default:
@@ -139,7 +240,7 @@ const SettingsLanding: React.FC = () => {
 
   const renderMobileGroupedPills = () => (
     <Box sx={{ px: { xs: 2, md: 3 }, py: 2, borderBottom: 1, borderColor: 'divider' }}>
-      {SETTINGS_NAV_GROUPS.map((group) => (
+      {navGroups.map((group) => (
         <Box key={group.id} sx={{ mb: 2 }}>
           <Typography
             variant="overline"
@@ -159,8 +260,8 @@ const SettingsLanding: React.FC = () => {
               <Button
                 key={item.key}
                 variant="text"
-                startIcon={TAB_ICONS[item.key]}
-                onClick={() => setActiveTab(item.key)}
+                startIcon={settingsNavIcon(item.key)}
+                onClick={() => selectTab(item.key)}
                 sx={navPillSx(activeTab === item.key)}
               >
                 {item.label}
@@ -187,7 +288,7 @@ const SettingsLanding: React.FC = () => {
         bgcolor: 'background.default',
       }}
     >
-      {SETTINGS_NAV_GROUPS.map((group) => (
+      {navGroups.map((group) => (
         <Box key={group.id} sx={{ mb: 2.5 }}>
           <Typography
             variant="overline"
@@ -207,7 +308,7 @@ const SettingsLanding: React.FC = () => {
             <ListItemButton
               key={item.key}
               selected={activeTab === item.key}
-              onClick={() => setActiveTab(item.key)}
+              onClick={() => selectTab(item.key)}
               sx={{
                 borderRadius: 1,
                 py: 0.75,
@@ -220,7 +321,7 @@ const SettingsLanding: React.FC = () => {
                 },
               }}
             >
-              <ListItemIcon sx={{ minWidth: 40, color: 'inherit' }}>{TAB_ICONS[item.key]}</ListItemIcon>
+              <ListItemIcon sx={{ minWidth: 40, color: 'inherit' }}>{settingsNavIcon(item.key)}</ListItemIcon>
               <ListItemText
                 primary={item.label}
                 primaryTypographyProps={{ variant: 'body2', fontWeight: activeTab === item.key ? 600 : 400 }}
@@ -233,43 +334,14 @@ const SettingsLanding: React.FC = () => {
   );
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <PageHeader
-        title={
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            <SettingsIcon sx={{ fontSize: 24, color: 'primary.main' }} />
-            <Typography
-              variant="h6"
-              sx={{
-                fontSize: { xs: '20px', md: '24px' },
-                fontWeight: 600,
-                lineHeight: 1.2,
-              }}
-            >
-              Settings
-            </Typography>
-          </Box>
-        }
-        subtitle={
-          <Box>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-              Manage your organization&apos;s configuration and preferences
-            </Typography>
-            {activeGroup ? (
-              <Typography variant="body2" color="text.secondary" component="p" sx={{ m: 0 }}>
-                <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>
-                  Settings
-                </Box>
-                {' / '}
-                <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>
-                  {activeGroup.label}
-                </Box>
-              </Typography>
-            ) : null}
-          </Box>
-        }
-      />
-
+    <Box
+      sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}
+      aria-label={
+        activeGroup
+          ? `Settings · ${activeGroup.label} · ${findNavItemLabel(activeTab)}`
+          : 'Settings'
+      }
+    >
       <Box
         sx={{
           flex: 1,
