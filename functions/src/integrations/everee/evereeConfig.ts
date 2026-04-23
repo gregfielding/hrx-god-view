@@ -4,6 +4,7 @@
  */
 
 import { getFirestore } from 'firebase-admin/firestore';
+import { HttpsError } from 'firebase-functions/v2/https';
 
 export type EvereeEnvironment = 'sandbox' | 'production';
 
@@ -43,6 +44,39 @@ export async function getEvereeConfigForEntity(
     evereeApiBaseUrl: baseUrl,
     evereeEnabled: true,
   };
+}
+
+/**
+ * Callable gate helper — AND of env-var and per-entity flag.
+ *
+ * Used at the top of every Everee callable so rollout can be staged per entity
+ * (e.g. turn on C1 Workforce before C1 Events) without flipping the env-wide
+ * switch. The env-var `EVEREE_ENABLED=true` is required at the process level
+ * (evereeGate.ts); this adds the second AND: the entity must opt in via its
+ * `evereeEnabled=true` + `payrollProvider='everee'` settings.
+ *
+ * Throws HttpsError('failed-precondition') so the error surfaces uniformly on
+ * the client regardless of which callable blocked. Returns the resolved config
+ * so callers don't need a second round-trip.
+ */
+export async function requireEvereeEnabledEntity(
+  tenantId: string,
+  entityId: string,
+): Promise<EvereeEntityConfig> {
+  if (process.env.EVEREE_ENABLED !== 'true') {
+    throw new HttpsError(
+      'failed-precondition',
+      'Everee is disabled at the process level (EVEREE_ENABLED !== "true").',
+    );
+  }
+  const config = await getEvereeConfigForEntity(tenantId, entityId);
+  if (!config) {
+    throw new HttpsError(
+      'failed-precondition',
+      `Everee is not enabled for entity ${entityId}. Set entity.evereeEnabled=true and payrollProvider="everee".`,
+    );
+  }
+  return config;
 }
 
 /** Path helpers for Everee collections (functions-side). */

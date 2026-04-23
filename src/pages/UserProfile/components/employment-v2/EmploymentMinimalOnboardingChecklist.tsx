@@ -32,6 +32,8 @@ import {
 } from '../../../../utils/employmentMinimalChecklistModel';
 import { EmploymentOnboardingPathRowAction } from './EmploymentOnboardingPathRowAction';
 import ExternalOnboardingVerificationControls from './ExternalOnboardingVerificationControls';
+import EvereePayrollSetupEmbed from '../../../../components/everee/EvereePayrollSetupEmbed';
+import EvereeMyPayPanel from '../../../../components/everee/EvereeMyPayPanel';
 import type { ExternalOnboardingStepKey } from '../../../../types/externalOnboardingSteps';
 import EmploymentI9SupportingDocumentsSubsection from '../../../../components/i9SupportingDocuments/EmploymentI9SupportingDocumentsSubsection';
 import ProfileTabPointerAlert from '../../../../components/profile/ProfileTabPointerAlert';
@@ -171,6 +173,8 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
   const theme = useTheme();
   const [payrollBusy, setPayrollBusy] = useState(false);
   const [payrollErr, setPayrollErr] = useState<string | null>(null);
+  const [evereeEmbedOpen, setEvereeEmbedOpen] = useState(false);
+  const [evereeMyPayOpen, setEvereeMyPayOpen] = useState(false);
 
   const { systems } = overview;
   const historical = !overview.hasOpenOnboardingDemand;
@@ -179,9 +183,35 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
     systems.payroll?.entityOnboardingUrl || systems.payroll?.entityPortalUrl || systems.payroll?.portalUrl
   );
   const entityOnboardingComplete = overview.onboardingComplete === true;
+  /**
+   * Everee embed supersedes the static "Resend payroll setup" path once the
+   * entity is flagged — surfaces a one-tap "Complete payroll setup" that opens
+   * the Everee iframe with a fresh, ephemeral session.
+   */
+  const evereePayrollEnabled =
+    systems.payroll?.evereeEnabled === true && systems.payroll?.provider === 'everee';
+  const evereeWorkerType: 'employee' | 'contractor' =
+    overview.workerType === '1099' ? 'contractor' : 'employee';
+  const showEvereeEmbedLaunch =
+    !historical &&
+    !entityOnboardingComplete &&
+    evereePayrollEnabled &&
+    Boolean(hiringEntityId && tenantId && profileUserId);
+  /**
+   * "View my pay" is the peer of the onboarding embed — surfaces once the
+   * worker's Everee onboarding is settled (mirrored onto the entity
+   * `onboardingComplete` flag by the webhook), or historically when we're
+   * viewing a past employment. We never require recruiter-level role here;
+   * the backend callable enforces `canSelfOrManageEveree`.
+   */
+  const showEvereeMyPay =
+    evereePayrollEnabled &&
+    (entityOnboardingComplete || historical) &&
+    Boolean(hiringEntityId && tenantId && profileUserId);
   const showPayrollResend =
     !historical &&
     !entityOnboardingComplete &&
+    !evereePayrollEnabled &&
     Boolean(systems.payroll && payrollLinksConfigured && hiringEntityId && tenantId && profileUserId);
 
   const firstAssignmentId = overview.assignments?.[0]?.assignmentId?.trim() || '';
@@ -362,6 +392,26 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
     >
       <ChecklistSection title="Payroll setup">
         <Stack spacing={1.25}>
+          {showEvereeEmbedLaunch ? (
+            <Button
+              variant="contained"
+              size="small"
+              onClick={() => setEvereeEmbedOpen(true)}
+              sx={{ textTransform: 'none', alignSelf: 'flex-start' }}
+            >
+              Complete payroll setup
+            </Button>
+          ) : null}
+          {showEvereeMyPay ? (
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => setEvereeMyPayOpen(true)}
+              sx={{ textTransform: 'none', alignSelf: 'flex-start' }}
+            >
+              View my pay
+            </Button>
+          ) : null}
           {showPayrollResend ? (
             <Button
               variant="contained"
@@ -378,9 +428,11 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
               {payrollErr}
             </Typography>
           ) : null}
-          <Typography variant="caption" color="text.secondary" display="block">
-            {lastInviteSent ? `Last sent: ${formatChecklistTimestamp(lastInviteSent)}` : 'Last sent: —'}
-          </Typography>
+          {!showEvereeEmbedLaunch ? (
+            <Typography variant="caption" color="text.secondary" display="block">
+              {lastInviteSent ? `Last sent: ${formatChecklistTimestamp(lastInviteSent)}` : 'Last sent: —'}
+            </Typography>
+          ) : null}
           {showManualExternalStepVerify ? (
             <ExternalOnboardingVerificationControls
               ctx={actionContext}
@@ -700,6 +752,27 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
           )}
         </Stack>
       </ChecklistSection>
+
+      {showEvereeEmbedLaunch ? (
+        <EvereePayrollSetupEmbed
+          open={evereeEmbedOpen}
+          onClose={() => setEvereeEmbedOpen(false)}
+          tenantId={tenantId}
+          entityId={hiringEntityId}
+          userId={profileUserId}
+          workerType={evereeWorkerType}
+          onComplete={onRefresh}
+        />
+      ) : null}
+      {showEvereeMyPay ? (
+        <EvereeMyPayPanel
+          open={evereeMyPayOpen}
+          onClose={() => setEvereeMyPayOpen(false)}
+          tenantId={tenantId}
+          entityId={hiringEntityId}
+          userId={profileUserId}
+        />
+      ) : null}
     </Stack>
   );
 };

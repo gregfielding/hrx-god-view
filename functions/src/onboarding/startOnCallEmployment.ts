@@ -19,6 +19,7 @@ import {
   TWILIO_MESSAGING_PHONE_NUMBER,
   TWILIO_A2P_CAMPAIGN,
 } from "../messaging/twilioSecrets";
+import { sendGridFromEmail, sendGridFromName } from "../messaging/emailProviderFactory";
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -29,7 +30,15 @@ const ON_CALL_AUDIT_V = "v1";
 
 const onCallWithTwilioSms = {
   cors: true as const,
-  secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
+  /** Match `applicationSmsTriggers`: bind SendGrid From secrets only; API key uses env (`SENDGRID_API_KEY`). */
+  secrets: [
+    TWILIO_ACCOUNT_SID,
+    TWILIO_AUTH_TOKEN,
+    TWILIO_MESSAGING_PHONE_NUMBER,
+    TWILIO_A2P_CAMPAIGN,
+    sendGridFromEmail,
+    sendGridFromName,
+  ],
   /** Twilio + onboarding graph; 256 MiB OOM seen in prod. */
   memory: '512MiB' as const,
 };
@@ -188,7 +197,7 @@ export async function runStartOnCallEmploymentFlow(
   const screeningServiceIdsNormalized = Array.isArray(screeningRequestedServiceIds)
     ? screeningRequestedServiceIds.map((x) => String(x).trim()).filter(Boolean)
     : [];
-  if (pkg) {
+  if (pkg || screeningServiceIdsNormalized.length > 0) {
     try {
       const { createBackgroundCheckInternal } = await import("../integrations/accusource/createBackgroundCheck");
       const { ensureAccusourceAdmin } = await import("../integrations/accusource/accusourceAdminGate");
@@ -218,7 +227,7 @@ export async function runStartOnCallEmploymentFlow(
           candidateName:
             [candidate.firstName, candidate.lastName].filter(Boolean).join(" ").trim() ||
             String(u.email || trimmedUser),
-          requestedPackageId: pkg,
+          requestedPackageId: pkg || undefined,
           requestedPackageName: screeningPackageName ? String(screeningPackageName).trim() : undefined,
           requestedServices: screeningServiceIdsNormalized.length > 0 ? screeningServiceIdsNormalized : undefined,
           candidate,
@@ -247,7 +256,7 @@ export async function runStartOnCallEmploymentFlow(
         hiringEntityId: trimmedEntity,
         details: {
           backgroundCheckId: result.backgroundCheckId,
-          packageId: pkg,
+          packageId: pkg || null,
           requestedServiceIds:
             screeningServiceIdsNormalized.length > 0 ? screeningServiceIdsNormalized : undefined,
         },
@@ -268,7 +277,7 @@ export async function runStartOnCallEmploymentFlow(
         hiringEntityId: trimmedEntity,
         skipReason: e instanceof Error ? e.message : String(e),
         details: {
-          packageId: pkg,
+          packageId: pkg || null,
           requestedServiceIds:
             screeningServiceIdsNormalized.length > 0 ? screeningServiceIdsNormalized : undefined,
         },

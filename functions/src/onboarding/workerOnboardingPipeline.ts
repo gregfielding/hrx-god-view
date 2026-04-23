@@ -343,6 +343,8 @@ export async function ensureWorkerOnboardingPipeline(args: {
   workerTypeOverride?: "w2" | "1099" | null;
   /** When true, skip `worker_onboarding_pipeline_started` automation (caller uses on-call-specific triggers). */
   suppressPipelineStartedAutomation?: boolean;
+  /** Skip hired / pipeline-started messaging (job order placements muted cleanup). Still writes pipeline docs. */
+  suppressOutboundAutomation?: boolean;
 }): Promise<{ pipelineId: string; created: boolean }> {
   const {
     tenantId,
@@ -358,6 +360,7 @@ export async function ensureWorkerOnboardingPipeline(args: {
     onCallScreeningPackageName,
     workerTypeOverride,
     suppressPipelineStartedAutomation,
+    suppressOutboundAutomation,
   } = args;
   const entityContext = await resolveEntityContext({ tenantId, entityId, jobOrderId });
   const pipelineId = `${userId}__${entityContext.entityKey}`;
@@ -519,7 +522,29 @@ export async function ensureWorkerOnboardingPipeline(args: {
     }
   }
 
-  if (created && !suppressPipelineStartedAutomation) {
+  if (created && !suppressOutboundAutomation) {
+    try {
+      const { dispatchWorkerHired } = await import("../messaging/workerHiredDispatch");
+      await dispatchWorkerHired({
+        tenantId,
+        userId,
+        pipelineId,
+        entityId: entityContext.entityId,
+        entityName: entityContext.entityName,
+        entityKey: entityContext.entityKey,
+        triggerSource,
+      });
+    } catch (e: unknown) {
+      logger.warn("dispatchWorkerHired failed", {
+        tenantId,
+        userId,
+        pipelineId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  if (created && !suppressPipelineStartedAutomation && !suppressOutboundAutomation) {
     try {
       const { dispatchWorkerOnboardingPipelineStarted } = await import(
         "../messaging/workerOnboardingPipelineStartedDispatch"
@@ -560,8 +585,9 @@ export async function ensureWorkerOnboardingPipelineForAssignmentConfirmed(args:
   userId: string;
   assignmentId: string;
   assignment: Record<string, unknown>;
+  suppressOutboundAutomation?: boolean;
 }): Promise<{ pipelineId: string; created: boolean } | null> {
-  const { tenantId, userId, assignmentId, assignment } = args;
+  const { tenantId, userId, assignmentId, assignment, suppressOutboundAutomation } = args;
   const trimmed = String(userId || "").trim();
   if (!trimmed) return null;
   const jobOrderId = (assignment.jobOrderId as string) || null;
@@ -574,6 +600,7 @@ export async function ensureWorkerOnboardingPipelineForAssignmentConfirmed(args:
     entityId,
     triggeredByUid: SYSTEM_ASSIGNMENT_CONFIRMED_ACTOR,
     triggerSource: "assignment_confirmed",
+    suppressOutboundAutomation,
   });
 }
 
