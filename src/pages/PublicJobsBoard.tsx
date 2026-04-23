@@ -72,7 +72,8 @@ import AuthDialog from '../components/AuthDialog';
 import EligibilityModal from '../components/EligibilityModal';
 import { checkMissingCertificationsWithEngine } from '../utils/checkMissingCertifications';
 import { toChipLabel } from '../utils/chipLabel';
-import { getLastShiftDateFromShifts } from '../utils/dateSchedule';
+import { formatDateScheduleSummary, getLastShiftDateFromShifts } from '../utils/dateSchedule';
+import { formatWeeklyScheduleSummary } from '../utils/weeklySchedule';
 import { formatWorksiteCityStateZip } from '../utils/formatWorksiteAddress';
 import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
 interface PublicJobPosting {
@@ -146,6 +147,44 @@ interface PublicJobPosting {
   trustedClient?: boolean;
   popularShift?: boolean;
   highDemand?: boolean;
+}
+
+/**
+ * Build a compact schedule summary for a job board card.
+ *
+ * Career jobs typically have a weekly-recurring schedule on one of the shifts;
+ * gig jobs have a date-based schedule tied to specific shift dates. Pull whichever
+ * the shifts expose first, format it for human reading, and let CSS truncate if
+ * the string exceeds the card width.
+ */
+function getCardScheduleSummary(job: {
+  jobType?: 'gig' | 'career';
+  shifts?: Array<{
+    weeklySchedule?: unknown;
+    dateSchedule?: unknown;
+    shiftDate?: string;
+    endDate?: string;
+  }>;
+}): string {
+  const shifts = Array.isArray(job?.shifts) ? job.shifts : [];
+
+  // Prefer weekly for career postings (and any shift that has it).
+  const weekly = shifts.find((s) => s && s.weeklySchedule);
+  if (weekly?.weeklySchedule) {
+    return formatWeeklyScheduleSummary(weekly.weeklySchedule as Parameters<typeof formatWeeklyScheduleSummary>[0]);
+  }
+
+  // Gig / date-based.
+  const dated = shifts.find((s) => s && s.dateSchedule && s.shiftDate);
+  if (dated?.dateSchedule && dated?.shiftDate) {
+    return formatDateScheduleSummary(
+      dated.dateSchedule as Parameters<typeof formatDateScheduleSummary>[0],
+      dated.shiftDate,
+      dated.endDate,
+    );
+  }
+
+  return '';
 }
 
 const PublicJobsBoard: React.FC = () => {
@@ -1851,6 +1890,26 @@ const PublicJobsBoard: React.FC = () => {
                     </Box>
                   </Box>
 
+                  {/* Job title subtitle (the standardized title, e.g. "Warehouse Associate") —
+                      hidden when empty or identical to the post title so we don't repeat ourselves. */}
+                  {job.jobTitle && job.jobTitle.trim() !== '' && job.jobTitle !== job.postTitle && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                      <Work sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />
+                      <Typography
+                        variant="body2"
+                        color="text.secondary"
+                        sx={{
+                          fontWeight: 500,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {job.jobTitle}
+                      </Typography>
+                    </Box>
+                  )}
+
                   {job.showPayRate && payLabel && (
                     <Box sx={{ mb: 1.25 }}>
                       <Typography variant="h6" sx={{ fontWeight: 800, fontSize: '1.2rem', color: 'success.dark' }}>
@@ -1872,6 +1931,31 @@ const PublicJobsBoard: React.FC = () => {
                       ) : null}
                     </Box>
                   </Box>
+
+                  {/* Compact schedule summary. Weekly for career; date-based for gig.
+                      Empty string → hide the row entirely. `white-space: nowrap + ellipsis`
+                      keeps the card height stable when the summary is long (multiple shift
+                      dates joined by semicolons). */}
+                  {(() => {
+                    const scheduleSummary = getCardScheduleSummary(job as unknown as Parameters<typeof getCardScheduleSummary>[0]);
+                    if (!scheduleSummary) return null;
+                    return (
+                      <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                        <Schedule sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />
+                        <Typography
+                          variant="body2"
+                          color="text.secondary"
+                          sx={{
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {scheduleSummary}
+                        </Typography>
+                      </Box>
+                    );
+                  })()}
 
                   {(() => {
                     const applicationId = `${job.tenantId}_${job.id}`;
