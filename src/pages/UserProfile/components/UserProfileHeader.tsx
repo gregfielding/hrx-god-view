@@ -1,12 +1,12 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { toChipLabel } from '../../../utils/chipLabel';
-import { Box, Avatar, IconButton, Button, Typography, Stack, Link, Chip, Breadcrumbs, Tooltip, CircularProgress, Snackbar, Alert, Badge, GlobalStyles, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions } from '@mui/material';
+import { Box, Avatar, IconButton, Button, Typography, Stack, Link, Chip, Breadcrumbs, Tooltip, CircularProgress, Snackbar, Alert, GlobalStyles, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions } from '@mui/material';
 import { keyframes } from '@emotion/react';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 import { Link as RouterLink } from 'react-router-dom';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
-import { doc, getDoc, updateDoc, collection, getDocs, query } from 'firebase/firestore';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import ClearIcon from '@mui/icons-material/Clear';
@@ -53,6 +53,9 @@ import { isOnboardingInProgress, getActiveOnboardingType, cancelOnboarding } fro
 import ImageCropDialog from '../../../components/common/ImageCropDialog';
 import UserEntityOnboardingStatusCell from '../../../components/tables/UserEntityOnboardingStatusCell';
 import { useUserProfileEntityEmploymentChips } from '../../../hooks/useUserProfileEntityEmploymentChips';
+import AvatarVerificationStatus from '../../../components/avatar/AvatarVerificationStatus';
+import AvatarVerificationAdminActions from '../../../components/avatar/AvatarVerificationAdminActions';
+import { useAvatarVerification } from '../../../hooks/useAvatarVerification';
 
 interface UserProfileHeaderProps {
   uid: string;
@@ -152,6 +155,18 @@ interface UserProfileHeaderProps {
   headerUserGroups?: Array<{ id: string; title: string }>;
   /** When true, show Indeed Flex logo beside name (user doc `addedToIndeedFlex`). */
   showIndeedFlexBadge?: boolean;
+  /**
+   * Per-service AccuSource adjudication verdict summary.
+   * Shape: "Social Security Locator: Passed, CrimNet: Passed, 4-Panel Urine: Waiting".
+   * Rendered below the screening pills when non-empty.
+   */
+  screeningVerdictSummary?: {
+    summaryText: string;
+    overallVerdict: 'PASSED' | 'FAILED' | 'NEEDS_REVIEW' | 'PENDING' | 'NONE';
+    anyFailed: boolean;
+    anyNeedsReview: boolean;
+    allPassed: boolean;
+  } | null;
 }
 
 const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
@@ -228,6 +243,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   onOnboardingStarted,
   headerUserGroups = [],
   showIndeedFlexBadge = false,
+  screeningVerdictSummary = null,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [hover, setHover] = useState(false);
@@ -241,7 +257,6 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   const [showStartOnboardingDialog, setShowStartOnboardingDialog] = useState(false);
   const [showCancelOnboardingDialog, setShowCancelOnboardingDialog] = useState(false);
   const [cancellingOnboarding, setCancellingOnboarding] = useState(false);
-  const [notesCount, setNotesCount] = useState<number>(0);
   const { securityLevel: viewerSecurityLevel, tenantId: authTenantId, activeTenant, user } = useAuth();
   const effectiveTenantId = tenantId || authTenantId || activeTenant?.id || '';
   const viewerLevel = parseInt(viewerSecurityLevel || '0');
@@ -260,6 +275,20 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   const { isFavorite, toggleFavorite } = useFavorites('users');
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+
+  // Live headshot verification record. Feeds the compact status pill rendered next to the
+  // avatar in both the mobile and desktop header layouts. See
+  // `functions/src/avatar/avatarVerificationTrigger.ts` for the write path.
+  const {
+    verification: avatarVerification,
+    isPending: avatarVerificationPending,
+    loading: avatarVerificationLoading,
+  } = useAvatarVerification(uid);
+  const avatarVerificationAudience: 'worker' | 'recruiter' = isOwnProfile ? 'worker' : 'recruiter';
+  const handleAvatarVerificationRetake = () => {
+    if (!canEditAvatar) return;
+    fileInputRef.current?.click();
+  };
 
   const headerCreatedShort = useMemo(() => {
     if (!createdAt) return null;
@@ -451,30 +480,6 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
       mounted = false;
     };
   }, [user?.uid, viewerSecurityLevel]);
-
-  // Load notes count
-  useEffect(() => {
-    const loadNotesCount = async () => {
-      try {
-        const notesRef = collection(db, 'users', uid, 'notes');
-        const notesSnapshot = await getDocs(query(notesRef));
-        setNotesCount(notesSnapshot.size);
-      } catch (error: any) {
-        // Silently handle permission errors for lower-level users
-        if (error?.code === 'permission-denied' || 
-            error?.code === 'PERMISSION_DENIED' || 
-            error?.message?.includes('Missing or insufficient permissions')) {
-          setNotesCount(0);
-        } else {
-          console.error('Error loading notes count:', error);
-        }
-      }
-    };
-
-    if (uid) {
-      loadNotesCount();
-    }
-  }, [uid]);
 
   // Detect missing items
   const missingItems = React.useMemo(() => detectMissingItems(
@@ -813,79 +818,101 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
           mb: 2
         }}>
           {/* Avatar */}
-          <Box
-            position="relative"
-            onMouseEnter={() => setHover(true)}
-            onMouseLeave={() => setHover(false)}
-          >
-            <Avatar 
-              src={avatarUrl || undefined} 
-              sx={{ 
-                width: 120, 
-                height: 120, 
-                fontSize: '2.5rem',
-                fontWeight: 'bold'
-              }}
-              onError={(e) => {
-                console.log('Avatar image failed to load, falling back to initials:', avatarUrl);
-                const target = e.target as HTMLImageElement;
-                target.style.display = 'none';
-              }}
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
+            <Box
+              position="relative"
+              onMouseEnter={() => setHover(true)}
+              onMouseLeave={() => setHover(false)}
             >
-              {!avatarUrl && initials}
-            </Avatar>
-            <input
-              type="file"
-              accept="image/*"
-              ref={fileInputRef}
-              style={{ display: 'none' }}
-              onChange={handleFileChange}
-            />
+              <Avatar
+                src={avatarUrl || undefined}
+                sx={{
+                  width: 120,
+                  height: 120,
+                  fontSize: '2.5rem',
+                  fontWeight: 'bold'
+                }}
+                onError={(e) => {
+                  console.log('Avatar image failed to load, falling back to initials:', avatarUrl);
+                  const target = e.target as HTMLImageElement;
+                  target.style.display = 'none';
+                }}
+              >
+                {!avatarUrl && initials}
+              </Avatar>
+              <input
+                type="file"
+                accept="image/*"
+                ref={fileInputRef}
+                style={{ display: 'none' }}
+                onChange={handleFileChange}
+              />
 
-            {canEditAvatar && (
-              <Box sx={{ 
-                position: 'absolute', 
-                bottom: -8, 
-                right: -8,
-                display: 'flex',
-                gap: 0.5
-              }}>
-                {hover && (
-                  <IconButton
-                    size="small"
-                    onClick={handleAvatarClick}
-                    disabled={avatarBusy}
-                    sx={{
-                      bgcolor: 'grey.300',
-                      color: 'grey.700',
-                      width: 24,
-                      height: 24,
-                      '&:hover': {
-                        bgcolor: 'grey.400'
-                      }
-                    }}
-                  >
-                    <CameraAltIcon sx={{ fontSize: 14 }} />
-                  </IconButton>
-                )}
-                
-                {hover && avatarUrl && (
-                  <IconButton
-                    size="small"
-                    onClick={handleDeleteAvatar}
-                    disabled={avatarBusy}
-                    sx={{
-                      bgcolor: 'grey.300',
-                      color: 'grey.700',
-                      width: 24,
-                      height: 24,
-                      '&:hover': {
-                        bgcolor: 'grey.400'
-                      }
-                    }}
-                  >
-                    <ClearIcon sx={{ fontSize: 14 }} />
-                  </IconButton>
+              {canEditAvatar && (
+                <Box sx={{
+                  position: 'absolute',
+                  bottom: -8,
+                  right: -8,
+                  display: 'flex',
+                  gap: 0.5
+                }}>
+                  {hover && (
+                    <IconButton
+                      size="small"
+                      onClick={handleAvatarClick}
+                      disabled={avatarBusy}
+                      sx={{
+                        bgcolor: 'grey.300',
+                        color: 'grey.700',
+                        width: 24,
+                        height: 24,
+                        '&:hover': {
+                          bgcolor: 'grey.400'
+                        }
+                      }}
+                    >
+                      <CameraAltIcon sx={{ fontSize: 14 }} />
+                    </IconButton>
+                  )}
+
+                  {hover && avatarUrl && (
+                    <IconButton
+                      size="small"
+                      onClick={handleDeleteAvatar}
+                      disabled={avatarBusy}
+                      sx={{
+                        bgcolor: 'grey.300',
+                        color: 'grey.700',
+                        width: 24,
+                        height: 24,
+                        '&:hover': {
+                          bgcolor: 'grey.400'
+                        }
+                      }}
+                    >
+                      <ClearIcon sx={{ fontSize: 14 }} />
+                    </IconButton>
+                  )}
+                </Box>
+              )}
+            </Box>
+
+            {/* Headshot verification pill (mobile) */}
+            {avatarUrl && (
+              <Box sx={{ maxWidth: 180, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                <AvatarVerificationStatus
+                  verification={avatarVerification}
+                  isPending={avatarVerificationPending}
+                  loading={avatarVerificationLoading}
+                  onRetake={canEditAvatar ? handleAvatarVerificationRetake : undefined}
+                  audience={avatarVerificationAudience}
+                  compact
+                />
+                {!isOwnProfile && viewerLevel >= 4 && (
+                  <AvatarVerificationAdminActions
+                    targetUserId={uid}
+                    verification={avatarVerification}
+                  />
                 )}
               </Box>
             )}
@@ -1117,28 +1144,26 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 </Tooltip>
               )}
               {canShowContactIconsRow && (
-                <Tooltip title={notesCount > 0 ? `${notesCount} note${notesCount !== 1 ? 's' : ''}` : 'Add note'}>
-                  <Badge badgeContent={notesCount > 0 ? notesCount : undefined} color="primary">
-                    <IconButton
-                      size="small"
-                      onClick={() => setShowAddNoteDialog(true)}
-                      sx={{ 
-                        p: 1,
-                        color: 'primary.main',
-                        bgcolor: 'action.hover',
-                        borderRadius: 1,
-                        '&:hover': {
-                          color: 'primary.dark',
-                          bgcolor: 'primary.light',
-                          transform: 'translateY(-1px)',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                        },
-                        transition: 'all 0.2s ease'
-                      }}
-                    >
-                      <NoteIcon sx={{ fontSize: 20 }} />
-                    </IconButton>
-                  </Badge>
+                <Tooltip title="Notes">
+                  <IconButton
+                    size="small"
+                    onClick={() => setShowAddNoteDialog(true)}
+                    sx={{ 
+                      p: 1,
+                      color: 'primary.main',
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                      '&:hover': {
+                        color: 'primary.dark',
+                        bgcolor: 'primary.light',
+                        transform: 'translateY(-1px)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                      },
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <NoteIcon sx={{ fontSize: 20 }} />
+                  </IconButton>
                 </Tooltip>
               )}
               {showIndeedFlexBadge && (
@@ -1319,7 +1344,46 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               </Box>
             );
           })()}
-          
+
+          {/* Screening verdict summary — Mobile */}
+          {canViewAdminContent &&
+            screeningVerdictSummary &&
+            screeningVerdictSummary.summaryText &&
+            screeningVerdictSummary.overallVerdict !== 'NONE' && (
+              <Box sx={{ mt: 0.5, mb: 1, display: 'flex', alignItems: 'flex-start', gap: 0.75, flexWrap: 'wrap' }}>
+                <Chip
+                  label={
+                    screeningVerdictSummary.overallVerdict === 'PASSED'
+                      ? 'Screening: Passed'
+                      : screeningVerdictSummary.overallVerdict === 'FAILED'
+                        ? 'Screening: Failed'
+                        : screeningVerdictSummary.overallVerdict === 'NEEDS_REVIEW'
+                          ? 'Screening: Needs review'
+                          : 'Screening: Waiting'
+                  }
+                  size="small"
+                  sx={{
+                    height: 22,
+                    fontSize: '0.7rem',
+                    fontWeight: 600,
+                    bgcolor:
+                      screeningVerdictSummary.overallVerdict === 'PASSED'
+                        ? '#4caf50'
+                        : screeningVerdictSummary.overallVerdict === 'FAILED'
+                          ? '#f44336'
+                          : screeningVerdictSummary.overallVerdict === 'NEEDS_REVIEW'
+                            ? '#ff9800'
+                            : '#9e9e9e',
+                    color: 'white',
+                    '& .MuiChip-label': { px: 1 },
+                  }}
+                />
+                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: '22px' }}>
+                  {screeningVerdictSummary.summaryText}
+                </Typography>
+              </Box>
+            )}
+
           {/* Skills Chips - Mobile - Above Profile Quality Bar */}
           {primarySkills && primarySkills.length > 0 && (
             <Box sx={{ mt: 1, mb: 1 }}>
@@ -1551,7 +1615,28 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               </Box>
             )}
           </Box>
-          
+
+          {/* Headshot verification pill — shows a spinner while auto-check is running, a
+              "Verified headshot" chip on approval, or a retake prompt on rejection. */}
+          {avatarUrl && (
+            <Box sx={{ mt: 0.5, maxWidth: 200, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+              <AvatarVerificationStatus
+                verification={avatarVerification}
+                isPending={avatarVerificationPending}
+                loading={avatarVerificationLoading}
+                onRetake={canEditAvatar ? handleAvatarVerificationRetake : undefined}
+                audience={avatarVerificationAudience}
+                compact
+              />
+              {!isOwnProfile && viewerLevel >= 4 && (
+                <AvatarVerificationAdminActions
+                  targetUserId={uid}
+                  verification={avatarVerification}
+                />
+              )}
+            </Box>
+          )}
+
           {/* Status Pills - Removed duplicate Work Eligible and Active chips - they're shown in ComplianceStatusChips and Employment Row */}
         </Box>
 
@@ -1709,15 +1794,10 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 </RecordHeaderActionIcon>
               )}
               {canShowContactIconsRow && (
-                <Tooltip
-                  title={notesCount > 0 ? `${notesCount} note${notesCount !== 1 ? 's' : ''}` : 'Add note'}
-                  componentsProps={recordHeaderTooltipComponentsProps}
-                >
-                  <Badge badgeContent={notesCount > 0 ? notesCount : undefined} color="primary">
-                    <IconButton size="small" onClick={() => setShowAddNoteDialog(true)} sx={recordHeaderActionIconButtonSx}>
-                      <NoteIcon />
-                    </IconButton>
-                  </Badge>
+                <Tooltip title="Notes" componentsProps={recordHeaderTooltipComponentsProps}>
+                  <IconButton size="small" onClick={() => setShowAddNoteDialog(true)} sx={recordHeaderActionIconButtonSx}>
+                    <NoteIcon />
+                  </IconButton>
                 </Tooltip>
               )}
               {showIndeedFlexBadge && (
@@ -1929,7 +2009,46 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               </Box>
             );
           })()}
-          
+
+          {/* Screening verdict summary — Desktop */}
+          {canViewAdminContent &&
+            screeningVerdictSummary &&
+            screeningVerdictSummary.summaryText &&
+            screeningVerdictSummary.overallVerdict !== 'NONE' && (
+              <Box sx={{ mt: 0.5, mb: 1, display: 'flex', alignItems: 'flex-start', gap: 0.75, flexWrap: 'wrap' }}>
+                <Chip
+                  label={
+                    screeningVerdictSummary.overallVerdict === 'PASSED'
+                      ? 'Screening: Passed'
+                      : screeningVerdictSummary.overallVerdict === 'FAILED'
+                        ? 'Screening: Failed'
+                        : screeningVerdictSummary.overallVerdict === 'NEEDS_REVIEW'
+                          ? 'Screening: Needs review'
+                          : 'Screening: Waiting'
+                  }
+                  size="small"
+                  sx={{
+                    height: 22,
+                    fontSize: '0.7rem',
+                    fontWeight: 600,
+                    bgcolor:
+                      screeningVerdictSummary.overallVerdict === 'PASSED'
+                        ? '#4caf50'
+                        : screeningVerdictSummary.overallVerdict === 'FAILED'
+                          ? '#f44336'
+                          : screeningVerdictSummary.overallVerdict === 'NEEDS_REVIEW'
+                            ? '#ff9800'
+                            : '#9e9e9e',
+                    color: 'white',
+                    '& .MuiChip-label': { px: 1 },
+                  }}
+                />
+                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: '22px' }}>
+                  {screeningVerdictSummary.summaryText}
+                </Typography>
+              </Box>
+            )}
+
           {/* Skills Chips - Above Profile Quality Bar */}
           {primarySkills && primarySkills.length > 0 && (
             <Box sx={{ mt: 1, mb: 1 }}>
@@ -2192,19 +2311,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
         onClose={() => setShowAddNoteDialog(false)}
         userId={uid}
         userName={`${firstName} ${lastName}`}
-        onNoteAdded={() => {
-          // Reload notes count after adding a note
-          const loadNotesCount = async () => {
-            try {
-              const notesRef = collection(db, 'users', uid, 'notes');
-              const notesSnapshot = await getDocs(query(notesRef));
-              setNotesCount(notesSnapshot.size);
-            } catch (error) {
-              console.error('Error loading notes count:', error);
-            }
-          };
-          loadNotesCount();
-        }}
+        onNoteAdded={() => {}}
       />
 
       {/* Start Onboarding Dialog */}

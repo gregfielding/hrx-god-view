@@ -17,6 +17,12 @@ import {
   AccordionDetails,
   useTheme,
   useMediaQuery,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
 } from '@mui/material';
 import { 
   AddCircle, 
@@ -28,12 +34,32 @@ import {
   Upload as UploadIcon,
   Visibility as ViewIcon,
 } from '@mui/icons-material';
-import { doc, onSnapshot, updateDoc, arrayUnion, arrayRemove, serverTimestamp } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, arrayRemove, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { db, storage } from '../../../firebase';
 import credentialsSeed from '../../../data/credentialsSeed.json';
 import { isUploadRequiredCert, getCertificationVerificationStatus } from '../../../utils/certificationVerification';
+import { tryDualWriteAfterLegacyCertification } from '../../../utils/certifications/tryDualWriteAfterLegacyCertification';
+import { tryDeleteCanonicalCertificationRecord } from '../../../utils/certifications/tryDeleteCanonicalCertificationRecord';
+import { warnCertifications } from '../../../utils/certifications/certificationsLogging';
+import {
+  getWorkerCertificationsUnified,
+  type GetWorkerCertificationsUnifiedResult,
+} from '../../../utils/certifications/getWorkerCertificationsUnified';
+import certificationCatalogManifest from '../../../data/generated/certificationCatalogManifest.v1.json';
+import type { CertificationCatalogManifestV1 } from '../../../types/certifications/certificationCatalogManifest';
+import { compareCertificationEvaluationWithLegacy } from '../../../utils/certifications/compareCertificationEvaluationWithLegacy';
+import { evaluateCertificationsForRequirements } from '../../../utils/certifications/evaluateCertificationsForRequirements';
+import { getCanonicalCertificationRecordsWithIds } from '../../../utils/certifications/getCanonicalCertificationRecords';
+import { getCatalogEntryById } from '../../../utils/certifications/getCatalogEntryById';
+import { normalizeDateToISODateString } from '../../../utils/certifications/normalizeDateToISODateString';
+import { PREVIEW_SAMPLE_CERTIFICATION_REQUIREMENTS } from '../../../utils/certifications/previewSampleCertificationRequirements';
 import { useT } from '../../../i18n';
+
+/** Internal unified preview — development only (preview flag removed at final lock). */
+const SHOW_UNIFIED_READ_INTERNAL_PREVIEW = process.env.NODE_ENV === 'development';
+
+const certificationManifest = certificationCatalogManifest as CertificationCatalogManifestV1;
 
 type Props = {
   uid: string;
@@ -48,6 +74,8 @@ interface Certification {
   expirationDate?: string;
   /** For upload-required certs: pending | verified (set by recruiter/admin). */
   verificationStatus?: string;
+  /** Canonical `certification_records` doc id (Phase 1B dual-write). */
+  certificationRecordId?: string;
 }
 
 const quickAddCertifications = [
@@ -82,6 +110,15 @@ const LicensesAndCertsTab: React.FC<Props> = ({ uid }) => {
   const [quickAddCertificationValue, setQuickAddCertificationValue] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [unifiedPreview, setUnifiedPreview] = useState<GetWorkerCertificationsUnifiedResult | null>(null);
+  const [unifiedPreviewLoading, setUnifiedPreviewLoading] = useState(false);
+  const [readinessEnginePreview, setReadinessEnginePreview] = useState<Array<{
+    certLabel: string;
+    legacyStatus: string;
+    engineStatus: string;
+    match: boolean;
+    reasonDiff?: string;
+  }> | null>(null);
   
   const [newCertification, setNewCertification] = useState({
     name: '',
@@ -116,6 +153,7 @@ const LicensesAndCertsTab: React.FC<Props> = ({ uid }) => {
                   uploadedAt: c.uploadedAt?.toDate?.() || (c.uploadedAt ? new Date(c.uploadedAt) : undefined),
                   issuer: c.issuer,
                   expirationDate: c.expirationDate,
+                  certificationRecordId: typeof c.certificationRecordId === 'string' ? c.certificationRecordId : undefined,
                 };
               })
           : [];
@@ -125,6 +163,53 @@ const LicensesAndCertsTab: React.FC<Props> = ({ uid }) => {
 
     return () => unsubscribe();
   }, [uid]);
+
+  useEffect(() => {
+    if (!SHOW_UNIFIED_READ_INTERNAL_PREVIEW || !uid) {
+      setUnifiedPreview(null);
+      setReadinessEnginePreview(null);
+      return;
+    }
+    let cancelled = false;
+    setUnifiedPreviewLoading(true);
+    const todayISO = normalizeDateToISODateString(new Date()) ?? '1970-01-01';
+
+    Promise.all([getWorkerCertificationsUnified(uid), getCanonicalCertificationRecordsWithIds(uid)])
+      .then(([unified, canonRows]) => {
+        if (cancelled) return;
+        setUnifiedPreview(unified);
+        const evaluated = evaluateCertificationsForRequirements({
+          requirements: PREVIEW_SAMPLE_CERTIFICATION_REQUIREMENTS,
+          records: canonRows,
+          context: 'apply',
+          todayISO,
+        });
+        const rows = evaluated.map(({ requirement, result }) => {
+          const meta = getCatalogEntryById(certificationManifest, requirement.catalogEntryId);
+          const certLabel = meta?.displayName ?? requirement.catalogEntryId;
+          const cmp = compareCertificationEvaluationWithLegacy({
+            requirementId: requirement.requirementId,
+            catalogDisplayNameForLegacyLookup: certLabel,
+            engineResult: result,
+            profileCerts: certifications,
+          });
+          return {
+            certLabel,
+            legacyStatus: cmp.legacyStatus,
+            engineStatus: result.status,
+            match: !cmp.mismatch,
+            reasonDiff: cmp.reasonDiff,
+          };
+        });
+        setReadinessEnginePreview(rows);
+      })
+      .finally(() => {
+        if (!cancelled) setUnifiedPreviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [uid, certifications]);
 
   const handleQuickAddCertification = (certName: string) => {
     setQuickAddCertificationValue(certName);
@@ -197,14 +282,40 @@ const LicensesAndCertsTab: React.FC<Props> = ({ uid }) => {
       }
 
       const updated = [...certifications, entry];
-      
+
       const userRef = doc(db, 'users', uid);
       await updateDoc(userRef, {
         certifications: updated,
         updatedAt: serverTimestamp(),
       });
 
-      setCertifications(updated);
+      const recordId = await tryDualWriteAfterLegacyCertification({
+        uid,
+        certificationName: entry.name,
+        issuerName: entry.issuer ?? null,
+        expirationDate: entry.expirationDate ?? null,
+        legacyEvidence: { fileUrl: entry.fileUrl, fileName: entry.fileName },
+        source: 'admin_manual',
+      });
+      if (recordId) {
+        const patched = updated.map((row, i) =>
+          i === updated.length - 1 ? { ...row, certificationRecordId: recordId } : row,
+        );
+        try {
+          await updateDoc(userRef, {
+            certifications: patched,
+            updatedAt: serverTimestamp(),
+          });
+          setCertifications(patched);
+        } catch (e) {
+          const detail = e instanceof Error ? e.message : String(e);
+          warnCertifications('dual_write_failed', { userId: uid, detail: `legacy certificationRecordId patch: ${detail}` });
+          setCertifications(updated);
+        }
+      } else {
+        setCertifications(updated);
+      }
+
       setCertificationDialogOpen(false);
       setNewCertification({
         name: '',
@@ -226,6 +337,8 @@ const LicensesAndCertsTab: React.FC<Props> = ({ uid }) => {
     if (!confirm(`Are you sure you want to delete ${cert.name}?`)) return;
 
     try {
+      await tryDeleteCanonicalCertificationRecord(uid, cert.certificationRecordId);
+
       // Delete file from storage if it exists
       if (cert.fileUrl) {
         try {
@@ -420,6 +533,97 @@ const LicensesAndCertsTab: React.FC<Props> = ({ uid }) => {
           Add Certification
         </Button>
       </Box>
+
+      {SHOW_UNIFIED_READ_INTERNAL_PREVIEW && (
+        <Paper variant="outlined" sx={{ p: 2, mt: 2, bgcolor: 'grey.50' }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+            Internal — unified certifications preview (Phase 1C)
+          </Typography>
+          {unifiedPreviewLoading && (
+            <Typography variant="body2" color="text.secondary">
+              Loading unified view…
+            </Typography>
+          )}
+          {!unifiedPreviewLoading && unifiedPreview && (
+            <>
+              <Typography variant="body2" sx={{ mb: 1 }}>
+                Legacy rows: <strong>{certifications.length}</strong> · Canonical docs:{' '}
+                <strong>{unifiedPreview.canonicalCount}</strong> · Unified items:{' '}
+                <strong>{unifiedPreview.items.length}</strong> · Legacy-only unmapped:{' '}
+                <strong>{unifiedPreview.legacyOnlyCount}</strong>
+              </Typography>
+              {unifiedPreview.warnings.length > 0 && (
+                <Typography variant="caption" color="warning.main" display="block" sx={{ mb: 1 }}>
+                  Warnings: {unifiedPreview.warnings.join('; ')}
+                </Typography>
+              )}
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>displayName</TableCell>
+                    <TableCell>provenance</TableCell>
+                    <TableCell>recordStatus</TableCell>
+                    <TableCell>reviewStatus</TableCell>
+                    <TableCell align="right">warnings</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {unifiedPreview.items.map((row) => (
+                    <TableRow key={row.unifiedId}>
+                      <TableCell>{row.displayName}</TableCell>
+                      <TableCell>{row.provenance}</TableCell>
+                      <TableCell>{row.recordStatus ?? '—'}</TableCell>
+                      <TableCell>{row.reviewStatus ?? '—'}</TableCell>
+                      <TableCell align="right">{row.mergeWarnings?.length ?? 0}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+
+              <Typography variant="subtitle2" sx={{ fontWeight: 700, mt: 3, mb: 1 }}>
+                Readiness Engine Preview (shadow — Phase 2)
+              </Typography>
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                Sample requirements vs legacy profile heuristics; engine uses canonical records only. Mismatches do not change production behavior.
+              </Typography>
+              {readinessEnginePreview && readinessEnginePreview.length > 0 && (
+                <Table size="small" sx={{ mt: 1 }}>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Cert</TableCell>
+                      <TableCell>Legacy</TableCell>
+                      <TableCell>Engine</TableCell>
+                      <TableCell align="center">Match?</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {readinessEnginePreview.map((row) => (
+                      <TableRow key={row.certLabel}>
+                        <TableCell>{row.certLabel}</TableCell>
+                        <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                          {row.legacyStatus}
+                        </TableCell>
+                        <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                          {row.engineStatus}
+                        </TableCell>
+                        <TableCell
+                          align="center"
+                          sx={{
+                            color: row.match ? 'success.main' : 'error.main',
+                            fontWeight: row.match ? 400 : 700,
+                          }}
+                        >
+                          {row.match ? 'Yes' : 'No'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </>
+          )}
+        </Paper>
+      )}
 
       {/* Certification Dialog */}
       <Dialog 

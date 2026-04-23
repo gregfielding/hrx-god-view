@@ -60,6 +60,7 @@ import type { OverviewQualificationsData } from '../utils/overviewQualifications
 import ResumeUpload from '../../../components/ResumeUpload';
 import { useAuth } from '../../../contexts/AuthContext';
 import type { ProfileUpdateReminderControls } from './MessagesTab';
+import type { RecruiterCertificationTrustPack } from '../../../utils/certifications/buildRecruiterCertificationTrustSignals';
 
 /** User-record overview only: flat cards, no hover elevation (jobs board etc. unchanged). */
 export const overviewCardFlatSx = {
@@ -157,6 +158,13 @@ export type OverviewQualificationsCardProps = {
   tenantId?: string | null;
   /** Recruiter SMS nudge (same as Messages tab) — top-right of card header. */
   profileUpdateReminder?: ProfileUpdateReminderControls;
+  /** Phase 5 — compact operational certification counts (engine-backed). */
+  certificationReadinessSummaryCounts?: {
+    approved: number;
+    pending: number;
+    missingRequired: number;
+    expiringSoon: number;
+  } | null;
 };
 
 /** Section 4: Full Qualifications snapshot (same sections as Qualifications tab, flat — no accordions). */
@@ -166,6 +174,7 @@ export function OverviewQualificationsCard({
   allowResumeUpload = false,
   tenantId: tenantIdProp,
   profileUpdateReminder,
+  certificationReadinessSummaryCounts,
 }: OverviewQualificationsCardProps) {
   const { tenantId: authTenantId, activeTenant } = useAuth();
   const effectiveTenantId = tenantIdProp ?? authTenantId ?? activeTenant?.id ?? undefined;
@@ -290,6 +299,17 @@ export function OverviewQualificationsCard({
             </Stack>
           ) : null}
         </Stack>
+
+        {certificationReadinessSummaryCounts ? (
+          <Box sx={{ mb: 1.25, pb: 1.25, borderBottom: '1px solid', borderColor: 'divider' }}>
+            <Typography {...overviewSubsectionHeadingTypographyProps}>Certifications (operational)</Typography>
+            <Typography variant="body2" sx={{ ...overviewProfileFieldValueSx, m: 0, mt: 0.5 }}>
+              Approved {certificationReadinessSummaryCounts.approved} · Pending {certificationReadinessSummaryCounts.pending}{' '}
+              · Missing required {certificationReadinessSummaryCounts.missingRequired} · Expiring soon{' '}
+              {certificationReadinessSummaryCounts.expiringSoon}
+            </Typography>
+          </Box>
+        ) : null}
 
         {!hasSubstance ? (
           <Typography variant="body2" component="p" sx={{ ...overviewProfileFieldValueSx, m: 0, mb: 1.25 }}>
@@ -489,6 +509,8 @@ export type OverviewScoringCardProps = {
   useRecruiterSnapshotOnly?: boolean;
   /** Condensed recruiter-trust card: optional Review & rescore slot + manual-override labels (internal viewers). */
   scoringDecisionControls?: OverviewScoringDecisionControls;
+  /** Phase 5 — engine-backed certification explanation (no formula change to headline score). */
+  certificationTrustPack?: RecruiterCertificationTrustPack | null;
 };
 
 /** Hiring score snapshot (grade, interviews, reviews, risk, recommendations) — opens Score tab for detail. */
@@ -503,6 +525,7 @@ export function OverviewScoringCard({
   recruiterMasterScore,
   useRecruiterSnapshotOnly = false,
   scoringDecisionControls,
+  certificationTrustPack,
 }: OverviewScoringCardProps) {
   const cardSx = { borderRadius: 1, borderColor: 'divider', ...overviewCardFlatSx } as const;
 
@@ -649,15 +672,46 @@ export function OverviewScoringCard({
             Unable to load condensed scoring (missing user id).
           </Typography>
         ) : condensedRecruiterTrust && uid ? (
-          <OverviewScoringCardRecruiterTrust
-            uid={uid}
-            scoreSummary={scoreSummary}
-            riskProfileRaw={riskProfileRaw}
-            recruiterScoreSnapshotRaw={recruiterScoreSnapshot}
-            recruiterMasterScoreRaw={recruiterMasterScore}
-            latestPrescreenInterviewAi={latestPrescreenInterviewAi ?? null}
-            decisionControls={scoringDecisionControls}
-          />
+          <>
+            <OverviewScoringCardRecruiterTrust
+              uid={uid}
+              scoreSummary={scoreSummary}
+              riskProfileRaw={riskProfileRaw}
+              recruiterScoreSnapshotRaw={recruiterScoreSnapshot}
+              recruiterMasterScoreRaw={recruiterMasterScore}
+              latestPrescreenInterviewAi={latestPrescreenInterviewAi ?? null}
+              decisionControls={scoringDecisionControls}
+            />
+            {certificationTrustPack ? (
+              <Stack
+                spacing={0.5}
+                sx={{ mt: 1.25, pt: 1.25, borderTop: '1px solid', borderColor: 'divider', width: '100%' }}
+              >
+                <Typography {...overviewSubsectionHeadingTypographyProps}>Certifications</Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.68rem', lineHeight: 1.45 }}>
+                  Required approved {certificationTrustPack.requiredApproved} / {certificationTrustPack.requiredTotal} ·
+                  Preferred met {certificationTrustPack.preferredMet} / {certificationTrustPack.preferredTotal} · Blocking
+                  issues {certificationTrustPack.blockingCertIssues}
+                </Typography>
+                {certificationTrustPack.explanationBullets.slice(0, 6).map((line) => (
+                  <Typography
+                    key={line}
+                    variant="caption"
+                    color="text.secondary"
+                    component="div"
+                    sx={{ fontSize: '0.65rem', lineHeight: 1.4 }}
+                  >
+                    • {line}
+                  </Typography>
+                ))}
+                {certificationTrustPack.riskLines.length > 0 ? (
+                  <Typography variant="caption" color="warning.main" sx={{ fontSize: '0.65rem', lineHeight: 1.4 }}>
+                    Risk signals: {certificationTrustPack.riskLines.slice(0, 4).join(' · ')}
+                  </Typography>
+                ) : null}
+              </Stack>
+            ) : null}
+          </>
         ) : !hasAny ? (
           <Typography variant="body2" sx={overviewProfileFieldValueSx}>
             No scoring data on file yet. Interviews, reviews, and profile signals populate this section.

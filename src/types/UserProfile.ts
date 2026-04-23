@@ -76,6 +76,12 @@ export interface UserProfile {
   preferredLanguage?: 'en' | 'es'; // Preferred language for templated messaging
   gender?: 'Male' | 'Female' | 'Nonbinary' | 'Other' | 'Prefer not to say';
   avatar?: string; // file URL
+  /**
+   * Automated headshot verification result (Cloud Vision face detection). Written by the
+   * `onUserAvatarChangedVerify` Cloud Function on every avatar change. See
+   * `./avatarVerification` for the full shape + rejection reason copy.
+   */
+  avatarVerification?: import('./avatarVerification').AvatarVerification;
 
   // 📍 Employment Classification
   securityLevel: '0' | '1' | '2' | '3' | '4' | '5'; // 0=Dismissed, 1=Applicant, 2=Flex, 3=Worker, 4=Manager, 5=Admin

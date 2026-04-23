@@ -25,7 +25,6 @@ import {
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
-import RefreshIcon from '@mui/icons-material/Refresh';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { doc, getDoc } from 'firebase/firestore';
@@ -38,13 +37,8 @@ import {
   type WorkerComplianceItem,
   type ComplianceStatus,
 } from '../../../types/compliance';
-import {
-  syncComplianceItemsFromEmployments,
-  type EmploymentForSync,
-} from '../../../utils/complianceSync';
 import { getExpirationState, hasExpiredCompliance, hasExpiringSoonCompliance } from '../../../utils/complianceExpiration';
 import ComplianceCredentialModal, { CREDENTIAL_EDIT_TYPES } from './ComplianceCredentialModal';
-import type { EntityEmploymentRecord } from './EmploymentTab';
 
 const STATUS_COLOR: Record<ComplianceStatus, 'default' | 'warning' | 'success' | 'error'> = {
   not_started: 'default',
@@ -80,7 +74,6 @@ function expStateToLegacy(state: 'expired' | 'expiring_soon' | 'ok'): 'expired' 
 
 const ComplianceTab: React.FC<ComplianceTabProps> = ({ uid, tenantId }) => {
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<(WorkerComplianceItem & { id: string })[]>([]);
   const [employmentNames, setEmploymentNames] = useState<Record<string, string>>({});
@@ -179,56 +172,6 @@ const ComplianceTab: React.FC<ComplianceTabProps> = ({ uid, tenantId }) => {
 
   const showExpirationAlert = hasExpiredCompliance(items) || hasExpiringSoonCompliance(items);
 
-  const handleSyncFromOnboarding = async () => {
-    if (!tenantId || !uid) return;
-    setSyncing(true);
-    setError(null);
-    try {
-      const empRef = collection(db, p.entityEmployments(tenantId));
-      const empQ = query(empRef, where('userId', '==', uid));
-      const empSnap = await getDocs(empQ);
-      const employments: EmploymentForSync[] = empSnap.docs.map((d) => {
-        const data = d.data() as EntityEmploymentRecord;
-        return {
-          id: d.id,
-          entityId: data.entityId ?? null,
-          entityKey: data.entityKey ?? '',
-          entityName: data.entityName ?? '',
-          workerType: data.workerType,
-          everifyStatus: data.everifyStatus,
-          backgroundStatus: data.backgroundStatus,
-          drugScreenStatus: data.drugScreenStatus,
-          onboardingPipelineId: data.onboardingPipelineId,
-        };
-      });
-      const pipelineByEmploymentId: Record<string, { steps?: { id: string; status?: string; milestones?: { id: string; completed?: boolean }[] }[] }> = {};
-      await Promise.all(
-        employments.map(async (emp) => {
-          if (!emp.onboardingPipelineId) return;
-          const pipeRef = doc(db, p.workerOnboardingPipeline(tenantId, emp.onboardingPipelineId));
-          const pipeSnap = await getDoc(pipeRef);
-          const data = pipeSnap.data();
-          const steps = Array.isArray(data?.steps) ? data.steps : [];
-          pipelineByEmploymentId[emp.id] = {
-            steps: steps.map((s: { id?: string; status?: string; milestones?: { id?: string; completed?: boolean }[] }) => ({
-              id: s.id,
-              status: s.status,
-              milestones: Array.isArray(s.milestones)
-                ? s.milestones.map((m: { id?: string; completed?: boolean }) => ({ id: m.id ?? '', completed: m.completed }))
-                : undefined,
-            })),
-          };
-        })
-      );
-      await syncComplianceItemsFromEmployments(tenantId, uid, employments, pipelineByEmploymentId);
-      await loadItems();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Sync failed');
-    } finally {
-      setSyncing(false);
-    }
-  };
-
   const openAddModal = () => {
     setEditingItem(null);
     setModalOpen(true);
@@ -263,15 +206,7 @@ const ComplianceTab: React.FC<ComplianceTabProps> = ({ uid, tenantId }) => {
         Job-specific certification requirements are tracked on the <strong>Assignments</strong> tab.
       </Typography>
       <Stack direction="row" alignItems="center" flexWrap="wrap" gap={1}>
-        <Button
-          size="small"
-          variant="outlined"
-          startIcon={syncing ? <CircularProgress size={16} /> : <RefreshIcon />}
-          onClick={handleSyncFromOnboarding}
-          disabled={syncing}
-        >
-          {syncing ? 'Syncing…' : 'Sync from onboarding'}
-        </Button>
+        {/* "Sync from onboarding" button intentionally hidden */}
         <Button size="small" variant="outlined" startIcon={<AddIcon />} onClick={openAddModal}>
           Add credential / permit
         </Button>
@@ -311,7 +246,7 @@ const ComplianceTab: React.FC<ComplianceTabProps> = ({ uid, tenantId }) => {
       )}
       {items.length === 0 ? (
         <Alert severity="info">
-          No compliance items yet. Use &quot;Sync from onboarding&quot; to create items from employment and pipeline, or &quot;Add credential / permit&quot; for licenses and permits.
+          No compliance items yet. Use &quot;Add credential / permit&quot; to add licenses and permits.
         </Alert>
       ) : (
         <TableContainer component={Paper} variant="outlined">
