@@ -26,8 +26,6 @@ import InboxSearchBar from '../components/InboxSearchBar';
 import FavoritesFilter from '../components/FavoritesFilter';
 import { useFavorites } from '../hooks/useFavorites';
 import { usePageCache } from '../hooks/usePageCache';
-import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
-import ToggleButton from '@mui/material/ToggleButton';
 import FormControl from '@mui/material/FormControl';
 import InputLabel from '@mui/material/InputLabel';
 import Select from '@mui/material/Select';
@@ -841,100 +839,142 @@ const CompaniesPage: React.FC = () => {
     }
   };
 
+  const companyScopeTabs = [
+    { id: 'all' as const, label: 'All Companies' },
+    { id: 'my' as const, label: 'My Companies' },
+  ];
+
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <PageHeader
-        title={
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 2 }}>
-            <Typography
-              variant="h6"
+        hideHeading
+        dense
+        title=""
+        filters={
+          <Box sx={{ display: 'flex', gap: 0.35, alignItems: 'center', flexWrap: 'wrap' }}>
+            {companyScopeTabs.map((tab) => {
+              const isActive = companyFilter === tab.id;
+              return (
+                <Button
+                  key={tab.id}
+                  variant="text"
+                  onClick={() => {
+                    setCompanyFilter(tab.id);
+                    updateCache({ companyFilter: tab.id });
+                  }}
+                  sx={{
+                    textTransform: 'none',
+                    borderRadius: '999px',
+                    fontSize: '13px',
+                    fontWeight: isActive ? 600 : 400,
+                    color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                    bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                    px: 1.25,
+                    py: 0.5,
+                    minHeight: 30,
+                    minWidth: 'auto',
+                    whiteSpace: 'nowrap',
+                    '&:hover': {
+                      bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                    },
+                  }}
+                >
+                  {tab.label}
+                </Button>
+              );
+            })}
+          </Box>
+        }
+        rightActions={
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
+            <FavoritesFilter
+              favoriteType="companies"
+              showFavoritesOnly={showFavoritesOnly}
+              onToggle={(value) => {
+                setShowFavoritesOnly(value);
+                updateCache({ showFavoritesOnly: value });
+              }}
+              showText={false}
+              size="small"
               sx={{
-                fontSize: { xs: '20px', md: '24px' },
+                minWidth: '32px',
+                width: '32px',
+                height: '32px',
+                borderRadius: '50%',
+                '&:hover': {
+                  backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover',
+                },
+              }}
+            />
+            <InboxSearchBar
+              value={search}
+              onChange={(value) => {
+                setSearch(value);
+                updateCache({ search: value });
+              }}
+              onSearch={(value) => {
+                setSearch(value);
+                updateCache({ search: value });
+                if (tenantId) {
+                  setCompanies([]);
+                  setCompaniesLoading(true);
+                  loadCompanies(value, null, false, companyFilter === 'my', locationStateFilter);
+                }
+              }}
+              placeholder="Search companies..."
+            />
+            <Button
+              variant="contained"
+              startIcon={<AddIcon sx={{ fontSize: 16 }} />}
+              onClick={() => setShowAddCompanyDialog(true)}
+              sx={{
+                textTransform: 'none',
+                borderRadius: '999px',
+                px: 1.5,
+                py: 0.5,
+                minHeight: 30,
+                height: 30,
                 fontWeight: 600,
-                lineHeight: 1.2,
+                fontSize: '13px',
+                bgcolor: '#0057B8',
+                boxShadow: 'none',
+                '& .MuiButton-startIcon': { mr: 0.35 },
+                '&:hover': {
+                  bgcolor: '#004a9f',
+                  boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
+                },
+                whiteSpace: 'nowrap',
               }}
             >
-              Companies
-            </Typography>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
-              <InboxSearchBar
-                value={search}
-                onChange={(value) => {
-                  setSearch(value);
-                  updateCache({ search: value });
-                  // Trigger search query when user types (with debounce handled by InboxSearchBar)
-                }}
-                onSearch={(value) => {
-                  setSearch(value);
-                  updateCache({ search: value });
-                  // Reload companies with search query
-                  if (tenantId) {
-                    setCompanies([]);
-                    setCompaniesLoading(true);
-                    loadCompanies(value, null, false, companyFilter === 'my', locationStateFilter);
-                  }
-                }}
-                placeholder="Search companies..."
-              />
-              
-              {/* Favorites filter */}
-              <FavoritesFilter
-                favoriteType="companies"
-                showFavoritesOnly={showFavoritesOnly}
-                onToggle={(value) => {
-                  setShowFavoritesOnly(value);
-                  updateCache({ showFavoritesOnly: value });
-                }}
-                showText={false}
-                size="small"
-                sx={{
-                  minWidth: '32px',
-                  width: '32px',
-                  height: '32px',
-                  borderRadius: '50%',
-                  '&:hover': {
-                    backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover',
-                  },
-                }}
-              />
-
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                onClick={() => setShowAddCompanyDialog(true)}
-                sx={{
-                  textTransform: 'none',
-                  borderRadius: '24px',
-                  px: 3,
-                  py: 1,
-                  height: '40px',
-                  fontWeight: 500,
-                  fontSize: '14px',
-                  bgcolor: '#0057B8',
-                  boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
-                  '&:hover': {
-                    bgcolor: '#004a9f',
-                    boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
-                  },
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                Add Company
-              </Button>
-            </Box>
+              Add Company
+            </Button>
           </Box>
         }
       />
-      
+
       <Box
         ref={contentRef}
         sx={{
           flex: 1,
           minHeight: 0,
+          minWidth: 0,
           overflowY: 'auto',
           overflowX: 'hidden',
           display: 'flex',
           flexDirection: 'column',
+          paddingTop: '8px',
+          '&::-webkit-scrollbar': { width: '8px', height: '8px' },
+          '&::-webkit-scrollbar-track': {
+            background: 'rgba(0, 0, 0, 0.02)',
+            borderRadius: '4px',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            background: 'rgba(0, 0, 0, 0.15)',
+            borderRadius: '4px',
+            '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+          },
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
         }}
       >
         {/* Filter & Toolbar Area */}
@@ -957,38 +997,6 @@ const CompaniesPage: React.FC = () => {
           }}
         >
           <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
-            <ToggleButtonGroup
-              value={companyFilter}
-              exclusive
-              onChange={(event, newFilter) => {
-                if (newFilter !== null) {
-                  setCompanyFilter(newFilter);
-                  updateCache({ companyFilter: newFilter });
-                }
-              }}
-              size="small"
-              sx={{ 
-                height: 36,
-                '& .MuiToggleButton-root': {
-                  px: 2.5,
-                  py: 0.75,
-                  fontSize: '0.8125rem',
-                  fontWeight: 500,
-                  borderRadius: '18px',
-                  border: '1px solid #E5E7EB',
-                  color: '#6B7280',
-                  backgroundColor: 'white',
-                  '&.Mui-selected': {
-                    backgroundColor: '#0B63C5',
-                    color: 'white',
-                  }
-                },
-              }}
-            >
-              <ToggleButton value="all">All Companies</ToggleButton>
-              <ToggleButton value="my">My Companies</ToggleButton>
-            </ToggleButtonGroup>
-
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
               <FormControl size="small" sx={{ minWidth: 160, height: 36 }}>
                 <InputLabel sx={{ fontSize: '0.875rem' }}>State Filter</InputLabel>

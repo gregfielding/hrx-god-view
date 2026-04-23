@@ -179,50 +179,78 @@ export async function loadContactActivities(
   }
 
   // 2. Load email logs for this contact
+  // Phase 2: Dual-query for migration. Primary = array-contains on participantContactIds
+  // (captures multi-contact emails), secondary = legacy contactId== (captures pre-backfill docs).
+  // Results are deduped by doc id.
   if (includeEmails) {
     try {
       const emailsRef = collection(db, 'tenants', tenantId, 'email_logs');
-      const emailsQuery = query(
+      const primaryQuery = query(
+        emailsRef,
+        where('participantContactIds', 'array-contains', contactId),
+        orderBy('timestamp', 'desc'),
+        limit(limitCount)
+      );
+      const legacyQuery = query(
         emailsRef,
         where('contactId', '==', contactId),
         orderBy('timestamp', 'desc'),
         limit(limitCount)
       );
-      const emailsSnapshot = await getDocs(emailsQuery);
-      
-      emailsSnapshot.docs.forEach(doc => {
-        const data = doc.data();
-        const direction = (data.direction || '').toLowerCase();
-        const toList: string[] = Array.isArray(data.to)
-          ? data.to
-          : (typeof data.to === 'string' && data.to ? [data.to] : []);
-        const toDisplay = toList.join(', ');
-        const fromDisplay: string = typeof data.from === 'string' ? data.from : '';
 
-        const description = direction === 'outbound'
-          ? `Email sent to ${toDisplay || 'recipient'}`
-          : `Email received from ${fromDisplay || 'sender'}`;
+      const [primarySnap, legacySnap] = await Promise.all([
+        getDocs(primaryQuery).catch((err) => {
+          console.warn('participantContactIds email_logs query failed, likely missing index:', err);
+          return null as any;
+        }),
+        getDocs(legacyQuery).catch((err) => {
+          console.warn('legacy contactId email_logs query failed:', err);
+          return null as any;
+        }),
+      ]);
 
-        activities.push({
-          id: `email_${doc.id}`,
-          type: 'email',
-          title: `Email: ${data.subject || '(no subject)'}`,
-          description,
-          timestamp: safeTimestampToDate(data.timestamp),
-          salespersonId: data.userId || data.salespersonId,
-          metadata: { 
-            from: data.from, 
-            to: data.to, 
-            direction: direction || 'sent',
-            subject: data.subject,
-            gmailMessageId: data.messageId,
-            threadId: data.threadId,
-            bodySnippet: data.bodySnippet,
-            bodyHtml: data.bodyHtml
-          },
-          source: 'email_logs'
+      const seen = new Set<string>();
+      const pushDocs = (snap: any) => {
+        if (!snap) return;
+        snap.docs.forEach((doc: any) => {
+          if (seen.has(doc.id)) return;
+          seen.add(doc.id);
+          const data = doc.data();
+          const direction = (data.direction || '').toLowerCase();
+          const toList: string[] = Array.isArray(data.to)
+            ? data.to
+            : (typeof data.to === 'string' && data.to ? [data.to] : []);
+          const toDisplay = toList.join(', ');
+          const fromDisplay: string = typeof data.from === 'string' ? data.from : '';
+
+          const description = direction === 'outbound'
+            ? `Email sent to ${toDisplay || 'recipient'}`
+            : `Email received from ${fromDisplay || 'sender'}`;
+
+          activities.push({
+            id: `email_${doc.id}`,
+            type: 'email',
+            title: `Email: ${data.subject || '(no subject)'}`,
+            description,
+            timestamp: safeTimestampToDate(data.timestamp),
+            salespersonId: data.userId || data.salespersonId,
+            metadata: {
+              from: data.from,
+              to: data.to,
+              direction: direction || 'sent',
+              subject: data.subject,
+              gmailMessageId: data.messageId,
+              threadId: data.threadId,
+              bodySnippet: data.bodySnippet,
+              bodyHtml: data.bodyHtml
+            },
+            source: 'email_logs'
+          });
         });
-      });
+      };
+
+      pushDocs(primarySnap);
+      pushDocs(legacySnap);
     } catch (error) {
       console.warn('Failed to load emails for contact:', error);
     }

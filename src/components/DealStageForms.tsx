@@ -70,7 +70,7 @@ import { getOptionsForField } from '../utils/fieldOptions';
 import jobTitlesList from '../data/onetJobTitles.json';
 import { getFieldDef } from '../fields/useFieldDef';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
-import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../data/screeningsOptions';
+import { additionalScreeningOptions } from '../data/screeningsOptions';
 import { logger } from '../utils/logger';
 
 const normalizeAutocompleteKey = (v: any): string => {
@@ -1365,74 +1365,6 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <Typography variant="h6" gutterBottom>Compliance Requirements</Typography>
         
         <Grid container spacing={2} sx={{ mb: 3 }}>
-          <Grid item xs={4}>
-            <Autocomplete
-              multiple
-              fullWidth
-              size="small"
-              options={Array.isArray(backgroundCheckOptions) ? backgroundCheckOptions.map(option => option.label) : []}
-              value={data.compliance?.backgroundCheckPackages || []}
-              onChange={(event, newValue) => {
-                handleStageDataChange('scoping', 'compliance', {
-                  ...data.compliance,
-                  backgroundCheckPackages: newValue,
-                  backgroundCheck: newValue.length > 0
-                });
-              }}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label={getFieldDef('backgroundCheckPackages')?.label || 'Background Check Packages'}
-                  helperText="Select required background check types"
-                />
-              )}
-              renderTags={(value, getTagProps) =>
-                value.map((option, index) => (
-                  <Chip
-                    variant="outlined"
-                    label={option}
-                    size="small"
-                    {...getTagProps({ index })}
-                    key={option}
-                  />
-                ))
-              }
-            />
-          </Grid>
-          <Grid item xs={4}>
-            <Autocomplete
-              multiple
-              fullWidth
-              size="small"
-              options={Array.isArray(drugScreeningOptions) ? drugScreeningOptions.map(option => option.label) : []}
-              value={data.compliance?.drugScreeningPanels || []}
-              onChange={(event, newValue) => {
-                handleStageDataChange('scoping', 'compliance', {
-                  ...data.compliance,
-                  drugScreeningPanels: newValue,
-                  drugScreen: newValue.length > 0
-                });
-              }}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label={getFieldDef('drugScreeningPanels')?.label || 'Drug Screening Panels'}
-                  helperText="Select required drug screening panels"
-                />
-              )}
-              renderTags={(value, getTagProps) =>
-                value.map((option, index) => (
-                  <Chip
-                    variant="outlined"
-                    label={option}
-                    size="small"
-                    {...getTagProps({ index })}
-                    key={option}
-                  />
-                ))
-              }
-            />
-          </Grid>
           <Grid item xs={4}>
             <FormControlLabel
               control={
