@@ -101,24 +101,71 @@ export function useEmailRealtime(
   const [threads, setThreads] = useState<EmailThread[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-  const unsubscribeRef = useRef<(() => void) | null>(null);
+  const unsubscribeRefs = useRef<Array<() => void>>([]);
+  // Keep the two source sets separate so snapshots from either subscription
+  // can be merged without losing the other's latest state.
+  const byUserIdRef = useRef<Map<string, EmailThread>>(new Map());
+  const byEmailRef = useRef<Map<string, EmailThread>>(new Map());
 
-  const refresh = useCallback(() => {
-    // Force re-subscription
-    if (unsubscribeRef.current) {
+  const clearSubscriptions = useCallback(() => {
+    for (const unsub of unsubscribeRefs.current) {
       try {
-        unsubscribeRef.current();
+        unsub();
       } catch (e) {
         // Firestore can occasionally throw internal assertion errors during rapid
         // subscribe/unsubscribe churn (notably in React StrictMode dev). Never let
         // that crash the app.
         console.warn('useEmailRealtime: unsubscribe threw', e);
-      } finally {
-        unsubscribeRef.current = null;
       }
     }
-    setLoading(true);
+    unsubscribeRefs.current = [];
   }, []);
+
+  const refresh = useCallback(() => {
+    clearSubscriptions();
+    byUserIdRef.current = new Map();
+    byEmailRef.current = new Map();
+    setLoading(true);
+  }, [clearSubscriptions]);
+
+  const publishMerged = useCallback(() => {
+    try {
+      const merged = new Map<string, EmailThread>();
+      // Prefer the most recent doc version across both queries (either could
+      // be more up to date depending on which write arrived first in cache).
+      const consider = (t: EmailThread) => {
+        const existing = merged.get(t.id);
+        const tMs = t.lastMessageAt instanceof Date ? t.lastMessageAt.getTime() : 0;
+        const eMs = existing?.lastMessageAt instanceof Date ? existing.lastMessageAt.getTime() : 0;
+        if (!existing || tMs >= eMs) merged.set(t.id, t);
+      };
+      byUserIdRef.current.forEach(consider);
+      byEmailRef.current.forEach(consider);
+
+      let fetchedThreads = Array.from(merged.values());
+
+      // Filter out deleted when viewing active
+      if (status === 'active') {
+        fetchedThreads = fetchedThreads.filter((t) => t.status !== 'deleted');
+      }
+
+      // Sort by lastMessageAt desc
+      fetchedThreads.sort((a, b) => {
+        const dateA = a.lastMessageAt instanceof Date ? a.lastMessageAt.getTime() : 0;
+        const dateB = b.lastMessageAt instanceof Date ? b.lastMessageAt.getTime() : 0;
+        return dateB - dateA;
+      });
+
+      fetchedThreads = fetchedThreads.slice(0, limitCount);
+      setThreads(fetchedThreads);
+      setLoading(false);
+      setError(null);
+    } catch (err: any) {
+      console.error('Error merging email threads snapshots:', err);
+      setError(err);
+      setLoading(false);
+    }
+  }, [status, limitCount]);
 
   useEffect(() => {
     if (!enabled || !tenantId || !userId) {
@@ -126,119 +173,93 @@ export function useEmailRealtime(
       return;
     }
 
+    clearSubscriptions();
+    byUserIdRef.current = new Map();
+    byEmailRef.current = new Map();
     setLoading(true);
     setError(null);
 
+    const threadsRef = collection(db, 'tenants', tenantId, 'emailThreads');
+    // Over-fetch per query; we merge and cap at limitCount after dedupe.
+    const perQueryLimit = limitCount * 2;
+
+    const normalizeSnapshot = (snapshot: QuerySnapshot<DocumentData>): EmailThread[] =>
+      snapshot.docs.map((doc) => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          lastMessageAt: normalizeTimestamp(data.lastMessageAt),
+        } as EmailThread;
+      });
+
+    // Subscription 1: by participantUserIds (includes threads where owner is linked by userId)
     try {
-      const threadsRef = collection(db, 'tenants', tenantId, 'emailThreads');
-
-      // Build query - try participantUserIds first, fallback to email
-      let threadsQuery;
-      
-      try {
-        // Primary query: by participantUserIds (more efficient)
-        threadsQuery = query(
-          threadsRef,
-          where('participantUserIds', 'array-contains', userId),
-          where('status', '==', status),
-          orderBy('lastMessageAt', 'desc'),
-          limit(limitCount * 2) // Get more to filter in memory
-        );
-      } catch (err) {
-        // Fallback to email-based query if participantUserIds index doesn't exist
-        if (userEmail) {
-          threadsQuery = query(
-            threadsRef,
-            where('participants', 'array-contains', userEmail.toLowerCase()),
-            where('status', '==', status),
-            orderBy('lastMessageAt', 'desc'),
-            limit(limitCount * 2)
-          );
-        } else {
-          throw new Error('No userEmail provided and participantUserIds query failed');
-        }
-      }
-
-      // Set up real-time listener
-      const unsubscribe = onSnapshot(
-        threadsQuery,
-        (snapshot: QuerySnapshot<DocumentData>) => {
-          try {
-            let fetchedThreads = snapshot.docs.map((doc) => ({
-              id: doc.id,
-              ...doc.data(),
-            })) as EmailThread[];
-
-            // Filter out deleted if status is active
-            if (status === 'active') {
-              fetchedThreads = fetchedThreads.filter((t) => t.status !== 'deleted');
-            }
-
-            // Normalize timestamps
-            fetchedThreads = fetchedThreads.map((t) => ({
-              ...t,
-              lastMessageAt: normalizeTimestamp(t.lastMessageAt),
-            }));
-
-            // Deduplicate by thread ID (in case of multiple queries or race conditions)
-            const threadMap = new Map<string, EmailThread>();
-            fetchedThreads.forEach((thread) => {
-              const existing = threadMap.get(thread.id);
-              // Keep the one with the most recent lastMessageAt
-              if (!existing || 
-                  (thread.lastMessageAt && existing.lastMessageAt &&
-                   (thread.lastMessageAt instanceof Date ? thread.lastMessageAt.getTime() : 0) >
-                   (existing.lastMessageAt instanceof Date ? existing.lastMessageAt.getTime() : 0))) {
-                threadMap.set(thread.id, thread);
-              }
-            });
-            fetchedThreads = Array.from(threadMap.values());
-
-            // Sort by lastMessageAt (most recent first)
-            fetchedThreads.sort((a, b) => {
-              const dateA = a.lastMessageAt ? (a.lastMessageAt instanceof Date ? a.lastMessageAt.getTime() : 0) : 0;
-              const dateB = b.lastMessageAt ? (b.lastMessageAt instanceof Date ? b.lastMessageAt.getTime() : 0) : 0;
-              return dateB - dateA;
-            });
-
-            // Limit results
-            fetchedThreads = fetchedThreads.slice(0, limitCount);
-
-            setThreads(fetchedThreads);
-            setLoading(false);
-            setError(null);
-          } catch (err: any) {
-            console.error('Error processing email threads snapshot:', err);
-            setError(err);
-            setLoading(false);
-          }
+      const q1 = query(
+        threadsRef,
+        where('participantUserIds', 'array-contains', userId),
+        where('status', '==', status),
+        orderBy('lastMessageAt', 'desc'),
+        limit(perQueryLimit)
+      );
+      const unsub1 = onSnapshot(
+        q1,
+        (snap) => {
+          const fresh = normalizeSnapshot(snap);
+          const next = new Map<string, EmailThread>();
+          fresh.forEach((t) => next.set(t.id, t));
+          byUserIdRef.current = next;
+          publishMerged();
         },
-        (err: Error) => {
-          console.error('Email threads snapshot error:', err);
+        (err) => {
+          console.error('useEmailRealtime userId listener error:', err);
+          // Don't clobber state — the email-based listener may still succeed.
           setError(err);
           setLoading(false);
         }
       );
-
-      unsubscribeRef.current = unsubscribe;
-
-      return () => {
-        if (unsubscribeRef.current) {
-          try {
-            unsubscribeRef.current();
-          } catch (e) {
-            console.warn('useEmailRealtime: unsubscribe threw', e);
-          } finally {
-            unsubscribeRef.current = null;
-          }
-        }
-      };
+      unsubscribeRefs.current.push(unsub1);
     } catch (err: any) {
-      console.error('Error setting up email threads listener:', err);
-      setError(err);
-      setLoading(false);
+      console.error('useEmailRealtime: failed to build userId query:', err);
     }
-  }, [tenantId, userId, userEmail, status, limitCount, enabled]);
+
+    // Subscription 2: by participants (email address). Catches threads that pre-date the
+    // participantUserIds ingestion fix, or any thread where the userId hasn't been merged yet.
+    // This guarantees parity with Gmail: every email addressed to the user's address shows up.
+    const normalizedEmail = userEmail?.toLowerCase();
+    if (normalizedEmail) {
+      try {
+        const q2 = query(
+          threadsRef,
+          where('participants', 'array-contains', normalizedEmail),
+          where('status', '==', status),
+          orderBy('lastMessageAt', 'desc'),
+          limit(perQueryLimit)
+        );
+        const unsub2 = onSnapshot(
+          q2,
+          (snap) => {
+            const fresh = normalizeSnapshot(snap);
+            const next = new Map<string, EmailThread>();
+            fresh.forEach((t) => next.set(t.id, t));
+            byEmailRef.current = next;
+            publishMerged();
+          },
+          (err) => {
+            // Missing composite index would land here; log but continue with userId listener.
+            console.warn('useEmailRealtime email listener error (non-fatal):', err);
+          }
+        );
+        unsubscribeRefs.current.push(unsub2);
+      } catch (err: any) {
+        console.warn('useEmailRealtime: failed to build email query:', err);
+      }
+    }
+
+    return () => {
+      clearSubscriptions();
+    };
+  }, [tenantId, userId, userEmail, status, limitCount, enabled, clearSubscriptions, publishMerged]);
 
   // Calculate unread count
   const unreadCount = threads.reduce((sum, thread) => sum + (thread.unreadCount || 0), 0);

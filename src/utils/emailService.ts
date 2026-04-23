@@ -90,24 +90,58 @@ export class EmailService {
 
   /**
    * Load emails for a specific contact
+   * Phase 2: Dual-query (participantContactIds array-contains primary, legacy contactId fallback)
+   * with dedupe-by-doc-id so multi-contact emails surface once per contact view.
    */
   static async loadEmailsForContact(tenantId: string, contactId: string): Promise<EmailLog[]> {
     try {
       const emailsRef = collection(db, 'tenants', tenantId, this.EMAIL_LOGS_COLLECTION);
-      const q = query(
+      const primaryQ = query(
+        emailsRef,
+        where('participantContactIds', 'array-contains', contactId),
+        orderBy('timestamp', 'desc')
+      );
+      const legacyQ = query(
         emailsRef,
         where('contactId', '==', contactId),
         orderBy('timestamp', 'desc')
       );
-      
-      const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        timestamp: doc.data().timestamp?.toDate() || new Date(),
-        createdAt: doc.data().createdAt?.toDate() || new Date(),
-        updatedAt: doc.data().updatedAt?.toDate() || new Date()
-      })) as EmailLog[];
+
+      const [primarySnap, legacySnap] = await Promise.all([
+        getDocs(primaryQ).catch((err) => {
+          console.warn('participantContactIds email_logs query failed (likely index still building):', err);
+          return null as any;
+        }),
+        getDocs(legacyQ).catch((err) => {
+          console.warn('legacy contactId email_logs query failed:', err);
+          return null as any;
+        }),
+      ]);
+
+      const byId = new Map<string, EmailLog>();
+      const addSnap = (snap: any) => {
+        if (!snap) return;
+        snap.docs.forEach((d: any) => {
+          if (byId.has(d.id)) return;
+          const data = d.data();
+          byId.set(d.id, {
+            id: d.id,
+            ...data,
+            timestamp: data.timestamp?.toDate() || new Date(),
+            createdAt: data.createdAt?.toDate() || new Date(),
+            updatedAt: data.updatedAt?.toDate() || new Date(),
+          } as EmailLog);
+        });
+      };
+      addSnap(primarySnap);
+      addSnap(legacySnap);
+
+      // Return sorted by timestamp desc (dedupe may have interleaved two snapshots)
+      return Array.from(byId.values()).sort((a: any, b: any) => {
+        const ta = a?.timestamp instanceof Date ? a.timestamp.getTime() : 0;
+        const tb = b?.timestamp instanceof Date ? b.timestamp.getTime() : 0;
+        return tb - ta;
+      });
     } catch (error) {
       console.error('Error loading emails for contact:', error);
       throw error;

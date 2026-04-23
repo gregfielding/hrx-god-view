@@ -92,6 +92,9 @@ export interface ProfileUpdateReminderControls {
   lastSentAt: Date | null;
   error: string | null;
   onSend: () => void;
+  /** Show SMS action but block click (e.g. worker has no phone on file). */
+  sendUnavailable?: boolean;
+  sendUnavailableHint?: string;
 }
 
 interface MessagesTabProps {

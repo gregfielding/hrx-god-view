@@ -1659,7 +1659,9 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
             </Box>
           )}
 
-          {/* Footer */}
+          {/* Footer — Reply/Forward buttons removed; drawer opens ready-to-reply
+              and the Forward icon in the header toolbar covers the forward action. */}
+          {/*
           <Box sx={{ p: 2, borderTop: 1, borderColor: 'divider' }}>
             <Stack direction="row" spacing={1}>
               <Button
@@ -1681,6 +1683,7 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
               </Button>
             </Stack>
           </Box>
+          */}
         </Box>
       </Drawer>
 
