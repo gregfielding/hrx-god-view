@@ -12,6 +12,8 @@ import {
   buildCertificationReplaceWritePatch,
   buildCertificationUploadWritePatch,
 } from '../../../utils/workerReadinessWriteModel';
+import { formatWorkerFacingScreeningPackage } from '../../../utils/backgroundChecks/formatWorkerFacingScreeningPackage';
+import { warnLegacyCertUsageDetected } from '../../../utils/certifications/certificationsLogging';
 
 type Props = {
   requirements: {
@@ -126,6 +128,19 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
   // Always show background screening if it's required
   const showBackgroundScreening = jobPosting?.showBackgroundChecks === true || jobPosting?.backgroundCheckRequired === true;
   const showAdditionalScreenings = jobPosting?.showAdditionalScreenings === true;
+  const screeningPkgServices = Array.isArray((jobPosting as any)?.screeningPackageServiceNames)
+    ? (jobPosting as any).screeningPackageServiceNames.filter(Boolean)
+    : [];
+  const screeningPackageWorkerCopy = useMemo(
+    () =>
+      formatWorkerFacingScreeningPackage({
+        packageName: (jobPosting as any)?.screeningPackageName ?? null,
+        services: screeningPkgServices.map((name: string) => ({ name: String(name || '').trim() })).filter((s: { name: string }) => s.name),
+      }),
+    [jobPosting, screeningPkgServices],
+  );
+  const showScreeningPackageOnForm =
+    (jobPosting as any)?.showScreeningPackageOnPost === true && screeningPkgServices.length > 0;
   // Always show E-Verify if it's required
   const showEVerify = jobPosting?.eVerifyRequired === true;
   // Show language/physical/uniform/PPE questions if they exist (not just if show flag is true)
@@ -285,6 +300,18 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
       const userRef = doc(db, 'users', uid);
       const snap = await getDoc(userRef);
       const data = snap.exists() ? (snap.data() as any) : {};
+      if (Array.isArray(data?.workerProfile?.credentials?.certifications)) {
+        warnLegacyCertUsageDetected({
+          surface: 'RequirementsAcknowledgementStep.handleDelete',
+          field: 'workerProfile.credentials.certifications',
+        });
+      }
+      if (Array.isArray(data?.certifications)) {
+        warnLegacyCertUsageDetected({
+          surface: 'RequirementsAcknowledgementStep.handleDelete',
+          field: 'user.certifications',
+        });
+      }
       const canonicalCerts = Array.isArray(data?.workerProfile?.credentials?.certifications)
         ? data.workerProfile.credentials.certifications
         : [];
@@ -355,6 +382,31 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
                 sx={{ mt: 2 }}
               />
             )}
+          </Box>
+        )}
+
+        {showScreeningPackageOnForm && (
+          <Box>
+            <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
+              {screeningPackageWorkerCopy.title}
+            </Typography>
+            <Stack spacing={3}>
+              {screeningPkgServices.map((svc: string) => (
+                <Box key={`pkg-svc-${svc}`}>
+                  <Typography sx={{ fontWeight: 700, mb: 1 }}>{svc}</Typography>
+                  <Typography color="text.secondary" sx={{ mb: 1.5 }}>
+                    {t('apply.comfortableWithScreening', { name: svc })}
+                  </Typography>
+                  <YesNoMaybeButtons
+                    value={(value?.screeningPackageServices || {})[svc] || ''}
+                    onChange={(val) => {
+                      const next = { ...(value?.screeningPackageServices || {}), [svc]: val };
+                      onChange({ ...value, screeningPackageServices: next });
+                    }}
+                  />
+                </Box>
+              ))}
+            </Stack>
           </Box>
         )}
 
