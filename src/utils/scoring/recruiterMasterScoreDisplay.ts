@@ -20,9 +20,11 @@ export function parseRecruiterMasterScore(raw: unknown): RecruiterMasterScore | 
   const o = raw as Record<string, unknown>;
   if (o.version !== 'v1') return null;
   const s = o.score100;
-  if (typeof s !== 'number' || !Number.isFinite(s)) return null;
   const g = o.grade;
-  if (g !== 'A' && g !== 'B' && g !== 'C' && g !== 'D' && g !== 'F') return null;
+  if (g !== 'A' && g !== 'B' && g !== 'C' && g !== 'D' && g !== 'E' && g !== 'N/A' && g !== 'F') return null;
+  if (g === 'N/A') {
+    if (s != null && (typeof s !== 'number' || !Number.isFinite(s))) return null;
+  } else if (typeof s !== 'number' || !Number.isFinite(s)) return null;
   return o as unknown as RecruiterMasterScore;
 }
 
@@ -50,8 +52,9 @@ export function getRecruiterMasterDisplayForAdminUi(args: {
 }): RecruiterMasterDisplayPack {
   const persisted = parseRecruiterMasterScore(args.recruiterMasterScoreRaw);
   if (persisted) {
+    const noScore = persisted.grade === 'N/A' || persisted.score100 == null;
     return {
-      score100: Math.round(persisted.score100),
+      score100: noScore ? null : Math.round(persisted.score100 as number),
       grade: persisted.grade,
       confidence: persisted.confidence,
       riskLevel: persisted.riskLevel,
@@ -72,8 +75,9 @@ export function getRecruiterMasterDisplayForAdminUi(args: {
       snapshotCategoryScores: snapCats,
       prescreenTransportationPlan: args.prescreenTransportationPlan ?? null,
     });
+    const noScore = m.grade === 'N/A' || m.score100 == null;
     return {
-      score100: Math.round(m.score100),
+      score100: noScore ? null : Math.round(m.score100 as number),
       grade: m.grade,
       confidence: m.confidence,
       riskLevel: m.riskLevel,
@@ -94,7 +98,7 @@ export function getRecruiterMasterDisplayForAdminUi(args: {
   };
 }
 
-/** Letter grade for master score — same bands as recruiter table (90=A …). */
+/** Letter grade for master score — same bands as recruiter table (90=A … &lt;60=E). */
 export function masterScoreToGrade(score100: number | null | undefined): string {
   if (score100 == null || !Number.isFinite(score100)) return '—';
   return recruiterTableLetterGrade(Math.round(Math.max(0, Math.min(100, score100))));

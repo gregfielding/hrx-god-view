@@ -1,4 +1,8 @@
-import { computeRecruiterMasterScore, RECRUITER_MASTER_WEIGHTS_V1 } from '../../shared/recruiterMasterScore';
+import {
+  computeRecruiterMasterScore,
+  computeFallbackProfileScore,
+  RECRUITER_MASTER_WEIGHTS_V1,
+} from '../../shared/recruiterMasterScore';
 
 describe('computeRecruiterMasterScore', () => {
   it('blends 50/35/15 when all components present', () => {
@@ -24,7 +28,7 @@ describe('computeRecruiterMasterScore', () => {
     expect(r.grade).toBe('B');
   });
 
-  it('renormalizes weights when profile is missing', () => {
+  it('uses profile fallback when aiScore is missing (still 50/35/15)', () => {
     const r = computeRecruiterMasterScore({
       userData: {
         scoreSummary: {},
@@ -41,9 +45,9 @@ describe('computeRecruiterMasterScore', () => {
       prescreenAi: { overallScore: 80 },
       prescreenTransportationPlan: null,
     });
-    const wCat = 0.5 / (0.5 + 0.35);
-    const wInt = 0.35 / (0.5 + 0.35);
-    expect(r.score100).toBe(Math.round(60 * wCat + 80 * wInt));
+    // Profile falls back to 40 (floor); all three weights apply.
+    expect(r.score100).toBe(Math.round(60 * 0.5 + 80 * 0.35 + 40 * 0.15));
+    expect(r.sourceMeta?.profileFallbackPartial).toBe(true);
   });
 
   it('applies own-vehicle boost to category when plan is own_vehicle', () => {
@@ -81,5 +85,39 @@ describe('computeRecruiterMasterScore', () => {
     });
     expect(withCar.score100).toBeGreaterThan(without.score100);
     expect(withCar.sourceMeta?.carOwnershipBoostApplied).toBe(true);
+  });
+
+  it('returns N/A when there is no category, interview, ai profile, or partial profile fields', () => {
+    const r = computeRecruiterMasterScore({
+      userData: { scoreSummary: {} },
+      prescreenAi: null,
+    });
+    expect(r.grade).toBe('N/A');
+    expect(r.score100).toBeNull();
+  });
+
+  it('partial profile (phone + email + language) yields non-zero blended score, not F', () => {
+    const r = computeRecruiterMasterScore({
+      userData: {
+        scoreSummary: {},
+        phone: '555-0100',
+        email: 'a@b.co',
+        preferredLanguage: 'en',
+      },
+      prescreenAi: null,
+    });
+    expect(r.score100).not.toBeNull();
+    expect(r.score100).toBeGreaterThanOrEqual(40);
+    expect(r.grade).not.toBe('F');
+    expect(r.sourceMeta?.profileFallbackPartial).toBe(true);
+  });
+
+  it('computeFallbackProfileScore matches expected partial credit', () => {
+    const s = computeFallbackProfileScore({
+      phone: '1',
+      email: 'a@b.co',
+      preferredLanguage: 'en',
+    });
+    expect(s).toBe(40 + 5 + 5 + 5);
   });
 });

@@ -15,8 +15,9 @@ export const OWN_VEHICLE_CATEGORY_BONUS = 3;
 
 export type RecruiterMasterScore = {
   version: 'v1';
-  score100: number;
-  grade: 'A' | 'B' | 'C' | 'D' | 'F';
+  /** Null when `grade` is `N/A` (no usable inputs). */
+  score100: number | null;
+  grade: 'A' | 'B' | 'C' | 'D' | 'E' | 'N/A' | 'F';
   confidence: 'high' | 'medium' | 'low';
   riskLevel: 'low' | 'moderate' | 'high';
   decision?: 'advance' | 'review' | 'reject' | 'hold';
@@ -48,6 +49,8 @@ export type RecruiterMasterScore = {
     profileSource: string;
     computedAt?: string;
     carOwnershipBoostApplied?: boolean;
+    /** True when profile used partial-data fallback (no `scoreSummary.aiScore`). */
+    profileFallbackPartial?: boolean;
   };
   inputSignature: string;
 };
@@ -56,13 +59,14 @@ function finite(n: unknown): number | null {
   return typeof n === 'number' && Number.isFinite(n) ? Math.round(n) : null;
 }
 
-function gradeFromScore100(s: number): RecruiterMasterScore['grade'] {
+/** Letter bands: &lt;60 → E (not F). F reserved for explicit disqualification (future). */
+function gradeFromScore100(s: number): Exclude<RecruiterMasterScore['grade'], 'N/A' | 'F'> {
   const x = Math.max(0, Math.min(100, Math.round(s)));
   if (x >= 90) return 'A';
   if (x >= 80) return 'B';
   if (x >= 70) return 'C';
   if (x >= 60) return 'D';
-  return 'F';
+  return 'E';
 }
 
 function simpleHash(s: string): string {
@@ -164,11 +168,54 @@ function extractInterviewScore100(
   return { score: null, source: 'none' };
 }
 
-/** Canonical profile-quality score: stored Hiring Score composite `scoreSummary.aiScore`. */
+/** Canonical profile-quality score: stored Hiring Score composite `scoreSummary.aiScore` only. */
 function extractProfileScore100(scoreSummary: Record<string, unknown> | undefined): { score: number | null; source: string } {
   const n = finite(scoreSummary?.aiScore);
   if (n != null) return { score: n, source: 'scoreSummary.aiScore' };
   return { score: null, source: 'none' };
+}
+
+function resumePresent(userData: Record<string, unknown>): boolean {
+  if (userData.resumeUrl && String(userData.resumeUrl).trim()) return true;
+  const r = userData.resume;
+  if (r && typeof r === 'object') {
+    const o = r as Record<string, unknown>;
+    if (o.downloadUrl && String(o.downloadUrl).trim()) return true;
+    if (o.storagePath && String(o.storagePath).trim()) return true;
+  }
+  return false;
+}
+
+/** True when any field used by fallback scoring is present (so we have a “signal” without aiScore). */
+export function partialProfileFieldsPresent(userData: Record<string, unknown>): boolean {
+  if (userData.phone && String(userData.phone).trim()) return true;
+  if (userData.email && String(userData.email).trim()) return true;
+  if (userData.preferredLanguage && String(userData.preferredLanguage).trim()) return true;
+  const skills = userData.skills;
+  if (Array.isArray(skills) && skills.length > 0) return true;
+  if (resumePresent(userData)) return true;
+  if (userData.availability) return true;
+  if (userData.address && String(userData.address).trim()) return true;
+  if (userData.workAuthStatus === 'Authorized') return true;
+  return false;
+}
+
+/**
+ * When `scoreSummary.aiScore` is missing: partial credit from profile fields (unknown ≠ failure).
+ * Floored at 40, capped at 75.
+ */
+export function computeFallbackProfileScore(userData: Record<string, unknown>): number {
+  let score = 40;
+  if (userData.preferredLanguage && String(userData.preferredLanguage).trim()) score += 5;
+  const skills = userData.skills;
+  if (Array.isArray(skills) && skills.length > 0) score += 10;
+  if (userData.phone && String(userData.phone).trim()) score += 5;
+  if (userData.email && String(userData.email).trim()) score += 5;
+  if (userData.workAuthStatus === 'Authorized') score += 10;
+  if (resumePresent(userData)) score += 15;
+  if (userData.availability) score += 5;
+  if (userData.address && String(userData.address).trim()) score += 5;
+  return Math.min(score, 75);
 }
 
 function normTransport(s: string | null | undefined): string {
@@ -191,15 +238,10 @@ function riskFromUserData(userData: Record<string, unknown>): RecruiterMasterSco
   return 'low';
 }
 
-function deriveConfidence(
-  score100: number,
-  present: { cat: boolean; int: boolean; prof: boolean },
-): RecruiterMasterScore['confidence'] {
-  const n = [present.cat, present.int, present.prof].filter(Boolean).length;
-  if (n >= 3 && score100 >= 72) return 'high';
-  if (n >= 2 && score100 >= 68) return 'high';
-  if (n >= 2) return 'medium';
-  if (n === 1) return 'medium';
+/** Confidence from how many of category / interview / profile components are present (not from score magnitude). */
+function deriveConfidence(signalCount: number): RecruiterMasterScore['confidence'] {
+  if (signalCount >= 3) return 'high';
+  if (signalCount >= 2) return 'medium';
   return 'low';
 }
 
@@ -232,42 +274,87 @@ export function computeRecruiterMasterScore(input: ComputeRecruiterMasterScoreIn
   }
 
   const intEx = extractInterviewScore100(prescreenAi, scoreSummary);
-  const profEx = extractProfileScore100(scoreSummary);
+  const profAi = extractProfileScore100(scoreSummary);
 
-  const w0 = { ...RECRUITER_MASTER_WEIGHTS_V1 };
+  const hasAnySignal =
+    categoryScore != null ||
+    intEx.score != null ||
+    profAi.score != null ||
+    partialProfileFieldsPresent(userData);
+
+  if (!hasAnySignal) {
+    const sigPayload = JSON.stringify({
+      categoryScore,
+      interviewScore: intEx.score,
+      profileAiScore: profAi.score,
+      carBoost,
+      reason: 'no_signal',
+    });
+    return {
+      version: 'v1',
+      score100: null,
+      grade: 'N/A',
+      confidence: 'low',
+      riskLevel: riskFromUserData(userData),
+      decision: extractDecision(prescreenAi),
+      summary: 'No data available for Master Recruiter Score.',
+      components: {
+        categoryScore,
+        interviewScore: intEx.score,
+        profileScore: profAi.score,
+      },
+      weights: { ...RECRUITER_MASTER_WEIGHTS_V1 },
+      effectiveWeights: { categoryScore: 0, interviewScore: 0, profileScore: 0 },
+      reasoning: {},
+      sourceMeta: {
+        categorySource: catSrc.source,
+        interviewSource: intEx.source,
+        profileSource: profAi.source,
+        computedAt: new Date().toISOString(),
+        carOwnershipBoostApplied: carBoost && catSrc.avg != null,
+      },
+      inputSignature: simpleHash(sigPayload),
+    };
+  }
+
+  const profileScore: number = profAi.score ?? computeFallbackProfileScore(userData);
+  const profileFallbackPartial = profAi.score == null;
+  const profileSource = profAi.score != null ? profAi.source : 'fallbackPartialProfile';
+
   const present = {
     cat: categoryScore != null,
     int: intEx.score != null,
-    prof: profEx.score != null,
+    prof: profAi.score != null || profileFallbackPartial,
   };
 
+  const w0 = { ...RECRUITER_MASTER_WEIGHTS_V1 };
   let wc = present.cat ? w0.categoryScore : 0;
   let wi = present.int ? w0.interviewScore : 0;
   let wp = present.prof ? w0.profileScore : 0;
   const sumW = wc + wi + wp;
   let ew = { categoryScore: 0, interviewScore: 0, profileScore: 0 };
+
   if (sumW <= 0) {
-    const score100 = 0;
     const sigPayload = JSON.stringify({
       categoryScore,
       interviewScore: intEx.score,
-      profileScore: profEx.score,
+      profileScore,
       carBoost,
       weights: w0,
       effective: ew,
     });
     return {
       version: 'v1',
-      score100,
-      grade: 'F',
+      score100: null,
+      grade: 'N/A',
       confidence: 'low',
       riskLevel: riskFromUserData(userData),
       decision: extractDecision(prescreenAi),
       summary: 'Insufficient data for Master Recruiter Score.',
       components: {
-        categoryScore: categoryScore,
+        categoryScore,
         interviewScore: intEx.score,
-        profileScore: profEx.score,
+        profileScore,
       },
       weights: { ...w0 },
       effectiveWeights: ew,
@@ -275,9 +362,10 @@ export function computeRecruiterMasterScore(input: ComputeRecruiterMasterScoreIn
       sourceMeta: {
         categorySource: catSrc.source,
         interviewSource: intEx.source,
-        profileSource: profEx.source,
+        profileSource,
         computedAt: new Date().toISOString(),
         carOwnershipBoostApplied: carBoost && catSrc.avg != null,
+        profileFallbackPartial,
       },
       inputSignature: simpleHash(sigPayload),
     };
@@ -291,20 +379,30 @@ export function computeRecruiterMasterScore(input: ComputeRecruiterMasterScoreIn
   const raw =
     (categoryScore != null ? categoryScore * wc : 0) +
     (intEx.score != null ? intEx.score * wi : 0) +
-    (profEx.score != null ? profEx.score * wp : 0);
+    profileScore * wp;
 
-  const score100 = Math.max(0, Math.min(100, Math.round(raw)));
+  let score100 = Math.max(0, Math.min(100, Math.round(raw)));
+  if (score100 < 40) {
+    score100 = 40;
+  }
+
+  const signalCount = [present.cat, present.int, present.prof].filter(Boolean).length;
+  const confidence = deriveConfidence(signalCount);
   const grade = gradeFromScore100(score100);
-  const confidence = deriveConfidence(score100, present);
 
   const strengths: string[] = [];
   if (carBoost) strengths.push('Reliable transportation (own vehicle)');
   if (categoryScore != null && categoryScore >= 80) strengths.push('Strong category profile signals');
 
+  const limitedNote = profileFallbackPartial
+    ? ' Limited data — score will improve with more information.'
+    : '';
+
   const sigPayload = JSON.stringify({
     categoryScore,
     interviewScore: intEx.score,
-    profileScore: profEx.score,
+    profileScore,
+    profileFallbackPartial,
     carBoost,
     weights: w0,
     effective: ew,
@@ -330,11 +428,11 @@ export function computeRecruiterMasterScore(input: ComputeRecruiterMasterScoreIn
     confidence,
     riskLevel: riskFromUserData(userData),
     decision: extractDecision(prescreenAi),
-    summary: `Master ${score100} (${grade}) — category ${categoryScore ?? '—'} · interview ${intEx.score ?? '—'} · profile ${profEx.score ?? '—'}`,
+    summary: `Master ${score100} (${grade}) — category ${categoryScore ?? '—'} · interview ${intEx.score ?? '—'} · profile ${profileScore}.${limitedNote}`.trim(),
     components: {
-      categoryScore: categoryScore,
+      categoryScore,
       interviewScore: intEx.score,
-      profileScore: profEx.score,
+      profileScore,
     },
     weights: { ...w0 },
     effectiveWeights: ew,
@@ -346,9 +444,10 @@ export function computeRecruiterMasterScore(input: ComputeRecruiterMasterScoreIn
     sourceMeta: {
       categorySource: catSrc.source,
       interviewSource: intEx.source,
-      profileSource: profEx.source,
+      profileSource,
       computedAt: new Date().toISOString(),
       carOwnershipBoostApplied: carBoost && catSrc.avg != null,
+      profileFallbackPartial,
     },
     inputSignature: simpleHash(sigPayload),
   };
