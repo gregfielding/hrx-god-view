@@ -791,6 +791,13 @@ export const onApplicationStatusChanged = onDocumentUpdated(
           else if (newStatus === 'advanced') messageTypeId = 'application_advanced';
           else if (newStatus === 'offer') messageTypeId = 'application_offered';
           else if (newStatus === 'hired') messageTypeId = 'application_hired';
+          // 'accepted' and 'confirmed' are the "selected / offer accepted" terminal
+          // states — they must NEVER fall through to the generic
+          // application_status_change template, because many tenants have that slot
+          // configured with waitlist / generic-update copy. Route them to the
+          // application_hired template explicitly.
+          else if (newStatus === 'accepted') messageTypeId = 'application_hired';
+          else if (newStatus === 'confirmed') messageTypeId = 'application_hired';
           else if (newStatus === 'rejected') messageTypeId = 'application_rejected';
           else if (newStatus === 'waitlisted') messageTypeId = 'application_waitlisted';
 
@@ -869,6 +876,8 @@ export const onApplicationStatusChanged = onDocumentUpdated(
               message = `Hi ${firstName}, you've received an offer for ${jobTitle}. Please check your account for details.`;
               break;
             case 'hired':
+            case 'accepted':
+            case 'confirmed':
               message = `Welcome to the team ${firstName}! Your application for ${jobTitle} has been accepted.`;
               break;
             case 'waitlisted':

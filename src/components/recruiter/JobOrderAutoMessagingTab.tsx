@@ -187,10 +187,10 @@ const JobOrderAutoMessagingTab: React.FC<JobOrderAutoMessagingTabProps> = ({
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
       <Alert severity="info" sx={{ borderRadius: 1 }}>
-        When new shifts are added to this gig job order, members of the selected user groups can receive an SMS and a
-        push notification with the jobs board link. Messages are sent in English or Spanish based on each user&apos;s
-        language preference. To avoid spam, each user can receive at most one of these messages per 15 minutes for this
-        job order (for example, adding 10 shifts quickly will still only notify them once).
+        When new shifts are added to this job order, members of the selected user groups can receive an SMS and a push
+        notification with the jobs board link. Messages are sent in English or Spanish based on each user&apos;s language
+        preference. To avoid spam, each user can receive at most one of these messages per 15 minutes for this job order
+        (for example, adding 10 shifts quickly will still only notify them once).
       </Alert>
 
       <Card variant="outlined">

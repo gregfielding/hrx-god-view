@@ -11,6 +11,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { processInboundSms } from './stopHelpHandler';
+import { handleCadenceReply } from '../cadence/cadenceReplyHandler';
 import { logMessage } from './messageLogging';
 import { findOrCreateThread, createInboundMessage } from './twoWayMessaging';
 import { createAIDraft, classifyInboundMessage } from './aiAssist';
@@ -68,6 +69,36 @@ export const handleInboundSms = onRequest(
 
       // Normalize phone number to E.164 format if needed
       const phoneE164 = fromNumber.startsWith('+') ? fromNumber : `+${fromNumber}`;
+
+      // Cadence-reply claim runs BEFORE the generic STOP/HELP/START matcher.
+      // Reason: the generic matcher treats bare "YES" as a START (re-opt-in)
+      // and "CANCEL" as a STOP. For CORT-style workers with a pending shift
+      // confirmation, those replies are shift intents, not SMS-compliance
+      // keywords. If there's no active cadence for this worker we fall
+      // through unchanged.
+      try {
+        const cadenceResult = await handleCadenceReply({
+          phoneE164,
+          messageBody,
+          twilioMessageSid: messageSid,
+        });
+        if (cadenceResult.handled) {
+          logger.info('[cadence_reply] inbound claimed by cadence handler', {
+            phoneE164,
+            intent: cadenceResult.intent,
+            tenantId: cadenceResult.tenantId,
+            assignmentId: cadenceResult.assignmentId,
+          });
+          response.status(200).send('OK');
+          return;
+        }
+      } catch (cadenceErr: any) {
+        // Never let a cadence-handler crash block STOP/HELP/START compliance.
+        logger.error('[cadence_reply] handler threw, falling through to normal pipeline', {
+          phoneE164,
+          err: cadenceErr?.message || String(cadenceErr),
+        });
+      }
 
       // Process keywords (STOP/HELP/START)
       const keywordResult = await processInboundSms(phoneE164, messageBody, messageSid, toNumber);

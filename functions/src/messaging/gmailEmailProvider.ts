@@ -12,6 +12,7 @@ import * as admin from 'firebase-admin';
 import { getStorage } from 'firebase-admin/storage';
 import { EmailProvider, SendEmailOptions, EmailSendResult } from './EmailProvider';
 import { getStorageBucketName } from '../utils/storageBucket';
+import { findOrCreateEmailThread, addMessageToThread, findContactsByEmails } from './emailThreading';
 
 const db = admin.firestore();
 
@@ -330,9 +331,29 @@ export class GmailEmailProvider implements EmailProvider {
 
       logger.info(`Email sent via Gmail: ${response.data.id} to ${Array.isArray(options.to) ? options.to.map(r => r.email).join(', ') : options.to.email}`);
 
+      // Mirror the outbound send into email_logs + emailThreads so the CRM
+      // contact timeline reflects it immediately (no Sync-button round trip).
+      // Failures here must NOT fail the send — we've already handed the
+      // message to Gmail and it WILL arrive.
+      try {
+        await this.mirrorOutboundSendToFirestore({
+          options,
+          connectedEmail: (userData?.gmailTokens?.email || options.fromEmail || '').toString(),
+          gmailMessageId: response.data.id || undefined,
+          gmailThreadId: response.data.threadId || undefined,
+          gmailLabelIds: response.data.labelIds || undefined,
+        });
+      } catch (mirrorErr: any) {
+        logger.warn('Outbound email mirror to Firestore failed (send still succeeded)', {
+          gmailMessageId: response.data.id,
+          err: mirrorErr?.message,
+        });
+      }
+
       return {
         success: true,
         providerMessageId: response.data.id || undefined,
+        providerThreadId: response.data.threadId || undefined,
       };
     } catch (error: any) {
       logger.error('Gmail email send failed:', {
@@ -359,6 +380,135 @@ export class GmailEmailProvider implements EmailProvider {
         success: false,
         errorMessage: error.message || 'Failed to send email via Gmail',
       };
+    }
+  }
+
+  /**
+   * Mirror an outbound Gmail send into email_logs + emailThreads so the
+   * CRM contact timeline shows it immediately. Best-effort; callers swallow
+   * errors because the send itself has already succeeded.
+   */
+  private async mirrorOutboundSendToFirestore(args: {
+    options: SendEmailOptions;
+    connectedEmail: string;
+    gmailMessageId?: string;
+    gmailThreadId?: string;
+    gmailLabelIds?: string[] | null;
+  }): Promise<void> {
+    const { options, connectedEmail, gmailMessageId, gmailThreadId, gmailLabelIds } = args;
+    const tenantId = options.tenantId;
+    if (!tenantId) return;
+
+    const toArr = Array.isArray(options.to) ? options.to : [options.to];
+    const ccArr = options.cc ? (Array.isArray(options.cc) ? options.cc : [options.cc]) : [];
+    const bccArr = options.bcc ? (Array.isArray(options.bcc) ? options.bcc : [options.bcc]) : [];
+
+    const toEmails = toArr.map((r) => r?.email).filter((e): e is string => !!e);
+    const ccEmails = ccArr.map((r) => r?.email).filter((e): e is string => !!e);
+    const bccEmails = bccArr.map((r) => r?.email).filter((e): e is string => !!e);
+
+    const fromEmail = (connectedEmail || '').toLowerCase();
+
+    // Match CRM contacts for everyone in the recipient set (batched — one
+    // query for up to 10 addresses per Firestore 'in' chunk).
+    const allRecipientEmails = Array.from(new Set([...toEmails, ...ccEmails, ...bccEmails]));
+    const contactMap = allRecipientEmails.length > 0
+      ? await findContactsByEmails(tenantId, allRecipientEmails)
+      : new Map<string, any>();
+
+    const participantContactIds: string[] = Array.from(contactMap.values())
+      .map((c: any) => c?.id)
+      .filter((id: any): id is string => typeof id === 'string' && !!id);
+
+    const participantCompanyIds: string[] = Array.from(
+      new Set(
+        Array.from(contactMap.values())
+          .map((c: any) => c?.companyId)
+          .filter((id: any): id is string => typeof id === 'string' && !!id)
+      )
+    );
+
+    const now = new Date();
+    const bodyPlain = (options.textBody || '').trim();
+    const bodySnippet = (bodyPlain || (options.htmlBody || '').replace(/<[^>]*>/g, ' '))
+      .trim()
+      .substring(0, 250);
+
+    // 1) Legacy email_logs write — what the contact timeline UI currently reads.
+    try {
+      await db
+        .collection('tenants')
+        .doc(tenantId)
+        .collection('email_logs')
+        .add({
+          messageId: gmailMessageId || null,
+          threadId: gmailThreadId || null,
+          subject: options.subject || '(no subject)',
+          from: fromEmail,
+          to: toEmails,
+          cc: ccEmails,
+          bcc: bccEmails,
+          timestamp: now,
+          bodySnippet,
+          bodyHtml: options.htmlBody || undefined,
+          direction: 'outbound',
+          contactId: participantContactIds[0] ?? null,
+          companyId: participantCompanyIds[0] ?? null,
+          participantContactIds,
+          participantCompanyIds,
+          dealId: null,
+          userId: options.userId || options.gmailUserId || null,
+          isDraft: false,
+          createdAt: now,
+          updatedAt: now,
+        });
+    } catch (err: any) {
+      logger.warn('email_logs mirror write failed', { err: err?.message });
+    }
+
+    // 2) Thread + message write for the modern inbox view.
+    try {
+      const thread = await findOrCreateEmailThread(
+        tenantId,
+        {
+          subject: options.subject || '(no subject)',
+          from: fromEmail,
+          to: toEmails,
+          cc: ccEmails.length > 0 ? ccEmails : undefined,
+          gmailThreadId: gmailThreadId,
+          gmailLabelIds: gmailLabelIds || undefined,
+        },
+        {
+          userId: options.gmailUserId || options.userId,
+          participantContactIds,
+          participantCompanyIds,
+        }
+      );
+
+      if (thread?.id) {
+        await addMessageToThread(thread.id, tenantId, {
+          gmailMessageId: gmailMessageId,
+          providerMessageId: gmailMessageId,
+          direction: 'outbound',
+          from: fromEmail,
+          fromUserId: options.gmailUserId || options.userId,
+          to: toEmails,
+          cc: ccEmails.length > 0 ? ccEmails : undefined,
+          bcc: bccEmails.length > 0 ? bccEmails : undefined,
+          subject: options.subject || '(no subject)',
+          bodyHtml: options.htmlBody,
+          bodyPlain: options.textBody,
+          bodySnippet,
+          status: 'sent',
+          read: true,
+          createdAt: now,
+        } as any, {
+          participantContactIds,
+          participantCompanyIds,
+        });
+      }
+    } catch (err: any) {
+      logger.warn('emailThreads mirror write failed', { err: err?.message });
     }
   }
 

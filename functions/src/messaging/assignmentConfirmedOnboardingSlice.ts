@@ -76,6 +76,17 @@ export async function runAssignmentConfirmedOnboardingSlice(args: {
     return;
   }
 
+  let jobOrderMuted = false;
+  const muteJoId = String((assignment.jobOrderId as string) || '').trim();
+  if (muteJoId) {
+    try {
+      const joSnap = await db.doc(`tenants/${tenantId}/job_orders/${muteJoId}`).get();
+      jobOrderMuted = Boolean(joSnap.data()?.muted);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
   const ckStarted = onboardingStartedCorrelationKey(tenantId, assignmentId);
   const startedFirst = await markLifecycleEventIfFirst({
     tenantId,
@@ -103,6 +114,7 @@ export async function runAssignmentConfirmedOnboardingSlice(args: {
         userId: workerId,
         assignmentId,
         assignment,
+        suppressOutboundAutomation: jobOrderMuted,
       });
       logger.info('assignment_confirmed: worker onboarding pipeline ensured', {
         tenantId,
@@ -127,6 +139,14 @@ export async function runAssignmentConfirmedOnboardingSlice(args: {
         error: e instanceof Error ? e.message : String(e),
       });
     }
+  }
+
+  if (jobOrderMuted) {
+    logger.info('runAssignmentConfirmedOnboardingSlice: skipping payroll onboarding invite (job order muted)', {
+      tenantId,
+      assignmentId,
+    });
+    return;
   }
 
   const ckPayroll = payrollOnboardingInviteCorrelationKey(tenantId, assignmentId);

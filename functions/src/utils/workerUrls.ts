@@ -53,6 +53,8 @@ export type WorkerAiPrescreenEntrySource =
   | 'chase_2'
   /** Worker dashboard “complete interview” CTA (`workerAiPrescreenDashboardActions`). */
   | 'dashboard_cta'
+  /** Recruiter user profile → Interview tab “Order Interview”. */
+  | 'recruiter_profile_order_interview'
   | 'direct'
   | string;
 

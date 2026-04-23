@@ -41,6 +41,7 @@ export interface SendEmailOptions {
 export interface EmailSendResult {
   success: boolean;
   providerMessageId?: string;
+  providerThreadId?: string; // Provider-assigned conversation/thread id (e.g. Gmail threadId)
   errorCode?: string;
   errorMessage?: string;
 }

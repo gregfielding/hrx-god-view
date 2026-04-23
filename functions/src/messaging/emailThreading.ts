@@ -58,7 +58,8 @@ export interface EmailThread {
   subject: string;
   participants: string[]; // Array of email addresses
   participantUserIds?: string[]; // Array of user IDs (if users exist in system)
-  participantContactIds?: string[]; // Array of contact IDs (for quick lookup)
+  participantContactIds?: string[]; // Array of contact IDs (for quick lookup / array-contains queries)
+  participantCompanyIds?: string[]; // Array of company IDs (for quick lookup / array-contains queries)
   participantContacts?: ParticipantContact[]; // Enriched contact information
   // Denormalized helpers for fast filtering (avoid per-thread message subcollection queries)
   // Threads where the user has sent at least one message can be queried via array-contains.
@@ -244,6 +245,8 @@ export async function findOrCreateEmailThread(
   },
   options?: {
     userId?: string; // User who owns this email (for participant matching)
+    participantContactIds?: string[]; // CRM contact IDs matched from participant emails
+    participantCompanyIds?: string[]; // CRM company IDs matched from participant contacts
   }
 ): Promise<EmailThread> {
   try {
@@ -258,6 +261,13 @@ export async function findOrCreateEmailThread(
       .filter(Boolean);
 
     const uniqueParticipants = Array.from(new Set(allParticipants));
+
+    const incomingContactIds = Array.from(
+      new Set((options?.participantContactIds || []).filter(Boolean))
+    );
+    const incomingCompanyIds = Array.from(
+      new Set((options?.participantCompanyIds || []).filter(Boolean))
+    );
 
     // Try to find existing thread
     let existingThread: EmailThread | null = null;
@@ -289,24 +299,67 @@ export async function findOrCreateEmailThread(
 
     // Extract Gmail categories from labelIds
     const categories = extractGmailCategories(emailData.gmailLabelIds);
-    
+
     // Return existing thread if found
     if (existingThread && existingThread.id) {
       // Always update labels (categories will default to 'primary' if none found)
       const existingLabels = existingThread.labels || [];
       const updatedLabels = Array.from(new Set([...existingLabels, ...categories]));
-      // Update if labels changed or if thread has no labels yet
-      if (updatedLabels.length !== existingLabels.length || existingLabels.length === 0) {
+
+      // Merge participant contact/company IDs if new ones were supplied
+      const existingContactIds = Array.isArray(existingThread.participantContactIds)
+        ? existingThread.participantContactIds
+        : [];
+      const mergedContactIds = Array.from(new Set([...existingContactIds, ...incomingContactIds]));
+      const contactIdsChanged = mergedContactIds.length !== existingContactIds.length;
+
+      const existingCompanyIds = Array.isArray(existingThread.participantCompanyIds)
+        ? existingThread.participantCompanyIds
+        : [];
+      const mergedCompanyIds = Array.from(new Set([...existingCompanyIds, ...incomingCompanyIds]));
+      const companyIdsChanged = mergedCompanyIds.length !== existingCompanyIds.length;
+
+      // Merge the owning user's userId into participantUserIds so inbox listeners that filter
+      // by `participantUserIds array-contains userId` see this thread even on pre-existing threads
+      // (e.g., threads created by outbound-first sync or legacy imports).
+      const existingParticipantUserIds = Array.isArray(existingThread.participantUserIds)
+        ? existingThread.participantUserIds
+        : [];
+      let mergedParticipantUserIds = existingParticipantUserIds;
+      if (options?.userId && !existingParticipantUserIds.includes(options.userId)) {
+        mergedParticipantUserIds = [...existingParticipantUserIds, options.userId];
+      }
+      const participantUserIdsChanged =
+        mergedParticipantUserIds.length !== existingParticipantUserIds.length;
+
+      const labelsChanged = updatedLabels.length !== existingLabels.length || existingLabels.length === 0;
+
+      if (labelsChanged || contactIdsChanged || companyIdsChanged || participantUserIdsChanged) {
+        const updates: Record<string, any> = {
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+        if (labelsChanged) {
+          updates.labels = updatedLabels;
+          existingThread.labels = updatedLabels;
+        }
+        if (contactIdsChanged) {
+          updates.participantContactIds = mergedContactIds;
+          existingThread.participantContactIds = mergedContactIds;
+        }
+        if (companyIdsChanged) {
+          updates.participantCompanyIds = mergedCompanyIds;
+          existingThread.participantCompanyIds = mergedCompanyIds;
+        }
+        if (participantUserIdsChanged) {
+          updates.participantUserIds = mergedParticipantUserIds;
+          existingThread.participantUserIds = mergedParticipantUserIds;
+        }
         await db
           .collection('tenants')
           .doc(tenantId)
           .collection('emailThreads')
           .doc(existingThread.id)
-          .update({
-            labels: updatedLabels,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-        existingThread.labels = updatedLabels;
+          .update(updates);
       }
       return existingThread;
     }
@@ -318,6 +371,8 @@ export async function findOrCreateEmailThread(
       subject: emailData.subject,
       participants: uniqueParticipants,
       participantUserIds: options?.userId ? [options.userId] : [],
+      participantContactIds: incomingContactIds,
+      participantCompanyIds: incomingCompanyIds,
       sentByUserIds: [],
       lastMessageAt: admin.firestore.FieldValue.serverTimestamp(),
       unreadCount: 0,
@@ -355,6 +410,13 @@ export async function addMessageToThread(
   tenantId: string,
   message: Omit<EmailMessage, 'id' | 'threadId' | 'tenantId' | 'createdAt'> & {
     createdAt?: Date | admin.firestore.Timestamp; // Optional: use original email timestamp
+  },
+  options?: {
+    participantContactIds?: string[]; // CRM contact IDs to merge into thread
+    participantCompanyIds?: string[]; // CRM company IDs to merge into thread
+    ownerUserId?: string; // Owning user's userId (recipient for inbound, sender for outbound).
+                          // Ensures thread appears in that user's inbox listener which filters
+                          // by `participantUserIds array-contains userId`.
   }
 ): Promise<string> {
   try {
@@ -442,6 +504,20 @@ export async function addMessageToThread(
       }
     }
 
+    // Owner tracking: ensure the owning user (recipient for inbound, sender for outbound) is
+    // in participantUserIds so their inbox listener surfaces this thread. Without this, inbound
+    // messages on a thread created before the owner was known never add the owner.
+    if (options?.ownerUserId) {
+      const existingParticipantUsers = Array.isArray(updates.participantUserIds)
+        ? updates.participantUserIds
+        : Array.isArray(threadData.participantUserIds)
+          ? threadData.participantUserIds
+          : [];
+      if (!existingParticipantUsers.includes(options.ownerUserId)) {
+        updates.participantUserIds = [...existingParticipantUsers, options.ownerUserId];
+      }
+    }
+
     // Update participants if new email addresses
     const newParticipants = [
       message.from,
@@ -458,6 +534,33 @@ export async function addMessageToThread(
 
     if (allParticipants.length > threadData.participants.length) {
       updates.participants = allParticipants;
+    }
+
+    // Merge participant contact/company IDs (for array-contains queries on threads)
+    const incomingContactIds = Array.from(
+      new Set((options?.participantContactIds || []).filter(Boolean))
+    );
+    if (incomingContactIds.length > 0) {
+      const existingContactIds = Array.isArray(threadData.participantContactIds)
+        ? threadData.participantContactIds
+        : [];
+      const merged = Array.from(new Set([...existingContactIds, ...incomingContactIds]));
+      if (merged.length !== existingContactIds.length) {
+        updates.participantContactIds = merged;
+      }
+    }
+
+    const incomingCompanyIds = Array.from(
+      new Set((options?.participantCompanyIds || []).filter(Boolean))
+    );
+    if (incomingCompanyIds.length > 0) {
+      const existingCompanyIds = Array.isArray(threadData.participantCompanyIds)
+        ? threadData.participantCompanyIds
+        : [];
+      const merged = Array.from(new Set([...existingCompanyIds, ...incomingCompanyIds]));
+      if (merged.length !== existingCompanyIds.length) {
+        updates.participantCompanyIds = merged;
+      }
     }
 
     await threadRef.update(updates);
