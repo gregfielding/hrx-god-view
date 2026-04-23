@@ -37,6 +37,8 @@ import {
   normalizeQualificationSubScoreValue,
   qualificationBarDisplayPercent,
   qualificationSeverityBand,
+  rawQualificationPointsToPercentages,
+  QUALIFICATION_BREAKDOWN_RAW_MAX,
 } from '../../../utils/scoring/normalizeQualificationScores';
 import {
   QUALIFICATION_DISPLAY_LABEL,
@@ -349,6 +351,12 @@ export function OverviewScoringCardRecruiterTrust({
 
   const sub = latestPrescreenInterviewAi?.subScores;
 
+  // Convert backend sub-score raw points (mixed maxes: experience 25, reliability 25,
+  // transportation 20, risk 20, physical 10 — summing to 100) to comparable 0-100
+  // percentages, then soft-cap physical for display. Mirrors `ScoreIntelligencePanel`.
+  // Previously this used `normalizeQualificationSubScoreValue` which only up-scaled
+  // values ≤10 (so physical 10 → 100, but experience 25 passed through as 25 and
+  // rendered as a tiny 25% bar — exactly the complaint that prompted this fix).
   const qualificationSubNormalized = useMemo(() => {
     if (!sub) {
       return normalizeQualificationScores({
@@ -359,13 +367,15 @@ export function OverviewScoringCardRecruiterTrust({
         physical: 0,
       });
     }
-    return normalizeQualificationScores({
-      experience: normalizeQualificationSubScoreValue(sub.experience) ?? 0,
-      reliability: normalizeQualificationSubScoreValue(sub.reliability) ?? 0,
-      transport: normalizeQualificationSubScoreValue(sub.transportation) ?? 0,
-      risk: normalizeQualificationSubScoreValue(sub.risk) ?? 0,
-      physical: normalizeQualificationSubScoreValue(sub.physical) ?? 0,
-    });
+    return normalizeQualificationScores(
+      rawQualificationPointsToPercentages({
+        experience: typeof sub.experience === 'number' ? sub.experience : 0,
+        reliability: typeof sub.reliability === 'number' ? sub.reliability : 0,
+        transportation: typeof sub.transportation === 'number' ? sub.transportation : 0,
+        risk: typeof sub.risk === 'number' ? sub.risk : 0,
+        physical: typeof sub.physical === 'number' ? sub.physical : 0,
+      }),
+    );
   }, [sub]);
 
   const overrideApplied =
@@ -547,6 +557,8 @@ export function OverviewScoringCardRecruiterTrust({
                     ? sub.transportation
                     : sub[dim as keyof typeof sub];
               const n = normalizeQualificationSubScoreValue(raw);
+              const rawPts = typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+              const maxPts = QUALIFICATION_BREAKDOWN_RAW_MAX[dim];
               const displayPct = qualificationNormalizedPercent(qualificationSubNormalized, dim);
               const barValue = qualificationBarDisplayPercent(displayPct);
               const sev = qualificationSeverityBand(displayPct);
@@ -592,10 +604,16 @@ export function OverviewScoringCardRecruiterTrust({
                   </Box>
                   <Typography
                     variant="caption"
-                    sx={{ width: 28, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+                    sx={{ width: 44, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
                     color={n == null ? 'text.disabled' : 'text.primary'}
                   >
-                    {n != null ? n : '—'}
+                    {/*
+                      Show raw points out of the per-category max (matches the
+                      ScoreIntelligencePanel "Interview model sub-scores" card
+                      and makes the scoring scale explicit — e.g. 22 / 25
+                      instead of a bare "22" that looks like 22%).
+                    */}
+                    {rawPts != null ? `${Math.round(rawPts)} / ${maxPts}` : '—'}
                   </Typography>
                 </Stack>
               );
