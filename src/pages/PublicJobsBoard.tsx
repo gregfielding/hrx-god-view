@@ -70,7 +70,7 @@ import FavoritesFilter from '../components/FavoritesFilter';
 import Layout from '../components/Layout';
 import AuthDialog from '../components/AuthDialog';
 import EligibilityModal from '../components/EligibilityModal';
-import { checkMissingCertifications } from '../utils/checkMissingCertifications';
+import { checkMissingCertificationsWithEngine } from '../utils/checkMissingCertifications';
 import { toChipLabel } from '../utils/chipLabel';
 import { getLastShiftDateFromShifts } from '../utils/dateSchedule';
 import { formatWorksiteCityStateZip } from '../utils/formatWorksiteAddress';
@@ -104,6 +104,9 @@ interface PublicJobPosting {
   workersNeeded?: number;
   showWorkersNeeded?: boolean; // Whether to show workers needed on public posting
   eVerifyRequired?: boolean;
+  screeningPackageName?: string;
+  showScreeningPackageOnPost?: boolean;
+  screeningPackageServiceNames?: string[];
   backgroundCheckPackages?: string[];
   showBackgroundChecks?: boolean;
   drugScreeningPanels?: string[];
@@ -195,7 +198,9 @@ const PublicJobsBoard: React.FC = () => {
   const [userAssignmentIdByJobOrderId, setUserAssignmentIdByJobOrderId] = useState<Record<string, string>>({});
   const [userGroupIds, setUserGroupIds] = useState<string[]>([]);
   const [userCertifications, setUserCertifications] = useState<Array<{ name?: string }>>([]);
-  
+  /** Gap list for requirements tab — engine-backed when `REACT_APP_CERT_ENGINE_READINESS` is set. */
+  const [profileMissingCertList, setProfileMissingCertList] = useState<string[]>([]);
+
   // Track shifts for selected job in dialog
   const [selectedJobShifts, setSelectedJobShifts] = useState<any[]>([]);
   const [loadingSelectedJobShifts, setLoadingSelectedJobShifts] = useState(false);
@@ -327,6 +332,39 @@ const PublicJobsBoard: React.FC = () => {
     };
     loadUserData();
   }, [user?.uid, specificTenantId]);
+
+  const licensesCertsKey =
+    selectedJob?.licensesCerts && selectedJob.licensesCerts.length > 0
+      ? JSON.stringify(selectedJob.licensesCerts)
+      : '';
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!user?.uid || !selectedJob?.licensesCerts?.length) {
+        setProfileMissingCertList([]);
+        return;
+      }
+      try {
+        const missing = await checkMissingCertificationsWithEngine({
+          requiredCerts: selectedJob.licensesCerts,
+          userCerts: userCertifications,
+          workerUid: user.uid,
+          jobPosting: {
+            id: selectedJob.id,
+            licensesCerts: selectedJob.licensesCerts,
+            showLicensesCerts: selectedJob.showLicensesCerts,
+          },
+        });
+        if (!cancelled) setProfileMissingCertList(missing);
+      } catch {
+        if (!cancelled) setProfileMissingCertList([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid, userCertifications, licensesCertsKey, selectedJob?.id]);
 
   // Request user's location permission and get coordinates
   // Only call this in response to a user gesture (e.g., selecting "Closest to Me")
@@ -479,9 +517,12 @@ const PublicJobsBoard: React.FC = () => {
       workersNeeded: jobOrder.workersNeeded,
       showWorkersNeeded: jobOrder.showWorkersNeeded === true, // Default to false so workers needed is hidden unless explicitly enabled
       eVerifyRequired: jobOrder.eVerifyRequired || false,
-      backgroundCheckPackages: jobOrder.backgroundCheckPackages || [],
+      screeningPackageName: (jobOrder as { screeningPackageName?: string }).screeningPackageName,
+      showScreeningPackageOnPost: false,
+      screeningPackageServiceNames: [],
+      backgroundCheckPackages: [],
       showBackgroundChecks: false,
-      drugScreeningPanels: jobOrder.drugScreeningPanels || [],
+      drugScreeningPanels: [],
       showDrugScreening: false,
       additionalScreenings: jobOrder.additionalScreenings || [],
       showAdditionalScreenings: false,
@@ -741,6 +782,9 @@ const PublicJobsBoard: React.FC = () => {
             workersNeeded: post.workersNeeded,
             showWorkersNeeded: post.showWorkersNeeded === true, // Default to false so workers needed is hidden unless explicitly enabled
             eVerifyRequired: post.eVerifyRequired,
+            screeningPackageName: post.screeningPackageName ?? undefined,
+            showScreeningPackageOnPost: post.showScreeningPackageOnPost,
+            screeningPackageServiceNames: post.screeningPackageServiceNames,
             backgroundCheckPackages: post.backgroundCheckPackages,
             showBackgroundChecks: post.showBackgroundChecks,
             drugScreeningPanels: post.drugScreeningPanels,
@@ -970,6 +1014,9 @@ const PublicJobsBoard: React.FC = () => {
               workersNeeded: post.workersNeeded,
             showWorkersNeeded: post.showWorkersNeeded === true, // Default to false so workers needed is hidden unless explicitly enabled
               eVerifyRequired: post.eVerifyRequired,
+              screeningPackageName: post.screeningPackageName ?? undefined,
+              showScreeningPackageOnPost: post.showScreeningPackageOnPost,
+              screeningPackageServiceNames: post.screeningPackageServiceNames,
               backgroundCheckPackages: post.backgroundCheckPackages,
               showBackgroundChecks: post.showBackgroundChecks,
               drugScreeningPanels: post.drugScreeningPanels,
@@ -2151,7 +2198,7 @@ const PublicJobsBoard: React.FC = () => {
                         // Only show warning if user has applied
                         if (!hasApplied) return null;
                         
-                        const missingCerts = checkMissingCertifications(selectedJob.licensesCerts, userCertifications);
+                        const missingCerts = profileMissingCertList;
                         if (missingCerts.length > 0) {
                           return (
                             <Alert 
@@ -2298,7 +2345,31 @@ const PublicJobsBoard: React.FC = () => {
                     </Box>
                   )}
 
-                  {/* Background Checks */}
+                  {selectedJob.showScreeningPackageOnPost &&
+                    (String(selectedJob.screeningPackageName || '').trim() ||
+                      (selectedJob.screeningPackageServiceNames &&
+                        selectedJob.screeningPackageServiceNames.length > 0)) && (
+                    <Box>
+                      <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
+                        <Security sx={{ fontSize: 20, mr: 1, verticalAlign: 'middle' }} />
+                        Required screenings
+                      </Typography>
+                      {selectedJob.screeningPackageServiceNames &&
+                      selectedJob.screeningPackageServiceNames.length > 0 ? (
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                          {selectedJob.screeningPackageServiceNames.map((svc, index) => (
+                            <Chip key={index} label={svc} size="small" variant="outlined" />
+                          ))}
+                        </Box>
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">
+                          Background screening required for this role.
+                        </Typography>
+                      )}
+                    </Box>
+                  )}
+
+                  {/* Background Checks (legacy) */}
                   {selectedJob.backgroundCheckPackages && selectedJob.backgroundCheckPackages.length > 0 && selectedJob.showBackgroundChecks && (
                     <Box>
                       <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>

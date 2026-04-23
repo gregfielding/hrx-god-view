@@ -47,6 +47,8 @@ import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
 import MarkEmailReadIcon from '@mui/icons-material/MarkEmailRead';
 import FilterListIcon from '@mui/icons-material/FilterList';
+import SyncIcon from '@mui/icons-material/Sync';
+import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
 import Checkbox from '@mui/material/Checkbox';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
@@ -301,35 +303,6 @@ const UserInboxPage: React.FC = () => {
     setShowUnreadOnly(false);
   };
 
-  const getInboxHeaderTitle = (): string => {
-    const mailboxLabelMap: Record<InboxFilter, string> = {
-      primary: 'Inbox: Primary',
-      social: 'Inbox: Social',
-      promotions: 'Inbox: Promotions',
-      updates: 'Inbox: Updates',
-      forums: 'Inbox: Forums',
-      spam: 'Inbox: Spam',
-      starred: 'Starred',
-      sent: 'Sent',
-      drafts: 'Drafts',
-      trash: 'Trash',
-    };
-
-    const base = mailboxLabelMap[activeFilter] ?? 'Inbox';
-    // Only show "(Unread)" when in a mailbox view (like Mimestream)
-    const isMailboxView = ['primary', 'social', 'promotions', 'updates', 'forums', 'spam'].includes(activeFilter);
-    return showUnreadOnly && isMailboxView ? `${base} (Unread)` : base;
-  };
-
-  const getInboxHeaderSubtitle = (): string => {
-    if (activeFilter === 'trash') return 'Deleted messages from your connected inbox.';
-    if (activeFilter === 'sent') return 'Messages you sent from your connected inbox.';
-    if (activeFilter === 'drafts') return 'Draft messages from your connected inbox.';
-    if (activeFilter === 'starred') return 'Starred messages from your connected inbox.';
-    if (activeFilter === 'spam') return 'Spam messages from your connected inbox.';
-    return 'View and manage messages from your connected inbox.';
-  };
-
   // Inbox uses the universal right-side drawer, not a split preview pane.
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -512,6 +485,38 @@ const UserInboxPage: React.FC = () => {
         }
       });
   }, [user?.uid, effectiveTenantId, refreshStatus]);
+
+  // Stop + restart the Gmail push watch. Recovers from stuck history IDs and
+  // channels that went silent (e.g. after OAuth reconnect).
+  const handleResetPushWatch = useCallback(async () => {
+    if (!user?.uid) return;
+    setError(null);
+    setSyncSuccess(null);
+    try {
+      const stopFn = httpsCallable(functions, 'stopGmailWatch');
+      const startFn = httpsCallable(functions, 'startGmailWatch');
+      try {
+        await stopFn({ userId: user.uid });
+      } catch (e) {
+        // Non-fatal — the old watch may not exist.
+        console.warn('stopGmailWatch failed (non-fatal):', e);
+      }
+      const res: any = await startFn({ userId: user.uid });
+      const data = res?.data || {};
+      if (data.success) {
+        setSyncSuccess(
+          `Push sync reset. Fresh watch active; historyId=${data.historyId || 'n/a'}.`
+        );
+        // Reset in-memory backoff so the next silent sync runs.
+        gmailSyncBackoffUntilRef.current = 0;
+      } else {
+        setError('Push sync reset did not confirm success. Check logs.');
+      }
+    } catch (e: any) {
+      console.error('Reset push watch failed:', e);
+      setError(`Failed to reset push sync: ${e?.message || 'Unknown error'}`);
+    }
+  }, [user?.uid]);
 
   // Reset search state when searchQuery becomes empty
   useEffect(() => {
@@ -1115,7 +1120,10 @@ const UserInboxPage: React.FC = () => {
             threadIds: ids,
             tenantId: effectiveTenantId,
             userId: user.uid,
-            updates: { unreadCount: 0 },
+            // Use read: true so each message's read flag is flipped and the
+            // Gmail UNREAD label is removed. Sending only unreadCount: 0 here
+            // makes the change revert on the next reconciliation pass.
+            updates: { read: true },
           }),
         }
       );
@@ -1998,8 +2006,9 @@ const UserInboxPage: React.FC = () => {
       {/* Page Header with Standardized Layout */}
           {activeTab === 'email' && (
         <PageHeader
-          title={getInboxHeaderTitle()}
-          subtitle={getInboxHeaderSubtitle()}
+          hideHeading
+          dense
+          title=""
           filters={
             <InboxFilters
               activeFilter={activeFilter}
@@ -2022,26 +2031,52 @@ const UserInboxPage: React.FC = () => {
                 suggestions={generateSearchSuggestions(searchQuery)}
                 disabled={loading}
               />
+          <Tooltip title="Pull the latest from Gmail (manual sync)">
+            <span>
+              <IconButton
+                size="small"
+                onClick={() => handleSyncGmail(false)}
+                disabled={syncingGmail || !gmailConnected}
+                sx={{ height: 32, width: 32 }}
+              >
+                {syncingGmail ? <CircularProgress size={16} /> : <SyncIcon sx={{ fontSize: 18 }} />}
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Tooltip title="Reset Gmail push sync (stop + restart watch). Use if new emails aren't arriving in real time.">
+            <span>
+              <IconButton
+                size="small"
+                onClick={handleResetPushWatch}
+                disabled={!gmailConnected}
+                sx={{ height: 32, width: 32 }}
+              >
+                <NotificationsActiveIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            </span>
+          </Tooltip>
           <Button
             variant="contained"
-            startIcon={<EditIcon />}
+            startIcon={<EditIcon sx={{ fontSize: 16 }} />}
             onClick={() => setMessageDrawerOpen(true)}
-                sx={{
-                  textTransform: 'none',
-                  borderRadius: '24px',
-                  px: 2.5,
-                  py: 1,
-                  height: '40px',
-                  fontWeight: 500,
-                  fontSize: '14px',
-                  bgcolor: '#0057B8',
-                  boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
-                  '&:hover': {
-                    bgcolor: '#004a9f',
-                    boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
-                  },
-                  whiteSpace: 'nowrap',
-                }}
+            sx={{
+              textTransform: 'none',
+              borderRadius: '999px',
+              px: 1.5,
+              py: 0.5,
+              minHeight: 30,
+              height: 30,
+              fontWeight: 600,
+              fontSize: '13px',
+              bgcolor: '#0057B8',
+              boxShadow: 'none',
+              '& .MuiButton-startIcon': { mr: 0.35 },
+              '&:hover': {
+                bgcolor: '#004a9f',
+                boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
+              },
+              whiteSpace: 'nowrap',
+            }}
           >
             Compose
           </Button>

@@ -65,36 +65,39 @@ export function runComplianceRules(input: ActionItemsV1Input): ActionItem[] {
   }
 
   const certs = Array.isArray(input.certifications) ? input.certifications : [];
-  certs.forEach((c, idx) => {
-    if (!c || typeof c !== 'object') return;
-    const o = c as Record<string, unknown>;
-    const name = String(o.name || o.label || o.title || 'Certification');
-    const required = o.required === true || o.isRequired === true;
-    const hasFile = Boolean(o.fileName || o.fileUrl || o.uploadedAt);
-    const expired = o.expired === true || o.status === 'expired';
-    if (required && (!hasFile || expired)) {
-      out.push(
-        makeActionItem({
-          dedupeKey: `cert:${name}:${idx}`,
-          type: 'cert_required_missing',
-          category: 'compliance',
-          severity: 'high',
-          actor: 'worker',
-          title: `Missing required certification — ${name}`,
-          shortDescription: expired
-            ? 'The saved credential looks expired — renew or replace it.'
-            : 'Upload proof or complete this requirement to clear the blocker.',
-          scope: { kind: 'global' },
-          blocking: 'hard',
-          sourceType: 'user_doc',
-          sourceId: input.uid,
-          ctaLabel: 'Certifications',
-          ctaTarget: { kind: 'profileTab', tab: 'Certifications' },
-          priority: 18,
-        }),
-      );
-    }
-  });
+  const skipLegacyCerts = input.skipLegacyCertificationActionItems === true;
+  if (!skipLegacyCerts) {
+    certs.forEach((c, idx) => {
+      if (!c || typeof c !== 'object') return;
+      const o = c as Record<string, unknown>;
+      const name = String(o.name || o.label || o.title || 'Certification');
+      const required = o.required === true || o.isRequired === true;
+      const hasFile = Boolean(o.fileName || o.fileUrl || o.uploadedAt);
+      const expired = o.expired === true || o.status === 'expired';
+      if (required && (!hasFile || expired)) {
+        out.push(
+          makeActionItem({
+            dedupeKey: `cert:${name}:${idx}`,
+            type: 'cert_required_missing',
+            category: 'compliance',
+            severity: 'high',
+            actor: 'worker',
+            title: `Missing required certification — ${name}`,
+            shortDescription: expired
+              ? 'The saved credential looks expired — renew or replace it.'
+              : 'Upload proof or complete this requirement to clear the blocker.',
+            scope: { kind: 'global' },
+            blocking: 'hard',
+            sourceType: 'user_doc',
+            sourceId: input.uid,
+            ctaLabel: 'Certifications',
+            ctaTarget: { kind: 'profileTab', tab: 'Certifications' },
+            priority: 18,
+          }),
+        );
+      }
+    });
+  }
 
   return out;
 }

@@ -44,7 +44,15 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage, db } from '../firebase';
 import { collection, query, where, getDocs, limit, doc, getDoc } from 'firebase/firestore';
 import { createAutoSave, loadDraft, deleteDraft } from '../utils/emailDrafts';
+import { generateEmailSignature, type EmailSignatureSettings } from '../utils/emailSignature';
 import { useMemo } from 'react';
+
+/**
+ * Delay before closing the drawer after a successful send. Short enough that the
+ * user perceives it as instant, long enough that the "Message sent" toast has a
+ * chance to flash.
+ */
+const CLOSE_AFTER_SEND_MS = 500;
 
 export interface MessageRecipient {
   userId: string;
@@ -130,6 +138,11 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
   const [recipientInputValue, setRecipientInputValue] = useState('');
   const [draftId, setDraftId] = useState<string | undefined>(undefined);
   const [draftLoaded, setDraftLoaded] = useState(false);
+  // Cc/Bcc are collapsed by default — 99% of emails don't use them, and showing them always
+  // eats vertical space the composer's message body needs.
+  const [showCcBcc, setShowCcBcc] = useState(false);
+  // Signature preview: we fetch and render what the server will append on send.
+  const [signatureHtml, setSignatureHtml] = useState<string>('');
   const prevOpenRef = useRef(false); // Track previous open state to detect when drawer first opens
   const hideChannelSelector =
     bulkSystemMode ||
@@ -182,6 +195,105 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
       setDraftLoaded(false);
     }
   }, [open, user?.uid, effectiveTenantId, threadId, defaultSubject, defaultBody]);
+
+  // Load email signature preview (mirrors backend `buildStoredBodiesWithSignature` logic)
+  useEffect(() => {
+    let cancelled = false;
+    const loadSignaturePreview = async () => {
+      if (!open || !user?.uid || !effectiveTenantId) {
+        if (!cancelled) setSignatureHtml('');
+        return;
+      }
+      // Signatures only apply to email via Gmail identity. Skip for bulk-system mode.
+      if (!channels.includes('email') || bulkSystemMode) {
+        if (!cancelled) setSignatureHtml('');
+        return;
+      }
+      try {
+        const [userSnap, tenantSnap] = await Promise.all([
+          getDoc(doc(db, 'users', user.uid)),
+          getDoc(doc(db, 'tenants', effectiveTenantId)),
+        ]);
+        if (cancelled) return;
+        const userData: any = userSnap.exists() ? userSnap.data() : null;
+        const tenantData: any = tenantSnap.exists() ? tenantSnap.data() : null;
+        const raw = userData?.emailSignature;
+        if (!raw) {
+          setSignatureHtml('');
+          return;
+        }
+        const hasAnySignatureConfig =
+          !!raw && (raw.template || raw.customHtml || raw.data || raw.enabled);
+        if (!hasAnySignatureConfig) {
+          setSignatureHtml('');
+          return;
+        }
+        const normalizeJobTitle = (title?: string): string =>
+          title
+            ? String(title)
+                .replace(/\s*\|\s*C1 Staffing\s*$/i, '')
+                .replace(/\s*-\s*C1 Staffing\s*$/i, '')
+                .trim()
+            : '';
+        const resolveOfficeLocation = (): string => {
+          const direct = userData?.officeLocation || userData?.location;
+          if (typeof direct === 'string' && direct.trim()) return direct.trim();
+          const city = userData?.city || '';
+          const state = userData?.state || '';
+          return [city, state].filter(Boolean).join(', ');
+        };
+        const hadOfficeLocationKey =
+          !!raw?.data && Object.prototype.hasOwnProperty.call(raw.data, 'officeLocation');
+        const settings: EmailSignatureSettings = {
+          template: raw.template || 'default',
+          enabled: true, // Always render preview (parity with provider always-on behavior)
+          customHtml: raw.customHtml,
+          data: { ...(raw.data || {}) } as any,
+        };
+        if (!settings.data.email && userData?.email) settings.data.email = userData.email;
+        if (!settings.data.fullName) {
+          const fullName =
+            userData?.displayName ||
+            `${userData?.firstName || ''} ${userData?.lastName || ''}`.trim() ||
+            userData?.email?.split('@')?.[0] ||
+            '';
+          if (fullName) settings.data.fullName = fullName;
+        }
+        if (!settings.data.phone && (userData?.phone || userData?.phoneNumber)) {
+          settings.data.phone = userData?.phone || userData?.phoneNumber || '';
+        }
+        if (!settings.data.jobTitle && userData?.jobTitle) {
+          settings.data.jobTitle = normalizeJobTitle(userData.jobTitle);
+        } else if (settings.data.jobTitle) {
+          settings.data.jobTitle = normalizeJobTitle(settings.data.jobTitle);
+        }
+        if (!hadOfficeLocationKey && !settings.data.officeLocation) {
+          const officeLocation = resolveOfficeLocation();
+          if (officeLocation) settings.data.officeLocation = officeLocation;
+        }
+        if (!settings.data.pronouns && userData?.pronouns) {
+          settings.data.pronouns = userData.pronouns;
+        }
+        if (
+          (settings.data as any).includeConfidentialityNotice == null &&
+          userData?.includeConfidentialityNotice != null
+        ) {
+          (settings.data as any).includeConfidentialityNotice = userData.includeConfidentialityNotice;
+        }
+        if (tenantData?.avatar) (settings.data as any).logoUrl = tenantData.avatar;
+        if (tenantData?.website) (settings.data as any).website = tenantData.website;
+        const html = generateEmailSignature(settings);
+        if (!cancelled) setSignatureHtml(html || '');
+      } catch (err) {
+        console.warn('[MessageDrawer] Failed to load signature preview', err);
+        if (!cancelled) setSignatureHtml('');
+      }
+    };
+    loadSignaturePreview();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, user?.uid, effectiveTenantId, channels, bulkSystemMode]);
 
   // Pre-load sender information and check Twilio number when drawer opens
   // CRITICAL: Only reset form fields when drawer FIRST opens (not on every prop change)
@@ -620,6 +732,22 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
     });
   };
 
+  /**
+   * Close the drawer after a successful send. All send paths (bulk email,
+   * bulk SMS, new email, thread reply, generic) go through this helper so the
+   * delay stays consistent. Previously each path had its own setTimeout with
+   * 0ms / 750ms / 2000ms — the variation was visible to users.
+   */
+  const closeAfterSend = (label: string) => {
+    console.info('[MessageDrawer] send succeeded, closing drawer', {
+      label,
+      delayMs: CLOSE_AFTER_SEND_MS,
+    });
+    setTimeout(() => {
+      onClose();
+    }, CLOSE_AFTER_SEND_MS);
+  };
+
   const validateForm = (): boolean => {
     if (channels.length === 0) {
       setError('Please select at least one channel');
@@ -714,7 +842,7 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
           } else {
             setSuccess(true);
             if (onSend) onSend({ success: true, dispatchedChannels: ['email'], messageLogIds: [] });
-            onClose();
+            closeAfterSend('bulk-email');
           }
         } else if (channels.includes('sms')) {
           console.log('[MessageDrawer] Bulk SMS request:', {
@@ -766,7 +894,7 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
           } else {
             setSuccess(true);
             if (onSend) onSend({ success: true, dispatchedChannels: ['sms'], messageLogIds: [] });
-            onClose();
+            closeAfterSend('bulk-sms');
           }
         } else {
           setError('Select email or SMS');
@@ -876,9 +1004,7 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
           if (onSend) {
             onSend({ success: true, dispatchedChannels: ['email'], messageLogIds: [result.messageId] });
           }
-          setTimeout(() => {
-            onClose();
-          }, 2000);
+          closeAfterSend('new-email');
         } else {
           setError('Failed to send email');
         }
@@ -993,9 +1119,7 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
               onSend({ success: true, dispatchedChannels: ['email'], messageLogIds: [result.messageId] });
             }
             setSuccess(true);
-            setTimeout(() => {
-              onClose();
-            }, 750);
+            closeAfterSend('thread-reply');
           } else {
             // Remove optimistic message on error
             if (onMessageSent) {
@@ -1085,9 +1209,7 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
         if (onSend) {
           onSend(result);
         }
-        setTimeout(() => {
-          onClose();
-        }, 2000);
+        closeAfterSend('generic');
       } else {
         setError(
           result.warnings?.filter(Boolean).join(' · ') ||
@@ -1109,7 +1231,7 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
     <Box sx={{ display: 'flex', flexDirection: 'column', height: variant === 'inline' ? 'auto' : '100%' }}>
       {/* Header - only show in drawer variant */}
       {variant === 'drawer' && (
-        <Box sx={{ p: 3, borderBottom: 1, borderColor: 'divider' }}>
+        <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <Typography variant="h6" component="h2">
               Send Message
@@ -1122,7 +1244,7 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
       )}
 
       {/* Content */}
-      <Box sx={{ flex: variant === 'inline' ? 'none' : 1, overflow: 'auto', p: variant === 'inline' ? 2 : 3 }}>
+      <Box sx={{ flex: variant === 'inline' ? 'none' : 1, overflow: 'auto', p: variant === 'inline' ? 2 : 2 }}>
           <Stack spacing={3}>
             {/* Sender Selection */}
             {bulkSystemMode ? (
@@ -1252,12 +1374,16 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
 
             {/* Email-specific fields */}
             {channels.includes('email') && (
-              <Stack spacing={2}>
+              <Stack spacing={1}>
                 {!bulkSystemMode && (
-                <Box>
-                  <Typography variant="subtitle2" gutterBottom>
-                    To *
+                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                  <Typography
+                    variant="body2"
+                    sx={{ width: 48, flexShrink: 0, color: 'text.secondary', pt: '7px' }}
+                  >
+                    To
                   </Typography>
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
                   <Autocomplete
                     freeSolo
                     multiple={false}
@@ -1391,13 +1517,27 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
                       </Stack>
                     </Box>
                   )}
+                  </Box>
+                  {!showCcBcc && (
+                    <Button
+                      size="small"
+                      variant="text"
+                      onClick={() => setShowCcBcc(true)}
+                      sx={{ flexShrink: 0, minWidth: 'auto', textTransform: 'none', color: 'text.secondary', pt: '4px' }}
+                    >
+                      Cc Bcc
+                    </Button>
+                  )}
                 </Box>
                 )}
-                {!bulkSystemMode && (
+                {!bulkSystemMode && showCcBcc && (
                 <>
-                <Box>
-                  <Typography variant="subtitle2" gutterBottom>
-                    Cc (optional)
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Typography
+                    variant="body2"
+                    sx={{ width: 48, flexShrink: 0, color: 'text.secondary' }}
+                  >
+                    Cc
                   </Typography>
                   <TextField
                     fullWidth
@@ -1407,9 +1547,12 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
                     placeholder="cc@example.com"
                   />
                 </Box>
-                <Box>
-                  <Typography variant="subtitle2" gutterBottom>
-                    Bcc (optional)
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Typography
+                    variant="body2"
+                    sx={{ width: 48, flexShrink: 0, color: 'text.secondary' }}
+                  >
+                    Bcc
                   </Typography>
                   <TextField
                     fullWidth
@@ -1421,9 +1564,12 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
                 </Box>
                 </>
                 )}
-                <Box>
-                  <Typography variant="subtitle2" gutterBottom>
-                    Subject *
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Typography
+                    variant="body2"
+                    sx={{ width: 48, flexShrink: 0, color: 'text.secondary' }}
+                  >
+                    Subject
                   </Typography>
                   <TextField
                     fullWidth
@@ -1456,12 +1602,41 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
                 onChange={setMessageBody}
                 availableVariables={['firstName', 'lastName', 'fullName', 'email', 'phone']}
                 hideViewToggle={true}
-                editorHeight={250}
+                editorHeight={360}
               />
               {channels.includes('sms') && (
                 <Alert severity="info" sx={{ mt: 1 }}>
                   SMS will use plain text version. Email will use rich formatting. Push will extract title from first line.
                 </Alert>
+              )}
+              {/* Signature preview — appended by server on send */}
+              {channels.includes('email') && !bulkSystemMode && signatureHtml && (
+                <Box
+                  sx={{
+                    mt: 1.5,
+                    pt: 1.5,
+                    borderTop: '1px dashed',
+                    borderColor: 'divider',
+                  }}
+                >
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block', mb: 0.5 }}
+                  >
+                    Signature (added automatically on send)
+                  </Typography>
+                  <Box
+                    sx={{
+                      color: 'text.secondary',
+                      fontSize: 13,
+                      lineHeight: 1.5,
+                      '& a': { color: 'primary.main', textDecoration: 'none' },
+                      '& strong': { color: 'text.primary' },
+                    }}
+                    dangerouslySetInnerHTML={{ __html: signatureHtml }}
+                  />
+                </Box>
               )}
             </Box>
 
@@ -1543,7 +1718,7 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
         </Box>
 
       {/* Footer Actions */}
-      <Box sx={{ p: variant === 'inline' ? 2 : 3, borderTop: 1, borderColor: 'divider' }}>
+      <Box sx={{ px: 2, py: 1.5, borderTop: 1, borderColor: 'divider' }}>
         <Stack direction="row" spacing={2} justifyContent="flex-end">
           <Button onClick={onClose} disabled={loading}>
             Cancel

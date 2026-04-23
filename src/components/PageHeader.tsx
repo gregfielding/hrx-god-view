@@ -11,8 +11,10 @@ import { Divider } from '@mui/material';
 import type { SxProps, Theme } from '@mui/material/styles';
 
 interface PageHeaderProps {
+  /** When true, skips the title + subtitle row (toolbar row unchanged). */
+  hideHeading?: boolean;
   title: string | React.ReactNode; // Can be string or custom React element (e.g., with avatar)
-  subtitle?: string | React.ReactNode; // Can be string or custom React element (e.g., metadata line)
+  subtitle?: string | React.ReactNode; // Can be string or custom React element (e.g., with metadata line)
   titleRightActions?: React.ReactNode; // Optional: actions rendered on the title row (record-style pages)
   filters?: React.ReactNode;     // Left side: filter chips, toggles, etc.
   rightActions?: React.ReactNode; // Right side: search + primary CTA
@@ -24,6 +26,7 @@ interface PageHeaderProps {
 }
 
 const PageHeader: React.FC<PageHeaderProps> = ({
+  hideHeading = false,
   title,
   subtitle,
   titleRightActions,
@@ -47,6 +50,7 @@ const PageHeader: React.FC<PageHeaderProps> = ({
   return (
     <Box sx={rootSx}>
       {/* Title and Subtitle */}
+      {!hideHeading && (
       <Box sx={{ mb: subtitle ? (dense ? 0.5 : 1) : dense ? 0.65 : 2 }}>
         <Box
           sx={{
@@ -121,6 +125,7 @@ const PageHeader: React.FC<PageHeaderProps> = ({
           )
         )}
       </Box>
+      )}
 
       {/* Toolbar Row */}
       {(filters || rightActions) && (

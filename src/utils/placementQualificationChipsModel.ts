@@ -29,6 +29,9 @@
 import type { ReadinessSnapshotV1Requirement } from '../shared/readinessSnapshotV1';
 import { stableCertRequiredSlug } from '../shared/jobOrderSyntheticCertificationDemands';
 import type { JobOrder } from '../types/recruiter/jobOrder';
+import { isCertEngineReadinessEnabled } from './certifications/certEngineReadinessFlag';
+
+export { isCertEngineReadinessEnabled };
 
 /** Keys never shown as red placement blockers (payroll / tax / handbook / policies). */
 export const PLACEMENT_BLOCKER_EXCLUDED_REQUIREMENT_KEYS = new Set([
@@ -129,35 +132,110 @@ export type PlacementBlockerFilterOptions = {
 /**
  * (C) Blocker filter: explicit allowlist for screening keys + cert suffixes; hard_block minus denylist; optional extra keys.
  */
+function collectPlacementBlockerLabel(
+  r: ReadinessSnapshotV1Requirement,
+  options: PlacementBlockerFilterOptions | null | undefined,
+  mode: 'all' | 'cert_only' | 'non_cert_only',
+): string | null {
+  if (r.status === 'complete') return null;
+  if (PLACEMENT_BLOCKER_EXCLUDED_REQUIREMENT_KEYS.has(r.key)) return null;
+
+  const certAllow = options?.requiredCertificationKeySuffixes ?? new Set<string>();
+  const isCert = r.key.startsWith(CERT_KEY_PREFIX);
+  if (mode === 'non_cert_only' && isCert) return null;
+  if (mode === 'cert_only' && !isCert) return null;
+
+  let include = false;
+  if (r.severity === 'hard_block') include = true;
+  else if (PLACEMENT_BLOCKER_SCREENING_KEYS.has(r.key)) include = true;
+  else if (PLACEMENT_BLOCKER_EXPLICIT_EXTRA_KEYS.has(r.key)) include = true;
+  else if (isCert) {
+    const suffix = certSuffixFromRequirementKey(r.key);
+    include = Boolean(suffix && certAllow.has(suffix));
+  }
+
+  if (!include) return null;
+  const label = (r.label || '').trim() || r.key;
+  return label;
+}
+
 export function selectPlacementBlockerLabelsFromSnapshot(
   requirements: ReadinessSnapshotV1Requirement[] | null | undefined,
   options?: PlacementBlockerFilterOptions | null
 ): string[] {
   if (!requirements?.length) return [];
-  const certAllow = options?.requiredCertificationKeySuffixes ?? new Set<string>();
   const out: string[] = [];
   const seen = new Set<string>();
 
   for (const r of requirements) {
-    if (r.status === 'complete') continue;
-    if (PLACEMENT_BLOCKER_EXCLUDED_REQUIREMENT_KEYS.has(r.key)) continue;
-
-    let include = false;
-    if (r.severity === 'hard_block') include = true;
-    else if (PLACEMENT_BLOCKER_SCREENING_KEYS.has(r.key)) include = true;
-    else if (PLACEMENT_BLOCKER_EXPLICIT_EXTRA_KEYS.has(r.key)) include = true;
-    else if (r.key.startsWith(CERT_KEY_PREFIX)) {
-      const suffix = certSuffixFromRequirementKey(r.key);
-      include = Boolean(suffix && certAllow.has(suffix));
-    }
-
-    if (!include) continue;
-    const label = (r.label || '').trim() || r.key;
+    const label = collectPlacementBlockerLabel(r, options, 'all');
+    if (!label) continue;
     if (seen.has(label)) continue;
     seen.add(label);
     out.push(label);
   }
   return out;
+}
+
+/** Screenings / hard_block / extras only — **excludes** `cert_*` rows (engine supplies cert gaps when enabled). */
+export function selectPlacementNonCertBlockerLabelsFromSnapshot(
+  requirements: ReadinessSnapshotV1Requirement[] | null | undefined,
+): string[] {
+  if (!requirements?.length) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  for (const r of requirements) {
+    const label = collectPlacementBlockerLabel(r, null, 'non_cert_only');
+    if (!label) continue;
+    if (seen.has(label)) continue;
+    seen.add(label);
+    out.push(label);
+  }
+  return out;
+}
+
+/** Snapshot-derived cert blocker labels only — for fallback + dev comparison to engine output. */
+export function selectPlacementCertBlockerLabelsLegacyFromSnapshot(
+  requirements: ReadinessSnapshotV1Requirement[] | null | undefined,
+  options?: PlacementBlockerFilterOptions | null,
+): string[] {
+  if (!requirements?.length) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  for (const r of requirements) {
+    const label = collectPlacementBlockerLabel(r, options, 'cert_only');
+    if (!label) continue;
+    if (seen.has(label)) continue;
+    seen.add(label);
+    out.push(label);
+  }
+  return out;
+}
+
+/**
+ * When the cert engine flag is on: merge non-cert snapshot blockers + engine-derived cert labels.
+ * When off: identical to `selectPlacementBlockerLabelsFromSnapshot`.
+ */
+export function selectPlacementBlockerLabelsWithOptionalEngine(
+  requirements: ReadinessSnapshotV1Requirement[] | null | undefined,
+  options: PlacementBlockerFilterOptions | null | undefined,
+  engineCertBlockerLabels: string[] | null | undefined,
+): string[] {
+  if (!isCertEngineReadinessEnabled()) {
+    return selectPlacementBlockerLabelsFromSnapshot(requirements, options);
+  }
+  const nonCert = selectPlacementNonCertBlockerLabelsFromSnapshot(requirements);
+  const engine = engineCertBlockerLabels ?? selectPlacementCertBlockerLabelsLegacyFromSnapshot(requirements, options);
+  const merged: string[] = [];
+  const seen = new Set<string>();
+  for (const x of [...nonCert, ...engine]) {
+    if (seen.has(x)) continue;
+    seen.add(x);
+    merged.push(x);
+  }
+  return merged;
 }
 
 /** Build options for `selectPlacementBlockerLabelsFromSnapshot` from the active job order and that row’s snapshot requirements. */

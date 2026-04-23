@@ -10,6 +10,9 @@ export interface PageCacheState {
   contactFilter?: 'all' | 'my';
   sortBy?: string;
   sortDirection?: 'asc' | 'desc';
+  /** Recruiter Users table client pagination */
+  usersTablePage?: number;
+  usersTableRowsPerPage?: number;
   // Cached results data
   cachedResults?: any[];
   cachedResultsTimestamp?: number;

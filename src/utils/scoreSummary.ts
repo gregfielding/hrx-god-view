@@ -138,6 +138,35 @@ export function formatOneDecimal(n: number | undefined): string {
   return (Math.round(n * 10) / 10).toFixed(1);
 }
 
+export type RecruiterInterviewCompletionDocFields = {
+  /** Root `users/{uid}.hasWorkerAiPrescreenInterview` — set when worker AI prescreen completes */
+  hasWorkerAiPrescreenInterview?: boolean;
+  interviewStatus?: string;
+  lastInterviewCompletedAt?: unknown;
+};
+
+/**
+ * Recruiter tables (/users, group members, applicants) must align with profile + server truth: prescreen completion
+ * updates root flags and sometimes `scoreSummary.interviewLastScore10` before legacy `interviewCount` / `interviewLastAt`
+ * are backfilled.
+ */
+export function hasRecruiterInterviewCompletionEvidence(
+  scoreSummary: ScoreSummary | undefined | null,
+  doc?: RecruiterInterviewCompletionDocFields | null,
+): boolean {
+  if (doc?.hasWorkerAiPrescreenInterview === true) return true;
+  if (String(doc?.interviewStatus || '').toLowerCase() === 'completed') return true;
+  if (doc?.lastInterviewCompletedAt != null) return true;
+
+  const ss = scoreSummary;
+  if (!ss) return false;
+  if ((ss.interviewCount ?? 0) > 0) return true;
+  if (ss.interviewLastAt != null) return true;
+  if (typeof ss.interviewLastScore10 === 'number' && Number.isFinite(ss.interviewLastScore10)) return true;
+  if (typeof ss.interviewAvg === 'number' && Number.isFinite(ss.interviewAvg)) return true;
+  return false;
+}
+
 const DEFAULT_AI_WEIGHTS = { completeness: 0.45, responsiveness: 0.25, quality: 0.3 };
 
 /**

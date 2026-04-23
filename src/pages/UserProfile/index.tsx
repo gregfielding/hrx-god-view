@@ -122,6 +122,7 @@ import { useScoringDistribution } from '../../hooks/useScoringDistribution';
 import { useUserProfileEntityEmploymentChips } from '../../hooks/useUserProfileEntityEmploymentChips';
 import { useRecruiterUsersEntityEmploymentChips } from '../../hooks/useRecruiterUsersEntityEmploymentChips';
 import { useRecruiterUsersLatestBackgroundChecks } from '../../hooks/useRecruiterUsersLatestBackgroundChecks';
+import { useAccusourceScreeningVerdictSummary } from '../../hooks/useAccusourceScreeningVerdictSummary';
 import { useRecruiterUsersRowExtras } from '../../hooks/useRecruiterUsersRowExtras';
 import UserEntityOnboardingStatusCell from '../../components/tables/UserEntityOnboardingStatusCell';
 import { getReadinessBreakdownRows } from '../../utils/recruiterUsersReadinessDisplay';
@@ -256,6 +257,9 @@ const UserProfilePage = () => {
   const [profileUpdateReminderLastSentAt, setProfileUpdateReminderLastSentAt] = useState<Date | null>(null);
   const [profileUpdateReminderSendError, setProfileUpdateReminderSendError] = useState<string | null>(null);
   const [sendingProfileUpdateReminder, setSendingProfileUpdateReminder] = useState(false);
+  const [recruiterOrderInterviewSmsLastSentAt, setRecruiterOrderInterviewSmsLastSentAt] = useState<Date | null>(null);
+  const [recruiterOrderInterviewSmsError, setRecruiterOrderInterviewSmsError] = useState<string | null>(null);
+  const [sendingRecruiterOrderInterviewSms, setSendingRecruiterOrderInterviewSms] = useState(false);
   const [messageHistoryRefreshKey, setMessageHistoryRefreshKey] = useState(0);
   /** Bumps tab counts / interview-derived signals after manual recruiter rescore (callable). */
   const [recruiterRescoreNonce, setRecruiterRescoreNonce] = useState(0);
@@ -416,10 +420,13 @@ const UserProfilePage = () => {
   );
 
   const effectiveTenantIdForMessaging = tenantId || authTenantId || activeTenant?.id || '';
-  const canSendProfileUpdateReminder = (() => {
+  /** Enough digits for SMS (US-style 10+ after stripping formatting). */
+  const hasWorkerPhoneForSms = String(phone || '').replace(/\D/g, '').length >= 10;
+  const canUseRecruiterWorkerSmsTools = (() => {
     const level = Number.parseInt(String(currentClaimsSecurityLevel || securityLevel || '0'), 10) || 0;
-    return level >= 5 && level <= 7 && !!uid && !!phone;
+    return level >= 5 && level <= 7 && !!uid;
   })();
+  const canSendProfileUpdateReminder = canUseRecruiterWorkerSmsTools && hasWorkerPhoneForSms;
 
   const handleSendProfileUpdateReminder = async () => {
     if (!uid || !effectiveTenantIdForMessaging) return;
@@ -444,6 +451,33 @@ const UserProfilePage = () => {
       setProfileUpdateReminderSendError(cleaned || 'Failed to send profile update reminder');
     } finally {
       setSendingProfileUpdateReminder(false);
+    }
+  };
+
+  const handleSendRecruiterOrderInterviewSms = async () => {
+    if (!uid || !effectiveTenantIdForMessaging) return;
+    setSendingRecruiterOrderInterviewSms(true);
+    setRecruiterOrderInterviewSmsError(null);
+    try {
+      const fn = httpsCallable(functions, 'sendWorkerOrderInterviewSms');
+      const result = await fn({ uid, tenantId: effectiveTenantIdForMessaging });
+      const data = (result as any)?.data || {};
+      setRecruiterOrderInterviewSmsLastSentAt(data?.sentAt ? new Date(data.sentAt) : new Date());
+      setMessageHistoryRefreshKey((k) => k + 1);
+      bumpAfterRecruiterRescore();
+    } catch (error: any) {
+      console.error('Failed to send order interview SMS:', error);
+      const raw =
+        error?.message ||
+        error?.details?.message ||
+        (typeof error === 'string' ? error : '');
+      const cleaned = String(raw)
+        .replace(/^Firebase:\s*/i, '')
+        .replace(/\s*\(functions\/[^)]+\)\s*$/i, '')
+        .trim();
+      setRecruiterOrderInterviewSmsError(cleaned || 'Failed to send interview invite SMS');
+    } finally {
+      setSendingRecruiterOrderInterviewSms(false);
     }
   };
 
@@ -565,7 +599,12 @@ const UserProfilePage = () => {
         const userSnap = await getDoc(userRef);
         if (userSnap.exists()) {
           const data = userSnap.data();
-          const _phoneRaw = String(data.phone || (data as { phoneE164?: string }).phoneE164 || '');
+          const _phoneRaw = String(
+            data.phone ||
+              (data as { phoneE164?: string }).phoneE164 ||
+              (data as { mobile?: string }).mobile ||
+              '',
+          ).trim();
           const _sanitized = sanitizeWorkerNameParts({
             firstName: data.firstName,
             lastName: data.lastName,
@@ -587,9 +626,10 @@ const UserProfilePage = () => {
           const tenantData = effectiveTenantId && data.tenantIds?.[effectiveTenantId] ? data.tenantIds[effectiveTenantId] : {};
           
           setJobTitle(tenantData.jobTitle || data.jobTitle || data.primaryJobTitle || '');
-          setPhone(data.phone || '');
+          setPhone(_phoneRaw);
           setEmail(data.email || '');
           setProfileUpdateReminderLastSentAt(data.profileUpdateReminderLastSentAt?.toDate?.() || null);
+          setRecruiterOrderInterviewSmsLastSentAt(data.recruiterOrderInterviewSmsLastSentAt?.toDate?.() || null);
           // City/State: prefer explicit top-level fields, then addressInfo (single source of truth in ProfileOverview),
           // then legacy address object fallbacks.
           setCity(data.city || data.addressInfo?.city || data.address?.city || '');
@@ -1396,6 +1436,11 @@ const UserProfilePage = () => {
     loadRecordHeaderEmploymentBreakdown && uid ? [uid] : [],
   );
 
+  const screeningVerdictSummary = useAccusourceScreeningVerdictSummary(
+    effectiveTenantId ?? null,
+    uid ?? null,
+  );
+
   const { latestNoteByUserId: recruiterLatestNoteByUserId, latestInterviewByUserId: recruiterLatestInterviewByUserId } =
     useRecruiterUsersRowExtras(loadRecordHeaderEmploymentBreakdown && uid ? [uid] : []);
 
@@ -1997,6 +2042,13 @@ const UserProfilePage = () => {
           backgroundCheckOrders={backgroundCheckOrders}
           drugScreeningOrders={drugScreeningOrders}
           additionalScreeningOrders={additionalScreeningOrders}
+          screeningVerdictSummary={{
+            summaryText: screeningVerdictSummary.summaryText,
+            overallVerdict: screeningVerdictSummary.overallVerdict,
+            anyFailed: screeningVerdictSummary.anyFailed,
+            anyNeedsReview: screeningVerdictSummary.anyNeedsReview,
+            allPassed: screeningVerdictSummary.allPassed,
+          }}
           behavioralTraits={(() => {
             try {
               // Extract behavioral traits from traitsProfile if available
@@ -2935,7 +2987,10 @@ const UserProfilePage = () => {
         </Paper>
         )}
 
-        <Box sx={{ mt: 1.5, px: { xs: 2, md: 3 }, pb: 1.5 }} className="profile-tab-content">
+        <Box
+          sx={{ mt: 1.5, px: { xs: 2, md: 3 }, pb: 1.5, minWidth: 0, maxWidth: '100%' }}
+          className="profile-tab-content"
+        >
           {(() => {
             const label = currentLabel;
             if (!label || !availableTabLabels.includes(label)) return null;
@@ -2983,6 +3038,19 @@ const UserProfilePage = () => {
                     scoreSummary={scoreSummary}
                     scoreFreshnessMeta={scoreFreshnessMeta}
                     recruiterTrustUi
+                    orderInterview={
+                      canUseRecruiterWorkerSmsTools
+                        ? {
+                            sending: sendingRecruiterOrderInterviewSms,
+                            lastSentAt: recruiterOrderInterviewSmsLastSentAt,
+                            error: recruiterOrderInterviewSmsError,
+                            onSend: handleSendRecruiterOrderInterviewSms,
+                            sendUnavailable: !hasWorkerPhoneForSms,
+                            sendUnavailableHint:
+                              'Add a phone number for this worker (profile or verified mobile) to send the interview SMS.',
+                          }
+                        : undefined
+                    }
                   />
                 );
               // case 'Score':

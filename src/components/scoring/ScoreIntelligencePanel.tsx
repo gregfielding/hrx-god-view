@@ -18,20 +18,19 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import TuneIcon from '@mui/icons-material/Tune';
 import LightbulbOutlinedIcon from '@mui/icons-material/LightbulbOutlined';
 import type { ScoreIntelligence } from '../../types/scoreIntelligence';
+import {
+  QUALIFICATION_BREAKDOWN_RAW_MAX,
+  normalizeQualificationScores,
+  qualificationBarDisplayPercent,
+  qualificationSeverityBand,
+  rawQualificationPointsToPercentages,
+} from '../../utils/scoring/normalizeQualificationScores';
+import {
+  QUALIFICATION_DISPLAY_LABEL,
+  QUALIFICATION_DISPLAY_ORDER,
+  qualificationNormalizedPercent,
+} from '../../utils/scoring/qualificationDisplayOrder';
 import ScoreProvenanceSummary from './ScoreProvenanceSummary';
-
-const BREAKDOWN_MAX = {
-  experience: 25,
-  reliability: 25,
-  transportation: 20,
-  risk: 20,
-  physical: 10,
-} as const;
-
-function pct(value: number, max: number): number {
-  if (max <= 0) return 0;
-  return Math.max(0, Math.min(100, Math.round((value / max) * 100)));
-}
 
 function decisionLabel(d: 'advance' | 'review' | 'reject' | null | undefined): string {
   switch (d) {
@@ -318,7 +317,7 @@ export default function ScoreIntelligencePanel({
               )}
             </Box>
 
-            {/* 4 — Breakdown bars */}
+            {/* 4 — Breakdown bars (display-only normalization: risk first, capped bar width, severity bands) */}
             <Box>
               <Stack direction="row" alignItems="center" gap={0.75} sx={{ mb: 1 }}>
                 <TuneIcon color="action" fontSize="small" />
@@ -327,31 +326,56 @@ export default function ScoreIntelligencePanel({
                 </Typography>
               </Stack>
               <Stack spacing={1.25}>
-                {(
-                  [
-                    ['Experience', 'experience'],
-                    ['Reliability', 'reliability'],
-                    ['Transportation', 'transportation'],
-                    ['Risk / screening', 'risk'],
-                    ['Physical fit', 'physical'],
-                  ] as const
-                ).map(([label, key]) => {
-                  const v = intelligence.breakdown[key];
-                  const max = BREAKDOWN_MAX[key];
-                  return (
-                    <Box key={key}>
-                      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.35 }}>
-                        <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
-                          {label}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {Math.round(v)} / {max}
-                        </Typography>
-                      </Stack>
-                      <LinearProgress variant="determinate" value={pct(v, max)} sx={{ height: 8, borderRadius: 1 }} />
-                    </Box>
+                {(() => {
+                  const normalized = normalizeQualificationScores(
+                    rawQualificationPointsToPercentages(intelligence.breakdown),
                   );
-                })}
+                  return QUALIFICATION_DISPLAY_ORDER.map((dim) => {
+                    const max = QUALIFICATION_BREAKDOWN_RAW_MAX[dim];
+                    const v = intelligence.breakdown[dim];
+                    const displayPct = qualificationNormalizedPercent(normalized, dim);
+                    const barValue = qualificationBarDisplayPercent(displayPct);
+                    const lowBand = qualificationSeverityBand(displayPct);
+                    const barSx =
+                      lowBand === 'strong'
+                        ? {
+                            height: 8,
+                            borderRadius: 1,
+                            bgcolor: 'action.hover',
+                            '& .MuiLinearProgress-bar': {
+                              bgcolor: 'error.main',
+                            },
+                          }
+                        : lowBand === 'mid'
+                          ? {
+                              height: 8,
+                              borderRadius: 1,
+                              bgcolor: 'action.hover',
+                              '& .MuiLinearProgress-bar': {
+                                bgcolor: 'warning.main',
+                              },
+                            }
+                          : { height: 8, borderRadius: 1 };
+
+                    return (
+                      <Box key={dim}>
+                        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.35 }}>
+                          <Typography
+                            variant="caption"
+                            color={dim === 'physical' ? 'text.disabled' : 'text.secondary'}
+                            sx={{ fontWeight: dim === 'physical' ? 500 : 600 }}
+                          >
+                            {QUALIFICATION_DISPLAY_LABEL[dim]}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {Math.round(v)} / {max}
+                          </Typography>
+                        </Stack>
+                        <LinearProgress variant="determinate" value={barValue} sx={barSx} />
+                      </Box>
+                    );
+                  });
+                })()}
               </Stack>
             </Box>
 

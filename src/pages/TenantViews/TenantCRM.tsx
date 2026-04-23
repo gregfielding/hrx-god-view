@@ -1914,85 +1914,19 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
       <Box sx={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: 'background.default' }}>
         <PageHeader
-          title={
-            standaloneTab === 'contacts' ? (
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 2 }}>
-                <Typography
-                  variant="h6"
-                  sx={{
-                    fontSize: { xs: '20px', md: '24px' },
-                    fontWeight: 600,
-                    lineHeight: 1.2,
-                  }}
-                >
-                  Contacts
-                </Typography>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
-                  <InboxSearchBar
-                    value={search}
-                    onChange={setSearch}
-                    onSearch={setSearch}
-                    placeholder="Search contacts..."
-                  />
-                  <FavoritesFilter
-                    favoriteType="contacts"
-                    showFavoritesOnly={contactsShowFavoritesOnly}
-                    onToggle={setContactsShowFavoritesOnly}
-                    showText={false}
-                    size="small"
-                    sx={{
-                      minWidth: '32px',
-                      width: '32px',
-                      height: '32px',
-                      borderRadius: '50%',
-                      '&:hover': {
-                        backgroundColor: contactsShowFavoritesOnly ? 'primary.dark' : 'action.hover',
-                      },
-                    }}
-                  />
-                  <Button
-                    variant="contained"
-                    startIcon={<AddIcon />}
-                    onClick={() => handleAddNew('contact')}
-                    sx={{
-                      textTransform: 'none',
-                      borderRadius: '24px',
-                      px: 3,
-                      py: 1,
-                      height: '40px',
-                      fontWeight: 500,
-                      fontSize: '14px',
-                      bgcolor: '#0057B8',
-                      boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
-                      '&:hover': {
-                        bgcolor: '#004a9f',
-                        boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
-                      },
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    Add Contact
-                  </Button>
-                </Box>
-              </Box>
-            ) : (
-              'CRM'
-            )
-          }
-          subtitle={
-            standaloneTab === 'contacts'
+          hideHeading
+          dense
+          title=""
+          filters={
+            standaloneTab
               ? undefined
-              : 'Manage opportunities and pipeline'
-          }
-        filters={
-          standaloneTab
-            ? undefined
-            : (
+              : (
               <Box 
                 display="flex" 
-                gap={0.5} 
+                gap={0.35} 
                 sx={{ 
                   flexWrap: 'nowrap', 
+                  alignItems: 'center',
                   overflowX: 'auto', 
                   overflowY: 'hidden', 
                   WebkitOverflowScrolling: 'touch', 
@@ -2024,14 +1958,19 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
                       sx={{
                         textTransform: 'none',
                         borderRadius: '999px',
-                        fontSize: '14px',
-                        fontWeight: isActive ? 500 : 400,
+                        fontSize: '13px',
+                        fontWeight: isActive ? 600 : 400,
                         color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
                         bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
-                        px: 1.5,
-                        py: 0.75,
+                        px: 1.25,
+                        py: 0.5,
+                        minHeight: 30,
                         minWidth: 'auto',
                         whiteSpace: 'nowrap',
+                        '& .MuiButton-startIcon': {
+                          mr: 0.35,
+                          '& svg': { fontSize: 16 },
+                        },
                         '&:hover': {
                           bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
                         },
@@ -2043,9 +1982,59 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
                 })}
               </Box>
             )
-        }
+          }
         rightActions={
-          standaloneTab === 'contacts' ? undefined : (
+          standaloneTab === 'contacts' ? (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
+              <FavoritesFilter
+                favoriteType="contacts"
+                showFavoritesOnly={contactsShowFavoritesOnly}
+                onToggle={setContactsShowFavoritesOnly}
+                showText={false}
+                size="small"
+                sx={{
+                  minWidth: '32px',
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  '&:hover': {
+                    backgroundColor: contactsShowFavoritesOnly ? 'primary.dark' : 'action.hover',
+                  },
+                }}
+              />
+              <InboxSearchBar
+                value={search}
+                onChange={setSearch}
+                onSearch={setSearch}
+                placeholder="Search contacts..."
+              />
+              <Button
+                variant="contained"
+                startIcon={<AddIcon sx={{ fontSize: 16 }} />}
+                onClick={() => handleAddNew('contact')}
+                sx={{
+                  textTransform: 'none',
+                  borderRadius: '999px',
+                  px: 1.5,
+                  py: 0.5,
+                  minHeight: 30,
+                  height: 30,
+                  fontWeight: 600,
+                  fontSize: '13px',
+                  bgcolor: '#0057B8',
+                  boxShadow: 'none',
+                  '& .MuiButton-startIcon': { mr: 0.35 },
+                  '&:hover': {
+                    bgcolor: '#004a9f',
+                    boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
+                  },
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Add Contact
+              </Button>
+            </Box>
+          ) : (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }} data-testid="crm-header-actions">
               {(tabValue === 1 || tabValue === 3) && (
                 <InboxSearchBar
@@ -2058,23 +2047,25 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
               {tabValue === 1 && (
                 <Button
                   variant="contained"
-                  startIcon={<AddIcon />}
+                  startIcon={<AddIcon sx={{ fontSize: 16 }} />}
                   onClick={() => {
                     setOpportunityDialogOpen(true);
                   }}
                   sx={{
                     textTransform: 'none',
-                    borderRadius: '24px',
-                    px: 2.5,
-                    py: 1,
-                    height: '40px',
-                    fontWeight: 500,
-                    fontSize: '14px',
+                    borderRadius: '999px',
+                    px: 1.5,
+                    py: 0.5,
+                    minHeight: 30,
+                    height: 30,
+                    fontWeight: 600,
+                    fontSize: '13px',
                     bgcolor: '#0057B8',
-                    boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
+                    boxShadow: 'none',
+                    '& .MuiButton-startIcon': { mr: 0.35 },
                     '&:hover': {
                       bgcolor: '#004a9f',
-                      boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
+                      boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
                     },
                     whiteSpace: 'nowrap',
                   }}

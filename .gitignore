@@ -42,6 +42,9 @@ service-account-key.json
 functions/service-account-key.json
 **/service-account-key.json
 
+# Claude/Cursor scratch output (logs, query dumps, etc. — never commit)
+.scratch/
+
 # Notebook artifacts
 *.ipynb
 

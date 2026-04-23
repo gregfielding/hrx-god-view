@@ -13,6 +13,7 @@ import {
   preparePayout,
   ping,
 } from './evereeService';
+import { requireEvereeEnabledEntity } from './evereeConfig';
 
 function requireAuth(request: { auth?: { uid: string; token?: Record<string, unknown> } | null }) {
   if (!request.auth?.uid) {
@@ -40,12 +41,31 @@ function canManageEveree(auth: { token?: { roles?: Record<string, { role?: strin
   return false;
 }
 
+/**
+ * Worker-facing embed callables allow **self-service** — a worker must be able
+ * to ensure their own Everee record + open their own onboarding session from
+ * the app. Recruiters retain full access via `canManageEveree`.
+ *
+ * Returns true when (a) the caller has recruiter/admin rights, or (b) the
+ * callable's target `userId` matches the auth'd uid.
+ */
+function canSelfOrManageEveree(
+  auth: { uid: string; token?: { roles?: Record<string, { role?: string }>; hrx?: boolean } } | null | undefined,
+  tenantId: string,
+  targetUserId: string,
+): boolean {
+  if (!auth?.uid) return false;
+  if (targetUserId && auth.uid === targetUserId) return true;
+  return canManageEveree(auth as any, tenantId);
+}
+
 export const evereePing = onCall(async (request) => {
   requireAuth(request);
   const { tenantId, entityId } = requireTenantEntity(request.data);
   if (!canManageEveree(request.auth as any, tenantId)) {
     throw new HttpsError('permission-denied', 'Not allowed to manage Everee for this tenant');
   }
+  await requireEvereeEnabledEntity(tenantId, entityId);
   return ping(tenantId, entityId);
 });
 
@@ -58,9 +78,10 @@ export const evereeEnsureWorker = onCall(async (request) => {
   if (!tenantId || !entityId || !userId) {
     throw new HttpsError('invalid-argument', 'tenantId, entityId, userId required');
   }
-  if (!canManageEveree(request.auth as any, tenantId)) {
+  if (!canSelfOrManageEveree(request.auth as any, tenantId, userId)) {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
+  await requireEvereeEnabledEntity(tenantId, entityId);
   return createWorkerIfNeeded({
     tenantId,
     entityId,
@@ -84,9 +105,10 @@ export const evereeCreateOnboardingSession = onCall(async (request) => {
   if (!tenantId || !entityId || !userId || !evereeWorkerId) {
     throw new HttpsError('invalid-argument', 'tenantId, entityId, userId, evereeWorkerId required');
   }
-  if (!canManageEveree(request.auth as any, tenantId)) {
+  if (!canSelfOrManageEveree(request.auth as any, tenantId, userId)) {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
+  await requireEvereeEnabledEntity(tenantId, entityId);
   return createOnboardingSession({
     tenantId,
     entityId,
@@ -105,6 +127,10 @@ export const evereeGetPayHistory = onCall(async (request) => {
   if (!tenantId || !entityId) {
     throw new HttpsError('invalid-argument', 'tenantId, entityId required');
   }
+  if (!canSelfOrManageEveree(request.auth as any, tenantId, userId)) {
+    throw new HttpsError('permission-denied', 'Not allowed to view pay history for this user');
+  }
+  await requireEvereeEnabledEntity(tenantId, entityId);
   return getPayHistory(tenantId, entityId, userId);
 });
 
@@ -118,6 +144,10 @@ export const evereeGetPayStatement = onCall(async (request) => {
   if (!tenantId || !entityId || !statementId) {
     throw new HttpsError('invalid-argument', 'tenantId, entityId, statementId required');
   }
+  if (!canSelfOrManageEveree(request.auth as any, tenantId, userId)) {
+    throw new HttpsError('permission-denied', 'Not allowed to view pay statement for this user');
+  }
+  await requireEvereeEnabledEntity(tenantId, entityId);
   const out = await getPayStatement(tenantId, entityId, userId, statementId);
   return out ?? null;
 });
@@ -128,6 +158,7 @@ export const evereeAdminPushShift = onCall(async (request) => {
   if (!canManageEveree(request.auth as any, tenantId)) {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
+  await requireEvereeEnabledEntity(tenantId, entityId);
   const payload = (request.data as Record<string, unknown>) ?? {};
   return pushShift(tenantId, entityId, payload as Parameters<typeof pushShift>[2]);
 });
@@ -138,6 +169,7 @@ export const evereeAdminPreparePayout = onCall(async (request) => {
   if (!canManageEveree(request.auth as any, tenantId)) {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
+  await requireEvereeEnabledEntity(tenantId, entityId);
   const payload = (request.data as Record<string, unknown>) ?? {};
   return preparePayout(tenantId, entityId, payload as Parameters<typeof preparePayout>[2]);
 });

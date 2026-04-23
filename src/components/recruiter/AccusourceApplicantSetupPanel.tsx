@@ -5,8 +5,8 @@ import React, { useCallback, useState } from 'react';
 import {
   Alert,
   Box,
-  Button,
   Chip,
+  IconButton,
   Stack,
   Tooltip,
   Typography,
@@ -18,6 +18,7 @@ import { Timestamp } from 'firebase/firestore';
 import {
   applicantSetupStatusSummary,
   resolveApplicantPortalUrl,
+  shouldShowApplicantPortalCta,
 } from '../../utils/backgroundCheckApplicantPortal';
 
 function formatTs(value: unknown): string {
@@ -40,6 +41,7 @@ export interface AccusourceApplicantSetupPanelProps {
 const AccusourceApplicantSetupPanel: React.FC<AccusourceApplicantSetupPanelProps> = ({ record }) => {
   const url = resolveApplicantPortalUrl(record);
   const summary = applicantSetupStatusSummary(record);
+  const showPortalCta = shouldShowApplicantPortalCta(record);
   const [copied, setCopied] = useState(false);
 
   const copy = useCallback(async () => {
@@ -59,7 +61,11 @@ const AccusourceApplicantSetupPanel: React.FC<AccusourceApplicantSetupPanelProps
         <Typography variant="caption" color="text.secondary" fontWeight={700} sx={{ textTransform: 'uppercase' }}>
           AccuSource — applicant setup
         </Typography>
-        <Chip size="small" color={url ? 'success' : record.hrxStatus === 'awaiting_applicant' ? 'warning' : 'default'} label={summary.headline} />
+        <Chip
+          size="small"
+          color={showPortalCta ? 'success' : url && record.hrxStatus === 'awaiting_applicant' ? 'warning' : 'default'}
+          label={summary.headline}
+        />
         {record.hrxStatus ? (
           <Chip size="small" variant="outlined" label={`HRX: ${record.hrxStatus}`} />
         ) : null}
@@ -105,7 +111,7 @@ const AccusourceApplicantSetupPanel: React.FC<AccusourceApplicantSetupPanelProps
         </Alert>
       ) : null}
 
-      {url ? (
+      {url && showPortalCta ? (
         <Stack direction="row" flexWrap="wrap" alignItems="flex-start" gap={1} sx={{ mt: 0.5 }}>
           <Typography
             variant="body2"
@@ -123,16 +129,26 @@ const AccusourceApplicantSetupPanel: React.FC<AccusourceApplicantSetupPanelProps
             {url}
           </Typography>
           <Tooltip title="Open in new tab">
-            <Button size="small" variant="contained" href={url} target="_blank" rel="noopener noreferrer" startIcon={<OpenInNewIcon />}>
-              Open link
-            </Button>
+            <IconButton
+              size="small"
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              sx={{ alignSelf: 'center' }}
+            >
+              <OpenInNewIcon fontSize="small" />
+            </IconButton>
           </Tooltip>
           <Tooltip title={copied ? 'Copied' : 'Copy URL'}>
-            <Button size="small" variant="outlined" onClick={() => void copy()} startIcon={<ContentCopyIcon />}>
-              {copied ? 'Copied' : 'Copy link'}
-            </Button>
+            <IconButton size="small" onClick={() => void copy()} sx={{ alignSelf: 'center' }}>
+              <ContentCopyIcon fontSize="small" />
+            </IconButton>
           </Tooltip>
         </Stack>
+      ) : url && !showPortalCta ? (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+          Portal link omitted — HRX status is no longer “awaiting applicant.” If you still need the URL, open AccuSource or check audit logs.
+        </Typography>
       ) : null}
     </Box>
   );

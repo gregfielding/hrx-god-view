@@ -26,6 +26,8 @@ import { useAuth } from '../../../contexts/AuthContext';
 import ProfileTabPointerAlert from '../../../components/profile/ProfileTabPointerAlert';
 import type { BackgroundCheckRecord } from '../../../types/backgroundCheck';
 import type { WorkerComplianceItem } from '../../../types/compliance';
+import { accusourceScreeningLineItems } from '../../../utils/accusourceScreeningLineItems';
+import { workerFacingScreeningPrimaryLineFromRecord } from '../../../utils/backgroundChecks/formatWorkerFacingScreeningPackage';
 import { getComplianceStatusDisplayLabel, getComplianceTypeLabel } from '../../../types/compliance';
 
 const PAGE_LIMIT = 100;
@@ -34,6 +36,16 @@ const everifyCasesCol = (tenantId: string) => collection(db, 'tenants', tenantId
 const userEmploymentsCol = (tenantId: string) => collection(db, 'tenants', tenantId, 'user_employments');
 
 const SCREENING_COMPLIANCE_TYPES = new Set(['background_check', 'drug_screen', 'tb_test']);
+
+function orderHasDrugRelevantLine(r: BackgroundCheckRecord): boolean {
+  const pkg = String(r.requestedPackageName || '').toLowerCase();
+  if (/drug|urine|panel/.test(pkg)) return true;
+  for (const line of accusourceScreeningLineItems(r)) {
+    const n = String(line.name || '').toLowerCase();
+    if (/drug|urine|panel/.test(n)) return true;
+  }
+  return false;
+}
 
 function formatBgStatus(hrxStatus: string | undefined): string {
   const s = String(hrxStatus || 'unknown');
@@ -213,8 +225,17 @@ const WorkerScreeningPage: React.FC = () => {
                 {screeningRows.map((r) => (
                   <Stack key={r.id} spacing={0.5}>
                     <Typography variant="body2" fontWeight={600}>
-                      {r.requestedPackageName?.trim() || 'Screening order'}
+                      {workerFacingScreeningPrimaryLineFromRecord(r)}
                     </Typography>
+                    {accusourceScreeningLineItems(r).length > 1 ? (
+                      <Box component="ul" sx={{ m: 0, pl: 2, mb: 0 }}>
+                        {accusourceScreeningLineItems(r).map((line) => (
+                          <Typography key={line.id} component="li" variant="caption" color="text.secondary">
+                            {line.name}
+                          </Typography>
+                        ))}
+                      </Box>
+                    ) : null}
                     <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap">
                       <Chip size="small" variant="outlined" label={formatBgStatus(r.hrxStatus)} />
                       {r.hrxStatus === 'awaiting_applicant' ? (
@@ -235,7 +256,7 @@ const WorkerScreeningPage: React.FC = () => {
             <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1.5 }}>
               Drug screen & clinic steps
             </Typography>
-            {screeningRows.some((r) => /drug/i.test(String(r.requestedPackageName || r.hrxStatus || ''))) ? (
+            {screeningRows.some((r) => orderHasDrugRelevantLine(r)) ? (
               <Typography variant="body2" color="text.secondary">
                 If a drug screen is part of your package, follow the instructions from the screening provider or your hiring
                 team (clinic location, scheduling, and chain-of-custody).

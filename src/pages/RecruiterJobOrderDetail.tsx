@@ -26,7 +26,6 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  TableSortLabel,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -114,6 +113,13 @@ import {
 import { buildShiftPickerSecondLine } from '../utils/shiftPickerLabel';
 import { JobOrder } from '../types/recruiter/jobOrder';
 import PageHeader from '../components/PageHeader';
+import RecordHeaderActionIcon from './UserProfile/components/RecordHeaderActionIcon';
+import {
+  recordHeaderColumnTitleSx,
+  recordHeaderBodyTextSx,
+  recordHeaderActionIconButtonSx,
+  recordHeaderTooltipComponentsProps,
+} from './UserProfile/components/recordHeaderStyles';
 import JobOrderForm from '../components/JobOrderForm';
 import { JobsBoardService, JobsBoardPost } from '../services/recruiter/jobsBoardService';
 import ManageContactsDialog from '../components/ManageContactsDialog';
@@ -127,19 +133,18 @@ import PlacementsTab from '../components/recruiter/PlacementsTab';
 import LaborPoolSelector from '../components/recruiter/LaborPoolSelector';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useFavorites } from '../hooks/useFavorites';
-import { useCategoryScoresCurrentMap } from '../hooks/useCategoryScoresCurrentMap';
-import { useEntity } from '../hooks/useEntity';
 import FavoriteButton from '../components/FavoriteButton';
-import InterviewCell from '../components/InterviewCell';
-import { RecruiterApplicantCategoryScoresRow } from '../components/recruiter/RecruiterApplicantCategoryScoresRow';
-import { calculateProfileScore, getScoreColor, getScoreLabel } from '../utils/applicantScoring';
-import { normalizeScoreSummary, formatOneDecimal, getUserScore } from '../utils/scoreSummary';
+import { useCategoryScoresCurrentMap } from '../hooks/useCategoryScoresCurrentMap';
+import { useRecruiterUsersEntityEmploymentChips } from '../hooks/useRecruiterUsersEntityEmploymentChips';
+import { useRecruiterUsersRowExtras } from '../hooks/useRecruiterUsersRowExtras';
+import { useRecruiterUsersLatestBackgroundChecks } from '../hooks/useRecruiterUsersLatestBackgroundChecks';
+import { useEntity } from '../hooks/useEntity';
+import { calculateProfileScore } from '../utils/applicantScoring';
+import { normalizeScoreSummary, getUserScore } from '../utils/scoreSummary';
 import { getOrComputeJobScoreSummary } from '../utils/jobScore';
 import { getOrComputeJobScoreSummaryV1, computeJobScoreSummaryV1 } from '../utils/jobScoreV1';
 import { getRequirementPackV1 } from '../data/jobRequirementPacksV1';
 import { isExcludedFromPlacementsApplicantPool, normalizeApplicationStatus } from '../utils/applicationStatusNormalize';
-import HiringLifecycleBadgeGroup from '../components/hiring/HiringLifecycleBadgeGroup';
-import { formatAiAutomationRecruiterTooltip } from '../utils/formatAiAutomationRecruiterTooltip';
 import {
   countRecruiterLifecycleBuckets,
   deriveRecruiterLifecycleBucket,
@@ -181,19 +186,24 @@ import AddJobOrderNoteDialog from '../components/recruiter/AddJobOrderNoteDialog
 import MessageDrawer, { type MessageRecipient } from '../components/MessageDrawer';
 import { computeComplianceSummary } from '../utils/complianceSummary';
 import { hasJobBoardSyndicationUrl } from '../utils/jobBoardSyndicationUrls';
+import { fetchRecruiterPickerOptions } from '../utils/fetchRecruiterPickerOptions';
 import JobBoardSyndicationIconRow from '../components/JobBoardSyndicationIconRow';
-import { getWorkAuthorizedStatus } from '../utils/workAuthorizedDisplay';
-import { getEVerifyComfortStatusFromUserData } from '../utils/eVerifyComfortDisplay';
-import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
-import EVerifyComfortChip from '../components/EVerifyComfortChip';
 import {
   DEFAULT_JOB_ORDER_DETAIL_TAB,
   type JobOrderDetailTabKey,
   JOB_ORDER_DETAIL_TAB_STRIP,
   jobOrderDetailTabStorageKey,
+  jobOrderSupportsAutoMessagingTab,
   parseJobOrderDetailTabQueryParam,
   parseStoredJobOrderTab,
 } from '../constants/recruiterJobOrderDetailTabs';
+import type { RecruiterUser } from '../types/recruiterUserListRow';
+import { mapUserDataToRecruiterUser } from '../utils/mapUserDataToRecruiterUser';
+import {
+  ApplicantsUsersStyleTableHeadCells,
+  ApplicantsUsersStyleTableBodyCells,
+  type ApplicantsUsersStyleMaps,
+} from '../components/recruiter/ApplicantsUsersStyleTableCells';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -300,6 +310,32 @@ interface Applicant {
   // Shift selection (for Gig jobs)
   selectedShifts?: string[];
   shiftAssignments?: Record<string, 'pending' | 'approved' | 'rejected' | 'waitlisted'>;
+  /** Users-table row shape when mappable from Firestore; null when filtered out by list rules. */
+  recruiterUser?: RecruiterUser | null;
+}
+
+function recruiterUserForApplicantsTableRow(applicant: Applicant): RecruiterUser {
+  if (applicant.recruiterUser) return applicant.recruiterUser;
+  return {
+    id: applicant.uid,
+    firstName: applicant.firstName,
+    lastName: applicant.lastName,
+    displayName: applicant.displayName,
+    email: applicant.email,
+    phone: applicant.phone,
+    avatar: applicant.avatar,
+    securityLevel: '1',
+    userGroupIds: [],
+    skills: [],
+    scoreSummary: applicant.scoreSummary,
+    city: applicant.city,
+    state: applicant.state,
+    workEligibility: applicant.workEligibility,
+    workEligibilityAttestation: applicant.workEligibilityAttestation ?? undefined,
+    comfortableEVerify: applicant.comfortableEVerify,
+    workerAttestations: applicant.workerAttestations,
+    phoneVerified: applicant.phoneVerified,
+  };
 }
 
 function applicationRowId(a: Applicant, jobOrderId: string): string {
@@ -387,8 +423,87 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     () => Array.from(new Set(applicants.map((a) => a.uid).filter(Boolean))),
     [applicants],
   );
-  const { scoresByUserId: categoryScoresCurrentByUserId, loading: categoryScoresCurrentLoading } =
-    useCategoryScoresCurrentMap(applicantUserIdsForCategoryScores);
+  const { scoresByUserId: categoryScoresCurrentByUserId } = useCategoryScoresCurrentMap(applicantUserIdsForCategoryScores);
+
+  const { itemsByUserId: entityEmploymentChipsByUser, employmentBreakdownByUserId } =
+    useRecruiterUsersEntityEmploymentChips(tenantId, applicantUserIdsForCategoryScores);
+  const { latestNoteByUserId, latestInterviewByUserId } = useRecruiterUsersRowExtras(applicantUserIdsForCategoryScores);
+  const { latestByUserId: latestBackgroundByUserId } = useRecruiterUsersLatestBackgroundChecks(
+    tenantId,
+    applicantUserIdsForCategoryScores,
+  );
+
+  const [tenantUserGroups, setTenantUserGroups] = useState<Array<{ id: string; title?: string }>>([]);
+  useEffect(() => {
+    if (!tenantId) {
+      setTenantUserGroups([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const snap = await getDocs(collection(db, 'tenants', tenantId, 'userGroups'));
+        if (cancelled) return;
+        setTenantUserGroups(snap.docs.map((d) => ({ id: d.id, ...(d.data() as { title?: string }) })));
+      } catch {
+        if (!cancelled) setTenantUserGroups([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId]);
+
+  const groupTitleLookup = useMemo(() => {
+    const m = new Map<string, string>();
+    tenantUserGroups.forEach((g) => m.set(g.id, g.title || g.id));
+    return m;
+  }, [tenantUserGroups]);
+
+  const formatUserTableDate = useCallback((timestamp: unknown) => {
+    if (timestamp == null) return 'N/A';
+    let date: Date;
+    if (timestamp instanceof Date) {
+      date = timestamp;
+    } else if (typeof timestamp === 'number') {
+      date = new Date(timestamp);
+    } else if (typeof timestamp === 'string') {
+      date = new Date(timestamp);
+    } else if (timestamp && typeof (timestamp as { toDate?: () => Date }).toDate === 'function') {
+      date = (timestamp as { toDate: () => Date }).toDate();
+    } else if (timestamp && typeof (timestamp as { _seconds?: number })._seconds === 'number') {
+      date = new Date((timestamp as { _seconds: number })._seconds * 1000);
+    } else {
+      return 'N/A';
+    }
+    if (Number.isNaN(date.getTime())) return 'N/A';
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  }, []);
+
+  const applicantsUsersStyleMaps: ApplicantsUsersStyleMaps = useMemo(
+    () => ({
+      entityEmploymentChipsByUser,
+      employmentBreakdownByUserId,
+      latestNoteByUserId,
+      latestInterviewByUserId,
+      latestBackgroundByUserId,
+      categoryScoresByUserId: categoryScoresCurrentByUserId,
+      groupTitleLookup,
+    }),
+    [
+      entityEmploymentChipsByUser,
+      employmentBreakdownByUserId,
+      latestNoteByUserId,
+      latestInterviewByUserId,
+      latestBackgroundByUserId,
+      categoryScoresCurrentByUserId,
+      groupTitleLookup,
+    ],
+  );
 
   const fetchApplicants = useCallback(async () => {
     try {
@@ -491,6 +606,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
             selectedShifts: app.selectedShifts || [],
             shiftAssignments: app.shiftAssignments || {},
             hiringLifecycle: parseApplicationHiringLifecycle(app.hiringLifecycle),
+            recruiterUser: mapUserDataToRecruiterUser(app.userId, userData, tenantId),
           };
         });
 
@@ -833,15 +949,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     return -1;
   };
 
-  const handleApplicantsSort = (key: 'interview' | 'jobScore') => {
-    if (applicantsSortBy === key) {
-      setApplicantsSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
-      return;
-    }
-    setApplicantsSortBy(key);
-    setApplicantsSortDirection('desc');
-  };
-
   const sortedApplicants = React.useMemo(() => {
     if (applicantsSortBy === 'interview') {
       const data = [...filteredByCategoryScores];
@@ -974,29 +1081,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     const recipientUserIds = selected.map((a) => a.uid);
     return { recipients, recipientUserIds };
   }, [applicants, selectedApplicationRowIds, jobOrderId]);
-
-  const formatInterviewDate = (ts: any) => {
-    const d = ts?.toDate?.();
-    if (d) return format(d, 'MMM d, yyyy');
-    const d2 = ts instanceof Date ? ts : new Date(ts);
-    return Number.isNaN(d2.getTime()) ? 'N/A' : format(d2, 'MMM d, yyyy');
-  };
-
-  const renderInterviewCell = (applicant: Applicant) => (
-    <Stack spacing={0.5} alignItems="flex-start">
-      <InterviewCell
-        userId={applicant.uid}
-        scoreSummary={applicant.scoreSummary}
-        formatDate={formatInterviewDate}
-      />
-      <RecruiterApplicantCategoryScoresRow
-        userId={applicant.uid}
-        applicationData={applicant.applicationData}
-        currentCategoryScores={categoryScoresCurrentByUserId[applicant.uid] ?? null}
-        currentScoresLoading={categoryScoresCurrentLoading}
-      />
-    </Stack>
-  );
 
   const handleChangeStatus = async (applicant: Applicant, newStatus: string) => {
     try {
@@ -1810,57 +1894,30 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                     aria-label="select all applicants"
                   />
                 </TableCell>
-                <TableCell sx={{ width: 60 }}></TableCell>
-                <TableCell>Applicant</TableCell>
-                <TableCell>Contact</TableCell>
-                <TableCell>Auth</TableCell>
-                <TableCell>Documented</TableCell>
-                <TableCell>Location</TableCell>
-                <TableCell>Applied</TableCell>
-                {isGigJob && shifts.length > 0 ? (
-                  <TableCell>Shift(s)</TableCell>
-                ) : null}
-                <TableCell>Profile</TableCell>
-                <TableCell>Fit</TableCell>
-                {jobOrder?.requirementPackId ? (
-                  <>
-                    <TableCell>
-                      <TableSortLabel
-                        active={applicantsSortBy === 'jobScore'}
-                        direction={applicantsSortBy === 'jobScore' ? applicantsSortDirection : 'desc'}
-                        onClick={() => handleApplicantsSort('jobScore')}
-                      >
-                        Job Score
-                      </TableSortLabel>
-                    </TableCell>
-                    <TableCell>Missing</TableCell>
-                  </>
-                ) : null}
-                <TableCell sx={{ minWidth: 120 }}>
-                  <TableSortLabel
-                    active={applicantsSortBy === 'interview'}
-                    direction={applicantsSortBy === 'interview' ? applicantsSortDirection : 'desc'}
-                    onClick={() => handleApplicantsSort('interview')}
-                  >
-                    Interview
-                  </TableSortLabel>
-                  <Tooltip title="Date and score from the latest interview; category chip shows the six category snapshot from the worker AI pre-screen when saved on this application (read-only).">
-                    <Typography component="span" variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                      + categories
-                    </Typography>
-                  </Tooltip>
+                <ApplicantsUsersStyleTableHeadCells />
+                <TableCell sx={{ fontWeight: 700, bgcolor: 'grey.50', textTransform: 'uppercase', fontSize: '0.75rem', py: 1.5 }}>
+                  Applied
                 </TableCell>
-                <TableCell>Compliance</TableCell>
-                <TableCell>Lifecycle</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell>Level</TableCell>
-                <TableCell align="right">Actions</TableCell>
+                {isGigJob && shifts.length > 0 ? (
+                  <TableCell sx={{ fontWeight: 700, bgcolor: 'grey.50', textTransform: 'uppercase', fontSize: '0.75rem', py: 1.5 }}>
+                    Shift(s)
+                  </TableCell>
+                ) : null}
+                <TableCell sx={{ fontWeight: 700, bgcolor: 'grey.50', textTransform: 'uppercase', fontSize: '0.75rem', py: 1.5 }}>
+                  Status
+                </TableCell>
+                <TableCell sx={{ fontWeight: 700, bgcolor: 'grey.50', textTransform: 'uppercase', fontSize: '0.75rem', py: 1.5 }}>
+                  Level
+                </TableCell>
+                <TableCell align="right" sx={{ fontWeight: 700, bgcolor: 'grey.50', textTransform: 'uppercase', fontSize: '0.75rem', py: 1.5 }}>
+                  Actions
+                </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {displayedApplicants.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={25} sx={{ py: 4, textAlign: 'center' }}>
+                  <TableCell colSpan={13 + (isGigJob && shifts.length > 0 ? 1 : 0)} sx={{ py: 4, textAlign: 'center' }}>
                     <Alert severity="info" sx={{ justifyContent: 'center' }}>
                       {applicants.length === 0
                         ? 'No applications received yet for this job order.'
@@ -1897,58 +1954,13 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       aria-label={`Select ${applicant.displayName}`}
                     />
                   </TableCell>
-                  <TableCell sx={{ py: 1 }} onClick={(e) => e.stopPropagation()}>
-                    <FavoriteButton
-                      itemId={applicant.uid}
-                      favoriteType="users"
-                      isFavorite={isFavorite}
-                      toggleFavorite={toggleFavorite}
-                      size="small"
-                      showTooltip={true}
-                      tooltipText={{
-                        favorited: 'Remove from favorites',
-                        notFavorited: 'Add to favorites'
-                      }}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                      <Avatar 
-                        src={applicant.avatar} 
-                        alt={applicant.displayName}
-                        sx={{ width: 40, height: 40 }}
-                      >
-                        {applicant.firstName?.[0]}{applicant.lastName?.[0]}
-                      </Avatar>
-                      <Box>
-                        <Typography variant="body2" fontWeight={600}>
-                          {applicant.displayName}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {applicant.applicationData?.jobTitle || 'N/A'}
-                        </Typography>
-                      </Box>
-                    </Box>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">{applicant.email}</Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      {applicant.phone}
-                    </Typography>
-                  </TableCell>
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <WorkAuthorizedChip status={getWorkAuthorizedStatus(applicant)} />
-                  </TableCell>
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <EVerifyComfortChip status={getEVerifyComfortStatusFromUserData(applicant)} />
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">
-                      {applicant.city && applicant.state 
-                        ? `${applicant.city}, ${applicant.state}`
-                        : applicant.city || applicant.state || '-'}
-                    </Typography>
-                  </TableCell>
+                  <ApplicantsUsersStyleTableBodyCells
+                    user={recruiterUserForApplicantsTableRow(applicant)}
+                    maps={applicantsUsersStyleMaps}
+                    formatDate={formatUserTableDate}
+                    isFavorite={isFavorite}
+                    toggleFavorite={toggleFavorite}
+                  />
                   <TableCell>
                     <Typography variant="body2">
                       {applicant.appliedAt 
@@ -2003,164 +2015,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       })()}
                     </TableCell>
                   ) : null}
-                  <TableCell>
-                    <Tooltip title="Profile completeness score based on resume, skills, work history, and engagement">
-                      <Chip 
-                        label={getScoreLabel(applicant.profileScore)}
-                        size="small"
-                        color={getScoreColor(applicant.profileScore)}
-                        sx={{ minWidth: 50, fontWeight: 600 }}
-                      />
-                    </Tooltip>
-                  </TableCell>
-                  <TableCell>
-                    {(() => {
-                      const jobScore = applicant.jobScoreSummary != null
-                        ? (applicant.jobScoreSummary as any).jobScore
-                        : undefined;
-                      const hiring = applicant.hiringScore;
-                      const hasJob = typeof jobScore === 'number' && Number.isFinite(jobScore);
-                      const hasHiring = typeof hiring === 'number' && Number.isFinite(hiring);
-                      const legacyFit = applicant.fitScore !== null && applicant.fitScore !== undefined;
-                      const showPlaceholder = !hasJob && !hasHiring && !legacyFit;
-                      const tooltipParts: string[] = [];
-                      if (hasJob) tooltipParts.push(`Job fit (this role): ${getScoreLabel(jobScore)}`);
-                      if (hasHiring) tooltipParts.push(`Hiring score (overall): ${getScoreLabel(hiring)}`);
-                      if (showPlaceholder)
-                        tooltipParts.push((applicant.profileScore ?? 0) >= 40 ? 'Fit score will be calculated automatically' : 'Complete profile to 40% to enable fit scoring');
-                      const tooltip = tooltipParts.length ? tooltipParts.join(' · ') : 'Fit';
-                      return (
-                        <Tooltip title={tooltip}>
-                          <Stack direction="row" alignItems="center" spacing={0.5} flexWrap="wrap" sx={{ minWidth: 50 }}>
-                            {showPlaceholder ? (
-                              <Chip label="..." size="small" variant="outlined" sx={{ minWidth: 50, opacity: 0.5 }} />
-                            ) : (
-                              <>
-                                {hasJob && (
-                                  <Chip
-                                    label={getScoreLabel(jobScore)}
-                                    size="small"
-                                    color={getScoreColor(jobScore)}
-                                    sx={{ minWidth: 44, fontWeight: 600 }}
-                                  />
-                                )}
-                                {hasHiring && (
-                                  <Chip
-                                    label={getScoreLabel(hiring)}
-                                    size="small"
-                                    variant={hasJob ? 'outlined' : 'filled'}
-                                    color={getScoreColor(hiring)}
-                                    sx={{ minWidth: 44, fontWeight: hasJob ? 500 : 600 }}
-                                  />
-                                )}
-                                {!hasJob && !hasHiring && legacyFit && (
-                                  <Chip
-                                    label={getScoreLabel(applicant.fitScore)}
-                                    size="small"
-                                    color={getScoreColor(applicant.fitScore)}
-                                    sx={{ minWidth: 50, fontWeight: 600 }}
-                                  />
-                                )}
-                              </>
-                            )}
-                          </Stack>
-                        </Tooltip>
-                      );
-                    })()}
-                  </TableCell>
-                  {jobOrder?.requirementPackId ? (
-                    <>
-                      <TableCell>
-                        {applicant.jobScoreSummary != null ? (
-                          (() => {
-                            const s = applicant.jobScoreSummary as any;
-                            const isV1 = s.version === 'v1';
-                            const stale = s.stale?.isStale;
-                            const tooltip = isV1
-                              ? (stale ? 'Score may be outdated (profile or pack changed). Use Refresh scores to update. ' : '') +
-                                `Requirements: ${s.breakdown?.requirements ?? '—'} · Hiring lift: ${s.breakdown?.hiringLift ?? '—'}`
-                              : `Fit: ${s.fitScore ?? '—'} · Hiring: ${s.hiringScoreUsed ?? '—'}`;
-                            const missingLabels = isV1
-                              ? (s.buckets?.missingRequired ?? []).map((x: any) => x.label)
-                              : (s.missingLabels ?? []);
-                            return (
-                              <Tooltip title={tooltip}>
-                                <Stack direction="row" alignItems="center" spacing={0.5} flexWrap="wrap">
-                                  {isV1 && stale && (
-                                    <Chip label="Stale" size="small" variant="outlined" color="warning" sx={{ fontWeight: 500 }} />
-                                  )}
-                                  {isV1 && !s.eligible && (
-                                    <Chip label="Not Eligible" size="small" color="error" sx={{ fontWeight: 600 }} />
-                                  )}
-                                  <Chip
-                                    label={getScoreLabel(s.jobScore)}
-                                    size="small"
-                                    color={getScoreColor(s.jobScore)}
-                                    sx={{ minWidth: 50, fontWeight: 600 }}
-                                  />
-                                </Stack>
-                              </Tooltip>
-                            );
-                          })()
-                        ) : (
-                          <Typography variant="caption" color="text.secondary">—</Typography>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {(() => {
-                          const s = applicant.jobScoreSummary as any;
-                          if (!s) return <Typography variant="caption" color="text.secondary">—</Typography>;
-                          const isV1 = s.version === 'v1';
-                          const labels = isV1 ? (s.buckets?.missingRequired ?? []).map((x: any) => x.label) : (s.missingLabels ?? []);
-                          if (labels.length) {
-                            return (
-                              <Tooltip title={labels.join(', ')}>
-                                <Typography variant="caption" noWrap sx={{ maxWidth: 120 }} color="text.secondary">
-                                  {labels.slice(0, 2).join(', ')}
-                                  {labels.length > 2 ? '…' : ''}
-                                </Typography>
-                              </Tooltip>
-                            );
-                          }
-                          return <Typography variant="caption" color="success.main">Eligible</Typography>;
-                        })()}
-                      </TableCell>
-                    </>
-                  ) : null}
-                  <TableCell>
-                    {renderInterviewCell(applicant)}
-                  </TableCell>
-                  <TableCell>
-                    {applicant.compliancePercent != null ? (
-                      <Tooltip title={applicant.complianceStatus === 'expiring_soon' ? 'Expiring soon' : applicant.complianceStatus === 'non_compliant' ? 'Expired or non-compliant' : applicant.complianceStatus === 'compliant' ? 'Compliant' : 'Incomplete'}>
-                        <Chip
-                          size="small"
-                          label={`${applicant.compliancePercent}%`}
-                          color={
-                            applicant.complianceStatus === 'compliant' ? 'success' :
-                            applicant.complianceStatus === 'expiring_soon' ? 'warning' :
-                            applicant.complianceStatus === 'non_compliant' ? 'error' : 'default'
-                          }
-                          variant="outlined"
-                          sx={{ minWidth: 44 }}
-                        />
-                      </Tooltip>
-                    ) : (
-                      <Typography variant="caption" color="text.secondary">—</Typography>
-                    )}
-                  </TableCell>
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <HiringLifecycleBadgeGroup
-                      lifecycle={applicant.hiringLifecycle}
-                      legacyStatusLabel={(
-                        normalizeApplicationStatus(applicant.applicationStatus || 'submitted') ??
-                        applicant.applicationStatus ??
-                        'submitted'
-                      ).replace(/_/g, ' ')}
-                      aiAutomationSummary={formatAiAutomationRecruiterTooltip(applicant.applicationData)}
-                      compact
-                    />
-                  </TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     {(() => {
                       const placementStatus = assignmentStatusByUserId.get(applicant.uid);
@@ -2858,6 +2712,11 @@ const JobOrderJobsBoardTab: React.FC<{
       ).trim();
       const accountRow = titleKey ? accountPricingByTitle.get(titleKey) : undefined;
       const accountJd = accountRow?.jobDescriptionFromClient?.trim();
+      const orderClientJd = String((jobOrder as any).jobDescriptionFromClient ?? '').trim();
+      const savedPrompt =
+        typeof existingPostForForm.jobDescriptionPrompt === 'string'
+          ? existingPostForForm.jobDescriptionPrompt.trim()
+          : '';
       return {
         ...existingPostForForm,
         startDate: formatDateForInput(existingPostForForm.startDate),
@@ -2868,6 +2727,7 @@ const JobOrderJobsBoardTab: React.FC<{
         skills: Array.isArray(existingPostForForm.skills) ? existingPostForForm.skills : (existingPostForForm.skills ? [existingPostForForm.skills] : []),
         uniformRequirements: Array.isArray(existingPostForForm.uniformRequirements) ? existingPostForForm.uniformRequirements : (existingPostForForm.uniformRequirements ? [existingPostForForm.uniformRequirements] : []),
         jobDescription: savedDesc || accountJd || '',
+        jobDescriptionPrompt: savedPrompt || orderClientJd,
       };
     }
 
@@ -2916,6 +2776,8 @@ const JobOrderJobsBoardTab: React.FC<{
         if (fromAccount) return fromAccount;
         return '';
       })(),
+      /** Mirrors Overview → "Job description from client" for AI / Jobs Board prompt */
+      jobDescriptionPrompt: String((jobOrder as any).jobDescriptionFromClient ?? '').trim(),
       companyId: jobOrder.companyId || '',
       companyName: jobOrder.companyName || '',
       worksiteId: jobOrder.worksiteId || '',
@@ -3259,11 +3121,11 @@ const RecruiterJobOrderDetail: React.FC = () => {
     }
   }, [jobOrderId, searchParams]);
 
-  /** Gig-only tab: clear stored/URL tab if it is not valid for this job order type. */
+  /** Auto Messaging tab: clear stored/URL tab if not valid for this job order type (Gig/Careers only). */
   useEffect(() => {
     if (!jobOrderId || !jobOrder) return;
     if (activeTab !== 'auto_messaging') return;
-    if ((jobOrder as any).jobType === 'gig') return;
+    if (jobOrderSupportsAutoMessagingTab((jobOrder as any).jobType)) return;
     setActiveTab(DEFAULT_JOB_ORDER_DETAIL_TAB);
     try {
       localStorage.setItem(jobOrderDetailTabStorageKey(jobOrderId), DEFAULT_JOB_ORDER_DETAIL_TAB);
@@ -3309,7 +3171,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [logActivityLoading, setLogActivityLoading] = useState(false);
   const [deleteJobOrderDialogOpen, setDeleteJobOrderDialogOpen] = useState(false);
   const [deleteJobOrderSubmitting, setDeleteJobOrderSubmitting] = useState(false);
-  /** Resolved labels for auto-messaging user groups (gig header). */
+  /** Resolved labels for auto-messaging user groups (Gig/Careers header). */
   const [autoMessagingUserGroupLabels, setAutoMessagingUserGroupLabels] = useState<string[]>([]);
 
   const { isFavorite: isJobOrderFavorite, toggleFavorite: toggleJobOrderFavorite } = useFavorites('jobOrders');
@@ -3579,7 +3441,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
   }, [tenantId, jobOrderId]);
 
   useEffect(() => {
-    if (!tenantId || !jobOrder || jobOrder.jobType !== 'gig') {
+    if (!tenantId || !jobOrder || !jobOrderSupportsAutoMessagingTab(jobOrder.jobType)) {
       setAutoMessagingUserGroupLabels([]);
       return;
     }
@@ -3689,46 +3551,13 @@ const RecruiterJobOrderDetail: React.FC = () => {
     }
   };
 
-  // Load available recruiters (users with security level 5-7 or recruiter access)
+  // Load available recruiters (`recruiter: true` only — shared with Job Orders table inline picker)
   const loadAvailableRecruiters = async () => {
     if (!tenantId) return;
-    
+
     setLoadingRecruiters(true);
     try {
-      const usersRef = collection(db, 'users');
-      const usersSnapshot = await getDocs(usersRef);
-      
-      const recruiters: Array<{id: string; displayName: string; email?: string}> = [];
-      
-      usersSnapshot.docs.forEach(doc => {
-        const userData = doc.data();
-        
-        // Check if user belongs to this tenant
-        if (!userData.tenantIds || !userData.tenantIds[tenantId]) return;
-        
-        const tenantData = userData.tenantIds[tenantId];
-        const securityLevel = parseInt(tenantData.securityLevel || userData.securityLevel || '0');
-        
-        // Include users with security level 5-7 (internal team) or users with recruiter access
-        const hasRecruiterAccess = tenantData.recruiter || userData.recruiter || false;
-        const isInternalTeam = securityLevel >= 5 && securityLevel <= 7;
-        
-        if (!isInternalTeam && !hasRecruiterAccess) return;
-        
-        const displayName = (userData.firstName && userData.lastName ? `${userData.firstName} ${userData.lastName}`.trim() : '') ||
-                            userData.displayName ||
-                            (userData.email ? String(userData.email).split('@')[0] : 'Recruiter');
-        
-        recruiters.push({
-          id: doc.id,
-          displayName,
-          email: userData.email
-        });
-      });
-      
-      // Sort by name
-      recruiters.sort((a, b) => a.displayName.localeCompare(b.displayName));
-      
+      const recruiters = await fetchRecruiterPickerOptions(tenantId);
       setAvailableRecruiters(recruiters);
     } catch (error) {
       console.error('Error loading available recruiters:', error);
@@ -4205,10 +4034,9 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const jobTypeLabel =
     jobTypeRaw === 'gig' ? 'Gig' : jobTypeRaw === 'career' ? 'Career' : jobTypeRaw ? String(jobTypeRaw) : '';
 
-  const jobOrderDetailVisibleTabStrip =
-    jobTypeRaw === 'gig'
-      ? JOB_ORDER_DETAIL_TAB_STRIP
-      : JOB_ORDER_DETAIL_TAB_STRIP.filter((t) => t.key !== 'auto_messaging');
+  const jobOrderDetailVisibleTabStrip = jobOrderSupportsAutoMessagingTab(jobTypeRaw)
+    ? JOB_ORDER_DETAIL_TAB_STRIP
+    : JOB_ORDER_DETAIL_TAB_STRIP.filter((t) => t.key !== 'auto_messaging');
 
   const displayCompanyId = (jobOrder as any).companyId || jobOrder?.deal?.companyId || company?.id;
 
@@ -4248,39 +4076,66 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const linkedRecruiterAccountId =
     (jobOrder as any)?.recruiterAccountId ?? linkedAccount?.id ?? null;
 
+  const jobOrderMetaChipSx = {
+    height: 22,
+    fontSize: '0.7rem',
+    fontWeight: 600,
+    '& .MuiChip-label': { px: 0.75 },
+    bgcolor: 'rgba(0,0,0,0.06)',
+  } as const;
+
+  const jobOrderLinkSx = {
+    ...recordHeaderBodyTextSx,
+    fontWeight: 600,
+    color: 'rgb(74, 144, 226)',
+    '&:hover': { color: 'rgb(74, 144, 226)' },
+  };
+
   return (
     <Box sx={{ p: 0 }}>
       <PageHeader
+        dense
         title={
-          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
-              <Avatar
-                src={company?.logo}
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: { xs: 1.5, md: 2 },
+              width: '100%',
+            }}
+          >
+            <Avatar
+              src={company?.logo}
               alt={displayCompanyName}
-                sx={{ 
-                width: 108,
-                height: 108,
-                  bgcolor: 'primary.main',
-                fontSize: '40px',
+              sx={{
+                width: { xs: 64, md: 72 },
+                height: { xs: 64, md: 72 },
+                bgcolor: 'primary.main',
+                fontSize: { xs: '1.5rem', md: '1.75rem' },
                 fontWeight: 700,
                 flexShrink: 0,
-                }}
-              >
-              {companyInitial}
-              </Avatar>
-
-            <Box
-              sx={{
-                flex: 1,
-                minWidth: 0,
-                minHeight: '108px',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'flex-start',
-                gap: 0.75,
               }}
             >
-              {/* Line 1: Name + Favorites star */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              {companyInitial}
+            </Avatar>
+
+            <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0, width: '100%' }}>
+                <Typography
+                  variant="h5"
+                  sx={{
+                    fontWeight: 700,
+                    fontSize: { xs: '1.25rem', md: '1.5rem' },
+                    lineHeight: 1.2,
+                    flex: 1,
+                    minWidth: 0,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {jobOrder.jobOrderName || 'Job Order'}
+                </Typography>
                 {jobOrderId && (
                   <FavoriteButton
                     itemId={jobOrderId}
@@ -4289,339 +4144,260 @@ const RecruiterJobOrderDetail: React.FC = () => {
                     toggleFavorite={toggleJobOrderFavorite}
                     size="small"
                     tooltipText={{ favorited: 'Remove from favorites', notFavorited: 'Add to favorites' }}
-                    sx={{ p: 0.25 }}
+                    sx={{ p: 0.2, flexShrink: 0 }}
                   />
                 )}
-                <Typography
-                  variant="h6"
-                  sx={{
-                    fontSize: { xs: '20px', md: '24px' },
-                    fontWeight: 600,
-                    lineHeight: 1.2,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {jobOrder.jobOrderName || 'Job Order'}
-                </Typography>
               </Box>
 
-              {/* Line 2: Job Order meta (two-row style from prod) */}
-              <Box sx={{ mt: 0.25, display: 'flex', flexWrap: 'wrap', gap: 1.25, alignItems: 'center' }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                  <Typography
-                    variant="body2"
-                    sx={{ color: 'rgba(0,0,0,0.55)', fontWeight: 500, fontSize: '0.875rem' }}
-                  >
-                    Job Order:
+              <Stack spacing={1.15} sx={{ width: '100%', alignItems: 'flex-start', mt: 0.35 }}>
+                <Box sx={{ width: '100%' }}>
+                  <Typography component="span" sx={recordHeaderColumnTitleSx}>
+                    Order
                   </Typography>
-                  <Chip
-                    label={`#${jobOrder.jobOrderNumber || ''}`}
-                    size="small"
+                  <Box
                     sx={{
-                      bgcolor: 'rgba(0,0,0,0.08)',
-                      '& .MuiChip-label': { fontWeight: 600, fontSize: '0.875rem' },
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: 0.5,
+                      alignItems: 'center',
+                      mt: 0.35,
                     }}
-                  />
-                </Box>
-                
-                {jobTypeLabel && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    <Typography
-                      variant="body2"
-                      sx={{ color: 'rgba(0,0,0,0.55)', fontWeight: 500, fontSize: '0.875rem' }}
-                    >
-                      Job Type:
-                    </Typography>
+                  >
                     <Chip
-                      label={jobTypeLabel}
+                      label={`#${jobOrder.jobOrderNumber || ''}`}
                       size="small"
-                      sx={{
-                        bgcolor: 'rgba(0,0,0,0.08)',
-                        '& .MuiChip-label': { fontWeight: 600, fontSize: '0.875rem' },
-                      }}
+                      sx={jobOrderMetaChipSx}
                     />
-                  </Box>
-                )}
-                
-                {jobOrder.status && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    <Typography
-                      variant="body2"
-                      sx={{ color: 'rgba(0,0,0,0.55)', fontWeight: 500, fontSize: '0.875rem' }}
-                    >
-                      Status:
-                    </Typography>
-          <Chip
-            label={jobOrder.status}
-                    size="small"
-                      sx={{
-                        bgcolor: 'rgba(0, 180, 90, 0.12)',
-                        color: '#0A7A3B',
-                        '& .MuiChip-label': { fontWeight: 700, fontSize: '0.875rem' },
-                      }}
-                    />
-                  </Box>
-                )}
-                
-                {displayLocationName && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    <Typography
-                      variant="body2"
-                      sx={{ color: 'rgba(0,0,0,0.55)', fontWeight: 500, fontSize: '0.875rem' }}
-                    >
-                      Location:
-                    </Typography>
-                    <Chip
-                      label={displayLocationName}
-                      size="small"
-                      sx={{
-                        bgcolor: 'rgba(0,0,0,0.08)',
-                        '& .MuiChip-label': { fontWeight: 600, fontSize: '0.875rem' },
-                      }}
-                    />
-                  </Box>
-                )}
-                
-                {startDate && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    <Typography
-                      variant="body2"
-                      sx={{ color: 'rgba(0,0,0,0.55)', fontWeight: 500, fontSize: '0.875rem' }}
-                    >
-                      Start Date:
-                    </Typography>
+                    {jobTypeLabel && (
+                      <Chip label={jobTypeLabel} size="small" sx={jobOrderMetaChipSx} />
+                    )}
+                    {jobOrder.status && (
                       <Chip
-                      label={format(startDate, 'MMM dd, yyyy')}
+                        label={jobOrder.status}
                         size="small"
-                      sx={{
-                        bgcolor: 'rgba(0,0,0,0.08)',
-                        '& .MuiChip-label': { fontWeight: 600, fontSize: '0.875rem' },
-                      }}
+                        sx={{
+                          ...jobOrderMetaChipSx,
+                          bgcolor: 'rgba(0, 180, 90, 0.12)',
+                          color: '#0A7A3B',
+                          fontWeight: 700,
+                          '& .MuiChip-label': { fontWeight: 700 },
+                        }}
                       />
-                    </Box>
-                )}
-              </Box>
+                    )}
+                  </Box>
+                </Box>
 
-              {hasJobBoardSyndicationUrl(
-                connectedPostSyndicationUrls.indeedUrl,
-                connectedPostSyndicationUrls.craigslistUrl
-              ) && (
-                <JobBoardSyndicationIconRow
-                  indeedUrl={connectedPostSyndicationUrls.indeedUrl}
-                  craigslistUrl={connectedPostSyndicationUrls.craigslistUrl}
-                  sx={{ mt: 0.25 }}
-                />
-              )}
-
-              {/* Line 3: Blue link row */}
-              <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', mt: 0.25, flexWrap: 'wrap' }}>
-                <BusinessIcon sx={{ fontSize: 18, color: 'rgb(74, 144, 226)' }} />
-                {displayCompanyId ? (
-                        <MUILink
-                    component="button"
-                    type="button"
-                          underline="hover"
-                    onClick={() => navigate(`/companies/${displayCompanyId}`)}
+                <Box sx={{ width: '100%' }}>
+                  <Typography component="span" sx={recordHeaderColumnTitleSx}>
+                    Worksite
+                  </Typography>
+                  <Stack
+                    direction="row"
+                    flexWrap="wrap"
+                    useFlexGap
+                    spacing={0}
+                    alignItems="center"
                     sx={{
-                      fontSize: '0.875rem',
-                      fontWeight: 600,
-                      color: 'rgb(74, 144, 226)',
-                      '&:hover': { color: 'rgb(74, 144, 226)' },
+                      mt: 0.35,
+                      gap: { xs: 0.75, sm: 1 },
+                      rowGap: 0.65,
                     }}
                   >
-                    {displayCompanyName}
+                    <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, maxWidth: '100%' }}>
+                      <BusinessIcon sx={{ fontSize: 15, color: 'rgb(74, 144, 226)', flexShrink: 0 }} />
+                      {displayCompanyId ? (
+                        <MUILink
+                          component="button"
+                          type="button"
+                          underline="hover"
+                          onClick={() => navigate(`/companies/${displayCompanyId}`)}
+                          sx={{ ...jobOrderLinkSx, minWidth: 0 }}
+                        >
+                          {displayCompanyName}
                         </MUILink>
-                ) : (
-                  <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'rgb(74, 144, 226)' }}>
-                    {displayCompanyName}
-                  </Typography>
-                )}
-
-                {displayLocationName && (
-                  <>
-                    <LocationIcon sx={{ fontSize: 18, color: 'rgb(74, 144, 226)' }} />
-                    {displayCompanyId && displayLocationId ? (
+                      ) : (
+                        <Typography sx={{ ...jobOrderLinkSx, minWidth: 0 }}>{displayCompanyName}</Typography>
+                      )}
+                    </Box>
+                    {displayLocationName && (
+                      <>
+                        <Typography component="span" sx={{ color: 'text.disabled', lineHeight: 1, userSelect: 'none' }}>
+                          ·
+                        </Typography>
+                        <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, maxWidth: '100%' }}>
+                          <LocationIcon sx={{ fontSize: 15, color: 'rgb(74, 144, 226)', flexShrink: 0 }} />
+                          {displayCompanyId && displayLocationId ? (
                             <MUILink
-                        component="button"
-                        type="button"
+                              component="button"
+                              type="button"
                               underline="hover"
-                        onClick={() =>
-                          navigate(`/companies/${displayCompanyId}/locations/${displayLocationId}`)
-                        }
+                              onClick={() =>
+                                navigate(`/companies/${displayCompanyId}/locations/${displayLocationId}`)
+                              }
+                              sx={{ ...jobOrderLinkSx, minWidth: 0 }}
+                            >
+                              {displayLocationName}
+                            </MUILink>
+                          ) : (
+                            <Typography sx={{ ...jobOrderLinkSx, minWidth: 0 }}>{displayLocationName}</Typography>
+                          )}
+                        </Box>
+                      </>
+                    )}
+                    {startDate && (
+                      <>
+                        <Typography component="span" sx={{ color: 'text.disabled', lineHeight: 1, userSelect: 'none' }}>
+                          ·
+                        </Typography>
+                        <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                          <CalendarIcon sx={{ fontSize: 15, color: 'rgb(74, 144, 226)', flexShrink: 0 }} />
+                          <Typography sx={recordHeaderBodyTextSx} component="span">
+                            Starts {format(startDate, 'MMM dd, yyyy')}
+                          </Typography>
+                        </Box>
+                      </>
+                    )}
+                    {jobOrderSupportsAutoMessagingTab(jobTypeRaw) && autoMessagingUserGroupLabels.length > 0 && (
+                      <>
+                        <Typography component="span" sx={{ color: 'text.disabled', lineHeight: 1, userSelect: 'none' }}>
+                          ·
+                        </Typography>
+                        <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
+                          <GroupsIcon sx={{ fontSize: 15, color: 'rgb(74, 144, 226)', flexShrink: 0 }} />
+                          <Typography component="span" sx={{ ...jobOrderLinkSx, wordBreak: 'break-word' }}>
+                            {autoMessagingUserGroupLabels.join(' · ')}
+                          </Typography>
+                        </Box>
+                      </>
+                    )}
+                  </Stack>
+                </Box>
+
+                <Box sx={{ width: '100%' }}>
+                  <Typography component="span" sx={recordHeaderColumnTitleSx}>
+                    Setup & actions
+                  </Typography>
+                  <Stack
+                    direction="row"
+                    flexWrap="wrap"
+                    useFlexGap
+                    alignItems="center"
+                    sx={{
+                      mt: 0.35,
+                      gap: 0.5,
+                      rowGap: 0.65,
+                    }}
+                  >
+                    {hasJobBoardSyndicationUrl(
+                      connectedPostSyndicationUrls.indeedUrl,
+                      connectedPostSyndicationUrls.craigslistUrl
+                    ) && (
+                      <JobBoardSyndicationIconRow
+                        indeedUrl={connectedPostSyndicationUrls.indeedUrl}
+                        craigslistUrl={connectedPostSyndicationUrls.craigslistUrl}
+                        sx={{ mr: 0.25 }}
+                      />
+                    )}
+                    <Box
+                      sx={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        flexWrap: 'wrap',
+                        gap: 0.35,
+                        minHeight: 26,
+                      }}
+                    >
+                      <Typography
+                        component="span"
                         sx={{
-                          fontSize: '0.875rem',
-                          fontWeight: 600,
-                          color: 'rgb(74, 144, 226)',
-                          '&:hover': { color: 'rgb(74, 144, 226)' },
+                          ...recordHeaderBodyTextSx,
+                          fontWeight: 700,
                         }}
                       >
-                        {displayLocationName}
-                            </MUILink>
-                    ) : (
-                      <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'rgb(74, 144, 226)' }}>
-                        {displayLocationName}
-                          </Typography>
-                    )}
-                  </>
-                )}
-
-                {jobTypeRaw === 'gig' && autoMessagingUserGroupLabels.length > 0 && (
-                  <>
-                    <GroupsIcon sx={{ fontSize: 18, color: 'rgb(74, 144, 226)' }} />
-                    <Typography
-                      component="span"
-                      sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'rgb(74, 144, 226)' }}
-                    >
-                      {autoMessagingUserGroupLabels.join(' · ')}
-                    </Typography>
-                  </>
-                )}
-              </Stack>
-
-              {/* Line 4: Checklist progress */}
-              <Stack
-                direction="row"
-                spacing={0.5}
-                sx={{ alignItems: 'center', mt: 0.5, flexWrap: 'wrap' }}
-              >
-                <Typography
-                  variant="caption"
-                  sx={{ fontWeight: 700, color: 'rgba(0,0,0,0.55)', mr: 0.75 }}
-                >
-                  Order Setup: {checklistProgress.completed}/{checklistProgress.total}
-                </Typography>
-                {checklistProgress.statuses.map((s) => (
-                  <Tooltip
-                    key={s.id}
-                    title={`${s.label}: ${s.complete ? 'Complete' : 'Missing'}`}
-                    arrow
-                  >
-                    <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center' }}>
-                      <CheckCircleIcon
-                        sx={{
-                          fontSize: 16,
-                          color: s.complete ? 'success.main' : 'grey.300',
-                        }}
-                      />
+                        Order setup {checklistProgress.completed}/{checklistProgress.total}
+                      </Typography>
+                      {checklistProgress.statuses.map((s) => (
+                        <Tooltip
+                          key={s.id}
+                          title={`${s.label}: ${s.complete ? 'Complete' : 'Missing'}`}
+                          arrow
+                          componentsProps={recordHeaderTooltipComponentsProps}
+                        >
+                          <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center' }}>
+                            <CheckCircleIcon
+                              sx={{
+                                fontSize: 14,
+                                color: s.complete ? 'success.main' : 'grey.300',
+                              }}
+                            />
+                          </Box>
+                        </Tooltip>
+                      ))}
                     </Box>
-                  </Tooltip>
-                ))}
-              </Stack>
-
-              {/* Line 5: Icon row (Account, Add Note, Add Task, Log Activity) */}
-              <Stack
-                direction="row"
-                spacing={1}
-                sx={{ alignItems: 'center', mt: 1.5 }}
-              >
-                <Tooltip
-                  title={
-                    linkedRecruiterAccountId
-                      ? 'Open linked account'
-                      : 'No recruiter account linked to this job’s company yet'
-                  }
-                >
-                  <span>
-                    <IconButton
-                      size="small"
-                      disabled={!linkedRecruiterAccountId}
-                      onClick={() =>
-                        linkedRecruiterAccountId && navigate(`/accounts/${linkedRecruiterAccountId}`)
-                      }
-                      aria-label="Open linked account"
+                    <Stack
+                      direction="row"
+                      spacing={0.5}
                       sx={{
-                        p: 1,
-                        color: 'primary.main',
-                        bgcolor: 'action.hover',
-                        borderRadius: 1,
-                        '&:hover': {
-                          color: 'primary.dark',
-                          bgcolor: 'primary.light',
-                          transform: 'translateY(-1px)',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                        },
-                        '&.Mui-disabled': { opacity: 0.45 },
-                        transition: 'all 0.2s ease',
+                        alignItems: 'center',
+                        flexWrap: 'wrap',
+                        gap: 0.5,
+                        pl: { xs: 0, sm: 0.75 },
+                        ml: { xs: 0, sm: 0.25 },
+                        borderLeft: { xs: 'none', sm: '1px solid' },
+                        borderColor: 'divider',
                       }}
                     >
-                      <AccountBalanceIcon sx={{ fontSize: 20 }} />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-                <Tooltip title="Add Note">
-                  <IconButton
-                    size="small"
-                    onClick={() => setShowAddNoteDialog(true)}
-                    sx={{ 
-                      p: 1,
-                      color: 'primary.main',
-                      bgcolor: 'action.hover',
-                      borderRadius: 1,
-                      '&:hover': {
-                        color: 'primary.dark',
-                        bgcolor: 'primary.light',
-                        transform: 'translateY(-1px)',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                      },
-                      transition: 'all 0.2s ease'
-                    }}
-                  >
-                    <NoteIcon sx={{ fontSize: 20 }} />
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title="Add Task">
-                  <IconButton
-                    size="small"
-                    onClick={() => setShowCreateTaskDialog(true)}
-                    sx={{ 
-                      p: 1,
-                      color: 'primary.main',
-                      bgcolor: 'action.hover',
-                      borderRadius: 1,
-                      '&:hover': {
-                        color: 'primary.dark',
-                        bgcolor: 'primary.light',
-                        transform: 'translateY(-1px)',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                      },
-                      transition: 'all 0.2s ease'
-                    }}
-                  >
-                    <AddTaskIcon sx={{ fontSize: 20 }} />
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title="Log Activity">
-                  <IconButton
-                    size="small"
-                    onClick={() => setShowLogActivityDialog(true)}
-                    sx={{ 
-                      p: 1,
-                      color: 'primary.main',
-                      bgcolor: 'action.hover',
-                      borderRadius: 1,
-                      '&:hover': {
-                        color: 'primary.dark',
-                        bgcolor: 'primary.light',
-                        transform: 'translateY(-1px)',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                      },
-                      transition: 'all 0.2s ease'
-                    }}
-                  >
-                    <CheckCircleIcon sx={{ fontSize: 20 }} />
-                  </IconButton>
-                </Tooltip>
+                      {linkedRecruiterAccountId ? (
+                        <RecordHeaderActionIcon
+                          tooltip="Open linked account"
+                          onClick={() => navigate(`/accounts/${linkedRecruiterAccountId}`)}
+                          aria-label="Open linked account"
+                        >
+                          <AccountBalanceIcon />
+                        </RecordHeaderActionIcon>
+                      ) : (
+                        <Tooltip
+                          title="No recruiter account linked to this job’s company yet"
+                          arrow
+                          componentsProps={recordHeaderTooltipComponentsProps}
+                        >
+                          <span>
+                            <IconButton
+                              size="small"
+                              disabled
+                              aria-label="Open linked account"
+                              sx={recordHeaderActionIconButtonSx}
+                            >
+                              <AccountBalanceIcon />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      )}
+                      <RecordHeaderActionIcon tooltip="Add Note" onClick={() => setShowAddNoteDialog(true)} aria-label="Add Note">
+                        <NoteIcon />
+                      </RecordHeaderActionIcon>
+                      <RecordHeaderActionIcon tooltip="Add Task" onClick={() => setShowCreateTaskDialog(true)} aria-label="Add Task">
+                        <AddTaskIcon />
+                      </RecordHeaderActionIcon>
+                      <RecordHeaderActionIcon
+                        tooltip="Log Activity"
+                        onClick={() => setShowLogActivityDialog(true)}
+                        aria-label="Log Activity"
+                      >
+                        <CheckCircleIcon />
+                      </RecordHeaderActionIcon>
+                    </Stack>
+                  </Stack>
+                </Box>
               </Stack>
-                      </Box>
-                  </Box>
+            </Box>
+          </Box>
         }
         filters={
-          <Box sx={{ display: 'flex', gap: 0.5 }}>
+          <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', alignItems: 'center' }}>
             {jobOrderDetailVisibleTabStrip.map((t) => {
               const isActive = activeTab === t.key;
-                return (
+              return (
                 <Button
                   key={t.key}
                   onClick={() => setTabAndPersist(t.key)}
@@ -4629,13 +4405,15 @@ const RecruiterJobOrderDetail: React.FC = () => {
                   sx={{
                     textTransform: 'none',
                     borderRadius: '999px',
-                    fontSize: '14px',
-                    fontWeight: isActive ? 500 : 400,
+                    fontSize: '0.8125rem',
+                    fontWeight: isActive ? 600 : 400,
+                    minHeight: 32,
+                    py: 0.5,
                     color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
                     bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
-                    px: 1.5,
-                    py: 0.75,
+                    px: 1.25,
                     minWidth: 'auto',
+                    lineHeight: 1.2,
                     '&:hover': {
                       bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
                     },
@@ -4645,20 +4423,23 @@ const RecruiterJobOrderDetail: React.FC = () => {
                 </Button>
               );
             })}
-              </Box>
-            } 
+          </Box>
+        }
         rightActions={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
             <Button
               variant="outlined"
               color="error"
-              startIcon={<DeleteIcon />}
+              size="small"
+              startIcon={<DeleteIcon sx={{ fontSize: 18 }} />}
               onClick={() => setDeleteJobOrderDialogOpen(true)}
               sx={{
                 textTransform: 'none',
-                borderRadius: '24px',
-                height: '40px',
-                px: 2,
+                borderRadius: '999px',
+                fontSize: '0.8125rem',
+                minHeight: 34,
+                py: 0.5,
+                px: 1.5,
                 whiteSpace: 'nowrap',
               }}
             >
@@ -4666,21 +4447,24 @@ const RecruiterJobOrderDetail: React.FC = () => {
             </Button>
             <Button
               variant="outlined"
-              startIcon={<ArrowBackIcon />}
+              size="small"
+              startIcon={<ArrowBackIcon sx={{ fontSize: 18 }} />}
               onClick={() => navigate('/jobs/job-orders')}
-                    sx={{
+              sx={{
                 textTransform: 'none',
-                borderRadius: '24px',
-                height: '40px',
-                px: 2,
+                borderRadius: '999px',
+                fontSize: '0.8125rem',
+                minHeight: 34,
+                py: 0.5,
+                px: 1.5,
                 whiteSpace: 'nowrap',
               }}
             >
               Back
             </Button>
-              </Box>
-            } 
-          />
+          </Box>
+        }
+      />
 
       <Dialog
         open={deleteJobOrderDialogOpen}

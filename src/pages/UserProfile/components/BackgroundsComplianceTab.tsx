@@ -15,6 +15,7 @@ import {
   DialogContent,
   DialogTitle,
   Divider,
+  IconButton,
   Link,
   Paper,
   Stack,
@@ -28,9 +29,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import GavelIcon from '@mui/icons-material/Gavel';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import {
   Timestamp,
   collection,
@@ -59,20 +58,19 @@ import { backgroundComplianceScreeningRowElementId } from '../../../utils/employ
 import { normalizeUserDocumentDobToYyyyMmDd } from '../../../utils/userProfileDob';
 import type { BackgroundCheckRecord } from '../../../types/backgroundCheck';
 import {
-  buildComplianceSummary,
   canAccusourceAdminFromUserDoc,
   canManageEverifyFromClaims,
   evaluateScreeningSatisfied,
   normalizeEverifyRow,
   normalizeScreeningRow,
-  statusToneFromStatusString,
   type ScreeningPackageMergeResult,
 } from './backgroundsComplianceModel';
 import { EVERIFY_SELECT_PERM_HINT } from './StartEverifySelectDialog';
-import I9SupportingDocumentsSection from '../../../components/i9SupportingDocuments/I9SupportingDocumentsSection';
+// import I9SupportingDocumentsSection from '../../../components/i9SupportingDocuments/I9SupportingDocumentsSection';
 import ProfileTabPointerAlert from '../../../components/profile/ProfileTabPointerAlert';
 import AccusourceApplicantSetupPanel from '../../../components/recruiter/AccusourceApplicantSetupPanel';
 import { resolveApplicantPortalUrl } from '../../../utils/backgroundCheckApplicantPortal';
+import AccusourceOrderServiceLinesTable from './AccusourceOrderServiceLinesTable';
 
 const PAGE_LIMIT = 100;
 
@@ -82,6 +80,10 @@ const userEmploymentsCol = (tenantId: string) => collection(db, 'tenants', tenan
 const everifyRetryCase = httpsCallable(functions, 'everifyRetryCase');
 const createAccusourceBackgroundCheck = httpsCallable(functions, 'createAccusourceBackgroundCheck');
 const getAccusourcePdf = httpsCallable(functions, 'getAccusourceBackgroundCheckPdf');
+const setAccusourceLineAdjudicationCallable = httpsCallable(
+  functions,
+  'setAccusourceLineAdjudication',
+);
 const syncAccusourcePackageCatalog = httpsCallable(functions, 'syncAccusourcePackageCatalog');
 
 function formatTime(value: unknown): string {
@@ -159,6 +161,7 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
   const [bgMessageSeverity, setBgMessageSeverity] = useState<'error' | 'warning'>('error');
 
   const [pdfLoading, setPdfLoading] = useState<string | null>(null);
+  const [adjudicationLoadingKey, setAdjudicationLoadingKey] = useState<string | null>(null);
   const [packageDefaultsTrace, setPackageDefaultsTrace] = useState('');
   const { catalog: accusourceCatalog, loading: catalogLoading, refetch: refetchAccusourceCatalog } =
     useAccusourceCatalog();
@@ -354,11 +357,6 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
     return userEmploymentsSnapshot.find((e) => e.entityId === selectEntityIdResolved) ?? null;
   }, [userEmploymentsSnapshot, selectEntityIdResolved]);
 
-  const summary = useMemo(
-    () => buildComplianceSummary(selectEverifyRows, screeningRows),
-    [selectEverifyRows, screeningRows]
-  );
-
   const normalizedRows = useMemo(() => {
     const ev = selectEverifyRows.map(({ id, data }) => normalizeEverifyRow(id, data));
     const bg = screeningRows.map(normalizeScreeningRow);
@@ -539,15 +537,111 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
 
   const openPdf = async (backgroundCheckId: string, kind: 'final' | 'drug') => {
     if (!canAccusourceAdmin) return;
+    // Open a blank tab *synchronously* on click; navigating it after the callable resolves avoids
+    // popup blockers (Safari in particular) that kill `window.open` invoked after an `await`.
+    const popup = window.open('', '_blank', 'noopener,noreferrer');
     setPdfLoading(`${backgroundCheckId}-${kind}`);
     try {
+      // Server contract (see `functions/.../getAccusourceBackgroundCheckPdf.ts`):
+      // `{ pdfBase64, mimeType, kind, profileId }` — NOT `{ url }`. Older builds of this handler
+      // destructured `url`, which silently swallowed the response.
       const res = (await getAccusourcePdf({ backgroundCheckId, kind })) as {
-        data?: { url?: string; base64?: string };
+        data?: {
+          pdfBase64?: string;
+          mimeType?: string;
+          // Legacy / alternate shapes kept for forward-compat with any server swap.
+          url?: string;
+          base64?: string;
+        };
       };
-      const url = res.data?.url;
-      if (url) window.open(url, '_blank', 'noopener,noreferrer');
+      const payload = res.data ?? {};
+      const directUrl = payload.url;
+      const base64 = payload.pdfBase64 ?? payload.base64;
+      const mimeType = payload.mimeType ?? 'application/pdf';
+
+      let objectUrl: string | null = null;
+      let targetUrl: string | null = null;
+      if (directUrl) {
+        targetUrl = directUrl;
+      } else if (base64) {
+        // Decode base64 → Uint8Array → Blob → object URL. No `atob(...).split('')` shortcut so we
+        // handle the full byte range correctly.
+        const bin = atob(base64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+        const blob = new Blob([bytes], { type: mimeType });
+        objectUrl = URL.createObjectURL(blob);
+        targetUrl = objectUrl;
+      }
+
+      if (!targetUrl) {
+        // Nothing to show — close the blank tab we just opened and surface an error.
+        if (popup && !popup.closed) popup.close();
+        setBgMessageSeverity('error');
+        setBgMessage('PDF callable returned no content. Check SourceDirect profile status.');
+        return;
+      }
+
+      if (popup && !popup.closed) {
+        popup.location.href = targetUrl;
+      } else {
+        // Popup was blocked — fall back to an anchor download so the user still gets the file.
+        const a = document.createElement('a');
+        a.href = targetUrl;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.download = `${backgroundCheckId}-${kind}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+
+      // Revoke the object URL after the new tab has had time to load the PDF.
+      if (objectUrl) {
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl as string), 60_000);
+      }
+    } catch (err) {
+      if (popup && !popup.closed) popup.close();
+      setBgMessageSeverity('error');
+      setBgMessage(`Failed to open PDF: ${formatFirebaseHttpsError(err)}`);
     } finally {
       setPdfLoading(null);
+    }
+  };
+
+  const setLineAdjudication = async (
+    backgroundCheckId: string,
+    serviceKey: string,
+    verdict: 'PASSED' | 'FAILED' | 'NEEDS_REVIEW' | null,
+    reason: string | null,
+  ) => {
+    if (!canAccusourceAdmin) {
+      setBgMessageSeverity('error');
+      setBgMessage(ACCUSOURCE_PERM_HINT);
+      return;
+    }
+    const key = `${backgroundCheckId}::${serviceKey}`;
+    setAdjudicationLoadingKey(key);
+    try {
+      await setAccusourceLineAdjudicationCallable({
+        backgroundCheckId,
+        serviceKey,
+        verdict,
+        reason,
+      });
+      // Firestore snapshot subscriptions keep the table in sync; show a lightweight confirmation.
+      setBgMessageSeverity('warning');
+      setBgMessage(
+        verdict === null
+          ? 'Reverted line to system verdict.'
+          : `Line marked as ${verdict === 'PASSED' ? 'Passed' : verdict === 'FAILED' ? 'Failed' : 'Needs review'}.`,
+      );
+    } catch (err) {
+      setBgMessageSeverity('error');
+      setBgMessage(`Failed to update verdict: ${formatFirebaseHttpsError(err)}`);
+      throw err;
+    } finally {
+      setAdjudicationLoadingKey(null);
     }
   };
 
@@ -568,13 +662,14 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
   }
 
   return (
-    <Stack spacing={2} sx={{ p: 2 }}>
+    <Stack spacing={2}>
       {showEmploymentPointer && onNavigateToProfileTab ? (
         <ProfileTabPointerAlert
           message="Payroll setup and I-9 documents are in Employment."
           onNavigate={() => onNavigateToProfileTab('Employment')}
         />
       ) : null}
+      {/* Screening tab intro + I-9 supporting documents card (disabled).
       <Alert severity="info" variant="outlined">
         <Typography variant="body2" component="div" sx={{ lineHeight: 1.45 }}>
           This tab is the <strong>screening record</strong> surface (orders, PDFs, E-Verify / I-9 context). It does not
@@ -597,6 +692,7 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
       {!viewerIsProfileSubject ? (
         <I9SupportingDocumentsSection tenantId={tenantId} workerUserId={uid} />
       ) : null}
+      */}
 
       {error && (
         <Alert severity="error" onClose={() => setError(null)}>
@@ -604,95 +700,36 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
         </Alert>
       )}
 
-      {/* 1. Summary */}
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
-          <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap">
-            <GavelIcon color="primary" fontSize="small" />
-            <Typography variant="subtitle1" fontWeight={700}>
-              Compliance summary
-            </Typography>
-            {summary.actionNeeded && (
-              <Chip
-                size="small"
-                color="warning"
-                icon={<WarningAmberIcon />}
-                label="Action needed"
-              />
-            )}
-          </Stack>
-          <Typography variant="caption" color="text.secondary">
-            Last updated: {lastRefresh ? lastRefresh.toLocaleString() : '—'}
-            {summary.maxMillis > 0 && ` · data max ${new Date(summary.maxMillis).toLocaleString()}`}
-          </Typography>
-        </Stack>
-        {hiddenEverifyCount > 0 && (
-          <Alert severity="info" sx={{ mt: 1 }}>
-            {hiddenEverifyCount} E-Verify case(s) on file are not shown because they are not linked to a <strong>C1 Select</strong> hiring entity
-            (check <code>everify_cases.entityId</code>).
-          </Alert>
-        )}
-        {(selectI9Employment || workforceI9Employments.length > 0) && (
-          <Stack spacing={1} sx={{ mt: 1.5 }}>
-            {selectI9Employment && (
-              <Box>
-                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase' }}>
-                  Work authorization — C1 Select (I-9)
-                </Typography>
-                <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mt: 0.5 }}>
-                  <Chip size="small" variant="outlined" label={`I-9: ${selectI9Employment.i9Status || '—'}`} />
-                </Stack>
-              </Box>
-            )}
-            {workforceI9Employments.length > 0 && (
-              <Box>
-                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase' }}>
-                  Work authorization — C1 Workforce (I-9 only)
-                </Typography>
-                <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mt: 0.5 }}>
-                  {workforceI9Employments.map((e) => (
-                    <Chip
-                      key={e.id}
-                      size="small"
-                      variant="outlined"
-                      label={`I-9: ${e.i9Status || '—'} (${entityNameById[e.entityId] || e.entityId})`}
-                    />
-                  ))}
-                </Stack>
-              </Box>
-            )}
-          </Stack>
-        )}
-        <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mt: 1.5, mb: 1 }}>
-          <Chip
-            size="small"
-            label={`Select — E-Verify: ${summary.evStatusLabel}`}
-            color={statusToneFromStatusString(summary.evStatusLabel)}
-            variant="outlined"
-          />
-          <Chip
-            size="small"
-            label={`Background screening: ${summary.bgStatusLabel}`}
-            color={statusToneFromStatusString(summary.bgStatusLabel)}
-            variant="outlined"
-          />
-          <Chip size="small" label={`Drug screening: ${summary.drugSummaryLabel}`} variant="outlined" />
-          <Chip size="small" label={`Additional: ${summary.additionalSummaryLabel}`} variant="outlined" />
-        </Stack>
-        <Stack direction="row" flexWrap="wrap" gap={1}>
-          <Tooltip title={!canAccusourceAdmin ? ACCUSOURCE_PERM_HINT : ''}>
+      {/* 1. Actions (Compliance summary card removed; Order Screening + Refresh kept at top) */}
+      <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center" justifyContent="space-between">
+        <Stack direction="row" flexWrap="wrap" gap={0.5} alignItems="center">
+          <Tooltip title={!canAccusourceAdmin ? ACCUSOURCE_PERM_HINT : 'Order a new screening'}>
             <span>
-              <Button variant="outlined" size="small" onClick={openScreeningModal} disabled={!canAccusourceAdmin}>
+              <Button
+                variant="text"
+                size="small"
+                onClick={openScreeningModal}
+                disabled={!canAccusourceAdmin}
+                sx={{ textTransform: 'none' }}
+              >
                 Order screening
               </Button>
             </span>
           </Tooltip>
-          <Button variant="outlined" size="small" startIcon={<RefreshIcon />} onClick={() => loadAll()} disabled={loading}>
-            Refresh status
-          </Button>
+          <Tooltip title="Refresh status">
+            <span>
+              <IconButton size="small" onClick={() => loadAll()} disabled={loading}>
+                <RefreshIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
         </Stack>
-      </Paper>
+        <Typography variant="caption" color="text.secondary">
+          Last updated: {lastRefresh ? lastRefresh.toLocaleString() : '—'}
+        </Typography>
+      </Stack>
 
+      {/* Default screening package (resolved) card — commented out per UI cleanup.
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="subtitle2" fontWeight={600} gutterBottom>
           Default screening package (resolved)
@@ -732,9 +769,10 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
           </Typography>
         )}
       </Paper>
+      */}
 
       {/* 2. Table */}
-      <Paper variant="outlined" sx={{ p: 0 }}>
+      <Paper variant="outlined" sx={{ p: 0, maxWidth: '100%', minWidth: 0 }}>
         <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
           <Typography variant="subtitle2" fontWeight={600}>
             Active orders & compliance items
@@ -743,7 +781,7 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
             E-Verify rows are <strong>C1 Select</strong> only. Screenings (AccuSource) apply per job/account rules.
           </Typography>
         </Box>
-        <TableContainer>
+        <TableContainer sx={{ maxWidth: '100%', overflowX: 'auto' }}>
           <Table size="small">
             <TableHead>
               <TableRow>
@@ -891,34 +929,30 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
                         ) : null}
                       </TableCell>
                     </TableRow>
-                    {row.screeningServiceLines?.map((svc) => (
-                      <TableRow key={`${row.key}-screen-${svc.id}`}>
-                        <TableCell sx={{ pl: 3, borderLeft: '3px solid', borderColor: 'divider' }}>
-                          <Typography variant="caption" color="text.secondary">
-                            Screen
-                          </Typography>
+                    {row.screeningServiceLines && row.screeningServiceLines.length > 0 ? (
+                      <TableRow>
+                        <TableCell
+                          colSpan={8}
+                          sx={{
+                            p: 0,
+                            pl: 0,
+                            borderLeft: '4px solid',
+                            borderColor: 'divider',
+                            bgcolor: 'grey.50',
+                            verticalAlign: 'top',
+                          }}
+                        >
+                          <AccusourceOrderServiceLinesTable
+                            record={r}
+                            onOpenFinalPdf={(id) => openPdf(id, 'final')}
+                            pdfLoading={pdfLoading}
+                            canAccusourceAdmin={canAccusourceAdmin}
+                            onSetAdjudication={setLineAdjudication}
+                            adjudicationLoadingKey={adjudicationLoadingKey}
+                          />
                         </TableCell>
-                        <TableCell>
-                          <Typography variant="body2">{svc.name}</Typography>
-                          {svc.type ? (
-                            <Typography variant="caption" color="text.secondary" display="block">
-                              {svc.type}
-                            </Typography>
-                          ) : null}
-                          <Typography variant="caption" color="text.secondary" display="block">
-                            ID {svc.id}
-                          </Typography>
-                        </TableCell>
-                        <TableCell>
-                          <Typography variant="body2">{svc.status}</Typography>
-                        </TableCell>
-                        <TableCell>{formatTime(row.submittedAt)}</TableCell>
-                        <TableCell>AccuSource</TableCell>
-                        <TableCell>—</TableCell>
-                        <TableCell>—</TableCell>
-                        <TableCell align="right">—</TableCell>
                       </TableRow>
-                    ))}
+                    ) : null}
                     <TableRow>
                       <TableCell
                         colSpan={8}

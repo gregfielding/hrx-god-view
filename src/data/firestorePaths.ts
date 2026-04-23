@@ -17,6 +17,14 @@
  * ```
  */
 
+/** Doc id under tenants/{tid}/workers_comp_rates: GA_8810 or GA_8810__m__accountDocId when scoped to a national/standalone account. */
+export function workersCompRateDocId(stateCode: string, code: string, modifierAccountId?: string | null): string {
+  const s = String(stateCode || '').trim().toUpperCase();
+  const c = String(code || '').trim();
+  const m = String(modifierAccountId || '').trim();
+  return m ? `${s}_${c}__m__${m}` : `${s}_${c}`;
+}
+
 /**
  * Canonical path helpers for Phase 1.5+ data model
  * 
@@ -228,10 +236,10 @@ export const p = {
   workersCompClassCode: (tid: string, id: string) => `tenants/${tid}/workers_comp_class_codes/${id}`,
   workersCompRateSets: (tid: string) => `tenants/${tid}/workers_comp_rate_sets`,
   workersCompRateSet: (tid: string, id: string) => `tenants/${tid}/workers_comp_rate_sets/${id}`,
-  /** WC rates by state + code (single source of truth). One doc per (state, code); update here and all accounts/job orders use new rate. */
+  /** WC rates by state + code (single source of truth). Doc id: STATE_CODE or STATE_CODE__m__accountId when scoped to a national/standalone account. */
   workersCompRates: (tid: string) => `tenants/${tid}/workers_comp_rates`,
-  workersCompRate: (tid: string, stateCode: string, code: string) =>
-    `tenants/${tid}/workers_comp_rates/${String(stateCode || '').trim().toUpperCase()}_${String(code || '').trim()}`,
+  workersCompRate: (tid: string, stateCode: string, code: string, modifierAccountId?: string | null) =>
+    `tenants/${tid}/workers_comp_rates/${workersCompRateDocId(stateCode, code, modifierAccountId)}`,
 
   /**
    * User Groups (manual candidate grouping)
@@ -297,6 +305,15 @@ export const workerNotificationsPaths = {
   thread: (threadId: string) => `threads/${threadId}`,
   threadMessages: (threadId: string) => `threads/${threadId}/messages`,
   threadMessage: (threadId: string, messageId: string) => `threads/${threadId}/messages/${messageId}`,
+};
+
+/**
+ * Worker certification records (Phase 1 — canonical `certification_records` subcollection).
+ */
+export const userCertificationPaths = {
+  certificationRecords: (uid: string) => `users/${uid}/certification_records`,
+  certificationRecord: (uid: string, recordId: string) =>
+    `users/${uid}/certification_records/${recordId}`,
 };
 
 /**

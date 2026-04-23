@@ -25,6 +25,7 @@ import { isQuietHours } from './quietHours';
 import { getSystemSenderIdentity, resolveSenderIdentity, SenderIdentity } from './senderIdentity';
 import { findOrCreateEmailThread, addMessageToThread } from './emailThreading';
 import {
+  containsWaitlistCopy,
   logWaitlistNotificationsSuppressed,
   shouldSendApplicationWaitlistNotifications,
 } from './applicationWaitlistNotificationsGate';
@@ -84,23 +85,40 @@ export async function sendMessage(context: MessageContext): Promise<SendMessageR
   try {
     logger.info(`Routing message: ${context.messageTypeId} to user ${context.userId}`);
 
-    if (context.messageTypeId === 'application_waitlisted' && !shouldSendApplicationWaitlistNotifications()) {
-      logWaitlistNotificationsSuppressed('routingOrchestrator.sendMessage', {
-        tenantId: context.tenantId,
-        userId: context.userId,
-      });
-      return {
-        success: true,
-        messageTypeId: context.messageTypeId,
-        userId: context.userId,
-        routingDecision: {
-          channels: [],
-          shouldSend: false,
-          reason: 'application_waitlisted notifications are disabled (set ENABLE_APPLICATION_WAITLIST_NOTIFICATIONS=true to allow)',
-          skippedChannels: [{ channel: 'sms', reason: 'waitlist_notifications_disabled' }],
-        },
-        deliveryResults: [],
-      };
+    // Waitlist gate — explicit messageTypeId OR content-based safety net.
+    // Content check fires when the rendered body or subject (passed via
+    // `variables._message` / `variables._subject`) reads like waitlist copy,
+    // even if the messageTypeId is something generic like `application_received`
+    // or `application_status_change`. Catches tenant-misconfigured templates
+    // and automation rule bodies that contain waitlist language.
+    if (!shouldSendApplicationWaitlistNotifications()) {
+      const waitlistByType = context.messageTypeId === 'application_waitlisted';
+      const waitlistByContent = containsWaitlistCopy(
+        context.variables?._message as string | undefined,
+        context.variables?._subject as string | undefined,
+        context.variables?._rawMessage as string | undefined,
+      );
+      if (waitlistByType || waitlistByContent) {
+        logWaitlistNotificationsSuppressed('routingOrchestrator.sendMessage', {
+          tenantId: context.tenantId,
+          userId: context.userId,
+          messageTypeId: context.messageTypeId,
+          source: context.source,
+          matchedBy: waitlistByType ? 'message_type' : 'content',
+        });
+        return {
+          success: true,
+          messageTypeId: context.messageTypeId,
+          userId: context.userId,
+          routingDecision: {
+            channels: [],
+            shouldSend: false,
+            reason: 'application_waitlisted notifications are disabled (set ENABLE_APPLICATION_WAITLIST_NOTIFICATIONS=true to allow)',
+            skippedChannels: [{ channel: 'sms', reason: 'waitlist_notifications_disabled' }],
+          },
+          deliveryResults: [],
+        };
+      }
     }
 
     // 1. Get message type configuration
@@ -397,6 +415,14 @@ async function shouldUseChannel(
       return { allowed: true };
     }
 
+    if (context.messageTypeId === 'worker_hired') {
+      const phone = userData.phoneE164 || userData.phone;
+      if (!phone) {
+        return { allowed: false, reason: 'Recipient has no phone number' };
+      }
+      return { allowed: true };
+    }
+
     if (context.messageTypeId === 'on_call_employment_started') {
       const phone = userData.phoneE164 || userData.phone;
       if (!phone) {
@@ -631,13 +657,33 @@ async function deliverSMS(
     } else {
       // Use provided message or default
       messageContent = context.variables?.message || `You have a new message from ${messageTypeConfig.label}.`;
-      
+
       // Add STOP footer if replies allowed
       if (messageTypeConfig.allowReply) {
         messageContent += ' Reply STOP to unsubscribe, HELP for help.';
       }
     }
-    
+
+    // Post-render waitlist safety net (SMS). Catches template-driven renders that
+    // bypassed the outer `sendMessage` gate because `_message` wasn't passed.
+    if (
+      !shouldSendApplicationWaitlistNotifications() &&
+      containsWaitlistCopy(messageContent)
+    ) {
+      logWaitlistNotificationsSuppressed('routingOrchestrator.deliverSMS.content_match', {
+        tenantId: context.tenantId,
+        userId: context.userId,
+        messageTypeId: context.messageTypeId,
+        source: context.source,
+      });
+      return {
+        channel: 'sms',
+        success: false,
+        suppressed: true,
+        error: 'waitlist_notifications_disabled_content_match',
+      };
+    }
+
     // PHASE 5.1: Check rate limits before sending (skip for test sends)
     const isTestSend = context.metadata?.testSend === true;
     const rateLimitCheck = isTestSend
@@ -1262,7 +1308,28 @@ async function deliverEmail(
     if (typeof subject === 'string' && (context.variables?._subject == null && context.variables?.subject == null)) {
       subject = renderStringWithVariables(subject, variables);
     }
-    
+
+    // Post-render waitlist safety net (email). Catches template-driven renders
+    // that bypassed the outer `sendMessage` gate because `_message` wasn't
+    // pre-rendered by the caller.
+    if (
+      !shouldSendApplicationWaitlistNotifications() &&
+      containsWaitlistCopy(renderedBody, renderedHtmlBody, typeof subject === 'string' ? subject : undefined)
+    ) {
+      logWaitlistNotificationsSuppressed('routingOrchestrator.deliverEmail.content_match', {
+        tenantId: context.tenantId,
+        userId: context.userId,
+        messageTypeId: context.messageTypeId,
+        source: context.source,
+      });
+      return {
+        channel: 'email',
+        success: false,
+        suppressed: true,
+        error: 'waitlist_notifications_disabled_content_match',
+      };
+    }
+
     // PHASE 5.1: Check rate limits before sending
     const rateLimitCheck = await checkRateLimits({
       tenantId: context.tenantId,
@@ -1537,6 +1604,17 @@ async function deliverPush(
     const stripHtml = (html: string): string => {
       return html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').trim();
     };
+
+    let usedExplicitPushContent = false;
+    if (context.messageTypeId === 'worker_hired') {
+      const pt = context.variables?.pushTitle as string | undefined;
+      const pb = context.variables?.pushBody as string | undefined;
+      if (pt && pb && typeof pt === 'string' && typeof pb === 'string') {
+        title = pt.length > 80 ? `${pt.substring(0, 77)}...` : pt;
+        body = pb.length > 200 ? `${pb.substring(0, 197)}...` : pb;
+        usedExplicitPushContent = true;
+      }
+    }
     
     // Helper function to extract title from message (first line or first sentence)
     const extractTitle = (html: string, maxLength: number = 50): string => {
@@ -1551,7 +1629,7 @@ async function deliverPush(
       return firstLine.substring(0, maxLength);
     };
     
-    if (isDirectMessage && unifiedMessage) {
+    if (!usedExplicitPushContent && isDirectMessage && unifiedMessage) {
       // Use provided subject/title if available, otherwise extract from first line/sentence
       const providedSubject = context.variables?._subject as string | undefined;
       title = providedSubject || extractTitle(unifiedMessage, 50) || messageTypeConfig.label;

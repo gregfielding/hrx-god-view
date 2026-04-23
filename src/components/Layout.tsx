@@ -56,6 +56,7 @@ import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
 import AlternateEmailIcon from '@mui/icons-material/AlternateEmail';
 import PersonIcon from '@mui/icons-material/Person';
 import LanguageIcon from '@mui/icons-material/Language';
+import CheckIcon from '@mui/icons-material/Check';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import Divider from '@mui/material/Divider';
@@ -73,19 +74,107 @@ import { Role, SecurityLevel } from '../utils/AccessRoles';
 
 import TenantSwitcher from './TenantSwitcher';
 import GoogleConnectionChip from './GoogleConnectionChip';
-import { GoogleStatusProvider } from '../contexts/GoogleStatusContext';
+import { GoogleStatusProvider, useGoogleStatus } from '../contexts/GoogleStatusContext';
 import MessengerIconButton from './messenger/MessengerIconButton';
 import MessengerDrawer from './messenger/MessengerDrawer';
 import { useUnreadMentionsCount } from '../hooks/useUnreadMentionsCount';
 import { useEffectiveSecurityLevel, useIsAdminShell } from '../hooks/useEffectiveSecurityLevel';
-import { useChatGPT } from '../contexts/ChatGPTContext';
 import ChatGPTDrawer from './chatgpt/ChatGPTDrawer';
+import { pathIsUsersListPath } from '../utils/usersLayoutPersistence';
 
 const drawerFullWidth = 240;
 const drawerCollapsedWidth = 64;
 const appBarHeight = 64;
 /** Charcoal for staff (0-4) shell icons and text */
 const STAFF_SHELL_CHARCOAL = '#36454F';
+
+/** Gmail/Calendar integration badge on avatar; must only render under GoogleStatusProvider. */
+const AccountAvatarWithGoogleStatus: React.FC<{
+  firstName: string;
+  lastName: string;
+  avatarUrl: string | null;
+  initials: string;
+  avatarMenuAnchorEl: HTMLElement | null;
+  setAvatarMenuAnchorEl: (el: HTMLElement | null) => void;
+  isStaffShell: boolean;
+}> = ({
+  firstName,
+  lastName,
+  avatarUrl,
+  initials,
+  avatarMenuAnchorEl,
+  setAvatarMenuAnchorEl,
+  isStaffShell,
+}) => {
+  const { googleStatus, error, loading } = useGoogleStatus();
+  const gmailOk = googleStatus.gmail.connected;
+  const calendarOk = googleStatus.calendar.connected;
+  const syncErr =
+    googleStatus.gmail.syncStatus === 'error' ||
+    googleStatus.calendar.syncStatus === 'error';
+  const hasIssue = Boolean(error) || syncErr;
+
+  let checkColor: string;
+  if (gmailOk && calendarOk && !hasIssue) {
+    checkColor = '#2e7d32'; // green — full connection
+  } else if (!gmailOk && !calendarOk && !hasIssue && !loading) {
+    checkColor = '#d32f2f'; // red — neither connected (after load)
+  } else {
+    checkColor = '#ed6c02'; // amber — partial, loading, or issues
+  }
+
+  const tooltipTitle =
+    gmailOk && calendarOk && !hasIssue
+      ? 'Google: Gmail & Calendar connected'
+      : !gmailOk && !calendarOk && !hasIssue && !loading
+        ? 'Google: not connected — use menu to link'
+        : hasIssue
+          ? 'Google: connection issue — use menu to fix'
+          : gmailOk !== calendarOk
+            ? 'Google: partial connection — use menu'
+            : 'Account menu';
+
+  return (
+    <Tooltip title={tooltipTitle}>
+      <IconButton
+        onClick={(e) => setAvatarMenuAnchorEl(e.currentTarget)}
+        sx={{
+          p: 0.5,
+          backgroundColor: 'transparent !important',
+          color: avatarMenuAnchorEl ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)'),
+          '&:hover': {
+            backgroundColor: 'transparent !important',
+            color: avatarMenuAnchorEl ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF'),
+          },
+        }}
+      >
+        <Box sx={{ position: 'relative', display: 'inline-flex', width: 32, height: 32 }}>
+          <Avatar alt={`${firstName} ${lastName}`} src={avatarUrl || undefined} sx={{ width: 32, height: 32 }}>
+            {!avatarUrl && initials}
+          </Avatar>
+          <Box
+            sx={{
+              position: 'absolute',
+              bottom: -2,
+              right: -2,
+              width: 14,
+              height: 14,
+              borderRadius: '50%',
+              bgcolor: 'background.paper',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 0 0 1px rgba(0,0,0,0.14)',
+              pointerEvents: 'none',
+            }}
+          >
+            <CheckIcon sx={{ fontSize: 11, color: checkColor }} />
+          </Box>
+        </Box>
+      </IconButton>
+    </Tooltip>
+  );
+};
 
 /** Wrapper that consumes router location so it re-renders on navigation. */
 const LayoutOutlet: React.FC = () => {
@@ -95,10 +184,13 @@ const LayoutOutlet: React.FC = () => {
       sx={{
         flex: 1,
         overflowY: 'auto',
-        overflowX: 'hidden',
+        // Allow wide tables (e.g. profile → Backgrounds) to scroll horizontally instead of clipping
+        // when a nested ancestor is a flex item (min-width: auto would otherwise expand past the viewport).
+        overflowX: 'auto',
         display: 'flex',
         flexDirection: 'column',
         minHeight: 0,
+        minWidth: 0,
         mt: '64px',
         pb: '16px',
       }}
@@ -132,14 +224,23 @@ const Layout: React.FC = function Layout() {
     recruiterEnabled,
     jobsBoardEnabled,
   } = useAuth();
-  const { openChatGPT } = useChatGPT();
   useHeartbeatPresence(); // Write user presence to Firestore
   const isMobile = useMediaQuery('(max-width:768px)');
   const location = useLocation();
   const navigate = useNavigate();
   const [firestoreInboxTotal, setFirestoreInboxTotal] = useState(0);
   const [gmailInboxTotal, setGmailInboxTotal] = useState<number | null>(null);
-  const inboxUnreadCount = Math.min(99, gmailInboxTotal ?? firestoreInboxTotal);
+  // Prefer the LOWER of Gmail (tab-parity) and Firestore (real-time) counts.
+  // Gmail label counts lag by up to 30s and only refresh on poll or eager-refresh;
+  // Firestore fires immediately when a thread's unreadCount changes, so the
+  // Firestore total drops the moment a user reads a thread. Taking the min lets
+  // the badge update in real time without drifting above Gmail's tab totals.
+  const inboxUnreadCount = Math.min(
+    99,
+    gmailInboxTotal != null
+      ? Math.min(gmailInboxTotal, firestoreInboxTotal)
+      : firestoreInboxTotal
+  );
   const [messagesUnreadCount, setMessagesUnreadCount] = useState(0);
   const [alertsUnreadCount, setAlertsUnreadCount] = useState(0);
   const [alertsCriticalCount, setAlertsCriticalCount] = useState(0);
@@ -207,6 +308,11 @@ const Layout: React.FC = function Layout() {
       return 'Company Setup';
     }
     
+    // Users hub list tabs (/users, /users/all, /users/my, …) — before profile routes below
+    if (pathname === '/users' || pathIsUsersListPath(pathname)) {
+      return 'Users';
+    }
+
     // User record routes - check if path includes /users/ anywhere (excluding /recruiter/users/)
     if (pathname.includes('/users/') && !pathname.includes('/recruiter/users/') && pathname.split('/users/').length > 1) {
       return 'User Details';
@@ -350,11 +456,18 @@ const Layout: React.FC = function Layout() {
 
   const [agencyLogoUrl, setAgencyLogoUrl] = useState<string | null>(null);
 
+  // Gmail mailbox counts loader — kept in a ref so the Firestore listener can
+  // eagerly call it when read state changes locally (no more 30s badge lag
+  // after marking messages read).
+  const gmailCountsLoaderRef = useRef<(() => Promise<void>) | null>(null);
+  const firestoreInboxTotalRef = useRef<number>(0);
+
   // Inbox nav badge: prefer Gmail mailbox counts (matches Inbox tabs: Primary, Updates, etc.).
   // Fall back to Firestore thread unread sum when Gmail is not connected.
   useEffect(() => {
     if (!user?.uid || !activeTenant?.id) {
       setFirestoreInboxTotal(0);
+      firestoreInboxTotalRef.current = 0;
       return;
     }
 
@@ -374,11 +487,21 @@ const Layout: React.FC = function Layout() {
           (sum, d) => sum + (Number((d.data() as any)?.unreadCount) || 0),
           0
         );
+        const prev = firestoreInboxTotalRef.current;
+        firestoreInboxTotalRef.current = total;
         setFirestoreInboxTotal(total);
+        // If Firestore says the local unread count changed (a read action fired,
+        // an inbound arrived, etc.), refresh Gmail counts now instead of waiting
+        // for the next poll. This keeps the nav badge in sync with the UI.
+        if (total !== prev) {
+          const loader = gmailCountsLoaderRef.current;
+          if (loader) loader().catch(() => void 0);
+        }
       },
       (err) => {
         console.warn('Inbox unread count listener failed:', err);
         setFirestoreInboxTotal(0);
+        firestoreInboxTotalRef.current = 0;
       }
     );
 
@@ -389,6 +512,7 @@ const Layout: React.FC = function Layout() {
   useEffect(() => {
     if (!user?.uid) {
       setGmailInboxTotal(null);
+      gmailCountsLoaderRef.current = null;
       return;
     }
 
@@ -409,9 +533,13 @@ const Layout: React.FC = function Layout() {
       }
     };
 
+    gmailCountsLoaderRef.current = load;
     load();
     const interval = setInterval(load, 30000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      gmailCountsLoaderRef.current = null;
+    };
   }, [user?.uid]);
 
   // Real-time listener for unread internal message count
@@ -1279,19 +1407,43 @@ const Layout: React.FC = function Layout() {
               const isInbox = text === 'Inbox';
               const showBadge = isInbox && inboxUnreadCount > 0;
               const pathname = location.pathname;
+              const navSearchParams = new URLSearchParams(
+                location.search.startsWith('?') ? location.search.slice(1) : location.search,
+              );
               const isUserDetailsPath =
                 pathname.includes('/users/') &&
                 !pathname.includes('/recruiter/users/') &&
                 pathname.split('/users/').length > 1;
 
               // Only mark as selected if pathname exactly matches or starts with the route.
+              // Support query targets (e.g. /settings?tab=workers-comp).
               // Also treat `/users/{id}` as part of any `/.../users` list route (we redirect legacy detail routes).
               // Don't mark ChatGPT as active when on dashboard.
-              const isSelected =
-                !!to &&
-                (pathname === to ||
-                  (pathname.startsWith(to + '/') && !(text === 'ChatGPT' && pathname.startsWith('/dashboard'))) ||
-                  (isUserDetailsPath && /\/users$/.test(to)));
+              let isSelected = false;
+              if (to && to !== '#') {
+                if (to.includes('?')) {
+                  const [pathPart, queryPart] = to.split('?');
+                  const expectedParams = new URLSearchParams(queryPart);
+                  const pathMatches = pathname === pathPart || pathname.startsWith(`${pathPart}/`);
+                  if (pathMatches) {
+                    isSelected = true;
+                    for (const [key, value] of expectedParams.entries()) {
+                      if (navSearchParams.get(key) !== value) {
+                        isSelected = false;
+                        break;
+                      }
+                    }
+                  }
+                } else {
+                  isSelected =
+                    pathname === to ||
+                    (pathname.startsWith(to + '/') && !(text === 'ChatGPT' && pathname.startsWith('/dashboard'))) ||
+                    (isUserDetailsPath && /\/users$/.test(to));
+                  if (to === '/settings' && navSearchParams.get('tab') === 'workers-comp') {
+                    isSelected = false;
+                  }
+                }
+              }
               const defaultIconColor = isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)';
               
               // Clone icon to add color prop directly - MUI icons inherit color from parent
@@ -1486,6 +1638,7 @@ const Layout: React.FC = function Layout() {
         data-router-path={location.pathname}
         sx={{
           flexGrow: 1,
+          minWidth: 0,
           display: 'flex',
           flexDirection: 'column',
           height: '100vh',
@@ -1594,14 +1747,9 @@ const Layout: React.FC = function Layout() {
             </Box>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            {/* Google Connection Chip - Show for security level 5-7 users (Staff Manager, Manager, Admin) */}
-            {shouldProvideGoogleStatus && (
-              <GoogleConnectionChip tenantId={effectiveGoogleTenantId} />
-            )}
-            
             {/* Top-Right Notifications Bar */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-              {/* 📥 Inbox Counter */}
+              {/* 📥 Inbox Counter (temporarily hidden)
               {inboxUnreadCount > 0 && (
                 <Tooltip title={`${inboxUnreadCount} unread inbox messages`}>
                   <IconButton
@@ -1627,6 +1775,7 @@ const Layout: React.FC = function Layout() {
                   </IconButton>
                 </Tooltip>
               )}
+              */}
               
               {/* 💬 Messages Counter - Internal HRX Messages */}
               {messagesUnreadCount > 0 && (
@@ -1766,8 +1915,8 @@ const Layout: React.FC = function Layout() {
                 </Tooltip>
               )}
               
-              {/* ChatGPT Icon - Only for security levels 5-7 */}
-              {hasAdminLevel && (
+              {/* ChatGPT Icon - Only for security levels 5-7 (temporarily hidden) */}
+              {/* {hasAdminLevel && (
                 <Tooltip title="ChatGPT">
                   <IconButton
                     onClick={() => openChatGPT()}
@@ -1783,7 +1932,7 @@ const Layout: React.FC = function Layout() {
                     <RocketLaunchIcon sx={{ fontSize: 20 }} />
                   </IconButton>
                 </Tooltip>
-              )}
+              )} */}
               
               {/* Direct Messenger Icon - Only for security levels 5-7 */}
               {user && hasAdminLevel && (
@@ -1812,28 +1961,40 @@ const Layout: React.FC = function Layout() {
               )}
               
               {/* 👤 Avatar Menu */}
-              <Tooltip title="Account menu">
-                <IconButton
-                  onClick={(e) => setAvatarMenuAnchorEl(e.currentTarget)}
-                  sx={{
-                    p: 0.5,
-                    backgroundColor: 'transparent !important',
-                    color: avatarMenuAnchorEl ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)'),
-                    '&:hover': { 
+              {shouldProvideGoogleStatus ? (
+                <AccountAvatarWithGoogleStatus
+                  firstName={firstName}
+                  lastName={lastName}
+                  avatarUrl={avatarUrl}
+                  initials={initials}
+                  avatarMenuAnchorEl={avatarMenuAnchorEl}
+                  setAvatarMenuAnchorEl={setAvatarMenuAnchorEl}
+                  isStaffShell={isStaffShell}
+                />
+              ) : (
+                <Tooltip title="Account menu">
+                  <IconButton
+                    onClick={(e) => setAvatarMenuAnchorEl(e.currentTarget)}
+                    sx={{
+                      p: 0.5,
                       backgroundColor: 'transparent !important',
-                      color: avatarMenuAnchorEl ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF'),
-                    },
-                  }}
-                >
-                  <Avatar
-                    alt={`${firstName} ${lastName}`}
-                    src={avatarUrl || undefined}
-                    sx={{ width: 32, height: 32 }}
+                      color: avatarMenuAnchorEl ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)'),
+                      '&:hover': {
+                        backgroundColor: 'transparent !important',
+                        color: avatarMenuAnchorEl ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF'),
+                      },
+                    }}
                   >
-                    {!avatarUrl && initials}
-                  </Avatar>
-                </IconButton>
-              </Tooltip>
+                    <Avatar
+                      alt={`${firstName} ${lastName}`}
+                      src={avatarUrl || undefined}
+                      sx={{ width: 32, height: 32 }}
+                    >
+                      {!avatarUrl && initials}
+                    </Avatar>
+                  </IconButton>
+                </Tooltip>
+              )}
               
               {/* Hamburger menu button - only show on mobile, positioned to the right of avatar */}
               {isMobile && (
@@ -1880,6 +2041,25 @@ const Layout: React.FC = function Layout() {
                 </Typography>
               </MenuItem>
               <Divider />
+              {shouldProvideGoogleStatus ? (
+                <>
+                  <Box
+                    component="li"
+                    sx={{
+                      listStyle: 'none',
+                      px: 2,
+                      py: 1.25,
+                      display: 'flex',
+                      justifyContent: 'center',
+                      width: '100%',
+                      boxSizing: 'border-box',
+                    }}
+                  >
+                    <GoogleConnectionChip tenantId={effectiveGoogleTenantId} />
+                  </Box>
+                  <Divider component="li" sx={{ margin: 0 }} />
+                </>
+              ) : null}
               <MenuItem onClick={() => {
                 const effectiveSecurityLevel = currentClaimsSecurityLevel || securityLevel;
                 const isWorker = effectiveSecurityLevel && ['1', '2', '3', '4'].includes(effectiveSecurityLevel);

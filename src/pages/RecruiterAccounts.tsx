@@ -236,7 +236,7 @@ const RecruiterAccounts: React.FC<RecruiterAccountsProps> = ({ onlyMyAccounts = 
         flexDirection: 'column',
         overflow: 'hidden',
         px: { xs: 2, md: 3 },
-        pt: 2,
+        pt: 1,
       }}
     >
       {/* Filter bar – same pattern as Companies (State Filter row) */}

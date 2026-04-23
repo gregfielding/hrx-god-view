@@ -38,9 +38,9 @@ import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
 import PageHeader from '../../../components/PageHeader';
 import { collection, getDocs, doc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../../firebase';
-import { p } from '../../../data/firestorePaths';
+import { p, workersCompRateDocId } from '../../../data/firestorePaths';
 import { useAuth } from '../../../contexts/AuthContext';
-import type { WorkersCompRateByState } from '../../../types/recruiter/account';
+import type { RecruiterAccount, WorkersCompRateByState } from '../../../types/recruiter/account';
 import { US_STATE_CODES } from '../../../utils/unemploymentRates';
 import jobTitlesData from '../../../data/onetJobTitles.json';
 
@@ -48,11 +48,23 @@ const jobTitlesList = Array.isArray(jobTitlesData) ? (jobTitlesData as string[])
 
 type Row = WorkersCompRateByState & { id: string };
 
-export interface WorkersCompRatesPageProps {
-  tenantId?: string | null;
+function isNationalOrStandaloneAccount(acc: RecruiterAccount): boolean {
+  const t = acc.accountType;
+  if (t === 'child') return false;
+  if (t === 'national' || t === 'standalone') return true;
+  return !(acc.parentAccountId && String(acc.parentAccountId).trim());
 }
 
-const WorkersCompRatesPage: React.FC<WorkersCompRatesPageProps> = ({ tenantId: tenantIdProp }) => {
+export interface WorkersCompRatesPageProps {
+  tenantId?: string | null;
+  /** When true, omit duplicate page chrome (used inside Settings shell). */
+  embeddedInSettings?: boolean;
+}
+
+const WorkersCompRatesPage: React.FC<WorkersCompRatesPageProps> = ({
+  tenantId: tenantIdProp,
+  embeddedInSettings,
+}) => {
   const { activeTenant, tenantId: authTenantId, user } = useAuth();
   const tenantId = tenantIdProp ?? activeTenant?.id ?? authTenantId;
 
@@ -65,6 +77,9 @@ const WorkersCompRatesPage: React.FC<WorkersCompRatesPageProps> = ({ tenantId: t
   const [formCode, setFormCode] = useState('');
   const [formRate, setFormRate] = useState<number | ''>('');
   const [formJobTitles, setFormJobTitles] = useState<string[]>([]);
+  /** National or standalone recruiter account — limits this row to jobs under that account subtree. */
+  const [formModifierAccount, setFormModifierAccount] = useState<RecruiterAccount | null>(null);
+  const [nationalStandaloneAccounts, setNationalStandaloneAccounts] = useState<RecruiterAccount[]>([]);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   type SortKey = 'state' | 'code' | 'rate';
@@ -106,6 +121,7 @@ const WorkersCompRatesPage: React.FC<WorkersCompRatesPageProps> = ({ tenantId: t
           code: data.code ?? '',
           rate: data.rate ?? 0,
           jobTitles: data.jobTitles ?? [],
+          modifierAccountId: data.modifierAccountId ?? null,
         };
       });
       setRows(list);
@@ -121,12 +137,35 @@ const WorkersCompRatesPage: React.FC<WorkersCompRatesPageProps> = ({ tenantId: t
     loadRates();
   }, [loadRates]);
 
+  /** If accounts load after opening Edit, attach the modifier account option. */
+  useEffect(() => {
+    if (!dialogOpen || !editingId || nationalStandaloneAccounts.length === 0) return;
+    const row = rows.find((r) => r.id === editingId);
+    const mid = (row?.modifierAccountId || '').trim();
+    if (!mid) return;
+    setFormModifierAccount((prev) => prev ?? (nationalStandaloneAccounts.find((a) => a.id === mid) ?? null));
+  }, [dialogOpen, editingId, rows, nationalStandaloneAccounts]);
+
+  useEffect(() => {
+    if (!tenantId) return;
+    getDocs(collection(db, p.recruiterAccounts(tenantId)))
+      .then((snap) => {
+        const list = snap.docs
+          .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as Omit<RecruiterAccount, 'id'>) }))
+          .filter((a) => a.active !== false && isNationalOrStandaloneAccount(a))
+          .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' }));
+        setNationalStandaloneAccounts(list);
+      })
+      .catch(() => setNationalStandaloneAccounts([]));
+  }, [tenantId]);
+
   const openAdd = () => {
     setEditingId(null);
     setFormState('');
     setFormCode('');
     setFormRate('');
     setFormJobTitles([]);
+    setFormModifierAccount(null);
     setDialogOpen(true);
   };
 
@@ -136,6 +175,8 @@ const WorkersCompRatesPage: React.FC<WorkersCompRatesPageProps> = ({ tenantId: t
     setFormCode(row.code);
     setFormRate(row.rate);
     setFormJobTitles(Array.isArray(row.jobTitles) ? [...row.jobTitles] : []);
+    const mid = (row.modifierAccountId || '').trim();
+    setFormModifierAccount(mid ? nationalStandaloneAccounts.find((a) => a.id === mid) || null : null);
     setDialogOpen(true);
   };
 
@@ -155,16 +196,21 @@ const WorkersCompRatesPage: React.FC<WorkersCompRatesPageProps> = ({ tenantId: t
     setSaving(true);
     setError(null);
     try {
-      const rateRef = doc(db, p.workersCompRate(tenantId, state, code));
+      const modifierId = formModifierAccount?.id ? String(formModifierAccount.id).trim() : '';
+      const newDocId = workersCompRateDocId(state, code, modifierId || null);
       const payload: WorkersCompRateByState & { updatedAt: any; updatedBy?: string | null } = {
         state,
         code,
         rate,
         jobTitles: formJobTitles.length ? formJobTitles : null,
+        modifierAccountId: modifierId || null,
         updatedAt: serverTimestamp(),
         updatedBy: user?.uid ?? null,
       };
-      await setDoc(rateRef, payload, { merge: true });
+      if (editingId && editingId !== newDocId) {
+        await deleteDoc(doc(db, p.workersCompRates(tenantId), editingId));
+      }
+      await setDoc(doc(db, p.workersCompRates(tenantId), newDocId), payload, { merge: true });
       await loadRates();
       setDialogOpen(false);
     } catch (e) {
@@ -179,12 +225,8 @@ const WorkersCompRatesPage: React.FC<WorkersCompRatesPageProps> = ({ tenantId: t
     setDeletingId(id);
     setError(null);
     try {
-      const [stateCode, code] = id.includes('_') ? id.split(/_(.+)/).filter(Boolean) : [id, ''];
-      if (stateCode && code) {
-        const rateRef = doc(db, p.workersCompRate(tenantId, stateCode, code));
-        await deleteDoc(rateRef);
-        await loadRates();
-      }
+      await deleteDoc(doc(db, p.workersCompRates(tenantId), id));
+      await loadRates();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to delete');
     } finally {
@@ -193,16 +235,18 @@ const WorkersCompRatesPage: React.FC<WorkersCompRatesPageProps> = ({ tenantId: t
   };
 
   return (
-    <Box sx={{ p: 2 }}>
-      <PageHeader
-        title={
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <HealthAndSafetyIcon fontSize="small" />
-            <span>Workers Comp</span>
-          </Box>
-        }
-        subtitle="Manage workers comp codes and rates by state. Assign job titles so accounts and job orders get the correct code and rate automatically."
-      />
+    <Box sx={embeddedInSettings ? { px: { xs: 2, md: 3 }, py: 2 } : { p: 2 }}>
+      {!embeddedInSettings && (
+        <PageHeader
+          title={
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <HealthAndSafetyIcon fontSize="small" />
+              <span>Workers Comp</span>
+            </Box>
+          }
+          subtitle="Manage workers comp codes and rates by state. Assign job titles so accounts and job orders get the correct code and rate automatically."
+        />
+      )}
 
       {error && (
         <Alert severity="error" onClose={() => setError(null)} sx={{ mb: 2 }}>
@@ -259,6 +303,7 @@ const WorkersCompRatesPage: React.FC<WorkersCompRatesPageProps> = ({ tenantId: t
                     </TableSortLabel>
                   </TableCell>
                   <TableCell sx={{ minWidth: 160 }}>Job titles (auto-apply)</TableCell>
+                  <TableCell sx={{ minWidth: 140 }}>Account scope</TableCell>
                   <TableCell align="right" sx={{ width: 100, maxWidth: 100 }}>Actions</TableCell>
                 </TableRow>
               </TableHead>
@@ -277,6 +322,16 @@ const WorkersCompRatesPage: React.FC<WorkersCompRatesPageProps> = ({ tenantId: t
                         </Box>
                       ) : (
                         <Typography variant="body2" color="text.secondary">—</Typography>
+                      )}
+                    </TableCell>
+                    <TableCell sx={{ minWidth: 140 }}>
+                      {(row.modifierAccountId || '').trim() ? (
+                        <Typography variant="body2" noWrap title={(row.modifierAccountId || '').trim()}>
+                          {nationalStandaloneAccounts.find((a) => a.id === row.modifierAccountId)?.name ||
+                            row.modifierAccountId}
+                        </Typography>
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">All accounts</Typography>
                       )}
                     </TableCell>
                     <TableCell align="right" sx={{ width: 100, maxWidth: 100 }}>
@@ -348,6 +403,22 @@ const WorkersCompRatesPage: React.FC<WorkersCompRatesPageProps> = ({ tenantId: t
                   <Chip label={option} size="small" {...getTagProps({ index })} key={option} />
                 ))
               }
+            />
+            <Autocomplete
+              size="small"
+              options={nationalStandaloneAccounts}
+              value={formModifierAccount}
+              onChange={(_, v) => setFormModifierAccount(v)}
+              getOptionLabel={(o) => String(o?.name || '').trim() || o.id}
+              isOptionEqualToValue={(a, b) => a.id === b.id}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Limit to national / standalone account (optional)"
+                  placeholder="Search accounts…"
+                  helperText="Only job orders under this client use this code/rate for the titles above. Leave empty for every account."
+                />
+              )}
             />
           </Box>
         </DialogContent>

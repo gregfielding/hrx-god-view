@@ -1,0 +1,138 @@
+# hrx-god-view — Cursor Rules
+
+## Project identity
+
+HRX God View is the admin & recruiter web app for **HRXOne**, a multi-tenant HR & staffing platform. It serves recruiters, agency admins, and HRX staff. A separate Flutter worker-facing app (`c1_app`) consumes the same Firebase backend.
+
+## Tech stack
+
+- **Frontend:** React 18 + TypeScript 4.9, Material-UI (MUI) v5, Emotion for styling, React Router v7, React Context for state (no Redux), Recharts + Chart.js, React Quill, Yup + Zod
+- **Build:** Create React App via craco
+- **Backend:** Firebase Cloud Functions (TypeScript, Node 20), Firestore (primary DB), Firebase Auth, Cloud Storage, Cloud Scheduler + Pub/Sub
+- **Integrations:** OpenAI, Twilio (SMS), SendGrid (email), Google APIs, Apollo (CRM enrichment), Slack, Accusource (BGC), eVerify
+- **Monorepo:** npm workspaces; `packages/contracts` holds JSON schemas → generated TS types
+- **CI/CD:** GitHub Actions (`ci.yml`, `autodevops-deploy.yml`, `pr-cop.yml`, `notify-push.yml`)
+- **Testing:** Mocha + Chai for functions, React Testing Library, Playwright for E2E
+
+## Repo map
+
+```
+src/                        React web app
+  components/               Reusable UI (recruiter/, messenger/, apply/, common/)
+  pages/                    Page-level views (Admin/, TenantViews/, AgencyProfile/, UserProfile/)
+  utils/                    Business logic — loggingTriggerMap.ts, logger.ts, AccessRoles.ts, dealCoachService.ts, certifications/
+  types/                    TS interfaces — CRM.ts, Tasks.ts, NewDataModel.ts, etc.
+  contexts/                 React Context providers (Auth, CRMCache, Associations, DirectMessenger, ChatGPT)
+  hooks/                    Custom hooks
+  firebase.ts               Client Firebase config
+functions/                  Cloud Functions
+  src/
+    index.ts                Central export (150+ functions, global options set here)
+    triggers/               Firestore trigger functions
+    workerAiPrescreen/      AI hiring orchestration (actively developed)
+    messaging/              SMS, email, unified inbox
+    integrations/           SSO, SCIM, HRIS, Slack
+    agents/                 AI agent implementations
+    utils/                  loggingTriggerMap.ts, createNotification.ts, logger.ts, openaiHelper.ts
+packages/contracts/         Source of truth for schemas
+  firestore/schemas/        JSON schemas → codegen to TS
+  firestore/rules/          Security rules
+  firestore/indexes/        Firestore indexes
+scripts/                    Build & utility scripts
+.github/workflows/          CI/CD
+```
+
+## Core architectural rules
+
+1. **Multi-tenant everywhere.** Data is scoped by `tenantId`. Users have a primary `tenantId` and `tenantIds[]` for all accessible tenants. Firestore rules enforce isolation — respect them. Never write a query that doesn't filter by `tenantId` on tenant-scoped collections.
+
+2. **Security levels 0–7.** 0=suspended, 7=admin. Use `getAccessRole`, `SecurityLevel`, `canAccessModule` from `src/utils/AccessRoles.ts` and `canAccessModule.ts`. Do not hardcode role checks.
+
+3. **Unified tenant model.** We've migrated from separate `agencies`/`customers` collections to a unified `tenants` collection with optional `customers` subcollection. Some legacy code still references the old model — prefer the new one. See `TENANT_STRUCTURE_MIGRATION.md`.
+
+4. **AI trigger logging is central.** Field changes that matter to AI modules flow through `loggingTriggerMap.ts` (exists in both `src/utils/` and `functions/src/utils/` — keep them consistent). Each entry maps `firestore.fieldPath → { modules, urgencyScore }`. When adding a new AI-relevant field, update this map.
+
+5. **Schemas live in `packages/contracts`.** JSON schemas are the source of truth. Run the codegen script (`packages/contracts/scripts/gen.ts`) to regenerate TS types. Do not hand-edit generated files.
+
+## Conventions
+
+- **File naming:** camelCase for utils/services (`logger.ts`, `dealCoachService.ts`), PascalCase for React components (`UserProfile.tsx`, `HealthBadge.tsx`)
+- **Firestore collections:** camelCase (`aiLogs`, `jobOrders`, `workerAiPrescreen`, `crmCompanies`)
+- **Types/interfaces:** PascalCase in `src/types/`
+- **Constants:** UPPER_SNAKE_CASE
+- **Cloud Functions:** triggers named by path (`onJobOrderWrite`, `onDocumentCreated`); callables end in `Callable` (`dealCoachChatCallable`); scheduled use `onSchedule()`
+- **State:** React Context for cross-page state; local `useState` elsewhere. No Redux.
+- **Validation:** Zod for runtime validation of API responses; Yup for form validation
+- **Styling:** MUI's `sx` prop or emotion-styled. Prettier: 2 spaces, 100 char line width, single quotes
+- **Logging:**
+  - Client: `logger.info/warn/error()` → `system_logs` when enabled
+  - Server: `logger.info/debug/error()` → Firebase Function logs
+  - Redact sensitive data (phone, SSN); max message length 500 chars
+
+## Key utilities to reuse (don't reinvent)
+
+```ts
+import { logger } from 'utils/logger';
+import { useAuth } from 'contexts/AuthContext';
+import { getAccessRole, canAccessModule } from 'utils/AccessRoles';
+import { loggingTriggerMap } from 'utils/loggingTriggerMap';
+import { dealCoachService } from 'utils/dealCoachService';
+import { unifiedAssociationService } from 'utils/unifiedAssociationService';
+import { createNotification } from 'functions/src/utils/createNotification';
+import { getTraitsAndTags } from 'functions/src/utils/openaiHelper';
+```
+
+## Cloud Functions hygiene
+
+- Global defaults are set in `functions/src/index.ts`: region `us-central1`, 512 MiB memory, 2 max instances, 240s timeout. Override per-function only when justified.
+- Wrap trigger logic in try/catch; log failures to `system_logs`.
+- For new Firestore triggers, register the fields you care about in `loggingTriggerMap.ts`.
+- Use `functions/src/utils/createNotification.ts` for any user-facing notification — don't write to the `notifications` collection directly.
+- Scheduled jobs use cron expressions via `onSchedule()`.
+
+## Active modules (be careful, they're evolving)
+
+- **Worker AI Prescreen** — `functions/src/workerAiPrescreen/` (candidate scoring, dynamic interview categories)
+- **Module System** — Reset Mode, Mini-Learning Boosts, Professional Growth, Work-Life Balance (`HRX_MODULES_IMPLEMENTATION_SUMMARY.md`)
+- **AI Campaigns** — scheduled motivational/contextual messaging (`AI_CAMPAIGNS_MODULE_SPECIFICATION.md`)
+- **Certification Engine** — `src/utils/certifications/` (complex validation; Phase 6+ in flight)
+- **AutoDevOps** — automated deploy with AI code review (`.github/workflows/autodevops-deploy.yml`, `AUTODEVOPS_IMPLEMENTATION_PLAN.md`)
+
+## Stable / legacy (augment carefully, don't rewrite without reason)
+
+- CRM integrations (Apollo, Clearbit)
+- Calendar and email integrations (tightly coupled)
+- Phase 1 onboarding (superseded by Phase 2)
+- Old agency role system (kept for backward compat)
+
+## Gotchas
+
+- `npm start` may OOM on <8 GB RAM machines — use `npm start:safe` (memory limits + lint disabled)
+- Firestore indexes must be deployed manually: `firebase deploy --only firestore:indexes`
+- Emulator can desync if functions code changes mid-run — restart it
+- Resume parsing (Google Document AI) is async, 10–30 s per doc — don't block UX on it
+- SMS rate-limited to 1 msg/sec per Twilio sender ID
+- Some files at repo root are stray (`firebase logout`, `firebase copy.json`, `package_main.json`, ad-hoc `test*.js`) — safe to delete but confirm first
+- `.bak` files in `functions/src/` are backups — do not import them
+- `*Disabled.ts` functions are intentionally off — don't re-enable without understanding why they were disabled
+
+## Deployment
+
+- `npm run deploy:hosting` — React build → Firebase Hosting
+- `npm run deploy:functions` — all Cloud Functions
+- `npm run deploy:functions:screening-automation` — selective deploy
+- Local dev: `firebase emulators:start` (Firestore, Functions, UI on port 4005)
+
+## Scratch workflow (Claude + Cursor)
+
+- `.scratch/` at the repo root is gitignored. Use it for command output, log dumps, query results, and throwaway scripts.
+- Authenticate Firebase CLI / gcloud via service account: `GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud-claude/service-account.json` (already exported in shell).
+- Example: `firebase functions:log --only <fnName> -n 200 > .scratch/<fnName>-logs.txt`
+- Never commit files from `.scratch/`. Never write secrets or prod data into code paths that aren't gitignored.
+
+## When you're not sure
+
+1. Check the relevant `*_IMPLEMENTATION_SUMMARY.md` doc at the repo root — there's one for almost every major feature.
+2. Look for similar code elsewhere before inventing a pattern. This repo has a lot of convention; follow it.
+3. If touching AI logging or orchestration, read `ai-architecture.md` and `AI_ORCHESTRATION_UPGRADE_SUMMARY.md` first.
+4. For tenant/data-model changes, read `TENANT_STRUCTURE_MIGRATION.md` and check `packages/contracts/firestore/schemas/`.

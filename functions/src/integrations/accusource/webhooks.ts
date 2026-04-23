@@ -5,6 +5,24 @@ import * as admin from 'firebase-admin';
 import { buildAccusourceApplicantPortalLink, getAccusourceConfig } from './config';
 import { accusourceLog, serializeErrorForLog } from './accusourceLogger';
 import type { BackgroundCheckDocument, BackgroundCheckEventDocument, HrxBackgroundCheckStatus } from './types';
+import {
+  computeServiceLineKey,
+  extractServiceLinePatch,
+  extractServiceLinePayloads,
+  mergeServiceLineDocument,
+} from './accusourceWebhookServiceLine';
+
+/** True when a stored `order:*` line was created for a drug / Lab workflow. */
+function isExistingDrugOrderLineRow(
+  row: Record<string, unknown> | undefined,
+): boolean {
+  if (!row) return false;
+  return (
+    row.labName != null ||
+    row.providerRegistrationId != null ||
+    (typeof row.serviceName === 'string' && row.serviceName.toLowerCase().includes('drug'))
+  );
+}
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -25,6 +43,78 @@ type WebhookStatusProjection = {
 
 function toRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+function pickStringLocal(rec: Record<string, unknown>, keys: string[]): string | null {
+  for (const k of keys) {
+    const v = rec[k];
+    if (v == null) continue;
+    const s = String(v).trim();
+    if (s !== '') return s;
+  }
+  return null;
+}
+
+function extractTopLevelReportUrl(payload: Record<string, unknown>): string | null {
+  const here = pickStringLocal(payload, [
+    'report_url',
+    'reportUrl',
+    'report_link',
+    'reportLink',
+    'report_pdf_url',
+    'reportPdfUrl',
+    'final_report_url',
+    'finalReportUrl',
+    'profile_report_url',
+    'profileReportUrl',
+    'download_url',
+    'downloadUrl',
+  ]);
+  if (here) return here;
+  const data = payload.data;
+  if (data && typeof data === 'object') {
+    return pickStringLocal(data as Record<string, unknown>, [
+      'report_url',
+      'reportUrl',
+      'report_link',
+      'reportLink',
+      'report_pdf_url',
+      'reportPdfUrl',
+      'final_report_url',
+      'finalReportUrl',
+    ]);
+  }
+  return null;
+}
+
+function extractTopLevelDecision(payload: Record<string, unknown>): string | null {
+  const here = pickStringLocal(payload, [
+    'decision',
+    'decisionSource',
+    'decision_source',
+    'disposition',
+    'adjudication',
+    'adjudication_status',
+    'adjudicationStatus',
+    'outcome',
+    'final_result',
+    'finalResult',
+    'eligibility',
+    'eligibility_status',
+  ]);
+  if (here) return here;
+  const data = payload.data;
+  if (data && typeof data === 'object') {
+    return pickStringLocal(data as Record<string, unknown>, [
+      'decision',
+      'disposition',
+      'adjudication',
+      'outcome',
+      'final_result',
+      'finalResult',
+    ]);
+  }
+  return null;
 }
 
 /**
@@ -59,7 +149,22 @@ function extractEventType(payload: Record<string, unknown>): string {
     data.eventType ||
     data.event ||
     data.type;
-  const normalized = String(candidate || 'unknown').trim() || 'unknown';
+  let normalized = String(candidate || 'unknown').trim() || 'unknown';
+  if (normalized.toLowerCase() === 'unknown') {
+    const lab =
+      (typeof payload.lab === 'string' && String(payload.lab).trim() !== '') ||
+      (typeof data.lab === 'string' && String(data.lab).trim() !== '');
+    const reg =
+      payload.reg_id != null ||
+      payload.regId != null ||
+      payload.registrationId != null ||
+      data.reg_id != null ||
+      data.regId != null ||
+      data.registrationId != null;
+    if (lab && reg) {
+      return 'drug_collection_update';
+    }
+  }
   if (normalized.toLowerCase() === PARTIAL_PROFILE_LINK_TYPE) {
     return PARTIAL_PROFILE_LINK_TYPE;
   }
@@ -249,64 +354,138 @@ async function findBackgroundCheckMatch(
   providerProfileId: string | null,
   clientId: string | null,
 ): Promise<admin.firestore.QueryDocumentSnapshot | null> {
-  if (providerProfileId) {
-    const byProfile = await db
-      .collectionGroup('backgroundChecks')
-      .where('providerProfileId', '==', providerProfileId)
-      .limit(1)
-      .get();
-    if (!byProfile.empty) return byProfile.docs[0];
+  try {
+    if (providerProfileId) {
+      const byProfile = await db
+        .collectionGroup('backgroundChecks')
+        .where('providerProfileId', '==', providerProfileId)
+        .limit(1)
+        .get();
+      if (!byProfile.empty) return byProfile.docs[0];
+    }
+
+    if (clientId) {
+      const byProviderClientId = await db
+        .collectionGroup('backgroundChecks')
+        .where('providerClientId', '==', clientId)
+        .limit(1)
+        .get();
+      if (!byProviderClientId.empty) return byProviderClientId.docs[0];
+
+      const byClientId = await db
+        .collectionGroup('backgroundChecks')
+        .where('clientId', '==', clientId)
+        .limit(1)
+        .get();
+      if (!byClientId.empty) return byClientId.docs[0];
+    }
+
+    return null;
+  } catch (err: unknown) {
+    const meta = serializeErrorForLog(err);
+    accusourceLog('error', 'webhook', 'findBackgroundCheckMatch failed (collectionGroup backgroundChecks)', {
+      ...meta,
+      providerProfileId,
+      clientId,
+      collectionGroupHint:
+        'Deploy firestore indexes with queryScope COLLECTION_GROUP on providerProfileId, providerClientId, clientId.',
+    });
+    throw err;
   }
-
-  if (clientId) {
-    const byProviderClientId = await db
-      .collectionGroup('backgroundChecks')
-      .where('providerClientId', '==', clientId)
-      .limit(1)
-      .get();
-    if (!byProviderClientId.empty) return byProviderClientId.docs[0];
-
-    const byClientId = await db
-      .collectionGroup('backgroundChecks')
-      .where('clientId', '==', clientId)
-      .limit(1)
-      .get();
-    if (!byClientId.empty) return byClientId.docs[0];
-  }
-
-  return null;
 }
 
-function applyServiceStatusChange(
-  payload: Record<string, unknown>,
+/**
+ * Merge per-service webhook payloads into `providerServiceOrderStatus` + `lastServiceComponent`.
+ * Handles `service_status_change` (flat) and `order_status_change` when payload includes `services[]` (or aliases).
+ */
+function applyServiceLineUpdatesFromPayload(
+  mergedPayload: Record<string, unknown>,
+  eventType: string,
   parentUpdate: Record<string, unknown>,
+  matched: admin.firestore.QueryDocumentSnapshot,
 ): void {
-  const serviceIdRaw = payload.service_id ?? payload.serviceId;
-  const serviceName = String(payload.service_name ?? payload.serviceName ?? '').trim();
-  const st = String(payload.status ?? '').trim();
-  const statusId = payload.status_id ?? payload.statusId;
-  const key = serviceIdRaw != null && String(serviceIdRaw).trim() !== '' ? String(serviceIdRaw).trim() : 'unknown';
+  const et = eventType.toLowerCase();
+  const payloadLooksLikeDrugPing =
+    typeof mergedPayload.lab === 'string' &&
+    (mergedPayload.reg_id != null ||
+      mergedPayload.regId != null ||
+      mergedPayload.orderId != null ||
+      mergedPayload.order_id != null);
 
-  const line = serviceName && st ? `${serviceName}: ${st}` : st || serviceName;
-  if (line) {
-    parentUpdate.providerStatus = line;
+  const isServiceTopic =
+    et === 'service_status_change' ||
+    et.includes('service_status') ||
+    et === 'order_status_change' ||
+    et.includes('order_status') ||
+    et === 'drug_collection_update' ||
+    et === 'report_ready' ||
+    et === 'final_report_ready' ||
+    et === 'profile_completed' ||
+    et === 'adjudication_complete' ||
+    et.includes('report_ready') ||
+    et.includes('final_report') ||
+    et.includes('profile_completed') ||
+    et.includes('adjudication') ||
+    payloadLooksLikeDrugPing;
+
+  if (!isServiceTopic) return;
+
+  const linePayloads = extractServiceLinePayloads(mergedPayload);
+  if (linePayloads.length === 0) return;
+
+  const existingRoot = matched.data() as Record<string, unknown>;
+  const existingMap =
+    (existingRoot.providerServiceOrderStatus as Record<string, Record<string, unknown>> | undefined) ?? {};
+  const receiveNow = admin.firestore.FieldValue.serverTimestamp();
+
+  const lineAcc: Record<string, Record<string, unknown>> = { ...existingMap };
+  const touchedKeys = new Set<string>();
+
+  for (const linePayload of linePayloads) {
+    const key = computeServiceLineKey(linePayload);
+
+    // Skip bare order-level events that aren't attributable to a catalog line,
+    // except LabCorp drug registration (initial row) or Follow-ups to a drug
+    // `order:*` line already in Firestore / accumulated this batch.
+    if (key.startsWith('order:')) {
+      const isDrugLab =
+        typeof linePayload.lab === 'string' &&
+        (linePayload.reg_id != null || linePayload.regId != null);
+      const existingRow = lineAcc[key] ?? existingMap[key];
+      const followUpDrug = isExistingDrugOrderLineRow(existingRow);
+      if (!isDrugLab && !followUpDrug) continue;
+    }
+
+    const patch = extractServiceLinePatch(linePayload);
+    const prev = lineAcc[key] ?? null;
+    lineAcc[key] = mergeServiceLineDocument(prev, patch, receiveNow);
+    touchedKeys.add(key);
   }
 
-  parentUpdate.lastServiceComponent = {
-    serviceId: key,
-    serviceName: serviceName || null,
-    status: st || null,
-    statusId: statusId ?? null,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  };
+  // Firebase Admin SDK's set({ merge: true }) does NOT interpret dot-notation keys as nested
+  // paths — it stores them as literal field names with dots. Assign a nested object so
+  // deep-merge works correctly. If nothing changed, skip so we don't needlessly re-write the map.
+  if (touchedKeys.size > 0) {
+    parentUpdate.providerServiceOrderStatus = lineAcc;
+  }
 
-  parentUpdate[`providerServiceOrderStatus.${key}`] = {
-    serviceId: serviceIdRaw,
-    serviceName: serviceName || null,
-    status: st || null,
-    statusId: statusId ?? null,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  };
+  const lastPayload = linePayloads[linePayloads.length - 1]!;
+  const lastKey = computeServiceLineKey(lastPayload);
+  const lastDoc = lineAcc[lastKey];
+  if (lastDoc) {
+    parentUpdate.lastServiceComponent = {
+      serviceId: lastKey,
+      serviceName: lastDoc.serviceName ?? null,
+      status: lastDoc.status ?? null,
+      statusId: lastDoc.statusId ?? null,
+      updatedAt: lastDoc.updatedAt ?? receiveNow,
+      jurisdiction: lastDoc.jurisdiction ?? null,
+    };
+    const name = String(lastDoc.serviceName ?? '');
+    const st = String(lastDoc.status ?? '');
+    const line = name && st ? `${name}: ${st}` : st || name;
+    if (line) parentUpdate.providerStatus = line;
+  }
 }
 
 async function processWebhookPayload(payloadInput: unknown): Promise<{ id: string; duplicate: boolean; matched: boolean }> {
@@ -380,9 +559,17 @@ async function processWebhookPayload(payloadInput: unknown): Promise<{ id: strin
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
 
-  const et = eventType.toLowerCase();
-  if (et === 'service_status_change' || et.includes('service_status')) {
-    applyServiceStatusChange(payload, parentUpdate);
+  applyServiceLineUpdatesFromPayload(payload, eventType, parentUpdate, matchedBackgroundCheck);
+
+  const topLevelReportUrl = extractTopLevelReportUrl(payload);
+  if (topLevelReportUrl) {
+    parentUpdate.providerFinalReportUrl = topLevelReportUrl;
+    parentUpdate.providerFinalReportAt = admin.firestore.FieldValue.serverTimestamp();
+  }
+  const topLevelDecision = extractTopLevelDecision(payload);
+  if (topLevelDecision) {
+    parentUpdate.providerFinalDecision = topLevelDecision;
+    parentUpdate.providerFinalDecisionAt = admin.firestore.FieldValue.serverTimestamp();
   }
 
   if (isPartialProfileLinkEventType(eventType)) {

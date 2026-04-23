@@ -81,9 +81,14 @@ import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage
 import { db, storage } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { p } from '../data/firestorePaths';
-import type { RecruiterAccount, AccountPositionPricing, WorkersCompRateByState } from '../types/recruiter/account';
+import type { RecruiterAccount, AccountPositionPricing } from '../types/recruiter/account';
 import jobTitlesData from '../data/onetJobTitles.json';
 import { getSutaRateByState, getFutaRateByState, normalizeStateCode, US_STATE_CODES } from '../utils/unemploymentRates';
+import {
+  buildWorkersCompRatesMapsFromSnapshot,
+  pickWorkersCompJobTitleLookup,
+  resolveWorkersCompModifierAccountId,
+} from '../utils/workersCompRateMaps';
 import PageHeader from '../components/PageHeader';
 import AccountCalendarTab from '../components/recruiter/AccountCalendarTab';
 import ActiveWorkersTable from '../components/recruiter/ActiveWorkersTable';
@@ -181,7 +186,14 @@ export default function AccountLocationDetail() {
   const [locationPricingSaving, setLocationPricingSaving] = useState(false);
   const [locationPricingSutaFutaState, setLocationPricingSutaFutaState] = useState('');
   const [wcRatesByKey, setWcRatesByKey] = useState<Record<string, number>>({});
-  const [wcRatesByStateAndJobTitle, setWcRatesByStateAndJobTitle] = useState<Record<string, { code: string; rate: number }>>({});
+  const [wcJobTitleMaps, setWcJobTitleMaps] = useState<{
+    byStateAndJobTitle: Record<string, { code: string; rate: number }>;
+    byStateJobTitleAndModifierAccount: Record<string, { code: string; rate: number }>;
+  }>({ byStateAndJobTitle: {}, byStateJobTitleAndModifierAccount: {} });
+  const wcModifierAccountIdForLocationPricing = useMemo(
+    () => resolveWorkersCompModifierAccountId(account),
+    [account],
+  );
   const [laborPoolOptions, setLaborPoolOptions] = useState<LaborPoolOption[]>([]);
   const [jobOrderApplicantCounts, setJobOrderApplicantCounts] = useState<Record<string, number>>({});
   const [invoicingSubView, setInvoicingSubView] = useState<'invoices' | 'ar' | 'payments' | 'mapping'>('invoices');
@@ -627,28 +639,17 @@ export default function AccountLocationDetail() {
     getDocs(collection(db, p.workersCompRates(tenantId)))
       .then((snap) => {
         if (!isMounted.current) return;
-        const byKey: Record<string, number> = {};
-        const byStateAndJobTitle: Record<string, { code: string; rate: number }> = {};
-        snap.docs.forEach((d) => {
-          const data = d.data() as WorkersCompRateByState;
-          if (d.id && data.rate != null) byKey[d.id] = Number(data.rate);
-          const state = (data.state || '').trim().toUpperCase();
-          const code = (data.code || '').trim();
-          const rate = Number(data.rate);
-          if (!state || !code || Number.isNaN(rate)) return;
-          const titles = Array.isArray(data.jobTitles) ? data.jobTitles : [];
-          titles.forEach((title) => {
-            const key = `${state}_${(title || '').trim().toLowerCase()}`;
-            if (key !== `${state}_`) byStateAndJobTitle[key] = { code, rate };
-          });
+        const built = buildWorkersCompRatesMapsFromSnapshot(snap);
+        setWcRatesByKey(built.wcRatesByStateAndCode);
+        setWcJobTitleMaps({
+          byStateAndJobTitle: built.byStateAndJobTitle,
+          byStateJobTitleAndModifierAccount: built.byStateJobTitleAndModifierAccount,
         });
-        setWcRatesByKey(byKey);
-        setWcRatesByStateAndJobTitle(byStateAndJobTitle);
       })
       .catch(() => {
         if (isMounted.current) {
           setWcRatesByKey({});
-          setWcRatesByStateAndJobTitle({});
+          setWcJobTitleMaps({ byStateAndJobTitle: {}, byStateJobTitleAndModifierAccount: {} });
         }
       });
   }, [tenantId]);
@@ -2122,7 +2123,15 @@ export default function AccountLocationDetail() {
                                   value={row.jobTitle}
                                   onInputChange={(_, v) => {
                                     const stateCode = (locationPricingSutaFutaState || normalizeStateCode(locationDoc?.state) || '').trim().toUpperCase();
-                                    const lookup = stateCode && v ? wcRatesByStateAndJobTitle[`${stateCode}_${String(v).trim().toLowerCase()}`] : undefined;
+                                    const lookup =
+                                      stateCode && v
+                                        ? pickWorkersCompJobTitleLookup(
+                                            wcJobTitleMaps,
+                                            stateCode,
+                                            String(v),
+                                            wcModifierAccountIdForLocationPricing,
+                                          )
+                                        : undefined;
                                     setLocationPricingPositions((prev) => {
                                       const next = [...prev];
                                       next[idx] = { ...next[idx], jobTitle: v };

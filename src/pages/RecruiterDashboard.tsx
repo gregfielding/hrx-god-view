@@ -89,10 +89,11 @@ const RecruiterDashboard: React.FC = () => {
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {isTopLevelTabRoute && (
         <PageHeader
-          title="Jobs"
-          subtitle="Manage job orders and job posts"
+          hideHeading
+          dense
+          title=""
           filters={
-            <Box display="flex" gap={0.5}>
+            <Box sx={{ display: 'flex', gap: 0.35, alignItems: 'center', flexWrap: 'wrap' }}>
               {tabs.map((tab) => {
                 const isActive = activeTab === tab.id;
                 return (
@@ -104,14 +105,19 @@ const RecruiterDashboard: React.FC = () => {
                     sx={{
                       textTransform: 'none',
                       borderRadius: '999px',
-                      fontSize: '14px',
-                      fontWeight: isActive ? 500 : 400,
+                      fontSize: '13px',
+                      fontWeight: isActive ? 600 : 400,
                       color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
                       bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
-                      px: 1.5,
-                      py: 0.75,
+                      px: 1.25,
+                      py: 0.5,
+                      minHeight: 30,
                       minWidth: 'auto',
                       whiteSpace: 'nowrap',
+                      '& .MuiButton-startIcon': {
+                        mr: 0.35,
+                        '& svg': { fontSize: 16 },
+                      },
                       '&:hover': {
                         bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
                       },
@@ -138,9 +144,9 @@ const RecruiterDashboard: React.FC = () => {
                   showText={false}
                   size="small"
                   sx={{
-                    minWidth: '36px',
-                    width: '36px',
-                    height: '36px',
+                    minWidth: '32px',
+                    width: '32px',
+                    height: '32px',
                     borderRadius: '50%',
                     '&:hover': {
                       backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover',
@@ -160,21 +166,23 @@ const RecruiterDashboard: React.FC = () => {
                 {(activeTab === 'job-orders' || activeTab === 'my-orders') && (
                   <Button
                     variant="contained"
-                    startIcon={<AddIcon />}
+                    startIcon={<AddIcon sx={{ fontSize: 16 }} />}
                     onClick={() => setNewJobOrderModalOpen(true)}
                     sx={{
                       textTransform: 'none',
-                      borderRadius: '24px',
-                      px: 2.5,
-                      py: 1,
-                      height: '40px',
-                      fontWeight: 500,
-                      fontSize: '14px',
+                      borderRadius: '999px',
+                      px: 1.5,
+                      py: 0.5,
+                      minHeight: 30,
+                      height: 30,
+                      fontWeight: 600,
+                      fontSize: '13px',
                       bgcolor: '#0057B8',
-                      boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
+                      boxShadow: 'none',
+                      '& .MuiButton-startIcon': { mr: 0.35 },
                       '&:hover': {
                         bgcolor: '#004a9f',
-                        boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
+                        boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
                       },
                       whiteSpace: 'nowrap',
                     }}
@@ -185,21 +193,23 @@ const RecruiterDashboard: React.FC = () => {
                 {activeTab === 'jobs-board' && (
                   <Button
                     variant="contained"
-                    startIcon={<AddIcon />}
+                    startIcon={<AddIcon sx={{ fontSize: 16 }} />}
                     onClick={() => navigate('/jobs/jobs-board?new=1')}
                     sx={{
                       textTransform: 'none',
-                      borderRadius: '24px',
-                      px: 2.5,
-                      py: 1,
-                      height: '40px',
-                      fontWeight: 500,
-                      fontSize: '14px',
+                      borderRadius: '999px',
+                      px: 1.5,
+                      py: 0.5,
+                      minHeight: 30,
+                      height: 30,
+                      fontWeight: 600,
+                      fontSize: '13px',
                       bgcolor: '#0057B8',
-                      boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
+                      boxShadow: 'none',
+                      '& .MuiButton-startIcon': { mr: 0.35 },
                       '&:hover': {
                         bgcolor: '#004a9f',
-                        boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
+                        boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
                       },
                       whiteSpace: 'nowrap',
                     }}

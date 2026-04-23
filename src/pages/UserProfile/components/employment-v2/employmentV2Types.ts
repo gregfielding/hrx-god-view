@@ -198,6 +198,14 @@ export interface EmploymentPayrollSummary {
   /** Entity `payrollSettings.portalUrl` — login / pay history for workers already on payroll. */
   entityPortalUrl?: string | null;
   actionNeeded?: boolean;
+  /**
+   * Canonical provider marker from the entity doc. When set to `'everee'` with
+   * `evereeEnabled=true`, UIs should prefer the embedded Everee panel over the
+   * static onboarding URL links.
+   */
+  provider?: string | null;
+  /** AND of env-level flag visibility and per-entity `evereeEnabled`. */
+  evereeEnabled?: boolean;
 }
 
 export interface EmploymentScreeningSummary {
@@ -257,6 +265,14 @@ export interface EntityTabSettingsSnapshot {
   /** From `entities.payrollSettings` when TempWorks (or similar) is configured. */
   payrollOnboardingUrl?: string | null;
   payrollPortalUrl?: string | null;
+  /**
+   * Canonical payroll provider marker on the entity doc (e.g. 'everee',
+   * 'tempworks'). `evereeEnabled=true` + `payrollProvider='everee'` is what
+   * the functions-side `requireEvereeEnabledEntity` gates on.
+   */
+  payrollProvider?: string | null;
+  /** Per-entity Everee toggle (AND'd with the EVEREE_ENABLED env flag). */
+  evereeEnabled?: boolean;
 }
 
 /**

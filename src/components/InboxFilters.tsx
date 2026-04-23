@@ -141,11 +141,26 @@ const InboxFilters: React.FC<InboxFiltersProps> = ({
     const showUnreadToggle = isMailboxView && typeof onUnreadOnlyChange === 'function';
 
     // Horizontal layout - subtle ghost buttons with segmented control feel
+    const pillSx = {
+      textTransform: 'none' as const,
+      borderRadius: '999px',
+      fontSize: '13px',
+      px: 1.25,
+      py: 0.5,
+      minHeight: 30,
+      minWidth: 'auto' as const,
+      whiteSpace: 'nowrap' as const,
+      '& .MuiButton-startIcon': {
+        mr: 0.35,
+        '& svg': { fontSize: 16 },
+      },
+    };
+
     return (
       <Box sx={{ 
         display: 'flex', 
         flexDirection: 'row', 
-        gap: 0.5, 
+        gap: 0.35, 
         alignItems: 'center', 
         flexWrap: 'nowrap', // Never wrap: PageHeader handles horizontal scrolling
       }}>
@@ -160,15 +175,10 @@ const InboxFilters: React.FC<InboxFiltersProps> = ({
                 startIcon={filter.icon}
                 onClick={() => onFilterChange(filter.id)}
                 sx={{ 
-                  textTransform: 'none',
-                  borderRadius: '999px', // Pill shape
-                  fontSize: '14px',
-                  fontWeight: activeFilter === filter.id ? 500 : 400,
+                  ...pillSx,
+                  fontWeight: activeFilter === filter.id ? 600 : 400,
                   color: activeFilter === filter.id ? 'white' : 'rgba(0, 0, 0, 0.7)',
                   bgcolor: activeFilter === filter.id ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
-                  px: 1.5,
-                  py: 0.75,
-                  minWidth: 'auto',
                   '&:hover': {
                     bgcolor: activeFilter === filter.id ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
                   },
@@ -200,15 +210,10 @@ const InboxFilters: React.FC<InboxFiltersProps> = ({
                 startIcon={<MailIcon />}
                 onClick={() => onUnreadOnlyChange(!unreadOnly)}
                 sx={{
-                  textTransform: 'none',
-                  borderRadius: '999px',
-                  fontSize: '14px',
+                  ...pillSx,
                   fontWeight: unreadOnly ? 600 : 400,
                   color: unreadOnly ? 'white' : 'rgba(0, 0, 0, 0.7)',
                   bgcolor: unreadOnly ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
-                  px: 1.5,
-                  py: 0.75,
-                  minWidth: 'auto',
                   '&:hover': {
                     bgcolor: unreadOnly ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
                   },
@@ -233,7 +238,7 @@ const InboxFilters: React.FC<InboxFiltersProps> = ({
               </Button>
             )}
 
-            <Divider orientation="vertical" flexItem sx={{ mx: 0.5, height: 20 }} />
+            <Divider orientation="vertical" flexItem sx={{ mx: 0.35, alignSelf: 'stretch', minHeight: 22 }} />
           </>
         )}
         
@@ -246,15 +251,10 @@ const InboxFilters: React.FC<InboxFiltersProps> = ({
             startIcon={filter.icon}
             onClick={() => onFilterChange(filter.id)}
             sx={{ 
-              textTransform: 'none',
-              borderRadius: '999px', // Pill shape
-              fontSize: '14px',
-              fontWeight: activeFilter === filter.id ? 500 : 400,
+              ...pillSx,
+              fontWeight: activeFilter === filter.id ? 600 : 400,
               color: activeFilter === filter.id ? 'white' : 'rgba(0, 0, 0, 0.7)',
               bgcolor: activeFilter === filter.id ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
-              px: 1.5, // 12-16px horizontal padding
-              py: 0.75, // 6-8px vertical padding
-              minWidth: 'auto',
               '&:hover': {
                 bgcolor: activeFilter === filter.id ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
               },

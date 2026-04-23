@@ -14,6 +14,7 @@ import {
 } from './workerRiskProfile';
 import { refreshRecruiterScoreSnapshotForUser } from '../scoring/refreshRecruiterScoreSnapshot';
 import type { RecruiterScoreSnapshotGeneratedBy } from '../scoring/buildRecruiterScoreSnapshot';
+import { sanitizeForFirestoreWrite } from '../firestore/sanitizeForFirestoreWrite';
 
 const RECRUITER_PRIMARY_SCORE_SOURCE_VERSION = 'recruiter_primary_v1';
 
@@ -69,23 +70,27 @@ export async function recomputeUserInterviewScoreSummary(
 
   const scored = docs
     .map((d) => (typeof d.score10 === 'number' ? d.score10 : typeof d.score === 'number' ? d.score : null))
-    .filter((n): n is number => typeof n === 'number');
+    .filter((n): n is number => typeof n === 'number' && Number.isFinite(n));
 
   const interviewCount = docs.length;
-  const interviewAvg =
+  const interviewAvgRaw =
     scored.length > 0 ? Math.round((scored.reduce((a, b) => a + b, 0) / scored.length) * 10) / 10 : undefined;
+  const interviewAvg =
+    interviewAvgRaw !== undefined && Number.isFinite(interviewAvgRaw) ? interviewAvgRaw : undefined;
 
   const lastInterview = docs[0];
   const lastAt = (lastInterview?.createdAt as { toDate?: () => Date } | undefined)?.toDate?.() ?? null;
   const lastTimestamp = (lastInterview?.timestamp as { toDate?: () => Date } | undefined)?.toDate?.() ?? null;
   const lastResolved = lastAt || lastTimestamp;
-  const lastScore10 =
+  const rawLast10 =
     lastInterview != null &&
     (typeof lastInterview.score10 === 'number' || typeof lastInterview.score === 'number')
       ? typeof lastInterview.score10 === 'number'
         ? lastInterview.score10
         : (lastInterview.score as number)
       : null;
+  const lastScore10 =
+    rawLast10 != null && typeof rawLast10 === 'number' && Number.isFinite(rawLast10) ? rawLast10 : null;
 
   const lastKind =
     lastInterview != null ? String((lastInterview as Record<string, unknown>).interviewKind ?? '') : '';
@@ -206,7 +211,8 @@ export async function recomputeUserInterviewScoreSummary(
     });
   }
 
-  await db.collection('users').doc(uid).update(update);
+  const sanitized = sanitizeForFirestoreWrite(update) as Record<string, unknown>;
+  await db.collection('users').doc(uid).update(sanitized);
 
   try {
     await refreshRecruiterScoreSnapshotForUser(

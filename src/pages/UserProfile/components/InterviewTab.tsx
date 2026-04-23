@@ -27,6 +27,7 @@ import {
   Tooltip,
   Chip,
   Stack,
+  CircularProgress,
   Collapse,
   Accordion,
   AccordionDetails,
@@ -78,6 +79,8 @@ import {
   WorkerAiPrescreenInterviewCardContent,
   type WorkerAiPrescreenInterviewCardModel,
 } from './WorkerAiPrescreenInterviewCardContent';
+import type { ProfileUpdateReminderControls } from './MessagesTab';
+import { overviewCardHeaderTextButtonSx } from './OverviewDashboardSections';
 
 interface InterviewQuestion {
   id: string;
@@ -125,6 +128,8 @@ interface InterviewTabProps {
   };
   /** Recruiter / internal view: de-emphasize duplicate score blocks and alternate copy. */
   recruiterTrustUi?: boolean;
+  /** Same control shape as Qualifications “Profile Update Reminder” — SMS with AI pre-screen link. */
+  orderInterview?: ProfileUpdateReminderControls;
 }
 
 function interviewDocToIntelInput(interview: Interview): ScoreIntelligenceInterviewInput | null {
@@ -185,6 +190,7 @@ const InterviewTab: React.FC<InterviewTabProps> = ({
   scoreSummary,
   scoreFreshnessMeta,
   recruiterTrustUi,
+  orderInterview,
 }) => {
   const { currentUser } = useAuth();
   const { scores: profileCategoryScores, userDocReady: profileScoresReady } = useCategoryScoresCurrent(uid);
@@ -752,9 +758,59 @@ const InterviewTab: React.FC<InterviewTabProps> = ({
       {/* Interviews History Card */}
       <Box sx={{ order: recruiterTrustUi ? 1 : 4 }}>
       <Card variant="outlined">
-        <CardHeader 
+        <CardHeader
           title={`Interview History (${interviews.length})`}
           titleTypographyProps={{ variant: 'h6', fontWeight: 700 }}
+          action={
+            orderInterview ? (
+              <Stack alignItems="flex-end" spacing={0.15} sx={{ maxWidth: 260, ml: 1 }}>
+                <Tooltip
+                  title={orderInterview.sendUnavailable && orderInterview.sendUnavailableHint ? orderInterview.sendUnavailableHint : ''}
+                  disableHoverListener={!orderInterview.sendUnavailable}
+                  placement="top"
+                >
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      maxWidth: '100%',
+                      ...(orderInterview.sendUnavailable ? { cursor: 'not-allowed' } : {}),
+                    }}
+                  >
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={orderInterview.onSend}
+                      disabled={orderInterview.sending || !!orderInterview.sendUnavailable}
+                      startIcon={orderInterview.sending ? <CircularProgress color="inherit" size={12} /> : undefined}
+                      sx={{
+                        ...overviewCardHeaderTextButtonSx,
+                        borderColor: 'divider',
+                        px: 0.5,
+                        py: 0.125,
+                        lineHeight: 1.2,
+                        fontWeight: 600,
+                        fontSize: '0.68rem',
+                        minHeight: 26,
+                        textTransform: 'none',
+                      }}
+                    >
+                      Order Interview
+                    </Button>
+                  </span>
+                </Tooltip>
+                {orderInterview.error ? (
+                  <Typography sx={{ fontSize: '0.6rem', lineHeight: 1.3, color: 'error.main', textAlign: 'right' }}>
+                    {orderInterview.error}
+                  </Typography>
+                ) : orderInterview.lastSentAt ? (
+                  <Typography sx={{ fontSize: '0.6rem', lineHeight: 1.3, color: 'text.secondary', textAlign: 'right' }}>
+                    Sent {orderInterview.lastSentAt.toLocaleString()}
+                  </Typography>
+                ) : null}
+              </Stack>
+            ) : undefined
+          }
+          sx={{ alignItems: 'flex-start', '& .MuiCardHeader-action': { m: 0, mt: 0.25 } }}
         />
         <CardContent sx={{ p: { xs: 0, md: 1 } }}>
           {loading ? (

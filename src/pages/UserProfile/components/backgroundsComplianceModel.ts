@@ -5,6 +5,7 @@
 
 import { Timestamp } from 'firebase/firestore';
 import type { BackgroundCheckRecord } from '../../../types/backgroundCheck';
+import type { AccusourceScreeningLineItem } from '../../../utils/accusourceScreeningLineItems';
 import { accusourceScreeningLineItems } from '../../../utils/accusourceScreeningLineItems';
 import { resolveApplicantPortalUrl } from '../../../utils/backgroundCheckApplicantPortal';
 import type { TenantRole } from '../../../contexts/AuthContext';
@@ -102,7 +103,7 @@ export interface NormalizedComplianceRow {
   /** Screening row payload when channel === 'screening' */
   screening?: BackgroundCheckRecord;
   /** Per AccuSource screen (from catalog + webhooks) — AccuSource screening rows only. */
-  screeningServiceLines?: Array<{ id: string; name: string; type?: string; status: string }>;
+  screeningServiceLines?: AccusourceScreeningLineItem[];
 }
 
 function everifyPublicStatus(data: Record<string, unknown>): string {

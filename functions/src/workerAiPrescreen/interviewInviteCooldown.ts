@@ -25,6 +25,17 @@ export function userInInterviewReinviteCooldown(userData: Record<string, unknown
 }
 
 /**
+ * Recruiter profile "Order interview" SMS only: blocks duplicate sends from **this** action.
+ * Do not reuse {@link userInInterviewReinviteCooldown} here — workers often have
+ * `lastInterviewInvitedAt` from group/auto flows while still showing zero interviews in UI.
+ */
+export const RECRUITER_ORDER_INTERVIEW_PROFILE_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+export function recruiterProfileOrderInterviewSmsInCooldown(userData: Record<string, unknown>): boolean {
+  return isWithinMs(userData.recruiterOrderInterviewSmsLastSentAt, RECRUITER_ORDER_INTERVIEW_PROFILE_COOLDOWN_MS);
+}
+
+/**
  * Call after any prescreen interview SMS succeeds (invites, reminders, chases) so cooldown reflects
  * the latest outreach.
  */

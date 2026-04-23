@@ -707,23 +707,54 @@ export const sendEmailReplyApi = onRequest(
         userData,
       });
 
-      // Add message to thread
-      const messageId = await addMessageToThread(threadId, tenantId, {
-        direction: 'outbound',
-        from: fromEmail,
-        fromUserId: userId,
-        to: toEmails,
-        cc: ccEmails.length > 0 ? ccEmails : undefined,
-        bcc: bccEmails.length > 0 ? bccEmails : undefined,
-        subject,
-        bodyHtml: storedBodies.htmlBody,
-        bodyPlain: storedBodies.textBody,
-        bodySnippet: storedBodies.textBody.substring(0, 200),
-        attachments: attachments || [],
-        status: emailResult.providerMessageId ? 'sent' : 'failed',
-        providerMessageId: emailResult.providerMessageId,
-        read: true, // Outbound messages are auto-read
-      });
+      // Gmail provider mirrors the outbound send into the thread's subcollection
+      // (see gmailEmailProvider.mirrorOutboundSendToFirestore). Before we write our
+      // own copy, check whether the mirror already persisted this provider message
+      // so we don't end up with two identical outbound docs. This also keeps
+      // messageCount honest when Gmail push subsequently re-syncs the same id.
+      let messageId: string | null = null;
+      if (emailResult.providerMessageId) {
+        try {
+          const existing = await db
+            .collection('tenants')
+            .doc(tenantId)
+            .collection('emailThreads')
+            .doc(threadId)
+            .collection('messages')
+            .where('providerMessageId', '==', emailResult.providerMessageId)
+            .limit(1)
+            .get();
+          if (!existing.empty) {
+            messageId = existing.docs[0].id;
+            logger.info(
+              `Reply outbound already mirrored for providerMessageId ${emailResult.providerMessageId} on thread ${threadId}; skipping duplicate addMessageToThread`
+            );
+          }
+        } catch (dedupeErr: any) {
+          logger.warn('Outbound dedupe lookup failed (will proceed with write)', {
+            err: dedupeErr?.message,
+          });
+        }
+      }
+
+      if (!messageId) {
+        messageId = await addMessageToThread(threadId, tenantId, {
+          direction: 'outbound',
+          from: fromEmail,
+          fromUserId: userId,
+          to: toEmails,
+          cc: ccEmails.length > 0 ? ccEmails : undefined,
+          bcc: bccEmails.length > 0 ? bccEmails : undefined,
+          subject,
+          bodyHtml: storedBodies.htmlBody,
+          bodyPlain: storedBodies.textBody,
+          bodySnippet: storedBodies.textBody.substring(0, 200),
+          attachments: attachments || [],
+          status: emailResult.providerMessageId ? 'sent' : 'failed',
+          providerMessageId: emailResult.providerMessageId,
+          read: true, // Outbound messages are auto-read
+        });
+      }
 
       // Collect all recipient emails (to, cc, bcc)
       const allRecipientEmails = [...toEmails, ...ccEmails, ...bccEmails];
@@ -798,12 +829,19 @@ export const sendEmailReplyApi = onRequest(
 
         const contactsToLog = Array.from(contactById.values());
         const contactIds: string[] = contactsToLog.map((c: any) => c.id).filter(Boolean);
+        const companyIds: string[] = Array.from(
+          new Set(
+            contactsToLog
+              .map((c: any) => c?.companyId)
+              .filter((id: any): id is string => typeof id === 'string' && !!id)
+          )
+        );
 
         for (const contact of contactsToLog) {
-          
+
           // Find deal for this contact
           const dealId = await findContactDeal(tenantId, contact.id);
-          
+
           // Create email_logs entry for CRM compatibility
           const emailLog = {
             messageId: emailResult.providerMessageId || `thread_${threadId}_${Date.now()}`,
@@ -817,15 +855,19 @@ export const sendEmailReplyApi = onRequest(
             bodySnippet: storedBodies.textBody.substring(0, 250),
             bodyHtml: storedBodies.htmlBody,
             direction: 'outbound',
+            // Legacy single-valued fields (preserved for backward compatibility)
             contactId: contact.id,
             companyId: contact.companyId || null,
+            // Phase 2: denormalized arrays for array-contains queries
+            participantContactIds: contactIds,
+            participantCompanyIds: companyIds,
             dealId: dealId || null,
             userId,
             isDraft: false,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           };
-          
+
           await db.collection('tenants').doc(tenantId)
             .collection('email_logs')
             .add(emailLog);
@@ -869,21 +911,32 @@ export const sendEmailReplyApi = onRequest(
             .add(activityLog);
         }
         
-        // Update thread with contact IDs for quick lookup
-        if (contactIds.length > 0) {
+        // Update thread with contact/company IDs for quick lookup (Phase 2)
+        if (contactIds.length > 0 || companyIds.length > 0) {
           const threadRef = db.collection('tenants').doc(tenantId)
             .collection('emailThreads')
             .doc(threadId);
-          
+
           const threadDoc = await threadRef.get();
           if (threadDoc.exists) {
             const existingContactIds = (threadDoc.data()?.participantContactIds || []) as string[];
             const updatedContactIds = Array.from(new Set([...existingContactIds, ...contactIds]));
-            
-            await threadRef.update({
-              participantContactIds: updatedContactIds,
+
+            const existingCompanyIds = (threadDoc.data()?.participantCompanyIds || []) as string[];
+            const updatedCompanyIds = Array.from(new Set([...existingCompanyIds, ...companyIds]));
+
+            const updates: Record<string, any> = {
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
+            };
+            if (updatedContactIds.length !== existingContactIds.length) {
+              updates.participantContactIds = updatedContactIds;
+            }
+            if (updatedCompanyIds.length !== existingCompanyIds.length) {
+              updates.participantCompanyIds = updatedCompanyIds;
+            }
+            if (Object.keys(updates).length > 1) {
+              await threadRef.update(updates);
+            }
           }
         }
       } catch (contactLogError) {
@@ -1049,9 +1102,12 @@ export const sendNewEmailApi = onRequest(
         userData,
       });
 
-      // Create a new thread for this email
-      // Note: For new emails, Gmail will create its own thread, but we don't have the threadId yet
-      // The thread will be created without gmailThreadId initially
+      // Create or find the thread for this email. Gmail returns its own thread id
+      // on send; passing it into findOrCreateEmailThread ensures we reuse the
+      // thread that the Gmail mirror path (mirrorOutboundSendToFirestore) created,
+      // instead of forking a duplicate Firestore thread. Without this, future
+      // inbound replies — which are ingested via gmailThreadId — land on the
+      // mirror thread only, leaving the send thread stuck showing one message.
       const newThread = await findOrCreateEmailThread(
         tenantId,
         {
@@ -1059,6 +1115,7 @@ export const sendNewEmailApi = onRequest(
           from: fromEmail,
           to: toEmails,
           cc: ccEmails.length > 0 ? ccEmails : undefined,
+          gmailThreadId: emailResult.providerThreadId,
           gmailLabelIds: [],
         },
         {
@@ -1066,23 +1123,52 @@ export const sendNewEmailApi = onRequest(
         }
       );
 
-      // Add message to the new thread
-      const messageId = await addMessageToThread(newThread.id!, tenantId, {
-        direction: 'outbound',
-        from: fromEmail,
-        fromUserId: userId,
-        to: toEmails,
-        cc: ccEmails.length > 0 ? ccEmails : undefined,
-        bcc: bccEmails.length > 0 ? bccEmails : undefined,
-        subject,
-        bodyHtml: storedBodies.htmlBody,
-        bodyPlain: storedBodies.textBody,
-        bodySnippet: storedBodies.textBody.substring(0, 200),
-        attachments: attachments || [],
-        status: emailResult.providerMessageId ? 'sent' : 'failed',
-        providerMessageId: emailResult.providerMessageId,
-        read: true, // Outbound messages are auto-read
-      });
+      // Dedupe: Gmail provider's mirror may have already written this outbound
+      // message into the thread's subcollection. Skip the duplicate write when
+      // we detect a matching providerMessageId.
+      let messageId: string | null = null;
+      if (emailResult.providerMessageId) {
+        try {
+          const existing = await db
+            .collection('tenants')
+            .doc(tenantId)
+            .collection('emailThreads')
+            .doc(newThread.id!)
+            .collection('messages')
+            .where('providerMessageId', '==', emailResult.providerMessageId)
+            .limit(1)
+            .get();
+          if (!existing.empty) {
+            messageId = existing.docs[0].id;
+            logger.info(
+              `New-email outbound already mirrored for providerMessageId ${emailResult.providerMessageId} on thread ${newThread.id}; skipping duplicate addMessageToThread`
+            );
+          }
+        } catch (dedupeErr: any) {
+          logger.warn('Outbound dedupe lookup failed (will proceed with write)', {
+            err: dedupeErr?.message,
+          });
+        }
+      }
+
+      if (!messageId) {
+        messageId = await addMessageToThread(newThread.id!, tenantId, {
+          direction: 'outbound',
+          from: fromEmail,
+          fromUserId: userId,
+          to: toEmails,
+          cc: ccEmails.length > 0 ? ccEmails : undefined,
+          bcc: bccEmails.length > 0 ? bccEmails : undefined,
+          subject,
+          bodyHtml: storedBodies.htmlBody,
+          bodyPlain: storedBodies.textBody,
+          bodySnippet: storedBodies.textBody.substring(0, 200),
+          attachments: attachments || [],
+          status: emailResult.providerMessageId ? 'sent' : 'failed',
+          providerMessageId: emailResult.providerMessageId,
+          read: true, // Outbound messages are auto-read
+        });
+      }
 
       // Collect all recipient emails (to, cc, bcc)
       const allRecipientEmails = [...toEmails, ...ccEmails, ...bccEmails];
@@ -1157,12 +1243,19 @@ export const sendNewEmailApi = onRequest(
 
         const contactsToLog = Array.from(contactById.values());
         const contactIds: string[] = contactsToLog.map((c: any) => c.id).filter(Boolean);
+        const companyIds: string[] = Array.from(
+          new Set(
+            contactsToLog
+              .map((c: any) => c?.companyId)
+              .filter((id: any): id is string => typeof id === 'string' && !!id)
+          )
+        );
 
         for (const contact of contactsToLog) {
-          
+
           // Find deal for this contact
           const dealId = await findContactDeal(tenantId, contact.id);
-          
+
           // Create email_logs entry for CRM compatibility
           const emailLog = {
             messageId: emailResult.providerMessageId || `thread_${newThread.id}_${Date.now()}`,
@@ -1176,15 +1269,19 @@ export const sendNewEmailApi = onRequest(
             bodySnippet: storedBodies.textBody.substring(0, 250),
             bodyHtml: storedBodies.htmlBody,
             direction: 'outbound',
+            // Legacy single-valued fields (preserved for backward compatibility)
             contactId: contact.id,
             companyId: contact.companyId || null,
+            // Phase 2: denormalized arrays for array-contains queries
+            participantContactIds: contactIds,
+            participantCompanyIds: companyIds,
             dealId: dealId || null,
             userId,
             isDraft: false,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           };
-          
+
           await db.collection('tenants').doc(tenantId)
             .collection('email_logs')
             .add(emailLog);
@@ -1228,16 +1325,18 @@ export const sendNewEmailApi = onRequest(
             .add(activityLog);
         }
         
-        // Update thread with contact IDs for quick lookup
-        if (contactIds.length > 0) {
+        // Update thread with contact/company IDs for quick lookup (Phase 2)
+        if (contactIds.length > 0 || companyIds.length > 0) {
           const threadRef = db.collection('tenants').doc(tenantId)
             .collection('emailThreads')
             .doc(newThread.id!);
-          
-          await threadRef.update({
-            participantContactIds: contactIds,
+
+          const updates: Record<string, any> = {
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
+          };
+          if (contactIds.length > 0) updates.participantContactIds = contactIds;
+          if (companyIds.length > 0) updates.participantCompanyIds = companyIds;
+          await threadRef.update(updates);
         }
       } catch (contactLogError) {
         logger.error('Failed to log email to contacts:', contactLogError);
@@ -1626,6 +1725,73 @@ export const bulkUpdateEmailThreadsApi = onRequest(
         response.status(400).json({
           success: false,
           error: { code: 'INVALID_ARGUMENT', message: 'updates object is required' },
+        });
+        return;
+      }
+
+      // Special handling for read: true — use markThreadRead so each message's
+      // read flag is set AND Gmail UNREAD label is removed. Without this cascade,
+      // the bulk write only zeros thread.unreadCount and the next reconciliation
+      // pass recomputes it from the still-unread message docs, flipping it back.
+      if (updates.read === true) {
+        if (!userId) {
+          response.status(400).json({
+            success: false,
+            error: {
+              code: 'INVALID_ARGUMENT',
+              message: 'userId is required when marking threads as read',
+            },
+          });
+          return;
+        }
+        // Mark each thread read (cascade to messages) in parallel
+        await Promise.all(
+          threadIds.map(async (tid: string) => {
+            try {
+              await markThreadRead(tid, tenantId, userId);
+            } catch (err: any) {
+              logger.warn(`bulkUpdateEmailThreadsApi: markThreadRead failed for ${tid}`, { error: err?.message });
+            }
+          })
+        );
+
+        // Best-effort: sync UNREAD label removal to Gmail for each thread
+        try {
+          // Firestore 'in' supports max 10 ids; batch if needed
+          const chunks: string[][] = [];
+          for (let i = 0; i < threadIds.length; i += 10) {
+            chunks.push(threadIds.slice(i, i + 10));
+          }
+          for (const chunk of chunks) {
+            const snap = await db
+              .collection('tenants')
+              .doc(tenantId)
+              .collection('emailThreads')
+              .where(admin.firestore.FieldPath.documentId(), 'in', chunk)
+              .get();
+            for (const d of snap.docs) {
+              const data = d.data() as any;
+              if (data?.gmailThreadId) {
+                syncThreadReadStateToGmail(userId, data.gmailThreadId, true).catch((err: any) => {
+                  logger.warn('Failed bulk Gmail read sync', { threadId: d.id, error: err?.message });
+                });
+              }
+            }
+          }
+        } catch (err: any) {
+          logger.warn('bulkUpdateEmailThreadsApi: Gmail bulk read sync enumeration failed', { error: err?.message });
+        }
+
+        // Drop `read` from the generic updates so bulkUpdateThreads doesn't
+        // overwrite the per-message cascade with a stray thread-level field.
+        const { read: _dropRead, unreadCount: _dropUnread, ...rest } = updates;
+        if (Object.keys(rest).length > 0) {
+          await bulkUpdateThreads(threadIds, tenantId, rest);
+        }
+
+        response.status(200).json({
+          success: true,
+          updatedCount: threadIds.length,
         });
         return;
       }

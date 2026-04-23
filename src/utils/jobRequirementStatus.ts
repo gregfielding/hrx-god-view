@@ -6,6 +6,7 @@
 export type RequirementCategory =
   | 'backgroundCheckPackages'
   | 'drugScreeningPanels'
+  | 'screeningPackageServices'
   | 'additionalScreenings'
   | 'licensesCerts'
   | 'skills'
@@ -241,6 +242,21 @@ import {
   getCertificationVerificationStatus,
   findProfileCertForRequirement,
 } from './certificationVerification';
+import { formatWorkerFacingScreeningPackage } from './backgroundChecks/formatWorkerFacingScreeningPackage';
+
+function dedupeScreeningServiceNamesWorker(names: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of names) {
+    const n = String(raw || '').trim();
+    if (!n) continue;
+    const k = n.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(n);
+  }
+  return out;
+}
 
 /**
  * Build status for all requirement categories on the posting.
@@ -328,6 +344,50 @@ export function getRequirementsWithStatus(
         return { label: screening, met: hasUser ? met : false, ackKey: key, attestationState };
       }),
     });
+  }
+
+  if (posting.showScreeningPackageOnPost) {
+    const svcRaw = Array.isArray(posting.screeningPackageServiceNames)
+      ? posting.screeningPackageServiceNames
+      : [];
+    const svcNames = dedupeScreeningServiceNamesWorker(
+      svcRaw.map((s: string) => String(s || '').trim()).filter(Boolean),
+    );
+    const pkgName = String(posting.screeningPackageName || '').trim();
+
+    let labels: string[] = [];
+    if (svcNames.length > 0) {
+      labels = svcNames;
+    } else if (pkgName) {
+      labels = [formatWorkerFacingScreeningPackage({ packageName: pkgName, services: null }).summary];
+    }
+
+    if (labels.length > 0) {
+      const pkgApp = applicationData?.data?.requirements?.screeningPackageServices || {};
+      result.push({
+        category: 'screeningPackageServices',
+        categoryLabel: 'Required screenings',
+        tier: tierRequired,
+        items: labels.map((svc: string) => {
+          const slug = String(svc).replace(/[^a-zA-Z0-9]+/g, '_');
+          const key =
+            svcNames.length > 0 ? `screeningPackageSvc_${slug}` : 'screeningPackagePkg';
+          const mainVal = pkgApp[svc] ?? appAck(applicationData, key);
+          const attestationState: RequirementItemStatus['attestationState'] =
+            mainVal === 'Yes' || mainVal === 'Maybe'
+              ? 'willing'
+              : mainVal === 'No'
+                ? 'unwilling'
+                : 'unknown';
+          return {
+            label: svc,
+            met: false,
+            ackKey: key,
+            attestationState,
+          };
+        }),
+      });
+    }
   }
 
   if (posting.eVerifyRequired) {

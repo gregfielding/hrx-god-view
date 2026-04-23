@@ -13,8 +13,11 @@ export interface AccusourceRequestOptions {
  * @see https://sdapi.accusourcedirect.com/documentation/external.html — Create a new profile (partial)
  */
 export interface AccusourceV2PartialProfileBody {
-  /** Required: integer package id from GET /api/v2/company/details (synced catalog). */
-  packageId: number;
+  /**
+   * Integer package id from GET /api/v2/company/details (synced catalog).
+   * Omit when ordering only à la carte `orders` (services only); vendor must accept this shape.
+   */
+  packageId?: number;
   /** HRX correlation id (echoed on webhooks). */
   clientId: string;
   /** Subject / applicant — partial profile; remaining data via Applicant Portal. */

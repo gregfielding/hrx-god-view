@@ -95,7 +95,8 @@ export const RequirementInteraction: React.FC<RequirementInteractionProps> = ({
     category === 'backgroundCheckPackages' ||
     category === 'drugScreeningPanels' ||
     category === 'eVerify' ||
-    category === 'additionalScreenings';
+    category === 'additionalScreenings' ||
+    category === 'screeningPackageServices';
 
   const handleAnswer = async (answer: 'Yes' | 'No') => {
     if (!onFix) return;

@@ -3,6 +3,11 @@ import { normalizeAssignmentStatus } from '../utils/assignmentStatusNormalize';
 export const SYSTEM_TRIGGER_KEYS = {
   /** Labor pool / pre-assignment hire started via `startOnCallEmployment` or `startOnCallOnboarding`. */
   onCallEmploymentStarted: 'on_call_employment_started',
+  /**
+   * First time a worker is hired into a given entity (onboarding pipeline created).
+   * Pair with message type worker_hired. Fires once per (userId, entityKey) before task-oriented follow-ups.
+   */
+  workerHired: 'worker_hired',
   /** First creation of `worker_onboarding` for worker + entity (any source: manual, on-call, assignment, etc.). */
   workerOnboardingPipelineStarted: 'worker_onboarding_pipeline_started',
   /**
@@ -46,6 +51,12 @@ export const SYSTEM_TRIGGER_CATALOG: TriggerCatalogEntry[] = [
     label: 'Payroll onboarding invite needed',
     description:
       'Runs when the system sends a payroll signup / portal invite (on-call hire or assignment confirmed). Pair with message type payroll_onboarding_invite_needed. If no active rule exists, a default body is sent.',
+  },
+  {
+    key: SYSTEM_TRIGGER_KEYS.workerHired,
+    label: 'Worker hired',
+    description:
+      "Runs once per (worker, hiring entity) the first time a worker onboarding pipeline is created. Celebratory/welcome message — fires before worker_onboarding_pipeline_started and payroll_onboarding_invite_needed. Variables include {{firstName}}, {{hiringEntityName}}, {{hiringEntityId}}, {{entityKey}}, {{workerTypeLabel}}, {{workerTypeLabelEn}}, {{workerTypeLabelEs}}, {{preferredLanguage}}. If no active rule exists, a default body is sent in the worker's preferred language (English or Spanish).",
   },
   {
     key: SYSTEM_TRIGGER_KEYS.workerOnboardingPipelineStarted,

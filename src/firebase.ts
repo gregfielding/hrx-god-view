@@ -59,6 +59,14 @@ export const auth = getAuth(app);
 export const storage = getStorage(app);
 export const functions = getFunctions(app, 'us-central1');
 
+// Dev-only: expose Firebase handles to window for one-off devtools invocations
+// (e.g. calling httpsCallable from the console). Safe because these are the
+// same handles the app already uses; no additional privileges are granted.
+if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+  const w = window as any;
+  w.__HRX__ = { ...(w.__HRX__ || {}), app, auth, functions, db };
+}
+
 /**
  * Analytics uses IndexedDB; full disk / strict privacy mode → QuotaExceededError and CRA dev overlay.
  * Local dev: off unless REACT_APP_ENABLE_FIREBASE_ANALYTICS=true (see .env).

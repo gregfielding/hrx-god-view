@@ -36,26 +36,34 @@ function TabPanel(props: { children?: React.ReactNode; index: number; value: num
 const StaffOnboardingCenter: React.FC = () => {
   const [searchParams] = useSearchParams();
   const [ui, setUi] = useState<StaffOnboardingUiState>(() => defaultStaffOnboardingUi());
+  /** Prevents the save effect from writing default state to sessionStorage before the first load from storage runs. */
+  const [storageHydrated, setStorageHydrated] = useState(false);
   const [i9ReminderOpen, setI9ReminderOpen] = useState(false);
   const { activeTenant } = useAuth();
   const tenantId = activeTenant?.id;
 
   useEffect(() => {
-    if (!tenantId) return;
+    if (!tenantId) {
+      setStorageHydrated(false);
+      setUi(defaultStaffOnboardingUi());
+      return;
+    }
     const saved = loadStaffOnboardingUi(tenantId);
-    if (saved) setUi(saved);
+    setUi(saved ?? defaultStaffOnboardingUi());
+    setStorageHydrated(true);
   }, [tenantId]);
 
   useEffect(() => {
-    if (!tenantId) return;
+    if (!tenantId || !storageHydrated) return;
     saveStaffOnboardingUi(tenantId, ui);
-  }, [tenantId, ui]);
+  }, [tenantId, storageHydrated, ui]);
 
   useEffect(() => {
+    if (!storageHydrated) return;
     if (searchParams.get('tab') === 'background') {
       setUi((prev) => ({ ...prev, tab: 2 }));
     }
-  }, [searchParams]);
+  }, [searchParams, storageHydrated]);
 
   const handleTabChange = useCallback((_: React.SyntheticEvent, value: number) => {
     setUi((prev) => ({ ...prev, tab: value }));
@@ -65,8 +73,8 @@ const StaffOnboardingCenter: React.FC = () => {
     () => ({
       page: ui.taxPage,
       pageSize: ui.taxPageSize,
-      setPage: (p) => setUi((s) => ({ ...s, taxPage: p })),
-      setPageSize: (s) => setUi((u) => ({ ...u, taxPageSize: s, taxPage: 0 })),
+      setPage: (p) => setUi((s) => ({ ...s, taxPage: p, taxScrollTop: 0 })),
+      setPageSize: (s) => setUi((u) => ({ ...u, taxPageSize: s, taxPage: 0, taxScrollTop: 0 })),
     }),
     [ui.taxPage, ui.taxPageSize],
   );
@@ -75,8 +83,8 @@ const StaffOnboardingCenter: React.FC = () => {
     () => ({
       page: ui.evPage,
       pageSize: ui.evPageSize,
-      setPage: (p) => setUi((s) => ({ ...s, evPage: p })),
-      setPageSize: (s) => setUi((u) => ({ ...u, evPageSize: s, evPage: 0 })),
+      setPage: (p) => setUi((s) => ({ ...s, evPage: p, evScrollTop: 0 })),
+      setPageSize: (s) => setUi((u) => ({ ...u, evPageSize: s, evPage: 0, evScrollTop: 0 })),
     }),
     [ui.evPage, ui.evPageSize],
   );
@@ -85,8 +93,8 @@ const StaffOnboardingCenter: React.FC = () => {
     () => ({
       page: ui.bgPage,
       pageSize: ui.bgPageSize,
-      setPage: (p) => setUi((s) => ({ ...s, bgPage: p })),
-      setPageSize: (s) => setUi((u) => ({ ...u, bgPageSize: s, bgPage: 0 })),
+      setPage: (p) => setUi((s) => ({ ...s, bgPage: p, bgScrollTop: 0 })),
+      setPageSize: (s) => setUi((u) => ({ ...u, bgPageSize: s, bgPage: 0, bgScrollTop: 0 })),
     }),
     [ui.bgPage, ui.bgPageSize],
   );
@@ -131,7 +139,9 @@ const StaffOnboardingCenter: React.FC = () => {
           tenantId={tenantId}
           pagination={taxPagination}
           workerSearch={ui.taxSearch}
-          onWorkerSearchChange={(v) => setUi((s) => ({ ...s, taxSearch: v, taxPage: 0 }))}
+          tableScrollTop={ui.taxScrollTop}
+          onTableScrollTopChange={(y) => setUi((s) => ({ ...s, taxScrollTop: y }))}
+          onWorkerSearchChange={(v) => setUi((s) => ({ ...s, taxSearch: v, taxPage: 0, taxScrollTop: 0 }))}
         />
       </TabPanel>
       <TabPanel value={ui.tab} index={1}>
@@ -139,7 +149,9 @@ const StaffOnboardingCenter: React.FC = () => {
           tenantId={tenantId}
           pagination={evPagination}
           workerSearch={ui.evSearch}
-          onWorkerSearchChange={(v) => setUi((s) => ({ ...s, evSearch: v, evPage: 0 }))}
+          tableScrollTop={ui.evScrollTop}
+          onTableScrollTopChange={(y) => setUi((s) => ({ ...s, evScrollTop: y }))}
+          onWorkerSearchChange={(v) => setUi((s) => ({ ...s, evSearch: v, evPage: 0, evScrollTop: 0 }))}
         />
       </TabPanel>
       <TabPanel value={ui.tab} index={2}>
@@ -150,7 +162,9 @@ const StaffOnboardingCenter: React.FC = () => {
           tenantId={tenantId}
           pagination={bgPagination}
           workerSearch={ui.bgSearch}
-          onWorkerSearchChange={(v) => setUi((s) => ({ ...s, bgSearch: v, bgPage: 0 }))}
+          tableScrollTop={ui.bgScrollTop}
+          onTableScrollTopChange={(y) => setUi((s) => ({ ...s, bgScrollTop: y }))}
+          onWorkerSearchChange={(v) => setUi((s) => ({ ...s, bgSearch: v, bgPage: 0, bgScrollTop: 0 }))}
         />
       </TabPanel>
     </Box>

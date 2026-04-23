@@ -1,9 +1,10 @@
 /**
  * Single write path for `users/{uid}.recruiterScoreSnapshot` and `users/{uid}.recruiterMasterScore`.
  */
-import * as admin from 'firebase-admin';
 import type { Firestore } from 'firebase-admin/firestore';
+import { FieldValue } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions/v2';
+import { sanitizeForFirestoreWrite } from '../firestore/sanitizeForFirestoreWrite';
 import {
   buildRecruiterScoreSnapshotForUserDoc,
   type RecruiterScoreSnapshotGeneratedBy,
@@ -34,22 +35,21 @@ export async function refreshRecruiterScoreSnapshotForUser(
   }
 
   try {
-    await userRef.set(
-      {
-        recruiterScoreSnapshot: {
-          ...nextSnap,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        } as Record<string, unknown>,
-        recruiterMasterScore: {
-          ...nextMaster,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        } as Record<string, unknown>,
-      },
-      { merge: true },
-    );
-  } catch (e) {
+    const recruiterScoreSnapshot = sanitizeForFirestoreWrite({
+      ...nextSnap,
+      updatedAt: FieldValue.serverTimestamp(),
+    }) as Record<string, unknown>;
+    const recruiterMasterScore = sanitizeForFirestoreWrite({
+      ...nextMaster,
+      updatedAt: FieldValue.serverTimestamp(),
+    }) as Record<string, unknown>;
+    await userRef.set({ recruiterScoreSnapshot, recruiterMasterScore }, { merge: true });
+  } catch (e: unknown) {
+    const code =
+      e && typeof e === 'object' && 'code' in e ? String((e as { code?: unknown }).code) : undefined;
     logger.error('refreshRecruiterScoreSnapshotForUser.write_failed', {
       uid,
+      code,
       message: e instanceof Error ? e.message : String(e),
     });
     throw e;

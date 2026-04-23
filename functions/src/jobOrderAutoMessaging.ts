@@ -1,5 +1,5 @@
 /**
- * Gig job orders: when a shift is created, notify members of configured user groups
+ * Gig and Careers job orders: when a shift is created, notify members of configured user groups
  * via SMS + push (per user language). Cooldown: one notification per user per job order every 15 minutes.
  */
 
@@ -184,7 +184,8 @@ export const jobOrderAutoMessagingOnShiftCreated = onDocumentCreated(
         return;
       }
       const jobOrder = jobOrderSnap.data()!;
-      if (String(jobOrder.jobType || '').toLowerCase() !== 'gig') {
+      const jt = String(jobOrder.jobType || '').toLowerCase();
+      if (jt !== 'gig' && jt !== 'career') {
         return;
       }
 

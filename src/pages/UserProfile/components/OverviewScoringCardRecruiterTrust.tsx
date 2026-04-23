@@ -32,6 +32,17 @@ import {
 import { deriveSystemDecisionConfidence } from '../../../utils/scoring/deriveSystemDecisionConfidence';
 import { deriveWhyThisDecision, recruiterDecisionHeadline } from '../../../utils/scoring/deriveNextBestAction';
 import { getRecruiterMasterDisplayForAdminUi } from '../../../utils/scoring/recruiterMasterScoreDisplay';
+import {
+  normalizeQualificationScores,
+  normalizeQualificationSubScoreValue,
+  qualificationBarDisplayPercent,
+  qualificationSeverityBand,
+} from '../../../utils/scoring/normalizeQualificationScores';
+import {
+  QUALIFICATION_DISPLAY_LABEL,
+  QUALIFICATION_DISPLAY_ORDER,
+  qualificationNormalizedPercent,
+} from '../../../utils/scoring/qualificationDisplayOrder';
 import { normalizeRiskProfileFromUserDoc } from '../../../utils/workerRiskProfileDisplay';
 import { riskBandLineWithIndex } from '../utils/recordHeaderScoreHelpers';
 import { overviewBodyChipSx } from './overviewBodyChipSx';
@@ -49,14 +60,6 @@ const CATEGORY_ROWS: { key: keyof PrescreenCategoryScoresV1; label: string }[] =
   { key: 'teamFit', label: 'Team fit' },
   { key: 'jobReadiness', label: 'Job readiness' },
   { key: 'stability', label: 'Stability' },
-];
-
-const SUB_KEYS: { key: keyof NonNullable<WorkerInterviewAiBlock['subScores']>; label: string }[] = [
-  { key: 'experience', label: 'Experience' },
-  { key: 'reliability', label: 'Reliability' },
-  { key: 'transportation', label: 'Transport' },
-  { key: 'risk', label: 'Risk' },
-  { key: 'physical', label: 'Physical' },
 ];
 
 function bandSx(band: 'high' | 'medium' | 'low'): { bgcolor: string } {
@@ -346,6 +349,25 @@ export function OverviewScoringCardRecruiterTrust({
 
   const sub = latestPrescreenInterviewAi?.subScores;
 
+  const qualificationSubNormalized = useMemo(() => {
+    if (!sub) {
+      return normalizeQualificationScores({
+        experience: 0,
+        reliability: 0,
+        transport: 0,
+        risk: 0,
+        physical: 0,
+      });
+    }
+    return normalizeQualificationScores({
+      experience: normalizeQualificationSubScoreValue(sub.experience) ?? 0,
+      reliability: normalizeQualificationSubScoreValue(sub.reliability) ?? 0,
+      transport: normalizeQualificationSubScoreValue(sub.transportation) ?? 0,
+      risk: normalizeQualificationSubScoreValue(sub.risk) ?? 0,
+      physical: normalizeQualificationSubScoreValue(sub.physical) ?? 0,
+    });
+  }, [sub]);
+
   const overrideApplied =
     typeof scoreSummary?.overrideAdjustedScore === 'number' &&
     typeof scoreSummary?.overrideScoreDelta === 'number' &&
@@ -517,29 +539,55 @@ export function OverviewScoringCardRecruiterTrust({
         <Box flex={1} minWidth={0}>
           <Typography variant="subtitle2">Interview / qualification scores</Typography>
           <Stack spacing={0.5} sx={{ mt: 0.5 }}>
-            {SUB_KEYS.map(({ key, label }) => {
-              const raw = sub?.[key];
-              let n: number | null =
-                typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
-              if (n != null && n <= 10 && n >= 0) n = Math.round(n * 10);
-              if (n != null) n = Math.max(0, Math.min(100, n));
+            {QUALIFICATION_DISPLAY_ORDER.map((dim) => {
+              const raw =
+                sub == null
+                  ? undefined
+                  : dim === 'transportation'
+                    ? sub.transportation
+                    : sub[dim as keyof typeof sub];
+              const n = normalizeQualificationSubScoreValue(raw);
+              const displayPct = qualificationNormalizedPercent(qualificationSubNormalized, dim);
+              const barValue = qualificationBarDisplayPercent(displayPct);
+              const sev = qualificationSeverityBand(displayPct);
+              const barSx =
+                sev === 'strong'
+                  ? {
+                      height: 6,
+                      borderRadius: 3,
+                      bgcolor: 'action.hover',
+                      '& .MuiLinearProgress-bar': { bgcolor: 'error.main', borderRadius: 3 },
+                    }
+                  : sev === 'mid'
+                    ? {
+                        height: 6,
+                        borderRadius: 3,
+                        bgcolor: 'action.hover',
+                        '& .MuiLinearProgress-bar': { bgcolor: 'warning.main', borderRadius: 3 },
+                      }
+                    : {
+                        height: 6,
+                        borderRadius: 3,
+                        bgcolor: 'action.hover',
+                        '& .MuiLinearProgress-bar': { bgcolor: 'primary.main', borderRadius: 3 },
+                      };
+
               return (
-                <Stack key={key} direction="row" alignItems="center" spacing={1}>
-                  <Typography variant="caption" sx={{ width: 72, flexShrink: 0, color: 'text.secondary' }}>
-                    {label}
+                <Stack key={dim} direction="row" alignItems="center" spacing={1}>
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      width: 128,
+                      flexShrink: 0,
+                      color: dim === 'physical' ? 'text.disabled' : 'text.secondary',
+                      fontWeight: dim === 'physical' ? 400 : 500,
+                    }}
+                  >
+                    {QUALIFICATION_DISPLAY_LABEL[dim]}
                   </Typography>
                   <Box sx={{ flex: 1, minWidth: 0 }}>
                     {n != null ? (
-                      <LinearProgress
-                        variant="determinate"
-                        value={n}
-                        sx={{
-                          height: 6,
-                          borderRadius: 3,
-                          bgcolor: 'action.hover',
-                          '& .MuiLinearProgress-bar': { bgcolor: 'primary.main', borderRadius: 3 },
-                        }}
-                      />
+                      <LinearProgress variant="determinate" value={barValue} sx={barSx} />
                     ) : null}
                   </Box>
                   <Typography

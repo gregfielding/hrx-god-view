@@ -204,9 +204,10 @@ export interface RecruiterAccountFormData {
 }
 
 /**
- * Tenant-level workers comp rate: one doc per (state, code). Single source of truth.
+ * Tenant-level workers comp rate: one doc per (state, code) or (state, code, modifier account).
  * Update the rate here and all accounts/job orders referencing this state+code use the new rate.
  * jobTitles: from master job title list; when an account/job order uses one of these titles and worksite is in this state, code+rate auto-apply.
+ * When modifierAccountId is set, the rule applies only to job orders / pricing under that national or standalone account (child venues use the parent id).
  */
 export interface WorkersCompRateByState {
   /** State code (e.g. TX) – rate applies statewide. */
@@ -217,6 +218,8 @@ export interface WorkersCompRateByState {
   rate: number;
   /** Job titles from master list that use this code/rate in this state (e.g. ["Cleaner", "Janitor"]). */
   jobTitles?: string[] | null;
+  /** When set, only accounts under this national or standalone recruiter account match (see resolveWorkersCompModifierAccountId). */
+  modifierAccountId?: string | null;
   updatedAt?: any;
   updatedBy?: string | null;
 }

@@ -29,8 +29,8 @@ import {
   Description as ResumeIcon,
   Info as BioIcon,
   Work as WorkHistoryIcon,
-  School as CertIcon,
   Badge as LicenseIcon,
+  School as ProfileCertsIcon,
   Lock as LockedIcon,
   LockOpen as UnlockedIcon,
   Clear as ClearIcon,
@@ -44,6 +44,9 @@ import {
   Sms as SmsIcon,
   Cancel as CancelIcon,
   GetApp as GetAppIcon,
+  Fingerprint as FingerprintIcon,
+  Science as ScienceIcon,
+  History as HistoryIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -86,9 +89,20 @@ import {
   placementEmploymentChipFromEntityData,
   formatPlacementEmploymentChipWithEntityName,
   placementBlockerOptionsForRow,
-  selectPlacementBlockerLabelsFromSnapshot,
+  selectPlacementBlockerLabelsWithOptionalEngine,
+  selectPlacementCertBlockerLabelsLegacyFromSnapshot,
   type PlacementEmploymentChipModel,
 } from '../../utils/placementQualificationChipsModel';
+import certificationCatalogManifest from '../../data/generated/certificationCatalogManifest.v1.json';
+import type { CertificationCatalogManifestV1 } from '../../types/certifications/certificationCatalogManifest';
+import { warnCertifications } from '../../utils/certifications/certificationsLogging';
+import { buildCertificationRequirementsFromJobOrder } from '../../utils/certifications/buildCertificationRequirementsFromJobOrder';
+import { computeEngineGapForPhase1Requirements } from '../../utils/certifications/evaluateCertificationsForLegacyRequirementStrings';
+import { logCertEngineShadowMismatch } from '../../utils/certifications/certEngineShadowCompare';
+import { normalizeDateToISODateString } from '../../utils/certifications/normalizeDateToISODateString';
+import { isCertEngineReadinessEnabled } from '../../utils/certifications/certEngineReadinessFlag';
+
+const PLACEMENT_CERT_MANIFEST = certificationCatalogManifest as CertificationCatalogManifestV1;
 import { buildPlacementJobFitMap } from '../../utils/placementApplicantJobFit';
 import {
   buildPlacementApplicationNoShowRiskMap,
@@ -96,6 +110,30 @@ import {
   type PlacementApplicationNoShowRisk,
 } from '../../utils/placementNoShowRiskDisplay';
 import type { ReadinessSnapshotV1Firestore } from '../../shared/readinessSnapshotV1';
+import { getRecruiterMasterDisplayForAdminUi } from '../../utils/scoring/recruiterMasterScoreDisplay';
+import {
+  placementJobOrderScreeningFlags,
+  coarseScreeningFromOrders,
+  placementRequiredCertMatchList,
+  type ScreeningSignalState,
+  type PlacementRequiredCertStatus,
+} from '../../utils/placementTileWorkforceSignals';
+
+/** Dark tooltip body: force white copy for contrast (Placements tiles). */
+const placementTileTooltipSlotProps = {
+  componentsProps: {
+    tooltip: {
+      sx: {
+        bgcolor: 'grey.900',
+        color: '#fff',
+        maxWidth: 320,
+        border: '1px solid',
+        borderColor: 'grey.700',
+        '& .MuiTypography-root': { color: '#fff' },
+      },
+    },
+  },
+} as const;
 
 interface PlacementsTabProps {
   tenantId: string;
@@ -165,6 +203,13 @@ interface Worker {
   assignmentOfferSentAt?: number;
   /** When status is confirmed, ms when the worker confirmed (accepted) the assignment */
   assignmentConfirmedAt?: number;
+  /** Master recruiter score (same source as Users table / profile header). */
+  recruiterMasterGrade?: string | null;
+  recruiterMasterScore100?: number | null;
+  recruiterMasterSummary?: string | null;
+  /** AccuSource-style screening orders on `users` (best-effort for tile signals). */
+  backgroundCheckOrders?: Array<Record<string, unknown>>;
+  drugScreeningOrders?: Array<Record<string, unknown>>;
 }
 
 const WORKER_DRAG_MIME = 'application/x-hrx-worker-id';
@@ -177,21 +222,136 @@ function formatInterviewLastScore10(v: number | undefined): string | null {
 
 const placementQualChipSx = { height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } };
 
+/** Match `placementScreeningIconSx` / readiness row (15px). */
+const placementProfileTileIconBtnSx = {
+  p: 0.35,
+  color: 'text.secondary',
+  '& .MuiSvgIcon-root': { fontSize: 15 },
+} as const;
+
+function placementScreeningIconSx(state: ScreeningSignalState, active: boolean): Record<string, unknown> {
+  if (!active || state === 'na') return { fontSize: 15, color: 'text.disabled', opacity: 0.45 };
+  if (state === 'ok') return { fontSize: 15, color: 'success.main' };
+  if (state === 'pending') return { fontSize: 15, color: 'warning.main' };
+  if (state === 'issue') return { fontSize: 15, color: 'error.main' };
+  if (state === 'missing') return { fontSize: 15, color: 'info.main' };
+  return { fontSize: 15, color: 'text.secondary' };
+}
+
+/** Job-order screening: compact icons + tooltips (Placements tiles). Required certs use chips in the qualification row. */
+function PlacementTileReadinessIconRow({
+  jobOrder,
+  worker,
+  leadingSlot,
+}: {
+  jobOrder: JobOrder | null;
+  worker: Worker;
+  leadingSlot?: React.ReactNode;
+}) {
+  if (!jobOrder) return leadingSlot ? <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.35, flexWrap: 'wrap' }}>{leadingSlot}</Box> : null;
+  const flags = placementJobOrderScreeningFlags(jobOrder);
+  const hasScreening = flags.bgRequired || flags.drugRequired || flags.certCount > 0;
+
+  const bgState = flags.bgRequired ? coarseScreeningFromOrders(worker.backgroundCheckOrders) : 'na';
+  const drugState = flags.drugRequired ? coarseScreeningFromOrders(worker.drugScreeningOrders) : 'na';
+
+  const jobLabel = String((jobOrder as { jobOrderName?: string }).jobOrderName || jobOrder.jobTitle || 'This job').trim();
+
+  const bgTip = (
+    <Box sx={{ maxWidth: 280 }}>
+      <Typography variant="caption" fontWeight={700} display="block" sx={{ mb: 0.5, color: '#fff' }}>
+        Background check
+      </Typography>
+      <Typography variant="caption" display="block" sx={{ color: '#fff' }}>
+        Job requires a background check ({jobLabel}). Worker signal uses AccuSource / screening orders on the profile.
+      </Typography>
+      <Typography variant="caption" display="block" sx={{ mt: 0.5, color: '#fff' }}>
+        Status:{' '}
+        {bgState === 'ok'
+          ? 'Satisfied (cleared / complete on latest order).'
+          : bgState === 'pending'
+            ? 'In progress or awaiting results.'
+            : bgState === 'missing'
+              ? 'No screening order found yet.'
+              : 'Needs review (failed, canceled, or unfavorable).'}
+      </Typography>
+    </Box>
+  );
+
+  const drugTip = (
+    <Box sx={{ maxWidth: 280 }}>
+      <Typography variant="caption" fontWeight={700} display="block" sx={{ mb: 0.5, color: '#fff' }}>
+        Drug screen
+      </Typography>
+      <Typography variant="caption" display="block" sx={{ color: '#fff' }}>
+        Job requires drug screening ({jobLabel}). Worker signal uses drug screening orders on the profile.
+      </Typography>
+      <Typography variant="caption" display="block" sx={{ mt: 0.5, color: '#fff' }}>
+        Status:{' '}
+        {drugState === 'ok'
+          ? 'Satisfied (negative / complete on latest order).'
+          : drugState === 'pending'
+            ? 'In progress or awaiting results.'
+            : drugState === 'missing'
+              ? 'No screening order found yet.'
+              : 'Needs review (positive, failed, or unfavorable).'}
+      </Typography>
+    </Box>
+  );
+
+  const historyTip = (
+    <Box sx={{ maxWidth: 280 }}>
+      <Typography variant="caption" fontWeight={700} display="block" sx={{ mb: 0.5, color: '#fff' }}>
+        Assignment history
+      </Typography>
+      <Typography variant="caption" display="block" sx={{ color: '#fff' }}>
+        Worked shifts vs. no-shows tracked in HRX will surface here when time entry is connected. Until then, use the
+        no-show risk line (model-based) when shown.
+      </Typography>
+    </Box>
+  );
+
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.35, flexWrap: 'wrap', minHeight: 18 }}>
+      {leadingSlot}
+      {hasScreening ? (
+        <>
+          {flags.bgRequired ? (
+            <Tooltip title={bgTip} placement="top" enterDelay={350} {...placementTileTooltipSlotProps}>
+              <FingerprintIcon sx={placementScreeningIconSx(bgState, true)} />
+            </Tooltip>
+          ) : null}
+          {flags.drugRequired ? (
+            <Tooltip title={drugTip} placement="top" enterDelay={350} {...placementTileTooltipSlotProps}>
+              <ScienceIcon sx={placementScreeningIconSx(drugState, true)} />
+            </Tooltip>
+          ) : null}
+        </>
+      ) : null}
+      <Tooltip title={historyTip} placement="top" enterDelay={200} {...placementTileTooltipSlotProps}>
+        <HistoryIcon sx={{ fontSize: 15, color: 'text.secondary', opacity: 0.65 }} />
+      </Tooltip>
+    </Box>
+  );
+}
+
 function PlacementQualificationChipsRow({
   employmentLoading,
   employmentChip,
   blockerLabels,
+  requiredCertStatuses = [],
 }: {
   employmentLoading: boolean;
   employmentChip: PlacementEmploymentChipModel;
   blockerLabels: string[];
+  requiredCertStatuses?: PlacementRequiredCertStatus[];
 }) {
   return (
     <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
       {employmentLoading ? (
         <Chip size="small" label="…" variant="outlined" sx={placementQualChipSx} />
       ) : (
-        <Tooltip title={employmentChip.tooltip || employmentChip.label}>
+        <Tooltip title={employmentChip.tooltip || employmentChip.label} {...placementTileTooltipSlotProps}>
           <Chip
             size="small"
             label={employmentChip.label}
@@ -201,8 +361,29 @@ function PlacementQualificationChipsRow({
           />
         </Tooltip>
       )}
+      {requiredCertStatuses.map(({ label, matched }, idx) => (
+        <Tooltip
+          key={`${label}-${idx}`}
+          title={matched ? 'Matched to profile' : 'Required on job — not matched on profile'}
+          {...placementTileTooltipSlotProps}
+        >
+          <Chip
+            size="small"
+            label={label.length > 32 ? `${label.slice(0, 30)}…` : label}
+            sx={{
+              ...placementQualChipSx,
+              maxWidth: 200,
+              fontWeight: 600,
+              border: 'none',
+              bgcolor: matched ? 'success.main' : 'error.main',
+              color: '#fff',
+              '& .MuiChip-label': { color: '#fff' },
+            }}
+          />
+        </Tooltip>
+      ))}
       {blockerLabels.map((bl) => (
-        <Tooltip key={bl} title={bl}>
+        <Tooltip key={bl} title={bl} {...placementTileTooltipSlotProps}>
           <Chip size="small" label={bl} color="error" variant="outlined" sx={placementQualChipSx} />
         </Tooltip>
       ))}
@@ -211,7 +392,7 @@ function PlacementQualificationChipsRow({
 }
 
 /**
- * Worker pool + Assignments column tiles: row 1 name + interview /10, row 2 job fit /100, row 3 context, row 4 chips.
+ * Worker pool + Assignments column tiles: name, master grade/score, interview, job fit, no-show, job-readiness icons, chips.
  */
 function PlacementWorkerTileMainColumn({
   worker,
@@ -221,6 +402,9 @@ function PlacementWorkerTileMainColumn({
   blockerLabels,
   row3,
   row4End,
+  jobOrder,
+  profileActionIcons,
+  requiredCertStatuses,
 }: {
   worker: Worker;
   hiringEntityName: string | null | undefined;
@@ -229,6 +413,10 @@ function PlacementWorkerTileMainColumn({
   blockerLabels: string[];
   row3: React.ReactNode;
   row4End?: React.ReactNode;
+  jobOrder: JobOrder | null;
+  /** Resume / bio / work history / license icons — same row as screening icons, before BG/drug/history. */
+  profileActionIcons?: React.ReactNode;
+  requiredCertStatuses?: PlacementRequiredCertStatus[];
 }) {
   const interviewLabel = formatInterviewLastScore10(worker.interviewLastScore10);
   const jf = worker.placementJobFitScore;
@@ -237,26 +425,102 @@ function PlacementWorkerTileMainColumn({
     placementEmploymentChipFromEntityData(entityEmploymentByUserId.get(worker.id)),
     hiringEntityName,
   );
+  const ms = worker.recruiterMasterScore100;
+  const grade = worker.recruiterMasterGrade;
+  const showMaster =
+    ms != null && grade != null && grade !== 'N/A' && Number.isFinite(ms);
+  const gradeColor =
+    ms == null || !Number.isFinite(ms)
+      ? 'text.secondary'
+      : ms >= 80
+        ? 'success.main'
+        : ms >= 60
+          ? 'warning.main'
+          : 'text.primary';
 
   return (
-    <Box sx={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 0.35 }}>
+    <Box
+      sx={{
+        minWidth: 0,
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 0.35,
+        width: '100%',
+        alignSelf: 'stretch',
+      }}
+    >
       <Box
         sx={{
-          display: 'flex',
-          alignItems: 'baseline',
-          justifyContent: 'space-between',
-          gap: 0.5,
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0, 1fr) auto',
+          alignItems: 'start',
+          columnGap: 1,
+          rowGap: 0.15,
+          width: '100%',
           minWidth: 0,
         }}
       >
-        <Typography variant="body2" fontWeight={600} noWrap sx={{ flex: 1, minWidth: 0 }}>
+        <Typography variant="body2" fontWeight={600} noWrap sx={{ minWidth: 0 }}>
           {worker.displayName}
         </Typography>
-        {interviewLabel ? (
-          <Typography variant="caption" color="primary" fontWeight={600} sx={{ flexShrink: 0, lineHeight: 1.2 }}>
-            {interviewLabel}
-          </Typography>
-        ) : null}
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-end',
+            justifySelf: 'end',
+            justifyContent: 'flex-start',
+            gap: 0.15,
+            textAlign: 'right',
+            minWidth: 0,
+          }}
+        >
+          {showMaster ? (
+            <Box sx={{ display: 'flex', width: '100%', justifyContent: 'flex-end', minWidth: 0 }}>
+              <Tooltip
+                title={
+                  <Box sx={{ maxWidth: 300 }}>
+                    <Typography variant="caption" fontWeight={700} display="block" sx={{ mb: 0.5, color: '#fff' }}>
+                      Master score
+                    </Typography>
+                    <Typography variant="caption" display="block" sx={{ whiteSpace: 'pre-wrap', color: '#fff' }}>
+                      {worker.recruiterMasterSummary || 'Blended category, interview, and profile inputs (same as Users table).'}
+                    </Typography>
+                  </Box>
+                }
+                placement="top"
+                enterDelay={300}
+                {...placementTileTooltipSlotProps}
+              >
+                <Box
+                  component="span"
+                  sx={{
+                    display: 'inline-flex',
+                    alignItems: 'baseline',
+                    gap: 0.35,
+                    cursor: 'default',
+                  }}
+                >
+                  <Typography
+                    component="span"
+                    sx={{ fontWeight: 800, fontSize: '0.9rem', lineHeight: 1, color: gradeColor }}
+                  >
+                    {grade}
+                  </Typography>
+                  <Typography variant="caption" fontWeight={700} color="text.primary" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                    {Math.round(ms)}
+                  </Typography>
+                </Box>
+              </Tooltip>
+            </Box>
+          ) : null}
+          {interviewLabel ? (
+            <Typography variant="caption" color="primary" fontWeight={600} sx={{ lineHeight: 1.2, textAlign: 'right' }}>
+              Int {interviewLabel}
+            </Typography>
+          ) : null}
+        </Box>
       </Box>
       {showJobFit ? (
         <Typography variant="caption" color="text.secondary" display="block">
@@ -264,16 +528,25 @@ function PlacementWorkerTileMainColumn({
         </Typography>
       ) : null}
       {worker.placementNoShowRisk ? (
-        <Typography variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.25 }}>
-          {formatPlacementNoShowRiskCompact(worker.placementNoShowRisk)}
-        </Typography>
+        <Tooltip
+          title="Model-based no-show risk from application/assignment data. Counts of worked shifts vs. no-shows from HRX time tracking will appear here when available."
+          placement="top"
+          enterDelay={250}
+          {...placementTileTooltipSlotProps}
+        >
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.25, cursor: 'default' }}>
+            {formatPlacementNoShowRiskCompact(worker.placementNoShowRisk)}
+          </Typography>
+        </Tooltip>
       ) : null}
       {row3}
+      <PlacementTileReadinessIconRow jobOrder={jobOrder} worker={worker} leadingSlot={profileActionIcons} />
       <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.5 }}>
         <PlacementQualificationChipsRow
           employmentLoading={placementEntityEmploymentLoading}
           employmentChip={employmentChip}
           blockerLabels={blockerLabels}
+          requiredCertStatuses={requiredCertStatuses}
         />
         {row4End}
       </Box>
@@ -295,6 +568,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     console.log('[PlacementsTab] Loaded WITH Preview Email button (run from /Users/gregfielding/hrx-god-view)');
   }
   const { user } = useAuth();
+  const placementNotificationsMuted = Boolean(jobOrder?.muted);
+  const [togglingPlacementMute, setTogglingPlacementMute] = useState(false);
   // Generate a unique storage key for this job order
   const storageKey = `placements_filters_${tenantId}_${jobOrderId}`;
   
@@ -320,7 +595,6 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const [selectedShiftId, setSelectedShiftId] = useState<string>(persistedFilters.shiftId);
   const [selectedWorkforce, setSelectedWorkforce] = useState<string>(persistedFilters.workforce);
   const [selectedDay, setSelectedDay] = useState<string>(persistedFilters.day ?? '');
-  
   // Data state
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
@@ -361,6 +635,23 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const [previewEmailHtml, setPreviewEmailHtml] = useState<string>('');
   const [previewEmailLoading, setPreviewEmailLoading] = useState(false);
   const [previewEmailError, setPreviewEmailError] = useState<string | null>(null);
+
+  const handleTogglePlacementNotificationsMuted = useCallback(async () => {
+    if (!tenantId || !jobOrderId) return;
+    setTogglingPlacementMute(true);
+    try {
+      setError(null);
+      await updateDoc(doc(db, 'tenants', tenantId, 'job_orders', jobOrderId), {
+        muted: !placementNotificationsMuted,
+        updatedAt: serverTimestamp(),
+      });
+      onJobOrderUpdated?.();
+    } catch (err: unknown) {
+      setError((err as Error)?.message ?? 'Failed to update mute setting');
+    } finally {
+      setTogglingPlacementMute(false);
+    }
+  }, [tenantId, jobOrderId, placementNotificationsMuted, onJobOrderUpdated]);
 
   // Helper function to extract full profile data from user document
   const extractWorkerData = (userData: any, userId: string): Worker => {
@@ -410,6 +701,16 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         ? ss.interviewLastScore10
         : undefined;
 
+    const masterDisp = getRecruiterMasterDisplayForAdminUi({
+      recruiterMasterScoreRaw: userData.recruiterMasterScore,
+      recruiterScoreSnapshotRaw: userData.recruiterScoreSnapshot,
+      userData: {
+        scoreSummary: userData.scoreSummary,
+        riskProfile: userData.riskProfile,
+      },
+      latestPrescreenInterviewAi: null,
+    });
+
     return {
       id: userId,
       firstName: userData.firstName || '',
@@ -431,6 +732,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       aiProfileScore,
       aiJobFitScore,
       interviewLastScore10,
+      recruiterMasterGrade: masterDisp.grade,
+      recruiterMasterScore100: masterDisp.score100,
+      recruiterMasterSummary: masterDisp.summary,
+      backgroundCheckOrders: Array.isArray(userData.backgroundCheckOrders) ? userData.backgroundCheckOrders : [],
+      drugScreeningOrders: Array.isArray(userData.drugScreeningOrders) ? userData.drugScreeningOrders : [],
     };
   };
 
@@ -476,6 +782,10 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   >(() => new Map());
   const [jobOrderByIdForPlacementCerts, setJobOrderByIdForPlacementCerts] = useState<
     Map<string, JobOrder | null>
+  >(() => new Map());
+  /** Phase 3 — engine-derived cert gap labels per assignment (when flag on). */
+  const [engineCertBlockerLabelsByAssignmentId, setEngineCertBlockerLabelsByAssignmentId] = useState<
+    Map<string, string[]>
   >(() => new Map());
 
   const assignmentIdsForReadinessSnapshot = useMemo(() => {
@@ -666,6 +976,104 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     };
   }, [tenantId, placementCertJobOrderIdsKey]);
 
+  useEffect(() => {
+    if (!isCertEngineReadinessEnabled() || assignmentWorkersList.length === 0) {
+      setEngineCertBlockerLabelsByAssignmentId(new Map());
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const next = new Map<string, string[]>();
+      const todayISO = normalizeDateToISODateString(new Date()) ?? '1970-01-01';
+
+      for (const w of assignmentWorkersList) {
+        const aid = w.assignmentId;
+        if (!aid || !w.id) continue;
+        const joId = (assignmentJobOrderIdByAssignmentId.get(aid) || '').trim();
+        let effectiveJobOrder: JobOrder | null | undefined;
+        if (!joId) {
+          effectiveJobOrder = jobOrder;
+        } else if (jobOrderByIdForPlacementCerts.has(joId)) {
+          effectiveJobOrder = jobOrderByIdForPlacementCerts.get(joId) ?? null;
+        } else {
+          continue;
+        }
+        const jc = effectiveJobOrder?.requiredCertifications;
+        const jl = effectiveJobOrder?.requiredLicenses;
+        if ((!jc || jc.length === 0) && (!jl || jl.length === 0)) {
+          next.set(aid, []);
+          continue;
+        }
+        try {
+          const { requirements, unmappedStrings } = buildCertificationRequirementsFromJobOrder({
+            jobOrder: effectiveJobOrder ?? undefined,
+            manifest: PLACEMENT_CERT_MANIFEST,
+            jobOrderId: joId || null,
+          });
+          const { labels, rows } = await computeEngineGapForPhase1Requirements({
+            workerUid: w.id,
+            requirements,
+            context: 'assignment',
+            todayISO,
+            manifest: PLACEMENT_CERT_MANIFEST,
+          });
+          next.set(aid, labels);
+
+          const reqs = readinessSnapByAssignmentId.get(aid)?.requirements;
+          const opts = placementBlockerOptionsForRow(effectiveJobOrder, reqs);
+          const legacyCert = selectPlacementCertBlockerLabelsLegacyFromSnapshot(reqs, opts);
+          logCertEngineShadowMismatch({
+            surface: 'placement',
+            requirementSource: 'assignment',
+            userId: w.id,
+            assignmentId: aid,
+            jobOrderId: joId || effectiveJobOrder?.id,
+            legacyMissing: legacyCert,
+            engineLabels: labels,
+            unmappedStrings,
+            engineRows: rows.map((r) => ({
+              catalogEntryId: r.requirement.catalogEntryId,
+              status: r.result.status,
+              legacySourceLabel: r.requirement.legacySourceLabel,
+            })),
+          });
+          if (process.env.NODE_ENV !== 'production') {
+            const oldKey = [...legacyCert].sort().join('\u0001');
+            const newKey = [...labels].sort().join('\u0001');
+            if (oldKey !== newKey) {
+              warnCertifications('readiness_mismatch', {
+                userId: w.id,
+                detail: {
+                  surface: 'placement_blockers',
+                  assignmentId: aid,
+                  oldBlockers: legacyCert,
+                  newBlockers: labels,
+                  oldMissing: legacyCert,
+                  newMissing: labels,
+                },
+              });
+            }
+          }
+        } catch {
+          /* ignore row */
+        }
+      }
+
+      if (!cancelled) {
+        setEngineCertBlockerLabelsByAssignmentId(next);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    assignmentWorkersList,
+    assignmentJobOrderIdByAssignmentId,
+    jobOrderByIdForPlacementCerts,
+    jobOrder,
+    readinessSnapByAssignmentId,
+  ]);
+
   const placementBlockerLabelsForAssignmentId = useCallback(
     (assignmentId: string | undefined) => {
       if (!assignmentId) return [];
@@ -675,18 +1083,23 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       if (!joId) {
         effectiveJobOrder = jobOrder;
       } else if (jobOrderByIdForPlacementCerts.has(joId)) {
-        // Missing JO in both collections → null: empty cert allowlist (never tab JO for certs).
         effectiveJobOrder = jobOrderByIdForPlacementCerts.get(joId) ?? null;
       } else {
-        // Fetch in flight: avoid tab `jobOrder` (often a different id than this assignment’s `jobOrderId`).
         effectiveJobOrder = null;
       }
-      return selectPlacementBlockerLabelsFromSnapshot(
-        reqs,
-        placementBlockerOptionsForRow(effectiveJobOrder, reqs)
-      );
+      const opts = placementBlockerOptionsForRow(effectiveJobOrder, reqs);
+      const engineLabels = isCertEngineReadinessEnabled()
+        ? engineCertBlockerLabelsByAssignmentId.get(assignmentId)
+        : undefined;
+      return selectPlacementBlockerLabelsWithOptionalEngine(reqs, opts, engineLabels);
     },
-    [readinessSnapByAssignmentId, assignmentJobOrderIdByAssignmentId, jobOrderByIdForPlacementCerts, jobOrder]
+    [
+      readinessSnapByAssignmentId,
+      assignmentJobOrderIdByAssignmentId,
+      jobOrderByIdForPlacementCerts,
+      jobOrder,
+      engineCertBlockerLabelsByAssignmentId,
+    ],
   );
 
   // Load user groups for workforce dropdown
@@ -2242,113 +2655,145 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         event.preventDefault();
       }}
     >
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap', mb: 2 }}>
-        {showContent && shifts.length > 0 && (
-          <FormControl size="small" sx={{ minWidth: 280 }}>
-            <InputLabel>Shift</InputLabel>
-            <Select
-              value={safeSelectedShiftId}
-              label="Shift"
-              onChange={(e) => setSelectedShiftId(e.target.value)}
-              disabled={loading}
-              renderValue={(value) => {
-                if (!value) {
-                  return <em>Select shift</em>;
-                }
-                const shift = shifts.find((s) => s.id === value);
-                if (!shift) return '';
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 2,
+          mb: 2,
+          width: '100%',
+          flexWrap: { xs: 'wrap', sm: 'nowrap' },
+        }}
+      >
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 3,
+            flexWrap: 'wrap',
+            flex: '1 1 auto',
+            minWidth: 0,
+          }}
+        >
+          {showContent && shifts.length > 0 && (
+            <FormControl size="small" sx={{ minWidth: 280 }}>
+              <InputLabel>Shift</InputLabel>
+              <Select
+                value={safeSelectedShiftId}
+                label="Shift"
+                onChange={(e) => setSelectedShiftId(e.target.value)}
+                disabled={loading}
+                renderValue={(value) => {
+                  if (!value) {
+                    return <em>Select shift</em>;
+                  }
+                  const shift = shifts.find((s) => s.id === value);
+                  if (!shift) return '';
+                  return (
+                    <Box sx={{ lineHeight: 1.25, textAlign: 'left' }}>
+                      <Typography variant="body2" component="span" display="block">
+                        {shift.shiftTitle || 'Shift'}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" component="span" display="block">
+                        {buildShiftPickerSecondLine(shift, (jobOrder as any)?.jobTitle)}
+                      </Typography>
+                    </Box>
+                  );
+                }}
+              >
+                <MenuItem value="">
+                  <em>Select shift</em>
+                </MenuItem>
+                {shifts.map((shift) => (
+                  <MenuItem key={shift.id} value={shift.id}>
+                    <Box>
+                      <Typography variant="body2">{shift.shiftTitle || 'Shift'}</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {buildShiftPickerSecondLine(shift, (jobOrder as any)?.jobTitle)}
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
+          {isGigMultiDay && dayOptions.length > 0 && (
+            <FormControl size="small" sx={{ minWidth: 200 }}>
+              <InputLabel>Day</InputLabel>
+              <Select
+                value={selectedDay || '__all__'}
+                label="Day"
+                onChange={(e) => setSelectedDay(e.target.value === '__all__' ? '' : e.target.value)}
+                disabled={loading}
+                renderValue={(v) => (v === '__all__' || !v ? 'All days' : dayOptions.find((d) => d.date === v)?.dayLabel ?? v)}
+              >
+                <MenuItem value="__all__">
+                  <em>All days</em>
+                </MenuItem>
+                {dayOptions.map((opt) => (
+                  <MenuItem key={opt.date} value={opt.date}>
+                    {opt.dayLabel}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
+          {selectedShift && !(isGigMultiDay && selectedDay === '') && (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+              {(() => {
+                const dayEntry = selectedDay && dayOptions.length > 0 ? dayOptions.find((d) => d.date === selectedDay) : null;
+                const startTime =
+                  dayEntry?.startTime ?? (selectedShift as any).defaultStartTime ?? (selectedShift as any).startTime ?? '';
+                const endTime =
+                  dayEntry?.endTime ?? (selectedShift as any).defaultEndTime ?? (selectedShift as any).endTime ?? '';
+                const formatTimeStr = (t: string) => {
+                  if (!t) return '';
+                  const m = t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+                  if (!m) return t;
+                  const hour = parseInt(m[1], 10);
+                  const min = m[2];
+                  if (m[3]) return `${hour}:${min} ${m[3]}`;
+                  const ampm = hour >= 12 ? 'PM' : 'AM';
+                  const displayHour = hour % 12 || 12;
+                  return `${displayHour}:${min} ${ampm}`;
+                };
+                const staffReq =
+                  dayEntry?.workersNeeded !== undefined
+                    ? dayEntry.workersNeeded
+                    : (selectedShift as any).totalStaffRequested ?? (selectedShift as any).staffNeeded ?? (selectedShift as any).workersNeeded;
+                const overstaff =
+                  dayEntry?.overstaff ?? (selectedShift as any).overstaffCount ?? (selectedShift as any).overstaff ?? 0;
+                const scheduleStr = startTime && endTime ? `${formatTimeStr(startTime)} – ${formatTimeStr(endTime)}` : null;
                 return (
-                  <Box sx={{ lineHeight: 1.25, textAlign: 'left' }}>
-                    <Typography variant="body2" component="span" display="block">
-                      {shift.shiftTitle || 'Shift'}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary" component="span" display="block">
-                      {buildShiftPickerSecondLine(shift, (jobOrder as any)?.jobTitle)}
-                    </Typography>
-                  </Box>
+                  <>
+                    {scheduleStr && (
+                      <Typography variant="body2" color="text.secondary">
+                        {scheduleStr}
+                      </Typography>
+                    )}
+                    {typeof staffReq === 'number' && (
+                      <Typography variant="body2" color="text.secondary">
+                        Staff: {staffReq}
+                        {typeof overstaff === 'number' && overstaff > 0 ? ` (+${overstaff} overstaff)` : ''}
+                      </Typography>
+                    )}
+                  </>
                 );
-              }}
-            >
-              <MenuItem value="">
-                <em>Select shift</em>
-              </MenuItem>
-              {shifts.map((shift) => (
-                <MenuItem key={shift.id} value={shift.id}>
-                  <Box>
-                    <Typography variant="body2">{shift.shiftTitle || 'Shift'}</Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      {buildShiftPickerSecondLine(shift, (jobOrder as any)?.jobTitle)}
-                    </Typography>
-                  </Box>
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-        )}
-        {isGigMultiDay && dayOptions.length > 0 && (
-          <FormControl size="small" sx={{ minWidth: 200 }}>
-            <InputLabel>Day</InputLabel>
-            <Select
-              value={selectedDay || '__all__'}
-              label="Day"
-              onChange={(e) => setSelectedDay(e.target.value === '__all__' ? '' : e.target.value)}
-              disabled={loading}
-              renderValue={(v) => (v === '__all__' || !v ? 'All days' : dayOptions.find((d) => d.date === v)?.dayLabel ?? v)}
-            >
-              <MenuItem value="__all__">
-                <em>All days</em>
-              </MenuItem>
-              {dayOptions.map((opt) => (
-                <MenuItem key={opt.date} value={opt.date}>
-                  {opt.dayLabel}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-        )}
-        {selectedShift && !(isGigMultiDay && selectedDay === '') && (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
-            {(() => {
-              const dayEntry = selectedDay && dayOptions.length > 0 ? dayOptions.find((d) => d.date === selectedDay) : null;
-              const startTime =
-                dayEntry?.startTime ?? (selectedShift as any).defaultStartTime ?? (selectedShift as any).startTime ?? '';
-              const endTime =
-                dayEntry?.endTime ?? (selectedShift as any).defaultEndTime ?? (selectedShift as any).endTime ?? '';
-              const formatTimeStr = (t: string) => {
-                if (!t) return '';
-                const m = t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
-                if (!m) return t;
-                const hour = parseInt(m[1], 10);
-                const min = m[2];
-                if (m[3]) return `${hour}:${min} ${m[3]}`;
-                const ampm = hour >= 12 ? 'PM' : 'AM';
-                const displayHour = hour % 12 || 12;
-                return `${displayHour}:${min} ${ampm}`;
-              };
-              const staffReq =
-                dayEntry?.workersNeeded !== undefined
-                  ? dayEntry.workersNeeded
-                  : (selectedShift as any).totalStaffRequested ?? (selectedShift as any).staffNeeded ?? (selectedShift as any).workersNeeded;
-              const overstaff =
-                dayEntry?.overstaff ?? (selectedShift as any).overstaffCount ?? (selectedShift as any).overstaff ?? 0;
-              const scheduleStr = startTime && endTime ? `${formatTimeStr(startTime)} – ${formatTimeStr(endTime)}` : null;
-              return (
-                <>
-                  {scheduleStr && (
-                    <Typography variant="body2" color="text.secondary">
-                      {scheduleStr}
-                    </Typography>
-                  )}
-                  {typeof staffReq === 'number' && (
-                    <Typography variant="body2" color="text.secondary">
-                      Staff: {staffReq}
-                      {typeof overstaff === 'number' && overstaff > 0 ? ` (+${overstaff} overstaff)` : ''}
-                    </Typography>
-                  )}
-                </>
-              );
-            })()}
-          </Box>
+              })()}
+            </Box>
+          )}
+        </Box>
+        {showContent && shifts.length > 0 && (
+          <Button
+            size="small"
+            variant={placementNotificationsMuted ? 'contained' : 'outlined'}
+            color={placementNotificationsMuted ? 'warning' : 'inherit'}
+            onClick={() => void handleTogglePlacementNotificationsMuted()}
+            disabled={togglingPlacementMute || loading}
+            sx={{ flexShrink: 0, ml: { xs: 'auto', sm: 0 } }}
+          >
+            {placementNotificationsMuted ? 'Notifications Muted' : 'Mute Notifications'}
+          </Button>
         )}
       </Box>
 
@@ -2545,10 +2990,16 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                             />
                             <PlacementWorkerTileMainColumn
                               worker={worker}
+                              jobOrder={jobOrder}
                               hiringEntityName={hiringEntityName}
                               entityEmploymentByUserId={entityEmploymentByUserId}
                               placementEntityEmploymentLoading={placementEntityEmploymentLoading}
                               blockerLabels={placementBlockerLabelsForAssignmentId(worker.assignmentId)}
+                              requiredCertStatuses={placementRequiredCertMatchList(
+                                jobOrder,
+                                worker.certifications,
+                                worker.licenses,
+                              )}
                               row3={
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                                   <Typography variant="caption" color="text.secondary" noWrap>
@@ -2868,6 +3319,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         const hasWorkHistory = worker.workHistory && worker.workHistory.length > 0;
                         const hasCerts = worker.certifications && worker.certifications.length > 0;
                         const hasLicenses = worker.licenses && worker.licenses.length > 0;
+                        const requiredCertStatuses = placementRequiredCertMatchList(
+                          jobOrder,
+                          worker.certifications,
+                          worker.licenses,
+                        );
 
                         return (
                           <Paper
@@ -2878,173 +3334,189 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                             sx={{
                               p: 0.5,
                               display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center',
-                              gap: 1,
+                              flexDirection: 'row',
+                              alignItems: 'stretch',
+                              gap: 0.5,
                               cursor: 'grab',
                             }}
                           >
-                            <PlacementWorkerTileMainColumn
-                              worker={worker}
-                              hiringEntityName={hiringEntityName}
-                              entityEmploymentByUserId={entityEmploymentByUserId}
-                              placementEntityEmploymentLoading={placementEntityEmploymentLoading}
-                              blockerLabels={placementBlockerLabelsForAssignmentId(worker.assignmentId)}
-                              row3={
-                                <Typography variant="caption" color="text.secondary" noWrap>
-                                  {[worker.city, worker.state].filter(Boolean).join(', ') ||
-                                    worker.email ||
-                                    worker.phone ||
-                                    'No contact info'}
-                                </Typography>
-                              }
-                              row4End={
-                                <>
-                                  {!!worker.skills?.length && (
-                                    <Chip
-                                      size="small"
-                                      label={`${worker.skills.length} skills`}
-                                      sx={{ height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }}
-                                    />
-                                  )}
-                                  {!!worker.languages?.length && (
-                                    <Chip
-                                      size="small"
-                                      variant="outlined"
-                                      label={`${worker.languages.length} langs`}
-                                      sx={{ height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }}
-                                    />
-                                  )}
-                                </>
-                              }
-                            />
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}>
-                                  {sameDayConflictByUserId.get(worker.id)?.length ? (
-                                    <Tooltip
-                                      title={
-                                        <Box sx={{ color: 'common.white' }}>
+                            <Box sx={{ flex: 1, minWidth: 0, pr: 0 }}>
+                              <PlacementWorkerTileMainColumn
+                                worker={worker}
+                                jobOrder={jobOrder}
+                                hiringEntityName={hiringEntityName}
+                                entityEmploymentByUserId={entityEmploymentByUserId}
+                                placementEntityEmploymentLoading={placementEntityEmploymentLoading}
+                                blockerLabels={placementBlockerLabelsForAssignmentId(worker.assignmentId)}
+                                requiredCertStatuses={requiredCertStatuses}
+                                profileActionIcons={
+                                  <>
+                                    {resumeUrl ? (
+                                      <Tooltip title="View resume" {...placementTileTooltipSlotProps}>
+                                        <IconButton
+                                          size="small"
+                                          sx={placementProfileTileIconBtnSx}
+                                          onClick={() => {
+                                            setSelectedResume({ url: resumeUrl, fileName: worker.resume?.fileName });
+                                            setResumeModalOpen(true);
+                                          }}
+                                        >
+                                          <ResumeIcon />
+                                        </IconButton>
+                                      </Tooltip>
+                                    ) : null}
+                                    {hasBio ? (
+                                      <Tooltip
+                                        title={
                                           <Typography
-                                            variant="caption"
-                                            fontWeight={600}
-                                            display="block"
-                                            sx={{ mb: 0.5, color: 'inherit' }}
+                                            variant="body2"
+                                            sx={{ whiteSpace: 'pre-wrap', maxWidth: 320, color: '#fff' }}
                                           >
-                                            Already on a shift this day
-                                          </Typography>
-                                          {sameDayConflictByUserId.get(worker.id)?.map((c, i) => (
-                                            <Typography key={i} variant="caption" display="block" sx={{ color: 'inherit' }}>
-                                              {c.shiftTitle} ({c.type === 'placement' ? 'Placed' : c.type === 'assigned' ? 'Accepted' : 'Confirmed'})
-                                            </Typography>
-                                          ))}
-                                        </Box>
-                                      }
-                                      arrow
-                                    >
-                                      <WarningIcon fontSize="small" sx={{ color: 'warning.main' }} />
-                                    </Tooltip>
-                                  ) : null}
-                                  {resumeUrl && (
-                                <Tooltip title="View resume">
-                                      <IconButton
-                                        size="small"
-                                        onClick={() => {
-                                          setSelectedResume({ url: resumeUrl, fileName: worker.resume?.fileName });
-                                          setResumeModalOpen(true);
-                                        }}
-                                      >
-                                        <ResumeIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
-                                  )}
-                                  {hasBio && (
-                                    <Tooltip
-                                      title={
-                                    <Typography
-                                      variant="body2"
-                                      sx={{ whiteSpace: 'pre-wrap', maxWidth: 320, color: 'common.white' }}
-                                    >
                                             {worker.bio}
                                           </Typography>
-                                      }
-                                      arrow
-                                    >
-                                      <IconButton size="small">
-                                        <BioIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
-                                  )}
-                                  {hasWorkHistory && (
-                                    <Tooltip
-                                      title={
-                                    <Box sx={{ maxWidth: 340, color: 'common.white' }}>
-                                          <Typography
-                                            variant="subtitle2"
-                                            sx={{ mb: 0.5, color: 'inherit', fontWeight: 600 }}
-                                          >
-                                            Work History
-                                          </Typography>
+                                        }
+                                        {...placementTileTooltipSlotProps}
+                                      >
+                                        <IconButton size="small" sx={placementProfileTileIconBtnSx}>
+                                          <BioIcon />
+                                        </IconButton>
+                                      </Tooltip>
+                                    ) : null}
+                                    {hasWorkHistory ? (
+                                      <Tooltip
+                                        title={
+                                          <Box sx={{ maxWidth: 340 }}>
+                                            <Typography variant="subtitle2" sx={{ mb: 0.5, color: '#fff', fontWeight: 600 }}>
+                                              Work history
+                                            </Typography>
                                             {worker.workHistory?.slice(0, 3).map((job: any, idx: number) => (
-                                        <Typography
-                                          key={idx}
-                                          variant="caption"
-                                          display="block"
-                                          sx={{ color: 'rgba(255, 255, 255, 0.92)' }}
+                                              <Typography key={idx} variant="caption" display="block" sx={{ color: '#fff' }}>
+                                                {job.position || job.title || job.role || 'Position'}
+                                                {job.company ? ` at ${job.company}` : ''}
+                                              </Typography>
+                                            ))}
+                                          </Box>
+                                        }
+                                        {...placementTileTooltipSlotProps}
+                                      >
+                                        <IconButton size="small" sx={placementProfileTileIconBtnSx}>
+                                          <WorkHistoryIcon />
+                                        </IconButton>
+                                      </Tooltip>
+                                    ) : null}
+                                    {hasLicenses ? (
+                                      <Tooltip
+                                        title={`${worker.licenses?.length} license${(worker.licenses?.length || 0) > 1 ? 's' : ''} on profile`}
+                                        {...placementTileTooltipSlotProps}
+                                      >
+                                        <IconButton
+                                          size="small"
+                                          sx={placementProfileTileIconBtnSx}
+                                          onClick={() => {
+                                            setSelectedLicenses(worker.licenses || []);
+                                            setLicenseModalOpen(true);
+                                          }}
                                         >
-                                          {job.position || job.title || job.role || 'Position'}{job.company ? ` at ${job.company}` : ''}
-                                                </Typography>
+                                          <LicenseIcon />
+                                        </IconButton>
+                                      </Tooltip>
+                                    ) : null}
+                                    {hasCerts ? (
+                                      <Tooltip title="View profile certifications" {...placementTileTooltipSlotProps}>
+                                        <IconButton
+                                          size="small"
+                                          sx={placementProfileTileIconBtnSx}
+                                          onClick={() => {
+                                            setSelectedCerts(worker.certifications || []);
+                                            setCertModalOpen(true);
+                                          }}
+                                        >
+                                          <ProfileCertsIcon />
+                                        </IconButton>
+                                      </Tooltip>
+                                    ) : null}
+                                  </>
+                                }
+                                row3={
+                                  <Typography variant="caption" color="text.secondary" noWrap>
+                                    {[worker.city, worker.state].filter(Boolean).join(', ') ||
+                                      worker.email ||
+                                      worker.phone ||
+                                      'No contact info'}
+                                  </Typography>
+                                }
+                                row4End={
+                                  <>
+                                    {!!worker.skills?.length && (
+                                      <Chip
+                                        size="small"
+                                        label={`${worker.skills.length} skills`}
+                                        sx={{ height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }}
+                                      />
+                                    )}
+                                    {!!worker.languages?.length && (
+                                      <Chip
+                                        size="small"
+                                        variant="outlined"
+                                        label={`${worker.languages.length} langs`}
+                                        sx={{ height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }}
+                                      />
+                                    )}
+                                  </>
+                                }
+                              />
+                            </Box>
+                            <Box
+                              sx={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'flex-end',
+                                justifyContent: 'space-between',
+                                flexShrink: 0,
+                                alignSelf: 'stretch',
+                                minWidth: 56,
+                              }}
+                            >
+                              {sameDayConflictByUserId.get(worker.id)?.length ? (
+                                <Tooltip
+                                  title={
+                                    <Box>
+                                      <Typography variant="caption" fontWeight={600} display="block" sx={{ mb: 0.5, color: '#fff' }}>
+                                        Already on a shift this day
+                                      </Typography>
+                                      {sameDayConflictByUserId.get(worker.id)?.map((c, i) => (
+                                        <Typography key={i} variant="caption" display="block" sx={{ color: '#fff' }}>
+                                          {c.shiftTitle} ({c.type === 'placement' ? 'Placed' : c.type === 'assigned' ? 'Accepted' : 'Confirmed'})
+                                        </Typography>
                                       ))}
-                                        </Box>
-                                      }
-                                      arrow
-                                    >
-                                      <IconButton size="small">
-                                        <WorkHistoryIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
-                                  )}
-                                  {hasCerts && (
-                                <Tooltip title={`${worker.certifications?.length} cert${(worker.certifications?.length || 0) > 1 ? 's' : ''}`}>
-                                      <IconButton
-                                        size="small"
-                                        onClick={() => {
-                                          setSelectedCerts(worker.certifications || []);
-                                          setCertModalOpen(true);
-                                        }}
-                                      >
-                                        <CertIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
-                                  )}
-                                  {hasLicenses && (
-                                <Tooltip title={`${worker.licenses?.length} license${(worker.licenses?.length || 0) > 1 ? 's' : ''}`}>
-                                      <IconButton
-                                        size="small"
-                                        onClick={() => {
-                                          setSelectedLicenses(worker.licenses || []);
-                                          setLicenseModalOpen(true);
-                                        }}
-                                      >
-                                        <LicenseIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
-                                  )}
-                                <Button 
+                                    </Box>
+                                  }
+                                  {...placementTileTooltipSlotProps}
+                                >
+                                  <WarningIcon fontSize="small" sx={{ color: 'warning.main' }} />
+                                </Tooltip>
+                              ) : (
+                                <Box sx={{ minHeight: 0 }} />
+                              )}
+                              <Button
                                 variant="outlined"
-                                  size="small"
-                                  onClick={() => handleAssignToShift(worker, selectedShift)}
+                                size="small"
+                                onClick={() => handleAssignToShift(worker, selectedShift)}
                                 disabled={!selectedShift}
                                 sx={{
-                                  minWidth: 72,
-                                  height: 28,
-                                  px: 1.25,
-                                  fontSize: '0.75rem',
+                                  mt: 'auto',
+                                  minWidth: 56,
+                                  height: 24,
+                                  py: 0.25,
+                                  px: 0.75,
+                                  fontSize: '0.6875rem',
                                   lineHeight: 1,
                                 }}
                               >
                                 Assign
-                                </Button>
-                              </Box>
-                            </Paper>
+                              </Button>
+                            </Box>
+                          </Paper>
                         );
                       })}
                     </Stack>

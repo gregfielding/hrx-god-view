@@ -55,6 +55,7 @@ import { db, functions } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useGuestLanguage } from '../hooks/useGuestLanguage';
 import { useT, setLanguage, useLanguage } from '../i18n';
+import { formatHeadshotGateError } from '../utils/avatarVerification/formatHeadshotGateError';
 import { formatDistanceToNow, format } from 'date-fns';
 import { enUS, es as esLocale } from 'date-fns/locale';
 import ShiftSelector from '../components/ShiftSelector';
@@ -70,6 +71,7 @@ import {
 import { updateUserSmartGroupOnWithdraw } from '../services/smartGroupService';
 import type { JobScoreSummary, JobScoreSummaryStored } from '../types/jobScore';
 import { getRequirementsWithStatus, getRequirementsWithStatusForJobPost, getEligibilitySummary } from '../utils/jobRequirementStatus';
+import { WORKER_SCREENING_SHORT_FALLBACK } from '../utils/backgroundChecks/formatWorkerFacingScreeningPackage';
 import { RequirementInteraction } from '../components/RequirementInteraction';
 import { getJobPostingDisplayText, localizeJobDescriptionEmbeddedLabels } from '../utils/jobPostingI18n';
 import { logAssignmentUpdateActivity } from '../utils/activityLogger';
@@ -646,9 +648,19 @@ const JobPostingDetail: React.FC = () => {
         const weekly =
           shifts.find((s) => s.shiftMode === 'multi' && s.weeklySchedule && !s.endDate) ||
           shifts.find((s) => s.weeklySchedule);
-        const summary = weekly?.weeklySchedule
+        let summary = weekly?.weeklySchedule
           ? formatWeeklyScheduleSummary(weekly.weeklySchedule)
           : '';
+        if (!summary && weekly?.defaultStartTime && weekly?.defaultEndTime) {
+          const fmt = (t: string) => {
+            if (!t || !/^\d{1,2}:\d{2}$/.test(t)) return t || '';
+            const [hh, mm] = t.split(':').map(Number);
+            const h12 = hh % 12 || 12;
+            const ap = hh >= 12 ? 'PM' : 'AM';
+            return `${h12}:${String(mm).padStart(2, '0')} ${ap}`;
+          };
+          summary = `${fmt(weekly.defaultStartTime)} – ${fmt(weekly.defaultEndTime)}`;
+        }
         setCareerWeeklyScheduleSummary(summary || '');
       } catch (err) {
         console.warn('Error loading career weekly schedule:', err);
@@ -1393,7 +1405,20 @@ const JobPostingDetail: React.FC = () => {
       posting?.uniformRequirements ||
       posting?.customUniformRequirements ||
       '';
+    const screeningPostSummary = (() => {
+      if (!posting?.showScreeningPackageOnPost) return null;
+      const names = Array.isArray(posting?.screeningPackageServiceNames)
+        ? posting.screeningPackageServiceNames.map((s: string) => String(s || '').trim()).filter(Boolean)
+        : [];
+      const pkgName = String(posting?.screeningPackageName || '').trim();
+      if (!names.length && !pkgName) return null;
+      if (names.length) {
+        return `Screening: ${names.join(', ')}`;
+      }
+      return WORKER_SCREENING_SHORT_FALLBACK;
+    })();
     const keyRequirementParts = [
+      screeningPostSummary,
       posting?.showBackgroundChecks ? 'Background check required' : null,
       posting?.showDrugScreening ? 'Drug screening required' : null,
       posting?.eVerifyRequired ? 'E-Verify required' : null,
@@ -1602,7 +1627,14 @@ const JobPostingDetail: React.FC = () => {
       }
     } catch (err) {
       console.error(`Failed to ${decision} assignment:`, err);
-      if (!suppressAlerts) {
+      // Headshot gate: show the localized retake nudge and offer a one-tap path to the
+      // profile page where the worker can upload a new photo. Falls through to the generic
+      // alert for any non-gate error.
+      const gate = decision === 'accept' ? formatHeadshotGateError(err) : null;
+      if (gate && !suppressAlerts) {
+        const takeThem = window.confirm(`${gate.message}\n\n${gate.retakeLabel}?`);
+        if (takeThem) navigate('/c1/workers/profile');
+      } else if (!suppressAlerts) {
         alert(`We were unable to ${decision} this assignment. Please try again.`);
       }
       if (suppressAlerts) {
@@ -2260,6 +2292,20 @@ const JobPostingDetail: React.FC = () => {
             );
           })()}
 
+          {/* Career shift schedule from job order (mirrors sidebar; visible in main column for job board readers) */}
+          {posting.jobType === 'career' && careerWeeklyScheduleSummary ? (
+            <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
+              <CardContent sx={{ p: 0 }}>
+                <Typography variant="h6" gutterBottom sx={{ fontWeight: 700 }}>
+                  {t('jobs.weeklySchedule')}
+                </Typography>
+                <Typography variant="body1" sx={{ lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                  {careerWeeklyScheduleSummary}
+                </Typography>
+              </CardContent>
+            </Card>
+          ) : null}
+
           {/* Location — address, map preview, Get Directions, optional distance */}
           {(posting.worksiteAddress?.street || posting.worksiteAddress?.city || posting.worksiteAddress?.state) && (
             <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
@@ -2597,6 +2643,9 @@ const JobPostingDetail: React.FC = () => {
               if (m.category === 'additionalScreenings') {
                 if (/covid|vaccine|vaccination/i.test(label)) return 'Vaccination requirement verification required';
                 return `Additional screening verification required (${label})`;
+              }
+              if (m.category === 'screeningPackageServices') {
+                return `Required screening: confirm you can complete “${label}”`;
               }
               if (m.category === 'skills') return t('jobs.requirementsActionConfirmSkill', { label });
               if (m.category === 'languages') return t('jobs.requirementsActionConfirmLanguage', { label });

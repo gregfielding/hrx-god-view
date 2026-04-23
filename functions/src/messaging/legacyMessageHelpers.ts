@@ -11,6 +11,7 @@ import { logger } from 'firebase-functions/v2';
 import { sendMessage } from './routingOrchestrator';
 import { dispatchSystemMessage } from './systemMessageDispatcher';
 import {
+  containsWaitlistCopy,
   isApplicationStatusWaitlisted,
   logWaitlistNotificationsSuppressed,
   shouldSendApplicationWaitlistNotifications,
@@ -44,8 +45,11 @@ export async function sendLegacyApplicationStatusMessage(args: {
   messageTypeIdOverride?: string;
 }): Promise<{ success: boolean; messageId: string | null; status: string; error?: string }> {
   try {
+    // Gate: block any waitlisted-status send (regardless of source) when the
+    // global waitlist notifications flag is off. Previously this was scoped to
+    // `source === 'application_status_changed'`, which let `application_created`
+    // callers slip through when the initial status was already 'waitlisted'.
     if (
-      args.source === 'application_status_changed' &&
       isApplicationStatusWaitlisted(args.status) &&
       !shouldSendApplicationWaitlistNotifications()
     ) {
@@ -53,12 +57,36 @@ export async function sendLegacyApplicationStatusMessage(args: {
         tenantId: args.tenantId,
         userId: args.userId,
         applicationId: args.applicationId,
+        source: args.source,
       });
       return {
         success: true,
         messageId: null,
         status: 'skipped_waitlist',
         error: 'waitlist_notifications_disabled',
+      };
+    }
+
+    // Content-based safety net: if the caller-provided message body or email
+    // subject reads like waitlist copy (e.g. tenant SMS template for
+    // `application_received` was misconfigured with waitlist language),
+    // refuse to deliver when the gate is off. Applies to every source.
+    if (
+      !shouldSendApplicationWaitlistNotifications() &&
+      containsWaitlistCopy(args.message, args.emailSubject)
+    ) {
+      logWaitlistNotificationsSuppressed('sendLegacyApplicationStatusMessage.content_match', {
+        tenantId: args.tenantId,
+        userId: args.userId,
+        applicationId: args.applicationId,
+        source: args.source,
+        status: args.status,
+      });
+      return {
+        success: true,
+        messageId: null,
+        status: 'skipped_waitlist_content',
+        error: 'waitlist_notifications_disabled_content_match',
       };
     }
 
@@ -104,6 +132,11 @@ export async function sendLegacyApplicationStatusMessage(args: {
       else if (args.status === 'advanced') messageTypeId = 'application_advanced';
       else if (args.status === 'offer') messageTypeId = 'application_offered';
       else if (args.status === 'hired') messageTypeId = 'application_hired';
+      // 'accepted' / 'confirmed' must route to application_hired, never to the
+      // generic application_status_change template (which many tenants have
+      // configured with waitlist / generic-update copy).
+      else if (args.status === 'accepted') messageTypeId = 'application_hired';
+      else if (args.status === 'confirmed') messageTypeId = 'application_hired';
       else if (args.status === 'rejected') messageTypeId = 'application_rejected';
       else if (args.status === 'waitlisted') messageTypeId = 'application_waitlisted';
       else messageTypeId = 'application_status_change';

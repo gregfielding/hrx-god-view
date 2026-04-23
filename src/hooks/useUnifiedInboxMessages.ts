@@ -20,15 +20,73 @@ interface UseUnifiedInboxMessagesOptions {
   limitPerChannel?: number;
 }
 
+// sessionStorage cache so the Inbox drawer renders instantly on re-open while
+// a fresh fetch runs in the background. Scoped per user + tenant + filter set.
+const CACHE_PREFIX = 'unifiedInboxCache:v1:';
+const CACHE_TTL_MS = 5 * 60 * 1000; // Consider entries older than 5 min "stale" (still shown, but refetched)
+
+interface CacheEntry {
+  savedAt: number;
+  messages: any[]; // Serialized UnifiedMessage[] — Timestamp fields are converted to ISO strings
+}
+
+function buildCacheKey(userId: string, tenantId: string, filters: UnifiedInboxFilters, limitPerChannel: number): string {
+  return `${CACHE_PREFIX}${userId}:${tenantId}:${limitPerChannel}:${JSON.stringify(filters || {})}`;
+}
+
+function readCache(key: string): UnifiedMessage[] | null {
+  try {
+    if (typeof window === 'undefined' || !window.sessionStorage) return null;
+    const raw = window.sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CacheEntry;
+    if (!parsed || !Array.isArray(parsed.messages)) return null;
+    // Rehydrate ISO date strings back to Date objects where applicable
+    return parsed.messages.map((m: any) => ({
+      ...m,
+      timestamp: m.timestamp
+        ? typeof m.timestamp === 'string'
+          ? new Date(m.timestamp)
+          : m.timestamp
+        : m.timestamp,
+    })) as UnifiedMessage[];
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(key: string, messages: UnifiedMessage[]): void {
+  try {
+    if (typeof window === 'undefined' || !window.sessionStorage) return;
+    // Convert Timestamp/Date to ISO string for JSON-safety.
+    const serialized = messages.map((m: any) => {
+      let ts = m.timestamp;
+      if (ts && typeof ts === 'object') {
+        if (typeof ts.toDate === 'function') ts = ts.toDate();
+        if (ts instanceof Date) ts = ts.toISOString();
+      }
+      return { ...m, timestamp: ts };
+    });
+    const entry: CacheEntry = { savedAt: Date.now(), messages: serialized };
+    window.sessionStorage.setItem(key, JSON.stringify(entry));
+  } catch (err) {
+    // Quota exceeded / serialization error — not fatal
+    console.warn('[useUnifiedInboxMessages] writeCache failed', err);
+  }
+}
+
 export function useUnifiedInboxMessages(options: UseUnifiedInboxMessagesOptions = {}) {
   const { user, activeTenant, currentClaimsSecurityLevel, securityLevel } = useAuth();
   const { filters = {}, limitPerChannel = 50 } = options;
-  
-  const [messages, setMessages] = useState<UnifiedMessage[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   const tenantId = activeTenant?.id || (user as any)?.activeTenantId || '';
+  const cacheKey = user?.uid && tenantId ? buildCacheKey(user.uid, tenantId, filters, limitPerChannel) : '';
+  // Seed state with cached messages so drawer renders instantly on mount.
+  const initialCached = useMemo(() => (cacheKey ? readCache(cacheKey) : null), [cacheKey]);
+  const [messages, setMessages] = useState<UnifiedMessage[]>(initialCached || []);
+  const [loading, setLoading] = useState(!initialCached);
+  const [error, setError] = useState<string | null>(null);
+
   // Ensure the object passed into security helpers includes activeTenantId + tenantIds security level.
   const userAny = user as any;
   const userWithTenant = user
@@ -64,7 +122,9 @@ export function useUnifiedInboxMessages(options: UseUnifiedInboxMessagesOptions 
 
     const fetchAllMessages = async () => {
       console.log('[useUnifiedInboxMessages] Starting fetchAllMessages');
-      setLoading(true);
+      // Only show the spinner if we don't already have something to display.
+      // Otherwise keep the cached list visible while we refetch in the background.
+      setLoading((prev) => (messages.length === 0 ? true : prev));
       setError(null);
 
       try {
@@ -308,11 +368,12 @@ export function useUnifiedInboxMessages(options: UseUnifiedInboxMessagesOptions 
 
         // Sort by timestamp (newest first)
         const sortedMessages = sortMessagesByTimestamp(filteredMessages);
-        console.log('[useUnifiedInboxMessages] Fetch complete, setting messages', { 
-          count: sortedMessages.length 
+        console.log('[useUnifiedInboxMessages] Fetch complete, setting messages', {
+          count: sortedMessages.length
         });
         setMessages(sortedMessages);
         setLoading(false);
+        if (cacheKey) writeCache(cacheKey, sortedMessages);
 
       } catch (err: any) {
         console.error('[useUnifiedInboxMessages] Error fetching unified messages:', err);

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { warnLegacyCertUsageDetected } from '../../../../utils/certifications/certificationsLogging';
 import { toChipLabel } from '../../../../utils/chipLabel';
 import { logger } from '../../../../utils/logger';
 import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
@@ -280,6 +281,10 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
     credentialId?: string;
   }>>(user.certifications || []);
   const [certInput, setCertInput] = useState({ name: '', issuer: '', dateObtained: '', expiryDate: '', credentialId: '' });
+
+  useEffect(() => {
+    warnLegacyCertUsageDetected({ surface: 'SkillsTab', field: 'user.certifications' });
+  }, []);
 
   // Helper to normalize languages from Firestore (handles both string[] and object[] formats)
   const normalizeLanguages = (langs: any[]): Array<{

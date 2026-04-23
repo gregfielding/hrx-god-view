@@ -66,6 +66,7 @@ import { useCategoryScoresCurrentMap } from '../../../hooks/useCategoryScoresCur
 import { useRecruiterUsersRowExtras } from '../../../hooks/useRecruiterUsersRowExtras';
 import { useRecruiterUsersLatestBackgroundChecks } from '../../../hooks/useRecruiterUsersLatestBackgroundChecks';
 import { useRecruiterUsersEntityEmploymentChips } from '../../../hooks/useRecruiterUsersEntityEmploymentChips';
+import { WorkHistoryJobTitlesCell } from '../ApplicantsUsersStyleTableCells';
 export type MemberPreferenceStatus = 'preferred' | 'member' | 'not_preferred';
 
 export type UserGroupMembersTableProps = {
@@ -657,11 +658,11 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
                         direction={membersSortBy === 'workReadiness' ? membersSortDirection : 'desc'}
                         onClick={() => handleMembersSort('workReadiness')}
                       >
-                        Work readiness
+                        Employment
                       </TableSortLabel>
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 120, py: 1 }}>
-                      Readiness breakdown
+                      Onboarding
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 120, py: 1 }}>
                       Backgrounds
@@ -677,6 +678,9 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 100, py: 1 }}>
                       Risk / concern
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 140, py: 1 }}>
+                      Work history
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', minWidth: 120, borderRadius: 0, py: 1 }}>
                       <TableSortLabel
@@ -702,7 +706,7 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
                 <TableBody>
                   {members.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} sx={{ color: 'text.secondary', fontStyle: 'italic', py: 2 }}>
+                      <TableCell colSpan={11} sx={{ color: 'text.secondary', fontStyle: 'italic', py: 2 }}>
                         No members in this group.
                       </TableCell>
                     </TableRow>
@@ -886,6 +890,9 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
                                 {concern}
                               </Typography>
                             )}
+                          </TableCell>
+                          <TableCell sx={{ verticalAlign: 'top', py: 0.5, px: 1, maxWidth: 200 }}>
+                            <WorkHistoryJobTitlesCell user={u as Record<string, unknown>} />
                           </TableCell>
                           <TableCell sx={{ minWidth: 120, verticalAlign: 'top', py: 0.5, px: 1 }}>
                             <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem', lineHeight: 1.3 }}>

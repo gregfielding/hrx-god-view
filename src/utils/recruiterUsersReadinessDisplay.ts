@@ -1,14 +1,14 @@
 /**
  * Presentation helpers for Recruiter Users table (/users/all): work readiness, breakdown, top concern.
  *
- * **Readiness breakdown** (Users + group members tables): mirrors the **Employment** onboarding checklist for the
+ * **Onboarding** column (Users + group members tables): mirrors the **Employment** onboarding checklist for the
  * primary entity — Direct deposit, Work auth, I-9, W-4 / 1099 (W-9), E-Verify, Handbook, Policies. **Background
  * screening stays in the Backgrounds column only**, not here.
  *
  * **Backgrounds** column (separate cell): AccuSource line items + legacy orders.
  */
 
-import type { ScoreSummary } from './scoreSummary';
+import { hasRecruiterInterviewCompletionEvidence, type ScoreSummary } from './scoreSummary';
 import { getWorkAuthorizedStatus } from './workAuthorizedDisplay';
 import { getEVerifyComfortStatusFromUserData } from './eVerifyComfortDisplay';
 import type { UserListEntityOnboardingItem } from './userListEntityEmploymentStatus';
@@ -37,6 +37,9 @@ export type RecruiterUserReadinessLike = {
   workEligibilityAttestation?: { authorizedToWorkUS?: boolean; attestedAt?: unknown };
   comfortableEVerify?: string;
   workerAttestations?: { eVerifyWillingness?: string };
+  hasWorkerAiPrescreenInterview?: boolean;
+  interviewStatus?: string;
+  lastInterviewCompletedAt?: unknown;
 };
 
 /** Optional screening / payroll fields already stored on `users/{uid}` (same as credentials tab). */
@@ -79,8 +82,7 @@ export function getWorkReadinessOperationalStatus(
 
   if (sec === '4') return { kind: 'ready', label: 'Ready to Work' };
 
-  const hasInterview =
-    (user.scoreSummary?.interviewCount ?? 0) > 0 || !!user.scoreSummary?.interviewLastAt;
+  const hasInterview = hasRecruiterInterviewCompletionEvidence(user.scoreSummary, user);
 
   if (sec === '2' || sec === '3') {
     if (!hasInterview) return { kind: 'needs_action', label: 'Needs Action' };
@@ -444,10 +446,10 @@ export function getReadinessBreakdownRows(
 }
 
 /** Letter grade for displayed (0–100) score — matches prescreen banding for recruiter consistency. */
-export function recruiterTableLetterGrade(displayScore: number): 'A' | 'B' | 'C' | 'D' | 'F' {
+export function recruiterTableLetterGrade(displayScore: number): 'A' | 'B' | 'C' | 'D' | 'E' {
   if (displayScore >= 90) return 'A';
   if (displayScore >= 80) return 'B';
   if (displayScore >= 70) return 'C';
   if (displayScore >= 60) return 'D';
-  return 'F';
+  return 'E';
 }

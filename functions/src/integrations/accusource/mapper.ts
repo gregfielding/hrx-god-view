@@ -174,7 +174,21 @@ export function buildPartialProfilePayload(
   clientId: string,
   backgroundCheckId: string,
 ): AccusourceV2PartialProfileBody {
-  const packageId = parsePositiveIntPackageId(input.requestedPackageId);
+  const pkgRaw = String(input.requestedPackageId ?? '').trim();
+  const hasPackage = pkgRaw !== '';
+  const addonServiceIds = parseRequestedServiceIds(input.requestedServices);
+
+  if (!hasPackage && addonServiceIds.length === 0) {
+    throw new Error(
+      'Provide requestedPackageId and/or one or more requestedServices (positive integer IDs from the synced catalog).',
+    );
+  }
+
+  let packageIdNum: number | undefined;
+  if (hasPackage) {
+    packageIdNum = parsePositiveIntPackageId(pkgRaw);
+  }
+
   const firstName = toStr(input.candidate?.firstName);
   const lastName = toStr(input.candidate?.lastName);
   const email = toStr(input.candidate?.email);
@@ -205,7 +219,7 @@ export function buildPartialProfilePayload(
   }
 
   const body: AccusourceV2PartialProfileBody = {
-    packageId,
+    ...(packageIdNum !== undefined ? { packageId: packageIdNum } : {}),
     clientId,
     subject,
     notes: `HRX backgroundCheckId=${backgroundCheckId}`,
@@ -245,7 +259,6 @@ export function buildPartialProfilePayload(
     body.accountingCodeId = Number(input.accountingCodeId);
   }
 
-  const addonServiceIds = parseRequestedServiceIds(input.requestedServices);
   if (addonServiceIds.length > 0) {
     body.orders = addonServiceIds.map((serviceId) => ({ serviceId }));
     /**

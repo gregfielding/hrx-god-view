@@ -186,18 +186,30 @@ const UsersLayout: React.FC = () => {
     ) : null;
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+    <Box
+      sx={{
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: 0,
+        minWidth: 0,
+        overflow: 'hidden',
+      }}
+    >
       {/* <OnCallI9SupportingReminderDialog
         open={i9MasterReminderOpen}
         onClose={() => setI9MasterReminderOpen(false)}
         tenantId={activeTenant?.id}
         audience="all_w2_onboarding"
       /> */}
+      {/* Tab row matches compact User Profile header tabs (UserProfile/index.tsx). */}
+      {/* was: title="Users" · subtitle="All users, groups, and smart groups" (duplicated top bar; use hideHeading) */}
       <PageHeader
-        title="Users"
-        subtitle="All users, groups, and smart groups"
+        hideHeading
+        dense
+        title=""
         filters={
-          <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+          <Box sx={{ display: 'flex', gap: 0.35, alignItems: 'center', flexWrap: 'wrap' }}>
             {USERS_LAYOUT_TAB_CONFIG.map(({ tab, path, label }) => {
               const isActive = activeTab === tab;
               return (
@@ -208,12 +220,13 @@ const UsersLayout: React.FC = () => {
                   sx={{
                     textTransform: 'none',
                     borderRadius: '999px',
-                    fontSize: '14px',
-                    fontWeight: isActive ? 500 : 400,
+                    fontSize: '13px',
+                    fontWeight: isActive ? 600 : 400,
                     color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
                     bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
-                    px: 1.5,
-                    py: 0.75,
+                    px: 1.25,
+                    py: 0.5,
+                    minHeight: 30,
                     minWidth: 'auto',
                     whiteSpace: 'nowrap',
                     '&:hover': {
@@ -233,8 +246,9 @@ const UsersLayout: React.FC = () => {
         sx={{
           flex: 1,
           minHeight: 0,
+          minWidth: 0,
           overflowY: 'auto',
-          overflowX: 'hidden',
+          overflowX: 'auto',
           display: 'flex',
           flexDirection: 'column',
           paddingTop: '8px',

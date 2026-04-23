@@ -1,15 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
+  Alert,
   Box,
-  Typography,
+  Button,
   Card,
   CardContent,
   CardHeader,
-  TextField,
-  Button,
+  CircularProgress,
   IconButton,
   Snackbar,
-  Alert,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
 } from '@mui/material';
 import {
   Description as DescriptionIcon,
@@ -38,6 +45,13 @@ export interface AccountOrderDefaultsCardProps {
   locationKey?: string;
   locationDefaults?: Record<string, unknown>;
   onRefreshLocation?: () => void | Promise<void>;
+}
+
+function formatFileSize(bytes: number | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return '—';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function instructionTextToString(value: unknown): string {
@@ -79,6 +93,7 @@ const AccountOrderDefaultsCard: React.FC<AccountOrderDefaultsCardProps> = ({
   const initialText = instructionTextToString(rawValue);
   const [localText, setLocalText] = useState(() => (typeof initialText === 'string' ? initialText : ''));
   const [toast, setToast] = useState<{ open: boolean; message: string; severity: 'success' | 'error' } | null>(null);
+  const [uploading, setUploading] = useState(false);
   const latestTextRef = useRef<string>(typeof initialText === 'string' ? initialText : '');
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastSavedRef = useRef<string>(typeof initialText === 'string' ? initialText : '');
@@ -166,77 +181,103 @@ const AccountOrderDefaultsCard: React.FC<AccountOrderDefaultsCardProps> = ({
 
           <Box>
             <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 600 }}>
-              Attachments
+              Uploaded files
             </Typography>
 
-            {instructionData?.files && instructionData.files.length > 0 && (
-              <Box sx={{ mb: 2 }}>
-                {instructionData.files.map((file: any, index: number) => (
-                  <Box
-                    key={index}
-                    sx={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      p: 1.5,
-                      mb: 1,
-                      border: '1px solid',
-                      borderColor: 'divider',
-                      borderRadius: 1,
-                      bgcolor: 'grey.50',
-                    }}
-                  >
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1 }}>
-                      <DescriptionIcon fontSize="small" color="primary" />
-                      <Box>
-                        <Typography variant="body2" fontWeight="medium">
-                          {file.label || file.name || 'Unnamed File'}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {file.name} • Uploaded{' '}
-                          {file.uploadedAt ? format(new Date(file.uploadedAt), 'MMM dd, yyyy') : 'Unknown date'}
-                        </Typography>
-                      </Box>
-                    </Box>
-                    <Box sx={{ display: 'flex', gap: 1 }}>
-                      <Button size="small" variant="outlined" onClick={() => window.open(file.url, '_blank')}>
-                        View
-                      </Button>
-                      <IconButton
-                        size="small"
-                        color="error"
-                        onClick={async () => {
-                          if (window.confirm('Delete this file?')) {
-                            try {
-                              const updatedFiles = instructionData.files.filter((_: any, i: number) => i !== index);
-                              if (isLocationMode && locationKey) {
-                                const locationRef = doc(db, p.recruiterAccountLocationDefaults(tenantId, accountId, locationKey));
-                                await updateDoc(locationRef, {
-                                  [`orderDefaults.staffInstructions.${fieldKey}.files`]: updatedFiles,
-                                  updatedAt: serverTimestamp(),
-                                  updatedBy: userId || null,
+            <TableContainer
+              sx={{
+                mb: 2,
+                border: '1px solid',
+                borderColor: 'divider',
+                borderRadius: 1,
+                maxWidth: '100%',
+                overflowX: 'auto',
+              }}
+            >
+              <Table size="small" stickyHeader>
+                <TableHead>
+                  <TableRow sx={{ bgcolor: 'grey.100' }}>
+                    <TableCell sx={{ fontWeight: 700 }}>Label</TableCell>
+                    <TableCell sx={{ fontWeight: 700 }}>File name</TableCell>
+                    <TableCell sx={{ fontWeight: 700 }}>Uploaded</TableCell>
+                    <TableCell sx={{ fontWeight: 700 }}>Size</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 700 }}>
+                      Actions
+                    </TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {instructionData?.files && instructionData.files.length > 0 ? (
+                    instructionData.files.map((file: any, index: number) => (
+                      <TableRow key={`${file.url ?? ''}-${index}`} hover>
+                        <TableCell>{file.label || file.name || '—'}</TableCell>
+                        <TableCell sx={{ maxWidth: 260 }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
+                            <DescriptionIcon fontSize="small" color="primary" sx={{ flexShrink: 0 }} />
+                            <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>
+                              {file.name || '—'}
+                            </Typography>
+                          </Box>
+                        </TableCell>
+                        <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                          {file.uploadedAt ? format(new Date(file.uploadedAt), 'MMM d, yyyy h:mm a') : '—'}
+                        </TableCell>
+                        <TableCell sx={{ whiteSpace: 'nowrap' }}>{formatFileSize(file.size)}</TableCell>
+                        <TableCell align="right">
+                          <Button size="small" variant="outlined" onClick={() => window.open(file.url, '_blank')}>
+                            View
+                          </Button>
+                          <IconButton
+                            size="small"
+                            color="error"
+                            aria-label="Delete file"
+                            onClick={async () => {
+                              if (!window.confirm('Delete this file?')) return;
+                              try {
+                                const updatedFiles = instructionData.files.filter((_: any, i: number) => i !== index);
+                                if (isLocationMode && locationKey) {
+                                  const locationRef = doc(db, p.recruiterAccountLocationDefaults(tenantId, accountId, locationKey));
+                                  await updateDoc(locationRef, {
+                                    [`orderDefaults.staffInstructions.${fieldKey}.files`]: updatedFiles,
+                                    updatedAt: serverTimestamp(),
+                                    updatedBy: userId || null,
+                                  });
+                                  await onRefreshLocation?.();
+                                } else {
+                                  await updateDoc(doc(db, p.recruiterAccount(tenantId, accountId)), {
+                                    [`orderDefaults.staffInstructions.${fieldKey}.files`]: updatedFiles,
+                                    updatedAt: serverTimestamp(),
+                                  });
+                                  await onRefresh();
+                                }
+                                setToast({ open: true, message: 'File removed', severity: 'success' });
+                              } catch (error: any) {
+                                console.error('Error deleting file:', error);
+                                setToast({
+                                  open: true,
+                                  message: error?.message || 'Failed to delete file',
+                                  severity: 'error',
                                 });
-                                await onRefreshLocation?.();
-                              } else {
-                                await updateDoc(doc(db, p.recruiterAccount(tenantId, accountId)), {
-                                  [`orderDefaults.staffInstructions.${fieldKey}.files`]: updatedFiles,
-                                  updatedAt: serverTimestamp(),
-                                });
-                                await onRefresh();
                               }
-                            } catch (error) {
-                              console.error('Error deleting file:', error);
-                            }
-                          }
-                        }}
-                      >
-                        <DeleteIcon fontSize="small" />
-                      </IconButton>
-                    </Box>
-                  </Box>
-                ))}
-              </Box>
-            )}
+                            }}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={5}>
+                        <Typography variant="body2" color="text.secondary">
+                          No files yet. Choose a file and click Upload File.
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
 
             <Box sx={{ p: 2, border: '2px dashed', borderColor: 'divider', borderRadius: 1 }}>
               <Typography variant="body2" color="text.secondary" gutterBottom>
@@ -250,11 +291,18 @@ const AccountOrderDefaultsCard: React.FC<AccountOrderDefaultsCardProps> = ({
                   sx={{ flex: 1 }}
                   id={inputId}
                 />
-                <Button variant="contained" component="label" size="small" startIcon={<UploadIcon />}>
-                  Upload File
+                <Button
+                  variant="contained"
+                  component="label"
+                  size="small"
+                  disabled={uploading}
+                  startIcon={uploading ? <CircularProgress size={16} color="inherit" /> : <UploadIcon />}
+                >
+                  {uploading ? 'Uploading…' : 'Upload File'}
                   <input
                     type="file"
                     hidden
+                    disabled={uploading}
                     accept=".pdf,.png,.jpg,.jpeg,.gif"
                     onChange={async (e) => {
                       const file = e.target.files?.[0];
@@ -264,6 +312,7 @@ const AccountOrderDefaultsCard: React.FC<AccountOrderDefaultsCardProps> = ({
                       const label = labelInput?.value?.trim() || file.name;
 
                       try {
+                        setUploading(true);
                         if (!tenantId || !accountId) throw new Error('Missing tenantId or accountId');
 
                         const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -303,11 +352,21 @@ const AccountOrderDefaultsCard: React.FC<AccountOrderDefaultsCardProps> = ({
                           await onRefresh();
                         }
 
+                        setToast({
+                          open: true,
+                          message: `Uploaded “${label}” (${file.name})`,
+                          severity: 'success',
+                        });
                         if (labelInput) labelInput.value = '';
                         e.target.value = '';
                       } catch (error: any) {
                         console.error(`Error uploading file to ${fieldKey}:`, error);
-                        alert(`Failed to upload file: ${error?.message || 'Unknown error'}`);
+                        const msg = error?.code === 'storage/unauthorized'
+                          ? 'Upload denied (Storage rules). Deploy updated storage rules or ask an admin.'
+                          : error?.message || 'Unknown error';
+                        setToast({ open: true, message: `Upload failed: ${msg}`, severity: 'error' });
+                      } finally {
+                        setUploading(false);
                       }
                     }}
                   />

@@ -26,6 +26,9 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { auth, db, storage } from '../../../firebase';
 import { useT } from '../../../i18n';
 import credentialsSeed from '../../../data/credentialsSeed.json';
+import { tryDualWriteAfterLegacyCertification } from '../../../utils/certifications/tryDualWriteAfterLegacyCertification';
+import { tryDeleteCanonicalCertificationRecord } from '../../../utils/certifications/tryDeleteCanonicalCertificationRecord';
+import { warnCertifications } from '../../../utils/certifications/certificationsLogging';
 
 type Props = {
   value: any;
@@ -329,12 +332,38 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
       
       const updated = [...certifications, entry];
       onChange({ ...value, certifications: updated });
-      
+
       if (uid) {
-        // Flush immediately for file uploads
-        await updateDoc(doc(db, 'users', uid), { certifications: updated, updatedAt: serverTimestamp() });
+        const userRef = doc(db, 'users', uid);
+        await updateDoc(userRef, { certifications: updated, updatedAt: serverTimestamp() });
+
+        const source = fileUrl ? 'worker_upload' : 'worker_attestation';
+        const recordId = await tryDualWriteAfterLegacyCertification({
+          uid,
+          certificationName: entry.name,
+          issuerName: entry.issuer ?? null,
+          expirationDate: entry.expirationDate ?? null,
+          legacyEvidence: { fileUrl: entry.fileUrl, fileName: entry.fileName },
+          source,
+        });
+        if (recordId) {
+          const patched = updated.map((row: Record<string, unknown>, i: number) =>
+            i === updated.length - 1 ? { ...row, certificationRecordId: recordId } : row,
+          );
+          try {
+            await updateDoc(userRef, { certifications: patched, updatedAt: serverTimestamp() });
+            onChange({ ...value, certifications: patched });
+          } catch (e) {
+            const detail = e instanceof Error ? e.message : String(e);
+            warnCertifications('dual_write_failed', {
+              userId: uid,
+              detail: `legacy certificationRecordId patch: ${detail}`,
+            });
+            onChange({ ...value, certifications: updated });
+          }
+        }
       }
-      
+
       setCertificationDialogOpen(false);
       setNewCertification({
         name: '',
@@ -352,10 +381,15 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
     }
   };
 
-  const handleDeleteCertification = (idx: number) => {
+  const handleDeleteCertification = async (idx: number) => {
+    const uid = auth.currentUser?.uid;
+    const removed = certifications[idx] as { certificationRecordId?: string } | undefined;
+    if (uid && removed?.certificationRecordId) {
+      await tryDeleteCanonicalCertificationRecord(uid, removed.certificationRecordId);
+    }
+
     const updated = certifications.filter((_, i) => i !== idx);
     onChange({ ...value, certifications: updated });
-    const uid = auth.currentUser?.uid;
     if (uid) {
       debouncedUpdate(doc(db, 'users', uid), { certifications: updated, updatedAt: serverTimestamp() });
     }

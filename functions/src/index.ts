@@ -222,6 +222,7 @@ export { cleanupTenantStandaloneMetros };
 export { getUserReviews, createUserReview, deleteUserReview } from './userReviews';
 export { deleteUserCompletely } from './deleteUserCompletely';
 export { sendProfileUpdateReminder } from './sendProfileUpdateReminder';
+export { sendWorkerOrderInterviewSms } from './sendWorkerOrderInterviewSms';
 export { reviewAndRescoreUser } from './reviewAndRescoreUser';
 export {
   onUserCreatedScheduleApplyWizardReminder,
@@ -262,12 +263,15 @@ export {
   evereeGetPayStatement,
   evereeAdminPushShift,
   evereeAdminPreparePayout,
+  evereeWebhook,
+  onEvereeWebhookEventCreated,
 } from './integrations/evereeGate';
 export {
   apiIntegrationsAccusourceWebhooks,
   createAccusourceBackgroundCheck,
   testCreateAccusourceBackgroundCheck,
   getAccusourceBackgroundCheckPdf,
+  setAccusourceLineAdjudication,
   syncAccusourcePackageCatalog,
 } from './integrations/accusource';
 export { syncC1WorkerHomeReadinessSnapshot } from './readiness/homeSnapshotTrigger';
@@ -317,6 +321,11 @@ export {
   ensureWorkerI9SlotsForMyEmploymentRecord,
 } from './onboarding/i9SupportingDocumentWorkflowCallables';
 export { onWorkerI9SupportingDocumentExtract } from './onboarding/i9SupportingDocumentExtractionTrigger';
+// Avatar (headshot) verification — Phase 1: trigger + callable re-verify.
+// Phase 5: recruiter manual approve / reject / request-reupload.
+export { onUserAvatarChangedVerify } from './avatar/avatarVerificationTrigger';
+export { reverifyAvatar } from './avatar/reverifyAvatar';
+export { setAvatarVerificationDecision } from './avatar/setAvatarVerificationDecision';
 export { submitWorkerAiPrescreenInterview } from './workerAiPrescreen/submitWorkerAiPrescreenInterview';
 export { getWorkerAiPrescreenInterviewPlan } from './workerAiPrescreen/getWorkerAiPrescreenInterviewPlan';
 export { backfillPrescreenCategoryScores } from './workerAiPrescreen/backfillPrescreenCategoryScoresCallable';
@@ -8775,6 +8784,14 @@ export const logAssignmentCreated = onDocumentCreated(
           }
         }
 
+        if (jobOrderData?.muted === true) {
+          logger.info(`logAssignmentCreated: skipped worker notification (job order muted)`, {
+            assignmentId,
+            jobOrderId: assignment.jobOrderId,
+          });
+          return { success: true };
+        }
+
         let dateTimeInfo = '';
         if (assignment.startDate) {
           const startDate = assignment.startDate.toDate ? assignment.startDate.toDate() : new Date(assignment.startDate);
@@ -8907,6 +8924,16 @@ export const logAssignmentUpdated = onDocumentUpdated(
           return { success: true, deduped: true };
         }
 
+        let jobOrderMuted = false;
+        if (after.jobOrderId) {
+          try {
+            const joSnap = await admin.firestore().doc(`tenants/${tenantId}/job_orders/${after.jobOrderId}`).get();
+            jobOrderMuted = Boolean(joSnap.exists && joSnap.data()?.muted);
+          } catch (_) {
+            /* ignore */
+          }
+        }
+
         if (afterN === 'confirmed' && beforeN !== 'confirmed') {
           try {
             const { runAssignmentConfirmedOnboardingSlice } = await import(
@@ -8952,7 +8979,12 @@ export const logAssignmentUpdated = onDocumentUpdated(
         const canNotify =
           !!phoneE164 || (afterN === 'confirmed' && !!userEmail && !!emailBody);
 
-        if (!canNotify) {
+        if (jobOrderMuted) {
+          logger.info(`logAssignmentUpdated: skipped worker notification (job order muted)`, {
+            assignmentId,
+            jobOrderId: after.jobOrderId,
+          });
+        } else if (!canNotify) {
           if (afterN === 'confirmed') {
             logger.warn(
               `logAssignmentUpdated: confirmed assignment ${assignmentId} skipped — no phone on file and no email/HTML to send`,
@@ -11893,6 +11925,27 @@ export {
 
 // Bulk Send (system sender only)
 export { bulkSendEmailApi, bulkSendSmsApi } from './messaging/bulkSendApi';
+
+// Phase 2 backfill: populate participantContactIds/CompanyIds on email_logs + emailThreads
+export { backfillEmailParticipantContactIds } from './messaging/backfillEmailParticipants';
+
+// Phase 3: Gmail push notifications (watch + Pub/Sub push + history.list incremental sync)
+export {
+  startGmailWatch,
+  stopGmailWatch,
+  onGmailPush,
+  renewGmailWatches,
+} from './messaging/gmailPush';
+
+// Calendar push notifications (watch + webhook + syncToken-based incremental sync).
+// Mirrors the Gmail push architecture but uses Google Calendar's webhook delivery model
+// instead of Pub/Sub. See functions/src/calendar/calendarPush.ts for details.
+export {
+  startCalendarPush,
+  stopCalendarPush,
+  onCalendarPush,
+  renewCalendarWatches,
+} from './calendar/calendarPush';
 
 // Scoring distribution (relative AI score per tenant)
 export {

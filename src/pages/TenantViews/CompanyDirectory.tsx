@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Typography,
@@ -72,46 +72,35 @@ const CompanyDirectory: React.FC<CompanyDirectoryProps> = ({
       const functions = getFunctions();
       const getUsersByTenantFn = httpsCallable(functions, 'getUsersByTenant');
       
-      const result = await getUsersByTenantFn({ 
+      const result = await getUsersByTenantFn({
         tenantId: effectiveTenantId,
         _cacheBust: Date.now() // Force fresh data
       });
       const data = result.data as { users: any[], count: number };
-      
-      // Debug: Log all users to see their data structure
-      console.log('All users from Cloud Function:', data.users?.map(u => ({
-        id: u.id,
-        firstName: u.firstName,
-        lastName: u.lastName,
-        securityLevel: u.securityLevel,
-        tenantId: u.tenantId,
-        tenantIds: u.tenantIds,
-        locationId: u.locationId,
-        regionId: u.regionId,
-        regionName: u.regionName
-      })));
-      
       setContacts(data.users || []);
     } catch (err: any) {
       console.error('Error fetching contacts:', err);
-      // Fallback to direct Firestore query - get all users and filter in memory
+      // Fallback to direct Firestore query. Prefer a server-side filter on
+      // the `tenantId` field so we don't pull every user in the system (the
+      // previous behavior loaded ~2k docs and spammed the console); if that
+      // throws we fall back to an in-memory filter as a last resort.
       try {
-        console.log('Using fallback query to fetch users...');
-        const allUsersSnapshot = await getDocs(collection(db, 'users'));
-        const allUsers = allUsersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        
-        // Filter for users in this tenant (both old and new structures)
-        const tenantUsers = allUsers.filter((user: any) => {
-          // Check direct tenantId field (old structure)
-          if (user.tenantId === effectiveTenantId) return true;
-          
-          // Check tenantIds map (new structure)
-          if (user.tenantIds && user.tenantIds[effectiveTenantId]) return true;
-          
-          return false;
-        });
-        
-        console.log(`Fallback query found ${tenantUsers.length} users for tenant ${effectiveTenantId}`);
+        let tenantUsers: any[] = [];
+        try {
+          const scopedSnapshot = await getDocs(
+            query(collection(db, 'users'), where('tenantId', '==', effectiveTenantId))
+          );
+          tenantUsers = scopedSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        } catch (scopedErr) {
+          console.warn('Scoped fallback query failed, using full-scan fallback', scopedErr);
+          const allUsersSnapshot = await getDocs(collection(db, 'users'));
+          const allUsers = allUsersSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+          tenantUsers = allUsers.filter((user: any) => {
+            if (user.tenantId === effectiveTenantId) return true;
+            if (user.tenantIds && user.tenantIds[effectiveTenantId]) return true;
+            return false;
+          });
+        }
         setContacts(tenantUsers);
       } catch (fallbackErr) {
         console.error('Fallback query also failed:', fallbackErr);
@@ -126,15 +115,6 @@ const CompanyDirectory: React.FC<CompanyDirectoryProps> = ({
       const q = query(collection(db, 'tenants', effectiveTenantId, 'locations'));
       const snapshot = await getDocs(q);
       const locationData = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      
-      // Debug: Log location data to see the structure
-      console.log('Fetched locations:', locationData.map((loc: any) => ({
-        id: loc.id,
-        nickname: loc.nickname,
-        name: loc.name,
-        primaryContacts: loc.primaryContacts
-      })));
-      
       setLocations(locationData);
     } catch (err: any) {
       console.warn('Could not fetch locations:', err);
@@ -172,14 +152,6 @@ const CompanyDirectory: React.FC<CompanyDirectoryProps> = ({
       const q = collection(db, 'tenants', effectiveTenantId, 'regions');
       const snapshot = await getDocs(q);
       const regionData = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      
-      // Debug: Log region data
-      console.log('Fetched regions:', regionData.map((region: any) => ({
-        id: region.id,
-        name: region.name,
-        shortcode: region.shortcode
-      })));
-      
       setRegions(regionData);
     } catch (err: any) {
       console.warn('Could not fetch regions:', err);
@@ -187,36 +159,30 @@ const CompanyDirectory: React.FC<CompanyDirectoryProps> = ({
     }
   };
 
-  // Filter for company directory workers (security levels 5, 6, 7)
-  const getCompanyDirectoryWorkers = () => {
+  // Filter for company directory workers (security levels 5, 6, 7).
+  // Memoized so the per-contact scan only re-runs when the inputs actually
+  // change (previously this re-ran on every render because it was a plain
+  // function called inline in JSX).
+  const companyDirectoryWorkers = useMemo(() => {
     return contacts.filter((c: any) => {
       let workerLevel: any = null;
-      
+
       // Check tenantIds map first (new structure)
-      if (c.tenantIds && c.tenantIds[effectiveTenantId]) {
+      if (c.tenantIds && effectiveTenantId && c.tenantIds[effectiveTenantId]) {
         workerLevel = c.tenantIds[effectiveTenantId].securityLevel;
       }
       // Fall back to direct securityLevel field (old structure)
       else if (c.securityLevel) {
         workerLevel = c.securityLevel;
       }
-      
-      // Debug logging
-      console.log(`Worker ${c.firstName} ${c.lastName}:`, {
-        tenantIds: c.tenantIds,
-        effectiveTenantId,
-        workerLevel,
-        directSecurityLevel: c.securityLevel,
-        tenantIdsEntry: c.tenantIds?.[effectiveTenantId],
-        included: workerLevel === 5 || workerLevel === 6 || workerLevel === 7 || 
-                  workerLevel === '5' || workerLevel === '6' || workerLevel === '7'
-      });
-      
+
       // Check if worker has security level 5, 6, or 7
-      return workerLevel === 5 || workerLevel === 6 || workerLevel === 7 || 
-             workerLevel === '5' || workerLevel === '6' || workerLevel === '7';
+      return (
+        workerLevel === 5 || workerLevel === 6 || workerLevel === 7 ||
+        workerLevel === '5' || workerLevel === '6' || workerLevel === '7'
+      );
     });
-  };
+  }, [contacts, effectiveTenantId]);
 
   if (loading) {
     return (
@@ -232,7 +198,7 @@ const CompanyDirectory: React.FC<CompanyDirectoryProps> = ({
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <WorkersTable
-        contacts={getCompanyDirectoryWorkers()}
+        contacts={companyDirectoryWorkers}
         locations={locations}
         departments={departments}
         divisions={divisions}

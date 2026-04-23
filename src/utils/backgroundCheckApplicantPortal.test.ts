@@ -1,8 +1,9 @@
 import {
   applicantSetupStatusSummary,
   resolveApplicantPortalUrl,
+  shouldShowApplicantPortalCta,
 } from './backgroundCheckApplicantPortal';
-import type { BackgroundCheckRecord } from '../types/backgroundCheck';
+import { BackgroundCheckRecord } from '../types/backgroundCheck';
 
 describe('resolveApplicantPortalUrl', () => {
   it('prefers applicantPortalUrl when both set', () => {
@@ -42,5 +43,29 @@ describe('applicantSetupStatusSummary', () => {
     });
     expect(s.headline).toMatch(/awaiting/i);
     expect(s.detail).toMatch(/webhook/i);
+  });
+
+  it('shouldShowApplicantPortalCta is true only for awaiting_applicant + URL', () => {
+    expect(
+      shouldShowApplicantPortalCta({
+        ...base,
+        hrxStatus: 'awaiting_applicant',
+        applicantPortalLink: 'https://example.com/setup?token=t',
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowApplicantPortalCta({
+        ...base,
+        hrxStatus: 'completed',
+        applicantPortalLink: 'https://example.com/setup?token=t',
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowApplicantPortalCta({
+        ...base,
+        hrxStatus: 'in_progress',
+        applicantPortalLink: 'https://example.com/setup?token=t',
+      }),
+    ).toBe(false);
   });
 });

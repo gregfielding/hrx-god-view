@@ -1,8 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, useParams, useNavigate, useLocation, useSearchParams, Navigate, Outlet } from 'react-router-dom';
 import { LoadScript, Libraries } from '@react-google-maps/api';
 import { logger } from './utils/logger';
 import { getUsersIndexRedirectPath } from './utils/usersLayoutPersistence';
+
+const CertEngineShadowDebugPanel =
+  process.env.NODE_ENV === 'development'
+    ? lazy(() => import('./components/dev/CertEngineShadowDebugPanel'))
+    : null;
 
 import Layout from './components/Layout';
 import ConditionalJobsBoardLayout from './components/ConditionalJobsBoardLayout';
@@ -159,7 +164,6 @@ import AccountLocationDetail from './pages/AccountLocationDetail';
 import GlobalInvoicingPage from './pages/GlobalInvoicingPage';
 import FinancesBudgetingPage from './pages/FinancesBudgetingPage';
 import StaffOnboardingCenter from './pages/StaffOnboardingCenter';
-import WorkersCompRatesPage from './pages/TenantViews/settings/WorkersCompRatesPage';
 import RecruiterContacts from './pages/RecruiterContacts';
 import RecruiterContactDetails from './pages/RecruiterContactDetails';
 import NewJobOrder from './pages/NewJobOrder';
@@ -726,13 +730,7 @@ function App() {
         />
         <Route
           path="workers-comp"
-          element={
-            <ProtectedRoute requiredSecurityLevel="5">
-              <RecruiterAccessGuard>
-                <WorkersCompRatesPage />
-              </RecruiterAccessGuard>
-            </ProtectedRoute>
-          }
+          element={<Navigate to="/settings?tab=workers-comp" replace />}
         />
         <Route
           path="accounts/:accountId"
@@ -1359,6 +1357,13 @@ function App() {
           </DirectMessengerProvider>
         </AuthProvider>
       </Router>
+      {/* Dev-only cert shadow stats (reads `cert_engine_shadow_events`; requires isHRX in firestore.rules). Re-enable when needed.
+      {process.env.NODE_ENV === 'development' && CertEngineShadowDebugPanel && (
+        <Suspense fallback={null}>
+          <CertEngineShadowDebugPanel />
+        </Suspense>
+      )}
+      */}
     </Box>
   );
 }

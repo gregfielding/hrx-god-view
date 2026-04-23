@@ -15,8 +15,52 @@ import type {
   CalendarEventInput,
   ListCalendarEventsRequest,
 } from './types';
+import { upsertCalendarEvent } from './calendarPush';
 
 const db = getFirestore();
+
+/**
+ * Resolve the tenantId for a user. Prefers the legacy `tenantId` scalar so the
+ * result matches the Firestore path used by the push webhook (`tenants/{tid}/
+ * calendar_events`); falls back to the first key of the newer `tenantIds` map.
+ * Returns null if neither is present — callers should treat that as "skip mirror
+ * writeback" rather than failing the whole operation.
+ */
+async function resolveUserTenantId(userId: string): Promise<string | null> {
+  try {
+    const snap = await db.collection('users').doc(userId).get();
+    if (!snap.exists) return null;
+    const data = snap.data() || {};
+    if (typeof data.tenantId === 'string' && data.tenantId) return data.tenantId;
+    if (data.tenantIds && typeof data.tenantIds === 'object') {
+      const keys = Object.keys(data.tenantIds);
+      if (keys.length > 0) return keys[0];
+    }
+    return null;
+  } catch (err) {
+    console.warn('resolveUserTenantId failed (non-fatal):', err);
+    return null;
+  }
+}
+
+/**
+ * Fire-and-log writeback to the `tenants/{tid}/calendar_events` mirror after
+ * an outbound create/update/delete. Swallows errors so a Firestore hiccup
+ * never surfaces to the UI — the next inbound push will reconcile anyway.
+ */
+async function mirrorOutboundEvent(
+  userId: string,
+  calendarId: string,
+  ev: any
+): Promise<void> {
+  try {
+    const tenantId = await resolveUserTenantId(userId);
+    if (!tenantId) return;
+    await upsertCalendarEvent(tenantId, userId, calendarId, ev);
+  } catch (err) {
+    console.warn('mirrorOutboundEvent failed (non-fatal):', err);
+  }
+}
 
 // OAuth configuration
 const clientId = defineString('GOOGLE_CLIENT_ID');
@@ -285,6 +329,10 @@ export const createEvent = onCall({
       conferenceDataVersion: payload.conferenceData ? 1 : undefined,
     });
 
+    // Keep the Firestore mirror fresh so realtime UIs don't have to wait for
+    // the inbound push to reconcile (can lag by several seconds).
+    await mirrorOutboundEvent(userId, calendarId, event.data);
+
     return mapCalendarEvent(event.data, calendarId);
   } catch (error: any) {
     console.error('Error creating calendar event:', error);
@@ -343,6 +391,9 @@ export const updateEvent = onCall({
       conferenceDataVersion: payload.conferenceData ? 1 : undefined,
     });
 
+    // Mirror the update so realtime UIs reflect it immediately.
+    await mirrorOutboundEvent(userId, calendarId, event.data);
+
     return mapCalendarEvent(event.data, calendarId);
   } catch (error: any) {
     console.error('Error updating calendar event:', error);
@@ -388,6 +439,14 @@ export const deleteEvent = onCall({
       sendUpdates: 'none', // Don't send email notifications
     });
 
+    // Mirror the cancellation into the Firestore replica. upsertCalendarEvent
+    // special-cases status='cancelled' and writes just the tombstone fields so
+    // realtime filters drop the event without needing another round-trip.
+    await mirrorOutboundEvent(userId, calendarId, {
+      id: eventId,
+      status: 'cancelled',
+    });
+
     return { success: true };
   } catch (error: any) {
     console.error('Error deleting calendar event:', error);
@@ -396,6 +455,12 @@ export const deleteEvent = onCall({
     }
     // Google Calendar API returns 410 for already-deleted events, treat as success
     if (error.code === 410) {
+      // Still mirror the cancellation locally — the event is gone on Google's
+      // side, so the mirror should reflect that.
+      await mirrorOutboundEvent(userId, calendarId, {
+        id: eventId,
+        status: 'cancelled',
+      });
       return { success: true };
     }
     throw new HttpsError('internal', `Failed to delete calendar event: ${error.message || 'Unknown error'}`);
@@ -482,6 +547,11 @@ export const rsvpToEvent = onCall({
       },
       sendUpdates: 'all', // Send email notifications to organizer
     });
+
+    // Mirror the attendee-status change so realtime UIs see the new response
+    // immediately (useful when the invitee is watching the event on another
+    // device and we're not the organizer, so no inbound push fires for them).
+    await mirrorOutboundEvent(userId, calendarId, updatedEvent.data);
 
     return mapCalendarEvent(updatedEvent.data, calendarId);
   } catch (error: any) {

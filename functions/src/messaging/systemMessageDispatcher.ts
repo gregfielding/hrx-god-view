@@ -10,6 +10,7 @@ import {
 } from './messageAutomationRules';
 import { SYSTEM_TRIGGER_KEYS, SystemTriggerKey } from './triggerRegistry';
 import {
+  containsWaitlistCopy,
   logWaitlistNotificationsSuppressed,
   shouldSendApplicationWaitlistNotifications,
 } from './applicationWaitlistNotificationsGate';
@@ -86,6 +87,11 @@ const AUTOMATION_CONTEXT_TEMPLATE_KEYS = [
   'entityName',
   'hiringEntityId',
   'hiringEntityName',
+  'firstName',
+  'workerTypeLabel',
+  'workerTypeLabelEn',
+  'workerTypeLabelEs',
+  'preferredLanguage',
   'onboardingPipelineId',
   'workerEntityEmploymentUrl',
   'i9SupportingDocumentsApplicable',
@@ -227,6 +233,30 @@ export async function dispatchSystemMessage(args: DispatchSystemMessageArgs): Pr
 
       const variables = await buildVariables(args, rule, template, userData as Record<string, unknown>);
       const messageTypeId = template.messageTypeId || 'direct_message';
+
+      // Content-based waitlist safety net. Tenants sometimes configure
+      // automation rule bodies (e.g. `applicationReceived`, `application_status_change`)
+      // with waitlist copy. If the gate is off and the rendered body or subject
+      // contains waitlist language, skip this rule entirely regardless of trigger.
+      if (
+        !shouldSendApplicationWaitlistNotifications() &&
+        containsWaitlistCopy(
+          variables._message as string | undefined,
+          variables._subject as string | undefined,
+          template.body,
+          template.subject,
+        )
+      ) {
+        logWaitlistNotificationsSuppressed('dispatchSystemMessage.content_match', {
+          tenantId: args.tenantId,
+          triggerKey: args.triggerKey,
+          ruleId: rule.ruleId,
+          templateId: template.id,
+          messageTypeId,
+          userId: args.userId,
+        });
+        continue;
+      }
 
       if (passiveMode) {
         logger.info('MESSAGE_AUTOMATION_PASSIVE_MODE enabled, skipping send', {

@@ -13,6 +13,23 @@ import {
 import OverviewActionItemsCard from './OverviewActionItemsCard';
 import UserScoreRefreshButton from './UserScoreRefreshButton';
 import { deriveActionItemsV1 } from '../../../utils/userActionItems/deriveActionItemsV1';
+import certificationCatalogManifestJson from '../../../data/generated/certificationCatalogManifest.v1.json';
+import type { CertificationCatalogManifestV1 } from '../../../types/certifications/certificationCatalogManifest';
+import { PREVIEW_SAMPLE_CERTIFICATION_REQUIREMENTS } from '../../../utils/certifications/previewSampleCertificationRequirements';
+import {
+  evaluateCertificationsForRequirements,
+  type RequirementEvaluationRow,
+} from '../../../utils/certifications/evaluateCertificationsForRequirements';
+import { getCanonicalCertificationRecordsWithIds } from '../../../utils/certifications/getCanonicalCertificationRecords';
+import { normalizeDateToISODateString } from '../../../utils/certifications/normalizeDateToISODateString';
+import {
+  buildRecruiterCertificationTrustSignals,
+  certificationOperationalSummaryCounts,
+} from '../../../utils/certifications/buildRecruiterCertificationTrustSignals';
+import {
+  isCertEngineActionItemsEnabled,
+  isCertEngineTrustSurfacesEnabled,
+} from '../../../utils/certifications/certEngineFeatureFlags';
 import { buildOverviewQualificationsFromUserDoc } from '../utils/overviewQualificationsSnapshot';
 import type { OverviewQualificationsData } from '../utils/overviewQualificationsSnapshot';
 import { toChipLabel } from '../../../utils/chipLabel';
@@ -383,6 +400,37 @@ const ProfileOverview: React.FC<Props> = ({
     };
   }, [uid]);
 
+  const catalogManifestPhase5 = certificationCatalogManifestJson as CertificationCatalogManifestV1;
+
+  useEffect(() => {
+    const flagsOn = isCertEngineActionItemsEnabled() || isCertEngineTrustSurfacesEnabled();
+    if (!uid || !flagsOn) {
+      setCertificationEvaluationRowsProfile(null);
+      return;
+    }
+    let cancelled = false;
+    const todayISO = normalizeDateToISODateString(new Date()) ?? '1970-01-01';
+    void (async () => {
+      try {
+        const records = await getCanonicalCertificationRecordsWithIds(uid);
+        if (cancelled) return;
+        const rows = evaluateCertificationsForRequirements({
+          requirements: PREVIEW_SAMPLE_CERTIFICATION_REQUIREMENTS,
+          records,
+          context: 'generic',
+          todayISO,
+        });
+        setCertificationEvaluationRowsProfile(rows);
+      } catch (e) {
+        console.warn('ProfileOverview: certification engine rows load failed', e);
+        if (!cancelled) setCertificationEvaluationRowsProfile(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [uid]);
+
   const [workEligibilityData, setWorkEligibilityData] = useState({
     workAuthorized: false,
     requireSponsorship: false,
@@ -400,6 +448,11 @@ const ProfileOverview: React.FC<Props> = ({
   const [overviewQualifications, setOverviewQualifications] = useState<OverviewQualificationsData>(() =>
     buildOverviewQualificationsFromUserDoc({}),
   );
+
+  /** Phase 5 — shared engine rows for action items + trust surfaces (preview requirements until tenant-scoped lists ship). */
+  const [certificationEvaluationRowsProfile, setCertificationEvaluationRowsProfile] = useState<
+    RequirementEvaluationRow[] | null
+  >(null);
 
   // Removed AI insights section
 
@@ -444,6 +497,16 @@ const ProfileOverview: React.FC<Props> = ({
     });
   }, [actionItemsBackgroundCheckOrders]);
 
+  const certificationTrustPack = useMemo(() => {
+    if (!isCertEngineTrustSurfacesEnabled() || !certificationEvaluationRowsProfile?.length) return null;
+    return buildRecruiterCertificationTrustSignals(certificationEvaluationRowsProfile, catalogManifestPhase5);
+  }, [certificationEvaluationRowsProfile]);
+
+  const certificationReadinessSummaryCounts = useMemo(() => {
+    if (!isCertEngineTrustSurfacesEnabled() || !certificationEvaluationRowsProfile?.length) return null;
+    return certificationOperationalSummaryCounts(certificationEvaluationRowsProfile);
+  }, [certificationEvaluationRowsProfile]);
+
   const actionItems = useMemo(
     () =>
       deriveActionItemsV1({
@@ -461,6 +524,10 @@ const ProfileOverview: React.FC<Props> = ({
         certifications: Array.isArray(actionItemsCertifications) ? actionItemsCertifications : [],
         actionSignalsReady: userDocHydratedForActionItems,
         prescreenInterviewAi: actionItemsPrescreenAi ?? null,
+        certEngineActionItemsEnabled: isCertEngineActionItemsEnabled(),
+        certificationEvaluationRows: certificationEvaluationRowsProfile,
+        certificationCatalogManifest: catalogManifestPhase5,
+        certificationActionSurface: 'profile',
       }),
     [
       uid,
@@ -477,6 +544,7 @@ const ProfileOverview: React.FC<Props> = ({
       actionItemsCertifications,
       userDocHydratedForActionItems,
       actionItemsPrescreenAi,
+      certificationEvaluationRowsProfile,
     ],
   );
 
@@ -1997,6 +2065,7 @@ const transportOptions: Array<{
                   allowResumeUpload={canEditProfile()}
                   tenantId={activeTenantId || tenantId || activeTenant?.id || null}
                   profileUpdateReminder={embeddedMode === 'full' ? profileUpdateReminder : undefined}
+                  certificationReadinessSummaryCounts={certificationReadinessSummaryCounts}
                 />
               </Grid>
               <Grid item xs={12}>
@@ -2010,6 +2079,7 @@ const transportOptions: Array<{
                   latestPrescreenInterviewAi={scoringPrescreenAiFromInterview ?? actionItemsPrescreenAi ?? null}
                   onOpenScoreTab={onOpenScoreTab}
                   headerActionsRight={null}
+                  certificationTrustPack={certificationTrustPack}
                   scoringDecisionControls={
                     showReviewRescore
                       ? {

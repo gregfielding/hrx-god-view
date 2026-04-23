@@ -66,8 +66,10 @@ export const StaffOnboardingTaxPayrollTab: React.FC<{
   tenantId: string | undefined;
   pagination: OnboardingQueuePagination;
   workerSearch: string;
+  tableScrollTop: number;
+  onTableScrollTopChange: (scrollTop: number) => void;
   onWorkerSearchChange: (value: string) => void;
-}> = ({ tenantId, pagination, workerSearch, onWorkerSearchChange }) => {
+}> = ({ tenantId, pagination, workerSearch, tableScrollTop, onTableScrollTopChange, onWorkerSearchChange }) => {
   const navigate = useNavigate();
   const q = useOnboardingTaxPayrollQueue(tenantId, pagination, workerSearch);
   const emptyMessage =
@@ -81,6 +83,8 @@ export const StaffOnboardingTaxPayrollTab: React.FC<{
     },
     [navigate],
   );
+
+  const scrollRestoreKey = `${pagination.page}-${pagination.pageSize}-${workerSearch}`;
 
   return (
     <Stack spacing={2} sx={{ width: '100%' }}>
@@ -99,6 +103,9 @@ export const StaffOnboardingTaxPayrollTab: React.FC<{
       pageSize={q.pageSize}
       onPageChange={q.setPage}
       onPageSizeChange={q.setPageSize}
+      savedScrollTop={tableScrollTop}
+      scrollRestoreKey={scrollRestoreKey}
+      onScrollTopChange={onTableScrollTopChange}
       head={
         <>
           <TableCell sx={headCellSx}>Worker</TableCell>
@@ -263,8 +270,10 @@ export const StaffOnboardingEverifyTab: React.FC<{
   tenantId: string | undefined;
   pagination: OnboardingQueuePagination;
   workerSearch: string;
+  tableScrollTop: number;
+  onTableScrollTopChange: (scrollTop: number) => void;
   onWorkerSearchChange: (value: string) => void;
-}> = ({ tenantId, pagination, workerSearch, onWorkerSearchChange }) => {
+}> = ({ tenantId, pagination, workerSearch, tableScrollTop, onTableScrollTopChange, onWorkerSearchChange }) => {
   const navigate = useNavigate();
   const q = useOnboardingEverifyQueue(tenantId, pagination, workerSearch);
   const emptyMessage =
@@ -282,6 +291,8 @@ export const StaffOnboardingEverifyTab: React.FC<{
     },
     [navigate],
   );
+
+  const scrollRestoreKey = `${pagination.page}-${pagination.pageSize}-${workerSearch}`;
 
   return (
     <Box>
@@ -314,6 +325,9 @@ export const StaffOnboardingEverifyTab: React.FC<{
         pageSize={q.pageSize}
         onPageChange={q.setPage}
         onPageSizeChange={q.setPageSize}
+        savedScrollTop={tableScrollTop}
+        scrollRestoreKey={scrollRestoreKey}
+        onScrollTopChange={onTableScrollTopChange}
         head={
           <>
             <TableCell sx={headCellSx}>Worker</TableCell>
@@ -395,8 +409,10 @@ export const StaffOnboardingBackgroundTab: React.FC<{
   tenantId: string | undefined;
   pagination: OnboardingQueuePagination;
   workerSearch: string;
+  tableScrollTop: number;
+  onTableScrollTopChange: (scrollTop: number) => void;
   onWorkerSearchChange: (value: string) => void;
-}> = ({ tenantId, pagination, workerSearch, onWorkerSearchChange }) => {
+}> = ({ tenantId, pagination, workerSearch, tableScrollTop, onTableScrollTopChange, onWorkerSearchChange }) => {
   const navigate = useNavigate();
   const q = useOnboardingBackgroundQueue(tenantId, pagination, workerSearch);
   const emptyMessage =
@@ -417,6 +433,8 @@ export const StaffOnboardingBackgroundTab: React.FC<{
     [navigate],
   );
 
+  const scrollRestoreKey = `${pagination.page}-${pagination.pageSize}-${workerSearch}`;
+
   return (
     <Stack spacing={2} sx={{ width: '100%' }}>
       <OnboardingQueueWorkerSearchField
@@ -434,6 +452,9 @@ export const StaffOnboardingBackgroundTab: React.FC<{
       pageSize={q.pageSize}
       onPageChange={q.setPage}
       onPageSizeChange={q.setPageSize}
+      savedScrollTop={tableScrollTop}
+      scrollRestoreKey={scrollRestoreKey}
+      onScrollTopChange={onTableScrollTopChange}
       head={
         <>
           <TableCell sx={headCellSx}>Worker</TableCell>
@@ -486,7 +507,22 @@ export const StaffOnboardingBackgroundTab: React.FC<{
               variant="outlined"
             />
           </TableCell>
-          <TableCell sx={{ whiteSpace: 'nowrap' }}>{r.lastUpdateLabel}</TableCell>
+          <TableCell sx={{ maxWidth: 280, verticalAlign: 'top' }}>
+            <Typography
+              variant="body2"
+              sx={{
+                fontWeight: r.lastWebhookActivityLabel !== '—' ? 500 : 400,
+                lineHeight: 1.35,
+                whiteSpace: 'normal',
+                wordBreak: 'break-word',
+              }}
+            >
+              {r.lastWebhookActivityLabel}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.35 }}>
+              {r.lastUpdateTimeLabel}
+            </Typography>
+          </TableCell>
           <TableCell>{r.ownerLabel}</TableCell>
           <TableCell align="right" onClick={(e) => e.stopPropagation()}>
             <Button

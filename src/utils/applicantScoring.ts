@@ -6,6 +6,8 @@
  * 2. Fit Score (0-100): AI-powered job-specific qualification match
  */
 
+import { warnLegacyCertUsageDetected } from './certifications/certificationsLogging';
+
 interface UserProfile {
   firstName?: string;
   lastName?: string;
@@ -62,7 +64,10 @@ export function calculateCompletenessScore(user: UserProfile): number {
   if (user.workHistory && user.workHistory.length > 0) score += 10;
 
   // Certifications (8 points)
-  if (user.certifications && user.certifications.length > 0) score += 8;
+  if (user.certifications && user.certifications.length > 0) {
+    warnLegacyCertUsageDetected({ surface: 'calculateApplicantFitScore', field: 'user.certifications' });
+    score += 8;
+  }
 
   // Education (4 points)
   if (user.education && user.education.length > 0) score += 4;
@@ -124,7 +129,10 @@ export const calculateProfileScore = (user: UserProfile): number => {
   }
 
   // Certifications (10 points)
-  if (user.certifications && user.certifications.length > 0) score += 10;
+  if (user.certifications && user.certifications.length > 0) {
+    warnLegacyCertUsageDetected({ surface: 'calculateProfileScore', field: 'user.certifications' });
+    score += 10;
+  }
 
   // Education (5 points)
   if (user.education && user.education.length > 0) score += 5;

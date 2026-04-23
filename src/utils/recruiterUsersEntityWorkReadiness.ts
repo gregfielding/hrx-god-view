@@ -8,6 +8,7 @@ import type { PrescreenCategoryScoresV1 } from '../types/prescreenCategoryScores
 import { accusourceScreeningLineItems } from './accusourceScreeningLineItems';
 import { getEVerifyComfortStatusFromUserData } from './eVerifyComfortDisplay';
 import type { RecruiterUserBreakdownExtras, RecruiterUserReadinessLike } from './recruiterUsersReadinessDisplay';
+import { hasRecruiterInterviewCompletionEvidence } from './scoreSummary';
 import { getWorkAuthorizedStatus } from './workAuthorizedDisplay';
 import type { UserListEntityOnboardingItem } from './userListEntityEmploymentStatus';
 import type { UserListEntityOnboardingTone } from './userListEntityEmploymentStatus';
@@ -260,9 +261,7 @@ export function getRecruiterUserTopConcernDetailed(
   if (auth === 'skipped' || evComfort === 'skipped') return 'Missing work authorization or E-Verify docs';
 
   if (sec === '2' || sec === '3') {
-    const hasInterview =
-      (user.scoreSummary?.interviewCount ?? 0) > 0 || !!user.scoreSummary?.interviewLastAt;
-    if (!hasInterview) return 'Interview not completed';
+    if (!hasRecruiterInterviewCompletionEvidence(user.scoreSummary, user)) return 'Interview not completed';
   }
 
   const cats = ctx?.categoryScores;

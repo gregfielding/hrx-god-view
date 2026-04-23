@@ -182,10 +182,6 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
       setError('Select a hiring entity.');
       return;
     }
-    if (selectedServiceIds.length > 0 && !packageId.trim()) {
-      setError('Select a screening package when adding additional services.');
-      return;
-    }
     submitInFlightRef.current = true;
     setSubmitting(true);
     try {
@@ -281,7 +277,7 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
             selectLabel="Screening package"
             emptyMenuLabel="None (optional)"
             packageNameFieldLabel="Package name (from selection)"
-            description="Same synced catalog as User → Backgrounds → Order screening (AccuSource). One package plus optional add-on services are sent in a single SourceDirect request; leave empty to skip screening."
+            description="Same synced catalog as User → Backgrounds → Order screening (AccuSource). Choose a package, optional add-on services, or à la carte services only (no package); leave all empty to skip screening."
           />
           <TextField
             label="Internal note (optional)"

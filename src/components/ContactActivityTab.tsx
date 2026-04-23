@@ -120,50 +120,66 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
 
   // Realtime refresh: when a new email_log lands for this contact, reload activities.
   // This ensures the Activity tab updates immediately after sending an email from the drawer.
+  // Phase 2: primary listener uses participantContactIds array-contains (covers multi-contact
+  // emails); a legacy listener on contactId== is kept during the migration window so
+  // historical emails (pre-backfill) still trigger refreshes.
   useEffect(() => {
     if (!contact?.id || !tenantId) return;
-    const q = query(
+
+    const triggerReload = async () => {
+      try {
+        const { loadContactActivities } = await import('../utils/activityService');
+        const activities = await loadContactActivities(tenantId, contact.id, {
+          limit: 200,
+          includeTasks: true,
+          includeEmails: true,
+          includeNotes: true,
+          includeAIActivities: false,
+          onlyCompletedTasks: true,
+        });
+        const aggregated: ContactActivityItem[] = activities.map((activity) => ({
+          id: activity.id,
+          type: activity.type,
+          timestamp: activity.timestamp,
+          title: activity.title,
+          description: activity.description,
+          metadata: activity.metadata,
+        }));
+        setItems(aggregated);
+        setPage(0);
+      } catch (e: any) {
+        console.warn('ContactActivityTab: failed to refresh activities after email_logs update', e);
+      }
+    };
+
+    const primaryQ = query(
+      collection(db, 'tenants', tenantId, 'email_logs'),
+      where('participantContactIds', 'array-contains', contact.id),
+      orderBy('timestamp', 'desc'),
+      limit(1)
+    );
+    const legacyQ = query(
       collection(db, 'tenants', tenantId, 'email_logs'),
       where('contactId', '==', contact.id),
       orderBy('timestamp', 'desc'),
       limit(1)
     );
-    const unsub = onSnapshot(
-      q,
-      () => {
-        // Fire-and-forget; load() is defined in the other effect, so re-run it by duplicating minimal logic here.
-        (async () => {
-          try {
-            const { loadContactActivities } = await import('../utils/activityService');
-            const activities = await loadContactActivities(tenantId, contact.id, {
-              limit: 200,
-              includeTasks: true,
-              includeEmails: true,
-              includeNotes: true,
-              includeAIActivities: false,
-              onlyCompletedTasks: true,
-            });
-            const aggregated: ContactActivityItem[] = activities.map((activity) => ({
-              id: activity.id,
-              type: activity.type,
-              timestamp: activity.timestamp,
-              title: activity.title,
-              description: activity.description,
-              metadata: activity.metadata,
-            }));
-            setItems(aggregated);
-            setPage(0);
-          } catch (e: any) {
-            // Don't clobber the UI on listener errors; just log
-            console.warn('ContactActivityTab: failed to refresh activities after email_logs update', e);
-          }
-        })();
-      },
-      (err) => {
-        console.warn('ContactActivityTab: email_logs listener error', err);
-      }
+
+    const unsubPrimary = onSnapshot(
+      primaryQ,
+      () => { triggerReload(); },
+      (err) => { console.warn('ContactActivityTab: participantContactIds listener error (expected until index builds)', err); }
     );
-    return () => unsub();
+    const unsubLegacy = onSnapshot(
+      legacyQ,
+      () => { triggerReload(); },
+      (err) => { console.warn('ContactActivityTab: legacy contactId listener error', err); }
+    );
+
+    return () => {
+      unsubPrimary();
+      unsubLegacy();
+    };
   }, [contact?.id, tenantId]);
 
   // Derived list after filters

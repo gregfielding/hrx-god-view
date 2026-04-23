@@ -1016,6 +1016,41 @@ function bgOwner(hrx: HrxBackgroundCheckStatus | undefined): OnboardingQueueOwne
   return 'Vendor';
 }
 
+const BG_WEBHOOK_SUMMARY_MAX = 140;
+
+function truncateEllipsis(text: string, max: number): string {
+  const t = text.trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, Math.max(0, max - 1))}…`;
+}
+
+function humanizeAccusourceWebhookEventType(raw: string | null | undefined): string {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  const spaced = s.replace(/_/g, ' ');
+  return spaced.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
+ * One-line summary of the latest stored webhook fields on the backgroundChecks doc.
+ */
+export function buildBackgroundWebhookActivityLabel(r: BackgroundCheckRecord): string {
+  const evt = humanizeAccusourceWebhookEventType(r.lastWebhookType);
+  const ps = String(r.providerStatus || '').trim();
+  const svc = r.lastServiceComponent;
+  const svcName = svc ? String(svc.serviceName || '').trim() : '';
+  const svcStatus = svc ? String(svc.status || '').trim() : '';
+  const svcLine =
+    svcName || svcStatus ? `${svcName || 'Service'}${svcName && svcStatus ? ': ' : ''}${svcStatus || ''}`.trim() : '';
+
+  if (evt && ps) return truncateEllipsis(`${evt} · ${ps}`, BG_WEBHOOK_SUMMARY_MAX);
+  if (evt && svcLine) return truncateEllipsis(`${evt} · ${svcLine}`, BG_WEBHOOK_SUMMARY_MAX);
+  if (ps) return truncateEllipsis(ps, BG_WEBHOOK_SUMMARY_MAX);
+  if (evt) return truncateEllipsis(evt, BG_WEBHOOK_SUMMARY_MAX);
+  if (svcLine) return truncateEllipsis(svcLine, BG_WEBHOOK_SUMMARY_MAX);
+  return '—';
+}
+
 export function buildBackgroundQueueRows(
   records: BackgroundCheckRecord[],
   userById: Record<string, UserProfileLite | undefined>,
@@ -1058,6 +1093,9 @@ export function buildBackgroundQueueRows(
 
     const packageLabel = String(r.requestedPackageName || '').trim() || '—';
 
+    const lastActivityTs = r.lastWebhookAt ?? r.updatedAt;
+    const lastWebhookActivityLabel = buildBackgroundWebhookActivityLabel(r);
+
     rows.push({
       rowId: `bg:${r.id}`,
       userId: uid,
@@ -1070,8 +1108,9 @@ export function buildBackgroundQueueRows(
       employmentModeLabel,
       packageLabel,
       statusLabel: stLabel === 'Not started' ? 'Not started' : stLabel,
-      lastUpdateLabel: formatQueueTime(r.updatedAt),
-      lastUpdateMs: firestoreTimeMs(r.updatedAt),
+      lastWebhookActivityLabel,
+      lastUpdateTimeLabel: formatQueueTime(lastActivityTs),
+      lastUpdateMs: firestoreTimeMs(lastActivityTs),
       ownerLabel: bgOwner(hrx),
       sortPriority: bgSortPriority(hrx),
       profilePath: `/users/${uid}`,

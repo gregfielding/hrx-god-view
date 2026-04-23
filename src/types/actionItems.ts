@@ -52,11 +52,27 @@ export type ActionItemType =
   | 'background_pending'
   | 'background_review_required'
   | 'cert_required_missing'
+  /** Phase 5 — certification engine (narrow items; prefer {@link ActionItem.certificationRef}). */
+  | 'missing_certification'
+  | 'certification_pending_review'
+  | 'certification_rejected'
+  | 'certification_expired'
+  | 'certification_attested_only'
+  | 'certification_expiring_soon'
+  | 'certification_preferred_unmet'
   | 'assignment_action_required'
   | 'assignment_readiness_blocked'
   | 'risk_watchout'
   | 'score_review_recommended'
   | 'score_auto_advance_blocked';
+
+/** Phase 5 — links Action Items row to canonical certification engine output. */
+export type ActionItemCertificationRef = {
+  requirementId: string;
+  catalogEntryId: string;
+  certificationRecordId?: string;
+  engineReason: string;
+};
 
 export interface ActionItem {
   id: string;
@@ -76,4 +92,6 @@ export interface ActionItem {
   /** Lower = higher precedence after dedupe */
   priority: number;
   rulesVersion: typeof ACTION_ITEMS_RULES_VERSION;
+  /** Present when `type` is Phase 5 certification engine types. */
+  certificationRef?: ActionItemCertificationRef;
 }

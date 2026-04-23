@@ -1,4 +1,5 @@
 import type * as admin from 'firebase-admin';
+import type { AccusourceLineAdjudication } from './accusourceAdjudication';
 
 export type AccusourceEnvironment = 'sandbox' | 'production';
 
@@ -60,20 +61,25 @@ export interface BackgroundCheckDocument {
   drugReportReady: boolean;
   profileCompleted: boolean;
   orderCompleted: boolean;
+  providerFinalReportUrl?: string | null;
+  providerFinalReportAt?: admin.firestore.Timestamp | admin.firestore.FieldValue | null;
+  providerFinalDecision?: string | null;
+  providerFinalDecisionAt?: admin.firestore.Timestamp | admin.firestore.FieldValue | null;
   lastWebhookAt?: admin.firestore.Timestamp | admin.firestore.FieldValue | null;
   lastWebhookType?: string | null;
   lastSyncAt?: admin.firestore.Timestamp | admin.firestore.FieldValue | null;
   syncError?: string | null;
   updatedAt?: admin.firestore.Timestamp | admin.firestore.FieldValue | null;
-  /** Latest component from `service_status_change` webhooks. */
+  /** Latest component from `service_status_change` / batched `order_status_change` webhooks. */
   lastServiceComponent?: {
     serviceId?: string | null;
     serviceName?: string | null;
     status?: string | null;
     statusId?: string | number | null;
     updatedAt?: admin.firestore.Timestamp | admin.firestore.FieldValue | null;
+    jurisdiction?: string | null;
   } | null;
-  /** Keyed by SourceDirect service id (string); merged on each `service_status_change`. */
+  /** Keyed by SourceDirect service id (string); merged on each service/order topic webhook. */
   providerServiceOrderStatus?: Record<
     string,
     {
@@ -82,6 +88,31 @@ export interface BackgroundCheckDocument {
       status?: string | null;
       statusId?: string | number | null;
       updatedAt?: admin.firestore.Timestamp | admin.firestore.FieldValue | null;
+      providerPrice?: number | null;
+      providerPriceFormatted?: string | null;
+      jurisdiction?: string | null;
+      assignmentLabel?: string | null;
+      orderedAt?: admin.firestore.Timestamp | null;
+      submittedAt?: admin.firestore.Timestamp | null;
+      startedAt?: admin.firestore.Timestamp | null;
+      completedAt?: admin.firestore.Timestamp | null;
+      receivedAt?: admin.firestore.Timestamp | null;
+      reviewedAt?: admin.firestore.Timestamp | null;
+      providerReportedAt?: admin.firestore.Timestamp | null;
+      reportUrl?: string | null;
+      decision?: string | null;
+      decisionAt?: admin.firestore.Timestamp | null;
+      providerOrderId?: unknown;
+      providerRegistrationId?: unknown;
+      labName?: string | null;
+      labCode?: number | null;
+      labShortDescription?: string | null;
+      labLongDescription?: string | null;
+      /**
+       * Per-line adjudication (auto verdict + optional recruiter override + history).
+       * Populated on every webhook merge; manual overrides are reversible.
+       */
+      adjudication?: AccusourceLineAdjudication | null;
     }
   > | null;
 }

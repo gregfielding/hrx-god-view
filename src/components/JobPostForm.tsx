@@ -20,6 +20,7 @@ import {
   Stack,
   Snackbar,
   Divider,
+  FormControlLabel,
 } from '@mui/material';
 import { Close as CloseIcon, AutoAwesome as AutoAwesomeIcon, ContentCopy as ContentCopyIcon } from '@mui/icons-material';
 import JobPostWorksiteCityPlacesField, {
@@ -31,12 +32,14 @@ import {
   stripReadOnlyJobPostFields,
 } from '../services/recruiter/jobsBoardService';
 import { AccusourcePackageSelector } from './recruiter/AccusourcePackageSelector';
+import { useAccusourceCatalog } from '../hooks/useAccusourceCatalog';
+import { getAccusourcePackageServiceDisplayNames } from '../utils/accusourceCatalogHelpers';
 import { useAuth } from '../contexts/AuthContext';
 import jobTitlesList from '../data/onetJobTitles.json';
 import onetSkills from '../data/onetSkills.json';
 import credentialsSeed from '../data/credentialsSeed.json';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
-import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../data/screeningsOptions';
+import { additionalScreeningOptions } from '../data/screeningsOptions';
 import { collection, getDocs, query, orderBy as firestoreOrderBy, where, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { geocodeAddress } from '../utils/geocodeAddress';
@@ -196,6 +199,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
   onHeaderPreviewChange,
 }) => {
   const { tenantId, user } = useAuth();
+  const { catalog } = useAccusourceCatalog();
   const [error, setError] = useState<string | null>(null);
   const [generatingDescription, setGeneratingDescription] = useState(false);
   const [copySnackbarOpen, setCopySnackbarOpen] = useState(false);
@@ -241,6 +245,8 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
       eVerifyRequired: false,
       screeningPackageId: '',
       screeningPackageName: '',
+      showScreeningPackageOnPost: false,
+      screeningPackageServiceNames: [] as string[],
       backgroundCheckPackages: [] as string[],
       showBackgroundChecks: false,
       drugScreeningPanels: [] as string[],
@@ -343,8 +349,35 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     setJobDescriptionLocal((prev) => (String(prev).trim() ? prev : jd));
   }, [positionJobDescriptionFromAccount]);
 
+  /**
+   * Job order Overview → "Job description from client" pre-fills the Jobs Board "Job description prompt"
+   * (for AI) when the user has not already set a saved prompt on the post.
+   */
+  useEffect(() => {
+    if (!hideJobOrderConnection || !jobOrderData) return;
+    const fromOrder = String(jobOrderData.jobDescriptionFromClient ?? '').trim();
+    if (!fromOrder) return;
+    setFormData((prev) => {
+      if (String(prev.jobDescriptionPrompt || '').trim()) return prev;
+      return { ...prev, jobDescriptionPrompt: fromOrder };
+    });
+    if (!jobDescriptionPromptFocusRef.current) {
+      setJobDescriptionPromptLocal((prev) => (String(prev).trim() ? prev : fromOrder));
+    }
+  }, [hideJobOrderConnection, jobOrderData?.jobDescriptionFromClient]);
+
   const formDataRef = useRef(formData);
   formDataRef.current = formData;
+  /** Keep denormalized catalog service labels in sync for public job board copy. */
+  useEffect(() => {
+    const id = String(formData.screeningPackageId ?? '').trim();
+    const next = id ? getAccusourcePackageServiceDisplayNames(catalog, id) : [];
+    setFormData((prev) => {
+      const cur = prev.screeningPackageServiceNames || [];
+      if (cur.length === next.length && cur.every((v, i) => v === next[i])) return prev;
+      return { ...prev, screeningPackageServiceNames: next };
+    });
+  }, [catalog, formData.screeningPackageId]);
   const persistChainRef = useRef(Promise.resolve());
   /** When auto-saving edits, parent may refresh `post` after each save; skip re-applying initialData if same document. */
   const lastSyncedAutoSavePostIdRef = useRef<string | null>(null);
@@ -387,10 +420,12 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
       showCustomUniformRequirements: fd.showCustomUniformRequirements,
       requiredPpe: coerceStringArrayField(fd.requiredPpe),
       showRequiredPpe: fd.showRequiredPpe,
-      backgroundCheckPackages: coerceStringArrayField(fd.backgroundCheckPackages),
-      showBackgroundChecks: fd.showBackgroundChecks,
-      drugScreeningPanels: coerceStringArrayField(fd.drugScreeningPanels),
-      showDrugScreening: fd.showDrugScreening,
+      backgroundCheckPackages: [],
+      showBackgroundChecks: false,
+      drugScreeningPanels: [],
+      showDrugScreening: false,
+      showScreeningPackageOnPost: fd.showScreeningPackageOnPost,
+      screeningPackageServiceNames: coerceStringArrayField(fd.screeningPackageServiceNames),
       additionalScreenings: coerceStringArrayField(fd.additionalScreenings),
       showAdditionalScreenings: fd.showAdditionalScreenings,
       shift: coerceStringArrayField(fd.shift),
@@ -1103,10 +1138,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             eVerifyRequired: jobOrderData.eVerifyRequired || false,
             screeningPackageId: String(jobOrderData.screeningPackageId ?? '').trim(),
             screeningPackageName: String(jobOrderData.screeningPackageName ?? '').trim(),
-            backgroundCheckPackages: jobOrderData.backgroundCheckPackages || [],
-            showBackgroundChecks: (jobOrderData.backgroundCheckPackages || []).length > 0,
-            drugScreeningPanels: jobOrderData.drugScreeningPanels || [],
-            showDrugScreening: (jobOrderData.drugScreeningPanels || []).length > 0,
+            backgroundCheckPackages: [],
+            showBackgroundChecks: false,
+            drugScreeningPanels: [],
+            showDrugScreening: false,
             additionalScreenings: jobOrderData.additionalScreenings || [],
             showAdditionalScreenings: (jobOrderData.additionalScreenings || []).length > 0,
             // Copy all requirements and qualifications (job order may use licensesCerts or requiredLicenses/requiredCertifications)
@@ -1318,10 +1353,12 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         showCustomUniformRequirements: formData.showCustomUniformRequirements,
         requiredPpe: coerceStringArrayField(formData.requiredPpe),
         showRequiredPpe: formData.showRequiredPpe,
-        backgroundCheckPackages: coerceStringArrayField(formData.backgroundCheckPackages),
-        showBackgroundChecks: formData.showBackgroundChecks,
-        drugScreeningPanels: coerceStringArrayField(formData.drugScreeningPanels),
-        showDrugScreening: formData.showDrugScreening,
+        backgroundCheckPackages: [],
+        showBackgroundChecks: false,
+        drugScreeningPanels: [],
+        showDrugScreening: false,
+        showScreeningPackageOnPost: formData.showScreeningPackageOnPost,
+        screeningPackageServiceNames: coerceStringArrayField(formData.screeningPackageServiceNames),
         additionalScreenings: coerceStringArrayField(formData.additionalScreenings),
         showAdditionalScreenings: formData.showAdditionalScreenings,
         shift: coerceStringArrayField(formData.shift),
@@ -2130,8 +2167,8 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
             Compliance & requirements
           </Typography>
-          <Grid container spacing={2} alignItems="flex-start">
-            <Grid item xs={12} md={7}>
+          <Grid container spacing={2} alignItems="center">
+            <Grid item xs={12} sm={6}>
               <AccusourcePackageSelector
                 packageId={formData.screeningPackageId}
                 packageName={formData.screeningPackageName}
@@ -2148,107 +2185,23 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 helperText="Optional override for AccuSource screening from this posting (merge order: job post → linked job order → location → account)."
               />
             </Grid>
-            <Grid item xs={12} md={5}>
-              <Box sx={{ pt: { md: 0.5 } }}>
-                <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.5 }}>
-                  Choose a catalog package so hiring and onboarding can resolve which AccuSource package to use for
-                  candidates who applied to this post.
-                </Typography>
-              </Box>
-            </Grid>
-          </Grid>
-        </Box>
-
-        {/* Background Checks Section */}
-        <Box sx={{ mt: 2 }}>
-          <Grid container spacing={2} alignItems="center">
             <Grid item xs={12} sm={6}>
-              <Autocomplete
-                multiple
-                fullWidth
-                options={backgroundCheckOptions.map(option => option.label)}
-                value={formData.backgroundCheckPackages}
-                onChange={(event, newValue) => {
-                  setFormData({ ...formData, backgroundCheckPackages: newValue });
-                  maybeTickPersist();
-                }}
-                renderInput={(params) => (
-                  <JobPostFormAutoSaveTextField
-                    {...params}
-                    label="Background Check Packages"
-                    helperText="Select required background check packages"
-                  />
-                )}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip
-                      variant="outlined"
-                      label={option}
-                      {...getTagProps({ index })}
-                      key={option}
-                    />
-                  ))
-                }
-              />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
-                <Typography variant="body1">Show Background Requirements</Typography>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', gap: 1 }}>
+                <Typography variant="body1">Show on jobs board post</Typography>
                 <Switch
-                  checked={formData.showBackgroundChecks}
+                  checked={formData.showScreeningPackageOnPost}
                   onChange={(e) => {
-                  setFormData({ ...formData, showBackgroundChecks: e.target.checked });
-                  maybeTickPersist();
-                }}
+                    setFormData((prev) => ({ ...prev, showScreeningPackageOnPost: e.target.checked }));
+                    maybeTickPersist();
+                  }}
                 />
               </Box>
             </Grid>
-          </Grid>
-        </Box>
-
-        {/* Drug Screening Section */}
-        <Box sx={{ mt: 2 }}>
-          <Grid container spacing={2} alignItems="center">
-            <Grid item xs={12} sm={6}>
-              <Autocomplete
-                multiple
-                fullWidth
-                options={drugScreeningOptions.map(option => option.label)}
-                value={formData.drugScreeningPanels}
-                onChange={(event, newValue) => {
-                  setFormData({ ...formData, drugScreeningPanels: newValue });
-                  maybeTickPersist();
-                }}
-                renderInput={(params) => (
-                  <JobPostFormAutoSaveTextField
-                    {...params}
-                    label="Drug Screening Panels"
-                    helperText="Select required drug screening panels"
-                  />
-                )}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip
-                      variant="outlined"
-                      label={option}
-                      {...getTagProps({ index })}
-                      key={option}
-                    />
-                  ))
-                }
-              />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
-                <Typography variant="body1">Show Drug Screening Requirements</Typography>
-                <Switch
-                  checked={formData.showDrugScreening}
-                  onChange={(e) => {
-                  setFormData({ ...formData, showDrugScreening: e.target.checked });
-                  maybeTickPersist();
-                }}
-                />
-              </Box>
+            <Grid item xs={12}>
+              <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.5 }}>
+                Choose a catalog package so hiring and onboarding can resolve which AccuSource package to use for
+                candidates who applied to this post.
+              </Typography>
             </Grid>
           </Grid>
         </Box>

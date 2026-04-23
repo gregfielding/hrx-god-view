@@ -7,7 +7,6 @@ import type { QueryDocumentSnapshot } from 'firebase-admin/firestore';
 import { FieldPath } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
-import { CALLABLE_BROWSER_CORS } from '../integrations/callableBrowserCors';
 import {
   entityEmploymentDocHasQualifyingStatus,
   normalizeRecruiterEntityKey,
@@ -121,9 +120,14 @@ async function loadEntityUserIdSet(
 export const searchRecruiterTableUsers = onCall(
   {
     enforceAppCheck: false,
-    cors: CALLABLE_BROWSER_CORS,
-    memory: '512MiB',
-    timeoutSeconds: 120,
+    /**
+     * Reflect request origin (auth still required). Using `true` avoids Gen2 CORS regressions where a
+     * curated list/RegExp misses the browser origin and the preflight returns no
+     * `Access-Control-Allow-Origin` (client shows a misleading CORS error instead of the real failure).
+     */
+    cors: true,
+    memory: '1GiB',
+    timeoutSeconds: 300,
   },
   async (request): Promise<SearchRecruiterTableUsersResponse> => {
     if (!request.auth?.uid) {
@@ -154,104 +158,128 @@ export const searchRecruiterTableUsers = onCall(
       throw new HttpsError('invalid-argument', 'searchQuery is too long');
     }
 
-    await assertCallerCanSearchTenant(request.auth.uid, tenantId);
+    try {
+      await assertCallerCanSearchTenant(request.auth.uid, tenantId);
 
-    let entityUserIds: Set<string> | null = null;
-    let entityScanned = 0;
-    let entityBatches = 0;
+      let entityUserIds: Set<string> | null = null;
+      let entityScanned = 0;
+      let entityBatches = 0;
 
-    if (hasEntity && entityKeyNorm) {
-      const loaded = await loadEntityUserIdSet(tenantId, entityKeyNorm);
-      entityUserIds = loaded.entityUserIds;
-      entityScanned = loaded.scannedDocuments;
-      entityBatches = loaded.batches;
-      if (entityUserIds.size === 0) {
-        logger.info('searchRecruiterTableUsers.done', {
-          tenantId,
-          callerUid: request.auth.uid,
-          hasSearch,
-          hasGroup,
-          hasState,
-          hasEntity,
-          entityKey: entityKeyNorm,
-          matchCount: 0,
-          scannedDocuments: entityScanned,
-          batches: entityBatches,
-          capped: false,
-          entityEmploymentScan: true,
-        });
-        return {
-          userIds: [],
-          scannedDocuments: entityScanned,
-          batches: entityBatches,
-          capped: false,
-        };
-      }
-    }
-
-    const userIds: string[] = [];
-    let lastDoc: QueryDocumentSnapshot | null = null;
-    let batches = 0;
-    let scanned = 0;
-    let capped = false;
-
-    while (batches < MAX_BATCHES && userIds.length < MAX_MATCH_IDS) {
-      const base = db
-        .collection('users')
-        .where(`tenantIds.${tenantId}.securityLevel`, 'in', TENANT_LISTABLE_SECURITY_LEVELS)
-        .orderBy('createdAt', 'desc')
-        .limit(BATCH_SIZE);
-      const snap = await (lastDoc ? base.startAfter(lastDoc) : base).get();
-      if (snap.empty) {
-        break;
+      if (hasEntity && entityKeyNorm) {
+        const loaded = await loadEntityUserIdSet(tenantId, entityKeyNorm);
+        entityUserIds = loaded.entityUserIds;
+        entityScanned = loaded.scannedDocuments;
+        entityBatches = loaded.batches;
+        if (entityUserIds.size === 0) {
+          logger.info('searchRecruiterTableUsers.done', {
+            tenantId,
+            callerUid: request.auth.uid,
+            hasSearch,
+            hasGroup,
+            hasState,
+            hasEntity,
+            entityKey: entityKeyNorm,
+            matchCount: 0,
+            scannedDocuments: entityScanned,
+            batches: entityBatches,
+            capped: false,
+            entityEmploymentScan: true,
+          });
+          return {
+            userIds: [],
+            scannedDocuments: entityScanned,
+            batches: entityBatches,
+            capped: false,
+          };
+        }
       }
 
-      batches += 1;
-      scanned += snap.docs.length;
+      const userIds: string[] = [];
+      let lastDoc: QueryDocumentSnapshot | null = null;
+      let batches = 0;
+      let scanned = 0;
+      let capped = false;
 
-      for (const doc of snap.docs) {
-        const data = doc.data() as Record<string, unknown>;
-        if (hasEntity && entityUserIds && !entityUserIds.has(doc.id)) continue;
-        if (!firestoreUserDocMatchesRecruiterSearch(data, tenantId, searchQuery)) continue;
-        if (hasGroup && !firestoreUserDocMatchesRecruiterGroup(data, tenantId, groupIdRaw)) continue;
-        if (hasState && !firestoreUserDocMatchesRecruiterState(data, stateCodeRaw)) continue;
-        userIds.push(doc.id);
-        if (userIds.length >= MAX_MATCH_IDS) {
-          capped = true;
+      while (batches < MAX_BATCHES && userIds.length < MAX_MATCH_IDS) {
+        const base = db
+          .collection('users')
+          .where(`tenantIds.${tenantId}.securityLevel`, 'in', TENANT_LISTABLE_SECURITY_LEVELS)
+          .orderBy('createdAt', 'desc')
+          .limit(BATCH_SIZE);
+        const snap = await (lastDoc ? base.startAfter(lastDoc) : base).get();
+        if (snap.empty) {
+          break;
+        }
+
+        batches += 1;
+        scanned += snap.docs.length;
+
+        for (const doc of snap.docs) {
+          const data = doc.data() as Record<string, unknown>;
+          if (hasEntity && entityUserIds && !entityUserIds.has(doc.id)) continue;
+          if (!firestoreUserDocMatchesRecruiterSearch(data, tenantId, searchQuery)) continue;
+          if (hasGroup && !firestoreUserDocMatchesRecruiterGroup(data, tenantId, groupIdRaw)) continue;
+          if (hasState && !firestoreUserDocMatchesRecruiterState(data, stateCodeRaw)) continue;
+          userIds.push(doc.id);
+          if (userIds.length >= MAX_MATCH_IDS) {
+            capped = true;
+            break;
+          }
+        }
+
+        lastDoc = snap.docs[snap.docs.length - 1] ?? null;
+
+        if (snap.docs.length < BATCH_SIZE) {
+          break;
+        }
+        if (capped) {
           break;
         }
       }
 
-      lastDoc = snap.docs[snap.docs.length - 1] ?? null;
+      logger.info('searchRecruiterTableUsers.done', {
+        tenantId,
+        callerUid: request.auth.uid,
+        hasSearch,
+        hasGroup,
+        hasState,
+        hasEntity,
+        entityKey: entityKeyNorm,
+        matchCount: userIds.length,
+        scannedDocuments: scanned + entityScanned,
+        batches: batches + entityBatches,
+        capped,
+        entityEmploymentScan: hasEntity,
+      });
 
-      if (snap.docs.length < BATCH_SIZE) {
-        break;
+      return {
+        userIds,
+        scannedDocuments: scanned + entityScanned,
+        batches: batches + entityBatches,
+        capped,
+      };
+    } catch (e: unknown) {
+      if (e instanceof HttpsError) throw e;
+      const msg = e instanceof Error ? e.message : String(e);
+      const rawCode =
+        e && typeof e === 'object' && 'code' in e ? String((e as { code?: unknown }).code ?? '') : '';
+      const isFailedPrecondition =
+        rawCode === '9' ||
+        rawCode === 'failed-precondition' ||
+        /requires an index|The query requires an index|failed[- ]precondition/i.test(msg);
+      logger.error('searchRecruiterTableUsers.failed', {
+        tenantId,
+        callerUid: request.auth.uid,
+        message: msg,
+        code: rawCode,
+      });
+      if (isFailedPrecondition) {
+        throw new HttpsError(
+          'failed-precondition',
+          `Firestore needs a composite index for this search (or the query could not run). ${msg}`,
+        );
       }
-      if (capped) {
-        break;
-      }
+      throw new HttpsError('internal', `User search failed: ${msg}`);
     }
-
-    logger.info('searchRecruiterTableUsers.done', {
-      tenantId,
-      callerUid: request.auth.uid,
-      hasSearch,
-      hasGroup,
-      hasState,
-      hasEntity,
-      entityKey: entityKeyNorm,
-      matchCount: userIds.length,
-      scannedDocuments: scanned + entityScanned,
-      batches: batches + entityBatches,
-      capped,
-      entityEmploymentScan: hasEntity,
-    });
-
-    return {
-      userIds,
-      scannedDocuments: scanned + entityScanned,
-      batches: batches + entityBatches,
-      capped,
-    };
   },
 );

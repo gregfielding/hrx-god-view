@@ -92,6 +92,9 @@ export interface AccusourcePackageSelectorBaseProps {
 
   /** Modal copy uses "from selection"; defaults form uses catalog. */
   packageNameFieldLabel?: string;
+
+  /** Placed inline to the right of the read-only package name field (e.g. “show on post” switch). */
+  packageNameEndAdornment?: React.ReactNode;
 }
 
 export const AccusourcePackageSelectorBase: React.FC<AccusourcePackageSelectorBaseProps> = ({
@@ -118,6 +121,7 @@ export const AccusourcePackageSelectorBase: React.FC<AccusourcePackageSelectorBa
   emptyCatalogSeverity = 'info',
   emptyCatalogMessage,
   packageNameFieldLabel = 'Package name (from catalog)',
+  packageNameEndAdornment,
 }) => {
   const missing = isAccusourcePackageIdMissingFromCatalog(catalog, packageId);
   const hasCatalog = Boolean(catalog?.packages?.length);
@@ -245,15 +249,21 @@ export const AccusourcePackageSelectorBase: React.FC<AccusourcePackageSelectorBa
         </Select>
       </FormControl>
 
-      <TextField
-        size="small"
-        label={packageNameFieldLabel}
-        value={packageName}
-        fullWidth
-        InputProps={{ readOnly: true }}
-        InputLabelProps={{ shrink: true }}
-        helperText={packageNameHelperText || ' '}
-      />
+      <Stack direction="row" spacing={1.5} alignItems="flex-start" useFlexGap>
+        <TextField
+          size="small"
+          label={packageNameFieldLabel}
+          value={packageName}
+          fullWidth
+          sx={{ flex: 1, minWidth: 0 }}
+          InputProps={{ readOnly: true }}
+          InputLabelProps={{ shrink: true }}
+          helperText={packageNameHelperText || ' '}
+        />
+        {packageNameEndAdornment ? (
+          <Box sx={{ pt: 0.5, flexShrink: 0 }}>{packageNameEndAdornment}</Box>
+        ) : null}
+      </Stack>
 
       {missing && (
         <Alert severity="warning">
@@ -276,7 +286,7 @@ export const AccusourcePackageSelectorBase: React.FC<AccusourcePackageSelectorBa
               {...params}
               size="small"
               label="Additional services (optional)"
-              helperText="Exact service IDs from the synced catalog; sent to AccuSource as orders[].serviceId on create (with packageId)."
+              helperText="Exact service IDs from the synced catalog; sent to AccuSource as orders[].serviceId — with a package when both are selected, or alone for à la carte orders."
             />
           )}
         />

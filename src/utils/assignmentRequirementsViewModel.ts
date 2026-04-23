@@ -21,6 +21,7 @@ import {
 } from './assignmentReadinessUi';
 import type { SignatureEnvelopeStatus } from '../types/phase1cOnboarding';
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
+import { workerFacingScreeningPrimaryLineFromRecord } from './backgroundChecks/formatWorkerFacingScreeningPackage';
 import type { OnboardingAutomationDispatchBrief } from './employmentOnboardingNarrative';
 import {
   filterScreeningAutomationDispatchBriefs,
@@ -121,8 +122,9 @@ function itemFromAssignmentRow(row: EmploymentOnboardingRow, category: Assignmen
 }
 
 function itemFromBackgroundRecord(r: BackgroundCheckRecord): AssignmentRequirementItemVm {
+  const primary = workerFacingScreeningPrimaryLineFromRecord(r);
   const title =
-    [r.requestedPackageName, r.candidateName].filter(Boolean).join(' · ') || `Screening order ${r.id.slice(0, 8)}…`;
+    [primary, r.candidateName].filter(Boolean).join(' · ') || `Screening order ${r.id.slice(0, 8)}…`;
   return {
     id: `bg__${r.id}`,
     category: 'screening_order',

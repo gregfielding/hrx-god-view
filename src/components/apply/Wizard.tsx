@@ -2951,6 +2951,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           <ProfilePictureStep
             value={formData.profilePicture || {}}
             onChange={(v) => persist({ profilePicture: v })}
+            userId={auth.currentUser?.uid || uid || undefined}
+            onSkip={handleNext}
           />
         );
       case 6:

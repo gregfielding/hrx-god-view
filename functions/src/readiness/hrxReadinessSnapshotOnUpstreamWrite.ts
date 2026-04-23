@@ -28,6 +28,8 @@ const triggerOpts = {
   region: 'us-central1' as const,
   maxInstances: 5,
   retry: false,
+  /** Default 256 MiB caused OOM on busy entity_employment writes (logs 2026-04-22). */
+  memory: '512MiB' as const,
 };
 
 function rowUserId(row: Record<string, unknown> | null | undefined): string {

@@ -21,7 +21,20 @@ function specificityRank(t: ActionItem['type']): number {
   if (t === 'i9_incomplete' || t === 'everify_action_required') return 0;
   if (t.startsWith('everify_')) return 1;
   if (t === 'payroll_or_tax_or_deposit_incomplete') return 2;
-  if (t === 'background_review_required' || t === 'background_pending' || t === 'cert_required_missing') return 3;
+  if (
+    t === 'background_review_required' ||
+    t === 'background_pending' ||
+    t === 'cert_required_missing' ||
+    t === 'missing_certification' ||
+    t === 'certification_pending_review' ||
+    t === 'certification_rejected' ||
+    t === 'certification_expired' ||
+    t === 'certification_attested_only' ||
+    t === 'certification_expiring_soon' ||
+    t === 'certification_preferred_unmet'
+  ) {
+    return 3;
+  }
   if (t === GENERIC_ONBOARDING) return 5;
   return 4;
 }
@@ -46,6 +59,13 @@ function displayTier(t: ActionItemType): number {
     case 'background_pending':
     case 'background_review_required':
     case 'cert_required_missing':
+    case 'missing_certification':
+    case 'certification_pending_review':
+    case 'certification_rejected':
+    case 'certification_expired':
+    case 'certification_attested_only':
+    case 'certification_expiring_soon':
+    case 'certification_preferred_unmet':
       return 3;
     case 'risk_watchout':
     case 'score_review_recommended':
