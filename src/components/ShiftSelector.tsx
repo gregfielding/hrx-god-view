@@ -286,11 +286,17 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                 )}
               </Stack>
 
-              {item.type === 'shift' && (getShiftDisplayText(shift as unknown as Record<string, unknown>, 'shiftDescription', language) || shift.shiftDescription) && (
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5, display: 'block', lineHeight: 1.5 }}>
-                  {getShiftDisplayText(shift as unknown as Record<string, unknown>, 'shiftDescription', language) || shift.shiftDescription}
-                </Typography>
-              )}
+              {/* Shift-specific description is private — may contain operational details
+                  (supervisor phone, site entry instructions, etc). Only render it AFTER the
+                  worker has been confirmed for this shift (i.e. this is their assignment view),
+                  not on the public jobs board where anyone can browse postings. */}
+              {item.type === 'shift' &&
+                isConfirmed &&
+                (getShiftDisplayText(shift as unknown as Record<string, unknown>, 'shiftDescription', language) || shift.shiftDescription) && (
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5, display: 'block', lineHeight: 1.5 }}>
+                    {getShiftDisplayText(shift as unknown as Record<string, unknown>, 'shiftDescription', language) || shift.shiftDescription}
+                  </Typography>
+                )}
             </Box>
 
             <Box sx={{ ml: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
