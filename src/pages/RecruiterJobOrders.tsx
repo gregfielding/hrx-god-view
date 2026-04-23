@@ -449,56 +449,11 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
 
       setJobOrders(newJobOrders);
       firstLoadRef.current = false;
-
-      // Fetch unique applicant counts for the visible job orders. Firestore's `in` operator
-      // supports up to 30 values per query, so we chunk. We dedupe by `userId` so a worker
-      // who applied to multiple shifts inside the same job order counts once. This runs AFTER
-      // setJobOrders so the table renders immediately with no count, then the counts fill in.
-      const jobOrderIds = newJobOrders.map((jo) => jo.id).filter(Boolean);
-      if (jobOrderIds.length > 0) {
-        try {
-          const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
-          const CHUNK = 30;
-          const countsByJobOrder = new Map<string, number>();
-
-          for (let i = 0; i < jobOrderIds.length; i += CHUNK) {
-            const chunk = jobOrderIds.slice(i, i + CHUNK);
-            const snap = await getDocs(
-              query(applicationsRef, where('jobOrderId', 'in', chunk)),
-            );
-
-            // Group doc userIds by jobOrderId → Set for dedup.
-            const perOrder = new Map<string, Set<string>>();
-            snap.docs.forEach((d) => {
-              const data = d.data() as { jobOrderId?: string; userId?: string; candidateId?: string };
-              const joId = data.jobOrderId;
-              if (!joId) return;
-              // Prefer userId; fall back to candidateId; fall back to the doc id so we at
-              // least don't zero-out legacy rows without either field.
-              const dedupKey =
-                (typeof data.userId === 'string' && data.userId.trim()) ||
-                (typeof data.candidateId === 'string' && data.candidateId.trim()) ||
-                d.id;
-              let set = perOrder.get(joId);
-              if (!set) {
-                set = new Set<string>();
-                perOrder.set(joId, set);
-              }
-              set.add(String(dedupKey));
-            });
-            perOrder.forEach((set, joId) => {
-              countsByJobOrder.set(joId, (countsByJobOrder.get(joId) ?? 0) + set.size);
-            });
-          }
-
-          setJobOrders((prev) =>
-            prev.map((jo) => ({ ...jo, applicantCount: countsByJobOrder.get(jo.id) ?? 0 })),
-          );
-        } catch (err) {
-          // Don't block the list render — just leave counts undefined on error.
-          console.warn('RecruiterJobOrders: applicant count fetch failed', err);
-        }
-      }
+      // Applicant counts are computed in a separate effect below — once the
+      // visible page + its connected jobs-board posts are loaded — so we can
+      // count apps linked via `jobOrderId`, `jobId`, AND `postId` the same way
+      // `RecruiterJobOrderDetail.fetchApplicants()` does. Counting only by
+      // `jobOrderId` here undercounts (detail showed 19, table showed 11).
     } catch (error) {
       console.error('❌ RecruiterJobOrders: Error fetching job orders:', error);
       const err = error as any;
@@ -667,6 +622,108 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, paginatedJobOrders]);
+
+  // Compute unique applicant count for each visible job order. Mirrors
+  // `RecruiterJobOrderDetail.fetchApplicants()` so the table number matches the
+  // detail-page header (e.g. "Applications (19)"). Three link types:
+  //   1. application.jobOrderId  — direct
+  //   2. application.jobId       — via a connected jobs-board posting
+  //   3. application.postId      — same, legacy field name
+  // We dedupe by userId (falling back to candidateId, then doc id) so one
+  // worker applying to multiple shifts in the same job order counts once.
+  useEffect(() => {
+    if (!tenantId) return;
+    const visibleIds = paginatedJobOrders.map((jo) => jo.id).filter(Boolean);
+    if (visibleIds.length === 0) return;
+
+    // postId -> jobOrderId reverse map, built from already-loaded jobs-board posts
+    const postToJobOrder = new Map<string, string>();
+    const allPostIds: string[] = [];
+    visibleIds.forEach((joId) => {
+      const posts = jobPostsByJobOrderId[joId] || [];
+      posts.forEach((p: any) => {
+        if (p?.id) {
+          postToJobOrder.set(p.id, joId);
+          allPostIds.push(p.id);
+        }
+      });
+    });
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+        const CHUNK = 30;
+        const setsByJo = new Map<string, Set<string>>();
+        const keyFor = (d: { userId?: string; candidateId?: string }, docId: string): string =>
+          (typeof d.userId === 'string' && d.userId.trim()) ||
+          (typeof d.candidateId === 'string' && d.candidateId.trim()) ||
+          docId;
+        const addFor = (joId: string, key: string) => {
+          let set = setsByJo.get(joId);
+          if (!set) {
+            set = new Set<string>();
+            setsByJo.set(joId, set);
+          }
+          set.add(key);
+        };
+
+        // 1) Apps with jobOrderId set directly
+        for (let i = 0; i < visibleIds.length; i += CHUNK) {
+          const chunk = visibleIds.slice(i, i + CHUNK);
+          const snap = await getDocs(query(applicationsRef, where('jobOrderId', 'in', chunk)));
+          snap.docs.forEach((d) => {
+            const data = d.data() as { jobOrderId?: string; userId?: string; candidateId?: string };
+            if (!data.jobOrderId) return;
+            addFor(data.jobOrderId, keyFor(data, d.id));
+          });
+        }
+
+        // 2) + 3) Apps linked via a connected job post (by jobId or postId)
+        if (allPostIds.length > 0) {
+          for (let i = 0; i < allPostIds.length; i += CHUNK) {
+            const chunk = allPostIds.slice(i, i + CHUNK);
+            const [byJobId, byPostId] = await Promise.all([
+              getDocs(query(applicationsRef, where('jobId', 'in', chunk))),
+              getDocs(query(applicationsRef, where('postId', 'in', chunk))),
+            ]);
+            [byJobId, byPostId].forEach((snap) => {
+              snap.docs.forEach((d) => {
+                const data = d.data() as {
+                  jobId?: string;
+                  postId?: string;
+                  userId?: string;
+                  candidateId?: string;
+                };
+                const postRef = data.jobId || data.postId;
+                if (!postRef) return;
+                const joId = postToJobOrder.get(postRef);
+                if (!joId) return;
+                addFor(joId, keyFor(data, d.id));
+              });
+            });
+          }
+        }
+
+        if (cancelled) return;
+        setJobOrders((prev) =>
+          prev.map((jo) =>
+            visibleIds.includes(jo.id)
+              ? { ...jo, applicantCount: setsByJo.get(jo.id)?.size ?? 0 }
+              : jo,
+          ),
+        );
+      } catch (err) {
+        if (cancelled) return;
+        console.warn('RecruiterJobOrders: applicant count fetch failed', err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, paginatedJobOrders, jobPostsByJobOrderId]);
 
   const handleSort = (field: string) => {
     // Applicants is computed client-side after the main fetch (not a Firestore field) — not sortable.

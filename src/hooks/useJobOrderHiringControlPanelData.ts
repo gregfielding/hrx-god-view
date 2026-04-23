@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   collection,
+  getDocs,
   onSnapshot,
   query,
   where,
@@ -123,12 +124,48 @@ export function useJobOrderHiringControlPanelData(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [assigned, setAssigned] = useState(0);
-  const [applicationDocs, setApplicationDocs] = useState<QueryDocumentSnapshot[]>([]);
+  // Applications can link to a job order three ways, mirroring
+  // `RecruiterJobOrderDetail.fetchApplicants()`:
+  //   1. application.jobOrderId  — direct
+  //   2. application.jobId       — a connected jobs-board posting id
+  //   3. application.postId      — same, legacy field name
+  // We keep a live subscription per link type and merge by doc.id so counts
+  // match the Applications tab header.
+  const [docsByJobOrderId, setDocsByJobOrderId] = useState<QueryDocumentSnapshot[]>([]);
+  const [docsByJobId, setDocsByJobId] = useState<QueryDocumentSnapshot[]>([]);
+  const [docsByPostId, setDocsByPostId] = useState<QueryDocumentSnapshot[]>([]);
+  const [jobPostIds, setJobPostIds] = useState<string[]>([]);
 
+  // One-shot: fetch connected jobs-board postings for this job order so we
+  // know the post IDs to filter applications by. Posts change rarely, and the
+  // Applications subscriptions below re-evaluate whenever this list updates.
+  useEffect(() => {
+    if (!tenantId || !jobOrderId) {
+      setJobPostIds([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const postsRef = collection(db, 'tenants', tenantId, 'job_postings');
+        const snap = await getDocs(query(postsRef, where('jobOrderId', '==', jobOrderId)));
+        if (cancelled) return;
+        setJobPostIds(snap.docs.map((d) => d.id));
+      } catch {
+        if (!cancelled) setJobPostIds([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, jobOrderId]);
+
+  // Sub 1: applications with jobOrderId set directly. Drives the `loading`
+  // and `error` state — the other two subs are additive and non-critical.
   useEffect(() => {
     if (!tenantId || !jobOrderId) {
       setLoading(false);
-      setApplicationDocs([]);
+      setDocsByJobOrderId([]);
       setAssigned(0);
       return;
     }
@@ -140,7 +177,7 @@ export function useJobOrderHiringControlPanelData(
     const unsubApps = onSnapshot(
       appsQ,
       (snap) => {
-        setApplicationDocs(snap.docs);
+        setDocsByJobOrderId(snap.docs);
         setLoading(false);
       },
       (err) => {
@@ -164,6 +201,57 @@ export function useJobOrderHiringControlPanelData(
       unsubPlac();
     };
   }, [tenantId, jobOrderId]);
+
+  // Sub 2: applications linked via `jobId` to a connected jobs-board post.
+  // Firestore `in` supports up to 30 values; job orders with more than 30
+  // connected posts are rare — we cap at 30 and log if exceeded.
+  useEffect(() => {
+    if (!tenantId || jobPostIds.length === 0) {
+      setDocsByJobId([]);
+      return;
+    }
+    if (jobPostIds.length > 30) {
+      console.warn(
+        'useJobOrderHiringControlPanelData: job order has >30 connected job posts; applicant count may be clipped',
+      );
+    }
+    const limited = jobPostIds.slice(0, 30);
+    const appsRef = collection(db, 'tenants', tenantId, 'applications');
+    const q = query(appsRef, where('jobId', 'in', limited));
+    const unsub = onSnapshot(
+      q,
+      (snap) => setDocsByJobId(snap.docs),
+      () => setDocsByJobId([]),
+    );
+    return () => unsub();
+  }, [tenantId, jobPostIds]);
+
+  // Sub 3: applications linked via the legacy `postId` field.
+  useEffect(() => {
+    if (!tenantId || jobPostIds.length === 0) {
+      setDocsByPostId([]);
+      return;
+    }
+    const limited = jobPostIds.slice(0, 30);
+    const appsRef = collection(db, 'tenants', tenantId, 'applications');
+    const q = query(appsRef, where('postId', 'in', limited));
+    const unsub = onSnapshot(
+      q,
+      (snap) => setDocsByPostId(snap.docs),
+      () => setDocsByPostId([]),
+    );
+    return () => unsub();
+  }, [tenantId, jobPostIds]);
+
+  // Merge docs from all three subs by doc.id so a single application that
+  // matches multiple filters still counts once.
+  const applicationDocs = useMemo<QueryDocumentSnapshot[]>(() => {
+    const byId = new Map<string, QueryDocumentSnapshot>();
+    for (const d of docsByJobOrderId) byId.set(d.id, d);
+    for (const d of docsByJobId) byId.set(d.id, d);
+    for (const d of docsByPostId) byId.set(d.id, d);
+    return Array.from(byId.values());
+  }, [docsByJobOrderId, docsByJobId, docsByPostId]);
 
   const pipeline = useMemo(
     () => aggregatePeerApplicationStats(applicationDocs, workerAiPrescreenRequired),

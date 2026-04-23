@@ -76,7 +76,7 @@ import {
   Save as SaveIcon,
   Search as SearchIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, setDoc, updateDoc, collection, getDocs, query, where, orderBy, limit, serverTimestamp, addDoc, deleteDoc, getCountFromServer, arrayUnion } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, collection, getDocs, query, where, orderBy, limit, serverTimestamp, addDoc, deleteDoc, arrayUnion } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -682,26 +682,109 @@ export default function AccountLocationDetail() {
       .catch(() => { if (isMounted.current) setLaborPoolOptions([]); });
   }, [tenantId]);
 
+  // Load unique applicant counts per job order at this location. Mirrors
+  // `RecruiterJobOrderDetail.fetchApplicants()` — applications can link via
+  // `jobOrderId`, `jobId` (a connected jobs-board post), or `postId` (legacy).
+  // Counting only `jobOrderId` undercounts. Dedupes by `userId` per job order.
   useEffect(() => {
     if (!tenantId || jobOrdersAtLocation.length === 0) {
       setJobOrderApplicantCounts({});
       return;
     }
-    const applicationsRef = collection(db, p.applications(tenantId));
-    Promise.all(
-      jobOrdersAtLocation.map(async (jo) => {
-        const q = query(applicationsRef, where('jobOrderId', '==', jo.id));
-        const snap = await getCountFromServer(q);
-        return { jobOrderId: jo.id, count: snap.data().count };
-      })
-    )
-      .then((results) => {
-        if (!isMounted.current) return;
+    const ids = jobOrdersAtLocation.map((jo) => jo.id).filter(Boolean);
+    if (ids.length === 0) {
+      setJobOrderApplicantCounts({});
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const applicationsRef = collection(db, p.applications(tenantId));
+        const postsRef = collection(db, 'tenants', tenantId, 'job_postings');
+        const IN_LIMIT = 30;
+
+        // Build postId → jobOrderId reverse map from connected jobs-board posts
+        const postToJobOrder = new Map<string, string>();
+        const allPostIds: string[] = [];
+        for (let i = 0; i < ids.length; i += 10) {
+          const chunk = ids.slice(i, i + 10);
+          const snap = await getDocs(query(postsRef, where('jobOrderId', 'in', chunk)));
+          snap.docs.forEach((d) => {
+            const data = d.data() as { jobOrderId?: string };
+            if (data.jobOrderId) {
+              postToJobOrder.set(d.id, data.jobOrderId);
+              allPostIds.push(d.id);
+            }
+          });
+        }
+
+        const setsByJo = new Map<string, Set<string>>();
+        const keyFor = (d: { userId?: string; candidateId?: string }, docId: string): string =>
+          (typeof d.userId === 'string' && d.userId.trim()) ||
+          (typeof d.candidateId === 'string' && d.candidateId.trim()) ||
+          docId;
+        const addFor = (joId: string, key: string) => {
+          let set = setsByJo.get(joId);
+          if (!set) {
+            set = new Set<string>();
+            setsByJo.set(joId, set);
+          }
+          set.add(key);
+        };
+
+        // 1) Apps with jobOrderId set directly
+        for (let i = 0; i < ids.length; i += IN_LIMIT) {
+          const chunk = ids.slice(i, i + IN_LIMIT);
+          const snap = await getDocs(query(applicationsRef, where('jobOrderId', 'in', chunk)));
+          snap.docs.forEach((d) => {
+            const data = d.data() as { jobOrderId?: string; userId?: string; candidateId?: string };
+            if (!data.jobOrderId) return;
+            addFor(data.jobOrderId, keyFor(data, d.id));
+          });
+        }
+
+        // 2) + 3) Apps linked via a connected jobs-board post (jobId or postId)
+        if (allPostIds.length > 0) {
+          for (let i = 0; i < allPostIds.length; i += IN_LIMIT) {
+            const chunk = allPostIds.slice(i, i + IN_LIMIT);
+            const [byJobId, byPostId] = await Promise.all([
+              getDocs(query(applicationsRef, where('jobId', 'in', chunk))),
+              getDocs(query(applicationsRef, where('postId', 'in', chunk))),
+            ]);
+            [byJobId, byPostId].forEach((snap) => {
+              snap.docs.forEach((d) => {
+                const data = d.data() as {
+                  jobId?: string;
+                  postId?: string;
+                  userId?: string;
+                  candidateId?: string;
+                };
+                const postRef = data.jobId || data.postId;
+                if (!postRef) return;
+                const joId = postToJobOrder.get(postRef);
+                if (!joId) return;
+                addFor(joId, keyFor(data, d.id));
+              });
+            });
+          }
+        }
+
+        if (cancelled || !isMounted.current) return;
         const next: Record<string, number> = {};
-        results.forEach(({ jobOrderId, count }) => { next[jobOrderId] = count; });
+        ids.forEach((id) => {
+          next[id] = setsByJo.get(id)?.size ?? 0;
+        });
         setJobOrderApplicantCounts(next);
-      })
-      .catch(() => { if (isMounted.current) setJobOrderApplicantCounts({}); });
+      } catch (err) {
+        console.warn('AccountLocationDetail: applicant count fetch failed', err);
+        if (!cancelled && isMounted.current) setJobOrderApplicantCounts({});
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [tenantId, jobOrdersAtLocation]);
 
   const laborPoolTableRows = useMemo(() => {
