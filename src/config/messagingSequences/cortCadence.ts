@@ -151,6 +151,72 @@ export const CORT_SEQUENCE_STEPS: MessagingSequenceStep[] = [
   },
 ];
 
+/**
+ * Per-tenant targeting config for a sequence. Persisted to Firestore at:
+ *   `tenants/{tenantId}/messagingConfig/sequences/{sequenceId}`
+ *
+ * The cloud-function dispatcher reads this (Phase 2 work) to decide which assignments
+ * get the sequence, instead of the tenant-wide `shiftReminderProfile` switch we use today.
+ */
+export type SequenceWorkerType = 'gig' | 'career';
+export type SequenceOccurrence = 'first_shift' | 'every_shift';
+
+export interface SequenceTargeting {
+  /**
+   * Human-readable label for THIS targeting rule (not the underlying sequence template).
+   * e.g. "CORT CSR Waitlist". Lets recruiters distinguish between multiple active rules
+   * that use the same sequence template but target different accounts.
+   */
+  label: string;
+  /**
+   * Master on/off switch. When false, the dispatcher skips this sequence entirely even if
+   * accountIds / workerTypes would otherwise match. Lets recruiters pause a rule without
+   * losing its configuration.
+   */
+  active: boolean;
+  /** Tenant Account ids (`tenants/{tid}/accounts/{id}`). Empty = applies to no accounts (disabled). */
+  accountIds: string[];
+  /** Which worker types this cadence applies to. */
+  workerTypes: SequenceWorkerType[];
+  /**
+   * `first_shift` = run from the worker's first assignment at this account through completion,
+   * then stop (subsequent shifts at the same account use the default cadence).
+   * `every_shift` = run on every assignment at these accounts.
+   */
+  occurrence: SequenceOccurrence;
+}
+
+export const DEFAULT_CORT_TARGETING: SequenceTargeting = {
+  label: 'CORT CSR Waitlist',
+  active: false,
+  accountIds: [],
+  workerTypes: ['gig'],
+  occurrence: 'first_shift',
+};
+
+/**
+ * Firestore path builder so the page and future dispatcher agree on where targeting lives.
+ *
+ * Each sequence is one document in the tenant's `messagingSequences` subcollection —
+ * 4 path segments, valid document reference. Future sequences (beyond CORT) are just
+ * additional docs in the same collection.
+ */
+export function sequenceTargetingDocPath(tenantId: string, sequenceId: string): string {
+  return `tenants/${tenantId}/messagingSequences/${sequenceId}`;
+}
+
+/** UI-facing labels for the worker type choices. */
+export const WORKER_TYPE_LABELS: Record<SequenceWorkerType, string> = {
+  gig: 'Gig',
+  career: 'Career',
+};
+
+/** UI-facing labels for the occurrence choices. */
+export const OCCURRENCE_LABELS: Record<SequenceOccurrence, string> = {
+  first_shift: 'First shift at account (until completion)',
+  every_shift: 'Every shift at account',
+};
+
 /** Summary shown at top of the UI describing what this sequence is. */
 export const CORT_SEQUENCE_SUMMARY = {
   id: 'cort_gig',
