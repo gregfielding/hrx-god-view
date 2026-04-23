@@ -4,6 +4,7 @@ import { logger } from 'firebase-functions/v2';
 import { ensureWorkerOnboardingPipeline } from './onboarding/workerOnboardingPipeline';
 import { ASSIGNMENT_STATUS_QUERY_LIVE, isAssignmentTerminalNormalized } from './utils/assignmentStatusNormalize';
 import { buildWorkerAssignmentResponseUrl } from './utils/workerUrls';
+import { assertWorkerHeadshotApproved } from './avatar/headshotAcceptGate';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -376,6 +377,7 @@ export const placementsCreateAssignments = onCall(
   if (!shiftSnap.exists) throw new HttpsError('not-found', 'Shift not found');
 
   const jobOrder = jobOrderSnap.data() || {};
+  const skipPlacementWorkerNotifications = Boolean(jobOrder.muted);
   const shift = shiftSnap.data() || {};
   const isGigJob = String(jobOrder.jobType || '').toLowerCase() === 'gig';
   const onboardingConfig = await resolveOnboardingConfigForJobOrder({
@@ -576,53 +578,55 @@ export const placementsCreateAssignments = onCall(
         failed.push({ userId, error: error?.message || 'unknown_error' });
       }
     }
-    for (const [userId, assignments] of createdByUserId) {
-      try {
-        const userDoc = await db.doc(`users/${userId}`).get();
-        const userData = userDoc.data() || {};
-        const phoneE164 = (userData?.phoneE164 || userData?.phone || '').trim();
-        const firstName = assignments.length ? (userData?.firstName as string) || 'there' : 'there';
-        const jobTitle = shift.defaultJobTitle || jobOrder.jobTitle || 'a position';
-        const dateStrs = assignments.map((a) => {
-          const d = new Date(a.date + 'T12:00:00');
-          return d.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
-        });
-        const dateTimeInfo = dateStrs.length ? ` on ${dateStrs.join(', ')}` : '';
-        const jobUrl = buildWorkerAssignmentResponseUrl({
-          jobPostId,
-          assignmentId: assignments[0].assignmentId,
-          shiftId,
-        });
-        const locationText = locationNickname ? ` at ${locationNickname}` : '';
-        const message = `Hi ${firstName}, your application has been accepted for ${jobTitle}${dateTimeInfo}${locationText}. View details and respond: ${jobUrl}`;
-        let emailSubject: string | undefined;
-        let emailBody: string | undefined;
+    if (!skipPlacementWorkerNotifications) {
+      for (const [userId, assignments] of createdByUserId) {
         try {
-          const { buildAssignmentDetailsEmail } = await import('./messaging/assignmentDetailsEmail');
-          const emailResult = await buildAssignmentDetailsEmail(tenantId, assignments[0].assignmentId);
-          if (emailResult) {
-            emailSubject = emailResult.subject;
-            emailBody = emailResult.html;
+          const userDoc = await db.doc(`users/${userId}`).get();
+          const userData = userDoc.data() || {};
+          const phoneE164 = (userData?.phoneE164 || userData?.phone || '').trim();
+          const firstName = assignments.length ? (userData?.firstName as string) || 'there' : 'there';
+          const jobTitle = shift.defaultJobTitle || jobOrder.jobTitle || 'a position';
+          const dateStrs = assignments.map((a) => {
+            const d = new Date(a.date + 'T12:00:00');
+            return d.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
+          });
+          const dateTimeInfo = dateStrs.length ? ` on ${dateStrs.join(', ')}` : '';
+          const jobUrl = buildWorkerAssignmentResponseUrl({
+            jobPostId,
+            assignmentId: assignments[0].assignmentId,
+            shiftId,
+          });
+          const locationText = locationNickname ? ` at ${locationNickname}` : '';
+          const message = `Hi ${firstName}, your application has been accepted for ${jobTitle}${dateTimeInfo}${locationText}. View details and respond: ${jobUrl}`;
+          let emailSubject: string | undefined;
+          let emailBody: string | undefined;
+          try {
+            const { buildAssignmentDetailsEmail } = await import('./messaging/assignmentDetailsEmail');
+            const emailResult = await buildAssignmentDetailsEmail(tenantId, assignments[0].assignmentId);
+            if (emailResult) {
+              emailSubject = emailResult.subject;
+              emailBody = emailResult.html;
+            }
+          } catch (_) {
+            /* ignore */
           }
-        } catch (_) {
-          /* ignore */
+          const { sendLegacyAssignmentMessage } = await import('./messaging/legacyMessageHelpers');
+          await sendLegacyAssignmentMessage({
+            tenantId,
+            userId,
+            phoneE164: phoneE164 || '+0000000000',
+            message,
+            messageTypeId: 'assignment_created',
+            source: 'assignment_created',
+            sourceId: assignments[0].assignmentId,
+            assignmentId: assignments[0].assignmentId,
+            emailSubject,
+            emailBody,
+          });
+        } catch (notifyErr: any) {
+          // log but don't fail the whole operation
+          console.warn(`Bulk assignment notification failed for user ${userId}:`, notifyErr?.message);
         }
-        const { sendLegacyAssignmentMessage } = await import('./messaging/legacyMessageHelpers');
-        await sendLegacyAssignmentMessage({
-          tenantId,
-          userId,
-          phoneE164: phoneE164 || '+0000000000',
-          message,
-          messageTypeId: 'assignment_created',
-          source: 'assignment_created',
-          sourceId: assignments[0].assignmentId,
-          assignmentId: assignments[0].assignmentId,
-          emailSubject,
-          emailBody,
-        });
-      } catch (notifyErr: any) {
-        // log but don't fail the whole operation
-        console.warn(`Bulk assignment notification failed for user ${userId}:`, notifyErr?.message);
       }
     }
     return { success: failed.length === 0, created, skipped, failed };
@@ -891,6 +895,10 @@ export const respondToAssignment = onCall(
   const applicationRef = applicationId ? db.doc(`tenants/${tenantId}/applications/${applicationId}`) : null;
 
   if (decision === 'accept') {
+    // Phase 4: universal headshot gate. Throws HttpsError('failed-precondition') with a typed
+    // details.code the client maps to localized retake / pending / error UX.
+    await assertWorkerHeadshotApproved(uid);
+
     await assignmentRef.set(
       {
         status: 'confirmed',
@@ -1017,8 +1025,23 @@ export const confirmAssignmentForWorker = onCall(
     const applicationId = assignment.applicationId as string | undefined;
     const applicationRef = applicationId ? db.doc(`tenants/${tenantId}/applications/${applicationId}`) : null;
 
+    let jobOrderMuted = false;
+    const confirmJoId = String(assignment.jobOrderId || '').trim();
+    if (confirmJoId) {
+      const joSnap = await db.doc(`tenants/${tenantId}/job_orders/${confirmJoId}`).get();
+      jobOrderMuted = Boolean(joSnap.data()?.muted);
+    }
+
     const now = admin.firestore.FieldValue.serverTimestamp();
     const uid = request.auth.uid;
+
+    // Phase 4: universal headshot gate also applies when a recruiter confirms on behalf of
+    // a worker. Recruiter can clear this by manually approving the worker's photo in the
+    // Phase 5 admin UI (which sets avatarVerification.status = 'approved').
+    const targetWorkerId = String(assignment.userId || assignment.candidateId || '').trim();
+    if (targetWorkerId) {
+      await assertWorkerHeadshotApproved(targetWorkerId);
+    }
 
     await assignmentRef.set(
       {
@@ -1042,7 +1065,6 @@ export const confirmAssignmentForWorker = onCall(
         { merge: true },
       );
     }
-    const targetWorkerId = String(assignment.userId || assignment.candidateId || '').trim();
     if (targetWorkerId) {
       await ensureWorkerOnboardingPipeline({
         tenantId,
@@ -1052,6 +1074,7 @@ export const confirmAssignmentForWorker = onCall(
         entityId: (assignment.entityId as string) || null,
         triggeredByUid: uid,
         triggerSource: 'recruiter_confirmation',
+        suppressOutboundAutomation: jobOrderMuted,
       });
     }
     return { success: true, status: 'confirmed' };
@@ -1204,6 +1227,17 @@ export const resendAssignmentOffer = onCall(
   const userId = assignment.userId || assignment.candidateId;
   if (!userId) {
     throw new HttpsError('invalid-argument', 'Assignment has no userId');
+  }
+
+  if (assignment.jobOrderId) {
+    try {
+      const joSnap = await db.doc(`tenants/${tenantId}/job_orders/${assignment.jobOrderId}`).get();
+      if (joSnap.exists && Boolean(joSnap.data()?.muted)) {
+        return { success: true, skipped: 'job_order_muted' as const };
+      }
+    } catch (_) {
+      /* continue */
+    }
   }
 
   await assignmentRef.set(
