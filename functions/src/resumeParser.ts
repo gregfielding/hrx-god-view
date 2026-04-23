@@ -1160,7 +1160,7 @@ async function canParseResumeForUser(
 export const parseResumeHttp = onRequest({
   cors: true,
   timeoutSeconds: 540,
-  memory: '512MiB',
+  memory: '1GiB',
   maxInstances: 5
 }, async (req, res) => {
   const requestOrigin = (req.headers.origin as string) || '';
