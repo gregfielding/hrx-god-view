@@ -28,6 +28,80 @@ const vision = require('@google-cloud/vision');
 const db = admin.firestore();
 db.settings({ ignoreUndefinedProperties: true });
 
+/** User-fixable file issues → HTTP 400 from {@link parseResumeHttp}. */
+export class ResumeParseClientError extends Error {
+  readonly code: string;
+
+  constructor(message: string, code = 'invalid_resume_file') {
+    super(message);
+    this.name = 'ResumeParseClientError';
+    this.code = code;
+  }
+}
+
+type BinaryWordKind = 'ooxml_zip' | 'legacy_ole' | 'unknown';
+
+/** OOXML .docx is a ZIP; legacy Word .doc is OLE compound file. */
+function sniffWordBinaryKind(buffer: Buffer): BinaryWordKind {
+  if (buffer.length < 8) return 'unknown';
+  if (
+    buffer[0] === 0xd0 &&
+    buffer[1] === 0xcf &&
+    buffer[2] === 0x11 &&
+    buffer[3] === 0xe0 &&
+    buffer[4] === 0xa1 &&
+    buffer[5] === 0xb1 &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0xe1
+  ) {
+    return 'legacy_ole';
+  }
+  if (buffer[0] === 0x50 && buffer[1] === 0x4b) {
+    return 'ooxml_zip';
+  }
+  return 'unknown';
+}
+
+function sniffPdfMagic(buffer: Buffer): boolean {
+  return buffer.length >= 5 && buffer.slice(0, 5).toString('latin1') === '%PDF-';
+}
+
+/**
+ * Compare filename extension to file magic bytes so we return 400 with a clear message
+ * instead of a generic mammoth/parse failure.
+ */
+function validateResumeBinaryAgainstExtension(buffer: Buffer, fileName: string): void {
+  const ext = fileName.toLowerCase().split('.').pop() ?? '';
+
+  if (ext === 'pdf') {
+    if (!sniffPdfMagic(buffer)) {
+      throw new ResumeParseClientError(
+        'This file does not look like a valid PDF (missing PDF signature). It may be corrupted or misnamed. Export or save as PDF and try again.',
+        'invalid_pdf_file',
+      );
+    }
+    return;
+  }
+
+  if (ext === 'docx' || ext === 'doc') {
+    const kind = sniffWordBinaryKind(buffer);
+    if (kind === 'legacy_ole') {
+      throw new ResumeParseClientError(
+        'This file is a legacy Microsoft Word document (.doc, binary format). HRX only supports Word documents saved in the newer .docx format. Open the file in Word and use Save As → Word Document (.docx), then upload again.',
+        'legacy_doc_not_supported',
+      );
+    }
+    if (ext === 'docx' && kind !== 'ooxml_zip') {
+      throw new ResumeParseClientError(
+        'This file does not look like a valid .docx (Office Open XML / ZIP). It may be corrupted, renamed, or still an older .doc saved with the wrong extension. Save As .docx from Microsoft Word or upload a PDF.',
+        'invalid_docx_file',
+      );
+    }
+    // .doc extension but ZIP magic → Word saved as OOXML but misnamed; mammoth can parse.
+    return;
+  }
+}
+
 // Validation functions using Zod schemas
 function validateParsedResumeData(data: any): any {
   try {
@@ -745,6 +819,8 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
     const fileBuffer = await downloadFile(fileUrl);
     const fileHash = calculateFileHash(fileBuffer);
     console.log('File downloaded, size:', fileBuffer.length, 'bytes');
+
+    validateResumeBinaryAgainstExtension(fileBuffer, fileName);
     
     // Upload file to Firebase Storage
     console.log('Uploading file to Firebase Storage at path:', storagePath);
@@ -994,6 +1070,13 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
       userId,
       fileSize
     });
+
+    if (error instanceof ResumeParseClientError) {
+      throw error;
+    }
+    if (error instanceof functions.https.HttpsError) {
+      throw error;
+    }
     
     // Update upload status to failed
     const uploadId = generateUploadId();
@@ -1130,9 +1213,33 @@ export const parseResumeHttp = onRequest({
   } catch (error: any) {
     console.error('parseResumeHttp error:', error);
     res.set('Access-Control-Allow-Origin', corsOrigin);
-    res.status(500).json({ 
-      error: error.message || 'Failed to parse resume',
-      code: error.code || 'internal'
+
+    if (error instanceof ResumeParseClientError) {
+      res.status(400).json({
+        error: error.message,
+        code: error.code,
+      });
+      return;
+    }
+
+    if (error instanceof functions.https.HttpsError) {
+      const map: Record<string, number> = {
+        'invalid-argument': 400,
+        'not-found': 404,
+        'permission-denied': 403,
+        'failed-precondition': 400,
+      };
+      const status = map[error.code] ?? 400;
+      res.status(status).json({
+        error: error.message,
+        code: error.code,
+      });
+      return;
+    }
+
+    res.status(500).json({
+      error: error?.message || 'Failed to parse resume',
+      code: error?.code || 'internal',
     });
   }
 });
@@ -1221,7 +1328,19 @@ async function parseWord(buffer: Buffer): Promise<string> {
     const result = await mammoth.extractRawText({ buffer });
     return result.value;
   } catch (error) {
-    throw new Error(`Word document parsing failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    const msg = error instanceof Error ? error.message : String(error);
+    const lower = msg.toLowerCase();
+    if (
+      lower.includes('could not find the body element') ||
+      lower.includes('are you sure this is a docx') ||
+      lower.includes('invalid zip')
+    ) {
+      throw new ResumeParseClientError(
+        'This file could not be read as a Word document (.docx). It may be corrupted, password-protected, not actually a Word file, or an older .doc format. Save As .docx from Microsoft Word or upload a PDF.',
+        'word_parse_invalid_ooxml',
+      );
+    }
+    throw new Error(`Word document parsing failed: ${msg}`);
   }
 }
 
