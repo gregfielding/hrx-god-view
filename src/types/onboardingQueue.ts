@@ -73,7 +73,10 @@ export interface OnboardingBackgroundQueueRow {
   employmentModeLabel: string;
   packageLabel: string;
   statusLabel: string;
-  lastUpdateLabel: string;
+  /** Latest webhook: event type and/or provider/service status line; "—" if none recorded. */
+  lastWebhookActivityLabel: string;
+  /** Formatted `lastWebhookAt`, or `updatedAt` when no webhook yet. */
+  lastUpdateTimeLabel: string;
   lastUpdateMs: number;
   ownerLabel: OnboardingQueueOwnerLabel;
   sortPriority: number;

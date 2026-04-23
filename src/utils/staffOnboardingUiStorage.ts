@@ -10,12 +10,16 @@ export type StaffOnboardingUiState = {
   taxPage: number;
   taxPageSize: number;
   taxSearch: string;
+  /** Vertical scroll offset inside the queue table container */
+  taxScrollTop: number;
   evPage: number;
   evPageSize: number;
   evSearch: string;
+  evScrollTop: number;
   bgPage: number;
   bgPageSize: number;
   bgSearch: string;
+  bgScrollTop: number;
 };
 
 const PAGE_SIZES = new Set([10, 20, 50, 100]);
@@ -28,12 +32,15 @@ export function defaultStaffOnboardingUi(): StaffOnboardingUiState {
     taxPage: 0,
     taxPageSize: 20,
     taxSearch: '',
+    taxScrollTop: 0,
     evPage: 0,
     evPageSize: 20,
     evSearch: '',
+    evScrollTop: 0,
     bgPage: 0,
     bgPageSize: 20,
     bgSearch: '',
+    bgScrollTop: 0,
   };
 }
 
@@ -54,12 +61,15 @@ function mergeSaved(o: Partial<StaffOnboardingUiState>): StaffOnboardingUiState 
     taxPage: clampInt(o.taxPage, d.taxPage, 0, 1_000_000),
     taxPageSize: typeof o.taxPageSize === 'number' && PAGE_SIZES.has(o.taxPageSize) ? o.taxPageSize : d.taxPageSize,
     taxSearch: clampSearch(o.taxSearch, d.taxSearch),
+    taxScrollTop: clampInt(o.taxScrollTop, d.taxScrollTop, 0, 2_000_000),
     evPage: clampInt(o.evPage, d.evPage, 0, 1_000_000),
     evPageSize: typeof o.evPageSize === 'number' && PAGE_SIZES.has(o.evPageSize) ? o.evPageSize : d.evPageSize,
     evSearch: clampSearch(o.evSearch, d.evSearch),
+    evScrollTop: clampInt(o.evScrollTop, d.evScrollTop, 0, 2_000_000),
     bgPage: clampInt(o.bgPage, d.bgPage, 0, 1_000_000),
     bgPageSize: typeof o.bgPageSize === 'number' && PAGE_SIZES.has(o.bgPageSize) ? o.bgPageSize : d.bgPageSize,
     bgSearch: clampSearch(o.bgSearch, d.bgSearch),
+    bgScrollTop: clampInt(o.bgScrollTop, d.bgScrollTop, 0, 2_000_000),
   };
 }
 
