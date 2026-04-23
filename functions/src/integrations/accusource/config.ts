@@ -88,7 +88,7 @@ export function getAccusourceConfig(): AccusourceProviderConfig {
 
 /**
  * Production cutover / validation: restrict who can create SourceDirect profiles and block assignment automation orders.
- * Set `ACCUSOURCE_PRODUCTION_VALIDATION_HRX_ONLY=false` after validation to allow tenant admins (L5+) to order in production.
+ * Set `ACCUSOURCE_PRODUCTION_VALIDATION_HRX_ONLY=false` after validation to rely on the normal admin gate (L5+ or admin roles) without the extra HRX / L5–7 production check.
  */
 export function isAccusourceProductionValidationHrxOnly(): boolean {
   const v =

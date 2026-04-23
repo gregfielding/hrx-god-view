@@ -9,11 +9,16 @@ import {
   AccordionSummary,
   Alert,
   Box,
+  Button,
+  Chip,
   Collapse,
   Link,
+  Stack,
   Typography,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import { decisionChipColor } from '../../utils/accusourceDecisionChip';
 import type { BackgroundCheckRecord } from '../../types/backgroundCheck';
 import { Timestamp } from 'firebase/firestore';
 
@@ -150,6 +155,31 @@ const AccusourceScreeningDebugSection: React.FC<AccusourceScreeningDebugSectionP
         <Alert severity="info" sx={{ mb: 2, py: 0.5 }}>
           For sandbox validation only. Remove or gate off after production approval.
         </Alert>
+
+        {(record.providerFinalReportUrl || record.providerFinalDecision) ? (
+          <Stack direction="row" alignItems="center" flexWrap="wrap" gap={1} sx={{ mb: 2 }}>
+            {record.providerFinalReportUrl ? (
+              <Button
+                variant="contained"
+                size="small"
+                component="a"
+                href={record.providerFinalReportUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                startIcon={<OpenInNewIcon fontSize="small" />}
+              >
+                View full AccuSource report
+              </Button>
+            ) : null}
+            {record.providerFinalDecision ? (
+              <Chip
+                size="small"
+                color={decisionChipColor(record.providerFinalDecision)}
+                label={`Decision: ${record.providerFinalDecision}`}
+              />
+            ) : null}
+          </Stack>
+        ) : null}
 
         <Typography variant="subtitle2" sx={{ mb: 1 }}>
           Key fields

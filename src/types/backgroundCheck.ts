@@ -4,6 +4,39 @@
  */
 import type { Timestamp } from 'firebase/firestore';
 
+/** Aggregate verdict shown on the verdict chip + SCREENING header aggregate. */
+export type AccusourceLineVerdict = 'PASSED' | 'FAILED' | 'NEEDS_REVIEW' | 'PENDING';
+
+/** `null` = no manual override active — use autoVerdict. */
+export type AccusourceManualVerdict = 'PASSED' | 'FAILED' | 'NEEDS_REVIEW' | null;
+
+export type AccusourceAdjudicationHistoryKind =
+  | 'auto_verdict_changed'
+  | 'manual_override_set'
+  | 'manual_override_cleared';
+
+export interface AccusourceAdjudicationHistoryEntry {
+  at?: Timestamp | null;
+  kind: AccusourceAdjudicationHistoryKind;
+  verdict: AccusourceManualVerdict | AccusourceLineVerdict;
+  fromVerdict?: AccusourceManualVerdict | AccusourceLineVerdict | null;
+  by: string;
+  reason?: string | null;
+  autoReason?: string | null;
+}
+
+export interface AccusourceLineAdjudication {
+  autoVerdict: AccusourceLineVerdict;
+  autoVerdictReason?: string | null;
+  autoVerdictAt?: Timestamp | null;
+  /** null = use autoVerdict (no manual override active). */
+  verdict: AccusourceManualVerdict;
+  overriddenBy?: string | null;
+  overriddenAt?: Timestamp | null;
+  overrideReason?: string | null;
+  history?: AccusourceAdjudicationHistoryEntry[];
+}
+
 export type HrxBackgroundCheckStatus =
   | 'draft'
   | 'queued'
@@ -22,6 +55,38 @@ export interface ServiceOrderStatusEntry {
   status?: string | null;
   statusId?: string | number | null;
   updatedAt?: Timestamp | null;
+  /** From webhook: numeric price when vendor sends it. */
+  providerPrice?: number | null;
+  /** From webhook: display price string when vendor sends it. */
+  providerPriceFormatted?: string | null;
+  /** County / venue / search scope (e.g. “Orange, US-FL”). */
+  jurisdiction?: string | null;
+  /** AccuSource researcher / assignment label when present. */
+  assignmentLabel?: string | null;
+  orderedAt?: Timestamp | null;
+  submittedAt?: Timestamp | null;
+  startedAt?: Timestamp | null;
+  completedAt?: Timestamp | null;
+  receivedAt?: Timestamp | null;
+  reviewedAt?: Timestamp | null;
+  providerReportedAt?: Timestamp | null;
+  /** Link to completed report (PDF/HTML) when the vendor webhook includes it. */
+  reportUrl?: string | null;
+  /** Adjudication / decision when AccuSource sends it. */
+  decision?: string | null;
+  decisionAt?: Timestamp | null;
+  providerOrderId?: string | number | null;
+  providerRegistrationId?: string | number | null;
+  labName?: string | null;
+  labCode?: number | null;
+  labShortDescription?: string | null;
+  labLongDescription?: string | null;
+  /**
+   * Per-line adjudication (auto verdict + optional recruiter override + history).
+   * Populated server-side on every webhook merge; overrides set via
+   * `setAccusourceLineAdjudication` callable.
+   */
+  adjudication?: AccusourceLineAdjudication | null;
 }
 
 export interface LastServiceComponent {
@@ -30,6 +95,7 @@ export interface LastServiceComponent {
   status?: string | null;
   statusId?: string | number | null;
   updatedAt?: Timestamp | null;
+  jurisdiction?: string | null;
 }
 
 export interface BackgroundCheckRecord {
@@ -96,6 +162,11 @@ export interface BackgroundCheckRecord {
   lastServiceComponent?: LastServiceComponent | null;
   /** Keyed by SourceDirect service id (string). */
   providerServiceOrderStatus?: Record<string, ServiceOrderStatusEntry> | null;
+  /** Profile- or order-level report artifact URL (e.g. final_report_ready). */
+  providerFinalReportUrl?: string | null;
+  providerFinalReportAt?: Timestamp | null;
+  providerFinalDecision?: string | null;
+  providerFinalDecisionAt?: Timestamp | null;
 }
 
 export interface BackgroundCheckEventRow {

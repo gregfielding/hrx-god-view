@@ -106,7 +106,7 @@ export async function createBackgroundCheckInternal(
     productionValidationHrxOnlyActive,
   });
 
-  assertAccusourceProductionOrderPolicy(invocation, uid);
+  await assertAccusourceProductionOrderPolicy(invocation, uid, input.tenantId);
 
   const docRef = input.backgroundCheckId
     ? db.collection('backgroundChecks').doc(String(input.backgroundCheckId))

@@ -64,15 +64,21 @@ export type AccusourceOrderInvocation =
   | { type: 'callable'; auth: { token?: Record<string, unknown> } }
   | { type: 'automation' };
 
+/** Same band as internal recruiter / group-manager eligibility — L5–7 for the active tenant. */
+export const ACCUSOURCE_PRODUCTION_ORDER_SECURITY_LEVEL_MIN = 5;
+export const ACCUSOURCE_PRODUCTION_ORDER_SECURITY_LEVEL_MAX = 7;
+
 /**
  * During controlled production validation (`ACCUSOURCE_PRODUCTION_VALIDATION_HRX_ONLY` default true):
- * - Callable orders require Firebase Auth custom claim `hrx: true` (same as in-app “HRX staff”).
- * - Assignment automation orders are blocked so only intentional manual HRX tests hit production.
+ * - Callable orders allowed if Firebase Auth claim `hrx: true` **or** effective security level 5–7 for
+ *   `tenantId` on the order (see `resolveAccusourceRoleAndSecurityLevel`).
+ * - Assignment automation orders are blocked so automation does not hit production during validation.
  */
-export function assertAccusourceProductionOrderPolicy(
+export async function assertAccusourceProductionOrderPolicy(
   invocation: AccusourceOrderInvocation,
   callerUid: string,
-): void {
+  tenantIdHint?: string | null,
+): Promise<void> {
   const cfg = getAccusourceConfig();
   if (cfg.environment !== 'production') {
     return;
@@ -93,21 +99,44 @@ export function assertAccusourceProductionOrderPolicy(
   }
 
   const hrx = invocation.auth.token?.hrx === true;
-  if (!hrx) {
-    accusourceLog('warn', 'policy', 'Rejected non-HRX AccuSource production order attempt.', {
-      reason: 'hrx_claim_required',
+  if (hrx) {
+    accusourceLog('info', 'policy', 'Production order allowed (HRX caller, validation mode).', {
+      reason: 'hrx_callable',
+      callerUid,
+      hrxClaim: true,
+    });
+    return;
+  }
+
+  const userSnap = await db.collection('users').doc(callerUid).get();
+  if (!userSnap.exists) {
+    throw new HttpsError('permission-denied', 'User profile not found.');
+  }
+  const { securityLevel } = resolveAccusourceRoleAndSecurityLevel(
+    userSnap.data() as Record<string, unknown>,
+    tenantIdHint,
+  );
+  const allowedByLevel =
+    securityLevel >= ACCUSOURCE_PRODUCTION_ORDER_SECURITY_LEVEL_MIN &&
+    securityLevel <= ACCUSOURCE_PRODUCTION_ORDER_SECURITY_LEVEL_MAX;
+
+  if (!allowedByLevel) {
+    accusourceLog('warn', 'policy', 'Rejected AccuSource production order (not HRX and not L5–7 for tenant).', {
+      reason: 'hrx_or_level_5_7_required',
       callerUid,
       hrxClaim: false,
+      securityLevel,
+      tenantIdHint: tenantIdHint ?? null,
     });
     throw new HttpsError(
       'permission-denied',
-      'AccuSource production validation: only HRX staff may submit background check orders. You can still refresh the package catalog. After validation, set ACCUSOURCE_PRODUCTION_VALIDATION_HRX_ONLY=false to allow tenant admin orders in production.',
+      'AccuSource production validation: background check orders require HRX staff or security level 5–7 for this tenant. You can still refresh the package catalog. After validation, set ACCUSOURCE_PRODUCTION_VALIDATION_HRX_ONLY=false to use the standard admin gate only.',
     );
   }
 
-  accusourceLog('info', 'policy', 'Production order allowed (HRX caller, validation mode).', {
-    reason: 'hrx_callable',
+  accusourceLog('info', 'policy', 'Production order allowed (L5–7, validation mode).', {
+    reason: 'security_level_callable',
     callerUid,
-    hrxClaim: true,
+    securityLevel,
   });
 }
