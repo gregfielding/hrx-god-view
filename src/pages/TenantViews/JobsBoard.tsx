@@ -64,7 +64,7 @@ import jobTitlesList from '../../data/onetJobTitles.json';
 import onetSkills from '../../data/onetSkills.json';
 import credentialsSeed from '../../data/credentialsSeed.json';
 import { experienceOptions, educationOptions } from '../../data/experienceOptions';
-import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../../data/screeningsOptions';
+import { additionalScreeningOptions } from '../../data/screeningsOptions';
 import { getOptionsForField } from '../../utils/fieldOptions';
 import { autoAddGroupsPickerValue, dedupeUserGroupsForUi } from '../../utils/dedupeUserGroupsForUi';
 import { generateJobDescriptionWithAi } from '../../utils/jobDescriptionAiGenerate';
@@ -209,6 +209,10 @@ const JobsBoard: React.FC = () => {
     payRate: string;
     workersNeeded: number;
     eVerifyRequired: boolean;
+    screeningPackageId: string;
+    screeningPackageName: string;
+    showScreeningPackageOnPost: boolean;
+    screeningPackageServiceNames: string[];
     backgroundCheckPackages: string[];
     showBackgroundChecks: boolean;
     drugScreeningPanels: string[];
@@ -391,9 +395,13 @@ const JobsBoard: React.FC = () => {
     showPayRate: true,
     workersNeeded: 1,
     eVerifyRequired: false,
-    backgroundCheckPackages: [],
+    screeningPackageId: '',
+    screeningPackageName: '',
+    showScreeningPackageOnPost: false,
+    screeningPackageServiceNames: [] as string[],
+    backgroundCheckPackages: [] as string[],
     showBackgroundChecks: false,
-    drugScreeningPanels: [],
+    drugScreeningPanels: [] as string[],
     showDrugScreening: false,
     additionalScreenings: [],
     showAdditionalScreenings: false,
@@ -860,10 +868,14 @@ const JobsBoard: React.FC = () => {
         payRate: newPost.payRate,
         workersNeeded: newPost.workersNeeded,
         eVerifyRequired: newPost.eVerifyRequired,
-        backgroundCheckPackages: newPost.backgroundCheckPackages,
-        showBackgroundChecks: newPost.showBackgroundChecks,
-        drugScreeningPanels: newPost.drugScreeningPanels,
-        showDrugScreening: newPost.showDrugScreening,
+        screeningPackageId: newPost.screeningPackageId?.trim() || '',
+        screeningPackageName: newPost.screeningPackageName?.trim() || '',
+        showScreeningPackageOnPost: newPost.showScreeningPackageOnPost,
+        screeningPackageServiceNames: newPost.screeningPackageServiceNames,
+        backgroundCheckPackages: [],
+        showBackgroundChecks: false,
+        drugScreeningPanels: [],
+        showDrugScreening: false,
         additionalScreenings: newPost.additionalScreenings,
         showAdditionalScreenings: newPost.showAdditionalScreenings,
         skills: newPost.skills,
@@ -928,8 +940,12 @@ const JobsBoard: React.FC = () => {
             payRate: jobOrderData.payRate?.toString() || '',
             workersNeeded: jobOrderData.workersNeeded || 1,
             eVerifyRequired: jobOrderData.eVerifyRequired || false,
-            backgroundCheckPackages: jobOrderData.backgroundCheckPackages || [],
-            drugScreeningPanels: jobOrderData.drugScreeningPanels || [],
+            screeningPackageId: String(jobOrderData.screeningPackageId ?? '').trim(),
+            screeningPackageName: String(jobOrderData.screeningPackageName ?? '').trim(),
+            showScreeningPackageOnPost: false,
+            screeningPackageServiceNames: [] as string[],
+            backgroundCheckPackages: [] as string[],
+            drugScreeningPanels: [] as string[],
             additionalScreenings: jobOrderData.additionalScreenings || [],
             // Copy requirements from job order; keep draft post values when the order has none
             licensesCerts: (() => {
@@ -1187,12 +1203,16 @@ const JobsBoard: React.FC = () => {
       payRate: '',
       showPayRate: true,
       workersNeeded: 1,
-      eVerifyRequired: false,
-      backgroundCheckPackages: [],
-      showBackgroundChecks: false,
-      drugScreeningPanels: [],
-      showDrugScreening: false,
-      additionalScreenings: [],
+    eVerifyRequired: false,
+    screeningPackageId: '',
+    screeningPackageName: '',
+    showScreeningPackageOnPost: false,
+    screeningPackageServiceNames: [] as string[],
+    backgroundCheckPackages: [] as string[],
+    showBackgroundChecks: false,
+    drugScreeningPanels: [] as string[],
+    showDrugScreening: false,
+    additionalScreenings: [],
       showAdditionalScreenings: false,
       visibility: 'public',
       restrictedGroups: [],
@@ -1345,10 +1365,14 @@ const JobsBoard: React.FC = () => {
           showPayRate: newPost.showPayRate,
           workersNeeded: newPost.workersNeeded,
           eVerifyRequired: newPost.eVerifyRequired,
-          backgroundCheckPackages: newPost.backgroundCheckPackages,
-          showBackgroundChecks: newPost.showBackgroundChecks,
-          drugScreeningPanels: newPost.drugScreeningPanels,
-          showDrugScreening: newPost.showDrugScreening,
+          screeningPackageId: newPost.screeningPackageId?.trim() || null,
+          screeningPackageName: newPost.screeningPackageName?.trim() || null,
+          showScreeningPackageOnPost: newPost.showScreeningPackageOnPost,
+          screeningPackageServiceNames: newPost.screeningPackageServiceNames,
+          backgroundCheckPackages: [],
+          showBackgroundChecks: false,
+          drugScreeningPanels: [],
+          showDrugScreening: false,
           additionalScreenings: newPost.additionalScreenings,
           showAdditionalScreenings: newPost.showAdditionalScreenings,
           skills: newPost.skills,
@@ -2051,10 +2075,14 @@ const JobsBoard: React.FC = () => {
                           payRate: originalFormValues.payRate,
                           workersNeeded: originalFormValues.workersNeeded,
                           eVerifyRequired: originalFormValues.eVerifyRequired,
-                          backgroundCheckPackages: originalFormValues.backgroundCheckPackages,
-                          showBackgroundChecks: originalFormValues.showBackgroundChecks,
-                          drugScreeningPanels: originalFormValues.drugScreeningPanels,
-                          showDrugScreening: originalFormValues.showDrugScreening,
+                          screeningPackageId: originalFormValues.screeningPackageId,
+                          screeningPackageName: originalFormValues.screeningPackageName,
+                          showScreeningPackageOnPost: originalFormValues.showScreeningPackageOnPost,
+                          screeningPackageServiceNames: originalFormValues.screeningPackageServiceNames,
+                          backgroundCheckPackages: [],
+                          showBackgroundChecks: false,
+                          drugScreeningPanels: [],
+                          showDrugScreening: false,
                           additionalScreenings: originalFormValues.additionalScreenings,
                           showAdditionalScreenings: originalFormValues.showAdditionalScreenings,
                           skills: originalFormValues.skills,
@@ -2512,92 +2540,6 @@ const JobsBoard: React.FC = () => {
                     <Switch
                       checked={newPost.eVerifyRequired}
                       onChange={(e) => setNewPost({ ...newPost, eVerifyRequired: e.target.checked })}
-                    />
-                  </Box>
-                </Grid>
-              </Grid>
-            </Box>
-
-            {/* Background Checks Section */}
-            <Box sx={{ mt: 2 }}>
-              <Grid container spacing={2} alignItems="center">
-                <Grid item xs={12} sm={6}>
-                  <Autocomplete
-                    multiple
-                    fullWidth
-                    options={backgroundCheckOptions.map(option => option.label)}
-                    value={newPost.backgroundCheckPackages}
-                    onChange={(event, newValue) => {
-                      setNewPost({ ...newPost, backgroundCheckPackages: newValue });
-                    }}
-                    renderInput={(params) => (
-                      <TextField
-                        {...params}
-                        label="Background Check Packages"
-                        helperText="Select required background check packages"
-                      />
-                    )}
-                    renderTags={(value, getTagProps) =>
-                      value.map((option, index) => (
-                        <Chip
-                          variant="outlined"
-                          label={option}
-                          {...getTagProps({ index })}
-                          key={option}
-                        />
-                      ))
-                    }
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
-                    <Typography variant="body1">Show Background Requirements</Typography>
-                    <Switch
-                      checked={newPost.showBackgroundChecks}
-                      onChange={(e) => setNewPost({ ...newPost, showBackgroundChecks: e.target.checked })}
-                    />
-                  </Box>
-                </Grid>
-              </Grid>
-            </Box>
-
-            {/* Drug Screening Section */}
-            <Box sx={{ mt: 2 }}>
-              <Grid container spacing={2} alignItems="center">
-                <Grid item xs={12} sm={6}>
-                  <Autocomplete
-                    multiple
-                    fullWidth
-                    options={drugScreeningOptions.map(option => option.label)}
-                    value={newPost.drugScreeningPanels}
-                    onChange={(event, newValue) => {
-                      setNewPost({ ...newPost, drugScreeningPanels: newValue });
-                    }}
-                    renderInput={(params) => (
-                      <TextField
-                        {...params}
-                        label="Drug Screening Panels"
-                        helperText="Select required drug screening panels"
-                      />
-                    )}
-                    renderTags={(value, getTagProps) =>
-                      value.map((option, index) => (
-                        <Chip
-                          variant="outlined"
-                          label={option}
-                          {...getTagProps({ index })}
-                          key={option}
-                        />
-                      ))
-                    }
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
-                    <Typography variant="body1">Show Drug Screening Requirements</Typography>
-                    <Switch
-                      checked={newPost.showDrugScreening}
-                      onChange={(e) => setNewPost({ ...newPost, showDrugScreening: e.target.checked })}
                     />
                   </Box>
                 </Grid>

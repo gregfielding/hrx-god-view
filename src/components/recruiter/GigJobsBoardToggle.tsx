@@ -33,7 +33,10 @@ import { db } from '../../firebase';
 import onetSkills from '../../data/onetSkills.json';
 import credentialsSeed from '../../data/credentialsSeed.json';
 import { experienceOptions, educationOptions } from '../../data/experienceOptions';
-import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../../data/screeningsOptions';
+import { additionalScreeningOptions } from '../../data/screeningsOptions';
+import { AccusourcePackageSelector } from './AccusourcePackageSelector';
+import { useAccusourceCatalog } from '../../hooks/useAccusourceCatalog';
+import { getAccusourcePackageServiceDisplayNames } from '../../utils/accusourceCatalogHelpers';
 
 interface GigJobsBoardToggleProps {
   jobOrder: JobOrder;
@@ -42,6 +45,7 @@ interface GigJobsBoardToggleProps {
 
 const GigJobsBoardToggle: React.FC<GigJobsBoardToggleProps> = ({ jobOrder, onPostUpdated }) => {
   const { tenantId } = useAuth();
+  const { catalog } = useAccusourceCatalog();
   const [isActive, setIsActive] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -50,10 +54,10 @@ const GigJobsBoardToggle: React.FC<GigJobsBoardToggleProps> = ({ jobOrder, onPos
   const [success, setSuccess] = useState<string | null>(null);
 
   // Requirement fields state - these will be stored on the job_order
-  const [backgroundCheckPackages, setBackgroundCheckPackages] = useState<string[]>([]);
-  const [showBackgroundChecks, setShowBackgroundChecks] = useState(false);
-  const [drugScreeningPanels, setDrugScreeningPanels] = useState<string[]>([]);
-  const [showDrugScreening, setShowDrugScreening] = useState(false);
+  const [screeningPackageId, setScreeningPackageId] = useState('');
+  const [screeningPackageName, setScreeningPackageName] = useState('');
+  const [showScreeningPackageOnPost, setShowScreeningPackageOnPost] = useState(false);
+  const [screeningPackageServiceNames, setScreeningPackageServiceNames] = useState<string[]>([]);
   const [additionalScreenings, setAdditionalScreenings] = useState<string[]>([]);
   const [showAdditionalScreenings, setShowAdditionalScreenings] = useState(false);
   const [skills, setSkills] = useState<string[]>([]);
@@ -115,6 +119,15 @@ const GigJobsBoardToggle: React.FC<GigJobsBoardToggleProps> = ({ jobOrder, onPos
     loadUserGroups();
   }, [tenantId]);
 
+  useEffect(() => {
+    const id = String(screeningPackageId || '').trim();
+    const next = id ? getAccusourcePackageServiceDisplayNames(catalog, id) : [];
+    setScreeningPackageServiceNames((prev) => {
+      if (prev.length === next.length && prev.every((v, i) => v === next[i])) return prev;
+      return next;
+    });
+  }, [catalog, screeningPackageId]);
+
   // Load existing job posting status and requirement fields
   useEffect(() => {
     const loadPostingStatus = async () => {
@@ -124,44 +137,45 @@ const GigJobsBoardToggle: React.FC<GigJobsBoardToggleProps> = ({ jobOrder, onPos
       }
 
       try {
+        let jobOrderData: Record<string, unknown> | null = null;
         // Load the latest job_order data to get current requirement fields
         const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrder.id);
         const jobOrderSnap = await getDoc(jobOrderRef);
         
         if (jobOrderSnap.exists()) {
-          const jobOrderData = jobOrderSnap.data();
-          
-          // Load requirement fields from job_order
-          setBackgroundCheckPackages(ensureStringArray(jobOrderData.backgroundCheckPackages));
-          setDrugScreeningPanels(ensureStringArray(jobOrderData.drugScreeningPanels));
-          setAdditionalScreenings(ensureStringArray(jobOrderData.additionalScreenings));
-          setSkills(ensureStringArray(jobOrderData.skillsRequired));
-          setLicensesCerts(ensureStringArray([...(jobOrderData.requiredLicenses || []), ...(jobOrderData.requiredCertifications || [])]));
-          setExperienceLevels(ensureStringArray(jobOrderData.experienceRequired));
-          setEducationLevels(ensureStringArray(jobOrderData.educationRequired));
-          setLanguages(ensureStringArray(jobOrderData.languagesRequired));
-          setPhysicalRequirements(ensureStringArray(jobOrderData.physicalRequirements));
-          setUniformRequirements(ensureStringArray(jobOrderData.uniformRequirements));
-          setRequiredPpe(ensureStringArray(jobOrderData.ppeRequirements));
-          setEVerifyRequired(jobOrderData.eVerifyRequired || false);
-          setJobDescription(jobOrderData.jobOrderDescription || jobOrderData.jobDescription || '');
-          
-          // Load visibility and restrictedGroups
-          setVisibility(jobOrderData.visibility || jobOrderData.jobsBoardVisibility || 'public');
-          setRestrictedGroups(ensureStringArray(jobOrderData.restrictedGroups));
-          
-          // Load "show" toggles from job_order (these are new fields we're adding)
-          setShowBackgroundChecks(jobOrderData.showBackgroundChecks || false);
-          setShowDrugScreening(jobOrderData.showDrugScreening || false);
-          setShowAdditionalScreenings(jobOrderData.showAdditionalScreenings || false);
-          setShowSkills(jobOrderData.showSkills || false);
-          setShowLicensesCerts(jobOrderData.showLicensesCerts || false);
-          setShowExperience(jobOrderData.showExperience || false);
-          setShowEducation(jobOrderData.showEducation || false);
-          setShowLanguages(jobOrderData.showLanguages || false);
-          setShowPhysicalRequirements(jobOrderData.showPhysicalRequirements || false);
-          setShowUniformRequirements(jobOrderData.showUniformRequirements || false);
-          setShowRequiredPpe(jobOrderData.showRequiredPpe || false);
+          const data = jobOrderSnap.data() as Record<string, unknown>;
+          jobOrderData = data;
+
+          // Load requirement fields from job_order (Firestore shapes vary; treat loosely)
+          const jo = data as Record<string, any>;
+          setScreeningPackageId(String(jo.screeningPackageId ?? '').trim());
+          setScreeningPackageName(String(jo.screeningPackageName ?? '').trim());
+          setShowScreeningPackageOnPost(!!jo.showScreeningPackageOnPost);
+          setScreeningPackageServiceNames(ensureStringArray(jo.screeningPackageServiceNames));
+          setAdditionalScreenings(ensureStringArray(jo.additionalScreenings));
+          setSkills(ensureStringArray(jo.skillsRequired));
+          setLicensesCerts(ensureStringArray([...(jo.requiredLicenses || []), ...(jo.requiredCertifications || [])]));
+          setExperienceLevels(ensureStringArray(jo.experienceRequired));
+          setEducationLevels(ensureStringArray(jo.educationRequired));
+          setLanguages(ensureStringArray(jo.languagesRequired));
+          setPhysicalRequirements(ensureStringArray(jo.physicalRequirements));
+          setUniformRequirements(ensureStringArray(jo.uniformRequirements));
+          setRequiredPpe(ensureStringArray(jo.ppeRequirements));
+          setEVerifyRequired(Boolean(jo.eVerifyRequired));
+          setJobDescription(jo.jobOrderDescription || jo.jobDescription || '');
+          setVisibility(
+            (jo.visibility || jo.jobsBoardVisibility || 'public') as 'hidden' | 'public' | 'group_restricted'
+          );
+          setRestrictedGroups(ensureStringArray(jo.restrictedGroups));
+          setShowAdditionalScreenings(!!jo.showAdditionalScreenings);
+          setShowSkills(Boolean(jo.showSkills));
+          setShowLicensesCerts(Boolean(jo.showLicensesCerts));
+          setShowExperience(Boolean(jo.showExperience));
+          setShowEducation(Boolean(jo.showEducation));
+          setShowLanguages(Boolean(jo.showLanguages));
+          setShowPhysicalRequirements(Boolean(jo.showPhysicalRequirements));
+          setShowUniformRequirements(Boolean(jo.showUniformRequirements));
+          setShowRequiredPpe(Boolean(jo.showRequiredPpe));
         }
 
         const jobsBoardService = JobsBoardService.getInstance();
@@ -171,6 +185,25 @@ const GigJobsBoardToggle: React.FC<GigJobsBoardToggleProps> = ({ jobOrder, onPos
           const activePost = posts.find(p => p.status === 'active') || posts[0];
           setConnectedPost(activePost);
           setIsActive(activePost?.status === 'active');
+          const jo = (jobOrderData || {}) as Record<string, any>;
+          setScreeningPackageId(
+            String(activePost.screeningPackageId ?? jo.screeningPackageId ?? '').trim()
+          );
+          setScreeningPackageName(
+            String(activePost.screeningPackageName ?? jo.screeningPackageName ?? '').trim()
+          );
+          setShowScreeningPackageOnPost(
+            activePost.showScreeningPackageOnPost ?? !!jo.showScreeningPackageOnPost
+          );
+          const fromPost = ensureStringArray(activePost.screeningPackageServiceNames);
+          setScreeningPackageServiceNames(
+            fromPost.length ? fromPost : ensureStringArray(jo.screeningPackageServiceNames)
+          );
+          const addFromPost = ensureStringArray(activePost.additionalScreenings);
+          setAdditionalScreenings(addFromPost.length ? addFromPost : ensureStringArray(jo.additionalScreenings));
+          setShowAdditionalScreenings(
+            activePost.showAdditionalScreenings ?? !!jo.showAdditionalScreenings
+          );
         } else {
           // Check if there's a stored preference indicating the posting should be active
           const shouldBeActive = localStorage.getItem(`gig-board-active-${jobOrder.id}`);
@@ -244,10 +277,15 @@ const GigJobsBoardToggle: React.FC<GigJobsBoardToggleProps> = ({ jobOrder, onPos
       shiftTimes: '',
       showShiftTimes: jobOrder.showShiftTimes,
       eVerifyRequired,
-      backgroundCheckPackages: ensureStringArray(backgroundCheckPackages),
-      showBackgroundChecks,
-      drugScreeningPanels: ensureStringArray(drugScreeningPanels),
-      showDrugScreening,
+      screeningPackageId: String(screeningPackageId || '').trim() || null,
+      screeningPackageName: String(screeningPackageName || '').trim() || null,
+      showScreeningPackageOnPost,
+      screeningPackageServiceNames: ensureStringArray(screeningPackageServiceNames),
+      // Legacy fields — empty; screening is AccuSource package + additionalScreenings only (same as job orders).
+      backgroundCheckPackages: [],
+      showBackgroundChecks: false,
+      drugScreeningPanels: [],
+      showDrugScreening: false,
       additionalScreenings: ensureStringArray(additionalScreenings),
       showAdditionalScreenings,
       skills: ensureStringArray(skills),
@@ -288,8 +326,12 @@ const GigJobsBoardToggle: React.FC<GigJobsBoardToggleProps> = ({ jobOrder, onPos
       // Note: Some fields are arrays in the form but strings in JobOrder - we'll store as arrays
       // and convert when needed
       const updateData: any = {
-        backgroundCheckPackages,
-        drugScreeningPanels,
+        screeningPackageId: String(screeningPackageId || '').trim() || null,
+        screeningPackageName: String(screeningPackageName || '').trim() || null,
+        showScreeningPackageOnPost,
+        screeningPackageServiceNames: ensureStringArray(screeningPackageServiceNames),
+        backgroundCheckPackages: [],
+        drugScreeningPanels: [],
         additionalScreenings,
         skillsRequired: skills,
         // Split licensesCerts back into requiredLicenses and requiredCertifications
@@ -308,8 +350,6 @@ const GigJobsBoardToggle: React.FC<GigJobsBoardToggleProps> = ({ jobOrder, onPos
         ppeRequirements: requiredPpe.length > 0 ? requiredPpe : undefined,
         eVerifyRequired,
         // Save "show" toggles
-        showBackgroundChecks,
-        showDrugScreening,
         showAdditionalScreenings,
         showSkills,
         showLicensesCerts,
@@ -361,8 +401,10 @@ const GigJobsBoardToggle: React.FC<GigJobsBoardToggleProps> = ({ jobOrder, onPos
       return () => clearTimeout(timer);
     }
   }, [
-    backgroundCheckPackages, showBackgroundChecks,
-    drugScreeningPanels, showDrugScreening,
+    screeningPackageId,
+    screeningPackageName,
+    showScreeningPackageOnPost,
+    screeningPackageServiceNames,
     additionalScreenings, showAdditionalScreenings,
     skills, showSkills,
     licensesCerts, showLicensesCerts,
@@ -595,95 +637,36 @@ const GigJobsBoardToggle: React.FC<GigJobsBoardToggleProps> = ({ jobOrder, onPos
           </Grid>
         </Box>
 
-        {/* Background Checks Section */}
-        <Box sx={{ mt: 2 }}>
-          <Grid container spacing={2} alignItems="center">
-            <Grid item xs={12} sm={6}>
-              <Autocomplete
-                multiple
-                fullWidth
-                options={backgroundCheckOptions.map(option => option.label)}
-                value={backgroundCheckPackages}
-                onChange={(event, newValue) => {
-                  setBackgroundCheckPackages(newValue);
-                }}
-                disabled={savingFields}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Background Check Packages"
-                    helperText="Select required background check packages"
-                  />
-                )}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip
-                      variant="outlined"
-                      label={option}
-                      {...getTagProps({ index })}
-                      key={option}
-                    />
-                  ))
-                }
-              />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
-                <Typography variant="body1">Show Background Requirements</Typography>
-                <Switch
-                  checked={showBackgroundChecks}
-                  onChange={(e) => setShowBackgroundChecks(e.target.checked)}
-                  disabled={savingFields}
-                />
-              </Box>
-            </Grid>
+        <Divider sx={{ my: 2 }} />
+        <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
+          Compliance & requirements
+        </Typography>
+        <Grid container spacing={2} alignItems="center">
+          <Grid item xs={12} sm={6}>
+            <AccusourcePackageSelector
+              packageId={screeningPackageId}
+              packageName={screeningPackageName}
+              onChange={(next) => {
+                setScreeningPackageId(next.packageId);
+                setScreeningPackageName(next.packageName);
+              }}
+              disabled={savingFields}
+              emptyMenuLabel="None"
+              showDiagnostics
+              helperText="AccuSource screening package for this gig; show on post lists catalog services for candidates."
+            />
           </Grid>
-        </Box>
-
-        {/* Drug Screening Section */}
-        <Box sx={{ mt: 2 }}>
-          <Grid container spacing={2} alignItems="center">
-            <Grid item xs={12} sm={6}>
-              <Autocomplete
-                multiple
-                fullWidth
-                options={drugScreeningOptions.map(option => option.label)}
-                value={drugScreeningPanels}
-                onChange={(event, newValue) => {
-                  setDrugScreeningPanels(newValue);
-                }}
+          <Grid item xs={12} sm={6}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', gap: 1 }}>
+              <Typography variant="body1">Show on jobs board post</Typography>
+              <Switch
+                checked={showScreeningPackageOnPost}
+                onChange={(e) => setShowScreeningPackageOnPost(e.target.checked)}
                 disabled={savingFields}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Drug Screening Panels"
-                    helperText="Select required drug screening panels"
-                  />
-                )}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip
-                      variant="outlined"
-                      label={option}
-                      {...getTagProps({ index })}
-                      key={option}
-                    />
-                  ))
-                }
               />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
-                <Typography variant="body1">Show Drug Screening Requirements</Typography>
-                <Switch
-                  checked={showDrugScreening}
-                  onChange={(e) => setShowDrugScreening(e.target.checked)}
-                  disabled={savingFields}
-                />
-              </Box>
-            </Grid>
+            </Box>
           </Grid>
-        </Box>
+        </Grid>
 
         {/* Additional Screenings Section */}
         <Box sx={{ mt: 2 }}>

@@ -47,7 +47,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { p } from '../data/firestorePaths';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
-import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../data/screeningsOptions';
+import { additionalScreeningOptions } from '../data/screeningsOptions';
 import { JobOrder, JobOrderContact } from '../types/recruiter/jobOrder';
 import { getFieldDef } from '../fields/useFieldDef';
 import { toNumberSafe, toISODate, coerceSelect } from '../utils/fieldCoercions';
@@ -58,6 +58,10 @@ import { JobsBoardService } from '../services/recruiter/jobsBoardService';
 import { ensureCityInSmartGroups } from '../services/smartGroupMetroSync';
 import { getRequirementPackIds, JOB_REQUIREMENT_PACKS } from '../data/jobRequirementPacks';
 import { useWorkersCompRatesByJobTitle } from '../hooks/useWorkersCompRatesByJobTitle';
+import {
+  pickWorkersCompJobTitleLookup,
+  resolveWorkersCompModifierAccountId,
+} from '../utils/workersCompRateMaps';
 import { AccusourcePackageSelector } from './recruiter/AccusourcePackageSelector';
 import { useEntity } from '../hooks/useEntity';
 import {
@@ -231,8 +235,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   // Use props if provided, otherwise fall back to auth context
   const tenantId = propTenantId || authTenantId;
   const user = propCreatedBy ? { uid: propCreatedBy } : authUser;
-  const { byStateAndJobTitle: wcRatesByStateAndJobTitle, wcRatesByStateAndCode } =
-    useWorkersCompRatesByJobTitle(tenantId);
+  const wcMaps = useWorkersCompRatesByJobTitle(tenantId);
 
   /** Account Pricing tab positions (child → national fallback); empty ⇒ use O*NET unless propJobTitles overrides */
   const [resolvedAccountPositions, setResolvedAccountPositions] = useState<AccountPositionPricing[]>([]);
@@ -288,6 +291,16 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       null,
     [pickedRecruiterAccountId, propRecruiterAccountId, loadedJobOrderData, jobOrder]
   );
+
+  /** National or standalone recruiter account id for WC rules scoped by account modifier (child venues → parent). */
+  const wcModifierAccountId = useMemo(() => {
+    const aid = effectiveRecruiterAccountId;
+    if (!aid) return null;
+    const acc =
+      recruiterAccountsForPicker.find((a) => a.id === aid) ||
+      recruiterAccountsAll.find((a) => a.id === aid);
+    return resolveWorkersCompModifierAccountId(acc || null);
+  }, [effectiveRecruiterAccountId, recruiterAccountsForPicker, recruiterAccountsAll]);
 
   /** Hiring entity from the job order's linked recruiter account (fixes stale job orders created before the account had hiringEntityId). */
   const recruiterAccountHiringEntityId = useMemo(() => {
@@ -786,13 +799,17 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         const od = merged.orderDetails;
         const bgLen = od.backgroundCheckPackages?.length ?? 0;
         const drugLen = od.drugScreeningPanels?.length ?? 0;
+        const hasScreeningPackage = Boolean(
+          merged.screeningPackageId != null && String(merged.screeningPackageId).trim() !== '',
+        );
         setFormData((prev) => ({
           ...prev,
           screeningPackageId: merged.screeningPackageId,
           screeningPackageName: merged.screeningPackageName,
           eVerifyRequired: merged.eVerifyRequired,
-          backgroundCheckPackages: od.backgroundCheckPackages ?? [],
-          drugScreeningPanels: od.drugScreeningPanels ?? [],
+          /* Legacy free-text BG/drug dropdowns removed — use AccuSource package + Additional Screenings. */
+          backgroundCheckPackages: [] as string[],
+          drugScreeningPanels: [] as string[],
           additionalScreenings: od.additionalScreenings ?? [],
           licensesCerts: od.licensesCerts ?? [],
           experienceRequired: od.experienceRequired ?? '',
@@ -812,7 +829,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           billingContactId: od.billingContactId ?? '',
           safetyContactId: od.safetyContactId ?? '',
           invoiceContactId: od.invoiceContactId ?? '',
-          backgroundCheckRequired: bgLen > 0,
+          backgroundCheckRequired: hasScreeningPackage || bgLen > 0,
           drugScreenRequired: drugLen > 0,
         }));
       } catch (e) {
@@ -913,7 +930,13 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   // Auto-apply WC code/rate from master when job title + worksite state match (Settings > Workers Comp Rates).
   // If Account Pricing only stored class code, fill rate from master by state+code (same as Account Pricing tab).
   useEffect(() => {
-    if (!formData.worksiteId || (Object.keys(wcRatesByStateAndJobTitle).length === 0 && Object.keys(wcRatesByStateAndCode).length === 0)) return;
+    if (
+      !formData.worksiteId ||
+      (Object.keys(wcMaps.byStateAndJobTitle).length === 0 &&
+        Object.keys(wcMaps.byStateJobTitleAndModifierAccount).length === 0 &&
+        Object.keys(wcMaps.wcRatesByStateAndCode).length === 0)
+    )
+      return;
     const selectedLocation = filteredLocations.find((loc) => loc.id === formData.worksiteId) as (Location & { state?: string; address?: { state?: string } }) | undefined;
     const stateRaw = selectedLocation?.state ?? selectedLocation?.address?.state;
     const stateCode = normalizeStateCode(stateRaw).trim().toUpperCase();
@@ -924,8 +947,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       const next = gigPositions.map((pos) => {
         const jobTitle = (pos.jobTitle ?? '').trim();
         if (jobTitle) {
-          const key = `${stateCode}_${jobTitle.toLowerCase()}`;
-          const lookup = wcRatesByStateAndJobTitle[key];
+          const lookup = pickWorkersCompJobTitleLookup(wcMaps, stateCode, jobTitle, wcModifierAccountId);
           if (lookup) {
             if (pos.workersCompClassCode === lookup.code && String(pos.workersCompRate ?? '') === String(lookup.rate)) return pos;
             updated = true;
@@ -934,7 +956,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         }
         const code = (pos.workersCompClassCode ?? '').trim();
         if (code) {
-          const rate = wcRatesByStateAndCode[`${stateCode}_${code}`];
+          const rate = wcMaps.wcRatesByStateAndCode[`${stateCode}_${code}`];
           if (rate != null && !Number.isNaN(rate) && String(pos.workersCompRate ?? '') !== String(rate)) {
             updated = true;
             return { ...pos, workersCompRate: String(rate) };
@@ -948,8 +970,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
 
     const jobTitle = (formData.jobTitle ?? '').trim();
     if (jobTitle) {
-      const key = `${stateCode}_${jobTitle.toLowerCase()}`;
-      const lookup = wcRatesByStateAndJobTitle[key];
+      const lookup = pickWorkersCompJobTitleLookup(wcMaps, stateCode, jobTitle, wcModifierAccountId);
       if (lookup) {
         setFormData((prev) => {
           if (prev.workersCompClassCode === lookup.code && String(prev.workersCompRate ?? '') === String(lookup.rate)) return prev;
@@ -960,7 +981,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     }
     const code = (formData.workersCompClassCode ?? '').trim();
     if (code) {
-      const rate = wcRatesByStateAndCode[`${stateCode}_${code}`];
+      const rate = wcMaps.wcRatesByStateAndCode[`${stateCode}_${code}`];
       if (rate != null && !Number.isNaN(rate)) {
         setFormData((prev) => {
           if (String(prev.workersCompRate ?? '') === String(rate)) return prev;
@@ -968,7 +989,16 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         });
       }
     }
-  }, [formData.worksiteId, formData.jobTitle, formData.jobType, formData.workersCompClassCode, gigPositions, filteredLocations, wcRatesByStateAndJobTitle, wcRatesByStateAndCode]);
+  }, [
+    formData.worksiteId,
+    formData.jobTitle,
+    formData.jobType,
+    formData.workersCompClassCode,
+    gigPositions,
+    filteredLocations,
+    wcMaps,
+    wcModifierAccountId,
+  ]);
 
   const loadCompanies = async () => {
     try {
@@ -1364,12 +1394,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           // Scoping Stage Fields - from stageData.scoping
           replacingExistingAgency: stageData.scoping?.replacingExistingAgency || false,
           rolloverExistingStaff: stageData.scoping?.rolloverExistingStaff || false,
-          backgroundCheckPackages: Array.isArray((data as any).backgroundCheckPackages)
-            ? (data as any).backgroundCheckPackages
-            : (stageData.scoping?.compliance?.backgroundCheckPackages || []),
-          drugScreeningPanels: Array.isArray((data as any).drugScreeningPanels)
-            ? (data as any).drugScreeningPanels
-            : (stageData.scoping?.compliance?.drugScreeningPanels || []),
+          /* Retired: use AccuSource package + Additional Screenings; save path clears stored arrays. */
+          backgroundCheckPackages: [] as string[],
+          drugScreeningPanels: [] as string[],
           additionalScreenings: Array.isArray((data as any).additionalScreenings)
             ? (data as any).additionalScreenings
             : (stageData.scoping?.compliance?.additionalScreenings || []),
@@ -1631,11 +1658,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         scoping: {
           replacingExistingAgency: (dataToUse as any).replacingExistingAgency || undefined,
           rolloverExistingStaff: (dataToUse as any).rolloverExistingStaff || undefined,
-          compliance: {
+            compliance: {
             backgroundCheck: (dataToUse as any).backgroundCheckRequired || undefined,
-            backgroundCheckPackages: (dataToUse as any).backgroundCheckPackages || [],
+            backgroundCheckPackages: [],
             drugScreen: (dataToUse as any).drugScreenRequired || undefined,
-            drugScreeningPanels: (dataToUse as any).drugScreeningPanels || [],
+            drugScreeningPanels: [],
             additionalScreenings: (dataToUse as any).additionalScreenings || [],
             eVerify: (dataToUse as any).eVerifyRequired || undefined,
             licensesCerts: (dataToUse as any).licensesCerts || [],
@@ -1987,9 +2014,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             rolloverExistingStaff: formData.rolloverExistingStaff,
             compliance: {
               backgroundCheck: formData.backgroundCheckRequired,
-              backgroundCheckPackages: formData.backgroundCheckPackages,
+              backgroundCheckPackages: [],
               drugScreen: formData.drugScreenRequired,
-              drugScreeningPanels: formData.drugScreeningPanels,
+              drugScreeningPanels: [],
               additionalScreenings: formData.additionalScreenings,
               eVerify: formEntity ? formEntity.everifyRequired : formData.eVerifyRequired,
               licensesCerts: formData.licensesCerts,
@@ -2184,9 +2211,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         screeningPackageId: String(formData.screeningPackageId ?? '').trim() || null,
         screeningPackageName: String(formData.screeningPackageName ?? '').trim() || null,
         
-        // Background Check and Drug Screening
-        backgroundCheckPackages: formData.backgroundCheckPackages || [],
-        drugScreeningPanels: formData.drugScreeningPanels || [],
+        // Background / drug screening via AccuSource package + Additional Screenings (legacy arrays cleared)
+        backgroundCheckPackages: [],
+        drugScreeningPanels: [],
         additionalScreenings: formData.additionalScreenings || [],
         
         // Customer Rules
@@ -2843,7 +2870,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                                       if (preset.workersCompRate != null && !Number.isNaN(Number(preset.workersCompRate))) {
                                         row.workersCompRate = String(preset.workersCompRate);
                                       } else if (pricingStateCode && wcCode) {
-                                        const r = wcRatesByStateAndCode[`${pricingStateCode}_${wcCode}`];
+                                        const r = wcMaps.wcRatesByStateAndCode[`${pricingStateCode}_${wcCode}`];
                                         if (r != null && !Number.isNaN(r)) {
                                           row.workersCompRate = String(r);
                                         }
@@ -2924,7 +2951,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                                           if (preset.workersCompRate != null && !Number.isNaN(Number(preset.workersCompRate))) {
                                             row.workersCompRate = String(preset.workersCompRate);
                                           } else if (pricingStateCode && wcCode) {
-                                            const r = wcRatesByStateAndCode[`${pricingStateCode}_${wcCode}`];
+                                            const r = wcMaps.wcRatesByStateAndCode[`${pricingStateCode}_${wcCode}`];
                                             if (r != null && !Number.isNaN(r)) {
                                               row.workersCompRate = String(r);
                                             }
@@ -3249,62 +3276,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                     showDiagnostics
                     emptyMenuLabel="None"
                     helperText="Overrides account and location order defaults for AccuSource screening (merge order: job → location → account)."
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <Autocomplete
-                    multiple
-                    fullWidth
-                    options={Array.isArray(backgroundCheckOptions) ? backgroundCheckOptions.map(option => option.label) : []}
-                    value={formData.backgroundCheckPackages}
-                    onChange={(event, newValue) => {
-                      handleInputChange('backgroundCheckPackages', newValue);
-                    }}
-                    renderInput={(params) => (
-                      <TextField
-                        {...params}
-                        label={getFieldDef('backgroundCheckPackages')?.label || 'Background Check Packages'}
-                        helperText="Select required background check types"
-                      />
-                    )}
-                    renderTags={(value, getTagProps) =>
-                      value.map((option, index) => (
-                        <Chip
-                          variant="outlined"
-                          label={option}
-                          {...getTagProps({ index })}
-                          key={option}
-                        />
-                      ))
-                    }
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <Autocomplete
-                    multiple
-                    fullWidth
-                    options={Array.isArray(drugScreeningOptions) ? drugScreeningOptions.map(option => option.label) : []}
-                    value={formData.drugScreeningPanels}
-                    onChange={(event, newValue) => {
-                      handleInputChange('drugScreeningPanels', newValue);
-                    }}
-                    renderInput={(params) => (
-                      <TextField
-                        {...params}
-                        label={getFieldDef('drugScreeningPanels')?.label || 'Drug Screening Panels'}
-                        helperText="Select required drug screening panels"
-                      />
-                    )}
-                    renderTags={(value, getTagProps) =>
-                      value.map((option, index) => (
-                        <Chip
-                          variant="outlined"
-                          label={option}
-                          {...getTagProps({ index })}
-                          key={option}
-                        />
-                      ))
-                    }
                   />
                 </Grid>
                 <Grid item xs={12}>

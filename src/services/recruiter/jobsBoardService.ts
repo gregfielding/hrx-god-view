@@ -64,6 +64,7 @@ const JOB_POST_STRING_ARRAY_FIELD_KEYS = [
   'restrictedGroups',
   'autoAddToUserGroups',
   'requirements',
+  'screeningPackageServiceNames',
 ] as const;
 
 /** Normalize raw Firestore document data into consistent shapes for the Jobs Board UI. */
@@ -94,6 +95,7 @@ export const normalizeJobsBoardPostRecord = (id: string, data: Record<string, un
       : typeof spName === 'string'
         ? spName.trim()
         : String(spName).trim();
+  out.showScreeningPackageOnPost = Boolean(out.showScreeningPackageOnPost);
   return out as unknown as JobsBoardPost;
 };
 
@@ -246,6 +248,8 @@ export interface JobsBoardPost {
    */
   screeningPackageId?: string | null;
   screeningPackageName?: string | null;
+  showScreeningPackageOnPost?: boolean;
+  screeningPackageServiceNames?: string[];
   backgroundCheckPackages: string[];
   showBackgroundChecks: boolean;
   drugScreeningPanels: string[];
@@ -357,6 +361,8 @@ export interface CreatePostData {
   eVerifyRequired: boolean;
   screeningPackageId?: string | null;
   screeningPackageName?: string | null;
+  showScreeningPackageOnPost?: boolean;
+  screeningPackageServiceNames?: string[];
   backgroundCheckPackages: string[];
   showBackgroundChecks: boolean;
   drugScreeningPanels: string[];
@@ -757,10 +763,14 @@ export class JobsBoardService {
           customData?.screeningPackageName !== undefined
             ? String(customData.screeningPackageName ?? '').trim() || null
             : String(jobOrder.screeningPackageName ?? '').trim() || null,
-        backgroundCheckPackages: customData?.backgroundCheckPackages !== undefined ? customData.backgroundCheckPackages : jobOrder.backgroundCheckPackages,
-        showBackgroundChecks: customData?.showBackgroundChecks !== undefined ? customData.showBackgroundChecks : false,
-        drugScreeningPanels: customData?.drugScreeningPanels !== undefined ? customData.drugScreeningPanels : jobOrder.drugScreeningPanels,
-        showDrugScreening: customData?.showDrugScreening !== undefined ? customData.showDrugScreening : false,
+        showScreeningPackageOnPost: customData?.showScreeningPackageOnPost ?? false,
+        screeningPackageServiceNames: coerceStringArrayField(
+          customData?.screeningPackageServiceNames as unknown
+        ),
+        backgroundCheckPackages: [],
+        showBackgroundChecks: false,
+        drugScreeningPanels: [],
+        showDrugScreening: false,
         additionalScreenings: customData?.additionalScreenings !== undefined ? customData.additionalScreenings : jobOrder.additionalScreenings,
         showAdditionalScreenings: customData?.showAdditionalScreenings !== undefined ? customData.showAdditionalScreenings : false,
         shift: customData?.shift !== undefined ? customData.shift : [],
@@ -935,6 +945,8 @@ export class JobsBoardService {
               screeningPackageName: String(postData.screeningPackageName ?? '').trim() || null,
             }
           : {}),
+        showScreeningPackageOnPost: postData.showScreeningPackageOnPost ?? false,
+        screeningPackageServiceNames: coerceStringArrayField(postData.screeningPackageServiceNames),
         backgroundCheckPackages: coerceStringArrayField(postData.backgroundCheckPackages),
         showBackgroundChecks: postData.showBackgroundChecks ?? false,
         drugScreeningPanels: coerceStringArrayField(postData.drugScreeningPanels),
