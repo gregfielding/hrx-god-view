@@ -57,8 +57,11 @@ import ImageCropDialog from '../../../components/common/ImageCropDialog';
 import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import PageHeader from '../../../components/PageHeader';
 import StandardTablePagination from '../../../components/StandardTablePagination';
+import InboxSearchBar from '../../../components/InboxSearchBar';
+import FavoritesFilter from '../../../components/FavoritesFilter';
 import FavoriteButton from '../../../components/FavoriteButton';
 import { useFavorites } from '../../../hooks/useFavorites';
+import { userMatchesSearchTerm } from '../../../utils/recruiterUserSearchMatch';
 import { TABLE_AVATAR_SIZE } from '../../../utils/uiConstants';
 import { sanitizeWorkerNameParts } from '../../../utils/profileDisplayName';
 import RecruiterUserTableContactBlock from '../../../components/tables/RecruiterUserTableContactBlock';
@@ -89,6 +92,7 @@ import { useCategoryScoresCurrentMap } from '../../../hooks/useCategoryScoresCur
 import { useRecruiterUsersRowExtras } from '../../../hooks/useRecruiterUsersRowExtras';
 import { useRecruiterUsersLatestBackgroundChecks } from '../../../hooks/useRecruiterUsersLatestBackgroundChecks';
 import { useRecruiterUsersEntityEmploymentChips } from '../../../hooks/useRecruiterUsersEntityEmploymentChips';
+import { WorkHistoryJobTitlesCell } from '../../../components/recruiter/ApplicantsUsersStyleTableCells';
 import UserGroupHiringControlPanel from '../../../components/recruiter/userGroup/UserGroupHiringControlPanel';
 import {
   formatEvaluateMembersOneClickSuccess,
@@ -100,6 +104,7 @@ import {
 } from '../../../utils/userGroupHirePassedOneClick';
 
 import AgencyProfileHeader from './AgencyProfileHeader';
+import { fetchAgencyUserGroupManagerCandidates } from '../../../utils/userGroupManagerCandidateUsers';
 
 const userGroupLastEvaluatedStorageKey = (tid: string, gid: string) =>
   `userGroupEvaluateLastAt:${tid}:${gid}`;
@@ -124,6 +129,8 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   const [agencyUsers, setAgencyUsers] = useState<any[]>([]);
   const [groupManagerIds, setGroupManagerIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<'members' | 'hiring' | 'details'>('members');
+  const [membersSearch, setMembersSearch] = useState('');
+  const [membersShowFavoritesOnly, setMembersShowFavoritesOnly] = useState(false);
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [membersPage, setMembersPage] = useState(0);
   const [membersRowsPerPage, setMembersRowsPerPage] = useState(20);
@@ -332,14 +339,11 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
 
   const fetchAgencyUsers = async () => {
     try {
-      const q = collection(db, 'users');
-      const snapshot = await getDocs(q);
-      setAgencyUsers(
-        snapshot.docs
-          .map((doc) => ({ id: doc.id, ...doc.data() }))
-          .filter((user: any) => user.tenantId === tenantId && user.role === 'Agency'),
-      );
-    } catch {}
+      const rows = await fetchAgencyUserGroupManagerCandidates(db, tenantId);
+      setAgencyUsers(rows);
+    } catch {
+      setAgencyUsers([]);
+    }
   };
 
   const handleEditChange = (field: string, value: string) => {
@@ -497,6 +501,22 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   }, [tenantId, groupId, memberIds]);
 
   const members = membersData;
+
+  useEffect(() => {
+    setMembersPage(0);
+  }, [membersSearch, membersShowFavoritesOnly]);
+
+  const filteredMembers = useMemo(() => {
+    let list = [...members];
+    if (membersShowFavoritesOnly) {
+      list = list.filter((u: { id: string }) => isUserFavorite(u.id));
+    }
+    if (membersSearch.trim()) {
+      list = list.filter((u) => userMatchesSearchTerm(u, membersSearch));
+    }
+    return list;
+  }, [members, membersSearch, membersShowFavoritesOnly, isUserFavorite]);
+
   const { scoresByUserId: categoryScoresByUserId } = useCategoryScoresCurrentMap(memberIds);
   const availableWorkers = allWorkers.filter((w) => !memberIds.includes(w.id));
   const toMillis = (input: any): number => {
@@ -560,7 +580,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
     useRecruiterUsersEntityEmploymentChips(tenantId, memberIds);
 
   const sortedMembers = useMemo(() => {
-    const copy = [...members];
+    const copy = [...filteredMembers];
     copy.sort((a: any, b: any) => {
       if (membersSortBy === 'workReadiness') {
         return compareWorkReadinessForEntity(
@@ -600,7 +620,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
     return copy;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- sort helpers close over group / getNameKey / getScoreNumber
   }, [
-    members,
+    filteredMembers,
     membersSortBy,
     membersSortDirection,
     entityEmploymentChipsByUser,
@@ -1214,39 +1234,67 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
 
       <Box sx={{ px: { xs: 2, md: 3 }, py: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
         {/* Inbox-style section header row: tab buttons (left) + primary action (right) */}
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
-          <Box sx={{ display: 'flex', gap: 0.75 }}>
-            {([
-              { id: 'members' as const, label: 'Members' },
-              { id: 'hiring' as const, label: 'Hiring' },
-              { id: 'details' as const, label: 'Details' },
-            ]).map((t) => {
-              const isActive = activeTab === t.id;
-              return (
-                <Button
-                  key={t.id}
-                  onClick={() => setActiveTab(t.id)}
-                  variant="text"
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap', rowGap: 1 }}>
+            <Box sx={{ display: 'flex', gap: 0.75 }}>
+              {([
+                { id: 'members' as const, label: 'Members' },
+                { id: 'hiring' as const, label: 'Hiring' },
+                { id: 'details' as const, label: 'Details' },
+              ]).map((t) => {
+                const isActive = activeTab === t.id;
+                return (
+                  <Button
+                    key={t.id}
+                    onClick={() => setActiveTab(t.id)}
+                    variant="text"
+                    sx={{
+                      textTransform: 'none',
+                      borderRadius: '999px',
+                      fontSize: '14px',
+                      fontWeight: isActive ? 600 : 500,
+                      color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                      bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                      px: 2,
+                      py: 0.75,
+                      minWidth: 'auto',
+                      whiteSpace: 'nowrap',
+                      '&:hover': {
+                        bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                      },
+                    }}
+                  >
+                    {t.label}
+                  </Button>
+                );
+              })}
+            </Box>
+            {activeTab === 'members' && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                <InboxSearchBar
+                  value={membersSearch}
+                  onChange={setMembersSearch}
+                  onSearch={setMembersSearch}
+                  placeholder="Search by name, email, or phone..."
+                />
+                <FavoritesFilter
+                  favoriteType="users"
+                  showFavoritesOnly={membersShowFavoritesOnly}
+                  onToggle={setMembersShowFavoritesOnly}
+                  showText={false}
+                  size="small"
                   sx={{
-                    textTransform: 'none',
-                    borderRadius: '999px',
-                    fontSize: '14px',
-                    fontWeight: isActive ? 600 : 500,
-                    color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
-                    bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
-                    px: 2,
-                    py: 0.75,
-                    minWidth: 'auto',
-                    whiteSpace: 'nowrap',
+                    minWidth: '32px',
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '50%',
                     '&:hover': {
-                      bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                      backgroundColor: membersShowFavoritesOnly ? 'primary.dark' : 'action.hover',
                     },
                   }}
-                >
-                  {t.label}
-                </Button>
-              );
-            })}
+                />
+              </Box>
+            )}
           </Box>
 
           {activeTab === 'members' && (
@@ -1421,11 +1469,11 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                         direction={membersSortBy === 'workReadiness' ? membersSortDirection : 'desc'}
                         onClick={() => handleMembersSort('workReadiness')}
                       >
-                        Work readiness
+                        Employment
                       </TableSortLabel>
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 120, py: 1 }}>
-                      Readiness breakdown
+                      Onboarding
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 120, py: 1 }}>
                       Backgrounds
@@ -1441,6 +1489,9 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 100, py: 1 }}>
                       Risk / concern
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 140, py: 1 }}>
+                      Work history
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', minWidth: 120, borderRadius: 0, py: 1 }}>
                       <TableSortLabel
@@ -1466,7 +1517,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                 <TableBody>
                   {members.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} sx={{ color: 'text.secondary', fontStyle: 'italic', py: 2 }}>
+                      <TableCell colSpan={11} sx={{ color: 'text.secondary', fontStyle: 'italic', py: 2 }}>
                         No members in this group.
                       </TableCell>
                     </TableRow>
@@ -1650,6 +1701,9 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                                 {concern}
                               </Typography>
                             )}
+                          </TableCell>
+                          <TableCell sx={{ verticalAlign: 'top', py: 0.5, px: 1, maxWidth: 200 }}>
+                            <WorkHistoryJobTitlesCell user={u as Record<string, unknown>} />
                           </TableCell>
                           <TableCell sx={{ minWidth: 120, verticalAlign: 'top', py: 0.5, px: 1 }}>
                             <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem', lineHeight: 1.3 }}>

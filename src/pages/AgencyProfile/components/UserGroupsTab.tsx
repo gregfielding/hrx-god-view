@@ -22,7 +22,15 @@ import {
   DialogActions,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
-import { collection, addDoc, getDocs, doc, getDoc, serverTimestamp, query, where } from 'firebase/firestore';
+import {
+  collection,
+  addDoc,
+  getDocs,
+  doc,
+  getDoc,
+  serverTimestamp,
+  updateDoc,
+} from 'firebase/firestore';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getAuth } from 'firebase/auth';
 
@@ -32,6 +40,7 @@ import InboxSearchBar from '../../../components/InboxSearchBar';
 import FavoriteButton from '../../../components/FavoriteButton';
 import FavoritesFilter from '../../../components/FavoritesFilter';
 import { useFavorites } from '../../../hooks/useFavorites';
+import { fetchAgencyUserGroupManagerCandidates } from '../../../utils/userGroupManagerCandidateUsers';
 
 export interface UserGroupsTabProps {
   tenantId: string;
@@ -61,7 +70,7 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
   const [error, setError] = useState('');
   const [user, setUser] = useState<any>(null);
   const [showForm, setShowForm] = useState(false);
-  const [agencyUsers, setAgencyUsers] = useState<any[]>([]);
+  const [managerOptions, setManagerOptions] = useState<any[]>([]);
   const [groupManagerIds, setGroupManagerIds] = useState<string[]>([]);
   const [localSearchTerm, setLocalSearchTerm] = useState('');
   const [localShowFavoritesOnly, setLocalShowFavoritesOnly] = useState(false);
@@ -100,25 +109,15 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
   useEffect(() => {
     if (!tenantId) return;
     
-    let isMounted = true;
-    
     const loadData = async () => {
       try {
-        await Promise.all([
-          fetchGroups(),
-          fetchCurrentUser(),
-          fetchAgencyUsers()
-        ]);
+        await Promise.all([fetchGroups(), fetchCurrentUser(), fetchAgencyUsersForManagers()]);
       } catch (err) {
         console.error('Error loading user groups data:', err);
       }
     };
-    
+
     loadData();
-    
-    return () => {
-      isMounted = false;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
@@ -155,22 +154,65 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
     }
   };
 
-  const fetchAgencyUsers = async () => {
+  /** Same pool as `UserGroupDetails` Group managers picker (`tenantId` + `role === 'Agency'`). */
+  const fetchAgencyUsersForManagers = async () => {
+    if (!tenantId) return;
     try {
-      // Query only users for this tenant to avoid loading all users
-      const q = query(
-        collection(db, 'users'),
-        where('tenantId', '==', tenantId),
-        where('role', '==', 'Agency')
-      );
-      const snapshot = await getDocs(q);
-      setAgencyUsers(
-        snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+      const rows = await fetchAgencyUserGroupManagerCandidates(db, tenantId);
+      setManagerOptions(rows);
+    } catch (err: any) {
+      console.error('Error fetching agency users for group managers:', err);
+      setManagerOptions([]);
+    }
+  };
+
+  /** Resolve `groupManagerIds` for search (agency pool + id fallback). */
+  const managerDisplayById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const u of managerOptions) {
+      const raw = String(u?.firstName ?? '').trim();
+      const rawLast = String(u?.lastName ?? '').trim();
+      const name = [raw, rawLast].filter(Boolean).join(' ').trim();
+      m.set(u.id, name || u.id);
+    }
+    return m;
+  }, [managerOptions]);
+
+  const handleRowGroupManagersChange = async (group: { id: string }, newIds: string[]) => {
+    if (!tenantId || !group?.id) return;
+    try {
+      const ref = doc(db, 'tenants', tenantId, 'userGroups', group.id);
+      await updateDoc(ref, { groupManagerIds: newIds });
+      setGroups((prev) =>
+        prev.map((g) => (g.id === group.id ? { ...g, groupManagerIds: newIds } : g)),
       );
     } catch (err: any) {
-      console.error('Error fetching agency users:', err);
-      setAgencyUsers([]);
+      console.error('Error updating group managers:', err);
+      setError(err.message || 'Failed to update group managers');
     }
+  };
+
+  const formatGroupManagersLabel = (group: { groupManagerIds?: string[] }): string => {
+    const ids = Array.isArray(group.groupManagerIds) ? group.groupManagerIds : [];
+    if (ids.length === 0) return '—';
+    return ids
+      .map((id) => managerDisplayById.get(id) ?? id)
+      .join(', ');
+  };
+
+  const managerOptionLabel = (u: { id?: string; firstName?: string; lastName?: string }) => {
+    const n = `${u?.firstName ?? ''} ${u?.lastName ?? ''}`.trim();
+    return n || u?.id || '';
+  };
+
+  /** Include ids not in the agency pool (e.g. old data) so chips match the stored group doc. */
+  const rowManagerOptions = (group: { groupManagerIds?: string[] }) => {
+    const ids = Array.isArray(group.groupManagerIds) ? group.groupManagerIds : [];
+    const known = new Set(managerOptions.map((u) => u.id));
+    const extra = ids
+      .filter((id) => !known.has(id))
+      .map((id) => ({ id, firstName: id, lastName: '' }));
+    return [...managerOptions, ...extra];
   };
 
   const handleChange = (field: string, value: string) => {
@@ -188,14 +230,19 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
       }
 
       const search = searchTerm.toLowerCase();
+      const managerSearchBlob = (Array.isArray(group.groupManagerIds) ? group.groupManagerIds : [])
+        .map((id) => managerDisplayById.get(id) ?? '')
+        .join(' ')
+        .toLowerCase();
       return (
         group.title?.toLowerCase().includes(search) ||
         group.description?.toLowerCase().includes(search) ||
         group.createdBy?.firstName?.toLowerCase().includes(search) ||
-        group.createdBy?.lastName?.toLowerCase().includes(search)
+        group.createdBy?.lastName?.toLowerCase().includes(search) ||
+        managerSearchBlob.includes(search)
       );
     });
-  }, [groups, searchTerm, showFavoritesOnly, favorites]);
+  }, [groups, searchTerm, showFavoritesOnly, favorites, managerDisplayById]);
 
   const handleBroadcastSuccess = (result: any) => {
     setSuccess(true);
@@ -402,6 +449,9 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
                       Created By
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                      Group managers
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                       Members
                     </TableCell>
                   </TableRow>
@@ -447,6 +497,37 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
                           ? `${group.createdBy.firstName} ${group.createdBy.lastName}`
                           : '-'}
                       </TableCell>
+                      <TableCell
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        sx={{ minWidth: 240, maxWidth: 320, verticalAlign: 'middle', py: 0.5 }}
+                      >
+                        <Autocomplete
+                          multiple
+                          size="small"
+                          disableCloseOnSelect
+                          options={rowManagerOptions(group)}
+                          getOptionLabel={(u: any) => managerOptionLabel(u)}
+                          isOptionEqualToValue={(a, b) => a.id === b.id}
+                          value={rowManagerOptions(group).filter((u: any) =>
+                            (Array.isArray(group.groupManagerIds) ? group.groupManagerIds : []).includes(
+                              u.id,
+                            ),
+                          )}
+                          onChange={(_, newValue) => {
+                            handleRowGroupManagersChange(group, newValue.map((u: any) => u.id));
+                          }}
+                          renderInput={(params) => (
+                            <TextField
+                              {...params}
+                              placeholder="Managers"
+                              variant="outlined"
+                              sx={{ '& .MuiOutlinedInput-root': { minHeight: 40 } }}
+                            />
+                          )}
+                          sx={{ '& .MuiAutocomplete-inputRoot': { flexWrap: 'wrap' } }}
+                        />
+                      </TableCell>
                       <TableCell>
                         {Array.isArray(group.memberIds) ? group.memberIds.length : 0}
                       </TableCell>
@@ -488,9 +569,9 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
               <Grid item xs={12}>
                 <Autocomplete
                   multiple
-                  options={agencyUsers}
-                  getOptionLabel={(u) => `${u.firstName} ${u.lastName}`}
-                  value={agencyUsers.filter((u) => groupManagerIds.includes(u.id))}
+                  options={managerOptions}
+                  getOptionLabel={(u: any) => managerOptionLabel(u)}
+                  value={managerOptions.filter((u) => groupManagerIds.includes(u.id))}
                   onChange={(_, newValue) => setGroupManagerIds(newValue.map((u: any) => u.id))}
                   renderInput={(params) => (
                     <TextField

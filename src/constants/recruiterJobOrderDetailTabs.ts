@@ -80,3 +80,9 @@ export function parseJobOrderDetailTabQueryParam(tabParam: string | null): JobOr
   }
   return null;
 }
+
+/** Auto Messaging tab + shift-based SMS/push: enabled for Gig and Careers job orders. */
+export function jobOrderSupportsAutoMessagingTab(jobType: unknown): boolean {
+  const j = String(jobType || '').toLowerCase();
+  return j === 'gig' || j === 'career';
+}

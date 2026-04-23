@@ -43,22 +43,14 @@ import { useAuth } from '../contexts/AuthContext';
 import { db, functions } from '../firebase';
 import { callSearchRecruiterTableUsers } from '../services/searchRecruiterTableUsersCallable';
 import { formatFirebaseHttpsError } from '../utils/firebaseHttpsErrors';
-import { calculateProfileScore } from '../utils/applicantScoring';
 import { formatPhoneNumber } from '../utils/formatPhone';
 import { normalizeUsStateCode } from '../utils/usStateNormalize';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
-import { sanitizeWorkerNameParts } from '../utils/profileDisplayName';
 import RecruiterUserTableContactBlock from '../components/tables/RecruiterUserTableContactBlock';
 import type { RecruiterOutletContext } from './RecruiterDashboard';
-import {
-  normalizeScoreSummary,
-  formatOneDecimal,
-  getCanonicalStoredAiScore,
-} from '../utils/scoreSummary';
+import { normalizeScoreSummary, getCanonicalStoredAiScore } from '../utils/scoreSummary';
 import { getRecruiterPrimaryScore100FromSummary } from '../utils/scoring/recruiterOperationalScore';
 import { getRecruiterMasterDisplayForAdminUi } from '../utils/scoring/recruiterMasterScoreDisplay';
-import { getRecruiterScoreDisplayForAdminUi } from '../utils/scoring/recruiterScoreSnapshot';
-import type { ScoreSummary } from '../utils/scoreSummary';
 import { getWorkAuthorizedStatus, compareWorkAuthorized } from '../utils/workAuthorizedDisplay';
 import {
   getEVerifyComfortStatusFromUserData,
@@ -66,11 +58,7 @@ import {
 } from '../utils/eVerifyComfortDisplay';
 import { useRecruiterUsersEntityEmploymentChips } from '../hooks/useRecruiterUsersEntityEmploymentChips';
 import { TENANT_LISTABLE_SECURITY_LEVELS } from '../constants/tenantWorkerSecurityLevels';
-import {
-  getBackgroundBreakdownRows,
-  getReadinessBreakdownRows,
-  recruiterTableLetterGrade,
-} from '../utils/recruiterUsersReadinessDisplay';
+import { getBackgroundBreakdownRows, getReadinessBreakdownRows } from '../utils/recruiterUsersReadinessDisplay';
 import type { UserListEntityOnboardingItem } from '../utils/userListEntityEmploymentStatus';
 import {
   compareWorkReadinessForEntity,
@@ -82,13 +70,15 @@ import {
   workerRiskPrimaryLine,
   workerRiskTooltipContent,
 } from '../utils/workerRiskProfileDisplay';
-import {
-  formatCategoryScoresCompactPreview,
-  formatCategoryScoresCompactPreviewFromPartial,
-} from '../utils/parseRecruiterCategoryScores';
 import { useCategoryScoresCurrentMap } from '../hooks/useCategoryScoresCurrentMap';
 import { useRecruiterUsersRowExtras } from '../hooks/useRecruiterUsersRowExtras';
 import { useRecruiterUsersLatestBackgroundChecks } from '../hooks/useRecruiterUsersLatestBackgroundChecks';
+import type { RecruiterUser } from '../types/recruiterUserListRow';
+import { mapUserDocToRecruiterUser } from '../utils/mapUserDataToRecruiterUser';
+import { userMatchesSearchTerm } from '../utils/recruiterUserSearchMatch';
+import RecruiterUserAiScoreCell from '../components/recruiter/RecruiterUserAiScoreCell';
+import { WorkHistoryJobTitlesCell } from '../components/recruiter/ApplicantsUsersStyleTableCells';
+import CertificationIntelligencePanel from '../components/recruiter/CertificationIntelligencePanel';
 
 /** C1 tenant entities — keys match `entity_employments.entityKey` and the recruiter callable. */
 type RecruiterUsersEntityFilterKey = 'all' | 'select' | 'workforce' | 'events';
@@ -104,219 +94,15 @@ type RecruiterUsersSortKey =
   | 'documented'
   | 'workReadiness';
 
-interface RecruiterUser {
-  id: string;
-  firstName: string;
-  lastName: string;
-  /** Profile display name when present (search + fallback when first/last missing). */
-  displayName?: string;
-  email: string;
-  phone?: string;
-  city?: string;
-  state?: string;
-  avatar?: string;
-  securityLevel: string;
-  employeeOnboardStatus?: string;
-  contractorOnboardStatus?: string;
-  onboardingType?: string;
-  scoreSummary?: ScoreSummary;
-  lastLoginAt?: any;
-  updatedAt?: any;
-  createdAt?: any;
-  aiProfileScore?: number;
-  aiJobFitScore?: number;
-  userGroupIds: string[];
-  skills: string[];
-  workEligibility?: boolean;
-  workEligibilityAttestation?: { authorizedToWorkUS?: boolean; attestedAt?: unknown };
-  /** Apply flow / profile — used by Documented (E-Verify) column */
-  comfortableEVerify?: string;
-  workerAttestations?: { eVerifyWillingness?: string };
-  /** Firestore `resume` map — used for inline resume link in Person column */
-  resume?: Record<string, unknown> | null;
-  addedToIndeedFlex?: boolean;
-  /** Screening / payroll — readiness breakdown (same shape as profile credentials) */
-  eVerifyOrders?: Array<{
-    status?: string;
-    result?: string;
-    dateSubmitted?: string;
-    completionDate?: string;
-    dateOrdered?: string;
-  }>;
-  backgroundCheckOrders?: Array<{
-    status?: string;
-    result?: string;
-    dateOrdered?: string;
-    completionDate?: string;
-  }>;
-  /** Structured AI + compliance risk layer */
-  riskProfile?: unknown;
-  /** Canonical recruiter score — single UI source when present */
-  recruiterScoreSnapshot?: unknown;
-  /** Blended Master Recruiter Score (preferred headline). */
-  recruiterMasterScore?: unknown;
-  /** Twilio / Firestore verification */
-  phoneVerified?: boolean;
+/** Default direction when switching sort mode (matches `handleSort` first-click behavior). */
+function defaultSortDirectionForKey(key: RecruiterUsersSortKey): 'asc' | 'desc' {
+  return key === 'name' ? 'asc' : 'desc';
 }
 
 interface TenantUserGroup {
   id: string;
   title?: string;
   description?: string;
-}
-
-/** Map a Firestore user doc to RecruiterUser for the given tenant; null if not in tenant or not security 0–4. */
-function mapUserDocToRecruiterUser(userDoc: { id: string; data: () => any }, tenantId: string): RecruiterUser | null {
-  const userData = userDoc.data() as any;
-  const tenantData = userData.tenantIds?.[tenantId] || null;
-  if (!tenantData) return null;
-
-  const securityLevel = String(tenantData.securityLevel ?? userData.securityLevel ?? '0');
-  if (!['0', '1', '2', '3', '4'].includes(securityLevel)) return null;
-
-  const rawSkills = Array.isArray(userData.skills)
-    ? userData.skills
-    : Array.isArray(tenantData.skills)
-    ? tenantData.skills
-    : [];
-  const normalizedSkills = rawSkills
-    .map((skill: any) => {
-      if (!skill) return null;
-      if (typeof skill === 'string') return skill;
-      if (typeof skill === 'object') {
-        if (typeof skill.label === 'string') return skill.label;
-        if (typeof skill.name === 'string') return skill.name;
-        if (typeof skill.value === 'string') return skill.value;
-      }
-      return null;
-    })
-    .filter((skill): skill is string => !!skill);
-
-  const mergedScoreSummary = normalizeScoreSummary({
-    ...(userData.scoreSummary || {}),
-    ...(tenantData?.scoreSummary || {}),
-  });
-
-  const resolvedEmail =
-    [userData.email, userData.contactEmail, userData.primaryEmail, userData.profileEmail].find(
-      (v: unknown) => typeof v === 'string' && String(v).trim().length > 0
-    ) || '';
-
-  const rawDisplay = String(userData.displayName || '').trim();
-  let firstName = String(userData.firstName || '').trim();
-  let lastName = String(userData.lastName || '').trim();
-  if (!firstName && !lastName && rawDisplay) {
-    const parts = rawDisplay.split(/\s+/).filter(Boolean);
-    if (parts.length >= 2) {
-      firstName = parts[0];
-      lastName = parts.slice(1).join(' ');
-    } else if (parts.length === 1) {
-      firstName = parts[0];
-    }
-  }
-
-  const phoneForSanitize = String(userData.phone || userData.phoneE164 || '');
-  const nameSanitized = sanitizeWorkerNameParts({
-    firstName,
-    lastName,
-    preferredName: userData.preferredName,
-    displayName: rawDisplay || undefined,
-    email: resolvedEmail,
-    phone: phoneForSanitize,
-  });
-
-  return {
-    id: userDoc.id,
-    firstName: nameSanitized.firstName,
-    lastName: nameSanitized.lastName,
-    displayName: rawDisplay || undefined,
-    email: String(resolvedEmail).trim(),
-    phone: userData.phone || '',
-    avatar: userData.avatar || tenantData.avatar,
-    securityLevel: String(securityLevel),
-    employeeOnboardStatus: userData.employeeOnboardStatus,
-    contractorOnboardStatus: userData.contractorOnboardStatus,
-    onboardingType: userData.onboardingType,
-    scoreSummary: mergedScoreSummary,
-    lastLoginAt: userData.lastLoginAt,
-    updatedAt: userData.updatedAt,
-    createdAt: userData.createdAt,
-    aiProfileScore:
-      tenantData.aiProfileScore ??
-      userData.aiProfileScore ??
-      userData.aiScore ??
-      userData.aiProfile?.score ??
-      calculateProfileScore(userData),
-    aiJobFitScore: tenantData.aiJobFitScore ?? userData.aiJobFitScore,
-    userGroupIds: tenantData.userGroupIds || userData.userGroupIds || [],
-    skills: normalizedSkills,
-    city: userData.city || userData.address?.city || (userData.addressInfo && (userData.addressInfo as any).city) || '',
-    state: (() => {
-      const ai = userData.addressInfo && typeof userData.addressInfo === 'object' ? (userData.addressInfo as any) : null;
-      const ad = userData.address && typeof userData.address === 'object' ? (userData.address as any) : null;
-      const raw = userData.state || ad?.state || ai?.state || '';
-      return typeof raw === 'string' ? raw.trim() : '';
-    })(),
-    workEligibility: userData.workEligibility,
-    workEligibilityAttestation: userData.workEligibilityAttestation,
-    comfortableEVerify: userData.comfortableEVerify,
-    workerAttestations: userData.workerAttestations,
-    resume: userData.resume ?? null,
-    addedToIndeedFlex: userData.addedToIndeedFlex === true,
-    eVerifyOrders: Array.isArray(userData.eVerifyOrders) ? userData.eVerifyOrders : undefined,
-    backgroundCheckOrders: Array.isArray(userData.backgroundCheckOrders) ? userData.backgroundCheckOrders : undefined,
-    riskProfile: userData.riskProfile ?? undefined,
-    recruiterScoreSnapshot: userData.recruiterScoreSnapshot ?? undefined,
-    recruiterMasterScore: userData.recruiterMasterScore ?? undefined,
-    phoneVerified: userData.phoneVerified === true,
-  };
-}
-
-/** Name, email (full + local-part + ignore spaces), phone, skills */
-function userMatchesSearchTerm(user: RecruiterUser, rawSearch: string): boolean {
-  const q = rawSearch.trim().toLowerCase();
-  if (!q) return true;
-
-  const fullName = `${user.firstName} ${user.lastName}`.trim().toLowerCase();
-  const displayLower = (user.displayName || '').trim().toLowerCase();
-
-  const fieldMatchesToken = (token: string) =>
-    fullName.includes(token) ||
-    (displayLower && displayLower.includes(token)) ||
-    (user.email || '').toLowerCase().includes(token) ||
-    (user.phone || '').toLowerCase().includes(token) ||
-    user.skills?.some((skill) => skill.toLowerCase().includes(token)) === true;
-
-  const tokens = q.split(/\s+/).filter(Boolean);
-  if (tokens.length > 1) {
-    if (tokens.every((t) => fieldMatchesToken(t))) return true;
-  } else {
-    if (fullName.includes(q)) return true;
-    if (displayLower && displayLower.includes(q)) return true;
-  }
-
-  const email = (user.email || '').trim();
-  const emailLower = email.toLowerCase();
-  if (emailLower) {
-    if (tokens.length <= 1 && emailLower.includes(q)) return true;
-    const compactEmail = emailLower.replace(/\s/g, '');
-    const compactQ = q.replace(/\s/g, '');
-    if (compactEmail.includes(compactQ)) return true;
-    const at = emailLower.indexOf('@');
-    if (at > 0) {
-      const local = emailLower.slice(0, at);
-      if (local.includes(q)) return true;
-    }
-  }
-
-  if (tokens.length <= 1 && user.phone?.toLowerCase().includes(q)) return true;
-  const digits = (s: string) => s.replace(/\D/g, '');
-  const qDigits = digits(q);
-  if (qDigits.length >= 3 && user.phone && digits(user.phone).includes(qDigits)) return true;
-
-  if (tokens.length <= 1 && user.skills?.some((skill) => skill.toLowerCase().includes(q))) return true;
-
-  return false;
 }
 
 export interface RecruiterUsersProps {
@@ -347,6 +133,8 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
       stateFilter: 'all',
       sortBy: 'accountCreated',
       sortDirection: 'desc',
+      usersTablePage: 0,
+      usersTableRowsPerPage: 20,
     },
   });
   
@@ -400,8 +188,17 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   const [stateFilter, setStateFilter] = useState<string>(cacheState.stateFilter || 'all');
   const [sortBy, setSortBy] = useState<RecruiterUsersSortKey>((cacheState.sortBy as RecruiterUsersSortKey) || 'accountCreated');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(cacheState.sortDirection || 'desc');
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(20);
+  const ROWS_PER_PAGE_OPTIONS = [10, 20, 50, 100] as const;
+  const [page, setPage] = useState(() => {
+    const raw = (cacheState as { usersTablePage?: unknown }).usersTablePage;
+    const n = typeof raw === 'number' && Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
+    return n;
+  });
+  const [rowsPerPage, setRowsPerPage] = useState(() => {
+    const raw = (cacheState as { usersTableRowsPerPage?: unknown }).usersTableRowsPerPage;
+    const r = typeof raw === 'number' && Number.isFinite(raw) ? Math.floor(raw) : 20;
+    return ROWS_PER_PAGE_OPTIONS.includes(r as (typeof ROWS_PER_PAGE_OPTIONS)[number]) ? r : 20;
+  });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectAllResults, setSelectAllResults] = useState(false);
   const [bulkDrawerOpen, setBulkDrawerOpen] = useState(false);
@@ -542,6 +339,11 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     });
   }, [effectiveScope, entityFilter, groupFilter, stateFilter, sortBy, sortDirection, updateCache]);
 
+  /** Persist table page / rows so browser back from /users/:id returns to the same slice (sessionStorage). */
+  useEffect(() => {
+    updateCache({ usersTablePage: page, usersTableRowsPerPage: rowsPerPage });
+  }, [page, rowsPerPage, updateCache]);
+
   // Reset client pagination when filters/search change
   useEffect(() => {
     setPage(0);
@@ -606,7 +408,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
       updateCache({ sortDirection: newDirection });
       return;
     }
-    const newDirection = key === 'name' ? 'asc' : 'desc';
+    const newDirection = defaultSortDirectionForKey(key);
     setSortBy(key);
     setSortDirection(newDirection);
     updateCache({ sortBy: key, sortDirection: newDirection });
@@ -867,144 +669,6 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     });
   };
 
-  const renderAiScore = (user: RecruiterUser) => {
-    const cat = categoryScoresByUserId[user.id];
-    const userData: Record<string, unknown> = {
-      scoreSummary: user.scoreSummary,
-      riskProfile: user.riskProfile,
-      ...(cat ? { categoryScoresCurrent: cat } : {}),
-    };
-    const masterDisp = getRecruiterMasterDisplayForAdminUi({
-      recruiterMasterScoreRaw: user.recruiterMasterScore,
-      recruiterScoreSnapshotRaw: user.recruiterScoreSnapshot,
-      userData,
-      latestPrescreenInterviewAi: null,
-    });
-    const snapDisp = getRecruiterScoreDisplayForAdminUi(user.recruiterScoreSnapshot);
-    const categoryPreview =
-      cat != null
-        ? formatCategoryScoresCompactPreview(cat)
-        : snapDisp.hasSnapshot && Object.keys(snapDisp.categoryScores || {}).length > 0
-          ? formatCategoryScoresCompactPreviewFromPartial(snapDisp.categoryScores)
-          : [];
-    const categoryLine1 = categoryPreview.slice(0, 3).join(' · ');
-    const categoryLine2 = categoryPreview.slice(3).join(' · ');
-    const rawScore = masterDisp.score100;
-    const m = masterDisp.master;
-    if (rawScore === null || Number.isNaN(rawScore)) {
-      return (
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.25 }}>
-          <Typography variant="body2" color="text.secondary">
-            N/A
-          </Typography>
-          {categoryLine1.length > 0 && (
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ fontSize: '0.65rem', lineHeight: 1.25, display: 'block', opacity: 0.88 }}
-            >
-              {categoryLine1}
-            </Typography>
-          )}
-          {categoryLine2.length > 0 && (
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ fontSize: '0.65rem', lineHeight: 1.25, display: 'block', opacity: 0.88 }}
-            >
-              {categoryLine2}
-            </Typography>
-          )}
-        </Box>
-      );
-    }
-    const displayScore = Math.round(rawScore);
-    const grade = masterDisp.grade ?? recruiterTableLetterGrade(displayScore);
-
-    let scoreColor: 'success.main' | 'warning.main' | 'text.primary' = 'text.primary';
-    if (displayScore >= 80) scoreColor = 'success.main';
-    else if (displayScore >= 60) scoreColor = 'warning.main';
-
-    const c = m?.components;
-    const ew = m?.effectiveWeights;
-
-    return (
-      <Tooltip
-        arrow
-        title={
-          <Box sx={{ p: 0.5 }}>
-            <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
-              Master Recruiter Score
-            </Typography>
-            <Typography variant="caption" color="inherit" sx={{ display: 'block', mb: 0.5, opacity: 0.9 }}>
-              Blended category (50%) · interview (35%) · profile Hiring Score (15%), renormalized when inputs are missing.
-            </Typography>
-            <Stack spacing={0.25}>
-              <Typography variant="body2">
-                Master: <strong>{displayScore}</strong> (grade {grade})
-                {masterDisp.computedFallback ? ' · computed locally' : ''}
-              </Typography>
-              {c && ew ? (
-                <>
-                  <Typography variant="caption" color="inherit" sx={{ opacity: 0.92 }}>
-                    Category {c.categoryScore ?? '—'} × {Math.round(ew.categoryScore * 100)}% · Interview {c.interviewScore ?? '—'} ×{' '}
-                    {Math.round(ew.interviewScore * 100)}% · Profile {c.profileScore ?? '—'} × {Math.round(ew.profileScore * 100)}%
-                  </Typography>
-                </>
-              ) : null}
-              <Typography variant="body2">
-                Interview avg: <strong>{formatOneDecimal(user.scoreSummary?.interviewAvg)}</strong>/10
-                {user.scoreSummary?.interviewCount ? ` (${user.scoreSummary.interviewCount})` : ''}
-              </Typography>
-              <Typography variant="body2">
-                Reviews: <strong>{formatOneDecimal(user.scoreSummary?.reviewAvg)}</strong>/5
-                {user.scoreSummary?.reviewCount ? ` (${user.scoreSummary.reviewCount})` : ''}
-              </Typography>
-            </Stack>
-          </Box>
-        }
-      >
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.25 }}>
-          <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75 }}>
-            <Typography
-              component="span"
-              variant="body2"
-              sx={{
-                fontWeight: 700,
-                color: scoreColor,
-                fontSize: '0.8125rem',
-                minWidth: 14,
-              }}
-            >
-              {grade}
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-              {displayScore}
-            </Typography>
-          </Box>
-          {categoryLine1.length > 0 && (
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ fontSize: '0.65rem', lineHeight: 1.25, display: 'block', opacity: 0.88 }}
-            >
-              {categoryLine1}
-            </Typography>
-          )}
-          {categoryLine2.length > 0 && (
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ fontSize: '0.65rem', lineHeight: 1.25, display: 'block', opacity: 0.88 }}
-            >
-              {categoryLine2}
-            </Typography>
-          )}
-        </Box>
-      </Tooltip>
-    );
-  };
-
   const filteredUsersUnsorted = useMemo(() => {
     return users.filter((user) => {
       if (showFavoritesOnly && !favorites.includes(user.id)) {
@@ -1083,6 +747,9 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     const end = start + rowsPerPage;
     return filteredUsers.slice(start, end);
   }, [filteredUsers, page, rowsPerPage]);
+
+  /** Stable reference for Phase 5.5 certification intelligence (bounded in hook). */
+  const workforceCertIntelligenceIds = useMemo(() => filteredUsers.map((u) => u.id), [filteredUsers]);
 
   const paginatedUserIds = useMemo(() => paginatedUsers.map((u) => u.id), [paginatedUsers]);
   const { scoresByUserId: categoryScoresByUserId } = useCategoryScoresCurrentMap(paginatedUserIds);
@@ -1178,6 +845,16 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   ]);
 
   const tableLoading = loading || searchFirestoreLoading;
+
+  /** If the result set shrinks, avoid an empty page. Skip while the first rowset is still loading so a restored page is not reset to 0. */
+  useEffect(() => {
+    if (tableLoading && filteredUsers.length === 0) return;
+    const n = filteredUsers.length;
+    const maxPage = n === 0 ? 0 : Math.max(0, Math.ceil(n / rowsPerPage) - 1);
+    if (page > maxPage) {
+      setPage(maxPage);
+    }
+  }, [filteredUsers.length, rowsPerPage, page, tableLoading]);
 
   if (error) {
     return (
@@ -1395,8 +1072,10 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                 value={sortBy}
                 onChange={(event) => {
                   const newSortBy = event.target.value as RecruiterUsersSortKey;
+                  const newDirection = defaultSortDirectionForKey(newSortBy);
                   setSortBy(newSortBy);
-                  updateCache({ sortBy: newSortBy });
+                  setSortDirection(newDirection);
+                  updateCache({ sortBy: newSortBy, sortDirection: newDirection });
                 }}
                 sx={{
                   height: 36,
@@ -1413,7 +1092,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                 <MenuItem value="aiScore">Master score</MenuItem>
                 <MenuItem value="name">Name (A-Z)</MenuItem>
                 {entityFilter !== 'all' && (
-                  <MenuItem value="workReadiness">Work readiness (selected entity)</MenuItem>
+                  <MenuItem value="workReadiness">Employment (selected entity)</MenuItem>
                 )}
               </Select>
             </FormControl>
@@ -1532,6 +1211,8 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
             </Box>
           )}
 
+          <CertificationIntelligencePanel workerIds={workforceCertIntelligenceIds} />
+
           <TableContainer
             component={Paper}
             elevation={0}
@@ -1601,14 +1282,14 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                       direction={sortBy === 'workReadiness' ? sortDirection : 'desc'}
                       onClick={() => handleSort('workReadiness')}
                     >
-                      Work readiness
+                      Employment
                     </TableSortLabel>
                   ) : (
-                    'Work readiness'
+                    'Employment'
                   )}
                 </TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 120, py: 1 }}>
-                  Readiness breakdown
+                  Onboarding
                 </TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 120, py: 1 }}>
                   Backgrounds
@@ -1624,6 +1305,9 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                 </TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 100, py: 1 }}>
                   Risk / concern
+                </TableCell>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 140, py: 1 }}>
+                  Work history
                 </TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', minWidth: 120, borderRadius: 0, py: 1 }}>
                   <TableSortLabel
@@ -1842,7 +1526,9 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                       ))}
                     </Stack>
                   </TableCell>
-                  <TableCell sx={{ verticalAlign: 'top', py: 0.5, px: 1 }}>{renderAiScore(user)}</TableCell>
+                  <TableCell sx={{ verticalAlign: 'top', py: 0.5, px: 1 }}>
+                    <RecruiterUserAiScoreCell user={user} categoryScoresCurrent={categoryScoresByUserId[user.id] ?? null} />
+                  </TableCell>
                   <TableCell sx={{ verticalAlign: 'top', py: 0.5, px: 1 }}>
                     {(() => {
                       const entityItems = entityEmploymentChipsByUser.get(user.id);
@@ -1873,6 +1559,9 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                         body
                       );
                     })()}
+                  </TableCell>
+                  <TableCell sx={{ verticalAlign: 'top', py: 0.5, px: 1, maxWidth: 200 }}>
+                    <WorkHistoryJobTitlesCell user={user as unknown as Record<string, unknown>} />
                   </TableCell>
                   <TableCell sx={{ minWidth: 120, verticalAlign: 'top', py: 0.5, px: 1 }}>
                     <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem', lineHeight: 1.3 }}>

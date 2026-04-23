@@ -412,10 +412,13 @@ export function useEntityEmploymentOverview({
                 workerType?: string;
                 onboardingWorkflowSteps?: Record<string, boolean>;
                 payrollSettings?: { onboardingUrl?: string | null; portalUrl?: string | null };
+                payrollProvider?: string | null;
+                evereeEnabled?: boolean;
               };
               const ps = d.payrollSettings;
               const ob = String(ps?.onboardingUrl || '').trim() || null;
               const pu = String(ps?.portalUrl || '').trim() || null;
+              const provider = String(d.payrollProvider || '').trim().toLowerCase() || null;
               entitySettingsByKey[ek] = {
                 entityFirestoreId: eid,
                 entityName: String(d.name || eid),
@@ -426,6 +429,8 @@ export function useEntityEmploymentOverview({
                 workerType: String(d.workerType || 'W2'),
                 payrollOnboardingUrl: ob,
                 payrollPortalUrl: pu,
+                payrollProvider: provider,
+                evereeEnabled: d.evereeEnabled === true,
               };
             } catch {
               /* ignore */

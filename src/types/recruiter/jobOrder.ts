@@ -73,8 +73,11 @@ export interface JobOrder {
   checkInInstructions?: string;
   timesheetCollectionMethod: TimesheetMethod;
 
-  /** Gig: notify these user groups (SMS + push) when new shifts are posted; 15 min cooldown per recipient. */
+  /** Gig / Careers: notify these user groups (SMS + push) when new shifts are posted; 15 min cooldown per recipient. */
   autoMessagingUserGroupIds?: string[];
+
+  /** When true, placement flows skip outbound worker notifications for this job order. */
+  muted?: boolean;
 
   // Jobs Board Options
   jobsBoardVisibility: JobsBoardVisibility;
@@ -127,6 +130,9 @@ export interface JobOrder {
   /** AccuSource screening package (provider id + display name from synced catalog). Merges with account/location orderDefaults in mergeScreeningPackageFromLayers. */
   screeningPackageId?: string;
   screeningPackageName?: string;
+  /** Gig jobs board: when true, public post lists catalog services for the selected package. */
+  showScreeningPackageOnPost?: boolean;
+  screeningPackageServiceNames?: string[];
   
   // 🆕 Deal Conversion Fields - Discovery Stage
   currentStaffCount?: number;
@@ -294,8 +300,10 @@ export interface JobOrderFormData {
   checkInInstructions?: string;
   timesheetCollectionMethod: TimesheetMethod;
 
-  /** Gig: notify these user groups (SMS + push) when new shifts are posted; 15 min cooldown per recipient. */
+  /** Gig / Careers: notify these user groups (SMS + push) when new shifts are posted; 15 min cooldown per recipient. */
   autoMessagingUserGroupIds?: string[];
+
+  muted?: boolean;
 
   // Jobs Board Options
   jobsBoardVisibility: JobsBoardVisibility;
@@ -320,7 +328,7 @@ export interface JobOrderFormData {
   ppeRequirements?: string;
   ppeProvidedBy: 'company' | 'worker' | 'both';
   additionalTrainingRequired?: string;
-  
+
   // Context & Notes
   competingAgencies?: {
     count: number;

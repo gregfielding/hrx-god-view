@@ -908,132 +908,132 @@ const RecruiterContacts: React.FC = () => {
     return Array.from(states).sort();
   }, [companies]);
 
+  const pipelineTabs = [
+    { value: 'contact', label: 'Contacts' },
+    { value: 'prospect', label: 'Prospects' },
+    { value: 'lead', label: 'Leads' },
+  ] as const;
+
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <PageHeader
-        title={
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 2 }}>
-            <Typography
-              variant="h6"
-              sx={{
-                fontSize: { xs: '20px', md: '24px' },
-                fontWeight: 600,
-                lineHeight: 1.2,
-              }}
-            >
-              Contacts
-            </Typography>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
-              <InboxSearchBar
-                value={headerSearch}
-                onChange={setHeaderSearch}
-                onSearch={setHeaderSearch}
-                placeholder="Search contacts..."
-              />
-              <FavoritesFilter
-                favoriteType="contacts"
-                showFavoritesOnly={headerShowFavoritesOnly}
-                onToggle={setHeaderShowFavoritesOnly}
-              />
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                onClick={handleAddNew}
-                sx={{
-                  textTransform: 'none',
-                  borderRadius: '24px',
-                  px: 2.5,
-                  py: 1,
-                  height: '40px',
-                  fontWeight: 500,
-                  fontSize: '14px',
-                  bgcolor: '#0057B8',
-                  boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
-                  '&:hover': {
-                    bgcolor: '#004a9f',
-                    boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
-                  },
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                Add Contact
-              </Button>
-            </Box>
-          </Box>
-        }
-      />
-      
-      <Box
-        ref={contentRef}
-        sx={{
-          flex: 1,
-          minHeight: 0,
-          overflowY: 'auto',
-          overflowX: 'hidden',
-          display: 'flex',
-          flexDirection: 'column',
-        }}
-      >
-        <Box
-          sx={{
-            px: { xs: 2, md: 3 },
-            pt: 0,
-            pb: 2,
-          }}
-        >
-          <Box
-            sx={{
-              px: 1.5,
-              py: 1.25,
-              backgroundColor: '#F9FAFB',
-              borderRadius: 2,
-              border: '1px solid #EAEEF4',
-              overflowX: 'auto',
-              overflowY: 'hidden',
-              '&::-webkit-scrollbar': { height: '6px' },
-              '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)', borderRadius: '4px' },
-              '&::-webkit-scrollbar-thumb': {
-                background: 'rgba(0, 0, 0, 0.15)',
-                borderRadius: '4px',
-                '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
-              },
-              scrollbarWidth: 'thin',
-              scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
-            }}
-          >
-            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
-              {[
-                { value: 'contact', label: 'Contacts' },
-                { value: 'prospect', label: 'Prospects' },
-                { value: 'lead', label: 'Leads' },
-              ].map((tab) => (
+        hideHeading
+        dense
+        title=""
+        filters={
+          <Box sx={{ display: 'flex', gap: 0.35, alignItems: 'center', flexWrap: 'wrap' }}>
+            {pipelineTabs.map((tab) => {
+              const isActive = pipelineFilter === tab.value;
+              return (
                 <Button
                   key={tab.value}
-                  variant={pipelineFilter === tab.value ? 'contained' : 'text'}
+                  variant="text"
                   onClick={() => {
                     setPipelineFilter(tab.value);
                     setPage(0);
                     updateCache({ pipelineFilter: tab.value });
                   }}
                   sx={{
-                    borderRadius: '18px',
                     textTransform: 'none',
-                    fontWeight: 500,
-                    px: 2.5,
-                    py: 0.75,
-                    height: 36,
-                    ...(pipelineFilter === tab.value
-                      ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                      : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                    borderRadius: '999px',
+                    fontSize: '13px',
+                    fontWeight: isActive ? 600 : 400,
+                    color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                    bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                    px: 1.25,
+                    py: 0.5,
+                    minHeight: 30,
+                    minWidth: 'auto',
+                    whiteSpace: 'nowrap',
+                    '&:hover': {
+                      bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                    },
                   }}
                 >
                   {tab.label}
                 </Button>
-              ))}
-            </Box>
+              );
+            })}
           </Box>
-        </Box>
+        }
+        rightActions={
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
+            <FavoritesFilter
+              favoriteType="contacts"
+              showFavoritesOnly={headerShowFavoritesOnly}
+              onToggle={setHeaderShowFavoritesOnly}
+              showText={false}
+              size="small"
+              sx={{
+                minWidth: '32px',
+                width: '32px',
+                height: '32px',
+                borderRadius: '50%',
+                '&:hover': {
+                  backgroundColor: headerShowFavoritesOnly ? 'primary.dark' : 'action.hover',
+                },
+              }}
+            />
+            <InboxSearchBar
+              value={headerSearch}
+              onChange={setHeaderSearch}
+              onSearch={setHeaderSearch}
+              placeholder="Search contacts..."
+            />
+            <Button
+              variant="contained"
+              startIcon={<AddIcon sx={{ fontSize: 16 }} />}
+              onClick={handleAddNew}
+              sx={{
+                textTransform: 'none',
+                borderRadius: '999px',
+                px: 1.5,
+                py: 0.5,
+                minHeight: 30,
+                height: 30,
+                fontWeight: 600,
+                fontSize: '13px',
+                bgcolor: '#0057B8',
+                boxShadow: 'none',
+                '& .MuiButton-startIcon': { mr: 0.35 },
+                '&:hover': {
+                  bgcolor: '#004a9f',
+                  boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
+                },
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Add Contact
+            </Button>
+          </Box>
+        }
+      />
 
+      <Box
+        ref={contentRef}
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          minWidth: 0,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          paddingTop: '8px',
+          '&::-webkit-scrollbar': { width: '8px', height: '8px' },
+          '&::-webkit-scrollbar-track': {
+            background: 'rgba(0, 0, 0, 0.02)',
+            borderRadius: '4px',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            background: 'rgba(0, 0, 0, 0.15)',
+            borderRadius: '4px',
+            '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+          },
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+        }}
+      >
         {/* Filter & Toolbar Area */}
         <Box
           ref={filtersRef}

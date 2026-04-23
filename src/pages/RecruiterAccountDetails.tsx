@@ -116,7 +116,7 @@ import type {
   RecruiterAccountFormData,
   AccountLocationRef,
 } from '../types/recruiter/account';
-import type { AccountPositionPricing, WorkersCompRateByState } from '../types/recruiter/account';
+import type { AccountPositionPricing } from '../types/recruiter/account';
 import PageHeader from '../components/PageHeader';
 import FavoriteButton from '../components/FavoriteButton';
 import InboxSearchBar from '../components/InboxSearchBar';
@@ -136,6 +136,11 @@ import type { JobOrder } from '../types/Phase1Types';
 import jobTitlesData from '../data/onetJobTitles.json';
 import { JobsBoardService, type JobsBoardPost } from '../services/recruiter/jobsBoardService';
 import { getSutaRateByState, getFutaRateByState, normalizeStateCode, US_STATE_CODES } from '../utils/unemploymentRates';
+import {
+  buildWorkersCompRatesMapsFromSnapshot,
+  pickWorkersCompJobTitleLookup,
+  resolveWorkersCompModifierAccountId,
+} from '../utils/workersCompRateMaps';
 import { canAccessAccountInvoicingTab } from '../utils/invoicingAccessControl';
 import { numberInputNoSpinnerSx } from '../utils/numberInputNoSpinner';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
@@ -1493,8 +1498,15 @@ const RecruiterAccountDetails: React.FC = () => {
   const [pricingSutaFutaState, setPricingSutaFutaState] = useState('');
   /** WC rate by "STATE_CODE" from tenants/workers_comp_rates (single source of truth; used for display and so master updates apply everywhere). */
   const [wcRatesByKey, setWcRatesByKey] = useState<Record<string, number>>({});
-  /** Lookup by (state, jobTitle) for auto-apply: key = "STATE_jobtitle" (lowercase), value = { code, rate }. */
-  const [wcRatesByStateAndJobTitle, setWcRatesByStateAndJobTitle] = useState<Record<string, { code: string; rate: number }>>({});
+  /** Job-title WC lookups (generic + account-scoped modifiers). */
+  const [wcJobTitleMaps, setWcJobTitleMaps] = useState<{
+    byStateAndJobTitle: Record<string, { code: string; rate: number }>;
+    byStateJobTitleAndModifierAccount: Record<string, { code: string; rate: number }>;
+  }>({ byStateAndJobTitle: {}, byStateJobTitleAndModifierAccount: {} });
+  const wcModifierAccountIdForPricing = useMemo(
+    () => resolveWorkersCompModifierAccountId(account),
+    [account],
+  );
 
   // Invoicing tab: sub-view (scaffolding for QuickBooks integration)
   const [invoicingSubView, setInvoicingSubView] = useState<'invoices' | 'ar' | 'payments' | 'mapping'>('invoices');
@@ -1620,32 +1632,21 @@ const RecruiterAccountDetails: React.FC = () => {
     };
   }, [tenantId, account?.associations?.locations]);
 
-  // Load tenant WC rates (state+code -> rate; state+jobTitle -> { code, rate }) for display and auto-apply when job title + state match.
+  // Load tenant WC rates (state+code -> rate; job title maps with optional account modifier).
   useEffect(() => {
     if (!tenantId) return;
     getDocs(collection(db, p.workersCompRates(tenantId)))
       .then((snap) => {
-        const byKey: Record<string, number> = {};
-        const byStateAndJobTitle: Record<string, { code: string; rate: number }> = {};
-        snap.docs.forEach((d) => {
-          const data = d.data() as WorkersCompRateByState;
-          if (d.id && data.rate != null) byKey[d.id] = Number(data.rate);
-          const state = (data.state || '').trim().toUpperCase();
-          const code = (data.code || '').trim();
-          const rate = Number(data.rate);
-          if (!state || !code || Number.isNaN(rate)) return;
-          const titles = Array.isArray(data.jobTitles) ? data.jobTitles : [];
-          titles.forEach((title) => {
-            const key = `${state}_${(title || '').trim().toLowerCase()}`;
-            if (key !== `${state}_`) byStateAndJobTitle[key] = { code, rate };
-          });
+        const built = buildWorkersCompRatesMapsFromSnapshot(snap);
+        setWcRatesByKey(built.wcRatesByStateAndCode);
+        setWcJobTitleMaps({
+          byStateAndJobTitle: built.byStateAndJobTitle,
+          byStateJobTitleAndModifierAccount: built.byStateJobTitleAndModifierAccount,
         });
-        setWcRatesByKey(byKey);
-        setWcRatesByStateAndJobTitle(byStateAndJobTitle);
       })
       .catch(() => {
         setWcRatesByKey({});
-        setWcRatesByStateAndJobTitle({});
+        setWcJobTitleMaps({ byStateAndJobTitle: {}, byStateJobTitleAndModifierAccount: {} });
       });
   }, [tenantId]);
 
@@ -2074,6 +2075,8 @@ const RecruiterAccountDetails: React.FC = () => {
         autoCreatedFromCompanyLocation: data?.autoCreatedFromCompanyLocation === true,
         companyId: data?.companyId ?? undefined,
         companyLocationId: data?.companyLocationId ?? undefined,
+        /** Required for Order Defaults tab (staff instructions + attachments); must mirror Firestore document. */
+        orderDefaults: data?.orderDefaults ?? undefined,
       });
 
       const d = data?.defaults;
@@ -4701,27 +4704,6 @@ const RecruiterAccountDetails: React.FC = () => {
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0 }}>
             {isNationalAccount ? (
               <>
-                <TextField
-                  size="small"
-                  placeholder="Search sub accounts…"
-                  value={childrenSearchQuery}
-                  onChange={(e) => setChildrenSearchQuery(e.target.value)}
-                  sx={{ maxWidth: 400 }}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <SearchIcon fontSize="small" sx={{ color: 'text.secondary' }} />
-                      </InputAdornment>
-                    ),
-                    endAdornment: childrenSearchQuery ? (
-                      <InputAdornment position="end">
-                        <IconButton size="small" onClick={() => setChildrenSearchQuery('')} aria-label="Clear">
-                          <ClearIcon fontSize="small" />
-                        </IconButton>
-                      </InputAdornment>
-                    ) : null,
-                  }}
-                />
                 {childAccountsLoading && childAccountsList.length === 0 ? (
                   <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
                     <CircularProgress size={32} />
@@ -5765,7 +5747,15 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                                     value={row.jobTitle}
                                     onInputChange={(_, v) => {
                                       const stateCode = (pricingSutaFutaState || normalizeStateCode(worksiteDetails?.state) || '').trim().toUpperCase();
-                                      const lookup = stateCode && v ? wcRatesByStateAndJobTitle[`${stateCode}_${String(v).trim().toLowerCase()}`] : undefined;
+                                      const lookup =
+                                        stateCode && v
+                                          ? pickWorkersCompJobTitleLookup(
+                                              wcJobTitleMaps,
+                                              stateCode,
+                                              String(v),
+                                              wcModifierAccountIdForPricing,
+                                            )
+                                          : undefined;
                                       setPricingPositions((prev) => {
                                         const next = [...prev];
                                         next[idx] = { ...next[idx], jobTitle: v };

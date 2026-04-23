@@ -27,6 +27,8 @@ import {
   Card,
   CardContent,
   Grid,
+  Autocomplete,
+  TextField,
 } from '@mui/material';
 import StandardTablePagination from '../components/StandardTablePagination';
 import {
@@ -36,8 +38,6 @@ import {
   FilterList as FilterIcon,
   Work as WorkIcon,
   Business as BusinessIcon,
-  LocationOn as LocationIcon,
-  Person as PersonIcon,
   Schedule as ScheduleIcon,
 } from '@mui/icons-material';
 import { useNavigate, useOutletContext } from 'react-router-dom';
@@ -68,12 +68,27 @@ import { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderCh
 import { hasJobBoardSyndicationUrl } from '../utils/jobBoardSyndicationUrls';
 import JobBoardSyndicationIconRow from '../components/JobBoardSyndicationIconRow';
 import { JobsBoardService } from '../services/recruiter/jobsBoardService';
+import { formatWorksiteCityStateZip } from '../utils/formatWorksiteAddress';
+import { normalizeStateCode } from '../utils/unemploymentRates';
+import {
+  fetchRecruiterPickerOptions,
+  type RecruiterPickerOption,
+} from '../utils/fetchRecruiterPickerOptions';
+
+function summarizeAssignedRecruiters(ids: string[], opts: Map<string, RecruiterPickerOption>): string {
+  if (!ids.length) return 'Unassigned';
+  const names = ids.map((id) => opts.get(id)?.displayName || id);
+  const first = names[0];
+  return ids.length > 1 ? `${first} (+${ids.length - 1})` : first;
+}
 
 /** Firestore job orders use recruiter statuses (lowercase); Phase1 JobOrder used title-case. */
 interface JobOrderWithDetails extends Omit<JobOrder, 'status'> {
   status: JobOrderStatus | string;
   companyName?: string;
   locationName?: string;
+  /** City/state/zip for list line + sorting by state */
+  worksiteAddress?: { city?: string; state?: string; zipCode?: string };
   worksiteCity?: string;
   recruiterName?: string;
   deal?: any; // The complete deal data structure
@@ -81,6 +96,7 @@ interface JobOrderWithDetails extends Omit<JobOrder, 'status'> {
   headcountFilled?: number;
   jobTitle?: string;
   jobType?: 'gig' | 'career';
+  assignedRecruiters?: string[];
 }
 
 const PAGE_SIZE = 20;
@@ -158,6 +174,9 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [statusMenuAnchor, setStatusMenuAnchor] = useState<Record<string, HTMLElement | null>>({});
   const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
+  const [recruiterPickerOptions, setRecruiterPickerOptions] = useState<RecruiterPickerOption[]>([]);
+  const [loadingRecruiterOptions, setLoadingRecruiterOptions] = useState(false);
+  const [assigningRecruitersJobOrderId, setAssigningRecruitersJobOrderId] = useState<string | null>(null);
   const firstLoadRef = useRef(true);
   const prevFiltersRef = useRef<{ search: string; statusFilter: string; companyFilter: string; showFavoritesOnly: boolean } | null>(null);
 
@@ -176,6 +195,59 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
   useEffect(() => {
     // Logging removed for production
   }, [favorites, effectiveShowFavoritesOnly]);
+
+  useEffect(() => {
+    if (!tenantId) {
+      setRecruiterPickerOptions([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingRecruiterOptions(true);
+    fetchRecruiterPickerOptions(tenantId)
+      .then((opts) => {
+        if (!cancelled) setRecruiterPickerOptions(opts);
+      })
+      .catch(() => {
+        if (!cancelled) setRecruiterPickerOptions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingRecruiterOptions(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId]);
+
+  const recruiterOptionMap = useMemo(
+    () => new Map(recruiterPickerOptions.map((o) => [o.id, o])),
+    [recruiterPickerOptions],
+  );
+
+  const persistAssignedRecruiters = async (jobOrderId: string, selected: RecruiterPickerOption[]) => {
+    if (!tenantId) return;
+    const ids = selected.map((s) => s.id);
+    setAssigningRecruitersJobOrderId(jobOrderId);
+    setLoadError(null);
+    try {
+      await updateDoc(doc(db, p.jobOrder(tenantId, jobOrderId)), {
+        assignedRecruiters: ids,
+        updatedAt: serverTimestamp(),
+      });
+      const mergedNameMap = new Map(recruiterOptionMap);
+      selected.forEach((s) => mergedNameMap.set(s.id, s));
+      const recruiterName = summarizeAssignedRecruiters(ids, mergedNameMap);
+      setJobOrders((prev) =>
+        prev.map((jo) =>
+          jo.id === jobOrderId ? { ...jo, assignedRecruiters: ids, recruiterName } : jo,
+        ),
+      );
+    } catch (err) {
+      console.error('Failed to update assigned recruiters:', err);
+      setLoadError(err instanceof Error ? err.message : 'Failed to update recruiters');
+    } finally {
+      setAssigningRecruitersJobOrderId(null);
+    }
+  };
 
   const fetchJobOrders = useCallback(async () => {
     if (!tenantId) return;
@@ -215,9 +287,10 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
           constraints.push(where('status', '==', normalizedStatus));
         }
 
-        // recruiterName is computed client-side, so use createdAt for Firestore order when sorting by recruiter
+        // recruiterName / worksiteState are computed client-side — use createdAt for Firestore order
         // jobOrderNumber is supported by Firestore orderBy (index required)
-        const orderByField = sortField === 'recruiterName' ? 'createdAt' : sortField;
+        const orderByField =
+          sortField === 'recruiterName' || sortField === 'worksiteState' ? 'createdAt' : sortField;
         constraints.push(orderBy(orderByField, sortDirection));
         constraints.push(limit(effectivePageSize));
 
@@ -252,31 +325,60 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
             }
           }
           
-          // Fetch location nickname
-          let locationName = 'No Location';
+          // Location display line + city/state line — same pattern as Jobs Board (`formatWorksiteCityStateZip(post.worksiteAddress)`).
           const flatWorksiteId = (data as any).worksiteId || (data as any).deal?.locationId;
-          const flatWorksiteName = (data as any).worksiteName || (data as any).deal?.locationName;
-          let worksiteCity: string | undefined =
-            (data as any).worksiteAddress?.city ||
-            (data as any).city ||
-            undefined;
-          
-          // First try to use worksiteName if available
-          if (flatWorksiteName) {
-            locationName = flatWorksiteName;
-          } else if (flatWorksiteId && flatCompanyId) {
+          const wa = (data as any).worksiteAddress as Record<string, unknown> | undefined;
+          const waInner =
+            wa && typeof wa === 'object' ? ((wa as any).address as Record<string, unknown> | undefined) : undefined;
+          let city = String(wa?.city ?? waInner?.city ?? (data as any).city ?? '').trim();
+          let state = String(wa?.state ?? waInner?.state ?? '').trim();
+          let zipCode = String(
+            (wa as any)?.zipCode ?? (wa as any)?.zip ?? waInner?.zipCode ?? (data as any).zipCode ?? (data as any).zip ?? '',
+          ).trim();
+
+          let locationName =
+            String((data as any).worksiteName || (data as any).deal?.locationName || '').trim() || 'No Location';
+
+          // Always hydrate from CRM location when worksite + company are known — job orders often store only
+          // worksiteName on the doc while city/state live on `crm_companies/{id}/locations/{id}`.
+          if (flatWorksiteId && flatCompanyId) {
             try {
-              const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', flatCompanyId, 'locations', flatWorksiteId);
+              const locationRef = doc(
+                db,
+                'tenants',
+                tenantId,
+                'crm_companies',
+                flatCompanyId,
+                'locations',
+                flatWorksiteId,
+              );
               const locationSnap = await getDoc(locationRef);
               if (locationSnap.exists()) {
-                const locationData = locationSnap.data() as any;
-                locationName = locationData.nickname || locationData.name || 'Unknown Location';
-                worksiteCity = worksiteCity || locationData.city || locationData.address?.city;
+                const ld = locationSnap.data() as any;
+                const ac = ld.address || {};
+                if (locationName === 'No Location') {
+                  locationName = String(ld.nickname || ld.name || locationName).trim() || 'No Location';
+                }
+                if (!city) city = String(ld.city || ac.city || '').trim();
+                if (!state) state = String(ld.state || ac.state || '').trim();
+                if (!zipCode) {
+                  zipCode = String(ld.zipCode || ld.zip || ac.zipCode || ac.zip || '').trim();
+                }
               }
-            } catch (error) {
-              // Silently handle errors
+            } catch {
+              /* ignore */
             }
           }
+
+          const worksiteAddress: { city?: string; state?: string; zipCode?: string } | undefined =
+            city || state || zipCode
+              ? {
+                  city: city || undefined,
+                  state: state ? normalizeStateCode(state) || state : undefined,
+                  zipCode: zipCode || undefined,
+                }
+              : undefined;
+          const worksiteCity = worksiteAddress?.city;
           
           // Fetch recruiter names from assignedRecruiters array
           let recruiterName = 'Unassigned';
@@ -308,6 +410,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
             id: jobOrderDoc.id,
             companyName,
             locationName,
+            worksiteAddress,
             worksiteCity,
             jobTitle: derivedJobTitle,
             recruiterName
@@ -315,17 +418,22 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
         })
       );
 
-      // Sort by recruiter name client-side (not stored in Firestore)
-      if (sortField === 'recruiterName') {
+      // Sort by worksite state (client-side — not on Firestore index)
+      if (sortField === 'worksiteState') {
+        const key = (jo: JobOrderWithDetails) =>
+          normalizeStateCode(jo.worksiteAddress?.state || '').toUpperCase() || '\uFFFF';
+        newJobOrders.sort((a, b) => {
+          const cmp = key(a).localeCompare(key(b));
+          return sortDirection === 'asc' ? cmp : -cmp;
+        });
+      } else if (sortField === 'recruiterName') {
         newJobOrders.sort((a, b) => {
           const na = (a.recruiterName || 'Unassigned').toLowerCase();
           const nb = (b.recruiterName || 'Unassigned').toLowerCase();
           const cmp = na.localeCompare(nb);
           return sortDirection === 'asc' ? cmp : -cmp;
         });
-      }
-      // Sort by job order number client-side when not using Firestore orderBy (e.g. My Orders)
-      if (sortField === 'jobOrderNumber' && effectiveOnlyMyOrders) {
+      } else if (sortField === 'jobOrderNumber' && effectiveOnlyMyOrders) {
         newJobOrders.sort((a, b) => {
           const aNum = Number(a.jobOrderNumber) || 0;
           const bNum = Number(b.jobOrderNumber) || 0;
@@ -413,6 +521,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
         (jo.companyName && jo.companyName.toLowerCase().includes(searchLower)) ||
         (jo.locationName && jo.locationName.toLowerCase().includes(searchLower)) ||
         (jo.worksiteCity && jo.worksiteCity.toLowerCase().includes(searchLower)) ||
+        (jo.worksiteAddress?.state && jo.worksiteAddress.state.toLowerCase().includes(searchLower)) ||
         (jo.jobTitle && jo.jobTitle.toLowerCase().includes(searchLower))
       );
       if (!matchesSearch) return false;
@@ -699,6 +808,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
             <MenuItem value="jobOrderNumber">Job Order #</MenuItem>
             <MenuItem value="createdAt">Newest First</MenuItem>
             <MenuItem value="status">Status</MenuItem>
+            <MenuItem value="worksiteState">State</MenuItem>
           </Select>
         </FormControl>
         </Box>
@@ -826,7 +936,16 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                     textTransform: 'uppercase', 
                     fontSize: '0.75rem',
                   }}>
-                    Location
+                    <TableSortLabel
+                      active={sortField === 'worksiteState'}
+                      direction={sortField === 'worksiteState' ? sortDirection : 'asc'}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSort('worksiteState');
+                      }}
+                    >
+                      Location
+                    </TableSortLabel>
                   </TableCell>
                   <TableCell sx={{ 
                     fontWeight: 700, 
@@ -1007,12 +1126,17 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                       </Box>
                     </TableCell>
                     <TableCell>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        <LocationIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
-                        <Typography variant="body2">
-                          {jobOrder.locationName || 'No Location'}
-                        </Typography>
-                      </Box>
+                      <Typography variant="body2" color="text.primary">
+                        {jobOrder.locationName || 'No Location'}
+                      </Typography>
+                      {(() => {
+                        const line = formatWorksiteCityStateZip(jobOrder.worksiteAddress);
+                        return line ? (
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            {line}
+                          </Typography>
+                        ) : null;
+                      })()}
                     </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <Chip
@@ -1062,13 +1186,58 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                         }
                       </Typography>
                     </TableCell>
-                    <TableCell>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        <PersonIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
-                        <Typography variant="body2">
-                          {jobOrder.recruiterName || 'Unassigned'}
-                        </Typography>
-                      </Box>
+                    <TableCell
+                      onClick={(e) => e.stopPropagation()}
+                      sx={{ verticalAlign: 'middle', minWidth: 220, maxWidth: 320 }}
+                    >
+                      <Autocomplete
+                        multiple
+                        size="small"
+                        loading={loadingRecruiterOptions}
+                        disabled={assigningRecruitersJobOrderId === jobOrder.id}
+                        options={recruiterPickerOptions}
+                        value={(jobOrder.assignedRecruiters || [])
+                          .map((id) => recruiterOptionMap.get(id))
+                          .filter((x): x is RecruiterPickerOption => Boolean(x))}
+                        onChange={(_, newValue) => {
+                          void persistAssignedRecruiters(jobOrder.id, newValue);
+                        }}
+                        getOptionLabel={(o) => o.displayName}
+                        isOptionEqualToValue={(a, b) => a.id === b.id}
+                        filterSelectedOptions
+                        renderTags={(tagValue, getTagProps) =>
+                          tagValue.map((option, index) => (
+                            <Chip
+                              {...getTagProps({ index })}
+                              key={option.id}
+                              label={option.displayName}
+                              size="small"
+                              sx={{ maxWidth: 120 }}
+                            />
+                          ))
+                        }
+                        renderInput={(params) => (
+                          <TextField
+                            {...params}
+                            placeholder="Assign recruiters…"
+                            variant="outlined"
+                            InputProps={{
+                              ...params.InputProps,
+                              endAdornment: (
+                                <>
+                                  {assigningRecruitersJobOrderId === jobOrder.id ? (
+                                    <CircularProgress color="inherit" size={14} sx={{ mr: 0.5 }} />
+                                  ) : null}
+                                  {params.InputProps.endAdornment}
+                                </>
+                              ),
+                            }}
+                          />
+                        )}
+                        sx={{
+                          '& .MuiOutlinedInput-root': { py: 0.25 },
+                        }}
+                      />
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2">
