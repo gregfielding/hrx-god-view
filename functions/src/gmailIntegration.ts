@@ -101,7 +101,12 @@ function isGmailTokenError(error: any): boolean {
     msg.includes('token has been expired') ||
     msg.includes('token expired') ||
     msg.includes('invalid credentials') ||
-    msg.includes('access has expired')
+    msg.includes('access has expired') ||
+    // Refresh token was issued by a DIFFERENT OAuth client than the one we're now
+    // using (e.g. client rotated). Google returns `unauthorized_client`. The
+    // refresh_token can never be used with this client; user must re-connect.
+    msg.includes('unauthorized_client') ||
+    msg.includes('invalid_client')
   );
 }
 
@@ -473,12 +478,30 @@ export const syncGmailEmails = onCall({
         logger.info(`Gmail access token refreshed for user ${userId}`);
       }
     } catch (refreshErr: any) {
-      // If refresh fails (e.g. refresh_token revoked), mark as disconnected
-      // so the UI can prompt a re-auth instead of silently failing each sync.
-      logger.warn(`Gmail token refresh failed for user ${userId}`, { err: refreshErr?.message });
-      if (refreshErr?.message?.includes('invalid_grant') || refreshErr?.response?.data?.error === 'invalid_grant') {
+      // If refresh fails (e.g. refresh_token revoked, or refresh_token was
+      // issued by a DIFFERENT OAuth client than the one we're now using after
+      // rotation — Google returns `unauthorized_client` in that case), mark as
+      // disconnected so the UI can prompt a re-auth instead of silently failing
+      // each sync.
+      const errMsg: string = (refreshErr?.message || '').toLowerCase();
+      const errCode: string = String(refreshErr?.response?.data?.error || '').toLowerCase();
+      logger.warn(`Gmail token refresh failed for user ${userId}`, {
+        err: refreshErr?.message,
+        code: refreshErr?.response?.data?.error,
+      });
+      const isStaleToken =
+        errMsg.includes('invalid_grant') ||
+        errCode === 'invalid_grant' ||
+        errMsg.includes('unauthorized_client') ||
+        errCode === 'unauthorized_client' ||
+        errMsg.includes('invalid_client') ||
+        errCode === 'invalid_client';
+      if (isStaleToken) {
         await db.collection('users').doc(userId).update({ gmailConnected: false });
-        throw new HttpsError('failed-precondition', 'Gmail token expired. Please reconnect your Gmail account.');
+        throw new HttpsError(
+          'failed-precondition',
+          'Gmail token is no longer valid. Please reconnect your Gmail account.',
+        );
       }
       // Other refresh errors: fall through and let the API call surface the real problem.
     }
@@ -519,6 +542,20 @@ export const syncGmailEmails = onCall({
     } catch (profileError: any) {
       logger.error(`Gmail API access failed: ${profileError.message}`);
       const msg = getErrorMessage(profileError);
+      // If the profile call fails with a token-level error (including
+      // `unauthorized_client` after an OAuth-client rotation), mark disconnected
+      // so the UI prompts a reconnect instead of showing a cryptic error.
+      if (isGmailTokenError(profileError)) {
+        try {
+          await db.collection('users').doc(userId).update({ gmailConnected: false });
+        } catch {
+          /* best effort */
+        }
+        throw new HttpsError(
+          'failed-precondition',
+          'Gmail token is no longer valid. Please reconnect your Gmail account.',
+        );
+      }
       throw new HttpsError('failed-precondition', `Gmail API access failed: ${msg}`);
     }
     
