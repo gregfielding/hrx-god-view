@@ -56,6 +56,25 @@ export const onAssignmentUpdatedPush = onDocumentUpdated(
       return;
     }
 
+    const jobOrderIdForMute = after.jobOrderId ? String(after.jobOrderId).trim() : '';
+    if (jobOrderIdForMute) {
+      try {
+        const joSnap = await db.doc(`tenants/${tenantId}/job_orders/${jobOrderIdForMute}`).get();
+        if (joSnap.exists && Boolean(joSnap.data()?.muted)) {
+          logger.info('[PUSH][assignment_updated] skipped: job order muted', {
+            assignmentId,
+            jobOrderId: jobOrderIdForMute,
+          });
+          return;
+        }
+      } catch (err: unknown) {
+        logger.warn('[PUSH][assignment_updated] job order mute check failed', {
+          assignmentId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     // Idempotency: already sent push for this status (e.g. trigger retry)
     if (after.lastPushSentForStatus === afterRaw) {
       logger.info('[PUSH][assignment_updated] skipped: already sent for status', { assignmentId, afterRaw });

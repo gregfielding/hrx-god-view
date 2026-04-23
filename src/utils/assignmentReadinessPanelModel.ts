@@ -4,6 +4,7 @@
 
 import type { AssignmentReadinessStateV1, AssignmentReadinessV1Snapshot } from '../types/assignmentReadinessV1';
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
+import { workerFacingScreeningPrimaryLineFromRecord } from './backgroundChecks/formatWorkerFacingScreeningPackage';
 import {
   assignmentReadinessSectionDisplayName,
   assignmentReadinessSectionStatusDisplay,
@@ -410,8 +411,8 @@ function buildBlockingLines(
   screenings.forEach((c) => {
     const st = String(c.hrxStatus || '').toLowerCase();
     if (TERMINAL_BG.has(st)) return;
-    const name = c.requestedPackageName || `Order ${c.id.slice(0, 8)}…`;
-    push(`Screening: ${name} (${st || 'pending'})`);
+    const line = workerFacingScreeningPrimaryLineFromRecord(c);
+    push(`Screening: ${line} (${st || 'pending'})`);
   });
 
   return lines;

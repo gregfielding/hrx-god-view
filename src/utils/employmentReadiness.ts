@@ -374,6 +374,8 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
 
   const entityOb = String(ctx.entitySettings?.payrollOnboardingUrl || '').trim() || null;
   const entityPo = String(ctx.entitySettings?.payrollPortalUrl || '').trim() || null;
+  const providerRaw = String(ctx.entitySettings?.payrollProvider || '').trim().toLowerCase() || null;
+  const evereeEnabled = ctx.entitySettings?.evereeEnabled === true && providerRaw === 'everee';
   const payrollSummary: EmploymentPayrollSummary = {
     applicable: Boolean(ee || ctx.payrollAccount),
     statusDisplay: ctx.payrollAccount
@@ -386,6 +388,8 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
       ctx.payrollAccount &&
         !['complete', 'inactive'].includes(String(ctx.payrollAccount.payrollStatus || ''))
     ),
+    provider: providerRaw,
+    evereeEnabled,
   };
 
   const openScr = openBackgroundCount(ctx.backgroundChecksForEntity);

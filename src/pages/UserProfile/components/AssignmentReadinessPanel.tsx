@@ -29,6 +29,7 @@ function showAssignmentReadinessReasonLine(readinessUi: AssignmentPanelReadiness
   return readinessUi !== 'ready' && readinessUi !== 'active' && readinessUi !== 'completed' && readinessUi !== 'canceled';
 }
 import { packageSectionsSummaryFromReadiness } from '../../../utils/assignmentReadinessUi';
+import { workerFacingScreeningPrimaryLineFromRecord } from '../../../utils/backgroundChecks/formatWorkerFacingScreeningPackage';
 
 export interface AssignmentReadinessPanelProps {
   rows: AssignmentReadinessPanelRow[];
@@ -161,7 +162,7 @@ const AssignmentReadinessCard: React.FC<{ row: AssignmentReadinessPanelRow }> = 
                 </Typography>
                 {row.linkedScreenings.map((c) => (
                   <Typography key={c.id} variant="body2" sx={{ lineHeight: 1.4 }}>
-                    {c.requestedPackageName || 'Screening'} — {String(c.hrxStatus || '—').replace(/_/g, ' ')}
+                    {workerFacingScreeningPrimaryLineFromRecord(c)} — {String(c.hrxStatus || '—').replace(/_/g, ' ')}
                   </Typography>
                 ))}
               </Box>
