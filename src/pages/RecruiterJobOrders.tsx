@@ -97,6 +97,12 @@ interface JobOrderWithDetails extends Omit<JobOrder, 'status'> {
   jobTitle?: string;
   jobType?: 'gig' | 'career';
   assignedRecruiters?: string[];
+  /**
+   * Unique applicant count for this job order. Computed client-side after fetching
+   * by batching `where('jobOrderId', 'in', [...])` queries and deduping by `userId`.
+   * Undefined while loading; 0 when the batch completes with no matches.
+   */
+  applicantCount?: number;
 }
 
 const PAGE_SIZE = 20;
@@ -443,6 +449,56 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
 
       setJobOrders(newJobOrders);
       firstLoadRef.current = false;
+
+      // Fetch unique applicant counts for the visible job orders. Firestore's `in` operator
+      // supports up to 30 values per query, so we chunk. We dedupe by `userId` so a worker
+      // who applied to multiple shifts inside the same job order counts once. This runs AFTER
+      // setJobOrders so the table renders immediately with no count, then the counts fill in.
+      const jobOrderIds = newJobOrders.map((jo) => jo.id).filter(Boolean);
+      if (jobOrderIds.length > 0) {
+        try {
+          const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+          const CHUNK = 30;
+          const countsByJobOrder = new Map<string, number>();
+
+          for (let i = 0; i < jobOrderIds.length; i += CHUNK) {
+            const chunk = jobOrderIds.slice(i, i + CHUNK);
+            const snap = await getDocs(
+              query(applicationsRef, where('jobOrderId', 'in', chunk)),
+            );
+
+            // Group doc userIds by jobOrderId → Set for dedup.
+            const perOrder = new Map<string, Set<string>>();
+            snap.docs.forEach((d) => {
+              const data = d.data() as { jobOrderId?: string; userId?: string; candidateId?: string };
+              const joId = data.jobOrderId;
+              if (!joId) return;
+              // Prefer userId; fall back to candidateId; fall back to the doc id so we at
+              // least don't zero-out legacy rows without either field.
+              const dedupKey =
+                (typeof data.userId === 'string' && data.userId.trim()) ||
+                (typeof data.candidateId === 'string' && data.candidateId.trim()) ||
+                d.id;
+              let set = perOrder.get(joId);
+              if (!set) {
+                set = new Set<string>();
+                perOrder.set(joId, set);
+              }
+              set.add(String(dedupKey));
+            });
+            perOrder.forEach((set, joId) => {
+              countsByJobOrder.set(joId, (countsByJobOrder.get(joId) ?? 0) + set.size);
+            });
+          }
+
+          setJobOrders((prev) =>
+            prev.map((jo) => ({ ...jo, applicantCount: countsByJobOrder.get(jo.id) ?? 0 })),
+          );
+        } catch (err) {
+          // Don't block the list render — just leave counts undefined on error.
+          console.warn('RecruiterJobOrders: applicant count fetch failed', err);
+        }
+      }
     } catch (error) {
       console.error('❌ RecruiterJobOrders: Error fetching job orders:', error);
       const err = error as any;
@@ -613,7 +669,8 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
   }, [tenantId, paginatedJobOrders]);
 
   const handleSort = (field: string) => {
-    if (field === 'Requested/Filled') return;
+    // Applicants is computed client-side after the main fetch (not a Firestore field) — not sortable.
+    if (field === 'Applicants' || field === 'Requested/Filled') return;
     const newDirection = sortField === field && sortDirection === 'desc' ? 'asc' : 'desc';
     updateCache({ sortField: field, sortDirection: newDirection, page: 0 });
   };
@@ -956,14 +1013,14 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                   }}>
                     Status
                   </TableCell>
-                  <TableCell sx={{ 
-                    fontWeight: 700, 
+                  <TableCell sx={{
+                    fontWeight: 700,
                     bgcolor: '#FFFFFF',
-                    color: 'text.secondary', 
-                    textTransform: 'uppercase', 
+                    color: 'text.secondary',
+                    textTransform: 'uppercase',
                     fontSize: '0.75rem',
                   }}>
-                    Requested/Filled
+                    Applicants
                   </TableCell>
                   <TableCell sx={{ 
                     fontWeight: 700, 
@@ -1176,14 +1233,11 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                       </Menu>
                     </TableCell>
                     <TableCell>
+                      {/* Unique applicant count for this job order (deduped by userId across
+                          all shifts in the order). `undefined` while the batch fetch is in
+                          flight — show a dash so the column doesn't lie with a stale "0". */}
                       <Typography variant="body2">
-                        {jobOrder.workersNeeded || 0} / {jobOrder.headcountFilled || 0}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {jobOrder.workersNeeded && jobOrder.headcountFilled
-                          ? `${Math.round(((jobOrder.headcountFilled || 0) / (jobOrder.workersNeeded || 1)) * 100)}% filled`
-                          : '0% filled'
-                        }
+                        {jobOrder.applicantCount === undefined ? '—' : jobOrder.applicantCount}
                       </Typography>
                     </TableCell>
                     <TableCell
