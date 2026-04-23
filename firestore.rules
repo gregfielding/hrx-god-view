@@ -578,6 +578,38 @@ service cloud.firestore {
         allow read, write: if isTenantAdmin(resource.data.tenantId);
       }
 
+      // --- CERTIFICATION RECORDS (Phase 1 canonical worker certs) ---
+      //
+      // DUAL-WRITE ROLE POLICY (explicit choice — Phase 1C):
+      // **Option B (current):** Tenant staff must be **security level >= 5** on the worker's tenant
+      // to create/update/delete **another user's** `certification_records` (e.g. recruiter dual-write).
+      // **Level-4** recruiters therefore **cannot** write canonical rows for workers via the client SDK;
+      // dual-write may log `dual_write_failed` while legacy `users.certifications` still succeeds.
+      // To adopt **Option A** (allow L4+): add `hasSecurityLevel(certTargetTenantId(), 4)` alongside the
+      // existing `...5)` checks below, and validate with security/compliance before rollout.
+      //
+      // Writes: never `request.auth != null` alone — owner, HRX, high-security internal, or L5+ tenant staff.
+      match /certification_records/{recordId} {
+        function certTargetTenantId() {
+          let target = get(/databases/$(database)/documents/users/$(userId)).data;
+          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+        }
+        allow read, write: if isAuthenticated() && request.auth.uid == userId;
+        allow read, write: if isHRX();
+        allow read, write: if isAuthenticated() && isHighSecurityLevel();
+        allow read: if isAuthenticated() && (
+          request.auth.uid == userId ||
+          isHRX() ||
+          (certTargetTenantId() != null && hasSecurityLevel(certTargetTenantId(), 5))
+        );
+        allow create, update, delete: if isAuthenticated() && (
+          request.auth.uid == userId ||
+          isHRX() ||
+          isHighSecurityLevel() ||
+          (certTargetTenantId() != null && hasSecurityLevel(certTargetTenantId(), 5))
+        );
+      }
+
       // --- INTERVIEWS (internal scoring) ---
       match /interviews/{interviewId} {
         // Internal team (securityLevel >= 5) can read/write; user can read their own.
@@ -656,6 +688,26 @@ service cloud.firestore {
       }
     }
 
+    // Cert engine shadow telemetry (Phase 6+) — append-only; HRX reads for mismatch rate analysis
+    match /cert_engine_shadow_events/{eventId} {
+      allow create: if request.auth != null &&
+        request.resource.data.keys().hasAll([
+          'createdAt', 'userId', 'surface', 'requirementSource',
+          'legacyLabels', 'engineLabels', 'mismatched', 'details',
+        ]) &&
+        request.resource.data.userId is string &&
+        request.resource.data.surface in ['apply', 'placement', 'readiness'] &&
+        request.resource.data.requirementSource in ['job_posting', 'job_order', 'assignment'] &&
+        request.resource.data.mismatched is bool &&
+        request.resource.data.legacyLabels is list &&
+        request.resource.data.engineLabels is list &&
+        request.resource.data.details is map &&
+        request.resource.data.legacyLabels.size() <= 80 &&
+        request.resource.data.engineLabels.size() <= 80;
+      allow read: if isHRX();
+      allow update, delete: if false;
+    }
+
     // --- TENANTS (Unified Agencies and Customers) ---
     match /tenants/{tenantId} {
       allow read, write: if isHRX();
@@ -722,15 +774,31 @@ service cloud.firestore {
       // --- EMAIL THREADS (Inbox - unread count listener and inbox page) ---
       // Path: tenants/{tenantId}/emailThreads/{threadId}
       match /emailThreads/{threadId} {
-        // Read: user must be in tenant (via assignment or claims) and be a participant (matches query: participantUserIds array-contains uid)
+        // Read: user must be in tenant, AND be a participant either by userId
+        // OR by email. Matching by email is required so the dual-subscription
+        // inbox hook (which queries by both participantUserIds and participants)
+        // doesn't hit "missing or insufficient permissions" on legacy threads
+        // where userId wasn't stamped during ingestion.
         allow read: if isAuthenticated() &&
                        (isAssignedToTenant(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles)) &&
-                       request.auth.uid in resource.data.get('participantUserIds', []);
+                       (
+                         request.auth.uid in resource.data.get('participantUserIds', []) ||
+                         (
+                           request.auth.token.email != null &&
+                           request.auth.token.email.lower() in resource.data.get('participants', [])
+                         )
+                       );
         // Create/update: tenant members can create/update (e.g. mark read); writes also from Cloud Functions
         allow create: if isAuthenticated() && isAssignedToTenant(tenantId);
         allow update: if isAuthenticated() &&
                          isAssignedToTenant(tenantId) &&
-                         request.auth.uid in resource.data.get('participantUserIds', []);
+                         (
+                           request.auth.uid in resource.data.get('participantUserIds', []) ||
+                           (
+                             request.auth.token.email != null &&
+                             request.auth.token.email.lower() in resource.data.get('participants', [])
+                           )
+                         );
         allow delete: if isHRX() || isTenantAdmin(tenantId);
       }
 
