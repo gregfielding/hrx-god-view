@@ -3054,7 +3054,7 @@ export const scheduledGmailMonitoring = onSchedule({
   maxInstances: 1,
   retryCount: 0,
   timeoutSeconds: 240,
-  memory: '256MiB'
+  memory: '512MiB'
 }, async (context) => {
   if (!ENABLE_GMAIL_MONITORING) {
     console.info('scheduledGmailMonitoring: disabled by ENABLE_GMAIL_MONITORING');
