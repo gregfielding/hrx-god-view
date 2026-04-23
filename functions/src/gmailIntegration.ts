@@ -324,6 +324,25 @@ export const gmailOAuthCallback = onRequest(async (req, res) => {
 
     const { userId } = JSON.parse(state);
 
+    // DIAGNOSTIC: log the exact values being sent to Google's /token endpoint so we can
+    // cross-check against the OAuth 2.0 client config in GCP Console (client ID + authorized
+    // redirect URIs). The secret is redacted; only its last 4 chars appear, which matches
+    // what GCP's "Client secrets" section displays.
+    const clientIdValue = String(clientId.value() || '');
+    const clientSecretValue = String(clientSecret.value() || '');
+    const redirectUriValue = String(redirectUri.value() || '');
+    logger.info('gmailOAuthCallback: about to exchange code with Google', {
+      clientIdPrefix: clientIdValue.slice(0, 20),
+      clientIdSuffix: clientIdValue.slice(-10),
+      clientSecretLast4: clientSecretValue.slice(-4),
+      clientSecretLength: clientSecretValue.length,
+      redirectUriSent: redirectUriValue,
+      redirectUriLength: redirectUriValue.length,
+      codePrefix: code.slice(0, 8),
+      codeLength: code.length,
+      userId,
+    });
+
     // Exchange code for tokens
     const { tokens } = await oauth2Client.getToken(code);
 
