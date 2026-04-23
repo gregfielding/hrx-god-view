@@ -44,7 +44,7 @@ import CredentialTypesPlaceholder from './settings/CredentialTypesPlaceholder';
 import ScreeningTypesPlaceholder from './settings/ScreeningTypesPlaceholder';
 import BenefitsProgramsPlaceholder from './settings/BenefitsProgramsPlaceholder';
 import PayrollProvidersPlaceholder from './settings/PayrollProvidersPlaceholder';
-import MessagingSequencesPlaceholder from './settings/MessagingSequencesPlaceholder';
+import MessagingSequencesPage from './settings/MessagingSequencesPage';
 import AISignalsSettings from './settings/AISignalsSettings';
 import WorkersCompRatesPage from './settings/WorkersCompRatesPage';
 import ApiServiceDetailContent from './settings/ApisAndServicesPage';
@@ -178,7 +178,7 @@ const SettingsLanding: React.FC = () => {
       case 'messaging':
         return effectiveTenantId ? <MessagingTab tenantId={effectiveTenantId} /> : null;
       case 'messaging-sequences':
-        return <MessagingSequencesPlaceholder />;
+        return <MessagingSequencesPage />;
       case 'senders':
         return <SenderManagementPage />;
       case 'slack':
