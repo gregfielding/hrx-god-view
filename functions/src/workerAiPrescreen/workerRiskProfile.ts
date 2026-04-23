@@ -665,18 +665,31 @@ export async function buildWorkerRiskProfileFromLatestInterview(
 
 export function riskProfileFirestorePayload(draft: WorkerRiskProfileDraft): Record<string, unknown> {
   const ts = admin.firestore.FieldValue.serverTimestamp();
-  return {
-    overallRiskScore: draft.overallRiskScore,
-    topRisks: draft.topRisks.map((r) => ({
-      ...r,
+  const topRisks = draft.topRisks.map((r) => {
+    const row: Record<string, unknown> = {
+      type: r.type,
+      severity: r.severity,
+      confidence: r.confidence,
+      summary: r.summary,
+      source: r.source,
       lastUpdatedAt: ts,
-    })),
+    };
+    if (r.sourceRef != null && r.sourceRef !== '') row.sourceRef = r.sourceRef;
+    if (r.status != null) row.status = r.status;
+    return row;
+  });
+  const out: Record<string, unknown> = {
+    overallRiskScore: draft.overallRiskScore,
+    topRisks,
     lastUpdatedAt: ts,
     lastGeneratedBy: draft.lastGeneratedBy,
     version: draft.version,
     generationSignature: draft.generationSignature,
-    ...(draft.staleness ? { staleness: draft.staleness } : {}),
   };
+  if (draft.staleness != null && typeof draft.staleness === 'object') {
+    out.staleness = draft.staleness;
+  }
+  return out;
 }
 
 /**
