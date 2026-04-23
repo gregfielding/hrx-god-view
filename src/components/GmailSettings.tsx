@@ -9,6 +9,9 @@ import {
   Alert,
   Grid,
   CircularProgress,
+  Switch,
+  FormControlLabel,
+  Tooltip,
 } from '@mui/material';
 import {
   Email as EmailIcon,
@@ -19,9 +22,12 @@ import {
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon,
   Warning as WarningIcon,
+  Bolt as BoltIcon,
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { doc, onSnapshot, Timestamp } from 'firebase/firestore';
 
+import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useGoogleStatus } from '../contexts/GoogleStatusContext';
 
@@ -56,6 +62,117 @@ const GmailSettings: React.FC<GmailSettingsProps> = ({ tenantId }) => {
   const getGmailAuthUrlFn = httpsCallable(functions, 'getGmailAuthUrl');
   const disconnectGmailFn = httpsCallable(functions, 'disconnectGmail');
   const syncGmailEmailsFn = httpsCallable(functions, 'syncGmailEmails');
+  const startGmailWatchFn = httpsCallable(functions, 'startGmailWatch');
+  const stopGmailWatchFn = httpsCallable(functions, 'stopGmailWatch');
+
+  // Push notification (real-time sync) state — sourced from user doc, updated via onSnapshot
+  const [pushState, setPushState] = useState<{
+    enabled: boolean;
+    expiration: number | null;
+    lastPushAt: Date | null;
+    lastError: string | null;
+    lastErrorAt: Date | null;
+  }>({
+    enabled: false,
+    expiration: null,
+    lastPushAt: null,
+    lastError: null,
+    lastErrorAt: null,
+  });
+  const [pushBusy, setPushBusy] = useState(false);
+
+  // Subscribe to user doc for push status changes (fires live when startGmailWatch completes, or when a push arrives)
+  useEffect(() => {
+    if (!user?.uid) return;
+    const userRef = doc(db, 'users', user.uid);
+    const unsub = onSnapshot(
+      userRef,
+      (snap) => {
+        const d: any = snap.data() || {};
+        const toDate = (v: any): Date | null => {
+          if (!v) return null;
+          if (v instanceof Timestamp) return v.toDate();
+          if (v instanceof Date) return v;
+          if (typeof v === 'number') return new Date(v);
+          if (typeof v?.toDate === 'function') return v.toDate();
+          return null;
+        };
+        setPushState({
+          enabled: !!d.gmailPushEnabled,
+          expiration:
+            typeof d.gmailWatchExpiration === 'number'
+              ? d.gmailWatchExpiration
+              : d.gmailWatchExpiration?.toMillis
+                ? d.gmailWatchExpiration.toMillis()
+                : null,
+          lastPushAt: toDate(d.gmailLastPushAt),
+          lastError: typeof d.gmailWatchLastError === 'string' ? d.gmailWatchLastError : null,
+          lastErrorAt: toDate(d.gmailWatchLastErrorAt),
+        });
+      },
+      (err) => {
+        console.warn('GmailSettings: user doc onSnapshot failed', err);
+      }
+    );
+    return () => {
+      try {
+        unsub();
+      } catch {
+        /* noop */
+      }
+    };
+  }, [user?.uid]);
+
+  const handleTogglePushSync = async (nextEnabled: boolean) => {
+    if (!user?.uid) {
+      setError('User not authenticated');
+      return;
+    }
+    setPushBusy(true);
+    setError(null);
+    try {
+      if (nextEnabled) {
+        const res: any = await startGmailWatchFn({});
+        const data = res?.data || {};
+        if (data?.skipped === 'no_tokens') {
+          setError(
+            'Real-time sync could not start because Gmail tokens were not found. Disconnect and reconnect Gmail, then try again.'
+          );
+        } else if (data?.success) {
+          setSuccess('Real-time sync enabled.');
+        } else {
+          setError('Could not enable real-time sync.');
+        }
+      } else {
+        const res: any = await stopGmailWatchFn({});
+        const data = res?.data || {};
+        if (data?.success) {
+          setSuccess('Real-time sync disabled. You will still receive emails via the periodic sync.');
+        } else {
+          setError(`Could not disable real-time sync${data?.reason ? `: ${data.reason}` : ''}.`);
+        }
+      }
+    } catch (err: any) {
+      console.error('Error toggling Gmail push sync:', err);
+      setError(`Real-time sync toggle failed: ${err?.message || 'unknown error'}`);
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const formatRelative = (d: Date | null): string => {
+    if (!d) return '—';
+    const diffMs = Date.now() - d.getTime();
+    if (diffMs < 0) return d.toLocaleString();
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins} min${mins === 1 ? '' : 's'} ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+    const days = Math.floor(hrs / 24);
+    if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`;
+    return d.toLocaleString();
+  };
 
   // Load Gmail status
   const loadGmailStatus = async () => {
@@ -318,6 +435,83 @@ const GmailSettings: React.FC<GmailSettingsProps> = ({ tenantId }) => {
           )}
         </CardContent>
       </Card>
+
+      {/* Real-time Sync (Gmail Push Notifications) */}
+      {googleStatus.gmail.connected && (
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Box display="flex" alignItems="center" gap={1} mb={1}>
+              <BoltIcon color={pushState.enabled ? 'primary' : 'disabled'} />
+              <Typography variant="h6">Real-time Sync</Typography>
+              <Chip
+                size="small"
+                label={pushState.enabled ? 'On' : 'Off'}
+                color={pushState.enabled ? 'success' : 'default'}
+                sx={{ ml: 1 }}
+              />
+            </Box>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              When enabled, new messages appear instantly via Gmail push notifications — no need to wait for the
+              periodic sync. The watch auto-renews daily.
+            </Typography>
+
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={pushState.enabled}
+                  disabled={pushBusy}
+                  onChange={(e) => handleTogglePushSync(e.target.checked)}
+                />
+              }
+              label={pushState.enabled ? 'Enabled' : 'Enable real-time sync'}
+            />
+
+            {pushState.enabled && (
+              <Box mt={2}>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} sm={6}>
+                    <Typography variant="body2" color="text.secondary">
+                      <strong>Last push received:</strong> {formatRelative(pushState.lastPushAt)}
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <Tooltip title="Gmail push watches expire after 7 days; we auto-renew daily.">
+                      <Typography variant="body2" color="text.secondary">
+                        <strong>Watch expires:</strong>{' '}
+                        {pushState.expiration
+                          ? new Date(pushState.expiration).toLocaleString()
+                          : '—'}
+                      </Typography>
+                    </Tooltip>
+                  </Grid>
+                </Grid>
+              </Box>
+            )}
+
+            {pushState.lastError && (
+              <Alert severity="warning" sx={{ mt: 2 }}>
+                <Typography variant="body2">
+                  <strong>Last error:</strong> {pushState.lastError}
+                  {pushState.lastErrorAt && (
+                    <Box component="span" ml={1} color="text.secondary">
+                      ({formatRelative(pushState.lastErrorAt)})
+                    </Box>
+                  )}
+                </Typography>
+              </Alert>
+            )}
+
+            {pushBusy && (
+              <Box mt={2} display="flex" alignItems="center" gap={1}>
+                <CircularProgress size={16} />
+                <Typography variant="caption" color="text.secondary">
+                  Updating real-time sync…
+                </Typography>
+              </Box>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Email Automation Features */}
       <Card>

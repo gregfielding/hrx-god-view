@@ -28,6 +28,7 @@ import { getUserTimezone } from '../utils/dateUtils';
 
 import { useAuth } from '../contexts/AuthContext';
 import { useGoogleStatus } from '../contexts/GoogleStatusContext';
+import CalendarWebhookManager from './CalendarWebhookManager';
 
 interface GoogleIntegrationProps {
   tenantId: string;
@@ -713,6 +714,13 @@ const GoogleIntegration: React.FC<GoogleIntegrationProps> = ({ tenantId }) => {
             </Box>
           </CardContent>
         </Card>
+      )}
+
+      {/* Real-time Calendar Sync toggle — only show when Calendar is connected */}
+      {googleStatus.calendar.connected && (
+        <Box sx={{ mb: 3 }}>
+          <CalendarWebhookManager tenantId={tenantId} />
+        </Box>
       )}
 
       {/* Gmail Email Capture - Only show when Gmail is connected */}

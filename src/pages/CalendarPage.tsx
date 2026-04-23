@@ -38,6 +38,7 @@ import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfDay, e
 import { useAuth } from '../contexts/AuthContext';
 import { useCalendarList } from '../hooks/useCalendarList';
 import { useCalendarEvents } from '../hooks/useCalendarEvents';
+import { useCalendarRealtime } from '../hooks/useCalendarRealtime';
 import { useGigJobOrdersCalendar, getGigJobOrdersCalendarSummary, getColorForJobOrderId } from '../hooks/useGigJobOrdersCalendar';
 import EventModal from '../components/calendar/EventModal';
 import type { CalendarEvent, CalendarView, CalendarSummary } from '../types/calendar';
@@ -162,6 +163,22 @@ const CalendarPage: React.FC = () => {
     enabled: selectedGoogleCalendarIds.length > 0 && !!userId,
   });
 
+  // Live overlay: subscribe to `tenants/{tenantId}/calendar_events` which is
+  // populated by the onCalendarPush webhook + renewCalendarWatches scheduler.
+  // When a user has push sync enabled, Google fires a notification and we
+  // upsert the latest event state into Firestore — this listener picks that
+  // up within ~1s, which then overlays onto the API-fetched set below. Safe
+  // to keep running when push is off: the array-contains filter on
+  // participantUserIds means users without push just see empty snapshots.
+  const { events: realtimeEvents } = useCalendarRealtime({
+    tenantId,
+    userId,
+    calendarIds: selectedGoogleCalendarIds,
+    timeMin: dateRange.start,
+    timeMax: dateRange.end,
+    enabled: !!tenantId && !!userId && selectedGoogleCalendarIds.length > 0,
+  });
+
   // Fetch Gig job orders as calendar events (only if not disabled)
   const { events: gigJobOrderEvents, loading: gigJobOrdersLoading } = useGigJobOrdersCalendar({
     tenantId,
@@ -170,10 +187,44 @@ const CalendarPage: React.FC = () => {
     enabled: isGigJobOrdersSelected && !!tenantId && !gigJobOrdersDisabled,
   });
 
+  // Merge Google (API) + realtime (Firestore push) events.
+  //
+  // Strategy: keyed by `${calendarId}::${id}`, the realtime version wins
+  // because it reflects the most recent push from Google (the API fetch
+  // is a snapshot from the last refetch). We preserve the API event's
+  // richer metadata (e.g. `hrx`, `creator`) by shallow-merging rather than
+  // wholesale replacing — realtime fields overwrite, API-only fields stay.
+  const mergedGoogleEvents = useMemo(() => {
+    if (realtimeEvents.length === 0) return googleEvents;
+
+    const makeKey = (e: CalendarEvent) => `${e.calendarId}::${e.id}`;
+    const byKey = new Map<string, CalendarEvent>();
+    for (const e of googleEvents) {
+      byKey.set(makeKey(e), e);
+    }
+    for (const rt of realtimeEvents) {
+      const key = makeKey(rt);
+      const existing = byKey.get(key);
+      if (!existing) {
+        byKey.set(key, rt);
+        continue;
+      }
+      // Prefer realtime only if it's fresher (or equal — string compare on
+      // ISO timestamps is monotonic). This avoids clobbering a just-created
+      // API event that has fields the Firestore mirror doesn't yet carry.
+      const apiUpdated = existing.updatedAt || '';
+      const rtUpdated = rt.updatedAt || '';
+      if (rtUpdated >= apiUpdated) {
+        byKey.set(key, { ...existing, ...rt, hrx: existing.hrx || rt.hrx });
+      }
+    }
+    return Array.from(byKey.values());
+  }, [googleEvents, realtimeEvents]);
+
   // Merge all events
   const events = useMemo(() => {
-    return [...googleEvents, ...gigJobOrderEvents];
-  }, [googleEvents, gigJobOrderEvents]);
+    return [...mergedGoogleEvents, ...gigJobOrderEvents];
+  }, [mergedGoogleEvents, gigJobOrderEvents]);
 
   // Load persisted calendar subscriptions from the user doc
   useEffect(() => {

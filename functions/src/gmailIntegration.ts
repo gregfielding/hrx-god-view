@@ -5,9 +5,33 @@ import * as admin from 'firebase-admin';
 import { google } from 'googleapis';
 import { logger } from './utils/logger';
 import { logMessage } from './messaging/messageLogging';
-import { findOrCreateEmailThread, addMessageToThread } from './messaging/emailThreading';
+import { findOrCreateEmailThread, addMessageToThread, findContactsByEmails } from './messaging/emailThreading';
 import { getStorage } from 'firebase-admin/storage';
 import { getStorageBucketName } from './utils/storageBucket';
+import { startWatchForUser } from './messaging/gmailPush';
+
+/**
+ * Best-effort: register the Gmail push watch for this user. Called from the
+ * OAuth callbacks so that every successful connect (including reconnects after
+ * a token revoke / disconnect) lands in a healthy push state without the user
+ * having to flip a separate toggle.
+ *
+ * Non-fatal: if the watch registration fails, we log and move on — the user
+ * is still connected for syncGmailEmails / outbound send. A later renewal or
+ * manual reset can recover.
+ */
+async function bestEffortStartGmailWatch(userId: string, context: string): Promise<void> {
+  try {
+    const res = await startWatchForUser(userId);
+    logger.info(
+      `bestEffortStartGmailWatch(${context}): user=${userId} historyId=${res.historyId} skipped=${res.skipped || 'n/a'}`
+    );
+  } catch (err: any) {
+    logger.warn(
+      `bestEffortStartGmailWatch(${context}): watch failed for ${userId}: ${err?.message || err}`
+    );
+  }
+}
 
 
 const db = getFirestore();
@@ -269,10 +293,14 @@ export const handleGmailCallback = onCall({
     // Store tokens securely
     await db.collection('users').doc(userId).update(updateData);
 
-    const message = hasCalendarScope 
+    // Register the Gmail push watch immediately so the user doesn't have to
+    // flip a separate toggle after reconnecting. Non-fatal on failure.
+    await bestEffortStartGmailWatch(userId, 'gmailCallback');
+
+    const message = hasCalendarScope
       ? 'Google services (Gmail and Calendar) connected successfully'
       : 'Gmail connected successfully';
-    
+
     return { success: true, message };
   } catch (error) {
     console.error('Error handling Gmail callback:', error);
@@ -331,6 +359,10 @@ export const gmailOAuthCallback = onRequest(async (req, res) => {
     }
 
     await db.collection('users').doc(userId).set(updateData, { merge: true });
+
+    // Register the Gmail push watch immediately so the user doesn't have to
+    // flip a separate toggle after reconnecting. Non-fatal on failure.
+    await bestEffortStartGmailWatch(userId, 'gmailOAuthCallback');
 
     // Simple success HTML
     const message = hasCalendarScope
@@ -404,6 +436,34 @@ export const syncGmailEmails = onCall({
 
     // Set up Gmail API client
     oauth2Client.setCredentials(gmailTokens);
+
+    // Refresh the access token if it's expired or within 5 minutes of expiry.
+    // Without this, long-idle users hit "invalid_grant" / 401 on sync and
+    // think Gmail is "broken" — they end up re-connecting repeatedly.
+    try {
+      const expiryDate = gmailTokens.expiry_date;
+      if (expiryDate && Date.now() >= expiryDate - 5 * 60 * 1000) {
+        logger.info(`Refreshing Gmail access token for user ${userId} (expired or near-expiry)`);
+        const { credentials } = await oauth2Client.refreshAccessToken();
+        await db.collection('users').doc(userId).update({
+          'gmailTokens.access_token': credentials.access_token,
+          'gmailTokens.expiry_date': credentials.expiry_date,
+          'gmailTokens.token_type': credentials.token_type,
+        });
+        oauth2Client.setCredentials(credentials);
+        logger.info(`Gmail access token refreshed for user ${userId}`);
+      }
+    } catch (refreshErr: any) {
+      // If refresh fails (e.g. refresh_token revoked), mark as disconnected
+      // so the UI can prompt a re-auth instead of silently failing each sync.
+      logger.warn(`Gmail token refresh failed for user ${userId}`, { err: refreshErr?.message });
+      if (refreshErr?.message?.includes('invalid_grant') || refreshErr?.response?.data?.error === 'invalid_grant') {
+        await db.collection('users').doc(userId).update({ gmailConnected: false });
+        throw new HttpsError('failed-precondition', 'Gmail token expired. Please reconnect your Gmail account.');
+      }
+      // Other refresh errors: fall through and let the API call surface the real problem.
+    }
+
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
     /** Connected mailbox address (lowercase); used for outbound vs inbound and must match Gmail "me". */
     let gmailConnectedEmail = '';
@@ -627,39 +687,39 @@ export const syncGmailEmails = onCall({
             parsedAddresses.add(addr);
           }
         }
-        const contactMap = new Map<string, { id: string; [k: string]: any }>();
 
-        for (const emailAddr of parsedAddresses) {
-          const contactQuery = await db
-            .collection('tenants')
-            .doc(tenantId)
-            .collection('crm_contacts')
-            .where('email', '==', emailAddr)
-            .limit(1)
-            .get();
+        // PERF: One batched query across all participant addresses (Firestore 'in', chunked to 10)
+        // replaces the previous N+1 per-address lookup.
+        const contactMap = await findContactsByEmails(
+          tenantId,
+          Array.from(parsedAddresses)
+        );
 
-          if (!contactQuery.empty) {
-            const contact = contactQuery.docs[0];
-            contactMap.set(emailAddr, {
-              id: contact.id,
-              ...contact.data(),
+        const contactIds = Array.from(contactMap.values())
+          .map((c: any) => c?.id)
+          .filter((id: any): id is string => typeof id === 'string' && !!id);
+
+        // Find most relevant deal across ALL matched contacts with a single query
+        // (array-contains-any, max 10 values — we slice to be safe).
+        let dealId: string | null = null;
+        if (contactIds.length > 0) {
+          try {
+            const dealQuery = await db
+              .collection('tenants')
+              .doc(tenantId)
+              .collection('crm_deals')
+              .where('associations.contacts', 'array-contains-any', contactIds.slice(0, 10))
+              .orderBy('updatedAt', 'desc')
+              .limit(1)
+              .get();
+            if (!dealQuery.empty) {
+              dealId = dealQuery.docs[0].id;
+            }
+          } catch (dealErr) {
+            logger.warn('Deal lookup failed during sync (non-fatal)', {
+              messageId: message.id,
+              err: (dealErr as any)?.message,
             });
-          }
-        }
-
-        // Find most relevant deal for contacts
-        let dealId = null;
-        for (const contact of contactMap.values()) {
-          const dealQuery = await db.collection('tenants').doc(tenantId)
-            .collection('crm_deals')
-            .where('associations.contacts', 'array-contains', contact.id)
-            .orderBy('updatedAt', 'desc')
-            .limit(1)
-            .get();
-
-          if (!dealQuery.empty) {
-            dealId = dealQuery.docs[0].id;
-            break;
           }
         }
 
@@ -674,6 +734,18 @@ export const syncGmailEmails = onCall({
               ? new Date(internalDateMillis)
               : new Date();
 
+        // Denormalize ALL matched contact ids so downstream queries can use
+        // array-contains without a backfill (Phase 2). Legacy single-value
+        // contactId/companyId fields are preserved for backward compatibility.
+        const participantContactIds: string[] = contactIds;
+        const participantCompanyIds: string[] = Array.from(
+          new Set(
+            Array.from(contactMap.values())
+              .map((c: any) => c?.companyId)
+              .filter((id: any): id is string => typeof id === 'string' && !!id)
+          )
+        );
+
         const emailLog = {
           messageId: message.id!,
           threadId: messageData.threadId!,
@@ -686,8 +758,15 @@ export const syncGmailEmails = onCall({
           bodySnippet: String(bodySnippet).substring(0, 250),
           bodyHtml: bodyHtml || undefined,
           direction,
-          contactId: contactMap.size > 0 ? Array.from(contactMap.values())[0].id : null,
-          companyId: contactMap.size > 0 ? Array.from(contactMap.values())[0].companyId : null,
+          // Legacy single-valued fields (first match wins — preserved so existing
+          // contactId-indexed queries keep working).
+          contactId: participantContactIds[0] ?? null,
+          companyId: participantCompanyIds[0] ?? null,
+          // New denormalized arrays — let Phase 2 move the frontend to
+          // array-contains without needing a backfill for messages synced
+          // after this change ships.
+          participantContactIds,
+          participantCompanyIds,
           dealId,
           userId,
           isDraft: messageData.labelIds?.includes('DRAFT') || false,
@@ -714,6 +793,8 @@ export const syncGmailEmails = onCall({
             gmailLabelIds: messageData.labelIds,
           }, {
             userId: direction === 'inbound' ? userId : undefined,
+            participantContactIds,
+            participantCompanyIds,
           });
 
           if (thread.id) {
@@ -796,6 +877,9 @@ export const syncGmailEmails = onCall({
                   gmailMessageId: message.id!,
                   read: effectiveRead,
                   createdAt: timestamp, // Use the original email timestamp
+                }, {
+                  participantContactIds,
+                  participantCompanyIds,
                 });
                 logger.info(`Added message ${messageId} to thread ${thread.id} for email ${message.id}`);
               }
@@ -2689,6 +2773,23 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
             }
 
             // Create email logs for all associated entities to enable "filter up" functionality
+            // Build participant arrays (Phase 2) so array-contains queries surface this log
+            // under every matched contact/company, not just the first.
+            const legacyParticipantContactIds = Array.from(
+              new Set(
+                (contacts as any[])
+                  .map((c: any) => c?.id)
+                  .filter((id: any): id is string => typeof id === 'string' && !!id)
+              )
+            );
+            const legacyParticipantCompanyIds = Array.from(
+              new Set(
+                (contacts as any[])
+                  .map((c: any) => c?.companyId)
+                  .filter((id: any): id is string => typeof id === 'string' && !!id)
+              )
+            );
+
             const emailLogBase = {
               messageId: message.id,
               threadId: messageData.threadId,
@@ -2700,7 +2801,11 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
               timestamp: emailDate,
               bodySnippet: bodySnippet.substring(0, 250),
               direction: isOutbound ? 'outbound' : 'inbound',
+              // Legacy single-valued field (preserved for backward compatibility)
               contactId: contact.id,
+              // Phase 2: denormalized arrays for array-contains queries
+              participantContactIds: legacyParticipantContactIds,
+              participantCompanyIds: legacyParticipantCompanyIds,
               userId,
               isDraft: messageData.labelIds?.includes('DRAFT') || false,
               createdAt: new Date(),
@@ -2718,6 +2823,22 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
               .add(contactEmailLog);
 
             // Create or find email thread and add message
+            // Pass full set of contact/company IDs from this batch so every
+            // matched CRM contact is linked to the thread (Phase 2 multi-contact linking).
+            const batchParticipantContactIds = Array.from(
+              new Set(
+                (contacts as any[])
+                  .map((c: any) => c?.id)
+                  .filter((id: any): id is string => typeof id === 'string' && !!id)
+              )
+            );
+            const batchParticipantCompanyIds = Array.from(
+              new Set(
+                (contacts as any[])
+                  .map((c: any) => c?.companyId)
+                  .filter((id: any): id is string => typeof id === 'string' && !!id)
+              )
+            );
             try {
               const thread = await findOrCreateEmailThread(tenantId, {
                 subject,
@@ -2728,6 +2849,8 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
                 gmailLabelIds: messageData.labelIds,
               }, {
                 userId: !isOutbound ? userId : undefined,
+                participantContactIds: batchParticipantContactIds,
+                participantCompanyIds: batchParticipantCompanyIds,
               });
 
               if (thread.id) {
@@ -2745,6 +2868,9 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
                   gmailMessageId: message.id,
                   read: isOutbound, // Outbound messages are auto-read
                   createdAt: emailDate, // Use the original email timestamp
+                }, {
+                  participantContactIds: batchParticipantContactIds,
+                  participantCompanyIds: batchParticipantCompanyIds,
                 });
               }
             } catch (threadError) {
