@@ -112,6 +112,7 @@ export function mapUserDataToRecruiterUser(userId: string, userData: any, tenant
     hasWorkerAiPrescreenInterview: userData.hasWorkerAiPrescreenInterview === true,
     interviewStatus: typeof userData.interviewStatus === 'string' ? userData.interviewStatus : undefined,
     lastInterviewCompletedAt: userData.lastInterviewCompletedAt,
+    recruiterOrderInterviewSmsLastSentAt: userData.recruiterOrderInterviewSmsLastSentAt,
     workHistoryJobTitles: buildWorkHistoryJobTitles(userData),
   };
 }

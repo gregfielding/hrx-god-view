@@ -22,7 +22,7 @@ import { db, functions } from '../firebase';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import PageHeader from '../components/PageHeader';
 import CompanyTable from '../components/CompanyTable';
-import InboxSearchBar from '../components/InboxSearchBar';
+import InboxSearchBar, { compactInboxSearchBarSx } from '../components/InboxSearchBar';
 import FavoritesFilter from '../components/FavoritesFilter';
 import { useFavorites } from '../hooks/useFavorites';
 import { usePageCache } from '../hooks/usePageCache';
@@ -922,6 +922,7 @@ const CompaniesPage: React.FC = () => {
                 }
               }}
               placeholder="Search companies..."
+              sx={compactInboxSearchBarSx}
             />
             <Button
               variant="contained"

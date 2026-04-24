@@ -81,6 +81,7 @@ import { useUnreadMentionsCount } from '../hooks/useUnreadMentionsCount';
 import { useEffectiveSecurityLevel, useIsAdminShell } from '../hooks/useEffectiveSecurityLevel';
 import ChatGPTDrawer from './chatgpt/ChatGPTDrawer';
 import { pathIsUsersListPath } from '../utils/usersLayoutPersistence';
+import TopBarTitleContext from '../contexts/TopBarTitleContext';
 
 const drawerFullWidth = 240;
 const drawerCollapsedWidth = 64;
@@ -390,6 +391,12 @@ const Layout: React.FC = function Layout() {
     // Default fallback - show active tenant name
     return activeTenant?.name || 'HRX Platform';
   };
+
+  const [topBarTitleOverride, setTopBarTitleOverride] = useState<React.ReactNode | null>(null);
+  const topBarTitleContextValue = useMemo(
+    () => ({ titleOverride: topBarTitleOverride, setTitleOverride: setTopBarTitleOverride }),
+    [topBarTitleOverride],
+  );
 
   const [open, setOpen] = useState(true);
   const setOpenWithLog = (value) => { console.log('setOpen', value); setOpen(value); };
@@ -1731,19 +1738,32 @@ const Layout: React.FC = function Layout() {
               </Box>
             </Box>
             {/* Page Title */}
-            <Box sx={{ ml: '12px', display: 'flex', alignItems: 'center' }}>
-              <Typography 
-                variant="h5" 
-                sx={{ 
-                  fontWeight: 600, 
-                  color: isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF',
-                  lineHeight: 1.2, // Ensure consistent line height for center alignment
-                  display: 'flex',
-                  alignItems: 'center',
-                }}
-              >
-                {getPageTitle()}
-              </Typography>
+            <Box sx={{ ml: '12px', display: 'flex', alignItems: 'center', minWidth: 0 }}>
+              {topBarTitleOverride != null ? (
+                <Box
+                  sx={{
+                    color: isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF',
+                    display: 'flex',
+                    alignItems: 'center',
+                    minWidth: 0,
+                  }}
+                >
+                  {topBarTitleOverride}
+                </Box>
+              ) : (
+                <Typography
+                  variant="h5"
+                  sx={{
+                    fontWeight: 600,
+                    color: isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF',
+                    lineHeight: 1.2,
+                    display: 'flex',
+                    alignItems: 'center',
+                  }}
+                >
+                  {getPageTitle()}
+                </Typography>
+              )}
             </Box>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -2144,7 +2164,9 @@ const Layout: React.FC = function Layout() {
         </Box>
 
         {/* Scrollable content area - LayoutOutlet re-renders on location change and remounts Outlet so content updates when clicking sidebar links */}
-        <LayoutOutlet />
+        <TopBarTitleContext.Provider value={topBarTitleContextValue}>
+          <LayoutOutlet />
+        </TopBarTitleContext.Provider>
         
         {/* Direct Messenger Drawer */}
         <MessengerDrawer />

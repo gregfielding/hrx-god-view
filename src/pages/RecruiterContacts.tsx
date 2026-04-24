@@ -42,7 +42,7 @@ import ContactTable from '../components/ContactTable';
 import ContactTableRow from '../components/ContactTableRow';
 import type { RecruiterOutletContext } from './RecruiterDashboard';
 import PageHeader from '../components/PageHeader';
-import InboxSearchBar from '../components/InboxSearchBar';
+import InboxSearchBar, { compactInboxSearchBarSx } from '../components/InboxSearchBar';
 import FavoritesFilter from '../components/FavoritesFilter';
 import { normalizeUsStateCode } from '../utils/usStateNormalize';
 
@@ -979,6 +979,7 @@ const RecruiterContacts: React.FC = () => {
               onChange={setHeaderSearch}
               onSearch={setHeaderSearch}
               placeholder="Search contacts..."
+              sx={compactInboxSearchBarSx}
             />
             <Button
               variant="contained"

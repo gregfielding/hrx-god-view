@@ -9,12 +9,12 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Box, Button } from '@mui/material';
+import { Box, Button, IconButton, Tooltip } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 // import { OnCallI9SupportingReminderDialog } from '../components/staffOnboarding/OnCallI9SupportingReminderDialog';
-import InboxSearchBar from '../components/InboxSearchBar';
+import InboxSearchBar, { compactInboxSearchBarSx } from '../components/InboxSearchBar';
 import FavoritesFilter from '../components/FavoritesFilter';
 import {
   USERS_LAYOUT_TAB_CONFIG,
@@ -117,6 +117,7 @@ const UsersLayout: React.FC = () => {
           onChange={setUsersSearch}
           onSearch={setUsersSearch}
           placeholder="Search by name, email, or phone..."
+          sx={compactInboxSearchBarSx}
         />
         <FavoritesFilter
           favoriteType="users"
@@ -142,6 +143,7 @@ const UsersLayout: React.FC = () => {
           onChange={setGroupsSearch}
           onSearch={setGroupsSearch}
           placeholder="Search groups..."
+          sx={compactInboxSearchBarSx}
         />
         <FavoritesFilter
           favoriteType="userGroups"
@@ -159,29 +161,20 @@ const UsersLayout: React.FC = () => {
             },
           }}
         />
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => setOpenCreateGroupForm(true)}
-          sx={{
-            textTransform: 'none',
-            borderRadius: '24px',
-            px: 2.5,
-            py: 1,
-            height: '40px',
-            fontWeight: 500,
-            fontSize: '14px',
-            bgcolor: '#0057B8',
-            boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
-            '&:hover': {
-              bgcolor: '#004a9f',
-              boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
-            },
-            whiteSpace: 'nowrap',
-          }}
-        >
-          Create New Group
-        </Button>
+        <Tooltip title="Create new group">
+          <IconButton
+            onClick={() => setOpenCreateGroupForm(true)}
+            sx={{
+              width: 32,
+              height: 32,
+              bgcolor: '#0057B8',
+              color: '#fff',
+              '&:hover': { bgcolor: '#004a9f' },
+            }}
+          >
+            <AddIcon sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Tooltip>
       </Box>
     ) : null;
 

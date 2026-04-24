@@ -23,6 +23,7 @@ import {
 } from '../../utils/workerRiskProfileDisplay';
 import type { RecruiterUserLatestInterviewPreview, RecruiterUserLatestNotePreview } from '../../hooks/useRecruiterUsersRowExtras';
 import RecruiterUserAiScoreCell from './RecruiterUserAiScoreCell';
+import OrderInterviewInlineAction from './OrderInterviewInlineAction';
 import { workHistoryTitlesForRecruiterTableRow } from '../../utils/workHistoryJobTitles';
 
 export interface ApplicantsUsersStyleMaps {
@@ -54,7 +55,7 @@ export const ApplicantsUsersStyleTableHeadCells: React.FC = () => (
       Score
     </TableCell>
     <TableCell sx={{ fontWeight: 700, bgcolor: 'grey.50', textTransform: 'uppercase', fontSize: '0.75rem', minWidth: 100, py: 1.5 }}>
-      Risk / concern
+      Concern
     </TableCell>
     <TableCell sx={{ fontWeight: 700, bgcolor: 'grey.50', textTransform: 'uppercase', fontSize: '0.75rem', minWidth: 140, py: 1.5 }}>
       Work history
@@ -297,12 +298,18 @@ export const ApplicantsUsersStyleTableBodyCells: React.FC<ApplicantsUsersStyleTa
               {concern}
             </Typography>
           );
-          return tip ? (
+          const concernNode = tip ? (
             <Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{tip}</span>} placement="top" enterDelay={350}>
               {body}
             </Tooltip>
           ) : (
             body
+          );
+          return (
+            <>
+              {concernNode}
+              <OrderInterviewInlineAction user={user} />
+            </>
           );
         })()}
       </TableCell>

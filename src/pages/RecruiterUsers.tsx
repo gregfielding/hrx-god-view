@@ -78,6 +78,7 @@ import { mapUserDocToRecruiterUser } from '../utils/mapUserDataToRecruiterUser';
 import { userMatchesSearchTerm } from '../utils/recruiterUserSearchMatch';
 import RecruiterUserAiScoreCell from '../components/recruiter/RecruiterUserAiScoreCell';
 import { WorkHistoryJobTitlesCell } from '../components/recruiter/ApplicantsUsersStyleTableCells';
+import OrderInterviewInlineAction from '../components/recruiter/OrderInterviewInlineAction';
 import CertificationIntelligencePanel from '../components/recruiter/CertificationIntelligencePanel';
 
 /** C1 tenant entities — keys match `entity_employments.entityKey` and the recruiter callable. */
@@ -1319,7 +1320,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                   </TableSortLabel>
                 </TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 100, py: 1 }}>
-                  Risk / concern
+                  Concern
                 </TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 140, py: 1 }}>
                   Work history
@@ -1566,12 +1567,18 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                           {concern}
                         </Typography>
                       );
-                      return tip ? (
+                      const concernNode = tip ? (
                         <Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{tip}</span>} placement="top" enterDelay={350}>
                           {body}
                         </Tooltip>
                       ) : (
                         body
+                      );
+                      return (
+                        <>
+                          {concernNode}
+                          <OrderInterviewInlineAction user={user} />
+                        </>
                       );
                     })()}
                   </TableCell>

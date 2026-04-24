@@ -67,6 +67,7 @@ import { useRecruiterUsersRowExtras } from '../../../hooks/useRecruiterUsersRowE
 import { useRecruiterUsersLatestBackgroundChecks } from '../../../hooks/useRecruiterUsersLatestBackgroundChecks';
 import { useRecruiterUsersEntityEmploymentChips } from '../../../hooks/useRecruiterUsersEntityEmploymentChips';
 import { WorkHistoryJobTitlesCell } from '../ApplicantsUsersStyleTableCells';
+import OrderInterviewInlineAction from '../OrderInterviewInlineAction';
 export type MemberPreferenceStatus = 'preferred' | 'member' | 'not_preferred';
 
 export type UserGroupMembersTableProps = {
@@ -677,7 +678,7 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
                       </TableSortLabel>
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 100, py: 1 }}>
-                      Risk / concern
+                      Concern
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 140, py: 1 }}>
                       Work history
@@ -890,6 +891,7 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
                                 {concern}
                               </Typography>
                             )}
+                            <OrderInterviewInlineAction user={u} tenantId={tenantId} />
                           </TableCell>
                           <TableCell sx={{ verticalAlign: 'top', py: 0.5, px: 1, maxWidth: 200 }}>
                             <WorkHistoryJobTitlesCell user={u as Record<string, unknown>} />

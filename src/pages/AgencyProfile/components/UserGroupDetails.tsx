@@ -41,6 +41,7 @@ import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc, where, document
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useNavigate, useLocation } from 'react-router-dom';
 import GroupsIcon from '@mui/icons-material/Groups';
+import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
@@ -57,9 +58,11 @@ import ImageCropDialog from '../../../components/common/ImageCropDialog';
 import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import PageHeader from '../../../components/PageHeader';
 import StandardTablePagination from '../../../components/StandardTablePagination';
-import InboxSearchBar from '../../../components/InboxSearchBar';
+import InboxSearchBar, { compactInboxSearchBarSx } from '../../../components/InboxSearchBar';
 import FavoritesFilter from '../../../components/FavoritesFilter';
 import FavoriteButton from '../../../components/FavoriteButton';
+import { useSetTopBarTitle } from '../../../contexts/TopBarTitleContext';
+import OrderInterviewInlineAction from '../../../components/recruiter/OrderInterviewInlineAction';
 import { useFavorites } from '../../../hooks/useFavorites';
 import { userMatchesSearchTerm } from '../../../utils/recruiterUserSearchMatch';
 import { TABLE_AVATAR_SIZE } from '../../../utils/uiConstants';
@@ -143,6 +146,46 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   const [groupStatusMenuAnchor, setGroupStatusMenuAnchor] = useState<{ [key: string]: HTMLElement | null }>({});
   const { isFavorite: isUserFavorite, toggleFavorite: toggleUserFavorite } = useFavorites('users');
   const { isFavorite: isGroupFavorite, toggleFavorite: toggleGroupFavorite } = useFavorites('userGroups');
+
+  const groupDisplayTitle = editForm.title || group?.title || 'User Group';
+  const topBarTitleNode = useMemo(
+    () => (
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
+        <Typography
+          sx={{
+            fontSize: '20px',
+            fontWeight: 600,
+            color: 'inherit',
+            lineHeight: 1.2,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            maxWidth: { xs: 220, sm: 360, md: 520 },
+          }}
+        >
+          {groupDisplayTitle}
+        </Typography>
+        <FavoriteButton
+          itemId={groupId}
+          favoriteType="userGroups"
+          isFavorite={isGroupFavorite}
+          toggleFavorite={toggleGroupFavorite}
+          size="small"
+          tooltipText={{
+            favorited: 'Remove group from favorites',
+            notFavorited: 'Add group to favorites',
+          }}
+          sx={{
+            p: 0.25,
+            color: 'inherit',
+            '& .MuiSvgIcon-root': { fontSize: 18, color: 'inherit' },
+          }}
+        />
+      </Box>
+    ),
+    [groupDisplayTitle, groupId, isGroupFavorite, toggleGroupFavorite],
+  );
+  useSetTopBarTitle(topBarTitleNode);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
@@ -1047,235 +1090,55 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
       )}
 
       <PageHeader
-        title={
-          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
-            <Box
-              position="relative"
-              onMouseEnter={() => setAvatarHover(true)}
-              onMouseLeave={() => setAvatarHover(false)}
-              sx={{ flexShrink: 0 }}
-            >
-              <Avatar
-                src={group?.avatar ?? undefined}
-                sx={{
-                  width: 72,
-                  height: 72,
-                  bgcolor: group?.avatar ? 'transparent' : 'primary.main',
-                  color: '#fff',
-                  fontWeight: 700,
-                }}
-              >
-                {!group?.avatar && <GroupsIcon />}
-              </Avatar>
-              <input
-                type="file"
-                accept="image/*"
-                ref={avatarFileInputRef}
-                style={{ display: 'none' }}
-                onChange={handleGroupAvatarFileChange}
-              />
-              {avatarHover && (
-                <Tooltip title="Replace photo">
-                  <IconButton
-                    size="small"
-                    onClick={handleGroupAvatarClick}
-                    disabled={avatarBusy}
-                    sx={{
-                      position: 'absolute',
-                      bottom: -4,
-                      right: -4,
-                      bgcolor: 'grey.300',
-                      color: 'grey.700',
-                      width: 28,
-                      height: 28,
-                      '&:hover': { bgcolor: 'grey.400' },
-                    }}
-                  >
-                    {avatarBusy ? (
-                      <CircularProgress size={16} color="inherit" />
-                    ) : (
-                      <CameraAltIcon sx={{ fontSize: 16 }} />
-                    )}
-                  </IconButton>
-                </Tooltip>
-              )}
-            </Box>
-            <Box sx={{ flex: 1, minWidth: 0 }}>
-              <Typography
-                variant="h6"
-                sx={{
-                  fontSize: { xs: '20px', md: '24px' },
-                  fontWeight: 700,
-                  lineHeight: 1.2,
-                  maxWidth: '100%',
-                }}
-              >
-                <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, maxWidth: '100%' }}>
-                  <Box
-                    sx={{
-                      display: 'block',
-                      maxWidth: 'calc(100% - 32px)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {editForm.title || group?.title || 'User Group'}
-                  </Box>
-                  <FavoriteButton
-                    itemId={groupId}
-                    favoriteType="userGroups"
-                    isFavorite={isGroupFavorite}
-                    toggleFavorite={toggleGroupFavorite}
-                    size="small"
-                    tooltipText={{
-                      favorited: 'Remove group from favorites',
-                      notFavorited: 'Add group to favorites',
-                    }}
-                    sx={{ ml: 0.25, flexShrink: 0 }}
-                  />
-                </Box>
-              </Typography>
-              <Typography
-                variant="body2"
-                sx={{
-                  fontSize: '14px',
-                  color: 'rgba(0, 0, 0, 0.55)',
-                  mt: 0.75,
-                }}
-              >
-                {editForm.description || group?.description || '—'}
-              </Typography>
-              <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap' }}>
-                <Chip label={`Members: ${memberIds.length}`} size="small" variant="outlined" />
-                <Chip label={`Managers: ${groupManagerIds.length}`} size="small" variant="outlined" />
-              </Stack>
-            </Box>
+        dense
+        hideHeading
+        title=""
+        filters={
+          <Box sx={{ display: 'flex', gap: 0.35, alignItems: 'center', flexWrap: 'wrap' }}>
+            {([
+              { id: 'members' as const, label: 'Members' },
+              { id: 'hiring' as const, label: 'Hiring' },
+              { id: 'details' as const, label: 'Details' },
+            ]).map((t) => {
+              const isActive = activeTab === t.id;
+              return (
+                <Button
+                  key={t.id}
+                  onClick={() => setActiveTab(t.id)}
+                  variant="text"
+                  sx={{
+                    textTransform: 'none',
+                    borderRadius: '999px',
+                    fontSize: '13px',
+                    fontWeight: isActive ? 600 : 400,
+                    color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                    bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                    px: 1.25,
+                    py: 0.5,
+                    minHeight: 30,
+                    minWidth: 'auto',
+                    whiteSpace: 'nowrap',
+                    '&:hover': {
+                      bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                    },
+                  }}
+                >
+                  {t.label}
+                </Button>
+              );
+            })}
           </Box>
         }
-        titleRightActions={
-          <Stack direction="row" spacing={1.25} alignItems="center" sx={{ justifyContent: { xs: 'flex-start', md: 'flex-end' } }}>
-            <Button
-              variant="outlined"
-              color="secondary"
-              onClick={() => void handleHirePassedCandidates()}
-              disabled={hirePassedBusy}
-              sx={{ borderRadius: '999px', textTransform: 'none' }}
-            >
-              {hirePassedBusy ? (
-                <>
-                  <CircularProgress size={16} sx={{ mr: 1 }} color="inherit" />
-                  Working…
-                </>
-              ) : (
-                'Hire passed candidates'
-              )}
-            </Button>
-            <Stack alignItems="flex-start" spacing={0.25}>
-              <Button
-                variant="outlined"
-                color="secondary"
-                onClick={() => void handleEvaluateMembersForNextStep()}
-                disabled={evaluateMembersBusy}
-                sx={{ borderRadius: '999px', textTransform: 'none' }}
-              >
-                {evaluateMembersBusy ? (
-                  <>
-                    <CircularProgress size={16} sx={{ mr: 1 }} color="inherit" />
-                    Working…
-                  </>
-                ) : (
-                  'Evaluate members for next step'
-                )}
-              </Button>
-              {lastEvaluatedAtIso ? (
-                <Typography
-                  variant="caption"
-                  sx={{ color: 'rgba(0, 0, 0, 0.55)', maxWidth: 280, lineHeight: 1.35 }}
-                >
-                  Last Evaluated at: {new Date(lastEvaluatedAtIso).toLocaleString()}
-                </Typography>
-              ) : null}
-            </Stack>
-            <Button
-              variant="outlined"
-              startIcon={<ContentCopyIcon />}
-              onClick={async () => {
-                const link = `${window.location.origin}/c1/apply/group/${groupId}`;
-                try {
-                  await navigator.clipboard.writeText(link);
-                  setShareSnackbarOpen(true);
-                } catch (e) {
-                  // Fallback best-effort
-                  try {
-                    await navigator.clipboard.writeText(link);
-                    setShareSnackbarOpen(true);
-                  } catch {
-                    setError('Unable to copy link to clipboard.');
-                  }
-                }
-              }}
-              sx={{ borderRadius: '999px', textTransform: 'none' }}
-            >
-              Copy Application Link
-            </Button>
-            <Button
-              variant="outlined"
-              startIcon={<ArrowBackIcon />}
-              onClick={() => (isFromTopLevel ? navigate('/users/user-groups') : navigate(`/tenants/${tenantId}?tab=6`))}
-              sx={{ borderRadius: '999px', textTransform: 'none' }}
-            >
-              Back
-            </Button>
-          </Stack>
-        }
-        showDivider={false}
-      />
-
-      <Box sx={{ px: { xs: 2, md: 3 }, py: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
-        {/* Inbox-style section header row: tab buttons (left) + primary action (right) */}
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap', rowGap: 1 }}>
-            <Box sx={{ display: 'flex', gap: 0.75 }}>
-              {([
-                { id: 'members' as const, label: 'Members' },
-                { id: 'hiring' as const, label: 'Hiring' },
-                { id: 'details' as const, label: 'Details' },
-              ]).map((t) => {
-                const isActive = activeTab === t.id;
-                return (
-                  <Button
-                    key={t.id}
-                    onClick={() => setActiveTab(t.id)}
-                    variant="text"
-                    sx={{
-                      textTransform: 'none',
-                      borderRadius: '999px',
-                      fontSize: '14px',
-                      fontWeight: isActive ? 600 : 500,
-                      color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
-                      bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
-                      px: 2,
-                      py: 0.75,
-                      minWidth: 'auto',
-                      whiteSpace: 'nowrap',
-                      '&:hover': {
-                        bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
-                      },
-                    }}
-                  >
-                    {t.label}
-                  </Button>
-                );
-              })}
-            </Box>
+        rightActions={
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0, flexWrap: 'nowrap', justifyContent: 'flex-end' }}>
             {activeTab === 'members' && (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              <>
                 <InboxSearchBar
                   value={membersSearch}
                   onChange={setMembersSearch}
                   onSearch={setMembersSearch}
-                  placeholder="Search by name, email, or phone..."
+                  placeholder="Search members..."
+                  sx={compactInboxSearchBarSx}
                 />
                 <FavoritesFilter
                   favoriteType="users"
@@ -1293,57 +1156,119 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                     },
                   }}
                 />
-              </Box>
-            )}
-          </Box>
-
-          {activeTab === 'members' && (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-              <FormControl size="small" sx={{ minWidth: 220 }}>
-                <InputLabel id="user-group-member-order-label">Order members</InputLabel>
-                <Select
-                  labelId="user-group-member-order-label"
-                  label="Order members"
-                  value={
-                    membersSortBy === 'hrxSignup' || membersSortBy === 'name'
-                      ? `${membersSortBy}:${membersSortDirection}`
-                      : ''
-                  }
-                  displayEmpty
-                  renderValue={(v) => {
-                    if (v === 'hrxSignup:desc') return 'HRX signup (newest first)';
-                    if (v === 'hrxSignup:asc') return 'HRX signup (oldest first)';
-                    if (v === 'name:asc') return 'Name (A–Z)';
-                    if (v === 'name:desc') return 'Name (Z–A)';
-                    return 'Column sort (see headers)';
-                  }}
-                  onChange={(e) => {
-                    const raw = String(e.target.value);
-                    const [k, d] = raw.split(':') as ['hrxSignup' | 'name', 'asc' | 'desc'];
-                    if (k === 'hrxSignup' || k === 'name') {
-                      setMembersSortBy(k);
-                      setMembersSortDirection(d);
-                      setMembersPage(0);
+                <FormControl size="small" sx={{ minWidth: 220 }}>
+                  <InputLabel id="user-group-member-order-label">Order members</InputLabel>
+                  <Select
+                    labelId="user-group-member-order-label"
+                    label="Order members"
+                    value={
+                      membersSortBy === 'hrxSignup' || membersSortBy === 'name'
+                        ? `${membersSortBy}:${membersSortDirection}`
+                        : ''
                     }
-                  }}
-                >
-                  <MenuItem value="hrxSignup:desc">HRX signup (newest first)</MenuItem>
-                  <MenuItem value="hrxSignup:asc">HRX signup (oldest first)</MenuItem>
-                  <MenuItem value="name:asc">Name (A–Z)</MenuItem>
-                  <MenuItem value="name:desc">Name (Z–A)</MenuItem>
-                </Select>
-              </FormControl>
-              <Button
-                variant="contained"
-                onClick={() => setAddMemberOpen(true)}
-                disabled={loading || availableWorkers.length === 0}
-                sx={{ borderRadius: '999px', textTransform: 'none' }}
+                    displayEmpty
+                    renderValue={(v) => {
+                      if (v === 'hrxSignup:desc') return 'HRX signup (newest first)';
+                      if (v === 'hrxSignup:asc') return 'HRX signup (oldest first)';
+                      if (v === 'name:asc') return 'Name (A–Z)';
+                      if (v === 'name:desc') return 'Name (Z–A)';
+                      return 'Column sort (see headers)';
+                    }}
+                    onChange={(e) => {
+                      const raw = String(e.target.value);
+                      const [k, d] = raw.split(':') as ['hrxSignup' | 'name', 'asc' | 'desc'];
+                      if (k === 'hrxSignup' || k === 'name') {
+                        setMembersSortBy(k);
+                        setMembersSortDirection(d);
+                        setMembersPage(0);
+                      }
+                    }}
+                  >
+                    <MenuItem value="hrxSignup:desc">HRX signup (newest first)</MenuItem>
+                    <MenuItem value="hrxSignup:asc">HRX signup (oldest first)</MenuItem>
+                    <MenuItem value="name:asc">Name (A–Z)</MenuItem>
+                    <MenuItem value="name:desc">Name (Z–A)</MenuItem>
+                  </Select>
+                </FormControl>
+                <Tooltip title="Add member">
+                  <span>
+                    <IconButton
+                      onClick={() => setAddMemberOpen(true)}
+                      disabled={loading || availableWorkers.length === 0}
+                      sx={{
+                        width: 32,
+                        height: 32,
+                        bgcolor: '#0057B8',
+                        color: '#fff',
+                        '&:hover': { bgcolor: '#004a9f' },
+                        '&.Mui-disabled': {
+                          bgcolor: 'rgba(0, 87, 184, 0.35)',
+                          color: 'rgba(255, 255, 255, 0.75)',
+                        },
+                      }}
+                    >
+                      <AddIcon sx={{ fontSize: 18 }} />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              </>
+            )}
+            <Tooltip title="Copy application link">
+              <IconButton
+                onClick={async () => {
+                  const link = `${window.location.origin}/c1/apply/group/${groupId}`;
+                  try {
+                    await navigator.clipboard.writeText(link);
+                    setShareSnackbarOpen(true);
+                  } catch (e) {
+                    try {
+                      await navigator.clipboard.writeText(link);
+                      setShareSnackbarOpen(true);
+                    } catch {
+                      setError('Unable to copy link to clipboard.');
+                    }
+                  }
+                }}
+                sx={{
+                  width: 32,
+                  height: 32,
+                  border: '1px solid',
+                  borderColor: 'rgba(0, 87, 184, 0.5)',
+                  color: '#0057B8',
+                  '&:hover': {
+                    borderColor: '#0057B8',
+                    bgcolor: 'rgba(0, 87, 184, 0.04)',
+                  },
+                }}
               >
-                Add Member
-              </Button>
-            </Box>
-          )}
-        </Box>
+                <ContentCopyIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="Back">
+              <IconButton
+                onClick={() => (isFromTopLevel ? navigate('/users/user-groups') : navigate(`/tenants/${tenantId}?tab=6`))}
+                sx={{
+                  width: 32,
+                  height: 32,
+                  border: '1px solid',
+                  borderColor: 'rgba(0, 87, 184, 0.5)',
+                  color: '#0057B8',
+                  '&:hover': {
+                    borderColor: '#0057B8',
+                    bgcolor: 'rgba(0, 87, 184, 0.04)',
+                  },
+                }}
+              >
+                <ArrowBackIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Tooltip>
+          </Box>
+        }
+        showDivider={false}
+        sx={{ pt: 1, pb: 1 }}
+      />
+
+      <Box sx={{ px: { xs: 2, md: 3 }, py: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
 
         {activeTab === 'members' && (
           <>
@@ -1409,37 +1334,30 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                 border: '1px solid #EAEEF4',
                 ...(selectedCount > 0 && { borderRadius: '0 0 8px 8px' }),
                 position: 'relative',
-                display: 'flex',
-                flexDirection: 'column',
-                minHeight: 0,
-                overflowY: 'auto',
-                overflowX: 'auto',
                 width: '100%',
                 px: 0,
-                '&::-webkit-scrollbar': { width: '8px', height: '8px' },
-                '&::-webkit-scrollbar-track': {
-                  background: 'rgba(0, 0, 0, 0.02)',
-                  borderRadius: '4px',
-                },
-                '&::-webkit-scrollbar-thumb': {
-                  background: 'rgba(0, 0, 0, 0.15)',
-                  borderRadius: '4px',
-                  '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
-                },
-                scrollbarWidth: 'thin',
-                scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+                // Use `overflow: visible` so the TableHead's `position: sticky`
+                // attaches to the parent (LayoutOutlet) scroll container instead
+                // of being trapped inside this box. This lets the header stay
+                // pinned to the top of the viewport as the user scrolls the page.
+                overflow: 'visible',
               }}
             >
               <Table size="small" stickyHeader sx={{ width: '100%' }}>
                 <TableHead
                   sx={{
-                    position: 'sticky',
-                    top: 0,
+                    // MUI's `stickyHeader` already sets `position: sticky; top: 0`
+                    // on each header cell. With the TableContainer's overflow set
+                    // to `visible`, the sticky context is the LayoutOutlet scroll
+                    // box (which sits just below the 64px app bar), so the header
+                    // pins to the top of the viewport as the page scrolls.
                     zIndex: 10,
-                    backgroundColor: 'background.paper',
-                    borderRadius: 0,
                     '& .MuiTableCell-root': {
+                      backgroundColor: 'background.paper',
                       borderRadius: 0,
+                      // Soft hairline under the sticky header so rows scrolling
+                      // beneath don't visually merge with the cells.
+                      boxShadow: 'inset 0 -1px 0 rgba(0, 0, 0, 0.08)',
                     },
                   }}
                 >
@@ -1488,7 +1406,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                       </TableSortLabel>
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 100, py: 1 }}>
-                      Risk / concern
+                      Concern
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 140, py: 1 }}>
                       Work history
@@ -1701,6 +1619,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                                 {concern}
                               </Typography>
                             )}
+                            <OrderInterviewInlineAction user={u as any} tenantId={tenantId} />
                           </TableCell>
                           <TableCell sx={{ verticalAlign: 'top', py: 0.5, px: 1, maxWidth: 200 }}>
                             <WorkHistoryJobTitlesCell user={u as Record<string, unknown>} />

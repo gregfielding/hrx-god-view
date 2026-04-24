@@ -17,6 +17,8 @@ import {
   ListItemText,
   Typography,
   Divider,
+  SxProps,
+  Theme,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import ClearIcon from '@mui/icons-material/Clear';
@@ -30,6 +32,31 @@ interface SearchSuggestion {
   icon?: React.ReactNode;
 }
 
+/**
+ * Compact preset sx for the InboxSearchBar wrapper. Use as
+ * `<InboxSearchBar sx={compactInboxSearchBarSx} ... />` to render the
+ * search bar at the same scale as the small icon controls used in
+ * record-page toolbars (32px high, ~240px wide, pill outline).
+ */
+export const compactInboxSearchBarSx: SxProps<Theme> = {
+  width: { xs: '100%', sm: 240 },
+  minWidth: { xs: 'auto', sm: 220 },
+  maxWidth: { xs: '100%', sm: 260 },
+  '& .MuiOutlinedInput-root': {
+    borderRadius: '999px',
+    height: 32,
+    fontSize: '13px',
+    backgroundColor: 'background.paper',
+  },
+  '& .MuiOutlinedInput-input': {
+    py: 0,
+    fontSize: '13px',
+  },
+  '& .MuiInputAdornment-root': {
+    marginRight: 0.25,
+  },
+};
+
 interface InboxSearchBarProps {
   value: string;
   onChange: (value: string) => void;
@@ -37,6 +64,12 @@ interface InboxSearchBarProps {
   suggestions?: SearchSuggestion[];
   placeholder?: string;
   disabled?: boolean;
+  /**
+   * Optional sx overrides applied to the search bar's outer wrapper.
+   * Useful for callers that want to constrain the width / min-width of
+   * the search input (the default sizing is tuned for the email inbox).
+   */
+  sx?: SxProps<Theme>;
 }
 
 const InboxSearchBar: React.FC<InboxSearchBarProps> = ({
@@ -46,6 +79,7 @@ const InboxSearchBar: React.FC<InboxSearchBarProps> = ({
   suggestions = [],
   placeholder = 'Search emails...',
   disabled = false,
+  sx,
 }) => {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -137,7 +171,13 @@ const InboxSearchBar: React.FC<InboxSearchBarProps> = ({
   const shortcutKey = isMac ? '⌘K' : 'Ctrl+K';
 
   return (
-    <Box ref={containerRef} sx={{ position: 'relative', width: '100%', maxWidth: { xs: '100%', sm: 420 }, minWidth: { xs: 'auto', sm: 380 } }}>
+    <Box
+      ref={containerRef}
+      sx={[
+        { position: 'relative', width: '100%', maxWidth: { xs: '100%', sm: 420 }, minWidth: { xs: 'auto', sm: 380 } },
+        ...(Array.isArray(sx) ? sx : sx ? [sx] : []),
+      ]}
+    >
       <TextField
         inputRef={inputRef}
         fullWidth
