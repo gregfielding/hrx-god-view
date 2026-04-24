@@ -76,6 +76,47 @@ service cloud.firestore {
         allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId));
         allow create, update, delete: if request.auth != null && (isTenantAdmin(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager']));
       }
+
+      // Phase 1 Readiness items (recruiter-ownership-model.md §13).
+      // Reads: tenant recruiters + the worker the item is about. Writes: callable /
+      // trigger run as admin (bypass rules); client writes are narrow — recruiters
+      // can update the `ownership` field for claim/reassign/release flows, and the
+      // owning worker can update `status` on items where `actor == 'worker'`.
+      match /employeeReadinessItems/{doc} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          request.auth.uid == resource.data.workerUid
+        );
+        // Recruiters / Managers at the tenant can claim / reassign / release via
+        // the ownership field. Worker-actor items also let the worker flip status.
+        allow update: if request.auth != null && (
+          isTenantAdmin(tenantId) ||
+          (request.auth.token.roles != null && tenantId in request.auth.token.roles &&
+           request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager']) ||
+          (request.auth.uid == resource.data.workerUid && resource.data.actor == 'worker')
+        );
+        // Create + delete are server-only (Cloud Functions run with admin privileges
+        // which bypass these rules; client SDK writes blocked).
+        allow create, delete: if false;
+      }
+
+      match /assignmentReadinessItems/{doc} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          request.auth.uid == resource.data.workerUid
+        );
+        allow update: if request.auth != null && (
+          isTenantAdmin(tenantId) ||
+          (request.auth.token.roles != null && tenantId in request.auth.token.roles &&
+           request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager']) ||
+          (request.auth.uid == resource.data.workerUid && resource.data.actor == 'worker')
+        );
+        allow create, delete: if false;
+      }
       
       match /job_postings/{doc} {
         // Allow anyone to read job postings (client-side filtering handles visibility)
