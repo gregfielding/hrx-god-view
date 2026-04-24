@@ -282,6 +282,10 @@ export { syncWorkerReadinessV1FromAssignment } from './readiness/assignmentWorke
 // Phase 1 readiness rethink — manual seed callable for EmployeeReadinessItem.
 // See recruiter-ownership-model.md §13 + readiness-onboarding-rethink.md.
 export { seedEmployeeReadinessItemsCallable } from './readiness/seedEmployeeReadinessItemsCallable';
+// Auto-seed on entity_employments create — removes the manual step for new hires.
+export { onEntityEmploymentCreatedAutoSeedReadiness } from './readiness/onEntityEmploymentCreatedAutoSeed';
+// Auto-seed Assignment Readiness items when a worker is placed on a shift.
+export { onAssignmentCreatedAutoSeedReadiness } from './readiness/onAssignmentCreatedAutoSeed';
 // Phase 1 readiness rethink — triggers that maintain
 // `users/{uid}.primaryRecruiterId` from readiness item ownership.
 export {
