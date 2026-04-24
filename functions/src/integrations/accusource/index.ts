@@ -5,6 +5,7 @@ export {
   createAccusourceBackgroundCheck,
   testCreateAccusourceBackgroundCheck,
 } from './createBackgroundCheck';
+export { markAccusourceBackgroundCheckCompleteOutside } from './markBackgroundCheckCompleteOutside';
 export { getAccusourceBackgroundCheckPdf } from './getAccusourceBackgroundCheckPdf';
 export { setAccusourceLineAdjudication } from './setAccusourceLineAdjudication';
 export { syncAccusourcePackageCatalog, ACCUSOURCE_CATALOG_DOC_PATH } from './syncPackageCatalog';

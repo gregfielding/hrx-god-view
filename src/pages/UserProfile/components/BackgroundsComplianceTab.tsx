@@ -79,6 +79,10 @@ const userEmploymentsCol = (tenantId: string) => collection(db, 'tenants', tenan
 
 const everifyRetryCase = httpsCallable(functions, 'everifyRetryCase');
 const createAccusourceBackgroundCheck = httpsCallable(functions, 'createAccusourceBackgroundCheck');
+const markAccusourceBackgroundCheckCompleteOutside = httpsCallable(
+  functions,
+  'markAccusourceBackgroundCheckCompleteOutside',
+);
 const getAccusourcePdf = httpsCallable(functions, 'getAccusourceBackgroundCheckPdf');
 const setAccusourceLineAdjudicationCallable = httpsCallable(
   functions,
@@ -144,6 +148,13 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
   >([]);
 
   const [bgModalOpen, setBgModalOpen] = useState(false);
+  /**
+   * `order` = real AccuSource order (calls `createAccusourceBackgroundCheck`).
+   * `mark-complete` = back-fill a pre-completed row for screenings done outside HRX
+   *   (calls `markAccusourceBackgroundCheckCompleteOutside`). Same modal, different
+   *   title + submit label + backend callable.
+   */
+  const [screeningMode, setScreeningMode] = useState<'order' | 'mark-complete'>('order');
 
   const [profileUser, setProfileUser] = useState<Record<string, unknown> | null>(null);
   const [defaultJobOrderId, setDefaultJobOrderId] = useState('');
@@ -438,6 +449,24 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
     setBgMessageSeverity('error');
     setBgNotes('');
     setSelectedServiceIds([]);
+    setScreeningMode('order');
+    setBgModalOpen(true);
+    await loadProfileForScreening();
+  };
+
+  /**
+   * Opens the same modal but puts it in "mark complete outside HRX" mode.
+   * The recruiter picks the package that was actually run in AccuSource and
+   * submits — we write a pre-completed `backgroundChecks/{id}` doc (no call
+   * to AccuSource). Used for the 200+ workers who were entered in AccuSource
+   * before the API integration came online.
+   */
+  const openMarkAsCompleteModal = async () => {
+    setBgMessage(null);
+    setBgMessageSeverity('error');
+    setBgNotes('');
+    setSelectedServiceIds([]);
+    setScreeningMode('mark-complete');
     setBgModalOpen(true);
     await loadProfileForScreening();
   };
@@ -520,6 +549,85 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
       const err = e as { message?: string };
       setBgMessageSeverity('error');
       setBgMessage(err.message || 'Failed to order screening');
+    } finally {
+      setBgSubmitting(false);
+    }
+  };
+
+  /**
+   * Back-fill path: the recruiter is telling us this screening was already
+   * completed outside HRX (in the AccuSource portal, before the API integration
+   * worked). We call the companion callable which writes a pre-completed
+   * `backgroundChecks/{id}` doc: hrxStatus='completed', every requested service
+   * marked PASSED. The existing readiness-sync trigger clears the screening
+   * blocker automatically from there. No call to AccuSource is made.
+   */
+  const submitMarkAsComplete = async () => {
+    if (!canAccusourceAdmin) {
+      setBgMessageSeverity('error');
+      setBgMessage(ACCUSOURCE_PERM_HINT);
+      return;
+    }
+    if (!tenantId || !profileUser) {
+      setBgMessageSeverity('error');
+      setBgMessage('Missing profile or tenant.');
+      return;
+    }
+    setBgSubmitting(true);
+    setBgMessage(null);
+    setBgMessageSeverity('error');
+    try {
+      if (!accusourceCatalog?.packages?.length) {
+        setBgMessage('Package catalog is empty — an admin must run Refresh packages to sync from AccuSource.');
+        setBgSubmitting(false);
+        return;
+      }
+      if (!pkgId.trim()) {
+        setBgMessage('Select the package that was actually run in AccuSource.');
+        setBgSubmitting(false);
+        return;
+      }
+      const services = selectedServiceIds;
+      const selectedPkg = accusourceCatalog?.packages?.find((p) => String(p.id) === String(pkgId).trim());
+      const requestedServicesCatalog =
+        selectedPkg?.services?.filter((s) => services.includes(String(s.id))) ?? [];
+      await markAccusourceBackgroundCheckCompleteOutside({
+        tenantId,
+        candidateId: uid,
+        candidateName:
+          [profileUser.firstName, profileUser.lastName].filter(Boolean).join(' ') ||
+          String(profileUser.email || ''),
+        accountId: defaultAccountId || undefined,
+        accountName: defaultAccountName || undefined,
+        jobOrderId: defaultJobOrderId || undefined,
+        worksiteId: defaultWorksiteId || undefined,
+        requestedPackageId: pkgId || undefined,
+        requestedPackageName: pkgName || undefined,
+        requestedServices: services,
+        requestedServicesCatalog:
+          requestedServicesCatalog.length > 0
+            ? requestedServicesCatalog.map((s) => ({
+                id: String(s.id),
+                name: String(s.name || s.id),
+                type: s.type != null ? String(s.type) : undefined,
+              }))
+            : undefined,
+        notes: bgNotes.trim() || undefined,
+      });
+      if (bgNotes.trim()) {
+        await logCustomActivity(
+          uid,
+          'screening_marked_complete_outside_hrx',
+          bgNotes.trim(),
+          'medium',
+        );
+      }
+      setBgModalOpen(false);
+      await loadAll();
+    } catch (e: unknown) {
+      const err = e as { message?: string };
+      setBgMessageSeverity('error');
+      setBgMessage(err.message || 'Failed to mark screening complete');
     } finally {
       setBgSubmitting(false);
     }
@@ -734,6 +842,25 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
                 sx={{ textTransform: 'none' }}
               >
                 Order screening
+              </Button>
+            </span>
+          </Tooltip>
+          <Tooltip
+            title={
+              !canAccusourceAdmin
+                ? ACCUSOURCE_PERM_HINT
+                : 'For workers whose screening was already run in AccuSource before we had the API wired up — writes a pre-completed record so blockers clear.'
+            }
+          >
+            <span>
+              <Button
+                variant="text"
+                size="small"
+                onClick={openMarkAsCompleteModal}
+                disabled={!canAccusourceAdmin}
+                sx={{ textTransform: 'none' }}
+              >
+                Completed Outside of HRX
               </Button>
             </span>
           </Tooltip>
@@ -1014,11 +1141,24 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
         </TableContainer>
       </Paper>
 
-      {/* 3B Screening modal */}
+      {/* 3B Screening modal — dual-mode: "order" (live AccuSource order) vs
+            "mark-complete" (back-fill for screenings done outside HRX). */}
       <Dialog open={bgModalOpen} onClose={() => setBgModalOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Order screening (AccuSource)</DialogTitle>
+        <DialogTitle>
+          {screeningMode === 'mark-complete'
+            ? 'Mark screening complete (outside HRX)'
+            : 'Order screening (AccuSource)'}
+        </DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
+            {screeningMode === 'mark-complete' && (
+              <Alert severity="info">
+                This records a screening that was already run in AccuSource (for workers entered
+                before the API integration). No request is sent to AccuSource — we write a
+                pre-completed record so the package items show as passed and readiness blockers
+                clear.
+              </Alert>
+            )}
             {bgMessage && (
               <Alert
                 severity={bgMessageSeverity}
@@ -1087,8 +1227,20 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setBgModalOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={submitScreening} disabled={bgSubmitting || !canAccusourceAdmin}>
-            {bgSubmitting ? <CircularProgress size={22} /> : 'Submit order'}
+          <Button
+            variant="contained"
+            onClick={
+              screeningMode === 'mark-complete' ? submitMarkAsComplete : submitScreening
+            }
+            disabled={bgSubmitting || !canAccusourceAdmin}
+          >
+            {bgSubmitting ? (
+              <CircularProgress size={22} />
+            ) : screeningMode === 'mark-complete' ? (
+              'Mark as Complete'
+            ) : (
+              'Submit order'
+            )}
           </Button>
         </DialogActions>
       </Dialog>

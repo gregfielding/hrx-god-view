@@ -270,6 +270,7 @@ export {
   apiIntegrationsAccusourceWebhooks,
   createAccusourceBackgroundCheck,
   testCreateAccusourceBackgroundCheck,
+  markAccusourceBackgroundCheckCompleteOutside,
   getAccusourceBackgroundCheckPdf,
   setAccusourceLineAdjudication,
   syncAccusourcePackageCatalog,
