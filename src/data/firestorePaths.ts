@@ -290,6 +290,12 @@ export const p = {
   main: (tid: string) => `tenants/${tid}/settings/main`,
   flex: (tid: string) => `tenants/${tid}/settings/flex`,
   smartGroups: (tid: string) => `tenants/${tid}/settings/smartGroups`,
+  /**
+   * Recruiting role defaults (HRX Systems Operator, Payroll Coordinator,
+   * plus CSA/Scheduler fallbacks). See `docs/RECRUITING_ROLE_MODEL.md` §4.3.
+   * Single doc per tenant.
+   */
+  roleDefaults: (tid: string) => `tenants/${tid}/settings/roleDefaults`,
 
   /**
    * Saved Smart Groups (saved search results with member list)

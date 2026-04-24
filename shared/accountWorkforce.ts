@@ -202,3 +202,28 @@ export type SetAccountWorkforceStatusResult = {
   /** Number of assignments cancelled as part of the cascade. Zero on reactivation or when checkbox was off. */
   assignmentsCancelled: number;
 };
+
+/**
+ * Denormalized entry maintained on `users.{uid}.inactiveAtAccounts[]` —
+ * Phase 5b. Written by a trigger on `account_workforce` status changes.
+ *
+ * Purpose: Labor Pool search surfaces a quiet "Inactive at N account(s)"
+ * chip on candidate rows. Without this cache, rendering it for a 500-row
+ * pool would require 500 cross-collection joins. With it, the chip is a
+ * direct field read on the user doc we already have in hand.
+ *
+ * Staleness: account name is stored at write time. An account rename is
+ * rare enough that we live with one-pass lag — a future rename trigger
+ * could sweep and rewrite if it ever matters.
+ */
+export type UserInactiveAtAccountEntry = {
+  /** Child or standalone recruiter account id that deactivated this worker. */
+  accountId: string;
+  /** Human-readable account name at the moment of deactivation. */
+  accountName: string;
+  reason: AccountWorkforceDeactivationReason;
+  /** ISO-8601. */
+  deactivatedAt: string;
+  /** Recruiter who deactivated. */
+  deactivatedBy?: string;
+};

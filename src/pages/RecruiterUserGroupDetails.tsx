@@ -25,6 +25,7 @@ import { TriggerGroupInterviewDialog } from '../components/recruiter/userGroup/T
 import UserGroupMembersTable, {
   type MemberPreferenceStatus,
 } from '../components/recruiter/userGroup/UserGroupMembersTable';
+import RecruiterMultiSelect from '../components/recruiter/RecruiterMultiSelect';
 
 interface TenantUserGroup {
   id: string;
@@ -33,6 +34,14 @@ interface TenantUserGroup {
   hiringConfig?: Record<string, unknown>;
   memberIds?: string[];
   memberStatusById?: Record<string, string>;
+  /**
+   * Recruiting role assignments. See `docs/RECRUITING_ROLE_MODEL.md` §2.1 —
+   * CSA assignment lives at the user-group level because a worker's CSA
+   * is resolved via their group memberships.
+   */
+  roles?: {
+    csaIds?: string[];
+  };
 }
 
 const RecruiterUserGroupDetails: React.FC = () => {
@@ -386,7 +395,7 @@ const RecruiterUserGroupDetails: React.FC = () => {
 
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
         {activeTab === 'settings' ? (
-          <Box sx={{ p: 2 }}>
+          <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
             <Paper elevation={0} sx={{ borderRadius: 2, border: '1px solid #EAEEF4', p: 2 }}>
               <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
                 Group Settings
@@ -404,6 +413,27 @@ const RecruiterUserGroupDetails: React.FC = () => {
                 Group ID: {group.id}
               </Typography>
             </Paper>
+
+            {/* Recruiting roles — CSA assignment (per docs/RECRUITING_ROLE_MODEL.md §2.1).
+                CSAs picked here own the relationship for every worker in this
+                group. A worker in multiple groups aggregates CSAs across
+                groups; the first (by group creation order) is the primary
+                and denormalizes onto users.{uid}.primaryRecruiterId. */}
+            <GroupRolesEditor
+              tenantId={tenantId || null}
+              groupId={group.id}
+              initialCsaIds={group.roles?.csaIds ?? []}
+              onSaved={(nextCsaIds) => {
+                setGroup((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        roles: { ...(prev.roles ?? {}), csaIds: nextCsaIds },
+                      }
+                    : prev,
+                );
+              }}
+            />
           </Box>
         ) : activeTab === 'hiring' && tenantId ? (
           <Box sx={{ p: '16px', width: '100%', boxSizing: 'border-box' }}>
@@ -444,4 +474,100 @@ const RecruiterUserGroupDetails: React.FC = () => {
 };
 
 export default RecruiterUserGroupDetails;
+
+// ---------------------------------------------------------------------------
+// GroupRolesEditor — inline editor for the user group's recruiting roles.
+// Today this is just the CSA list. Kept as a separate component so the
+// Settings tab stays readable and so future roles (e.g. a sourcing lead
+// per group) drop in without bloating the parent.
+// ---------------------------------------------------------------------------
+
+interface GroupRolesEditorProps {
+  tenantId: string | null;
+  groupId: string;
+  initialCsaIds: string[];
+  onSaved: (nextCsaIds: string[]) => void;
+}
+
+const GroupRolesEditor: React.FC<GroupRolesEditorProps> = ({
+  tenantId,
+  groupId,
+  initialCsaIds,
+  onSaved,
+}) => {
+  const [csaIds, setCsaIds] = React.useState<string[]>(initialCsaIds);
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [savedAt, setSavedAt] = React.useState<number | null>(null);
+
+  // Sync local state when the parent re-renders with a fresh group doc.
+  React.useEffect(() => {
+    setCsaIds(initialCsaIds);
+  }, [initialCsaIds.join(',')]);
+
+  const dirty = useMemo(() => {
+    if (csaIds.length !== initialCsaIds.length) return true;
+    const set = new Set(initialCsaIds);
+    return csaIds.some((id) => !set.has(id));
+  }, [csaIds, initialCsaIds]);
+
+  const handleSave = async () => {
+    if (!tenantId || !groupId || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await updateDoc(doc(db, 'tenants', tenantId, 'userGroups', groupId), {
+        'roles.csaIds': csaIds,
+      });
+      onSaved(csaIds);
+      setSavedAt(Date.now());
+    } catch (err: any) {
+      setError(err?.message || 'Failed to save recruiting roles');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Paper elevation={0} sx={{ borderRadius: 2, border: '1px solid #EAEEF4', p: 2 }}>
+      <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
+        Recruiting roles
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        Candidate Success Agents picked here own the relationship for every
+        worker in this group. Click a chip's × to remove; save to apply.
+      </Typography>
+
+      <RecruiterMultiSelect
+        tenantId={tenantId}
+        label="Candidate Success Agents"
+        value={csaIds}
+        onChange={setCsaIds}
+        helperText="Workers in this group will show these CSAs on their profile header."
+        disabled={saving || !tenantId}
+      />
+
+      {error ? (
+        <Alert severity="error" sx={{ mt: 1.5 }}>
+          {error}
+        </Alert>
+      ) : null}
+
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 2 }}>
+        <Button
+          variant="contained"
+          onClick={handleSave}
+          disabled={!dirty || saving || !tenantId}
+        >
+          {saving ? <CircularProgress size={18} /> : 'Save'}
+        </Button>
+        {savedAt && !dirty ? (
+          <Typography variant="caption" color="text.secondary">
+            Saved · {new Date(savedAt).toLocaleTimeString()}
+          </Typography>
+        ) : null}
+      </Box>
+    </Paper>
+  );
+};
 

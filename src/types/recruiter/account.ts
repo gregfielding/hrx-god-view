@@ -195,6 +195,18 @@ export interface RecruiterAccount {
   companyId?: string | null;
   /** `crm_companies/{companyId}/locations/{locationId}` location id when tied to a worksite. */
   companyLocationId?: string | null;
+  /**
+   * Recruiting role assignments for this account. Each role is a separate
+   * `uid[]` — role overlap (one person holding multiple) is modelled
+   * naturally by the same uid appearing in multiple lists.
+   *
+   * See `docs/RECRUITING_ROLE_MODEL.md`:
+   *   - `schedulerIds` — Schedulers own order flow for this account
+   *     (§2.2). Stamped onto new orders' `jobOrder.schedulerUid`.
+   */
+  roles?: {
+    schedulerIds?: string[];
+  };
 }
 
 export interface RecruiterAccountFormData {

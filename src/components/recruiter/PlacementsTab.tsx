@@ -80,6 +80,8 @@ import {
 } from '../../utils/gigShiftState';
 import { buildShiftPickerSecondLine } from '../../utils/shiftPickerLabel';
 import MessageDrawer, { type MessageRecipient } from '../MessageDrawer';
+import WorkforceInactiveElsewhereChip from './WorkforceInactiveElsewhereChip';
+import type { UserInactiveAtAccountEntry } from '../../shared/accountWorkforce';
 import { useAuth } from '../../contexts/AuthContext';
 import { logAssignmentUpdateActivity } from '../../utils/activityLogger';
 import { JobOrder } from '../../types/recruiter/jobOrder';
@@ -210,6 +212,15 @@ interface Worker {
   /** AccuSource-style screening orders on `users` (best-effort for tile signals). */
   backgroundCheckOrders?: Array<Record<string, unknown>>;
   drugScreeningOrders?: Array<Record<string, unknown>>;
+  /**
+   * Accounts where this worker has been marked inactive (§5b of the
+   * Workforce doc). Denormalized onto `users/{uid}.inactiveAtAccounts`
+   * by `onAccountWorkforceStatusChangeSyncUserInactiveSet` — forwarded
+   * here so Labor Pool tiles can render a quiet "Inactive at N
+   * account(s)" chip. The Labor Pool view filters out entries that
+   * match the current account before rendering.
+   */
+  inactiveAtAccounts?: UserInactiveAtAccountEntry[];
 }
 
 const WORKER_DRAG_MIME = 'application/x-hrx-worker-id';
@@ -737,6 +748,14 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       recruiterMasterSummary: masterDisp.summary,
       backgroundCheckOrders: Array.isArray(userData.backgroundCheckOrders) ? userData.backgroundCheckOrders : [],
       drugScreeningOrders: Array.isArray(userData.drugScreeningOrders) ? userData.drugScreeningOrders : [],
+      // Phase 5b — denormalized AccountWorkforce inactive entries. The
+      // array-of-objects shape is enforced at write time by the workforce
+      // trigger (see shared/accountWorkforce.ts UserInactiveAtAccountEntry).
+      // Cast through unknown because Firestore reads come back `any` and
+      // the source-of-truth shape is guaranteed by the trigger.
+      inactiveAtAccounts: Array.isArray(userData.inactiveAtAccounts)
+        ? (userData.inactiveAtAccounts as unknown as UserInactiveAtAccountEntry[])
+        : undefined,
     };
   };
 
@@ -3351,6 +3370,16 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                 requiredCertStatuses={requiredCertStatuses}
                                 profileActionIcons={
                                   <>
+                                    {/* Phase 5b — quiet "Inactive at N account(s)"
+                                        signal, filtered to exclude the current
+                                        account the recruiter is already placing
+                                        for. Read from denormalized user doc
+                                        field; zero extra queries. */}
+                                    <WorkforceInactiveElsewhereChip
+                                      entries={worker.inactiveAtAccounts}
+                                      currentAccountId={(jobOrder as any)?.recruiterAccountId ?? null}
+                                      iconOnly
+                                    />
                                     {resumeUrl ? (
                                       <Tooltip title="View resume" {...placementTileTooltipSlotProps}>
                                         <IconButton

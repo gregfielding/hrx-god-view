@@ -8,3 +8,4 @@ export { onAssignmentWriteMaintainAccountWorkforce } from './onAssignmentWriteMa
 export { setAccountWorkforceStatus } from './setAccountWorkforceStatus';
 export { onAccountHiringEntityChangeBackfillWorkforceEngagementType } from './onAccountHiringEntityChangeBackfillWorkforceEngagementType';
 export { setAssignmentOutcome } from './setAssignmentOutcome';
+export { onAccountWorkforceStatusChangeSyncUserInactiveSet } from './onAccountWorkforceStatusChangeSyncUserInactiveSet';

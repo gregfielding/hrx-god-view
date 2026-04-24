@@ -134,6 +134,9 @@ import ActiveWorkersTable, {
 import AccountWorkforceTab, {
   type WorkforceSubAccountGrouping,
 } from '../components/recruiter/AccountWorkforceTab';
+import RecruiterMultiSelect, {
+  type RecruiterOption,
+} from '../components/recruiter/RecruiterMultiSelect';
 import AddJobOrderModal from '../components/recruiter/AddJobOrderModal';
 import AddAccountModal from '../components/recruiter/AddAccountModal';
 import type { JobOrder } from '../types/Phase1Types';
@@ -7251,6 +7254,28 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
           <Grid container spacing={3}>
             <Grid item xs={12} md={9}>
               <Grid container spacing={3}>
+                {/* Recruiting roles card — Scheduler assignment per
+                    docs/RECRUITING_ROLE_MODEL.md §2.2. Schedulers picked
+                    here own order flow for this account and get stamped
+                    onto new orders' jobOrder.schedulerUid (Phase 4). */}
+                <Grid item xs={12} md={7}>
+                  <AccountRecruitingRolesCard
+                    tenantId={tenantId}
+                    accountId={account.id!}
+                    initialSchedulerIds={account?.roles?.schedulerIds ?? []}
+                    recruiterOptions={recruitersOptions}
+                    onSaved={(nextSchedulerIds) => {
+                      setAccount((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              roles: { ...(prev.roles ?? {}), schedulerIds: nextSchedulerIds },
+                            }
+                          : prev,
+                      );
+                    }}
+                  />
+                </Grid>
                 <Grid item xs={12} md={7}>
                   <Card>
                     <CardHeader title="Customer Rules & Policies (Defaults)" />
@@ -7998,3 +8023,100 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
 };
 
 export default RecruiterAccountDetails;
+
+// ---------------------------------------------------------------------------
+// AccountRecruitingRolesCard — Phase 3 of docs/RECRUITING_ROLE_MODEL.md.
+// Inline editor for account.roles.schedulerIds. Kept colocated with the
+// Account page so it sees the already-loaded `recruitersOptions` and
+// `account` without prop drilling. Future per-role fields (e.g. payroll
+// override at the account level) drop in here too.
+// ---------------------------------------------------------------------------
+
+interface AccountRecruitingRolesCardProps {
+  tenantId: string | null;
+  accountId: string;
+  initialSchedulerIds: string[];
+  recruiterOptions: RecruiterOption[];
+  onSaved: (nextSchedulerIds: string[]) => void;
+}
+
+const AccountRecruitingRolesCard: React.FC<AccountRecruitingRolesCardProps> = ({
+  tenantId,
+  accountId,
+  initialSchedulerIds,
+  recruiterOptions,
+  onSaved,
+}) => {
+  const [schedulerIds, setSchedulerIds] = useState<string[]>(initialSchedulerIds);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  // Stay in sync when the parent re-renders with a fresh account doc.
+  useEffect(() => {
+    setSchedulerIds(initialSchedulerIds);
+  }, [initialSchedulerIds.join(',')]);
+
+  const dirty = useMemo(() => {
+    if (schedulerIds.length !== initialSchedulerIds.length) return true;
+    const set = new Set(initialSchedulerIds);
+    return schedulerIds.some((id) => !set.has(id));
+  }, [schedulerIds, initialSchedulerIds]);
+
+  const handleSave = async () => {
+    if (!tenantId || !accountId || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await updateDoc(doc(db, p.recruiterAccount(tenantId, accountId)), {
+        'roles.schedulerIds': schedulerIds,
+      });
+      onSaved(schedulerIds);
+      setSavedAt(Date.now());
+    } catch (err: any) {
+      setError(err?.message || 'Failed to save recruiting roles');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader title="Recruiting Roles" />
+      <CardContent>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Schedulers picked here own this account's order flow and are stamped
+          onto new orders as the Scheduler of record.
+        </Typography>
+        <RecruiterMultiSelect
+          tenantId={tenantId}
+          label="Schedulers"
+          value={schedulerIds}
+          onChange={setSchedulerIds}
+          helperText="Shown on Job Order headers; drives the AccountWorkforce deactivation gate."
+          options={recruiterOptions}
+          disabled={saving || !tenantId}
+        />
+        {error ? (
+          <Alert severity="error" sx={{ mt: 1.5 }}>
+            {error}
+          </Alert>
+        ) : null}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 2 }}>
+          <Button
+            variant="contained"
+            onClick={handleSave}
+            disabled={!dirty || saving || !tenantId}
+          >
+            {saving ? <CircularProgress size={18} /> : 'Save'}
+          </Button>
+          {savedAt && !dirty ? (
+            <Typography variant="caption" color="text.secondary">
+              Saved · {new Date(savedAt).toLocaleTimeString()}
+            </Typography>
+          ) : null}
+        </Box>
+      </CardContent>
+    </Card>
+  );
+};
