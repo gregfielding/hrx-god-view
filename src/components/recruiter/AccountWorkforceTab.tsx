@@ -79,6 +79,8 @@ import type {
 } from '../../shared/accountWorkforce';
 import { formatFirebaseHttpsError } from '../../utils/firebaseHttpsErrors';
 import AssignmentOutcomeMenu from './AssignmentOutcomeMenu';
+import WorkforceReadinessChip from './WorkforceReadinessChip';
+import type { WorkerState } from '../../types/workforceStateV1';
 
 /** Sub-tab keys; also used as localStorage key suffixes. */
 type WorkforceSubTab = 'scheduled' | 'active' | 'inactive';
@@ -422,6 +424,11 @@ type AccountWorkforceRosterRow = {
   deactivationReason?: AccountWorkforceDeactivationReason;
   deactivationNotes?: string;
   blockers: AccountWorkforceBlocker[];
+  /**
+   * Canonical worker readiness state (`users.{uid}.workerReadinessV1.overallWorkerState`).
+   * Surfaced as a chip in the Active list — same data the profile banner uses.
+   */
+  overallWorkerState?: WorkerState | null;
 };
 
 function useAccountWorkforceRoster(args: {
@@ -469,19 +476,21 @@ function useAccountWorkforceRoster(args: {
         });
       }
 
-      // Resolve worker names in parallel — one users doc per unique workerId.
-      // Existing ActiveWorkersTable doesn't cache across mounts so we do the
-      // same thing; if this ever gets heavy, hoist into a shared cache.
+      // Resolve worker names + readiness state in parallel — one users doc
+      // per unique workerId. Same fetch powers the roster name and the
+      // Phase 5 readiness chip, so no extra roundtrip.
       const workerIds = Array.from(
         new Set(Array.from(rawDocs.values()).map((v) => v.workerId)),
       );
       const workerNameById = new Map<string, string>();
+      const workerStateById = new Map<string, WorkerState | null>();
       await Promise.all(
         workerIds.map(async (wid) => {
           try {
             const wSnap = await getDoc(doc(db, 'users', wid));
             if (!wSnap.exists()) {
               workerNameById.set(wid, wid);
+              workerStateById.set(wid, null);
               return;
             }
             const wData = wSnap.data() as Record<string, unknown>;
@@ -491,8 +500,14 @@ function useAccountWorkforceRoster(args: {
               typeof wData.displayName === 'string' ? wData.displayName.trim() : '';
             const combined = `${first} ${last}`.trim();
             workerNameById.set(wid, combined || display || wid);
+            const wr = (wData.workerReadinessV1 || {}) as Record<string, unknown>;
+            const rawState = typeof wr.overallWorkerState === 'string'
+              ? (wr.overallWorkerState as WorkerState)
+              : null;
+            workerStateById.set(wid, rawState);
           } catch {
             workerNameById.set(wid, wid);
+            workerStateById.set(wid, null);
           }
         }),
       );
@@ -515,6 +530,7 @@ function useAccountWorkforceRoster(args: {
           deactivationReason: data.deactivationReason,
           deactivationNotes: data.deactivationNotes,
           blockers: Array.isArray(data.blockers) ? data.blockers : [],
+          overallWorkerState: workerStateById.get(data.workerId) ?? null,
         }),
       );
       // Sort: active rows by lastShiftAt desc (fallback firstConfirmedAt);
@@ -562,6 +578,8 @@ type ScheduledRow = {
   shiftStart: Date | null;
   shiftEnd: Date | null;
   status: string;
+  /** Canonical readiness state from `users.{uid}.workerReadinessV1.overallWorkerState`. */
+  overallWorkerState?: WorkerState | null;
 };
 
 function useScheduledAssignments(args: {
@@ -674,7 +692,10 @@ function useScheduledAssignments(args: {
             typeof a.firstName === 'string' ? (a.firstName as string) : '';
           const lastName = typeof a.lastName === 'string' ? (a.lastName as string) : '';
           const inlineName = `${firstName} ${lastName}`.trim();
-          if (!inlineName) workerIdsNeedingLookup.add(workerId);
+          // Always add to the lookup set — Phase 5 needs readiness state
+          // from the user doc regardless of whether the assignment carried
+          // an inline name. One query per unique worker.
+          workerIdsNeedingLookup.add(workerId);
 
           rows.push({
             id: `${a.id}-${jobOrderId}`,
@@ -690,10 +711,11 @@ function useScheduledAssignments(args: {
           });
         }
 
-        // Resolve names for assignments that didn't inline firstName/lastName.
+        // Resolve names + readiness state for every unique worker in the set.
         if (workerIdsNeedingLookup.size > 0) {
           const idList = Array.from(workerIdsNeedingLookup);
           const workerNameById = new Map<string, string>();
+          const workerStateById = new Map<string, WorkerState | null>();
           await Promise.all(
             idList.map(async (wid) => {
               try {
@@ -705,8 +727,13 @@ function useScheduledAssignments(args: {
                 const dn = typeof data.displayName === 'string' ? data.displayName : '';
                 const combined = `${f} ${l}`.trim();
                 workerNameById.set(wid, combined || dn || wid);
+                const wr = (data.workerReadinessV1 || {}) as Record<string, unknown>;
+                const rawState = typeof wr.overallWorkerState === 'string'
+                  ? (wr.overallWorkerState as WorkerState)
+                  : null;
+                workerStateById.set(wid, rawState);
               } catch {
-                /* ignore */
+                /* ignore — name falls back to id, state stays null */
               }
             }),
           );
@@ -714,6 +741,7 @@ function useScheduledAssignments(args: {
             if (!r.workerName) {
               r.workerName = workerNameById.get(r.workerId) || r.workerId;
             }
+            r.overallWorkerState = workerStateById.get(r.workerId) ?? null;
           }
         }
 
@@ -791,6 +819,9 @@ function RosterView(props: {
             {row.engagementType.toUpperCase()}
           </Typography>
         )}
+      </TableCell>
+      <TableCell>
+        <WorkforceReadinessChip state={row.overallWorkerState} dense />
       </TableCell>
       {mode === 'active' ? (
         <>
@@ -877,6 +908,7 @@ function RosterView(props: {
     mode === 'active' ? (
       <TableRow sx={{ bgcolor: 'grey.50' }}>
         <TableCell sx={{ fontWeight: 600 }}>Worker</TableCell>
+        <TableCell sx={{ fontWeight: 600 }}>Readiness</TableCell>
         <TableCell sx={{ fontWeight: 600 }}>Last shift</TableCell>
         <TableCell sx={{ fontWeight: 600 }} align="right">Shifts</TableCell>
         <TableCell align="right" />
@@ -884,13 +916,14 @@ function RosterView(props: {
     ) : (
       <TableRow sx={{ bgcolor: 'grey.50' }}>
         <TableCell sx={{ fontWeight: 600 }}>Worker</TableCell>
+        <TableCell sx={{ fontWeight: 600 }}>Readiness</TableCell>
         <TableCell sx={{ fontWeight: 600 }}>Deactivated</TableCell>
         <TableCell sx={{ fontWeight: 600 }}>Reason</TableCell>
         <TableCell sx={{ fontWeight: 600 }}>Blockers</TableCell>
         <TableCell align="right" />
       </TableRow>
     );
-  const colSpan = mode === 'active' ? 4 : 5;
+  const colSpan = mode === 'active' ? 5 : 6;
 
   // --- Grouped body ---
   if (isGrouped && subAccountGrouping) {
@@ -1048,6 +1081,9 @@ function ScheduledView(props: {
       <TableCell>
         <Typography variant="body2">{row.workerName || row.workerId}</Typography>
       </TableCell>
+      <TableCell>
+        <WorkforceReadinessChip state={row.overallWorkerState} dense />
+      </TableCell>
       <TableCell>{row.jobOrderName}</TableCell>
       <TableCell>
         {row.shiftStart ? (
@@ -1090,13 +1126,14 @@ function ScheduledView(props: {
   const headers = (
     <TableRow sx={{ bgcolor: 'grey.50' }}>
       <TableCell sx={{ fontWeight: 600 }}>Worker</TableCell>
+      <TableCell sx={{ fontWeight: 600 }}>Readiness</TableCell>
       <TableCell sx={{ fontWeight: 600 }}>Job order</TableCell>
       <TableCell sx={{ fontWeight: 600 }}>Starts</TableCell>
       <TableCell sx={{ fontWeight: 600 }}>Type</TableCell>
       <TableCell sx={{ fontWeight: 600, width: 48 }} align="right" />
     </TableRow>
   );
-  const colSpan = 5;
+  const colSpan = 6;
 
   if (isGrouped && subAccountGrouping) {
     const groups = subAccountGrouping.groups;
