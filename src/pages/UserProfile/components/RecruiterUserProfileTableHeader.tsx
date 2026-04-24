@@ -58,7 +58,7 @@ import { getCalendarDayLocal, parseCalendarDateLocal } from '../../../utils/date
 import { googleMapsSearchUrl } from '../../../utils/recordHeaderAddress';
 import type { EmergencyContact } from '../../../types/UserProfile';
 import type { RecordHeaderAssignmentLine } from '../../../utils/recordHeaderAssignments';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { db } from '../../../firebase';
 
 type TenantUserGroupOption = { id: string; title: string };
@@ -280,6 +280,45 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
   /** Admin: five columns (Contact … Employment … Risk); otherwise four (no Risk). */
   const gridColMd = canViewAdminContent ? 2.4 : 3;
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
+
+  /**
+   * Primary recruiter (owner) for this worker — denormalized onto
+   * `users.{uid}.primaryRecruiterId` by the ownership trigger. Rendered
+   * as a small "OWNER" block beneath Groups so the whole header can tell
+   * you at a glance who's accountable for the worker. Missing means the
+   * worker is in the tenant's Unassigned pool (or ownership hasn't
+   * resolved yet for a brand-new record).
+   */
+  const primaryRecruiterId =
+    typeof userDocForTableIcons?.primaryRecruiterId === 'string' &&
+    (userDocForTableIcons.primaryRecruiterId as string).trim() !== ''
+      ? (userDocForTableIcons.primaryRecruiterId as string).trim()
+      : null;
+  const [primaryRecruiterName, setPrimaryRecruiterName] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setPrimaryRecruiterName(null);
+    if (!primaryRecruiterId) return;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'users', primaryRecruiterId));
+        if (cancelled || !snap.exists()) return;
+        const data = snap.data() as Record<string, unknown>;
+        const first = typeof data.firstName === 'string' ? data.firstName : '';
+        const last = typeof data.lastName === 'string' ? data.lastName : '';
+        const display = typeof data.displayName === 'string' ? data.displayName.trim() : '';
+        const combined = `${first} ${last}`.trim();
+        setPrimaryRecruiterName(combined || display || primaryRecruiterId);
+      } catch {
+        // Missing recruiter user doc shouldn't crash the header; fall back
+        // to showing the uid so the owner is at least addressable.
+        if (!cancelled) setPrimaryRecruiterName(primaryRecruiterId);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [primaryRecruiterId]);
 
   const handleCopy = async (text: string, notice: string) => {
     try {
@@ -913,6 +952,37 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                   </Stack>
                 </Box>
               )}
+
+              {/* Primary recruiter (owner) — surfaced from the denormalized
+                  `users.{uid}.primaryRecruiterId` scalar. Null means the
+                  worker is in the tenant's Unassigned pool; we still
+                  render the label so "unassigned" is visible rather than
+                  merely absent. Clicking opens that recruiter's profile. */}
+              <Box sx={{ mt: 1.25 }}>
+                <Typography component="span" sx={recordHeaderColumnTitleSx}>
+                  Owner
+                </Typography>
+                <Box sx={{ mt: 0.35 }}>
+                  {primaryRecruiterId ? (
+                    <Link
+                      component={RouterLink}
+                      to={`/users/${primaryRecruiterId}`}
+                      underline="hover"
+                      sx={{
+                        ...recordHeaderBodyTextSx,
+                        color: 'primary.main',
+                        fontWeight: 400,
+                      }}
+                    >
+                      {primaryRecruiterName || '…'}
+                    </Link>
+                  ) : (
+                    <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                      Unassigned
+                    </Typography>
+                  )}
+                </Box>
+              </Box>
             </Grid>
 
             {canViewAdminContent && (
