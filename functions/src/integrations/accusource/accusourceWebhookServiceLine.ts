@@ -404,11 +404,28 @@ export function mergeServiceLineDocument(
   // webhook still get a stable verdict.
   const mergedStatus = typeof out.status === 'string' ? out.status : null;
   const mergedDecision = typeof out.decision === 'string' ? out.decision : null;
+  const serviceNameLower =
+    typeof out.serviceName === 'string' ? out.serviceName.toLowerCase() : '';
   const isLabLine =
     out.labName != null ||
     out.providerRegistrationId != null ||
-    (typeof out.serviceName === 'string' && out.serviceName.toLowerCase().includes('drug'));
-  const kind: 'lab' | 'background' = isLabLine ? 'lab' : 'background';
+    serviceNameLower.includes('drug');
+  // SSN Locator detection — match vendor variants (Social Security Number Trace,
+  // SSN Locator, Social Security Locator, etc.). AccuSource's report boilerplate
+  // says "The list of possible names and addresses … have been reviewed", which
+  // means any real hits spawn separate downstream orders that carry their own
+  // verdicts. Bare Completed on this line is a clean pass by design.
+  const isSsnLocator =
+    !isLabLine &&
+    (serviceNameLower.includes('social security locator') ||
+      serviceNameLower.includes('ssn locator') ||
+      serviceNameLower.includes('social security number trace') ||
+      serviceNameLower.includes('ssn trace'));
+  const kind: 'lab' | 'ssn_locator' | 'background' = isLabLine
+    ? 'lab'
+    : isSsnLocator
+      ? 'ssn_locator'
+      : 'background';
   const autoVerdict = classifyAutoVerdict({ status: mergedStatus, decision: mergedDecision, kind });
   const historyNow = admin.firestore.Timestamp.now();
   const prevAdjudication = out.adjudication as AccusourceLineAdjudication | null | undefined;

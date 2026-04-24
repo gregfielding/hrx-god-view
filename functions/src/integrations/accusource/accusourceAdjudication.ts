@@ -160,11 +160,19 @@ export interface AutoVerdictInput {
   /** Vendor decision / disposition when the service line has one set. */
   decision?: string | null | undefined;
   /**
-   * Optional screen kind — lab/drug screens with a negative result are clear passes
-   * even when the vendor status is just "Success"; background screens often need
-   * explicit "Clear" to call it a pass (since "Completed" can still hold records).
+   * Optional screen kind — drives the "what counts as a clean pass" rule:
+   *   - `lab`          : drug screens; "Success" or "Completed" with no decision ⇒ PASSED.
+   *   - `ssn_locator`  : Social Security Locator is a routing/staging service; once the vendor
+   *                      closes it, the `Results/Special Notes` section contains
+   *                      "The list of possible names and addresses returned … have been
+   *                      reviewed …". Any actual hits generate SEPARATE downstream orders.
+   *                      So a bare "Completed" status on an SSN Locator line is a clean pass —
+   *                      treating it as NEEDS_REVIEW just creates noise for the recruiter.
+   *   - `background`   : everything else (county/national criminal, MVR, etc.). Strict:
+   *                      explicit clear language is required for an auto-pass; otherwise we
+   *                      route to NEEDS_REVIEW so a recruiter reads the report.
    */
-  kind?: 'lab' | 'background' | null | undefined;
+  kind?: 'lab' | 'ssn_locator' | 'background' | null | undefined;
 }
 
 export interface AutoVerdictResult {
@@ -209,6 +217,19 @@ export function classifyAutoVerdict(input: AutoVerdictInput): AutoVerdictResult 
   //    separately only when positive).
   if (input.kind === 'lab' && (status === 'success' || statusIsCompleted(status))) {
     return { verdict: 'PASSED', reason: `Lab screen closed: ${input.status ?? ''}` };
+  }
+
+  // 5a. Social Security Locator is a name/address lookup that spawns downstream
+  // orders when hits exist. A bare "Completed" status is the vendor's way of
+  // saying "we reviewed and there's nothing that requires your attention". Any
+  // real hits would have either (a) set `decision` to something decisive, or
+  // (b) created a separate per-jurisdiction criminal order which has its OWN
+  // verdict on its OWN row. So: SSN Locator + Completed ⇒ PASSED.
+  if (input.kind === 'ssn_locator' && statusIsCompleted(status)) {
+    return {
+      verdict: 'PASSED',
+      reason: `SSN Locator closed — downstream orders carry verdicts (${input.status ?? ''})`,
+    };
   }
 
   // 6. Generic "Completed" without a decision — let a recruiter read the report.

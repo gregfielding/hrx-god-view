@@ -213,6 +213,9 @@ export function accusourceScreeningLineItems(r: BackgroundCheckRecord): Accusour
     const catalogName = name && name.length > 0 ? name : '';
     const webhookName = entry?.serviceName != null ? String(entry.serviceName).trim() : '';
     const jurisdiction = entry?.jurisdiction != null ? String(entry.jurisdiction).trim() : '';
+    const hasLab =
+      (entry?.labName != null && String(entry.labName).trim() !== '') ||
+      entry?.labCode != null;
 
     let resolvedName: string;
     if (catalogName) {
@@ -220,10 +223,17 @@ export function accusourceScreeningLineItems(r: BackgroundCheckRecord): Accusour
       resolvedName = catalogName;
     } else if (webhookName && !genericOrderLabel.test(webhookName)) {
       resolvedName = webhookName;
+    } else if (jurisdiction && !hasLab) {
+      // Generic "Order <id>" webhook name + a jurisdiction + no lab info is almost always a
+      // per-county criminal search (that's the only screening type in the standard staffing
+      // package that gets one order per county). AccuSource's dashboard renders these as
+      // "County Criminal" + "City, STATE"; we mirror that so the recruiter sees the same label
+      // the vendor shows. If your tenant ever orders a different kind of jurisdiction-scoped
+      // screen without a catalog name, this will mislabel — but that's a theoretical case and
+      // easier to fix when we hit it than today's "Order 8551322" that tells the recruiter nothing.
+      resolvedName = `County Criminal · ${jurisdiction}`;
     } else if (jurisdiction) {
-      // Either no stored name or a generic `Order <id>` — surface the jurisdiction so recruiters
-      // can still tell per-county rows apart. Prefix with webhookName when we have it so the
-      // order id stays visible alongside the location.
+      // Jurisdiction + lab info: keep the lab-ish label (handled elsewhere) and include juris.
       resolvedName = webhookName ? `${webhookName} — ${jurisdiction}` : jurisdiction;
     } else {
       resolvedName = webhookName || id;
