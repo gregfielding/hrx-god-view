@@ -346,12 +346,12 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
         return;
       }
 
-      const oversized = files.find((file) => file.size > 10 * 1024 * 1024);
+      const oversized = files.find((file) => file.size > 25 * 1024 * 1024);
       if (oversized) {
         setParsingStatus({
           status: 'error',
           progress: 0,
-          message: 'File too large. Please upload files smaller than 10MB each.',
+          message: 'File too large. Please upload files smaller than 25MB each.',
           error: 'File too large',
         });
         return;
@@ -551,7 +551,7 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
         )}
         
         <Typography variant="caption" color="text.secondary">
-          Maximum file size: 10MB each
+          Maximum file size: 25MB each
         </Typography>
       </Paper>
 
