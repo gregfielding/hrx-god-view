@@ -139,6 +139,9 @@ function shiftToRangeBarEvent(shift: any, jobOrder: any, jobOrderColor: string):
     : formatWeeklyScheduleSummary(shift.weeklySchedule);
   const description = scheduleSummary ? `Schedule: ${scheduleSummary}` : undefined;
 
+  const requestedStaff =
+    typeof shift?.totalStaffRequested === 'number' ? shift.totalStaffRequested : undefined;
+
   return {
     id: `gig-shift-range-${jobOrder?.id || 'unknown'}-${shift.id}`,
     calendarId: GIG_JOB_ORDERS_CALENDAR_ID,
@@ -163,6 +166,11 @@ function shiftToRangeBarEvent(shift: any, jobOrder: any, jobOrderColor: string):
     hrx: {
       gigShiftId: shift.id,
       gigShiftRange: true,
+      worksiteName: jobOrder?.worksiteName || undefined,
+      shiftStartTime: shift?.defaultStartTime || undefined,
+      shiftEndTime: shift?.defaultEndTime || undefined,
+      requestedStaff,
+      // `assignedStaff` is back-filled by the hook after the batched assignment lookup.
     },
   };
 }
@@ -588,9 +596,16 @@ export function useGigJobOrdersCalendar({
             };
             const event = shiftToCalendarEvent(syntheticShift, jobOrder, jobOrderColor);
             if (event) {
+              const requestedStaff =
+                typeof shift?.totalStaffRequested === 'number' ? shift.totalStaffRequested : undefined;
               event.hrx = {
                 gigShiftId: shift.id,
                 gigShiftRange: false,
+                worksiteName: jobOrder?.worksiteName || undefined,
+                shiftStartTime: occ.startTime,
+                shiftEndTime: occ.endTime,
+                requestedStaff,
+                // assignedStaff back-filled below from a single batched query.
               };
               calendarEvents.push(event);
             }
@@ -602,6 +617,71 @@ export function useGigJobOrdersCalendar({
           if ((jobOrder as any).jobType !== 'gig') continue;
           const evt = jobOrderEstimatedRangeToEvent(jobOrder, timeMin, timeMax);
           if (evt) calendarEvents.push(evt);
+        }
+
+        // --------------------------------------------------------------------
+        // Back-fill `hrx.assignedStaff` for each shift-derived event.
+        //
+        // jobs-board service currently hard-codes `staffFilled: 0` as a TODO.
+        // For the Account Calendar tooltip we compute it on demand: one
+        // `where('shiftId', 'in', [...])` query per 30 shifts against
+        // `tenants/{tid}/assignments` (and the same against placements, to
+        // match how PlacementsTab counts "workers on this shift"). We dedupe
+        // by userId per shiftId so multi-day occurrences don't double-count.
+        // Assignment cancellations are excluded.
+        // --------------------------------------------------------------------
+        const shiftIds = Array.from(
+          new Set(
+            allShifts
+              .map(({ shift }) => (shift?.id ? String(shift.id) : null))
+              .filter((id): id is string => Boolean(id)),
+          ),
+        );
+        if (shiftIds.length > 0 && !cancelled && !queryAborted) {
+          try {
+            const uniqByShift = new Map<string, Set<string>>();
+            const eatChunk = (docs: any[]) => {
+              for (const d of docs) {
+                const data = d.data ? d.data() : d;
+                const sid = typeof data?.shiftId === 'string' ? data.shiftId : null;
+                const uid = typeof data?.userId === 'string' ? data.userId : null;
+                if (!sid || !uid) continue;
+                // Skip cancelled assignments — they shouldn't count as filled.
+                const status =
+                  typeof data?.status === 'string' ? data.status.toLowerCase() : '';
+                if (status === 'cancelled' || status === 'canceled') continue;
+                if (!uniqByShift.has(sid)) uniqByShift.set(sid, new Set());
+                uniqByShift.get(sid)!.add(uid);
+              }
+            };
+
+            const assignmentsRef = collection(db, 'tenants', tenantId, 'assignments');
+            const placementsRef = collection(db, 'tenants', tenantId, 'placements');
+            for (let i = 0; i < shiftIds.length; i += 30) {
+              if (cancelled) break;
+              const batch = shiftIds.slice(i, i + 30);
+              try {
+                const [aSnap, pSnap] = await Promise.all([
+                  getDocs(query(assignmentsRef, where('shiftId', 'in', batch))),
+                  getDocs(query(placementsRef, where('shiftId', 'in', batch))),
+                ]);
+                eatChunk(aSnap.docs);
+                eatChunk(pSnap.docs);
+              } catch (batchErr) {
+                // Non-fatal: tooltip falls back to "— assigned" for these shifts.
+                console.warn('[Gig calendar] assigned-count batch failed', batchErr);
+              }
+            }
+
+            for (const event of calendarEvents) {
+              const sid = event.hrx?.gigShiftId;
+              if (!sid || !event.hrx) continue;
+              event.hrx.assignedStaff = uniqByShift.get(sid)?.size ?? 0;
+            }
+          } catch (err) {
+            // Swallow — counts are a nice-to-have, not a blocker for rendering.
+            console.warn('[Gig calendar] assigned-count enrichment failed', err);
+          }
         }
 
         if (!cancelled) {

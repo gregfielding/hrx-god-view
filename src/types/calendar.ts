@@ -76,6 +76,23 @@ export interface CalendarEvent {
      */
     gigJobOrderRange?: boolean;
     gigJobOrderId?: string;
+    /**
+     * Worksite / location display name for this shift — surfaced in the Account
+     * Calendar tooltip so recruiters can tell shifts apart at a glance.
+     */
+    worksiteName?: string;
+    /** "HH:mm" (24h) shift start — for tooltip rendering only. */
+    shiftStartTime?: string;
+    /** "HH:mm" (24h) shift end — for tooltip rendering only. */
+    shiftEndTime?: string;
+    /** Staff requested on the shift (from `shift.totalStaffRequested`). */
+    requestedStaff?: number;
+    /**
+     * Distinct workers currently placed/assigned on this shift. Populated by
+     * `useGigJobOrdersCalendar` via a batched query against
+     * `tenants/{tid}/assignments` + `tenants/{tid}/placements` (keyed by shiftId).
+     */
+    assignedStaff?: number;
   };
   isAllDay: boolean;
   isRecurringInstance: boolean;

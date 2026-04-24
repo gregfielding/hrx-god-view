@@ -14,6 +14,7 @@ import {
   ToggleButtonGroup,
   CircularProgress,
   Paper,
+  Tooltip,
 } from '@mui/material';
 import {
   ChevronLeft as ChevronLeftIcon,
@@ -62,6 +63,65 @@ function getEventLocalDate(event: CalendarEvent, useStart = true): Date | null {
 function getEventColor(event: CalendarEvent): { backgroundColor: string; foregroundColor: string } {
   const hex = event.colorId ? getColorForJobOrderId(event.colorId) : '#5c6bc0';
   return { backgroundColor: hex, foregroundColor: '#ffffff' };
+}
+
+/** Convert "HH:mm" (24h) to "h:mm a". Returns the raw string on parse failure. */
+function formatTimeLabel(hhmm: string | undefined): string | null {
+  if (!hhmm || !/^\d{1,2}:\d{2}$/.test(hhmm)) return hhmm || null;
+  const [hRaw, mRaw] = hhmm.split(':');
+  const h = Number(hRaw);
+  const m = Number(mRaw);
+  if (Number.isNaN(h) || Number.isNaN(m)) return hhmm;
+  const period = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${period}`;
+}
+
+/**
+ * Tooltip contents for a calendar bar on the Account calendar: worksite name,
+ * shift hours, and requested/assigned counts. Gracefully skips fields that
+ * aren't available (e.g. Gig job-order range bars have no shift-level data).
+ */
+function renderShiftTooltip(event: CalendarEvent): React.ReactNode {
+  const hrx = event.hrx;
+  if (!hrx) return null;
+  const worksite = hrx.worksiteName?.trim();
+  const start = formatTimeLabel(hrx.shiftStartTime);
+  const end = formatTimeLabel(hrx.shiftEndTime);
+  const hours = start && end ? `${start} – ${end}` : start || end || null;
+  const requested = typeof hrx.requestedStaff === 'number' ? hrx.requestedStaff : null;
+  const assigned = typeof hrx.assignedStaff === 'number' ? hrx.assignedStaff : null;
+
+  const hasAnything = Boolean(worksite || hours || requested != null || assigned != null);
+  if (!hasAnything) return null;
+
+  const staffLine =
+    requested != null || assigned != null
+      ? `${requested ?? '—'} Requested / ${assigned ?? 0} Assigned`
+      : null;
+
+  return (
+    <Box sx={{ p: 0.25, fontSize: '0.75rem', lineHeight: 1.35 }}>
+      <Typography variant="subtitle2" sx={{ fontWeight: 600, fontSize: '0.8rem', mb: 0.25 }}>
+        {event.summary}
+      </Typography>
+      {worksite && (
+        <Typography variant="caption" display="block" sx={{ color: 'inherit' }}>
+          {worksite}
+        </Typography>
+      )}
+      {hours && (
+        <Typography variant="caption" display="block" sx={{ color: 'inherit' }}>
+          {hours}
+        </Typography>
+      )}
+      {staffLine && (
+        <Typography variant="caption" display="block" sx={{ color: 'inherit' }}>
+          {staffLine}
+        </Typography>
+      )}
+    </Box>
+  );
 }
 
 export interface AccountCalendarTabProps {
@@ -384,7 +444,8 @@ function MonthView({
               >
                 {segments.map((seg) => {
                   const eventColor = getEventColor(seg.event);
-                  return (
+                  const tooltipContent = renderShiftTooltip(seg.event);
+                  const bar = (
                     <Box
                       key={`${seg.event.id}-${seg.startIdx}-${seg.row}`}
                       onClick={(e) => { e.stopPropagation(); onEventClick(seg.event); }}
@@ -408,6 +469,18 @@ function MonthView({
                     >
                       {seg.event.summary}
                     </Box>
+                  );
+                  if (!tooltipContent) return bar;
+                  return (
+                    <Tooltip
+                      key={`${seg.event.id}-${seg.startIdx}-${seg.row}`}
+                      title={tooltipContent}
+                      arrow
+                      placement="top"
+                      enterDelay={150}
+                    >
+                      {bar}
+                    </Tooltip>
                   );
                 })}
               </Box>
@@ -452,7 +525,8 @@ function MonthView({
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mt: 0.5 }}>
                     {dayEvents.slice(0, 3).map((event) => {
                       const eventColor = getEventColor(event);
-                      return (
+                      const tooltipContent = renderShiftTooltip(event);
+                      const chip = (
                         <Box
                           key={event.id}
                           onClick={(e) => { e.stopPropagation(); onEventClick(event); }}
@@ -472,6 +546,18 @@ function MonthView({
                         >
                           {event.summary}
                         </Box>
+                      );
+                      if (!tooltipContent) return chip;
+                      return (
+                        <Tooltip
+                          key={event.id}
+                          title={tooltipContent}
+                          arrow
+                          placement="top"
+                          enterDelay={150}
+                        >
+                          {chip}
+                        </Tooltip>
                       );
                     })}
                     {dayEvents.length > 3 && (
