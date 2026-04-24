@@ -112,6 +112,35 @@ function extractJurisdiction(rec: Record<string, unknown>): string | null {
     const parts = [county, state, country].filter(Boolean) as string[];
     if (parts.length > 0) return parts.join(', ');
   }
+
+  // AccuSource's portal shows the "Searched Name" column as
+  // `<Last>, <First>: <Jurisdiction>` — e.g. "Seo, Danny Donghun: Orange, US-CA".
+  // For County Criminal `order_status_change` events, the vendor often doesn't
+  // populate any dedicated jurisdiction field; the only place it carries the
+  // county is embedded in the subject name string. Parse it out as a last resort.
+  const subjectIsh = pickString(rec, [
+    'searched_name',
+    'searchedName',
+    'subject_name',
+    'subjectName',
+    'candidate_name',
+    'candidateName',
+  ]);
+  if (subjectIsh) {
+    // Pattern: anything, a colon, then the jurisdiction. We grab after the FIRST colon
+    // so "Last, First: Orange, US-CA" → "Orange, US-CA".
+    const colonIdx = subjectIsh.indexOf(':');
+    if (colonIdx > 0 && colonIdx < subjectIsh.length - 1) {
+      const tail = subjectIsh.slice(colonIdx + 1).trim();
+      // Only accept the tail when it looks like a jurisdiction (contains a
+      // state-code pattern, or comma-separated region tokens). This avoids
+      // misfiring on subject strings like "Smith: Jr." or other punctuation.
+      if (/\b[A-Z]{2,3}-[A-Z]{2}\b/.test(tail) || /,\s*[A-Z]{2}$/.test(tail) || tail.includes(',')) {
+        return tail;
+      }
+    }
+  }
+
   return null;
 }
 

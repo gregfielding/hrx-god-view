@@ -29,6 +29,13 @@ import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import AddIcon from '@mui/icons-material/Add';
+// Verdict icons for the Screening block. Match the vocabulary + colors used in
+// AccusourceOrderServiceLinesTable's StatusChip so recruiters see the same
+// visual for "Passed" everywhere.
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CancelIcon from '@mui/icons-material/Cancel';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import FavoriteButton from '../../../components/FavoriteButton';
 import { PhoneVerifiedInlineCheck } from '../../../components/PhoneVerifiedInlineCheck';
 import UserTableIndeedFlexBadge from '../../../components/tables/UserTableIndeedFlexBadge';
@@ -716,15 +723,22 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
               ) : null}
               {screeningLines.length > 0 ? (
                 <Stack spacing={0.35}>
-                  {screeningLines.map((line) => (
-                    <Typography key={line.id} variant="body2" sx={recordHeaderBodyTextSx}>
-                      <Box component="span">
-                        {line.name}
-                        {line.type ? ` (${line.type})` : ''}:
-                      </Box>{' '}
-                      {line.status}
-                    </Typography>
-                  ))}
+                  {screeningLines.map((line) => {
+                    const verdictIcon = renderVerdictIconForHeader(line.verdict);
+                    return (
+                      <Typography
+                        key={line.id}
+                        variant="body2"
+                        sx={{ ...recordHeaderBodyTextSx, display: 'flex', alignItems: 'flex-start', gap: 0.5 }}
+                      >
+                        {verdictIcon}
+                        <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
+                          {line.name}
+                          {line.type ? ` (${line.type})` : ''}: {line.status}
+                        </Box>
+                      </Typography>
+                    );
+                  })}
                 </Stack>
               ) : (
                 <Typography variant="body2" sx={recordHeaderBodyTextSx}>
@@ -990,5 +1004,54 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
     </Box>
   );
 };
+
+/**
+ * Small inline icon for the SCREENING block that reflects the per-line verdict.
+ *
+ * Mirrors the vocabulary + colors of `StatusChip` in
+ * `AccusourceOrderServiceLinesTable.tsx` so recruiters see the same visual for
+ * "Passed" in both places. Returns `null` for PENDING / unknown so those lines
+ * render without an icon (no visual noise for "waiting" screenings).
+ */
+function renderVerdictIconForHeader(
+  verdict: 'PASSED' | 'FAILED' | 'NEEDS_REVIEW' | 'PENDING' | null | undefined,
+): React.ReactNode {
+  switch (verdict) {
+    case 'PASSED':
+      return (
+        <CheckCircleIcon
+          fontSize="inherit"
+          sx={{ color: 'success.main', fontSize: 16, flexShrink: 0, mt: '3px' }}
+          aria-label="Passed"
+        />
+      );
+    case 'FAILED':
+      return (
+        <CancelIcon
+          fontSize="inherit"
+          sx={{ color: 'error.main', fontSize: 16, flexShrink: 0, mt: '3px' }}
+          aria-label="Failed"
+        />
+      );
+    case 'NEEDS_REVIEW':
+      return (
+        <WarningAmberIcon
+          fontSize="inherit"
+          sx={{ color: 'warning.main', fontSize: 16, flexShrink: 0, mt: '3px' }}
+          aria-label="Needs review"
+        />
+      );
+    case 'PENDING':
+      return (
+        <HourglassEmptyIcon
+          fontSize="inherit"
+          sx={{ color: 'text.disabled', fontSize: 16, flexShrink: 0, mt: '3px' }}
+          aria-label="Waiting"
+        />
+      );
+    default:
+      return null;
+  }
+}
 
 export default RecruiterUserProfileTableHeader;
