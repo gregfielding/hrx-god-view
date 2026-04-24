@@ -3248,33 +3248,60 @@ const RecruiterJobOrderDetail: React.FC = () => {
 
   // Resolve recruiter account linked to this job order's company (for Account Type, E-Verify, Hiring Entity on Basic Information)
   const companyIdForAccount = jobOrder?.companyId || (jobOrder as any)?.accountId || null;
+  const jobOrderRecruiterAccountId =
+    (jobOrder as any)?.recruiterAccountId && String((jobOrder as any).recruiterAccountId).trim()
+      ? String((jobOrder as any).recruiterAccountId).trim()
+      : null;
   useEffect(() => {
-    if (!tenantId || !companyIdForAccount) {
+    if (!tenantId) {
       setLinkedAccount(null);
       return;
     }
+    // Prefer a direct lookup by `jobOrder.recruiterAccountId` so the header shows
+    // the actual child/national account the recruiter linked to this JO. The old
+    // company-associations query was load-order-dependent — for a company with
+    // multiple child accounts it returned the first one Firestore happened to
+    // match, which could be a sibling rather than the one the JO is pinned to.
     let cancelled = false;
-    const accountsRef = collection(db, p.recruiterAccounts(tenantId));
-    const q = query(
-      accountsRef,
-      where('associations.companyIds', 'array-contains', companyIdForAccount),
-      limit(1)
-    );
-    getDocs(q)
-      .then((snap) => {
+    (async () => {
+      try {
+        if (jobOrderRecruiterAccountId) {
+          const snap = await getDoc(
+            doc(db, p.recruiterAccount(tenantId, jobOrderRecruiterAccountId)),
+          );
+          if (cancelled) return;
+          if (snap.exists()) {
+            setLinkedAccount({ id: snap.id, ...(snap.data() as any) } as any);
+            return;
+          }
+          // else fall through to the company-associations fallback below
+        }
+        if (!companyIdForAccount) {
+          if (!cancelled) setLinkedAccount(null);
+          return;
+        }
+        const accountsRef = collection(db, p.recruiterAccounts(tenantId));
+        const q = query(
+          accountsRef,
+          where('associations.companyIds', 'array-contains', companyIdForAccount),
+          limit(1),
+        );
+        const snap = await getDocs(q);
         if (cancelled) return;
         const first = snap.docs[0];
         if (first) {
-          setLinkedAccount({ id: first.id, ...first.data() } as any);
+          setLinkedAccount({ id: first.id, ...(first.data() as any) } as any);
         } else {
           setLinkedAccount(null);
         }
-      })
-      .catch(() => {
+      } catch {
         if (!cancelled) setLinkedAccount(null);
-      });
-    return () => { cancelled = true; };
-  }, [tenantId, companyIdForAccount]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, companyIdForAccount, jobOrderRecruiterAccountId]);
 
   /** When the JO has no `hiringEntityId`, inherit from `recruiterAccountId` (then parent national account). Matches backend `resolveEntityContext` / Placements entity_employments scoping. */
   const [resolvedRecruiterAccountHiringEntityId, setResolvedRecruiterAccountHiringEntityId] = useState<string | null>(null);
@@ -4203,22 +4230,47 @@ const RecruiterJobOrderDetail: React.FC = () => {
                       rowGap: 0.65,
                     }}
                   >
-                    <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, maxWidth: '100%' }}>
-                      <BusinessIcon sx={{ fontSize: 15, color: 'rgb(74, 144, 226)', flexShrink: 0 }} />
-                      {displayCompanyId ? (
-                        <MUILink
-                          component="button"
-                          type="button"
-                          underline="hover"
-                          onClick={() => navigate(`/companies/${displayCompanyId}`)}
-                          sx={{ ...jobOrderLinkSx, minWidth: 0 }}
+                    {/* Account (recruiter-side account for this job order) — replaces
+                        the old Company link. For child accounts this is the actual
+                        linked child (e.g. "CORT Gaylord Resort & Convention Center -
+                        DC"), not the parent company. Falls back to company name when
+                        no account is linked yet so the header still shows something
+                        meaningful on legacy job orders. */}
+                    {(() => {
+                      const accountName = linkedAccount?.name || displayCompanyName;
+                      const accountHref = linkedRecruiterAccountId
+                        ? `/accounts/${linkedRecruiterAccountId}`
+                        : null;
+                      return (
+                        <Box
+                          sx={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 0.5,
+                            maxWidth: '100%',
+                          }}
                         >
-                          {displayCompanyName}
-                        </MUILink>
-                      ) : (
-                        <Typography sx={{ ...jobOrderLinkSx, minWidth: 0 }}>{displayCompanyName}</Typography>
-                      )}
-                    </Box>
+                          <BusinessIcon
+                            sx={{ fontSize: 15, color: 'rgb(74, 144, 226)', flexShrink: 0 }}
+                          />
+                          {accountHref ? (
+                            <MUILink
+                              component="button"
+                              type="button"
+                              underline="hover"
+                              onClick={() => navigate(accountHref)}
+                              sx={{ ...jobOrderLinkSx, minWidth: 0 }}
+                            >
+                              {accountName}
+                            </MUILink>
+                          ) : (
+                            <Typography sx={{ ...jobOrderLinkSx, minWidth: 0 }}>
+                              {accountName}
+                            </Typography>
+                          )}
+                        </Box>
+                      );
+                    })()}
                     {displayLocationName && (
                       <>
                         <Typography component="span" sx={{ color: 'text.disabled', lineHeight: 1, userSelect: 'none' }}>
