@@ -160,26 +160,16 @@ export async function generateMenuItems(
     // Add tenant-specific menu items with claims-based role requirements
     // Workforce Management moved to Settings - removed from sidebar
     menuItems.push(
-      // Canonical Contacts/Companies (avoid duplication across Recruiter + CRM)
-      // Show for security levels 5+ (Recruiter/Manager/Admin/Worker types)
+      // Accounts / Users / Onboarding (sec level 5+).
+      // Contacts + Companies moved below Sales CRM per UX request — they're
+      // CRM-adjacent, so they now sit right after the CRM link rather than
+      // next to Accounts/Users.
       ...((effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) ? [
         {
           text: 'Accounts',
           to: '/accounts',
           icon: 'business',
           requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
-        },
-        {
-          text: 'Contacts',
-          to: '/contacts',
-          icon: 'contacts',
-          requiredRoles: ['Recruiter', 'Manager', 'Admin', 'Worker'] as ClaimsRole[],
-        },
-        {
-          text: 'Companies',
-          to: '/companies',
-          icon: 'companies',
-          requiredRoles: ['Recruiter', 'Manager', 'Admin', 'Worker'] as ClaimsRole[],
         },
         {
           text: 'Users',
@@ -274,6 +264,23 @@ export async function generateMenuItems(
         icon: 'business',
         requiredRoles: ['Admin', 'Manager', 'Recruiter', 'Worker'] as ClaimsRole[], // Admin, Manager, Recruiter, and Worker access
       }]),
+      // Contacts + Companies — CRM-adjacent. Sit between Sales CRM and Settings
+      // in the sidebar so they read as "CRM tooling" rather than duplicating
+      // Accounts/Users up top. Still gated to sec levels 5+.
+      ...((effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) ? [
+        {
+          text: 'Contacts',
+          to: '/contacts',
+          icon: 'contacts',
+          requiredRoles: ['Recruiter', 'Manager', 'Admin', 'Worker'] as ClaimsRole[],
+        },
+        {
+          text: 'Companies',
+          to: '/companies',
+          icon: 'companies',
+          requiredRoles: ['Recruiter', 'Manager', 'Admin', 'Worker'] as ClaimsRole[],
+        },
+      ] : []),
       {
         text: 'My Assignments',
         to: '/assignments',
