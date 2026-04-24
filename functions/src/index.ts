@@ -279,6 +279,15 @@ export { logC1WorkerReadinessDomainChanges } from './readiness/homeSnapshotTrigg
 export { syncWorkerProfileReadinessV1 } from './readiness/profileReadinessTrigger';
 export { syncWorkerReadinessV1FromEntityEmployment } from './readiness/entityEmploymentWorkerReadinessTrigger';
 export { syncWorkerReadinessV1FromAssignment } from './readiness/assignmentWorkerReadinessTrigger';
+// Phase 1 readiness rethink — manual seed callable for EmployeeReadinessItem.
+// See recruiter-ownership-model.md §13 + readiness-onboarding-rethink.md.
+export { seedEmployeeReadinessItemsCallable } from './readiness/seedEmployeeReadinessItemsCallable';
+// Phase 1 readiness rethink — triggers that maintain
+// `users/{uid}.primaryRecruiterId` from readiness item ownership.
+export {
+  recomputePrimaryOnEmployeeReadinessItemWrite,
+  recomputePrimaryOnAssignmentReadinessItemWrite,
+} from './readiness/onActionItemOwnershipChange';
 export { syncAssignmentReadinessV1OnAssignmentWrite } from './readiness/assignmentReadinessOnAssignmentWrite';
 export { syncAssignmentReadinessV1OnOnboardingInstanceWrite } from './readiness/assignmentReadinessOnOnboardingInstanceWrite';
 export { syncAssignmentReadinessV1OnSignatureEnvelopeWrite } from './readiness/assignmentReadinessOnSignatureEnvelopeWrite';
