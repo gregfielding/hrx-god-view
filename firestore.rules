@@ -405,6 +405,22 @@ service cloud.firestore {
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
       }
 
+      // Account Workforce (Phase 2 of docs/WORKFORCE_DOMAIN_MODEL.md) —
+      // durable (account, worker) relationship records. Doc id is composite
+      // `{accountId}__{workerId}`. ALL writes flow through server-side
+      // triggers / the setAccountWorkforceStatus callable (admin SDK
+      // bypasses these rules) — direct client writes are blocked so the
+      // validation + cascade logic can't be sidestepped.
+      match /account_workforce/{docId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          hasSecurityLevel(tenantId, 5) ||
+          resource.data.workerId == request.auth.uid
+        );
+        allow create, update, delete: if false;
+      }
+
       // Worker compliance items (Compliance tab / Employment tab) - same read as entity_employments
       match /worker_compliance_items/{itemId} {
         allow read: if request.auth != null && (

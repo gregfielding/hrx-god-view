@@ -297,6 +297,16 @@ export { syncAssignmentReadinessV1OnAssignmentWrite } from './readiness/assignme
 export { syncAssignmentReadinessV1OnOnboardingInstanceWrite } from './readiness/assignmentReadinessOnOnboardingInstanceWrite';
 export { syncAssignmentReadinessV1OnSignatureEnvelopeWrite } from './readiness/assignmentReadinessOnSignatureEnvelopeWrite';
 export { syncAssignmentReadinessV1OnBackgroundCheckWrite } from './readiness/assignmentReadinessOnBackgroundCheckWrite';
+
+// Workforce domain (Phase 2 of docs/WORKFORCE_DOMAIN_MODEL.md).
+// - Trigger maintains AccountWorkforce docs from assignment writes.
+// - Callable flips status (active/inactive) with optional assignment cascade.
+// - Trigger rewrites engagementType cache when an account's hiring entity changes.
+export {
+  onAssignmentWriteMaintainAccountWorkforce,
+  setAccountWorkforceStatus,
+  onAccountHiringEntityChangeBackfillWorkforceEngagementType,
+} from './workforce';
 export {
   syncHrxReadinessSnapshotV1OnPayrollWrite,
   syncHrxReadinessSnapshotV1OnWorkerOnboardingWrite,

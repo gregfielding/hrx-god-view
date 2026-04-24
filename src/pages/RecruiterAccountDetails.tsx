@@ -131,6 +131,9 @@ import AccountCalendarTab from '../components/recruiter/AccountCalendarTab';
 import ActiveWorkersTable, {
   type ActiveWorkersSubAccountGrouping,
 } from '../components/recruiter/ActiveWorkersTable';
+import AccountWorkforceTab, {
+  type WorkforceSubAccountGrouping,
+} from '../components/recruiter/AccountWorkforceTab';
 import AddJobOrderModal from '../components/recruiter/AddJobOrderModal';
 import AddAccountModal from '../components/recruiter/AddAccountModal';
 import type { JobOrder } from '../types/Phase1Types';
@@ -5135,10 +5138,26 @@ const RecruiterAccountDetails: React.FC = () => {
           </Grid>
         </TabPanel>
         <TabPanel value={tabValue} index={2}>
-          <ActiveWorkersTable
+          {/* Workforce tab — rebuilt as three sub-tabs (Scheduled / Active /
+              Inactive) per docs/WORKFORCE_DOMAIN_MODEL.md Phase 3. The
+              legacy ActiveWorkersTable is still used on location-scoped
+              pages; this account-scoped page gets the new component. */}
+          <AccountWorkforceTab
             tenantId={tenantId}
+            account={
+              account
+                ? {
+                    id: account.id,
+                    name: account.name,
+                    accountType: account.accountType,
+                    childAccountIds: account.childAccountIds,
+                  }
+                : null
+            }
             jobOrderIds={accountJobOrders.map((j) => j.id)}
-            subAccountGrouping={activeWorkersSubAccountGrouping}
+            subAccountGrouping={
+              activeWorkersSubAccountGrouping as WorkforceSubAccountGrouping | undefined
+            }
           />
         </TabPanel>
         <TabPanel value={tabValue} index={3}>

@@ -125,6 +125,18 @@ export const p = {
   assignment: (tid: string, id: string) => `tenants/${tid}/assignments/${id}`,
 
   /**
+   * Account Workforce — durable (account, worker) relationship records.
+   * Doc id is composite `${accountId}__${workerId}` (see
+   * `shared/accountWorkforce.ts → accountWorkforceDocId`). `accountId`
+   * is always a child or standalone recruiter account; national parent
+   * views aggregate across children at query time.
+   * @see docs/WORKFORCE_DOMAIN_MODEL.md
+   */
+  accountWorkforce: (tid: string) => `tenants/${tid}/account_workforce`,
+  accountWorkforceDoc: (tid: string, accountId: string, workerId: string) =>
+    `tenants/${tid}/account_workforce/${accountId}__${workerId}`,
+
+  /**
    * Onboarding (Phase 1A)
    */
   entities: (tid: string) => `tenants/${tid}/entities`,
