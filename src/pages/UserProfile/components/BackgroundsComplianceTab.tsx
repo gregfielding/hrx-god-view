@@ -537,9 +537,20 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
 
   const openPdf = async (backgroundCheckId: string, kind: 'final' | 'drug') => {
     if (!canAccusourceAdmin) return;
-    // Open a blank tab *synchronously* on click; navigating it after the callable resolves avoids
-    // popup blockers (Safari in particular) that kill `window.open` invoked after an `await`.
-    const popup = window.open('', '_blank', 'noopener,noreferrer');
+    // Synchronously open a blank tab on click so popup blockers (esp. Safari) treat this as a
+    // user gesture. Intentionally OMIT `noopener` here — per spec that returns `null` from
+    // `window.open`, leaving us without a handle to navigate to the blob URL after the await.
+    const popup = window.open('', '_blank');
+    if (popup) {
+      try {
+        popup.document.title = 'Loading PDF…';
+        popup.document.body.style.font = '14px system-ui, sans-serif';
+        popup.document.body.style.padding = '24px';
+        popup.document.body.textContent = 'Loading PDF…';
+      } catch {
+        /* about:blank doc may be locked down in some browsers; ignore. */
+      }
+    }
     setPdfLoading(`${backgroundCheckId}-${kind}`);
     try {
       // Server contract (see `functions/.../getAccusourceBackgroundCheckPdf.ts`):
@@ -575,22 +586,32 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
       }
 
       if (!targetUrl) {
-        // Nothing to show — close the blank tab we just opened and surface an error.
         if (popup && !popup.closed) popup.close();
         setBgMessageSeverity('error');
         setBgMessage('PDF callable returned no content. Check SourceDirect profile status.');
         return;
       }
 
+      const filename = `${backgroundCheckId}-${kind}.pdf`;
+      let navigated = false;
       if (popup && !popup.closed) {
-        popup.location.href = targetUrl;
-      } else {
-        // Popup was blocked — fall back to an anchor download so the user still gets the file.
+        try {
+          popup.location.replace(targetUrl);
+          navigated = true;
+        } catch {
+          /* Cross-origin or sandboxed popup — fall through to anchor fallback. */
+        }
+      }
+
+      if (!navigated) {
+        // Popup blocked or unable to navigate — trigger a download/new-tab via anchor element.
         const a = document.createElement('a');
         a.href = targetUrl;
         a.target = '_blank';
         a.rel = 'noopener noreferrer';
-        a.download = `${backgroundCheckId}-${kind}.pdf`;
+        // `download` only works for blob/same-origin URLs; for direct cross-origin URLs the
+        // browser will navigate to it in the new tab instead, which is the desired fallback.
+        if (objectUrl) a.download = filename;
         document.body.appendChild(a);
         a.click();
         a.remove();
