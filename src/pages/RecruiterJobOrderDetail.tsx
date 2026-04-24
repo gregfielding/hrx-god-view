@@ -3083,6 +3083,14 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [deal, setDeal] = useState<any>(null);
   /** Recruiter account linked to this job order's company (for Account Type, E-Verify, Hiring Entity). */
   const [linkedAccount, setLinkedAccount] = useState<{ id: string; name?: string; accountType?: string | null; hiringEntityId?: string | null; defaults?: { eVerify?: { eVerifyRequired?: boolean } } } | null>(null);
+  /**
+   * Scheduler for this job order — display name resolved from
+   * `jobOrder.schedulerUid` (a denormalized cache stamped by the
+   * server-side trigger, see `docs/RECRUITING_ROLE_MODEL.md` §2.2).
+   * Null when no Scheduler is assigned; used to render the Scheduler
+   * chip in the header.
+   */
+  const [schedulerName, setSchedulerName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   
   const getStoredTab = (): JobOrderDetailTabKey => {
@@ -3302,6 +3310,41 @@ const RecruiterJobOrderDetail: React.FC = () => {
       cancelled = true;
     };
   }, [tenantId, companyIdForAccount, jobOrderRecruiterAccountId]);
+
+  /**
+   * Resolve the Scheduler's display name when `jobOrder.schedulerUid`
+   * is present. Denormalized stamp is maintained server-side by
+   * `onJobOrderWriteStampScheduler` + `onAccountRolesChangeRestampSchedulers`
+   * (see `docs/RECRUITING_ROLE_MODEL.md` §2.2, Phase 4c). Missing uid →
+   * the chip renders as "Unassigned" rather than being silent.
+   */
+  const jobOrderSchedulerUid =
+    typeof (jobOrder as any)?.schedulerUid === 'string' &&
+    ((jobOrder as any).schedulerUid as string).trim() !== ''
+      ? ((jobOrder as any).schedulerUid as string).trim()
+      : null;
+  useEffect(() => {
+    let cancelled = false;
+    setSchedulerName(null);
+    if (!jobOrderSchedulerUid) return;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'users', jobOrderSchedulerUid));
+        if (cancelled || !snap.exists()) return;
+        const data = snap.data() as Record<string, unknown>;
+        const first = typeof data.firstName === 'string' ? data.firstName : '';
+        const last = typeof data.lastName === 'string' ? data.lastName : '';
+        const display = typeof data.displayName === 'string' ? data.displayName.trim() : '';
+        const combined = `${first} ${last}`.trim();
+        setSchedulerName(combined || display || jobOrderSchedulerUid);
+      } catch {
+        if (!cancelled) setSchedulerName(jobOrderSchedulerUid);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [jobOrderSchedulerUid]);
 
   /** When the JO has no `hiringEntityId`, inherit from `recruiterAccountId` (then parent national account). Matches backend `resolveEntityContext` / Placements entity_employments scoping. */
   const [resolvedRecruiterAccountHiringEntityId, setResolvedRecruiterAccountHiringEntityId] = useState<string | null>(null);
@@ -4309,6 +4352,38 @@ const RecruiterJobOrderDetail: React.FC = () => {
                         </Box>
                       </>
                     )}
+                    {/* Scheduler chip — Phase 5 of RECRUITING_ROLE_MODEL.md.
+                        Shows the Scheduler who owns this order; the chip is
+                        stamped server-side from account.roles.schedulerIds.
+                        Renders as a clickable link when the uid resolves and
+                        falls back to "Unassigned" when no Scheduler exists. */}
+                    <>
+                      <Typography component="span" sx={{ color: 'text.disabled', lineHeight: 1, userSelect: 'none' }}>
+                        ·
+                      </Typography>
+                      <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
+                        <PersonIcon sx={{ fontSize: 15, color: 'rgb(74, 144, 226)', flexShrink: 0 }} />
+                        {jobOrderSchedulerUid ? (
+                          <MUILink
+                            component="button"
+                            type="button"
+                            underline="hover"
+                            onClick={() => navigate(`/users/${jobOrderSchedulerUid}`)}
+                            sx={{ ...jobOrderLinkSx, minWidth: 0 }}
+                          >
+                            {schedulerName || '…'}
+                          </MUILink>
+                        ) : (
+                          <Typography
+                            component="span"
+                            sx={{ ...recordHeaderBodyTextSx, color: 'text.secondary' }}
+                          >
+                            Scheduler: Unassigned
+                          </Typography>
+                        )}
+                      </Box>
+                    </>
+
                     {jobOrderSupportsAutoMessagingTab(jobTypeRaw) && autoMessagingUserGroupLabels.length > 0 && (
                       <>
                         <Typography component="span" sx={{ color: 'text.disabled', lineHeight: 1, userSelect: 'none' }}>

@@ -80,18 +80,83 @@ async function resolveCallerSecurityLevel(
   return { securityLevel: Number.isNaN(parsed) ? 0 : parsed, isHrx };
 }
 
-/** Gate: HRX or security level 5–7 for the tenant. Matches doc §3.5 / §6.2. */
+/**
+ * Deactivation permission gate — tightened for the Recruiting Role Model
+ * (`docs/RECRUITING_ROLE_MODEL.md` §5.3).
+ *
+ * Allowed when ANY of:
+ *   - HRX auto-qualifies.
+ *   - Caller is a CSA for any user group that contains this worker
+ *     (`userGroup.roles.csaIds`).
+ *   - Caller is a Scheduler for this account
+ *     (`account.roles.schedulerIds`).
+ *   - Legacy migration fallback: caller has tenant security level 5–7.
+ *     Kept so tenants that haven't populated CSAs/Schedulers yet don't
+ *     lose the ability to deactivate. Remove once every tenant has
+ *     roles configured.
+ *
+ * The CSA / Scheduler checks fire against the post-normalization input,
+ * so `workerId` and `accountId` are always resolvable at call time.
+ */
 async function assertWorkforceAdmin(
   uid: string,
   authToken: Record<string, unknown> | undefined,
-  tenantId: string,
+  input: SetAccountWorkforceStatusInput,
 ): Promise<void> {
+  const { tenantId, accountId, workerId } = input;
+
+  // HRX auto-qualifies — same as before.
   const { securityLevel, isHrx } = await resolveCallerSecurityLevel(uid, authToken, tenantId);
   if (isHrx) return;
+
+  // Role-model check #1 — Scheduler for the account. One read.
+  try {
+    const accountSnap = await db.doc(`tenants/${tenantId}/accounts/${accountId}`).get();
+    if (accountSnap.exists) {
+      const data = accountSnap.data() as Record<string, unknown>;
+      const roles = (data.roles || {}) as { schedulerIds?: unknown };
+      if (Array.isArray(roles?.schedulerIds) && roles.schedulerIds.includes(uid)) {
+        return;
+      }
+    }
+  } catch (err) {
+    // Non-fatal — fall through to the next check. An outage in this
+    // path shouldn't lock recruiters out of deactivation.
+    logger.warn('assertWorkforceAdmin: scheduler check failed', {
+      tenantId,
+      accountId,
+      err: (err as Error).message,
+    });
+  }
+
+  // Role-model check #2 — CSA for any user group containing this worker.
+  try {
+    const groupsSnap = await db
+      .collection(`tenants/${tenantId}/userGroups`)
+      .where('memberIds', 'array-contains', workerId)
+      .get();
+    for (const d of groupsSnap.docs) {
+      const data = d.data() as Record<string, unknown>;
+      const roles = (data.roles || {}) as { csaIds?: unknown };
+      if (Array.isArray(roles?.csaIds) && roles.csaIds.includes(uid)) {
+        return;
+      }
+    }
+  } catch (err) {
+    logger.warn('assertWorkforceAdmin: CSA check failed', {
+      tenantId,
+      workerId,
+      err: (err as Error).message,
+    });
+  }
+
+  // Legacy fallback — tenant security level 5/6/7. Keeps deactivation
+  // working for tenants that haven't populated CSA/Scheduler roles yet.
   if (securityLevel >= 5 && securityLevel <= 7) return;
+
   throw new HttpsError(
     'permission-denied',
-    'Workforce status changes require tenant security level 5, 6, or 7.',
+    'Deactivating a worker requires you to be a CSA for one of their user groups, a Scheduler for this account, or a tenant admin (security level 5+).',
   );
 }
 
@@ -161,7 +226,7 @@ export const setAccountWorkforceStatus = onCall(
     const actorUid = request.auth.uid;
 
     const input = normalizeInput(request.data);
-    await assertWorkforceAdmin(actorUid, request.auth.token as Record<string, unknown>, input.tenantId);
+    await assertWorkforceAdmin(actorUid, request.auth.token as Record<string, unknown>, input);
 
     const docId = accountWorkforceDocId(input.accountId, input.workerId);
     const ref = db.doc(`tenants/${input.tenantId}/account_workforce/${docId}`);
