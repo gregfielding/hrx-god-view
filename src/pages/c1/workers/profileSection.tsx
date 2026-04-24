@@ -18,12 +18,13 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import { doc, onSnapshot, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
-import { Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { db, auth } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { setLanguage, useT } from '../../../i18n';
 import WorkerBasicIdentityCard from '../../../components/worker/profile/WorkerBasicIdentityCard';
+import EligibilityModal from '../../../components/EligibilityModal';
 import WorkEligibilityStep from '../../../components/apply/steps/WorkEligibilityStep';
 import { deriveWorkEligibilityFromAttestation } from '../../../types/workEligibility';
 import ResumeUpload from '../../../components/ResumeUpload';
@@ -129,6 +130,7 @@ const SECTION_META: Record<SectionKey, { titleKey: string; descriptionKey: strin
 const WorkerProfileSection: React.FC = () => {
   const { section } = useParams<{ section?: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user, avatarUrl, setAvatarUrl, logout } = useAuth();
   const t = useT();
   const uid = user?.uid;
@@ -138,6 +140,29 @@ const WorkerProfileSection: React.FC = () => {
   const [userDoc, setUserDoc] = useState<Record<string, unknown> | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Action items route here with `?verify=phone` when the Twilio phone is not
+  // yet verified. Auto-open the Eligibility modal so the worker immediately
+  // sees the OTP send + code-entry flow instead of landing on a plain profile
+  // form with no call to action. The param is cleared when the modal closes
+  // so refreshing the page doesn't re-open it repeatedly.
+  const verifyTarget = searchParams.get('verify');
+  const [verifyModalOpen, setVerifyModalOpen] = useState(false);
+  useEffect(() => {
+    if (verifyTarget === 'phone') {
+      setVerifyModalOpen(true);
+    }
+  }, [verifyTarget]);
+  const clearVerifyParam = useCallback(() => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('verify');
+        return next;
+      },
+      { replace: true },
+    );
+  }, [setSearchParams]);
 
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
   const [industryPrefs, setIndustryPrefs] = useState<TargetIndustry[]>([]);
@@ -673,6 +698,24 @@ const WorkerProfileSection: React.FC = () => {
           </Card>
         )}
       </Stack>
+
+      {/* Twilio phone verification modal — auto-opens when dashboard action item
+          routes here with `?verify=phone`; also usable in the future for manual
+          triggers. Clears the `verify` query param on close so reloads don't
+          re-open it. */}
+      <EligibilityModal
+        open={verifyModalOpen}
+        onClose={() => {
+          setVerifyModalOpen(false);
+          clearVerifyParam();
+        }}
+        onComplete={() => {
+          setVerifyModalOpen(false);
+          clearVerifyParam();
+        }}
+        needDOB={false}
+        needPhone
+      />
     </Container>
   );
 };

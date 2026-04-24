@@ -309,6 +309,13 @@ function buildWorkerProfileStackItems(input: BuildWorkerDashboardActionItemsInpu
     const descriptionKey = needsVerify
       ? 'dashboard.actionItems.verifyPhoneDescriptionVerify'
       : 'dashboard.actionItems.verifyPhoneDescriptionAdd';
+    // When the worker has a valid US phone but it's not yet verified, route
+    // directly to the Personal Details page with `?verify=phone` so the page
+    // auto-opens the Twilio verification modal (sends OTP + collects the code)
+    // instead of just landing on the edit form with no call to action.
+    const href = needsVerify
+      ? `${WORKER_PERSONAL_DETAILS_HREF}?verify=phone`
+      : WORKER_PERSONAL_DETAILS_HREF;
     return [
       {
         id: 'verify_phone_number',
@@ -318,7 +325,7 @@ function buildWorkerProfileStackItems(input: BuildWorkerDashboardActionItemsInpu
         sortOrder: 20,
         primaryLabelKey,
         primaryKind: 'navigate',
-        href: WORKER_PERSONAL_DETAILS_HREF,
+        href,
         sourceReason: 'Rule 2 (Phone gate): suppress other profile items only',
         qaEvaluatedFields: { gate: 'phone', ...phoneEval.evaluatedFields },
       },

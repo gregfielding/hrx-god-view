@@ -1150,9 +1150,24 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       };
 
       if (shouldPrefillPersonal) {
-        const merged = !hasExistingPersonalData
-          ? personal
-          : { ...personal, ...currentFormData.personal };
+        // Start with the userProfile-derived values (freshly loaded from Firestore)
+        // and let currentFormData overlay — but only for keys whose current value is
+        // actually meaningful. Previous behavior spread the whole currentFormData map,
+        // so empty-string/null/undefined keys in a stale localStorage draft (e.g. a
+        // returning visitor whose saved draft had phone:'' and dob:'') would clobber
+        // the phone + DOB we just read from the user doc. Repro: type phone+DOB on
+        // step 0, go forward, come back — fields are blank even though user doc has
+        // them.
+        const overlayPersonal: Record<string, unknown> = hasExistingPersonalData
+          ? Object.fromEntries(
+              Object.entries(currentFormData.personal || {}).filter(([, v]) => {
+                if (v === null || v === undefined) return false;
+                if (typeof v === 'string' && v.trim() === '') return false;
+                return true;
+              }),
+            )
+          : {};
+        const merged = { ...personal, ...overlayPersonal } as typeof personal;
         merged.dob = toDobString(merged.dob) || '';
         persistPayload.personal = merged;
       }
@@ -1695,10 +1710,17 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             console.warn('Failed to reload user profile:', err);
           }
 
-          // If phone changed, enforce Twilio verification via modal
+          // Enforce Twilio verification via modal whenever the phone is not yet verified
+          // on this user's doc — OR whenever the phone has just changed. Previously this
+          // only fired when the phone changed, so a new signup whose `phone` happened to
+          // match an already-verified number on another user (Twilio phoneVerified never
+          // gets set on the new user's doc until we run `confirmPhoneCode`) would skip
+          // verification entirely and land on Address as step 2.
           const onlyDigits = (v: string) => (v || '').replace(/\D/g, '');
           const currentPhone = userProfile?.phone || userProfile?.phoneE164 || '';
-          if (onlyDigits(p.phone || '') !== onlyDigits(currentPhone)) {
+          const phoneVerifiedOnDoc = Boolean(userProfile?.phoneVerified);
+          const phoneChanged = onlyDigits(p.phone || '') !== onlyDigits(currentPhone);
+          if ((p.phone || '').trim() && (phoneChanged || !phoneVerifiedOnDoc)) {
             setVerifyOpen(true);
             return; // pause progression until verification completes
           }
