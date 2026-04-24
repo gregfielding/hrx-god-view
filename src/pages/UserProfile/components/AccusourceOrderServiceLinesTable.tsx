@@ -13,6 +13,8 @@ import {
   DialogContent,
   DialogContentText,
   DialogTitle,
+  Divider,
+  Drawer,
   IconButton,
   Menu,
   MenuItem,
@@ -27,6 +29,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import CloseIcon from '@mui/icons-material/Close';
 import type { SystemStyleObject } from '@mui/system';
 import type { Theme } from '@mui/material/styles';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
@@ -205,6 +208,29 @@ function lineStatusLooksComplete(status: string | null | undefined): boolean {
   return s.includes('complete') || s.includes('closed') || s === 'pass' || s.includes('clear');
 }
 
+/**
+ * Pick the most specific label for the "Scope" column. Per-county criminal
+ * rows get a jurisdiction string; drug-screen rows get their lab info; the
+ * generic fallback is the hiring entity name. Having every row just repeat
+ * "C1 Select LLC" was useless for adjudication — the scope is the thing the
+ * recruiter needs to see.
+ */
+function scopeLabelForLine(
+  line: AccusourceScreeningLineItem,
+  clientLabelFallback: string,
+): string {
+  const juris = line.jurisdiction != null ? String(line.jurisdiction).trim() : '';
+  if (juris) return juris;
+
+  const labName = line.labName != null ? String(line.labName).trim() : '';
+  const labCode = line.labCode != null ? String(line.labCode).trim() : '';
+  if (labName && labCode) return `${labName} · ${labCode}`;
+  if (labName) return labName;
+  if (labCode) return `Lab ${labCode}`;
+
+  return clientLabelFallback;
+}
+
 function lineHasPrice(line: AccusourceScreeningLineItem): boolean {
   if (line.providerPrice != null && Number.isFinite(line.providerPrice)) return true;
   if (line.providerPriceFormatted != null && String(line.providerPriceFormatted).trim() !== '') return true;
@@ -228,6 +254,11 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
   const [overrideVerdict, setOverrideVerdict] = useState<AccusourceManualVerdict>(null);
   const [overrideReason, setOverrideReason] = useState<string>('');
   const [submittingOverride, setSubmittingOverride] = useState(false);
+  // Per-line detail drawer — opens when a line needs review but has no
+  // clickable report URL and the parent final PDF isn't ready yet. Shows
+  // every field AccuSource sent us so the recruiter has something to
+  // adjudicate against.
+  const [detailLine, setDetailLine] = useState<AccusourceScreeningLineItem | null>(null);
 
   const canOverride = !!onSetAdjudication && canAccusourceAdmin !== false;
 
@@ -316,7 +347,7 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
         includes them on webhooks (field names are normalized server-side).
       </Typography>
       <TableContainer sx={{ maxWidth: '100%', overflowX: 'auto' }}>
-        <Table size="small" sx={{ minWidth: 1280 }}>
+        <Table size="small" sx={{ minWidth: 960 }}>
           <TableHead>
             <TableRow>
               <TableCell sx={{ fontWeight: 700, whiteSpace: 'nowrap' }}>Order #</TableCell>
@@ -324,10 +355,14 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
               {showCostColumn && (
                 <TableCell sx={{ fontWeight: 700, whiteSpace: 'nowrap' }}>Cost</TableCell>
               )}
-              <TableCell sx={{ fontWeight: 700 }}>Client</TableCell>
+              {/* Scope + Subject columns hidden per product feedback — they were
+                  mostly redundant (Scope repeated the hiring entity for most rows,
+                  Subject repeated the worker name shown in the page header). Both
+                  are still visible inside the per-line Details drawer when a
+                  recruiter needs them. Left the <TableCell> stubs removed so
+                  downstream row widths auto-collapse. */}
               <TableCell sx={{ fontWeight: 700, whiteSpace: 'nowrap' }}>Order placed (HRX)</TableCell>
               <TableCell sx={{ fontWeight: 700, minWidth: 200 }}>Lifecycle timestamps</TableCell>
-              <TableCell sx={{ fontWeight: 700 }}>Subject</TableCell>
               <TableCell sx={{ fontWeight: 700 }}>Jurisdiction</TableCell>
               <TableCell sx={{ fontWeight: 700, whiteSpace: 'nowrap' }}>Component ID</TableCell>
               <TableCell sx={{ fontWeight: 700, whiteSpace: 'nowrap' }}>
@@ -336,7 +371,10 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
                 </Tooltip>
               </TableCell>
               <TableCell sx={{ fontWeight: 700, whiteSpace: 'nowrap' }}>Report</TableCell>
-              <TableCell sx={{ fontWeight: 700 }}>Decision</TableCell>
+              {/* Decision column hidden — it's the vendor's raw disposition string and is empty
+                  on the majority of screenings (SSN Locator, most county criminals, in-progress
+                  rows). The Verdict column already incorporates it as an input. Still visible
+                  in the per-line Details drawer for audit. */}
               <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
               <TableCell sx={(theme) => ({ fontWeight: 700, whiteSpace: 'nowrap', ...verdictHeaderStickySx(theme) })}>
                 <Tooltip title="System verdict (auto). Recruiters L5–L7 can override and revert.">
@@ -374,9 +412,7 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
                     <Typography variant="body2">{formatPrice(line)}</Typography>
                   </TableCell>
                 )}
-                <TableCell sx={{ verticalAlign: 'top' }}>
-                  <Typography variant="body2">{clientLabel}</Typography>
-                </TableCell>
+                {/* Scope + Subject cells removed to match the header — available in the Details drawer. */}
                 <TableCell sx={{ verticalAlign: 'top', whiteSpace: 'nowrap' }}>
                   <Typography variant="caption" color="text.secondary">
                     {orderedAtFallback}
@@ -384,11 +420,6 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
                 </TableCell>
                 <TableCell sx={{ verticalAlign: 'top' }}>
                   <LifecycleTimestamps line={line} />
-                </TableCell>
-                <TableCell sx={{ verticalAlign: 'top', maxWidth: 180 }}>
-                  <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>
-                    {subjectLabel}
-                  </Typography>
                 </TableCell>
                 <TableCell sx={{ verticalAlign: 'top', maxWidth: 200 }}>
                   <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>
@@ -442,6 +473,18 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
                         </Button>
                       );
                     }
+                    // No per-line reportUrl AND no final PDF — still give recruiters
+                    // SOMETHING to look at when a verdict of "Needs review" lands. The
+                    // drawer surfaces every field we persisted from the vendor so they
+                    // can adjudicate without blind-guessing Pass / Fail.
+                    const needsReview = line.verdict === 'NEEDS_REVIEW' || lineStatusLooksComplete(line.status);
+                    if (needsReview) {
+                      return (
+                        <Button size="small" variant="text" onClick={() => setDetailLine(line)}>
+                          Details
+                        </Button>
+                      );
+                    }
                     return (
                       <Typography variant="body2" color="text.disabled">
                         —
@@ -449,20 +492,7 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
                     );
                   })()}
                 </TableCell>
-                <TableCell sx={{ verticalAlign: 'top' }}>
-                  {line.decision != null && String(line.decision).trim() !== '' ? (
-                    <Chip
-                      size="small"
-                      label={String(line.decision)}
-                      color={decisionChipColor(String(line.decision))}
-                      sx={{ fontWeight: 600 }}
-                    />
-                  ) : (
-                    <Typography variant="body2" color="text.disabled">
-                      —
-                    </Typography>
-                  )}
-                </TableCell>
+                {/* Decision cell removed to match header — value still shown in Details drawer. */}
                 <TableCell sx={{ verticalAlign: 'top' }}>
                   <Chip
                     size="small"
@@ -598,8 +628,151 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/*
+        Per-line detail drawer. Dumb, thorough view of every field we persisted
+        from the vendor webhook so a recruiter with "Needs review" has something
+        to adjudicate against. Not an attempt to replace the final report PDF —
+        just an always-available fallback.
+      */}
+      <Drawer
+        anchor="right"
+        open={!!detailLine}
+        onClose={() => setDetailLine(null)}
+        PaperProps={{ sx: { width: { xs: '100%', sm: 520 } } }}
+      >
+        {detailLine && (
+          <Box sx={{ p: 3 }}>
+            <Stack direction="row" alignItems="center" justifyContent="space-between" mb={2}>
+              <Typography variant="h6" fontWeight={700}>
+                Line detail
+              </Typography>
+              <IconButton size="small" onClick={() => setDetailLine(null)} aria-label="Close">
+                <CloseIcon fontSize="small" />
+              </IconButton>
+            </Stack>
+            <Typography variant="subtitle1" fontWeight={600}>
+              {detailLine.name}
+            </Typography>
+            {detailLine.type && (
+              <Typography variant="caption" color="text.secondary" display="block">
+                {detailLine.type}
+              </Typography>
+            )}
+            <Divider sx={{ my: 2 }} />
+            <Stack spacing={1.25}>
+              {renderDetailField('Order line id', detailLine.id)}
+              {renderDetailField('Provider order id', detailLine.providerOrderId)}
+              {renderDetailField('Status', detailLine.status)}
+              {renderDetailField('Verdict', verdictChipLabel(detailLine.verdict))}
+              {renderDetailField('Decision', detailLine.decision)}
+              {renderDetailField('Scope', scopeLabelForLine(detailLine, clientLabel))}
+              {renderDetailField('Jurisdiction', detailLine.jurisdiction)}
+              {renderDetailField('Lab name', detailLine.labName)}
+              {renderDetailField(
+                'Lab code',
+                detailLine.labCode != null ? String(detailLine.labCode) : null,
+              )}
+              {renderDetailField('Subject', subjectLabel)}
+              {renderDetailField('Assignment label', detailLine.assignmentLabel)}
+              {renderDetailField(
+                'Ordered at',
+                detailLine.orderedAt ? formatTimestamp(detailLine.orderedAt) : null,
+              )}
+              {renderDetailField(
+                'Updated at',
+                detailLine.updatedAt ? formatTimestamp(detailLine.updatedAt) : null,
+              )}
+              {renderDetailField(
+                'Completed at',
+                detailLine.completedAt ? formatTimestamp(detailLine.completedAt) : null,
+              )}
+              {renderDetailField(
+                'Provider reported at',
+                detailLine.providerReportedAt ? formatTimestamp(detailLine.providerReportedAt) : null,
+              )}
+              {renderDetailField(
+                'Report URL',
+                detailLine.reportUrl ? String(detailLine.reportUrl) : null,
+                { isLink: true },
+              )}
+              {detailLine.adjudication?.autoVerdictReason && (
+                <>
+                  <Divider sx={{ my: 0.5 }} />
+                  {renderDetailField(
+                    'Auto verdict reason',
+                    detailLine.adjudication.autoVerdictReason,
+                  )}
+                </>
+              )}
+              {detailLine.adjudication?.overrideReason && (
+                renderDetailField(
+                  'Override reason',
+                  detailLine.adjudication.overrideReason,
+                )
+              )}
+            </Stack>
+            <Divider sx={{ my: 2 }} />
+            <Typography variant="caption" color="text.secondary">
+              If the vendor's final report PDF is required to adjudicate, it becomes available once
+              every line on this order is complete. Until then, adjudicate from the fields above or
+              request the vendor push the per-line report URL.
+            </Typography>
+          </Box>
+        )}
+      </Drawer>
     </Box>
   );
 };
+
+/** Small key-value renderer for the detail drawer. Optionally renders value as a link. */
+function renderDetailField(
+  label: string,
+  value: string | number | null | undefined,
+  opts?: { isLink?: boolean },
+): React.ReactNode {
+  const v = value != null && String(value).trim() !== '' ? String(value).trim() : null;
+  return (
+    <Box key={label}>
+      <Typography variant="caption" color="text.secondary" display="block">
+        {label}
+      </Typography>
+      {v == null ? (
+        <Typography variant="body2" color="text.disabled">
+          —
+        </Typography>
+      ) : opts?.isLink ? (
+        <Button
+          size="small"
+          variant="text"
+          component="a"
+          href={v}
+          target="_blank"
+          rel="noopener noreferrer"
+          sx={{ textTransform: 'none', p: 0, minWidth: 'auto', justifyContent: 'flex-start' }}
+        >
+          {v.length > 64 ? `${v.slice(0, 64)}…` : v}
+        </Button>
+      ) : (
+        <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>
+          {v}
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
+function formatTimestamp(ts: Timestamp | Date | null | undefined): string {
+  if (!ts) return '';
+  try {
+    if (typeof (ts as Timestamp).toDate === 'function') {
+      return (ts as Timestamp).toDate().toLocaleString();
+    }
+    if (ts instanceof Date) return ts.toLocaleString();
+  } catch {
+    /* fall through */
+  }
+  return '';
+}
 
 export default AccusourceOrderServiceLinesTable;
