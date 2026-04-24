@@ -4036,7 +4036,7 @@ const RecruiterAccountDetails: React.FC = () => {
                     : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
                 }}
               >
-                Active Workers
+                Workforce
               </Button>
               {!isChildAccount && (
                 <Button

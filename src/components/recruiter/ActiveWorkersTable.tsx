@@ -278,77 +278,91 @@ export const ActiveWorkersTable: React.FC<ActiveWorkersTableProps> = ({
         : groupedRows
       : null;
 
+  // Shared sx for all three toggles — matches the Job Orders tab exactly so
+  // the filter bar reads as a unified control strip across both tabs.
+  const toggleSx = {
+    height: 36,
+    '& .MuiToggleButton-root': {
+      textTransform: 'none',
+      fontSize: '0.875rem',
+      px: 1.75,
+      borderRadius: '6px',
+      backgroundColor: 'white',
+    },
+    '& .MuiToggleButton-root.Mui-selected': {
+      backgroundColor: '#0B63C5',
+      color: 'white',
+      '&:hover': { backgroundColor: '#0B63C5' },
+    },
+  } as const;
+
   return (
     <Box>
-      {title && (
+      {/* Section title intentionally suppressed — the account tab strip
+          above already identifies this view, so the "Active Workers" h6
+          was redundant. Keeping the `title` prop for backwards-compat with
+          other callers; render it only when an explicit non-empty title is
+          passed that isn't the legacy default. */}
+      {title && title !== 'Active Workers' && (
         <Typography variant="h6" fontWeight={600} sx={{ mb: 2 }}>
           {title}
         </Typography>
       )}
-      <Stack direction="row" alignItems="center" gap={2} flexWrap="wrap" sx={{ mb: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Typography variant="body2" color="text.secondary">
-            Show:
-          </Typography>
+      {/* Filter bar — mirrors the Job Orders tab container so the two tabs
+          look like siblings. */}
+      <Box
+        sx={{
+          p: 1.5,
+          mb: 2,
+          backgroundColor: '#F9FAFB',
+          borderRadius: '8px',
+          border: '1px solid #E5E7EB',
+        }}
+      >
+        <Stack direction="row" gap={1.5} flexWrap="wrap">
           <ToggleButtonGroup
             value={mode}
             exclusive
             onChange={(_, v) => v != null && setMode(v)}
             size="small"
+            aria-label="Career or Gig"
+            sx={toggleSx}
           >
-            <ToggleButton value="career" aria-label="Career">
-              Career
-            </ToggleButton>
-            <ToggleButton value="gig" aria-label="Gig">
-              Gig
-            </ToggleButton>
+            <ToggleButton value="career">Career</ToggleButton>
+            <ToggleButton value="gig">Gig</ToggleButton>
           </ToggleButtonGroup>
-        </Box>
-        {subAccountGrouping && (
-          <ToggleButtonGroup
-            size="small"
-            exclusive
-            value={view}
-            onChange={(_, next) => {
-              if (next === 'flat' || next === 'sub-account') handleViewChange(next);
-            }}
-            aria-label="Active workers view"
-            sx={{
-              '& .MuiToggleButton-root': { textTransform: 'none' },
-              '& .MuiToggleButton-root.Mui-selected': {
-                backgroundColor: '#0B63C5',
-                color: 'white',
-                '&:hover': { backgroundColor: '#0B63C5' },
-              },
-            }}
-          >
-            <ToggleButton value="flat">Flat list</ToggleButton>
-            <ToggleButton value="sub-account">Sub accounts</ToggleButton>
-          </ToggleButtonGroup>
-        )}
-        {subAccountGrouping && view === 'sub-account' && (
-          <ToggleButtonGroup
-            size="small"
-            exclusive
-            value={subFilter}
-            onChange={(_, next) => {
-              if (next === 'all' || next === 'with-workers') handleSubFilterChange(next);
-            }}
-            aria-label="Sub accounts filter"
-            sx={{
-              '& .MuiToggleButton-root': { textTransform: 'none' },
-              '& .MuiToggleButton-root.Mui-selected': {
-                backgroundColor: '#0B63C5',
-                color: 'white',
-                '&:hover': { backgroundColor: '#0B63C5' },
-              },
-            }}
-          >
-            <ToggleButton value="all">All sub accounts</ToggleButton>
-            <ToggleButton value="with-workers">With workers</ToggleButton>
-          </ToggleButtonGroup>
-        )}
-      </Stack>
+          {subAccountGrouping && (
+            <ToggleButtonGroup
+              size="small"
+              exclusive
+              value={view}
+              onChange={(_, next) => {
+                if (next === 'flat' || next === 'sub-account') handleViewChange(next);
+              }}
+              aria-label="Active workers view"
+              sx={toggleSx}
+            >
+              <ToggleButton value="flat">Flat list</ToggleButton>
+              <ToggleButton value="sub-account">Sub accounts</ToggleButton>
+            </ToggleButtonGroup>
+          )}
+          {subAccountGrouping && view === 'sub-account' && (
+            <ToggleButtonGroup
+              size="small"
+              exclusive
+              value={subFilter}
+              onChange={(_, next) => {
+                if (next === 'all' || next === 'with-workers') handleSubFilterChange(next);
+              }}
+              aria-label="Sub accounts filter"
+              sx={toggleSx}
+            >
+              <ToggleButton value="all">All sub accounts</ToggleButton>
+              <ToggleButton value="with-workers">With workers</ToggleButton>
+            </ToggleButtonGroup>
+          )}
+        </Stack>
+      </Box>
       {loading ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
           <CircularProgress size={32} />
