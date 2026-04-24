@@ -469,91 +469,106 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
           return;
         }
 
-        // My Job Orders: assignedRecruiters contains me OR legacy recruiterId == me
-        const jobOrdersRef = collection(db, 'tenants', tenantId, 'job_orders');
-        const [snapAssigned, snapLegacy] = await Promise.all([
-          getDocs(query(jobOrdersRef, where('assignedRecruiters', 'array-contains', uid), limit(500))),
-          getDocs(query(jobOrdersRef, where('recruiterId', '==', uid), limit(500))),
-        ]);
-        const jobOrderIds = Array.from(
-          new Set([...snapAssigned.docs.map((d) => d.id), ...snapLegacy.docs.map((d) => d.id)])
-        );
+        // My Users = union of two sources during the Phase 1 readiness rollout:
+        //
+        //   (A) CANONICAL source — `users/{uid}.primaryRecruiterId == me`. This
+        //       is the denormalized scalar maintained by the
+        //       recomputePrimaryOnEmployeeReadinessItemWrite /
+        //       recomputePrimaryOnAssignmentReadinessItemWrite triggers per
+        //       recruiter-ownership-model.md §13b. It's authoritative once
+        //       readiness items have been seeded for a worker, but won't cover
+        //       pre-existing workers until the one-time backfill runs.
+        //
+        //   (B) LEGACY source — workers linked to me via job_orders I'm
+        //       assignedRecruiters on (or the pre-array `recruiterId`). This is
+        //       what RecruiterUsers did before the rethink. We union it so the
+        //       tab isn't nearly empty during the transition. Once the backfill
+        //       runs and every active worker has a scalar, (B) can be removed.
+        //
+        // We query both in parallel and dedupe by doc id.
+        const userDocMap = new Map<string, QueryDocumentSnapshot<DocumentData>>();
 
-        if (jobOrderIds.length === 0) {
-          setUsers([]);
-          setLastVisibleDoc(null);
-          setHasMore(false);
-          return;
-        }
+        // (A) Canonical — primaryRecruiterId scalar lookup. One indexed query.
+        const scalarSnapPromise = getDocs(
+          query(usersRef, where('primaryRecruiterId', '==', uid), limit(500)),
+        ).then((snap) => {
+          snap.docs.forEach((d) => userDocMap.set(d.id, d));
+        });
 
-        const idSet = new Set<string>();
-        const chunks = chunk(jobOrderIds, 10);
+        // (B) Legacy — JO-based union of applications + job_applications + assignments.
+        const legacyPromise = (async () => {
+          const jobOrdersRef = collection(db, 'tenants', tenantId, 'job_orders');
+          const [snapAssigned, snapLegacy] = await Promise.all([
+            getDocs(query(jobOrdersRef, where('assignedRecruiters', 'array-contains', uid), limit(500))),
+            getDocs(query(jobOrdersRef, where('recruiterId', '==', uid), limit(500))),
+          ]);
+          const jobOrderIds = Array.from(
+            new Set([...snapAssigned.docs.map((d) => d.id), ...snapLegacy.docs.map((d) => d.id)]),
+          );
+          if (jobOrderIds.length === 0) return;
 
-        const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
-        const jobApplicationsRef = collection(db, 'tenants', tenantId, 'job_applications');
-        const assignmentsRef = collection(db, 'tenants', tenantId, 'assignments');
+          const idSet = new Set<string>();
+          const chunks = chunk(jobOrderIds, 10);
+          const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+          const jobApplicationsRef = collection(db, 'tenants', tenantId, 'job_applications');
+          const assignmentsRef = collection(db, 'tenants', tenantId, 'assignments');
 
-        await Promise.all(
-          chunks.map(async (ids) => {
-            try {
-              const snap = await getDocs(query(applicationsRef, where('jobOrderId', 'in', ids)));
-              snap.docs.forEach((d) => {
-                const id = extractUserId(d.data());
-                if (id) idSet.add(id);
-              });
-            } catch {
-              // ignore
-            }
-          })
-        );
+          const collectUserIdsFromApplication = (snap: { docs: Array<{ data: () => any }> }) => {
+            snap.docs.forEach((d) => {
+              const id = extractUserId(d.data());
+              if (id) idSet.add(id);
+            });
+          };
 
-        await Promise.all(
-          chunks.map(async (ids) => {
-            try {
-              const snap = await getDocs(query(jobApplicationsRef, where('jobOrderId', 'in', ids)));
-              snap.docs.forEach((d) => {
-                const id = extractUserId(d.data());
-                if (id) idSet.add(id);
-              });
-            } catch {
-              // ignore
-            }
-          })
-        );
-
-        await Promise.all(
-          chunks.map(async (ids) => {
-            try {
-              const snap = await getDocs(query(assignmentsRef, where('jobOrderId', 'in', ids)));
-              snap.docs.forEach((d) => {
-                const id = extractUserId(d.data());
-                if (id) idSet.add(id);
-              });
-            } catch {
-              // ignore
-            }
-          })
-        );
-
-        const myUserIds = Array.from(idSet);
-        if (myUserIds.length === 0) {
-          setUsers([]);
-          setLastVisibleDoc(null);
-          setHasMore(false);
-          return;
-        }
-
-        const userIdChunks = chunk(myUserIds, 10);
-        const userDocs = (
           await Promise.all(
-            userIdChunks.map(async (ids) => {
-              const snap = await getDocs(query(usersRef, where(documentId(), 'in', ids)));
-              return snap.docs;
-            })
-          )
-        ).flat();
+            chunks.map(async (ids) => {
+              try {
+                const snap = await getDocs(query(applicationsRef, where('jobOrderId', 'in', ids)));
+                collectUserIdsFromApplication(snap);
+              } catch {
+                /* ignore */
+              }
+            }),
+          );
+          await Promise.all(
+            chunks.map(async (ids) => {
+              try {
+                const snap = await getDocs(query(jobApplicationsRef, where('jobOrderId', 'in', ids)));
+                collectUserIdsFromApplication(snap);
+              } catch {
+                /* ignore */
+              }
+            }),
+          );
+          await Promise.all(
+            chunks.map(async (ids) => {
+              try {
+                const snap = await getDocs(query(assignmentsRef, where('jobOrderId', 'in', ids)));
+                collectUserIdsFromApplication(snap);
+              } catch {
+                /* ignore */
+              }
+            }),
+          );
 
-        const mapped = userDocs
+          const legacyUserIds = Array.from(idSet).filter((id) => !userDocMap.has(id));
+          if (legacyUserIds.length === 0) return;
+
+          const userIdChunks = chunk(legacyUserIds, 10);
+          const userDocs = (
+            await Promise.all(
+              userIdChunks.map(async (ids) => {
+                const snap = await getDocs(query(usersRef, where(documentId(), 'in', ids)));
+                return snap.docs;
+              }),
+            )
+          ).flat();
+          userDocs.forEach((d) => userDocMap.set(d.id, d));
+        })();
+
+        await Promise.all([scalarSnapPromise, legacyPromise]);
+
+        const mapped = Array.from(userDocMap.values())
           .map((d) => mapUserDocToRecruiterUser(d, tenantId))
           .filter((u): u is RecruiterUser => !!u);
 
