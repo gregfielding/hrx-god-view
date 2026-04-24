@@ -76,6 +76,22 @@ export async function assertWorkerHeadshotApproved(
   const verification = data?.avatarVerification ?? null;
   const status = (verification?.status ?? null) as AvatarVerificationStatus | null;
 
+  // ----------------------------------------------------------------------
+  // TEMPORARY: relaxed gate — any uploaded avatar counts as sufficient.
+  //
+  // The Vision-based verification pipeline is throwing false positives
+  // (workers who HAVE a valid photo keep getting stuck on `pending`/`error`),
+  // which blocks recruiters from confirming legit assignments. Until we
+  // re-harden the verification pass, we treat "worker has any non-empty
+  // avatar URL" as the passing condition — same bar as the rest of the
+  // recruiter UI uses for showing a headshot.
+  //
+  // To restore strict verification: delete this block and keep only the
+  // `status === 'approved'` short-circuit below.
+  // ----------------------------------------------------------------------
+  const hasAvatar = typeof data?.avatar === 'string' && data.avatar.trim().length > 0;
+  if (hasAvatar) return;
+
   if (status === 'approved') return;
 
   const details = buildBlockedDetails(data, verification, status);
