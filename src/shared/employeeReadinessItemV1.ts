@@ -1,7 +1,4 @@
 /**
- * **Mirror of `shared/employeeReadinessItemV1.ts`** — CRA client/jest copy.
- * Keep byte-for-byte in sync.
- *
  * Employee Readiness — PER-ENTITY readiness state for a worker.
  *
  * Scope: one `EmployeeReadinessItem` is one (worker × hiring entity × requirement)
@@ -45,18 +42,38 @@ export type EmployeeReadinessRequirementType =
   /** Escape hatch for tenant-custom requirements not in the canonical list. */
   | 'custom';
 
-/** Current state of the requirement. */
+/**
+ * Current state of the requirement. Per `readiness-onboarding-rethink.md §6e`
+ * we avoid an ambiguous "complete" value for anything with a pass/fail
+ * dimension — vendor-driven items (background, drug, E-Verify) routinely come
+ * back "done" with a failing verdict, and collapsing that to "complete" hides
+ * the recruiter's actual work.
+ */
 export type EmployeeReadinessItemStatus =
-  /** The requirement applies and needs action. */
+  /** The requirement applies and the worker / recruiter hasn't started it. */
   | 'incomplete'
-  /** Waiting on a vendor / external response (AccuSource pending, E-Verify TNC review, etc.). */
+  /** Worker submitted / vendor order placed; waiting on the vendor/system result. */
   | 'in_progress'
-  /** Worker / recruiter / vendor marked this satisfied. */
-  | 'complete'
-  /** Vendor returned a blocker (DISCREPANCY, FINAL_NONCONFIRMATION). Needs recruiter review. */
+  /** Satisfied with a positive verdict (e-verify authorized, handbook signed, bank attached). */
+  | 'complete_pass'
+  /** Satisfied with a negative verdict (e-verify FNC, background FAIL). Terminal or retryable per item. */
+  | 'complete_fail'
+  /** Vendor returned a signal needing recruiter adjudication (AccuSource DISCREPANCY, E-Verify TNC). */
+  | 'needs_review'
+  /** Previously complete_pass but the `expiresAt` has passed — needs re-verification. */
+  | 'expired'
+  /** Something upstream blocks the worker from starting this item (missing prereq, worker terminated). */
   | 'blocked'
   /** Doesn't apply for this worker × entity (e.g. 1099 contractor skips W-4). */
-  | 'not_applicable';
+  | 'not_applicable'
+  /**
+   * Legacy "done" state for items created before we split pass/fail. New writes
+   * must use `complete_pass` / `complete_fail`; readers should treat `complete`
+   * as `complete_pass` with an implicit "pre-6e" caveat. Keep in the union so
+   * existing docs validate.
+   * @deprecated
+   */
+  | 'complete';
 
 /** Who owns moving this item forward. Independent from `ownership.primaryRecruiterId` — a
  *  recruiter still "owns" a worker-actor item for follow-up, but doesn't do the action itself. */

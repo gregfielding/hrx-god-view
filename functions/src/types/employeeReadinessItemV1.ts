@@ -26,9 +26,14 @@ export type EmployeeReadinessRequirementType =
 export type EmployeeReadinessItemStatus =
   | 'incomplete'
   | 'in_progress'
-  | 'complete'
+  | 'complete_pass'
+  | 'complete_fail'
+  | 'needs_review'
+  | 'expired'
   | 'blocked'
-  | 'not_applicable';
+  | 'not_applicable'
+  /** @deprecated pre-§6e; treat as complete_pass. Kept so old docs validate. */
+  | 'complete';
 
 export type EmployeeReadinessItemActor = 'worker' | 'recruiter' | 'vendor' | 'system';
 

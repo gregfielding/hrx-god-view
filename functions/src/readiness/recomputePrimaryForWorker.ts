@@ -25,11 +25,27 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-/** An item status is "active" for ownership purposes when it's still requiring action. */
+/**
+ * An item status is "active" for ownership purposes when the primary recruiter
+ * still has responsibility for moving it forward. Per §6e this includes:
+ *   - incomplete / in_progress — not yet resolved
+ *   - blocked                  — upstream issue still owned by this recruiter
+ *   - needs_review             — vendor returned DISCREPANCY / TNC; recruiter adjudicates
+ *   - complete_fail            — failure may be retryable; keep ownership until closed
+ *   - expired                  — previously passed, now needs re-verification
+ *
+ * NOT active (removes the anchor from the primary computation):
+ *   - complete_pass            — done cleanly; no further action from this recruiter
+ *   - not_applicable           — never applied
+ *   - complete (legacy)        — treat like complete_pass
+ */
 const ACTIVE_STATUSES: ReadonlySet<string> = new Set([
   'incomplete',
   'in_progress',
   'blocked',
+  'needs_review',
+  'complete_fail',
+  'expired',
 ]);
 
 export type RecomputePrimaryResult = {

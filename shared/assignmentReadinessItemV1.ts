@@ -45,12 +45,21 @@ export type AssignmentReadinessRequirementType =
   | 'custom';
 
 /** State for the item. Same semantics as EmployeeReadinessItemStatus. */
+/**
+ * Same vocabulary as `EmployeeReadinessItemStatus` — see the detailed doc
+ * comment there. Split pass/fail per `readiness-onboarding-rethink.md §6e`.
+ */
 export type AssignmentReadinessItemStatus =
   | 'incomplete'
   | 'in_progress'
-  | 'complete'
+  | 'complete_pass'
+  | 'complete_fail'
+  | 'needs_review'
+  | 'expired'
   | 'blocked'
-  | 'not_applicable';
+  | 'not_applicable'
+  /** @deprecated use `complete_pass` / `complete_fail`. Kept for pre-6e docs. */
+  | 'complete';
 
 export type AssignmentReadinessItemActor = 'worker' | 'recruiter' | 'vendor' | 'system';
 

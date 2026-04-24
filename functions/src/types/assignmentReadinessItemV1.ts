@@ -18,9 +18,14 @@ export type AssignmentReadinessRequirementType =
 export type AssignmentReadinessItemStatus =
   | 'incomplete'
   | 'in_progress'
-  | 'complete'
+  | 'complete_pass'
+  | 'complete_fail'
+  | 'needs_review'
+  | 'expired'
   | 'blocked'
-  | 'not_applicable';
+  | 'not_applicable'
+  /** @deprecated pre-§6e; treat as complete_pass. Kept so old docs validate. */
+  | 'complete';
 
 export type AssignmentReadinessItemActor = 'worker' | 'recruiter' | 'vendor' | 'system';
 

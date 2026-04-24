@@ -160,6 +160,27 @@ describe('seedEmployeeReadinessItems — defaults', () => {
     );
     expect(b[0].status).toBe('complete');
   });
+
+  it('accepts the §6e status vocabulary (complete_pass, complete_fail, needs_review, expired)', () => {
+    // Each §6e status should be assignable on a seeded item. If the enum regresses,
+    // TS blocks this test from compiling — which is the behavior we want.
+    const items = seedEmployeeReadinessItems(
+      baseInput({
+        requirements: [
+          { requirementType: 'handbook_acknowledgement', status: 'complete_pass' },
+          { requirementType: 'e_verify', status: 'complete_fail' },
+          { requirementType: 'background_check', status: 'needs_review' },
+          { requirementType: 'i9_section_1', status: 'expired' },
+        ],
+      }),
+    );
+    expect(items.map((i) => i.status)).toEqual([
+      'complete_pass',
+      'complete_fail',
+      'needs_review',
+      'expired',
+    ]);
+  });
 });
 
 describe('seedEmployeeReadinessItems — validation', () => {

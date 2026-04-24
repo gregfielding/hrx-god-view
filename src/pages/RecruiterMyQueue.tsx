@@ -65,6 +65,10 @@ import BlockIcon from '@mui/icons-material/Block';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CancelIcon from '@mui/icons-material/Cancel';
+import RateReviewIcon from '@mui/icons-material/RateReview';
+import ScheduleIcon from '@mui/icons-material/Schedule';
 import { collection, getDocs, query, where, doc, serverTimestamp, updateDoc, arrayUnion } from 'firebase/firestore';
 
 import { useAuth } from '../contexts/AuthContext';
@@ -92,7 +96,17 @@ type QueueRow = {
   /** Shared. */
   requirementType: string;
   requirementLabel?: string;
-  status: 'incomplete' | 'in_progress' | 'complete' | 'blocked' | 'not_applicable';
+  status:
+    | 'incomplete'
+    | 'in_progress'
+    | 'complete_pass'
+    | 'complete_fail'
+    | 'needs_review'
+    | 'expired'
+    | 'blocked'
+    | 'not_applicable'
+    /** @deprecated legacy pre-§6e value; treat as complete_pass. */
+    | 'complete';
   actor: 'worker' | 'recruiter' | 'vendor' | 'system';
   blocking: boolean;
   /** For tier determination + claim action. */
@@ -117,7 +131,20 @@ type QueueRow = {
 
 type QueueTier = 'primary' | 'visibility' | 'pool';
 
-const ACTIVE_STATUSES: ReadonlySet<QueueRow['status']> = new Set(['incomplete', 'in_progress', 'blocked']);
+/**
+ * Statuses that belong in the queue — i.e. the recruiter still has something to
+ * do. Mirrors the server-side ACTIVE_STATUSES in `recomputePrimaryForWorker.ts`
+ * but widened to include `complete_fail` (often retryable, worth surfacing) and
+ * `expired` (needs re-verification).
+ */
+const ACTIVE_STATUSES: ReadonlySet<QueueRow['status']> = new Set([
+  'incomplete',
+  'in_progress',
+  'blocked',
+  'needs_review',
+  'complete_fail',
+  'expired',
+]);
 
 const RecruiterMyQueue: React.FC = () => {
   const { user, activeTenant } = useAuth();
@@ -954,15 +981,27 @@ function formatAge(ms: number): string {
   return `${days}d`;
 }
 
-/** Small per-status chip. Mirrors the "complete_pass / complete_fail" vocabulary from the
- *  rethink doc §6e, although for v1 we only show active statuses here. */
+/**
+ * Per-status chip. Implements the §6e vocabulary — "Complete" is gone as a
+ * pass/fail-ambiguous label; items render as Passed / Failed / Needs review /
+ * Expired when they carry a verdict, and keep the pre-verdict states
+ * (Incomplete / In progress / Blocked / N/A) otherwise.
+ *
+ * Legacy `complete` renders as "Passed" since that's how pre-§6e rows are to
+ * be interpreted going forward.
+ */
 const StatusChip: React.FC<{ status: QueueRow['status'] }> = ({ status }) => {
   const byStatus: Record<QueueRow['status'], { label: string; color: any; icon: React.ReactElement | undefined }> = {
     incomplete: { label: 'Incomplete', color: 'default', icon: <HourglassEmptyIcon fontSize="small" /> },
     in_progress: { label: 'In progress', color: 'info', icon: <PlayCircleOutlineIcon fontSize="small" /> },
     blocked: { label: 'Blocked', color: 'error', icon: <ErrorOutlineIcon fontSize="small" /> },
-    complete: { label: 'Complete', color: 'success', icon: undefined },
+    complete_pass: { label: 'Passed', color: 'success', icon: <CheckCircleIcon fontSize="small" /> },
+    complete_fail: { label: 'Failed', color: 'error', icon: <CancelIcon fontSize="small" /> },
+    needs_review: { label: 'Needs review', color: 'warning', icon: <RateReviewIcon fontSize="small" /> },
+    expired: { label: 'Expired', color: 'warning', icon: <ScheduleIcon fontSize="small" /> },
     not_applicable: { label: 'N/A', color: 'default', icon: undefined },
+    // Legacy — interpret as pass per the type comment.
+    complete: { label: 'Passed', color: 'success', icon: <CheckCircleIcon fontSize="small" /> },
   };
   const cfg = byStatus[status] ?? byStatus.incomplete;
   return <Chip label={cfg.label} size="small" color={cfg.color} variant="outlined" icon={cfg.icon} />;
