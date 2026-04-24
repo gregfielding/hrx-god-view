@@ -128,7 +128,9 @@ import { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderCh
 import AccountOrderDefaultsCard from '../components/recruiter/AccountOrderDefaultsCard';
 import AccountOrderDetailsForm from '../components/recruiter/AccountOrderDetailsForm';
 import AccountCalendarTab from '../components/recruiter/AccountCalendarTab';
-import ActiveWorkersTable from '../components/recruiter/ActiveWorkersTable';
+import ActiveWorkersTable, {
+  type ActiveWorkersSubAccountGrouping,
+} from '../components/recruiter/ActiveWorkersTable';
 import AddJobOrderModal from '../components/recruiter/AddJobOrderModal';
 import AddAccountModal from '../components/recruiter/AddAccountModal';
 import type { JobOrder } from '../types/Phase1Types';
@@ -3153,6 +3155,52 @@ const RecruiterAccountDetails: React.FC = () => {
   }, [account?.id, account?.name, account?.childAccountIds, accountOptions, filteredAccountJobOrders]);
 
   /**
+   * Sub-account grouping config for the Active Workers tab. Same shape the
+   * Job Orders tab builds inline, but only a thin mapping — the table itself
+   * bucket-sorts worker rows by group. Returned undefined for non-National
+   * accounts so the component falls back to its original flat layout.
+   */
+  const activeWorkersSubAccountGrouping = useMemo<ActiveWorkersSubAccountGrouping | undefined>(() => {
+    if (!isNationalAccount || !account?.id) return undefined;
+    const childIds = (account.childAccountIds || []).filter(
+      (id): id is string => typeof id === 'string' && id.trim() !== '',
+    );
+    const childLabelById = new Map<string, string>();
+    for (const opt of accountOptions) {
+      if (opt?.id && opt?.label) childLabelById.set(opt.id, opt.label);
+    }
+    const groups = [
+      {
+        id: account.id,
+        label: `${account.name || 'Parent account'} (National)`,
+        isParent: true,
+        href: `/accounts/${account.id}`,
+      },
+      ...childIds.map((id) => ({
+        id,
+        label: childLabelById.get(id) || 'Sub account',
+        isParent: false,
+        href: `/accounts/${id}`,
+      })),
+    ];
+    const childIdSet = new Set(childIds);
+    const groupIdByJobOrderId: Record<string, string> = {};
+    for (const jo of accountJobOrders) {
+      const raid = (jo as any).recruiterAccountId;
+      const rid = typeof raid === 'string' && raid.trim() !== '' ? raid.trim() : null;
+      groupIdByJobOrderId[jo.id] = rid && childIdSet.has(rid) ? rid : account.id;
+    }
+    return { groups, groupIdByJobOrderId, persistKey: account.id };
+  }, [
+    isNationalAccount,
+    account?.id,
+    account?.name,
+    account?.childAccountIds,
+    accountOptions,
+    accountJobOrders,
+  ]);
+
+  /**
    * Fan-out fetch of shifts for each Gig JO in the current `accountJobOrders`.
    * Career orders are skipped. Processed in chunks of 10 so we don't slam
    * Firestore for accounts with 50+ orders. Aborts cleanly on unmount /
@@ -5090,6 +5138,7 @@ const RecruiterAccountDetails: React.FC = () => {
           <ActiveWorkersTable
             tenantId={tenantId}
             jobOrderIds={accountJobOrders.map((j) => j.id)}
+            subAccountGrouping={activeWorkersSubAccountGrouping}
           />
         </TabPanel>
         <TabPanel value={tabValue} index={3}>
