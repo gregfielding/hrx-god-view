@@ -148,6 +148,7 @@ import RecruiterSettings from './pages/RecruiterSettings';
 import RecruiterDashboard from './pages/RecruiterDashboard';
 import AccountsDashboard from './pages/AccountsDashboard';
 import RecruiterMain from './pages/RecruiterMain';
+import RecruiterMyQueue from './pages/RecruiterMyQueue';
 import RecruiterJobOrders from './pages/RecruiterJobOrders';
 import RecruiterAccounts from './pages/RecruiterAccounts';
 import RecruiterJobOrderDetail from './pages/RecruiterJobOrderDetail';
@@ -1265,6 +1266,9 @@ function App() {
           <Route index element={<Navigate to="/jobs/job-orders" replace />} />
           <Route path="job-orders" element={<RecruiterJobOrders />} />
           <Route path="my-orders" element={<RecruiterJobOrders />} />
+          {/* Phase 1 readiness: recruiter action queue across all readiness items I own.
+              Lives under the Recruiter hub so nav + auth chrome match the rest of /jobs/*. */}
+          <Route path="my-queue" element={<RecruiterMyQueue />} />
           <Route path="onboarding" element={<Navigate to="/jobs/job-orders" replace />} />
           <Route path="job-orders/new" element={<NewJobOrder />} />
           <Route path="job-orders/:jobOrderId" element={<RecruiterJobOrderDetail />} />

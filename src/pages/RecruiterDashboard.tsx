@@ -14,6 +14,7 @@ import {
   Add as AddIcon,
   Person as PersonIcon,
   GroupAdd as GroupAddIcon,
+  PlaylistAddCheck as PlaylistAddCheckIcon,
 } from '@mui/icons-material';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
@@ -25,6 +26,7 @@ import AddJobOrderModal from '../components/recruiter/AddJobOrderModal';
 export type RecruiterTab =
   | 'job-orders'
   | 'my-orders'
+  | 'my-queue'
   | 'jobs-board'
   | 'reports';
 
@@ -52,6 +54,8 @@ const RecruiterDashboard: React.FC = () => {
   // Get active tab from URL or default to 'job-orders'
   const getActiveTab = (): RecruiterTab => {
     const path = location.pathname;
+    // Check my-queue BEFORE my-orders so the substring match doesn't collide.
+    if (path.includes('/my-queue')) return 'my-queue';
     if (path.includes('/my-orders')) return 'my-orders';
     if (path.includes('/job-orders')) return 'job-orders';
     if (path.includes('/jobs-board')) return 'jobs-board';
@@ -82,6 +86,8 @@ const RecruiterDashboard: React.FC = () => {
   const tabs = [
     { id: 'job-orders' as RecruiterTab, label: 'Job Orders', icon: <WorkIcon fontSize="small" /> },
     { id: 'my-orders' as RecruiterTab, label: 'My Job Orders', icon: <PersonIcon fontSize="small" /> },
+    // Phase 1 readiness action queue — readiness items owned by the current recruiter.
+    { id: 'my-queue' as RecruiterTab, label: 'My Queue', icon: <PlaylistAddCheckIcon fontSize="small" /> },
     { id: 'jobs-board' as RecruiterTab, label: 'Jobs Board', icon: <AssignmentIcon fontSize="small" /> },
   ];
 
