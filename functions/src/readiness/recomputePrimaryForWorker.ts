@@ -19,6 +19,7 @@ import {
 } from '../shared/workerPrimaryRecruiter';
 import type { EmployeeReadinessItem } from '../shared/employeeReadinessItemV1';
 import type { AssignmentReadinessItem } from '../shared/assignmentReadinessItemV1';
+import { resolveRole, type ResolveRoleUserGroup } from '../shared/resolveRole';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -74,34 +75,113 @@ export async function recomputePrimaryForWorker(
     return { primaryRecruiterId: null, changed: false, sourceAnchor: null };
   }
 
+  // CSA path first — Recruiting Role Model (docs/RECRUITING_ROLE_MODEL.md §2.1
+  // and §5.4). If any user group this worker belongs to has a populated
+  // `roles.csaIds`, that wins and becomes the primary. Only when no group
+  // has CSAs do we fall through to the legacy anchor-based computation,
+  // so behavior is unchanged for tenants that haven't adopted the role
+  // model yet. Earliest-created group's first CSA wins (§3.1).
+  const csaResult = await tryResolveCsaForWorker(tenantId, workerUid);
+  if (csaResult.primaryRecruiterId !== null) {
+    const writeResult = await writePrimaryIfChanged(workerUid, csaResult.primaryRecruiterId);
+    return {
+      primaryRecruiterId: csaResult.primaryRecruiterId,
+      changed: writeResult.changed,
+      // No anchor for CSA-sourced writes — the "source" is the user group.
+      sourceAnchor: null,
+    };
+  }
+
   const anchors = await loadActiveAnchors(tenantId, workerUid);
   const { primaryRecruiterId, sourceAnchor } = computePrimaryRecruiterForWorker(anchors);
 
+  const writeResult = await writePrimaryIfChanged(workerUid, primaryRecruiterId);
+  return { primaryRecruiterId, changed: writeResult.changed, sourceAnchor };
+}
+
+/**
+ * Transactional write — only touches `users/{uid}` when the scalar
+ * actually needs to change. Shared between the CSA path and the legacy
+ * anchor path so both write behavior and timestamp semantics stay
+ * identical no matter which resolver picked the winner.
+ */
+async function writePrimaryIfChanged(
+  workerUid: string,
+  next: string | null,
+): Promise<{ changed: boolean }> {
   const userRef = db.doc(`users/${workerUid}`);
-  const result = await db.runTransaction(async (tx) => {
+  return db.runTransaction(async (tx) => {
     const snap = await tx.get(userRef);
     const current = (snap.exists ? snap.data()?.primaryRecruiterId : null) as string | null | undefined;
-
-    // Normalize falsy variants (undefined / missing) to null for comparison.
     const before: string | null = typeof current === 'string' && current.trim() !== '' ? current : null;
-    if (before === primaryRecruiterId) {
-      return { changed: false };
-    }
+    if (before === next) return { changed: false };
 
     const patch: Record<string, unknown> = {
-      primaryRecruiterId,
+      primaryRecruiterId: next,
       primaryRecruiterSince: admin.firestore.FieldValue.serverTimestamp(),
     };
     // Clear `primaryRecruiterSince` when clearing the scalar so we don't leave
     // a stale timestamp pointing at a recruiter who no longer owns this worker.
-    if (primaryRecruiterId === null) {
+    if (next === null) {
       patch.primaryRecruiterSince = admin.firestore.FieldValue.delete();
     }
     tx.set(userRef, patch, { merge: true });
     return { changed: true };
   });
+}
 
-  return { primaryRecruiterId, changed: result.changed, sourceAnchor };
+/**
+ * CSA tier resolver — walks the worker's user-group memberships and
+ * delegates to the pure `resolveRole('candidate_success_agent', ...)`
+ * resolver. Returns `null` when no group has CSAs populated so the
+ * caller can fall through to the legacy anchor path.
+ *
+ * Performance: one query (userGroups where memberIds array-contains
+ * workerUid). For a typical worker in 1-3 groups, total read budget
+ * stays in single digits.
+ */
+async function tryResolveCsaForWorker(
+  tenantId: string,
+  workerUid: string,
+): Promise<{ primaryRecruiterId: string | null }> {
+  try {
+    const snap = await db
+      .collection(`tenants/${tenantId}/userGroups`)
+      .where('memberIds', 'array-contains', workerUid)
+      .get();
+    if (snap.empty) return { primaryRecruiterId: null };
+
+    const groups: ResolveRoleUserGroup[] = snap.docs.map((d) => {
+      const data = d.data() as Record<string, unknown>;
+      const roles = (data.roles || {}) as { csaIds?: unknown };
+      const csaIds = Array.isArray(roles?.csaIds)
+        ? (roles.csaIds.filter((x) => typeof x === 'string') as string[])
+        : [];
+      const createdAtIso =
+        typeof data.createdAt === 'string'
+          ? data.createdAt
+          : data.createdAt && typeof (data.createdAt as { toDate?: unknown }).toDate === 'function'
+            ? (() => {
+                try {
+                  return (data.createdAt as { toDate: () => Date }).toDate().toISOString();
+                } catch {
+                  return undefined;
+                }
+              })()
+            : undefined;
+      return { id: d.id, csaIds, createdAtIso };
+    });
+
+    const result = resolveRole({ role: 'candidate_success_agent', userGroups: groups });
+    return { primaryRecruiterId: result.primaryUid };
+  } catch (err) {
+    logger.warn('recomputePrimaryForWorker: CSA tier lookup failed; falling back to legacy', {
+      tenantId,
+      workerUid,
+      err: (err as Error).message,
+    });
+    return { primaryRecruiterId: null };
+  }
 }
 
 /**

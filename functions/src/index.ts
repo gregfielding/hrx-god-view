@@ -309,6 +309,18 @@ export {
   setAssignmentOutcome,
   onAccountWorkforceStatusChangeSyncUserInactiveSet,
 } from './workforce';
+
+// Recruiting role model (Phase 4 of docs/RECRUITING_ROLE_MODEL.md).
+// - CSA denorm trigger: keeps users.{uid}.primaryRecruiterId in sync
+//   with user-group CSA assignments. The per-worker recompute lives in
+//   readiness/recomputePrimaryForWorker (CSA path tried first, legacy
+//   anchor fallback for tenants that haven't adopted CSAs yet).
+// - Scheduler stamping triggers: stamp jobOrder.schedulerUid from the
+//   account's roles.schedulerIds on JO write; re-stamp every JO for an
+//   account when its Scheduler roster changes.
+export { onUserGroupRolesOrMembersChangeRecomputeWorkersPrimary } from './recruiting/onUserGroupRolesOrMembersChange';
+export { onJobOrderWriteStampScheduler } from './recruiting/onJobOrderWriteStampScheduler';
+export { onAccountRolesChangeRestampSchedulers } from './recruiting/onAccountRolesChangeRestampSchedulers';
 export {
   syncHrxReadinessSnapshotV1OnPayrollWrite,
   syncHrxReadinessSnapshotV1OnWorkerOnboardingWrite,
