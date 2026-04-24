@@ -91,7 +91,7 @@ import {
 } from '../utils/workersCompRateMaps';
 import PageHeader from '../components/PageHeader';
 import AccountCalendarTab from '../components/recruiter/AccountCalendarTab';
-import ActiveWorkersTable from '../components/recruiter/ActiveWorkersTable';
+import AccountWorkforceTab from '../components/recruiter/AccountWorkforceTab';
 import AccountOrderDefaultsCard from '../components/recruiter/AccountOrderDefaultsCard';
 import AccountOrderDetailsForm from '../components/recruiter/AccountOrderDetailsForm';
 import MapWithMarkers from './UserProfile/components/AddressTab/MapWithMarkers';
@@ -1914,8 +1914,30 @@ export default function AccountLocationDetail() {
         </TabPanel>
 
         <TabPanel value={tabValue} index={2}>
-          <ActiveWorkersTable
+          {/* Workforce tab — unified with the account-level Workforce tab so
+              locations get Scheduled / Active / Inactive sub-tabs + the
+              outcome menu + readiness chips. Scope notes (doc §4.3):
+              - `jobOrderIds` narrows the Scheduled sub-tab to just this
+                location's JOs.
+              - `account` is the page's recruiter account; Active / Inactive
+                show that account's full roster (AccountWorkforce is keyed
+                to the account, not the location). In practice a child
+                account usually represents a single venue, so the two are
+                effectively the same. */}
+          <AccountWorkforceTab
             tenantId={tenantId}
+            account={
+              account
+                ? {
+                    id: account.id,
+                    name: account.name,
+                    accountType: account.accountType,
+                    // Location pages are child-scope by design — no
+                    // child union aggregation here.
+                    childAccountIds: [],
+                  }
+                : null
+            }
             jobOrderIds={jobOrdersAtLocation.map((j) => j.id)}
           />
         </TabPanel>
