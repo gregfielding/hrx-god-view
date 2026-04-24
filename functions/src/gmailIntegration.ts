@@ -1307,7 +1307,25 @@ export const getGmailMailboxCounts = onCall(
           rateLimited: true,
         };
       }
-      throw err;
+      // Defensive catch-all: this callable powers a polling UI badge — throwing
+      // 500s causes the client to spam Cloud Functions every 30s. Prefer
+      // logging the root cause and returning stale-or-empty counts so the
+      // badge degrades gracefully. If we ever need to distinguish "real broken"
+      // from "temporary blip", promote specific errors to their own branches
+      // above and keep this as the final fallback.
+      logger.error('getGmailMailboxCounts: unhandled error — returning stale-or-empty counts', {
+        userId,
+        error: err?.message || String(err),
+        stack: err?.stack,
+      });
+      return {
+        success: true,
+        counts: cached || emptyCounts,
+        connected: true,
+        cached: !!cached,
+        stale: !!cached,
+        degraded: true,
+      };
     }
   }
 );

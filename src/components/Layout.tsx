@@ -516,6 +516,11 @@ const Layout: React.FC = function Layout() {
   }, [user?.uid, activeTenant?.id]);
 
   // Gmail mailbox counts: single source of truth for badge so it matches Inbox tabs (e.g. Updates 10).
+  // Self-healing circuit breaker: we start the 30s interval ONLY after a successful first call.
+  // This prevents hammering `getGmailMailboxCounts` for users who don't have Gmail connected
+  // (previously: N-page-load × 30s = perpetual 500s in the console, since the callable fails
+  // hard when no OAuth tokens are on the user doc). Refresh the page after connecting Gmail
+  // to resume polling.
   useEffect(() => {
     if (!user?.uid) {
       setGmailInboxTotal(null);
@@ -523,28 +528,56 @@ const Layout: React.FC = function Layout() {
       return;
     }
 
-    const load = async () => {
+    let cancelled = false;
+    let interval: ReturnType<typeof setInterval> | null = null;
+    /** How many times in a row the load call has failed — used to stop polling after repeated failures. */
+    let consecutiveFailures = 0;
+    const MAX_CONSECUTIVE_FAILURES = 1; // one strike and we stop for this session
+
+    const load = async (): Promise<boolean> => {
       try {
         const getCounts = httpsCallable<{ userId: string }, { success: boolean; counts?: Record<string, { threadsUnread?: number }> }>(functions, 'getGmailMailboxCounts');
         const result = await getCounts({ userId: user.uid });
+        if (cancelled) return false;
         const data = result.data;
         if (!data?.success || !data.counts) {
           setGmailInboxTotal(null);
-          return;
+          consecutiveFailures += 1;
+          return false;
         }
         const c = data.counts;
         const total = Number(c.primary?.threadsUnread || 0) + Number(c.social?.threadsUnread || 0) + Number(c.promotions?.threadsUnread || 0) + Number(c.updates?.threadsUnread || 0) + Number(c.forums?.threadsUnread || 0) + Number(c.spam?.threadsUnread || 0);
         setGmailInboxTotal(total);
+        consecutiveFailures = 0;
+        return true;
       } catch {
-        setGmailInboxTotal(null);
+        if (!cancelled) setGmailInboxTotal(null);
+        consecutiveFailures += 1;
+        return false;
       }
     };
 
-    gmailCountsLoaderRef.current = load;
-    load();
-    const interval = setInterval(load, 30000);
+    gmailCountsLoaderRef.current = async () => {
+      await load();
+    };
+
+    (async () => {
+      const ok = await load();
+      if (cancelled) return;
+      if (!ok) return; // Gmail not connected or backend broken — don't start the interval.
+      interval = setInterval(async () => {
+        const pollOk = await load();
+        if (!pollOk && consecutiveFailures >= MAX_CONSECUTIVE_FAILURES && interval) {
+          // Recovered-then-failed case: stop the bleeding until next mount.
+          clearInterval(interval);
+          interval = null;
+        }
+      }, 30000);
+    })();
+
     return () => {
-      clearInterval(interval);
+      cancelled = true;
+      if (interval) clearInterval(interval);
       gmailCountsLoaderRef.current = null;
     };
   }, [user?.uid]);
