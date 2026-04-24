@@ -217,10 +217,18 @@ export const onAssignmentWriteMaintainAccountWorkforce = onDocumentWritten(
     // Is this a new terminal outcome landing now (not a re-write of the same state)?
     const transitionedToTerminalOutcome =
       TERMINAL_OUTCOME_STATUSES.has(afterStatus) && beforeStatus !== afterStatus;
+    // Undo case (Phase 4): a terminal outcome was reverted back to
+    // `confirmed` / `active`. Decrement the counters that were bumped
+    // when the outcome originally landed, so undoing a mistake doesn't
+    // leave stale stats.
+    const undidTerminalOutcome =
+      TERMINAL_OUTCOME_STATUSES.has(beforeStatus) &&
+      !TERMINAL_OUTCOME_STATUSES.has(afterStatus) &&
+      COMMITTING_STATUSES.has(afterStatus);
 
-    // Nothing to do if neither condition fires. Avoids useless reads when,
+    // Nothing to do if none of these fire. Avoids useless reads when,
     // say, a minor field updates while status stays `confirmed`.
-    if (!transitionedToCommitting && !transitionedToTerminalOutcome) return;
+    if (!transitionedToCommitting && !transitionedToTerminalOutcome && !undidTerminalOutcome) return;
 
     const now = admin.firestore.Timestamp.now();
 
@@ -347,6 +355,18 @@ export const onAssignmentWriteMaintainAccountWorkforce = onDocumentWritten(
         if (shiftDate.toMillis() >= existingLastMs) {
           patch.lastShiftAt = shiftDate;
         }
+      }
+    }
+
+    if (undidTerminalOutcome) {
+      // Phase 4 — undo path. Reverse the counter bumps from when the
+      // outcome originally landed. `lastShiftAt` is NOT reverted — we
+      // only have a forward timestamp history; recomputing the previous
+      // value would require a scan. Leave it alone and let the next
+      // outcome write move it forward again.
+      patch.totalShifts = admin.firestore.FieldValue.increment(-1);
+      if (beforeStatus === 'completed') {
+        patch.completedShifts = admin.firestore.FieldValue.increment(-1);
       }
     }
 

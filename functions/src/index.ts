@@ -306,6 +306,7 @@ export {
   onAssignmentWriteMaintainAccountWorkforce,
   setAccountWorkforceStatus,
   onAccountHiringEntityChangeBackfillWorkforceEngagementType,
+  setAssignmentOutcome,
 } from './workforce';
 export {
   syncHrxReadinessSnapshotV1OnPayrollWrite,

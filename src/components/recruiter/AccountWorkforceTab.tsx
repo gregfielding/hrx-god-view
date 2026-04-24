@@ -76,8 +76,9 @@ import type {
   AccountWorkforceStatus,
   SetAccountWorkforceStatusInput,
   SetAccountWorkforceStatusResult,
-} from '../../../shared/accountWorkforce';
+} from '../../shared/accountWorkforce';
 import { formatFirebaseHttpsError } from '../../utils/firebaseHttpsErrors';
+import AssignmentOutcomeMenu from './AssignmentOutcomeMenu';
 
 /** Sub-tab keys; also used as localStorage key suffixes. */
 type WorkforceSubTab = 'scheduled' | 'active' | 'inactive';
@@ -217,12 +218,13 @@ const AccountWorkforceTab: React.FC<AccountWorkforceTabProps> = ({
   });
 
   // --- Scheduled data ---
-  const { scheduledRows, scheduledLoading, scheduledError } = useScheduledAssignments({
-    tenantId,
-    jobOrderIds,
-    mode: careerGig,
-    enabled: subTab === 'scheduled',
-  });
+  const { scheduledRows, scheduledLoading, scheduledError, refreshScheduled } =
+    useScheduledAssignments({
+      tenantId,
+      jobOrderIds,
+      mode: careerGig,
+      enabled: subTab === 'scheduled',
+    });
 
   // --- Dialog state (deactivate / reactivate) ---
   const [deactivateTarget, setDeactivateTarget] = useState<AccountWorkforceRosterRow | null>(null);
@@ -332,6 +334,7 @@ const AccountWorkforceTab: React.FC<AccountWorkforceTabProps> = ({
       {/* Content — per sub-tab. */}
       {subTab === 'scheduled' && (
         <ScheduledView
+          tenantId={tenantId}
           loading={scheduledLoading}
           error={scheduledError}
           rows={scheduledRows}
@@ -339,6 +342,7 @@ const AccountWorkforceTab: React.FC<AccountWorkforceTabProps> = ({
           view={view}
           subFilter={subFilter}
           subAccountGrouping={subAccountGrouping}
+          onRefresh={refreshScheduled}
         />
       )}
       {subTab === 'active' && (
@@ -569,11 +573,18 @@ function useScheduledAssignments(args: {
   scheduledRows: ScheduledRow[];
   scheduledLoading: boolean;
   scheduledError: string | null;
+  refreshScheduled: () => Promise<void>;
 } {
   const { tenantId, jobOrderIds, mode, enabled } = args;
   const [scheduledRows, setScheduledRows] = useState<ScheduledRow[]>([]);
   const [scheduledLoading, setScheduledLoading] = useState(false);
   const [scheduledError, setScheduledError] = useState<string | null>(null);
+  /** Bumped by `refreshScheduled` to force a re-run of the load effect. */
+  const [reloadKey, setReloadKey] = useState(0);
+
+  const refreshScheduled = useCallback(async () => {
+    setReloadKey((k) => k + 1);
+  }, []);
 
   useEffect(() => {
     if (!enabled || !tenantId || jobOrderIds.length === 0) {
@@ -632,6 +643,13 @@ function useScheduledAssignments(args: {
         }
 
         const now = Date.now();
+        // Outcome-capture grace — shifts that ended within the last 48h
+        // stay on the Scheduled list with an actionable menu. Once the
+        // recruiter marks an outcome, the row drops out (status flips
+        // away from `confirmed`). Prevents building a separate
+        // "past shifts" view just to host the menu.
+        const OUTCOME_GRACE_MS = 48 * 60 * 60 * 1000;
+        const earliestEndCutoff = now - OUTCOME_GRACE_MS;
         const rows: ScheduledRow[] = [];
         const workerIdsNeedingLookup = new Set<string>();
         for (const a of assignments) {
@@ -643,10 +661,10 @@ function useScheduledAssignments(args: {
           if (meta.jobType !== mode) continue;
           const shiftStart = toDate(a.startDate);
           const shiftEnd = toDate(a.endDate);
-          // Future only — show shifts that haven't ended yet. Using shiftEnd
-          // when present lets a multi-day shift stay in the list on day 1.
+          // Include future shifts, in-progress shifts, and shifts that
+          // ended within the last 48h (the outcome-capture grace window).
           const upperBound = shiftEnd ?? shiftStart;
-          if (upperBound && upperBound.getTime() < now) continue;
+          if (upperBound && upperBound.getTime() < earliestEndCutoff) continue;
 
           const workerId =
             pickString(a.userId, a.candidateId, (a as any).workerUid) ?? '';
@@ -718,9 +736,9 @@ function useScheduledAssignments(args: {
     return () => {
       cancelled = true;
     };
-  }, [tenantId, jobOrderIds.join(','), mode, enabled]);
+  }, [tenantId, jobOrderIds.join(','), mode, enabled, reloadKey]);
 
-  return { scheduledRows, scheduledLoading, scheduledError };
+  return { scheduledRows, scheduledLoading, scheduledError, refreshScheduled };
 }
 
 // ===========================================================================
@@ -996,6 +1014,7 @@ function RosterView(props: {
 // ===========================================================================
 
 function ScheduledView(props: {
+  tenantId: string | null;
   loading: boolean;
   error: string | null;
   rows: ScheduledRow[];
@@ -1003,8 +1022,10 @@ function ScheduledView(props: {
   view: 'flat' | 'sub-account';
   subFilter: 'all' | 'with-workers';
   subAccountGrouping?: WorkforceSubAccountGrouping;
+  onRefresh: () => Promise<void>;
 }) {
-  const { loading, error, rows, mode, view, subFilter, subAccountGrouping } = props;
+  const { tenantId, loading, error, rows, mode, view, subFilter, subAccountGrouping, onRefresh } =
+    props;
   const navigate = useNavigate();
   const isGrouped = view === 'sub-account' && !!subAccountGrouping;
 
@@ -1052,6 +1073,17 @@ function ScheduledView(props: {
       <TableCell>
         <Chip label={row.jobOrderType === 'gig' ? 'Gig' : 'Career'} size="small" />
       </TableCell>
+      <TableCell align="right" onClick={(e) => e.stopPropagation()}>
+        {tenantId && (
+          <AssignmentOutcomeMenu
+            tenantId={tenantId}
+            assignmentId={row.assignmentId}
+            currentStatus={row.status}
+            shiftStart={row.shiftStart}
+            onOutcomeChanged={onRefresh}
+          />
+        )}
+      </TableCell>
     </TableRow>
   );
 
@@ -1061,9 +1093,10 @@ function ScheduledView(props: {
       <TableCell sx={{ fontWeight: 600 }}>Job order</TableCell>
       <TableCell sx={{ fontWeight: 600 }}>Starts</TableCell>
       <TableCell sx={{ fontWeight: 600 }}>Type</TableCell>
+      <TableCell sx={{ fontWeight: 600, width: 48 }} align="right" />
     </TableRow>
   );
-  const colSpan = 4;
+  const colSpan = 5;
 
   if (isGrouped && subAccountGrouping) {
     const groups = subAccountGrouping.groups;

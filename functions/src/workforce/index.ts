@@ -7,3 +7,4 @@
 export { onAssignmentWriteMaintainAccountWorkforce } from './onAssignmentWriteMaintainAccountWorkforce';
 export { setAccountWorkforceStatus } from './setAccountWorkforceStatus';
 export { onAccountHiringEntityChangeBackfillWorkforceEngagementType } from './onAccountHiringEntityChangeBackfillWorkforceEngagementType';
+export { setAssignmentOutcome } from './setAssignmentOutcome';
