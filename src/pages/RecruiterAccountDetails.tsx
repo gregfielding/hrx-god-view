@@ -157,6 +157,89 @@ interface JobOrderWithDetails extends JobOrder {
   jobTitle?: string;
 }
 
+/**
+ * Helpers for computing the "next upcoming shift" for a Gig job order on the
+ * Account Job Orders tab. We keep this simple on purpose — full occurrence
+ * generation with per-day overrides lives in `useGigJobOrdersCalendar`. This
+ * version handles:
+ *   - single-day shifts (shiftDate + defaultStartTime)
+ *   - multi-day shifts with a weeklySchedule (per-DOW start times / disable)
+ *   - multi-day shifts with a per-date dateSchedule map
+ *
+ * Returns the earliest Date >= `now` across all provided shifts, or null.
+ */
+function parseYyyyMmDdLocal(s: string | undefined | null): Date | null {
+  if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [y, m, d] = s.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+function formatYyyyMmDdLocal(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function makeShiftDateTime(day: Date, hhmm: string): Date | null {
+  if (!/^\d{1,2}:\d{2}$/.test(hhmm)) return null;
+  const [h, m] = hhmm.split(':').map(Number);
+  const out = new Date(day);
+  out.setHours(h, m, 0, 0);
+  return out;
+}
+function nextShiftStartForJobOrder(shifts: Array<Record<string, any>>, now: Date): Date | null {
+  let best: Date | null = null;
+  for (const shift of shifts) {
+    const shiftDate = typeof shift.shiftDate === 'string' ? shift.shiftDate : '';
+    const endDate = typeof shift.endDate === 'string' ? shift.endDate : '';
+    const defStart = typeof shift.defaultStartTime === 'string' ? shift.defaultStartTime : '00:00';
+    const startD = parseYyyyMmDdLocal(shiftDate);
+    if (!startD) continue;
+    // Cancelled / closed shifts shouldn't drive "next shift".
+    const status = typeof shift.status === 'string' ? shift.status.toLowerCase() : '';
+    if (status === 'cancelled' || status === 'canceled' || status === 'closed') continue;
+
+    const isMulti = shift.shiftMode === 'multi' && !!endDate && endDate !== shiftDate;
+    const endD = isMulti ? parseYyyyMmDdLocal(endDate) : startD;
+    if (!endD) continue;
+    const dateSched =
+      shift.dateSchedule && typeof shift.dateSchedule === 'object'
+        ? (shift.dateSchedule as Record<string, { enabled?: boolean; startTime?: string }>)
+        : null;
+    const weekly =
+      shift.weeklySchedule && typeof shift.weeklySchedule === 'object'
+        ? (shift.weeklySchedule as Record<string, { enabled?: boolean; startTime?: string }>)
+        : null;
+    const cursor = new Date(startD);
+    while (cursor.getTime() <= endD.getTime()) {
+      const dateStr = formatYyyyMmDdLocal(cursor);
+      let enabled = true;
+      let startTime = defStart;
+      if (dateSched && dateSched[dateStr]) {
+        const entry = dateSched[dateStr];
+        if (entry.enabled === false) enabled = false;
+        else if (entry.startTime) startTime = entry.startTime;
+      } else if (weekly) {
+        const dow = String(cursor.getDay());
+        const sched = weekly[dow];
+        if (sched?.enabled === false) enabled = false;
+        else if (sched?.startTime) startTime = sched.startTime;
+      }
+      if (enabled) {
+        const dt = makeShiftDateTime(cursor, startTime);
+        if (dt && dt.getTime() >= now.getTime()) {
+          if (!best || dt.getTime() < best.getTime()) best = dt;
+        }
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  }
+  return best;
+}
+/** "Apr 30 · 7:00 AM" — compact label used in the row caption. */
+function formatNextShiftLabel(d: Date): string {
+  const dateLabel = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const timeLabel = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return `${dateLabel} · ${timeLabel}`;
+}
+
 // SectionCard – same pattern as DealDetails 3rd column; optional titleHref for header link to list page
 const SectionCard: React.FC<{
   title: string;
@@ -1322,8 +1405,80 @@ const RecruiterAccountDetails: React.FC = () => {
   const [jobOrdersSortDirection, setJobOrdersSortDirection] = useState<'asc' | 'desc'>('desc');
   const [jobOrdersPage, setJobOrdersPage] = useState(0);
   const [jobOrdersRowsPerPage, setJobOrdersRowsPerPage] = useState(20);
+  /**
+   * Job Orders tab view mode — only exposed on National accounts.
+   *  - `flat`: the original paginated table (one row per job order).
+   *  - `sub-account`: rows grouped by sub account. Each sub account gets a
+   *    summary header row (click to open the sub account) followed by its
+   *    job orders. Empty sub accounts still show a header + "No job orders"
+   *    placeholder row. Orders on the parent itself (or with no linked
+   *    sub account) group under a top-level "<name> (National)" header.
+   *
+   * Persisted per-account in localStorage so each National account
+   * remembers its last-used view. Default is `flat` on first visit.
+   */
+  const [jobOrdersView, setJobOrdersView] = useState<'flat' | 'sub-account'>('flat');
+  /**
+   * Secondary filter — only visible/meaningful when `jobOrdersView === 'sub-account'`.
+   *  - `all`: show every child account header (even if it has zero orders).
+   *  - `with-orders`: hide sub-accounts (and the parent group) that have no
+   *    orders in the current filter set. Useful for recruiters who just want
+   *    to see what's actually happening.
+   * Persisted per-account in localStorage alongside the main view toggle.
+   */
+  const [subAccountsFilter, setSubAccountsFilter] = useState<'all' | 'with-orders'>('all');
+  useEffect(() => {
+    if (!accountId) return;
+    try {
+      const stored = localStorage.getItem(`accountJobOrdersView_${accountId}`);
+      setJobOrdersView(stored === 'sub-account' ? 'sub-account' : 'flat');
+      const storedSub = localStorage.getItem(`accountJobOrdersSubFilter_${accountId}`);
+      setSubAccountsFilter(storedSub === 'with-orders' ? 'with-orders' : 'all');
+    } catch {
+      // localStorage can throw in private/incognito — fall back to default.
+      setJobOrdersView('flat');
+      setSubAccountsFilter('all');
+    }
+  }, [accountId]);
+  const handleJobOrdersViewChange = useCallback(
+    (next: 'flat' | 'sub-account') => {
+      setJobOrdersView(next);
+      if (!accountId) return;
+      try {
+        localStorage.setItem(`accountJobOrdersView_${accountId}`, next);
+      } catch {
+        /* ignore — not critical */
+      }
+    },
+    [accountId],
+  );
+  const handleSubAccountsFilterChange = useCallback(
+    (next: 'all' | 'with-orders') => {
+      setSubAccountsFilter(next);
+      if (!accountId) return;
+      try {
+        localStorage.setItem(`accountJobOrdersSubFilter_${accountId}`, next);
+      } catch {
+        /* ignore */
+      }
+    },
+    [accountId],
+  );
 
   const { isFavorite: isJobOrderFavorite, toggleFavorite: toggleJobOrderFavorite } = useFavorites('jobOrders');
+
+  /**
+   * Next upcoming shift per Gig job order on the Job Orders tab. Populated by
+   * a fan-out query over `tenants/{tid}/job_orders/{id}/shifts` for each Gig
+   * JO currently in `accountJobOrders`. Career orders are skipped (they don't
+   * have shifts in this sense). Values are `Date` objects (shift start);
+   * `nextShiftStartForJobOrder` handles single + multi-day with weekly /
+   * per-date schedule overrides.
+   *
+   * Populated lazily once the JOs are loaded so the table paints instantly
+   * and the "Next shift" caption hydrates as results come back.
+   */
+  const [nextShiftByJobOrderId, setNextShiftByJobOrderId] = useState<Record<string, Date>>({});
 
   // Jobs Board tab: posts for account's companies
   const [accountJobPosts, setAccountJobPosts] = useState<JobsBoardPost[]>([]);
@@ -2170,17 +2325,49 @@ const RecruiterAccountDetails: React.FC = () => {
             } catch (_) {}
           }
           let locationName = 'No Location';
+          // Pull the full address too so the Sub accounts grouped view can
+          // render worksite name + street / city,state zip underneath without
+          // needing a second round-trip per row. Prefer inline `worksiteAddress`
+          // on the JO; fall back to the linked location doc if it's empty.
+          let worksiteAddressForDetails:
+            | { street?: string; city?: string; state?: string; zipCode?: string }
+            | undefined = (data as any).worksiteAddress;
           const flatWorksiteId = (data as any).worksiteId || (data as any).deal?.locationId;
           const flatWorksiteName = (data as any).worksiteName || (data as any).deal?.locationName;
           if (flatWorksiteName) {
             locationName = flatWorksiteName;
-          } else if (flatWorksiteId && flatCompanyId) {
+          }
+          const needsLocationFetch =
+            !flatWorksiteName ||
+            !worksiteAddressForDetails ||
+            !(worksiteAddressForDetails.street || worksiteAddressForDetails.city);
+          if (needsLocationFetch && flatWorksiteId && flatCompanyId) {
             try {
               const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', flatCompanyId, 'locations', flatWorksiteId);
               const locationSnap = await getDoc(locationRef);
               if (locationSnap.exists()) {
                 const locationData = locationSnap.data() as any;
-                locationName = locationData.nickname || locationData.name || 'Unknown Location';
+                if (!flatWorksiteName) {
+                  locationName = locationData.nickname || locationData.name || 'Unknown Location';
+                }
+                if (!worksiteAddressForDetails || !(worksiteAddressForDetails.street || worksiteAddressForDetails.city)) {
+                  const addrFromLoc = locationData.address;
+                  if (addrFromLoc && typeof addrFromLoc === 'object') {
+                    worksiteAddressForDetails = {
+                      street: addrFromLoc.street,
+                      city: addrFromLoc.city,
+                      state: addrFromLoc.state,
+                      zipCode: addrFromLoc.zipCode || addrFromLoc.zip,
+                    };
+                  } else if (typeof addrFromLoc === 'string') {
+                    worksiteAddressForDetails = {
+                      street: addrFromLoc,
+                      city: locationData.city,
+                      state: locationData.state,
+                      zipCode: locationData.zipCode || locationData.zip,
+                    };
+                  }
+                }
               }
             } catch (_) {}
           }
@@ -2208,6 +2395,13 @@ const RecruiterAccountDetails: React.FC = () => {
             recruiterName,
             workersNeeded: (data as any).workersNeeded ?? (data as any).openings ?? 0,
             headcountFilled: (data as any).headcountFilled ?? (data as any).remainingOpenings ?? 0,
+            // Carry the resolved address forward so Sub accounts view can render
+            // it on two lines under the worksite name. Overwrites any partial
+            // inline `worksiteAddress` with the hydrated version from the
+            // location doc when one was needed.
+            ...(worksiteAddressForDetails
+              ? { worksiteAddress: worksiteAddressForDetails as any }
+              : {}),
           };
         })
       );
@@ -2889,6 +3083,130 @@ const RecruiterAccountDetails: React.FC = () => {
     const start = jobOrdersPage * jobOrdersRowsPerPage;
     return filteredAccountJobOrders.slice(start, start + jobOrdersRowsPerPage);
   }, [filteredAccountJobOrders, jobOrdersPage, jobOrdersRowsPerPage]);
+
+  /**
+   * Sub-account-grouped view of filtered job orders. Always shows every
+   * direct child account (even when it has no orders) so the recruiter can
+   * see the full national footprint at a glance. The parent "(National)"
+   * group sits at the top and collects:
+   *   - Orders whose `recruiterAccountId` equals the parent account's own id
+   *   - Orders with a missing or unrecognized `recruiterAccountId`
+   *
+   * Not paginated — pagination doesn't play well with group headers and
+   * National accounts rarely exceed a few hundred orders. If that becomes
+   * untrue, revisit here.
+   */
+  type SubAccountJobOrderGroup = {
+    key: string;
+    subAccountId: string | null;
+    /** Null for the parent "(National)" group; click-through only on real sub accounts. */
+    href: string | null;
+    label: string;
+    /** True when this is the parent account's own group — renders with a slightly different header tone. */
+    isParentGroup: boolean;
+    orders: JobOrderWithDetails[];
+  };
+  const groupedAccountJobOrders = useMemo<SubAccountJobOrderGroup[]>(() => {
+    if (!account?.id) return [];
+    const parentLabel = `${account.name || 'Parent account'} (National)`;
+    // Build the index of child accounts we care about, preserving childAccountIds order.
+    const childIds = (account.childAccountIds || []).filter(
+      (id): id is string => typeof id === 'string' && id.trim() !== '',
+    );
+    const childLabelById = new Map<string, string>();
+    for (const opt of accountOptions) {
+      if (opt?.id && opt?.label) childLabelById.set(opt.id, opt.label);
+    }
+    // Bucket orders into parent vs each child.
+    const parentOrders: JobOrderWithDetails[] = [];
+    const ordersByChildId = new Map<string, JobOrderWithDetails[]>();
+    for (const id of childIds) ordersByChildId.set(id, []);
+    for (const jo of filteredAccountJobOrders) {
+      const raid = (jo as any).recruiterAccountId;
+      const rid = typeof raid === 'string' && raid.trim() !== '' ? raid.trim() : null;
+      if (rid && ordersByChildId.has(rid)) {
+        ordersByChildId.get(rid)!.push(jo);
+      } else {
+        parentOrders.push(jo);
+      }
+    }
+    const groups: SubAccountJobOrderGroup[] = [];
+    groups.push({
+      key: `group-parent-${account.id}`,
+      subAccountId: account.id,
+      href: `/accounts/${account.id}`,
+      label: parentLabel,
+      isParentGroup: true,
+      orders: parentOrders,
+    });
+    for (const id of childIds) {
+      groups.push({
+        key: `group-child-${id}`,
+        subAccountId: id,
+        href: `/accounts/${id}`,
+        label: childLabelById.get(id) || 'Sub account',
+        isParentGroup: false,
+        orders: ordersByChildId.get(id) || [],
+      });
+    }
+    return groups;
+  }, [account?.id, account?.name, account?.childAccountIds, accountOptions, filteredAccountJobOrders]);
+
+  /**
+   * Fan-out fetch of shifts for each Gig JO in the current `accountJobOrders`.
+   * Career orders are skipped. Processed in chunks of 10 so we don't slam
+   * Firestore for accounts with 50+ orders. Aborts cleanly on unmount /
+   * re-run so stale results don't overwrite a newer fetch.
+   */
+  useEffect(() => {
+    if (!tenantId || accountJobOrders.length === 0) {
+      setNextShiftByJobOrderId({});
+      return;
+    }
+    const gigJobOrderIds = accountJobOrders
+      .filter((jo) => (jo as any).jobType === 'gig')
+      .map((jo) => jo.id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+    if (gigJobOrderIds.length === 0) {
+      setNextShiftByJobOrderId({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const result: Record<string, Date> = {};
+      const now = new Date();
+      const CHUNK = 10;
+      for (let i = 0; i < gigJobOrderIds.length; i += CHUNK) {
+        if (cancelled) return;
+        const chunk = gigJobOrderIds.slice(i, i + CHUNK);
+        await Promise.all(
+          chunk.map(async (joId) => {
+            try {
+              const shiftsRef = collection(
+                db,
+                'tenants',
+                tenantId,
+                'job_orders',
+                joId,
+                'shifts',
+              );
+              const snap = await getDocs(shiftsRef);
+              const shifts = snap.docs.map((d) => d.data() as Record<string, any>);
+              const next = nextShiftStartForJobOrder(shifts, now);
+              if (next) result[joId] = next;
+            } catch {
+              // Ignore per-JO failures — missing `next shift` just means the
+              // row falls back to no caption instead of a stale or wrong value.
+            }
+          }),
+        );
+      }
+      if (!cancelled) setNextShiftByJobOrderId(result);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, accountJobOrders]);
 
   const getJobOrderStatusColor = (status: string) => {
     const s = status?.toLowerCase();
@@ -6118,6 +6436,11 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                       </Select>
                     </FormControl>
                     */}
+                    {/* Sort By — hidden for now per UX feedback. Header #/Recruiter
+                        sort controls still work via the column headers, so we
+                        keep `jobOrdersSortField`/`jobOrdersSortDirection` state
+                        around. Uncomment this block to bring the dropdown back. */}
+                    {/*
                     <FormControl size="small" sx={{ minWidth: 150, height: 36 }}>
                       <InputLabel sx={{ fontSize: '0.875rem' }}>Sort By</InputLabel>
                       <Select
@@ -6134,6 +6457,74 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                         <MenuItem value="recruiterName">Recruiter(s)</MenuItem>
                       </Select>
                     </FormControl>
+                    */}
+                    {/* National accounts only: flat list vs. grouped-by-sub-account view.
+                        Sort is preserved inside each group when grouped. */}
+                    {isNationalAccount && (
+                      <ToggleButtonGroup
+                        size="small"
+                        exclusive
+                        value={jobOrdersView}
+                        onChange={(_, next) => {
+                          if (next === 'flat' || next === 'sub-account') {
+                            handleJobOrdersViewChange(next);
+                          }
+                        }}
+                        sx={{
+                          height: 36,
+                          '& .MuiToggleButton-root': {
+                            textTransform: 'none',
+                            fontSize: '0.875rem',
+                            px: 1.75,
+                            borderRadius: '6px',
+                            backgroundColor: 'white',
+                          },
+                          '& .MuiToggleButton-root.Mui-selected': {
+                            backgroundColor: '#0B63C5',
+                            color: 'white',
+                            '&:hover': { backgroundColor: '#0B63C5' },
+                          },
+                        }}
+                        aria-label="Job orders view"
+                      >
+                        <ToggleButton value="flat">Flat list</ToggleButton>
+                        <ToggleButton value="sub-account">Sub accounts</ToggleButton>
+                      </ToggleButtonGroup>
+                    )}
+                    {/* Secondary filter for Sub Accounts view — hide sub-accounts
+                        with no orders. Only rendered when the main toggle is on
+                        "Sub accounts" so the filter bar doesn't get cluttered. */}
+                    {isNationalAccount && jobOrdersView === 'sub-account' && (
+                      <ToggleButtonGroup
+                        size="small"
+                        exclusive
+                        value={subAccountsFilter}
+                        onChange={(_, next) => {
+                          if (next === 'all' || next === 'with-orders') {
+                            handleSubAccountsFilterChange(next);
+                          }
+                        }}
+                        sx={{
+                          height: 36,
+                          '& .MuiToggleButton-root': {
+                            textTransform: 'none',
+                            fontSize: '0.875rem',
+                            px: 1.75,
+                            borderRadius: '6px',
+                            backgroundColor: 'white',
+                          },
+                          '& .MuiToggleButton-root.Mui-selected': {
+                            backgroundColor: '#0B63C5',
+                            color: 'white',
+                            '&:hover': { backgroundColor: '#0B63C5' },
+                          },
+                        }}
+                        aria-label="Sub accounts filter"
+                      >
+                        <ToggleButton value="all">All sub accounts</ToggleButton>
+                        <ToggleButton value="with-orders">With job orders</ToggleButton>
+                      </ToggleButtonGroup>
+                    )}
                   </Stack>
                 </Box>
                 {accountJobOrdersError && (
@@ -6153,7 +6544,17 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                       Link companies to this account to see job orders here.
                     </Typography>
                   </Box>
-                ) : filteredAccountJobOrders.length === 0 ? (
+                ) : filteredAccountJobOrders.length === 0 &&
+                    !(
+                      isNationalAccount &&
+                      jobOrdersView === 'sub-account' &&
+                      subAccountsFilter === 'all' &&
+                      (account?.childAccountIds?.length ?? 0) > 0
+                    ) ? (
+                  // Sub Account view (with "All sub accounts" filter) intentionally
+                  // falls through so empty child headers still render with "No job
+                  // orders yet" rows. With "With job orders" filter on, no orders
+                  // means nothing would render, so we fall back to the empty state.
                   <Box sx={{ textAlign: 'center', py: 8 }}>
                     <WorkIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
                     <Typography variant="h6" color="text.secondary" gutterBottom>
@@ -6194,11 +6595,17 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                               </TableSortLabel>
                             </TableCell>
                             <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Title</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Type</TableCell>
                             <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Job Title</TableCell>
-                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Account</TableCell>
+                            {/* Account column — redundant in Sub Accounts view since the
+                                group header row already identifies the sub-account. */}
+                            {!(isNationalAccount && jobOrdersView === 'sub-account') && (
+                              <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Account</TableCell>
+                            )}
                             <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Location</TableCell>
                             <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Status</TableCell>
-                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Requested/Filled</TableCell>
+                            {/* Requested/Filled column — hidden per UX feedback; uncomment to restore. */}
+                            {/* <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Requested/Filled</TableCell> */}
                             <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
                               <TableSortLabel
                                 active={jobOrdersSortField === 'recruiterName'}
@@ -6212,103 +6619,332 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                                 Recruiter(s)
                               </TableSortLabel>
                             </TableCell>
-                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Age</TableCell>
+                            {/* Age column — hidden per UX feedback; uncomment to restore. */}
+                            {/* <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Age</TableCell> */}
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {paginatedAccountJobOrders.map((jobOrder, index) => (
-                            <TableRow
-                              key={jobOrder.id}
-                              hover
-                              onClick={() => navigate(`/jobs/job-orders/${jobOrder.id}`)}
-                              sx={{
-                                cursor: 'pointer',
-                                backgroundColor: index % 2 === 0 ? 'background.paper' : 'action.hover',
-                                '&:hover': { backgroundColor: 'action.selected' },
-                              }}
-                            >
-                              <TableCell onClick={(e) => e.stopPropagation()}>
-                                <FavoriteButton
-                                  itemId={jobOrder.id}
-                                  favoriteType="jobOrders"
-                                  isFavorite={isJobOrderFavorite}
-                                  toggleFavorite={toggleJobOrderFavorite}
-                                  size="small"
-                                  tooltipText={{ favorited: 'Remove from favorites', notFavorited: 'Add to favorites' }}
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <Typography variant="body2" fontWeight={600}>
-                                  {formatJobOrderNumber((jobOrder as any).jobOrderNumber ?? 0)}
-                                </Typography>
-                              </TableCell>
-                              <TableCell>
-                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, minWidth: 0 }}>
-                                  <Typography variant="body2" fontWeight={500}>
-                                    {jobOrder.jobOrderName}
+                          {(() => {
+                            /**
+                             * Row renderer shared between flat + grouped views.
+                             *  - `zebraIndex`: striping; in grouped mode this resets per group.
+                             *  - `variant`:
+                             *      - `flat`  — renders every column.
+                             *      - `grouped` — drops the Account column (the parent
+                             *        sub-account header already identifies the account)
+                             *        and replaces the Location cell's single line with
+                             *        worksite name on top + full address beneath.
+                             */
+                            const renderJobOrderRow = (
+                              jobOrder: JobOrderWithDetails,
+                              zebraIndex: number,
+                              variant: 'flat' | 'grouped' = 'flat',
+                            ) => (
+                              <TableRow
+                                key={jobOrder.id}
+                                hover
+                                onClick={() => navigate(`/jobs/job-orders/${jobOrder.id}`)}
+                                sx={{
+                                  cursor: 'pointer',
+                                  backgroundColor:
+                                    zebraIndex % 2 === 0 ? 'background.paper' : 'action.hover',
+                                  '&:hover': { backgroundColor: 'action.selected' },
+                                }}
+                              >
+                                <TableCell onClick={(e) => e.stopPropagation()}>
+                                  <FavoriteButton
+                                    itemId={jobOrder.id}
+                                    favoriteType="jobOrders"
+                                    isFavorite={isJobOrderFavorite}
+                                    toggleFavorite={toggleJobOrderFavorite}
+                                    size="small"
+                                    tooltipText={{
+                                      favorited: 'Remove from favorites',
+                                      notFavorited: 'Add to favorites',
+                                    }}
+                                  />
+                                </TableCell>
+                                <TableCell>
+                                  <Typography variant="body2" fontWeight={600}>
+                                    {formatJobOrderNumber((jobOrder as any).jobOrderNumber ?? 0)}
                                   </Typography>
-                                  <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
-                                    Order Setup: —
+                                </TableCell>
+                                <TableCell>
+                                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, minWidth: 0 }}>
+                                    <Typography variant="body2" fontWeight={500}>
+                                      {jobOrder.jobOrderName}
+                                    </Typography>
+                                    {/* Replaces the old "Order Setup: —" caption (which
+                                        wasn't loading). For Gig JOs with an upcoming shift
+                                        today or later, surface the next-shift datetime.
+                                        Career orders / Gig JOs with no future shifts render
+                                        nothing so the title sits alone. */}
+                                    {(() => {
+                                      const joType = (jobOrder as any).jobType;
+                                      if (joType !== 'gig') return null;
+                                      const nextShift = nextShiftByJobOrderId[jobOrder.id];
+                                      if (!nextShift) return null;
+                                      return (
+                                        <Typography
+                                          variant="caption"
+                                          color="text.secondary"
+                                          sx={{ lineHeight: 1.2 }}
+                                        >
+                                          Next shift: {formatNextShiftLabel(nextShift)}
+                                        </Typography>
+                                      );
+                                    })()}
+                                  </Box>
+                                </TableCell>
+                                <TableCell>
+                                  {/* Type — Career/Gig chip from `jobType`. Stays blank
+                                      for legacy rows where the field was never set so we
+                                      don't mislabel them. Matches the chip style used in
+                                      the Job Order header (RecruiterJobOrderDetail). */}
+                                  {(() => {
+                                    const raw = (jobOrder as any).jobType;
+                                    const label =
+                                      raw === 'gig'
+                                        ? 'Gig'
+                                        : raw === 'career'
+                                          ? 'Career'
+                                          : raw
+                                            ? String(raw)
+                                            : null;
+                                    return label ? (
+                                      <Chip
+                                        label={label}
+                                        size="small"
+                                        sx={{
+                                          height: 22,
+                                          fontSize: '0.7rem',
+                                          fontWeight: 600,
+                                          bgcolor: 'rgba(0,0,0,0.06)',
+                                          '& .MuiChip-label': { px: 0.75 },
+                                        }}
+                                      />
+                                    ) : (
+                                      <Typography variant="body2" color="text.disabled">
+                                        —
+                                      </Typography>
+                                    );
+                                  })()}
+                                </TableCell>
+                                <TableCell>
+                                  <Typography variant="body2">{jobOrder.jobTitle || 'No Job Title'}</Typography>
+                                </TableCell>
+                                {variant === 'flat' && (
+                                  <TableCell>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                      <BusinessIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+                                      <Typography variant="body2">{jobOrder.companyName || 'Unknown Company'}</Typography>
+                                    </Box>
+                                  </TableCell>
+                                )}
+                                <TableCell>
+                                  {(() => {
+                                    const locName = jobOrder.locationName || 'No Location';
+                                    // Sub accounts view: worksite name on top, then two
+                                    // lines of smaller secondary text — street on line 2,
+                                    // "city, state zip" on line 3. Each line only renders
+                                    // when its parts are populated so partial addresses
+                                    // don't leave empty gaps.
+                                    if (variant === 'grouped') {
+                                      const addr = (jobOrder as any).worksiteAddress as
+                                        | {
+                                            street?: string;
+                                            city?: string;
+                                            state?: string;
+                                            zipCode?: string;
+                                          }
+                                        | undefined;
+                                      const street = addr?.street?.trim() || '';
+                                      const cityStateZip = [
+                                        [addr?.city?.trim(), addr?.state?.trim()]
+                                          .filter(Boolean)
+                                          .join(', '),
+                                        addr?.zipCode?.trim(),
+                                      ]
+                                        .filter(Boolean)
+                                        .join(' ');
+                                      return (
+                                        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.5, minWidth: 0 }}>
+                                          <LocationOnIcon sx={{ fontSize: 16, color: 'text.secondary', mt: '2px', flexShrink: 0 }} />
+                                          <Box sx={{ minWidth: 0 }}>
+                                            <Typography variant="body2" sx={{ lineHeight: 1.3 }}>
+                                              {locName}
+                                            </Typography>
+                                            {street && (
+                                              <Typography
+                                                variant="caption"
+                                                color="text.secondary"
+                                                sx={{ display: 'block', lineHeight: 1.3 }}
+                                              >
+                                                {street}
+                                              </Typography>
+                                            )}
+                                            {cityStateZip && (
+                                              <Typography
+                                                variant="caption"
+                                                color="text.secondary"
+                                                sx={{ display: 'block', lineHeight: 1.3 }}
+                                              >
+                                                {cityStateZip}
+                                              </Typography>
+                                            )}
+                                          </Box>
+                                        </Box>
+                                      );
+                                    }
+                                    return (
+                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                        <LocationOnIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+                                        <Typography variant="body2">{locName}</Typography>
+                                      </Box>
+                                    );
+                                  })()}
+                                </TableCell>
+                                <TableCell>
+                                  <Chip
+                                    label={jobOrder.status}
+                                    color={getJobOrderStatusColor(jobOrder.status) as any}
+                                    size="small"
+                                  />
+                                </TableCell>
+                                {/* Requested/Filled cell — hidden per UX feedback; uncomment to restore. */}
+                                {/*
+                                <TableCell>
+                                  <Typography variant="body2">
+                                    {jobOrder.workersNeeded ?? 0} / {jobOrder.headcountFilled ?? 0}
                                   </Typography>
-                                </Box>
-                              </TableCell>
-                              <TableCell>
-                                <Typography variant="body2">{jobOrder.jobTitle || 'No Job Title'}</Typography>
-                              </TableCell>
-                              <TableCell>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                  <BusinessIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
-                                  <Typography variant="body2">{jobOrder.companyName || 'Unknown Company'}</Typography>
-                                </Box>
-                              </TableCell>
-                              <TableCell>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                  <LocationOnIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
-                                  <Typography variant="body2">{jobOrder.locationName || 'No Location'}</Typography>
-                                </Box>
-                              </TableCell>
-                              <TableCell>
-                                <Chip
-                                  label={jobOrder.status}
-                                  color={getJobOrderStatusColor(jobOrder.status) as any}
-                                  size="small"
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <Typography variant="body2">
-                                  {jobOrder.workersNeeded ?? 0} / {jobOrder.headcountFilled ?? 0}
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary">
-                                  {jobOrder.workersNeeded && jobOrder.headcountFilled
-                                    ? `${Math.round(((jobOrder.headcountFilled ?? 0) / (jobOrder.workersNeeded || 1)) * 100)}% filled`
-                                    : '0% filled'}
-                                </Typography>
-                              </TableCell>
-                              <TableCell>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                  <PersonIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
-                                  <Typography variant="body2">{jobOrder.recruiterName || 'Unassigned'}</Typography>
-                                </Box>
-                              </TableCell>
-                              <TableCell>
-                                <Typography variant="body2">{getJobOrderAge(jobOrder.createdAt)} days</Typography>
-                              </TableCell>
-                            </TableRow>
-                          ))}
+                                  <Typography variant="caption" color="text.secondary">
+                                    {jobOrder.workersNeeded && jobOrder.headcountFilled
+                                      ? `${Math.round(((jobOrder.headcountFilled ?? 0) / (jobOrder.workersNeeded || 1)) * 100)}% filled`
+                                      : '0% filled'}
+                                  </Typography>
+                                </TableCell>
+                                */}
+                                <TableCell>
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                    <PersonIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+                                    <Typography variant="body2">{jobOrder.recruiterName || 'Unassigned'}</Typography>
+                                  </Box>
+                                </TableCell>
+                                {/* Age cell — hidden per UX feedback; uncomment to restore. */}
+                                {/*
+                                <TableCell>
+                                  <Typography variant="body2">{getJobOrderAge(jobOrder.createdAt)} days</Typography>
+                                </TableCell>
+                                */}
+                              </TableRow>
+                            );
+
+                            const isGrouped = isNationalAccount && jobOrdersView === 'sub-account';
+                            if (!isGrouped) {
+                              return paginatedAccountJobOrders.map((jo, i) => renderJobOrderRow(jo, i));
+                            }
+
+                            // Apply secondary sub-accounts filter. `with-orders`
+                            // hides empty groups entirely (both the child empties
+                            // and the parent "(National)" group when it's empty).
+                            const visibleGroups =
+                              subAccountsFilter === 'with-orders'
+                                ? groupedAccountJobOrders.filter((g) => g.orders.length > 0)
+                                : groupedAccountJobOrders;
+
+                            // Grouped view: emit a header row per sub-account, then its orders
+                            // (or a "No job orders" placeholder when the group is empty).
+                            return visibleGroups.flatMap((group) => {
+                              // Parent "(National)" group keeps the BusinessIcon — it's the
+                              // parent account itself, not a sub-account. Children use the
+                              // AccountTree icon so the sidebar icon for "Sub Accounts"
+                              // matches what recruiters see in the header rows.
+                              const HeaderIcon = group.isParentGroup
+                                ? BusinessIcon
+                                : AccountTreeIcon;
+                              const headerRow = (
+                                <TableRow
+                                  key={group.key}
+                                  onClick={
+                                    group.href
+                                      ? () => navigate(group.href as string)
+                                      : undefined
+                                  }
+                                  sx={{
+                                    cursor: group.href ? 'pointer' : 'default',
+                                    backgroundColor: group.isParentGroup ? '#EEF2F7' : '#F3F4F6',
+                                    '&:hover': group.href
+                                      ? { backgroundColor: group.isParentGroup ? '#E3E9F1' : '#E5E7EB' }
+                                      : undefined,
+                                    borderTop: '2px solid',
+                                    borderTopColor: 'divider',
+                                  }}
+                                >
+                                  <TableCell
+                                    colSpan={8}
+                                    sx={{
+                                      py: 1,
+                                      fontWeight: 700,
+                                      color: 'text.primary',
+                                    }}
+                                  >
+                                    <Box
+                                      sx={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 1,
+                                        minWidth: 0,
+                                      }}
+                                    >
+                                      <HeaderIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+                                      <Typography variant="body2" fontWeight={700} component="span">
+                                        {group.label}
+                                      </Typography>
+                                    </Box>
+                                  </TableCell>
+                                </TableRow>
+                              );
+                              const orderRows = group.orders.length
+                                ? group.orders.map((jo, i) => renderJobOrderRow(jo, i, 'grouped'))
+                                : [
+                                    <TableRow key={`${group.key}-empty`}>
+                                      <TableCell
+                                        colSpan={8}
+                                        sx={{
+                                          py: 1.5,
+                                          pl: 5,
+                                          color: 'text.secondary',
+                                          fontStyle: 'italic',
+                                          fontSize: '0.875rem',
+                                        }}
+                                      >
+                                        No job orders yet
+                                      </TableCell>
+                                    </TableRow>,
+                                  ];
+                              return [headerRow, ...orderRows];
+                            });
+                          })()}
                         </TableBody>
                       </Table>
                     </TableContainer>
-                    <StandardTablePagination
-                      count={filteredAccountJobOrders.length}
-                      page={jobOrdersPage}
-                      onPageChange={(_, newPage) => setJobOrdersPage(newPage)}
-                      rowsPerPage={jobOrdersRowsPerPage}
-                      onRowsPerPageChange={(e) => {
-                        const val = parseInt(e.target.value, 10);
-                        setJobOrdersRowsPerPage(val);
-                        setJobOrdersPage(0);
-                      }}
-                    />
+                    {/* Pagination only applies to the flat view — the grouped view
+                        always shows every sub-account so paging through headers
+                        would be confusing. National accounts rarely exceed a few
+                        hundred orders; if that changes, revisit. */}
+                    {!(isNationalAccount && jobOrdersView === 'sub-account') && (
+                      <StandardTablePagination
+                        count={filteredAccountJobOrders.length}
+                        page={jobOrdersPage}
+                        onPageChange={(_, newPage) => setJobOrdersPage(newPage)}
+                        rowsPerPage={jobOrdersRowsPerPage}
+                        onRowsPerPageChange={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          setJobOrdersRowsPerPage(val);
+                          setJobOrdersPage(0);
+                        }}
+                      />
+                    )}
                   </Box>
                 )}
               </Box>
