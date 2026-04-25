@@ -54,7 +54,6 @@ import {
   Tooltip,
 } from '@mui/material';
 import {
-  ArrowBack as ArrowBackIcon,
   Business as BusinessIcon,
   Edit as EditIcon,
   Dashboard as DashboardIcon,
@@ -117,6 +116,7 @@ import type {
 } from '../types/recruiter/account';
 import type { AccountPositionPricing } from '../types/recruiter/account';
 import PageHeader from '../components/PageHeader';
+import UniversalBackButton from '../components/common/UniversalBackButton';
 import FavoriteButton from '../components/FavoriteButton';
 import InboxSearchBar from '../components/InboxSearchBar';
 import FavoritesFilter from '../components/FavoritesFilter';
@@ -3627,9 +3627,9 @@ const RecruiterAccountDetails: React.FC = () => {
     return (
       <Box sx={{ p: 3 }}>
         <Typography color="error">{error || 'Account not found'}</Typography>
-        <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/recruiter/accounts')} sx={{ mt: 2 }}>
-          Back to Accounts
-        </Button>
+        <Box sx={{ mt: 2 }}>
+          <UniversalBackButton to="/recruiter/accounts" tooltip="Back to Accounts" />
+        </Box>
       </Box>
     );
   }
@@ -3837,21 +3837,7 @@ const RecruiterAccountDetails: React.FC = () => {
                     New Order
                   </Button>
                 )}
-                <Button
-                  variant="outlined"
-                  startIcon={<ArrowBackIcon />}
-                  onClick={() => navigate('/accounts')}
-                  sx={{
-                    textTransform: 'none',
-                    borderRadius: '24px',
-                    height: '40px',
-                    px: 2,
-                    whiteSpace: 'nowrap',
-                    flexShrink: 0,
-                  }}
-                >
-                  Back
-                </Button>
+                <UniversalBackButton to="/accounts" />
               </Box>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.5, flexWrap: 'wrap' }}>
                 {parentAccount && (

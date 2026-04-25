@@ -60,7 +60,6 @@ import {
   Work as WorkIcon,
   Description as DescriptionIcon,
   RocketLaunch as RocketLaunchIcon,
-  ArrowBack as ArrowBackIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, deleteDoc, collection, query, where, getDocs, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -70,6 +69,7 @@ import { db, storage } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { createUnifiedAssociationService } from '../../utils/unifiedAssociationService';
 import StageChip from '../../components/StageChip';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import CRMNotesTab from '../../components/CRMNotesTab';
 import DealStageForms from '../../components/DealStageForms';
 import DealFormRenderer from '../../forms/DealFormRenderer';
@@ -2807,25 +2807,7 @@ const DealDetails: React.FC = () => {
                 }}
               />
             )}
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={<ArrowBackIcon />}
-              onClick={() => navigate('/crm')}
-              sx={{
-                textTransform: 'none',
-                borderRadius: 2,
-                px: 2,
-                borderColor: '#E5E7EB',
-                color: '#374151',
-                '&:hover': {
-                  borderColor: '#D1D5DB',
-                  bgcolor: '#F9FAFB',
-                },
-              }}
-            >
-              Back
-            </Button>
+            <UniversalBackButton to="/crm" />
           </Box>
         }
         showDivider={false}

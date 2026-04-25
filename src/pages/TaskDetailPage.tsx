@@ -14,13 +14,11 @@ import {
   Alert,
   Paper,
 } from '@mui/material';
-import {
-  ArrowBack as ArrowBackIcon,
-} from '@mui/icons-material';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import PageHeader from '../components/PageHeader';
+import UniversalBackButton from '../components/common/UniversalBackButton';
 import UnifiedTaskCreateModal from '../components/UnifiedTaskCreateModal';
 import { UnifiedTask } from '../types/UnifiedTask';
 
@@ -89,13 +87,9 @@ const TaskDetailPage: React.FC = () => {
         <Alert severity="error" sx={{ mt: 2 }}>
           {error?.message || 'Task not found'}
         </Alert>
-        <Button
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/tasks')}
-          sx={{ mt: 2 }}
-        >
-          Back to Tasks
-        </Button>
+        <Box sx={{ mt: 2 }}>
+          <UniversalBackButton to="/tasks" tooltip="Back to Tasks" />
+        </Box>
       </Box>
     );
   }
@@ -160,13 +154,9 @@ const TaskDetailPage: React.FC = () => {
           </Box>
         </Paper>
 
-        <Button
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/tasks')}
-          sx={{ mt: 2 }}
-        >
-          Back to Tasks
-        </Button>
+        <Box sx={{ mt: 2 }}>
+          <UniversalBackButton to="/tasks" tooltip="Back to Tasks" />
+        </Box>
       </Box>
 
       {showEditModal && (

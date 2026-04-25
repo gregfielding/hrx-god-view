@@ -73,7 +73,6 @@ import {
   Edit as EditIcon,
   ContentCopy as ContentCopyIcon,
   Language as ExternalLinkIcon,
-  ArrowBack as ArrowBackIcon,
   Email as EmailIcon,
   Sms as SmsIcon,
   Lock as LockedIcon,
@@ -81,6 +80,7 @@ import {
   Groups as GroupsIcon,
 } from '@mui/icons-material';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import UniversalBackButton from '../components/common/UniversalBackButton';
 import { format, formatDistanceToNow } from 'date-fns';
 import {
   doc,
@@ -4572,23 +4572,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
             >
               Delete
             </Button>
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={<ArrowBackIcon sx={{ fontSize: 18 }} />}
-              onClick={() => navigate('/jobs/job-orders')}
-              sx={{
-                textTransform: 'none',
-                borderRadius: '999px',
-                fontSize: '0.8125rem',
-                minHeight: 34,
-                py: 0.5,
-                px: 1.5,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              Back
-            </Button>
+            <UniversalBackButton to="/jobs/job-orders" />
           </Box>
         }
       />

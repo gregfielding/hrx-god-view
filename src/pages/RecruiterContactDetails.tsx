@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../components/common/UniversalBackButton';
 import {
   Box,
   Typography,
@@ -44,7 +45,6 @@ import {
   Notes as NotesIcon,
   Work as WorkIcon,
   Edit as EditIcon,
-  ArrowBack as ArrowBackIcon,
   LinkedIn as LinkedInIcon,
   Twitter as TwitterIcon,
   Facebook as FacebookIcon,
@@ -1019,9 +1019,9 @@ const RecruiterContactDetails: React.FC = () => {
         <Alert severity="error" sx={{ mb: 2 }}>
           {error || 'Contact not found'}
         </Alert>
-        <Button onClick={() => navigate('/contacts')} sx={{ mt: 2 }} startIcon={<ArrowBackIcon />}>
-          Back to Contacts
-        </Button>
+        <Box sx={{ mt: 2 }}>
+          <UniversalBackButton to="/contacts" tooltip="Back to Contacts" />
+        </Box>
       </Box>
     );
   }
@@ -1334,20 +1334,7 @@ const RecruiterContactDetails: React.FC = () => {
         }
         rightActions={
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Button
-              variant="outlined"
-              startIcon={<ArrowBackIcon />}
-              onClick={() => navigate('/contacts')}
-              sx={{
-                textTransform: 'none',
-                borderRadius: '24px',
-                height: '40px',
-                px: 2,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              Back
-            </Button>
+            <UniversalBackButton to="/contacts" />
 
             <Button
               variant="outlined"

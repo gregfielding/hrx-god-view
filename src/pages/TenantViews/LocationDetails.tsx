@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import {
   Box,
   Typography,
@@ -39,7 +40,6 @@ import {
   InputAdornment,
 } from '@mui/material';
 import {
-  ArrowBack as ArrowBackIcon,
   Edit as EditIcon,
   Save as SaveIcon,
   Cancel as CancelIcon,
@@ -1107,13 +1107,7 @@ const LocationDetails: React.FC = () => {
         <Alert severity="error" sx={{ mb: 2 }}>
           {error}
         </Alert>
-        <Button
-          variant="outlined"
-          startIcon={<ArrowBackIcon />}
-          onClick={navigateBackToCompany}
-        >
-          Back to Company
-        </Button>
+        <UniversalBackButton onClick={navigateBackToCompany} tooltip="Back to Company" />
       </Box>
     );
   }
@@ -1124,13 +1118,7 @@ const LocationDetails: React.FC = () => {
       <Typography variant="h6" color="error" gutterBottom>
         Location not found
       </Typography>
-      <Button
-        variant="outlined"
-        startIcon={<ArrowBackIcon />}
-        onClick={navigateBackToCompany}
-      >
-        Back to Company
-      </Button>
+      <UniversalBackButton onClick={navigateBackToCompany} tooltip="Back to Company" />
     </Box>
     );
   }
@@ -1470,9 +1458,7 @@ const LocationDetails: React.FC = () => {
         }
         rightActions={
           <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-            <Button variant="outlined" startIcon={<ArrowBackIcon />} onClick={navigateBackToCompany}>
-              Back
-            </Button>
+            <UniversalBackButton onClick={navigateBackToCompany} />
           </Box>
         }
       />

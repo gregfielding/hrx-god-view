@@ -102,8 +102,8 @@ import { useFavorites } from '../../hooks/useFavorites';
 import PageHeader from '../../components/PageHeader';
 import FavoriteButton from '../../components/FavoriteButton';
 import { Stack, Tooltip } from '@mui/material';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import AddTaskIcon from '@mui/icons-material/AddTask';
 import PersonSearchIcon from '@mui/icons-material/PersonSearch';
 import {
@@ -1467,14 +1467,7 @@ const CompanyDetails: React.FC = () => {
         }
         rightActions={
           <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-            <Button
-              variant="outlined"
-              startIcon={<ArrowBackIcon />}
-              onClick={() => navigate('/companies')}
-              sx={{ textTransform: 'none' }}
-            >
-              Back
-            </Button>
+            <UniversalBackButton to="/companies" />
             <Tooltip title="Open Sales Coach">
               <IconButton
                 onClick={() => {

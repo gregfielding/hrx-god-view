@@ -7,6 +7,7 @@
 
 import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
+import UniversalBackButton from '../components/common/UniversalBackButton';
 import {
   Box,
   Typography,
@@ -1253,9 +1254,9 @@ export default function AccountLocationDetail() {
     return (
       <Box sx={{ p: 3 }}>
         <Typography color="error">{error ?? 'Account not found.'}</Typography>
-        <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/accounts')} sx={{ mt: 2 }}>
-          Back to Accounts
-        </Button>
+        <Box sx={{ mt: 2 }}>
+          <UniversalBackButton to="/accounts" tooltip="Back to Accounts" />
+        </Box>
       </Box>
     );
   }

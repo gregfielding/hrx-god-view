@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../components/common/UniversalBackButton';
 import {
   Box,
   Typography,
@@ -40,7 +41,6 @@ import {
   Tooltip,
 } from '@mui/material';
 import {
-  ArrowBack as ArrowBackIcon,
   Edit as EditIcon,
   Save as SaveIcon,
   Cancel as CancelIcon,
@@ -1052,13 +1052,7 @@ const RecruiterLocationDetails: React.FC = () => {
         <Alert severity="error" sx={{ mb: 2 }}>
           {error}
         </Alert>
-        <Button
-          variant="outlined"
-          startIcon={<ArrowBackIcon />}
-          onClick={navigateBackToCompany}
-        >
-          Back to Company
-        </Button>
+        <UniversalBackButton onClick={navigateBackToCompany} tooltip="Back to Company" />
       </Box>
     );
   }
@@ -1069,13 +1063,7 @@ const RecruiterLocationDetails: React.FC = () => {
       <Typography variant="h6" color="error" gutterBottom>
         Location not found
       </Typography>
-      <Button
-        variant="outlined"
-        startIcon={<ArrowBackIcon />}
-        onClick={navigateBackToCompany}
-      >
-        Back to Company
-      </Button>
+      <UniversalBackButton onClick={navigateBackToCompany} tooltip="Back to Company" />
     </Box>
     );
   }

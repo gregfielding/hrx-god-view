@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../components/common/UniversalBackButton';
 import {
   Box,
   Typography,
@@ -22,7 +23,6 @@ import {
   AttachMoney as MoneyIcon,
   Schedule as ScheduleIcon,
   Business as BusinessIcon,
-  ArrowBack as ArrowBackIcon,
   CheckCircle as CheckCircleIcon,
   Cancel as CancelIcon,
   Pending as PendingIcon,
@@ -1164,13 +1164,9 @@ const AssignmentDetails: React.FC = () => {
     return (
       <Box sx={{ p: 3 }}>
         <Alert severity="error">{error}</Alert>
-        <Button
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate(-1)}
-          sx={{ mt: 2 }}
-        >
-          {t('common.back')}
-        </Button>
+        <Box sx={{ mt: 2 }}>
+          <UniversalBackButton tooltip={t('common.back')} />
+        </Box>
       </Box>
     );
   }
@@ -1179,13 +1175,9 @@ const AssignmentDetails: React.FC = () => {
     return (
       <Box sx={{ p: 3 }}>
         <Alert severity="info">{t('assignment.notFound')}</Alert>
-        <Button
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate(-1)}
-          sx={{ mt: 2 }}
-        >
-          {t('common.back')}
-        </Button>
+        <Box sx={{ mt: 2 }}>
+          <UniversalBackButton tooltip={t('common.back')} />
+        </Box>
       </Box>
     );
   }
@@ -1214,13 +1206,7 @@ const AssignmentDetails: React.FC = () => {
         >
           {t('assignment.addToCalendar')}
         </Button>
-        <Button
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate(-1)}
-          variant="outlined"
-        >
-          {t('common.back')}
-        </Button>
+        <UniversalBackButton tooltip={t('common.back')} />
       </Stack>
 
       {/* Main content: full-width stack; My Recruiter appended at bottom only when assigned */}

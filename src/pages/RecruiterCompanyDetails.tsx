@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../components/common/UniversalBackButton';
 import {
   Box,
   Typography,
@@ -48,7 +49,6 @@ import {
 import {
   Phone as PhoneIcon,
   Add as AddIcon,
-  ArrowBack as ArrowBackIcon,
   LocationOn as LocationIcon,
   Language as LanguageIcon,
   Work as WorkIcon,
@@ -1243,20 +1243,7 @@ const RecruiterCompanyDetails: React.FC = () => {
         rightActions={
           <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Button
-                variant="outlined"
-                startIcon={<ArrowBackIcon />}
-                onClick={() => navigate('/companies')}
-                sx={{
-                  textTransform: 'none',
-                  borderRadius: '24px',
-                  height: '40px',
-                  px: 2,
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                Back
-              </Button>
+              <UniversalBackButton to="/companies" />
 
               {/* Keep these buttons and functions */}
               <Button

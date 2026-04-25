@@ -24,7 +24,6 @@ import {
   DialogTitle,
   DialogContent,
 } from '@mui/material';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import PersonIcon from '@mui/icons-material/Person';
 import CloseIcon from '@mui/icons-material/Close';
 import PhoneOutlinedIcon from '@mui/icons-material/PhoneOutlined';
@@ -37,6 +36,7 @@ import AddTaskIcon from '@mui/icons-material/AddTask';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import ContactActionButtons from './components/ContactActionButtons';
 import { httpsCallable } from 'firebase/functions';
 import {
@@ -2780,8 +2780,7 @@ const UserProfilePage = () => {
                   </Tooltip>
                 )}
                 */}
-                <Button
-                  startIcon={<ArrowBackIcon sx={{ fontSize: '0.95rem' }} />}
+                <UniversalBackButton
                   onClick={() => {
                     if (isRecruiterRoute) {
                       navigate('/users');
@@ -2793,35 +2792,7 @@ const UserProfilePage = () => {
                     }
                     navigate(-1);
                   }}
-                  variant="outlined"
-                  sx={{
-                    textTransform: 'none',
-                    borderRadius: '999px',
-                    fontSize: '13px',
-                    fontWeight: 500,
-                    px: 1.25,
-                    py: 0.5,
-                    minHeight: 30,
-                    minWidth: 'auto',
-                    lineHeight: 1.2,
-                    whiteSpace: 'nowrap',
-                    boxSizing: 'border-box',
-                    borderColor: 'divider',
-                    color: 'text.secondary',
-                    bgcolor: 'action.hover',
-                    '&:hover': {
-                      borderColor: 'divider',
-                      bgcolor: 'action.selected',
-                      color: 'text.primary',
-                    },
-                    '& .MuiButton-startIcon': {
-                      mr: 0.5,
-                      ml: -0.25,
-                    },
-                  }}
-                >
-                  Back
-                </Button>
+                />
               </Box>
             }
             subtitle={undefined}

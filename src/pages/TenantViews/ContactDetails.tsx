@@ -105,7 +105,7 @@ import PageHeader from '../../components/PageHeader';
 import FavoriteButton from '../../components/FavoriteButton';
 import { Stack } from '@mui/material';
 import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import { ContactHeaderMarketing, type CrmContactIndustrySegment } from '../../components/crm/contacts/ContactHeaderMarketing';
 import { PipelineStageContainer } from '../../components/crm/contacts/PipelineStageContainer';
 import { PIPELINE_STAGES, PIPELINE_STAGE_LABELS, type PipelineStage } from '../../types/CRM';
@@ -2609,13 +2609,9 @@ const ContactDetails: React.FC = () => {
         showDivider={false}
         rightActions={
           <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-            <Button
-              variant="outlined"
-              startIcon={<ArrowBackIcon />}
+            <UniversalBackButton
               onClick={() => navigate(company ? `/companies/${company.id}?tab=2` : '/contacts')}
-            >
-              Back
-            </Button>
+            />
             <Tooltip title="Open Sales Coach">
               <IconButton
                 onClick={() => {

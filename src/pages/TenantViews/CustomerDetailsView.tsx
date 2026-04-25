@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import {
   Box,
   Typography,
@@ -38,7 +39,6 @@ import {
   LocationOn as LocationIcon,
   Phone as PhoneIcon,
   Email as EmailIcon,
-  ArrowBack as ArrowBackIcon,
   CameraAlt as CameraAltIcon,
   Clear as ClearIcon,
   LinkedIn as LinkedInIcon,
@@ -629,13 +629,7 @@ const CustomerDetailsView: React.FC<CustomerDetailsViewProps> = ({
             </Box>
           </Box>
         </Box>
-        <Button
-          variant="outlined"
-          onClick={onBack}
-          startIcon={<ArrowBackIcon />}
-        >
-          Back to Customers
-        </Button>
+        <UniversalBackButton onClick={onBack} tooltip="Back to Customers" />
       </Box>
 
       {/* Contacts Section */}
