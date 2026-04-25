@@ -137,13 +137,18 @@ function findRequiredClassForSpec(
 }
 
 /**
- * Convert an ISO YYYY-MM-DD date string to UTC midnight in ms. Returns null
- * for non-strings, empty, or unparseable values.
+ * Convert a license `expirationDate` (ISO YYYY-MM-DD calendar date) to the ms
+ * timestamp at which the license actually becomes expired. That's the START of
+ * the day AFTER the expirationDate — `matchLicenses` treats today ===
+ * expirationDate as still valid (`expirationDate < todayISO` is its failure
+ * condition), so the reconciler's strict `expiresAtMs < nowMs` query lines up.
  *
- * Day-precision intentional: license expirationDate is a calendar date, not a
- * datetime. Reconciler treats today === expirationDate as still valid (matches
- * `matchLicenses` semantics: `expirationDate < todayISO` is the failure
- * condition).
+ * Example:
+ *   `'2028-06-15'` → `Date.UTC(2028, 5, 16)` (midnight UTC on June 16, 2028).
+ *   On June 15 at any time of day, `nowMs < expiresAtMs` → still valid.
+ *   At midnight UTC June 16, `nowMs >= expiresAtMs` → expired.
+ *
+ * Returns `null` for non-strings, empty, or unparseable values.
  */
 function parseIsoDateToMillis(iso: string | null | undefined): number | null {
   if (typeof iso !== 'string') return null;
@@ -153,7 +158,8 @@ function parseIsoDateToMillis(iso: string | null | undefined): number | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
   if (!match) return null;
   const [, y, m, d] = match;
-  const ms = Date.UTC(Number(y), Number(m) - 1, Number(d));
+  // Start of day AFTER the expirationDate — see jsdoc.
+  const ms = Date.UTC(Number(y), Number(m) - 1, Number(d) + 1);
   if (Number.isNaN(ms)) return null;
   return ms;
 }

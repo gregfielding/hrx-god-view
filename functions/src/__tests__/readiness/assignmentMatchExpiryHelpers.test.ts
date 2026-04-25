@@ -43,7 +43,10 @@ function spec(
 }
 
 describe('stampExpiryOnSpecs — license_match', () => {
-  it('stamps expiresAtMs from the matched license expirationDate (UTC midnight)', () => {
+  it('stamps expiresAtMs at start-of-day-after expirationDate (matches matchLicenses semantics)', () => {
+    // expirationDate '2028-06-15' → license valid through end of June 15 →
+    // expiresAtMs = midnight UTC June 16. Reconciler's `< nowMs` then aligns
+    // with matchLicenses' `expirationDate < todayISO` failure condition.
     const specs = [spec('license_match', 'complete_pass', 'CDL_Class_A')];
     stampExpiryOnSpecs({
       specs,
@@ -51,7 +54,7 @@ describe('stampExpiryOnSpecs — license_match', () => {
       requiredLicensesV2: [reqCdlA],
       screeningEval: null,
     });
-    expect(specs[0].expiresAtMs).to.equal(Date.UTC(2028, 5, 15));
+    expect(specs[0].expiresAtMs).to.equal(Date.UTC(2028, 5, 16));
   });
 
   it('does NOT stamp when status is not complete_pass', () => {
@@ -117,7 +120,7 @@ describe('stampExpiryOnSpecs — license_match', () => {
       requiredLicensesV2: [reqCdlA],
       screeningEval: null,
     });
-    expect(specs[0].expiresAtMs).to.equal(Date.UTC(2030, 0, 1));
+    expect(specs[0].expiresAtMs).to.equal(Date.UTC(2030, 0, 2));
   });
 });
 
@@ -208,7 +211,7 @@ describe('stampExpiryOnSpecs — composite', () => {
       requiredLicensesV2: [reqCdlA],
       screeningEval: passingScreening,
     });
-    expect(specs[0].expiresAtMs).to.equal(Date.UTC(2028, 5, 15)); // license
+    expect(specs[0].expiresAtMs).to.equal(Date.UTC(2028, 5, 16)); // license (start of day after expirationDate)
     expect(specs[1].expiresAtMs).to.be.undefined; // skill
     expect(specs[2].expiresAtMs).to.equal(passingScreening.expiresAtMs); // screening
     expect(specs[3].expiresAtMs).to.be.undefined; // education

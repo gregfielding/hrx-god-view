@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "assignmentReadinessItems",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {"fieldPath": "expiresAtMs", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"}
+      ]
+    },
+    {
       "collectionGroup": "calendar_events",
       "queryScope": "COLLECTION",
       "fields": [

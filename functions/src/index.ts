@@ -312,6 +312,7 @@ export { onUserFieldChangeUpdateReadiness } from './readiness/onUserFieldChangeU
 // Bridges the gap matrix §6 hole #7 names: snapshot built once and never
 // refreshed. Daily reconciler (Phase C.2) handles the time-passes path.
 export { onUserLicensesChangeRefreshAssignments } from './readiness/onUserLicensesChangeRefreshAssignments';
+export { dailyReconcileExpiredReadiness } from './readiness/dailyReconcileExpiredReadiness';
 
 // Workforce domain (Phase 2 of docs/WORKFORCE_DOMAIN_MODEL.md).
 // - Trigger maintains AccountWorkforce docs from assignment writes.
