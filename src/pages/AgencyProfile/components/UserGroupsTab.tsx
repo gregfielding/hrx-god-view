@@ -16,6 +16,7 @@ import {
   Alert,
   Autocomplete,
   CircularProgress,
+  TableSortLabel,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -45,6 +46,13 @@ import { fetchAgencyUserGroupManagerCandidates } from '../../../utils/userGroupM
 export interface UserGroupsTabProps {
   tenantId: string;
   hideHeader?: boolean;
+  /**
+   * `'all'` (default) shows every group in the tenant.
+   * `'mine'` filters to groups where the current viewer's uid is in
+   * `groupManagerIds`. The Cloud-Function-side rules don't need to
+   * change — we just hide rows the viewer isn't a manager of.
+   */
+  scope?: 'all' | 'mine';
   layoutSearch?: string;
   layoutSetSearch?: (value: string) => void;
   layoutShowFavoritesOnly?: boolean;
@@ -56,6 +64,7 @@ export interface UserGroupsTabProps {
 const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
   tenantId,
   hideHeader = false,
+  scope = 'all',
   layoutSearch,
   layoutSetSearch,
   layoutShowFavoritesOnly,
@@ -74,6 +83,12 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
   const [groupManagerIds, setGroupManagerIds] = useState<string[]>([]);
   const [localSearchTerm, setLocalSearchTerm] = useState('');
   const [localShowFavoritesOnly, setLocalShowFavoritesOnly] = useState(false);
+  // Per-column sort. Defaults to title ascending so the table opens
+  // alphabetised — matches the previous (implicit) order most closely.
+  type SortKey = 'title' | 'managers' | 'members';
+  type SortDir = 'asc' | 'desc';
+  const [sortBy, setSortBy] = useState<SortKey>('title');
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -219,8 +234,18 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
+  const viewerUid = user?.userId as string | undefined;
+
   const filteredGroups = useMemo(() => {
     return groups.filter((group) => {
+      // `scope === 'mine'` powers the /users/my-user-groups tab — only
+      // surface groups where the signed-in viewer is one of the managers.
+      if (scope === 'mine') {
+        if (!viewerUid) return false;
+        const ids = Array.isArray(group.groupManagerIds) ? group.groupManagerIds : [];
+        if (!ids.includes(viewerUid)) return false;
+      }
+
       if (showFavoritesOnly && !favorites.includes(group.id)) {
         return false;
       }
@@ -242,7 +267,49 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
         managerSearchBlob.includes(search)
       );
     });
-  }, [groups, searchTerm, showFavoritesOnly, favorites, managerDisplayById]);
+  }, [groups, scope, viewerUid, searchTerm, showFavoritesOnly, favorites, managerDisplayById]);
+
+  /**
+   * Click handler shared by every sortable column header. Toggles between
+   * asc/desc when the same column is clicked twice; switches column and
+   * defaults to asc for text / desc for numeric counts otherwise.
+   */
+  const handleRequestSort = (key: SortKey) => {
+    if (sortBy === key) {
+      setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortBy(key);
+      setSortDir(key === 'title' ? 'asc' : 'desc');
+    }
+  };
+
+  const sortedGroups = useMemo(() => {
+    const dir = sortDir === 'asc' ? 1 : -1;
+    const safeStr = (v: unknown) => (typeof v === 'string' ? v : '').toLowerCase();
+    const managerCount = (g: any) =>
+      Array.isArray(g.groupManagerIds) ? g.groupManagerIds.length : 0;
+    const memberCount = (g: any) => (Array.isArray(g.memberIds) ? g.memberIds.length : 0);
+
+    return [...filteredGroups].sort((a, b) => {
+      switch (sortBy) {
+        case 'title': {
+          const cmp = safeStr(a.title).localeCompare(safeStr(b.title));
+          return cmp * dir;
+        }
+        case 'managers': {
+          const cmp = managerCount(a) - managerCount(b);
+          // Tie-break by title so stable, predictable order.
+          return (cmp || safeStr(a.title).localeCompare(safeStr(b.title))) * dir;
+        }
+        case 'members': {
+          const cmp = memberCount(a) - memberCount(b);
+          return (cmp || safeStr(a.title).localeCompare(safeStr(b.title))) * dir;
+        }
+        default:
+          return 0;
+      }
+    });
+  }, [filteredGroups, sortBy, sortDir]);
 
   const handleBroadcastSuccess = (result: any) => {
     setSuccess(true);
@@ -274,7 +341,11 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
   };
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    // `flex: 1, minHeight: 0` lets the table stretch when this tab is
+    // hosted in a flex column parent (UsersLayout outlet). In the legacy
+    // AgencyProfile tab panel the parent isn't a flex container, so the
+    // box just falls back to content height — same as it did before.
+    <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       {!hideHeader && (
         <PageHeader
           title={
@@ -351,8 +422,9 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
           flexDirection: 'column',
         }}
       >
-        {/* Table Container */}
-        <Box sx={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', px: 2, pb: 2 }}>
+        {/* Table Container — no bottom padding here; UsersLayout's outlet
+            container already supplies the 16px gutter below the table. */}
+        <Box sx={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', px: 2, pb: 0 }}>
           {/* Loading overlay */}
           {loading && groups.length === 0 && (
             <Box
@@ -387,7 +459,9 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
               <Typography variant="body2" color="text.secondary">
                 {groups.length === 0
                   ? 'No groups yet.'
-                  : 'No groups match your search.'}
+                  : scope === 'mine'
+                    ? 'You aren’t listed as a manager on any groups yet.'
+                    : 'No groups match your search.'}
               </Typography>
             </Box>
           )}
@@ -436,28 +510,57 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
                 >
                   <TableRow sx={{ backgroundColor: 'background.paper', borderRadius: 0 }}>
                     <TableCell sx={{ width: 60, bgcolor: '#FFFFFF', borderRadius: 0 }} />
-                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
-                      Title
+                    <TableCell
+                      sortDirection={sortBy === 'title' ? sortDir : false}
+                      sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}
+                    >
+                      <TableSortLabel
+                        active={sortBy === 'title'}
+                        direction={sortBy === 'title' ? sortDir : 'asc'}
+                        onClick={() => handleRequestSort('title')}
+                      >
+                        Title
+                      </TableSortLabel>
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                       Description
                     </TableCell>
+                    {/* Created / Created By columns hidden per product request — uncomment to restore.
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                       Created
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                       Created By
                     </TableCell>
-                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
-                      Group managers
+                    */}
+                    <TableCell
+                      sortDirection={sortBy === 'managers' ? sortDir : false}
+                      sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}
+                    >
+                      <TableSortLabel
+                        active={sortBy === 'managers'}
+                        direction={sortBy === 'managers' ? sortDir : 'desc'}
+                        onClick={() => handleRequestSort('managers')}
+                      >
+                        Group managers
+                      </TableSortLabel>
                     </TableCell>
-                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
-                      Members
+                    <TableCell
+                      sortDirection={sortBy === 'members' ? sortDir : false}
+                      sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}
+                    >
+                      <TableSortLabel
+                        active={sortBy === 'members'}
+                        direction={sortBy === 'members' ? sortDir : 'desc'}
+                        onClick={() => handleRequestSort('members')}
+                      >
+                        Members
+                      </TableSortLabel>
                     </TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {filteredGroups.map((group, index) => (
+                  {sortedGroups.map((group, index) => (
                     <TableRow
                       key={group.id}
                       hover
@@ -489,6 +592,7 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
                           ? group.description.slice(0, 40) + '...'
                           : group.description || '-'}
                       </TableCell>
+                      {/* Created / Created By cells hidden per product request — uncomment to restore.
                       <TableCell>
                         {group.createdAt?.toDate ? group.createdAt.toDate().toLocaleDateString() : '-'}
                       </TableCell>
@@ -497,6 +601,7 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
                           ? `${group.createdBy.firstName} ${group.createdBy.lastName}`
                           : '-'}
                       </TableCell>
+                      */}
                       <TableCell
                         onClick={(e) => e.stopPropagation()}
                         onMouseDown={(e) => e.stopPropagation()}

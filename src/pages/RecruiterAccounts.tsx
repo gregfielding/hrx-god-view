@@ -25,7 +25,15 @@ import {
   MenuItem,
   IconButton,
 } from '@mui/material';
-import { Business as BusinessIcon, AccountTree as AccountTreeIcon, Add as AddIcon, Star, StarBorder } from '@mui/icons-material';
+import {
+  Business as BusinessIcon,
+  AccountTree as AccountTreeIcon,
+  Add as AddIcon,
+  Star,
+  StarBorder,
+  AccountBalance as AccountBalanceIcon,
+  Person as PersonIcon,
+} from '@mui/icons-material';
 import { useOutletContext, useSearchParams, useNavigate } from 'react-router-dom';
 import { collection, query, orderBy, getDocs, addDoc, serverTimestamp, doc, updateDoc, arrayUnion } from 'firebase/firestore';
 
@@ -255,6 +263,48 @@ const RecruiterAccounts: React.FC<RecruiterAccountsProps> = ({ onlyMyAccounts = 
         }}
       >
         <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* Tab pills (Accounts / My Accounts) live on the left of the
+              filter row, with the Status / Sort By dropdowns to their right.
+              They used to live in the page header above; moving them here
+              lets the table take the full page width. */}
+          {[
+            { id: 'accounts' as const, label: 'Accounts', icon: <AccountBalanceIcon fontSize="small" />, to: '/accounts' },
+            { id: 'my-accounts' as const, label: 'My Accounts', icon: <PersonIcon fontSize="small" />, to: '/accounts/my' },
+          ].map((tab) => {
+            const isActive = onlyMyAccounts ? tab.id === 'my-accounts' : tab.id === 'accounts';
+            return (
+              <Button
+                key={tab.id}
+                startIcon={tab.icon}
+                onClick={() => navigate(tab.to)}
+                variant="text"
+                sx={{
+                  textTransform: 'none',
+                  borderRadius: '999px',
+                  fontSize: '13px',
+                  fontWeight: isActive ? 600 : 400,
+                  color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                  bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                  px: 1.25,
+                  py: 0.5,
+                  minHeight: 30,
+                  height: 30,
+                  minWidth: 'auto',
+                  whiteSpace: 'nowrap',
+                  '& .MuiButton-startIcon': {
+                    mr: 0.35,
+                    '& svg': { fontSize: 16 },
+                  },
+                  '&:hover': {
+                    bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                  },
+                }}
+              >
+                {tab.label}
+              </Button>
+            );
+          })}
+
           <FormControl size="small" sx={{ minWidth: 160, height: 36 }}>
             <InputLabel sx={{ fontSize: '0.875rem' }}>Status</InputLabel>
             <Select
@@ -297,8 +347,10 @@ const RecruiterAccounts: React.FC<RecruiterAccountsProps> = ({ onlyMyAccounts = 
         </Box>
       </Box>
 
-      {/* Full-width table – CompanyTable-style */}
-      <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', pt: 0, pb: 2 }}>
+      {/* Full-width table – CompanyTable-style.
+          Bottom spacing comes from LayoutOutlet (16px). Don't double-pad here
+          or the table won't fill the viewport. */}
+      <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', pt: 0, pb: 0 }}>
         {loading && accounts.length === 0 ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1, p: 4 }}>
             <CircularProgress />

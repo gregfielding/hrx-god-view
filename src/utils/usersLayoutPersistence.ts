@@ -8,6 +8,7 @@ export type UsersTab =
   | 'my'
   | 'invite-users'
   | 'user-groups'
+  | 'my-user-groups'
   | 'smart-groups'
   | 'all-smart-groups'
   | 'my-smart-groups';
@@ -15,8 +16,12 @@ export type UsersTab =
 export const USERS_LAYOUT_TAB_CONFIG: { tab: UsersTab; path: string; label: string }[] = [
   { tab: 'all', path: '/users/all', label: 'All Users' },
   { tab: 'my', path: '/users/my', label: 'My Users' },
-  { tab: 'invite-users', path: '/users/invite-users', label: 'Invite Users' },
+  // Hidden from the toolbar — the route still exists for direct navigation
+  // and any in-flight links, but the pill is suppressed per product request.
+  // Re-enable by uncommenting the row below.
+  // { tab: 'invite-users', path: '/users/invite-users', label: 'Invite Users' },
   { tab: 'user-groups', path: '/users/user-groups', label: 'User Groups' },
+  { tab: 'my-user-groups', path: '/users/my-user-groups', label: 'My User Groups' },
   { tab: 'smart-groups', path: '/users/smart-groups', label: 'Smart Groups' },
   { tab: 'all-smart-groups', path: '/users/all-smart-groups', label: 'All Smart Groups' },
   { tab: 'my-smart-groups', path: '/users/my-smart-groups', label: 'My Smart Groups' },
@@ -75,6 +80,9 @@ export function getUsersIndexRedirectPath(): string {
 }
 
 export function getActiveUsersTab(pathname: string): UsersTab {
+  // Order matters — match the longest / most specific path first so
+  // `/users/my-user-groups` doesn't accidentally resolve to `user-groups`.
+  if (pathname.includes('/users/my-user-groups')) return 'my-user-groups';
   if (pathname.includes('/users/user-groups')) return 'user-groups';
   if (pathname.includes('/users/my-smart-groups')) return 'my-smart-groups';
   if (pathname.includes('/users/all-smart-groups')) return 'all-smart-groups';
