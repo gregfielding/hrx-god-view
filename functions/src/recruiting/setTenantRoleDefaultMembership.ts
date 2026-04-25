@@ -87,7 +87,11 @@ export const setTenantRoleDefaultMembership = onCall<
     region: 'us-central1',
     maxInstances: 5,
     timeoutSeconds: 30,
-    memory: '256MiB',
+    // 256MiB OOM'd on cold start — this codebase's module bundle
+    // (gmail integration, SendGrid, firestore triggers, dotenv) uses
+    // ~200+ MiB just to boot, leaving no headroom for the actual call.
+    // Match the convention used by setAccountWorkforceStatus and friends.
+    memory: '512MiB',
     cors: true,
   },
   async (request) => {
