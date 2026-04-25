@@ -29,8 +29,10 @@ import {
   List,
   ListItem,
   ListItemAvatar,
+  ListItemButton,
   ListItemText,
   ListItemSecondaryAction,
+  ListSubheader,
   FormControl,
   InputLabel,
   Select,
@@ -74,13 +76,13 @@ import {
   AccountTree as AccountTreeIcon,
   Settings as SettingsIcon,
   Save as SaveIcon,
-  Description as DescriptionIcon,
   CalendarMonth as CalendarIcon,
   Receipt as ReceiptIcon,
   LinkedIn as LinkedInIcon,
   Assessment as ReportsIcon,
   Note as NoteIcon,
   Notes as NotesIcon,
+  Sync as SyncIcon,
 } from '@mui/icons-material';
 import {
   doc,
@@ -122,6 +124,7 @@ import InboxSearchBar from '../components/InboxSearchBar';
 import FavoritesFilter from '../components/FavoritesFilter';
 import StandardTablePagination from '../components/StandardTablePagination';
 import { useFavorites } from '../hooks/useFavorites';
+import { useSetTopBarTitle } from '../contexts/TopBarTitleContext';
 import { useEntity } from '../hooks/useEntity';
 import { getJobOrderAge } from '../utils/dateUtils';
 import { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderChecklist';
@@ -154,6 +157,14 @@ import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import { ensureCityInSmartGroups } from '../services/smartGroupMetroSync';
 import AddNoteDialog from '../components/AddNoteDialog';
 import CRMNotesTab from '../components/CRMNotesTab';
+import { recordHeaderBodyTextSx } from './UserProfile/components/recordHeaderStyles';
+import {
+  ACCOUNT_SETTINGS_NAV_GROUPS,
+  DEFAULT_ACCOUNT_SETTINGS_SECTION,
+  LEGACY_ACCOUNT_TAB_REDIRECTS,
+  isAccountSettingsSection,
+  type AccountSettingsSection,
+} from '../config/accountSettingsNavigation';
 
 interface JobOrderWithDetails extends JobOrder {
   companyName?: string;
@@ -1361,14 +1372,37 @@ const RecruiterAccountDetails: React.FC = () => {
 
   const tabFromUrl = useMemo(() => {
     const tab = searchParams.get('tab');
+    // Legacy redirect: ?tab=pricing and ?tab=order-defaults now live as
+    // sections inside the unified Docs & Settings tab. Resolve them to the
+    // settings tab index here so deep links keep working; the URL itself
+    // gets normalized below in the redirect effect.
+    if (tab && LEGACY_ACCOUNT_TAB_REDIRECTS[tab]) {
+      return ACCOUNT_TAB_SLUGS.indexOf('settings');
+    }
+    // Overview was retired — both legacy `?tab=overview` and bare URLs with
+    // no `?tab=` land on Calendar now. URL gets normalized below.
+    if (tab === 'overview' || !tab) {
+      return ACCOUNT_TAB_SLUGS.indexOf('calendar');
+    }
     const idx = ACCOUNT_TAB_SLUGS.indexOf(tab as any);
-    return idx >= 0 ? idx : 0;
+    return idx >= 0 ? idx : ACCOUNT_TAB_SLUGS.indexOf('calendar');
+  }, [searchParams]);
+
+  const sectionFromUrl = useMemo<AccountSettingsSection>(() => {
+    const tab = searchParams.get('tab');
+    // Legacy redirect path supplies the section directly.
+    if (tab && LEGACY_ACCOUNT_TAB_REDIRECTS[tab]) {
+      return LEGACY_ACCOUNT_TAB_REDIRECTS[tab];
+    }
+    const raw = searchParams.get('section');
+    return isAccountSettingsSection(raw) ? raw : DEFAULT_ACCOUNT_SETTINGS_SECTION;
   }, [searchParams]);
 
   const [account, setAccount] = useState<RecruiterAccount | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tabValue, setTabValue] = useState(tabFromUrl);
+  const [selectedSection, setSelectedSection] = useState<AccountSettingsSection>(sectionFromUrl);
   const [isEditingDetails, setIsEditingDetails] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -1688,8 +1722,81 @@ const RecruiterAccountDetails: React.FC = () => {
 
   const setAccountTab = useCallback((index: number) => {
     setTabValue(index);
-    setSearchParams({ tab: ACCOUNT_TAB_SLUGS[index] }, { replace: true });
-  }, [setSearchParams]);
+    const slug = ACCOUNT_TAB_SLUGS[index];
+    // Settings tab is the only one that surfaces a `?section=` qualifier.
+    // Other tabs strip it so the URL stays clean when you tab away.
+    if (slug === 'settings') {
+      setSearchParams(
+        { tab: slug, section: selectedSection },
+        { replace: true },
+      );
+    } else {
+      setSearchParams({ tab: slug }, { replace: true });
+    }
+  }, [setSearchParams, selectedSection]);
+
+  const setSettingsSection = useCallback(
+    (section: AccountSettingsSection) => {
+      setSelectedSection(section);
+      setSearchParams(
+        { tab: 'settings', section },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  // One-time normalization on mount: rewrite legacy URLs to their new
+  // canonical form so subsequent back-button / share-link behavior matches
+  // the current IA. `replace` keeps legacy URLs out of history.
+  // - ?tab=pricing / ?tab=order-defaults → ?tab=settings&section=…
+  // - ?tab=overview or bare URL (no ?tab=) → ?tab=calendar
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab && LEGACY_ACCOUNT_TAB_REDIRECTS[tab]) {
+      setSearchParams(
+        { tab: 'settings', section: LEGACY_ACCOUNT_TAB_REDIRECTS[tab] },
+        { replace: true },
+      );
+      return;
+    }
+    if (tab === 'overview' || !tab) {
+      setSearchParams({ tab: 'calendar' }, { replace: true });
+    }
+    // We only care about the very first arrival of a legacy / empty slug;
+    // once rewritten the branches above never fire again on a fresh mount.
+    // Intentionally limited deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Compact tab-pill styling that matches the /users layout tabs
+  // (UsersLayout.tsx). Lifts the visual sizing of every Account Details
+  // tab onto the same scale as the global Users hub navigation.
+  const tabPillSx = useCallback(
+    (isActive: boolean) =>
+      ({
+        textTransform: 'none' as const,
+        borderRadius: '999px',
+        fontSize: '13px',
+        fontWeight: isActive ? 600 : 400,
+        color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
+        bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+        px: 1.25,
+        py: 0.5,
+        minHeight: 30,
+        height: 30,
+        minWidth: 'auto',
+        whiteSpace: 'nowrap' as const,
+        '& .MuiButton-startIcon': {
+          mr: 0.5,
+          '& svg': { fontSize: 16 },
+        },
+        '&:hover': {
+          bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+        },
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (accountId && tenantId) {
@@ -3353,7 +3460,15 @@ const RecruiterAccountDetails: React.FC = () => {
     }
   };
 
-  const saveAccountDefaults = async () => {
+  /**
+   * Section-scoped saves used by the new Docs & Settings layout. Each one
+   * touches only its slice of `defaults.*` and merges, so saving Customer
+   * Rules can't clobber Billing edits the user hasn't saved yet (and vice
+   * versa). The pre-split `saveAccountDefaults` (which wrote rules/eVerify/
+   * billing in one shot) was retired with the IA migration — `git log` for
+   * the original if a single-shot save is ever needed again.
+   */
+  const saveCustomerRules = async () => {
     if (!accountId || !tenantId) return;
     setDefaultsSaving(true);
     try {
@@ -3362,13 +3477,31 @@ const RecruiterAccountDetails: React.FC = () => {
         defaults: {
           rules: { ...defaultRules },
           eVerify: { ...defaultEVerify },
+        },
+        updatedAt: serverTimestamp(),
+        updatedBy: user?.uid ?? null,
+      }, { merge: true });
+    } catch (err) {
+      console.error('RecruiterAccountDetails: save customer rules error', err);
+    } finally {
+      setDefaultsSaving(false);
+    }
+  };
+
+  const saveBillingDefaults = async () => {
+    if (!accountId || !tenantId) return;
+    setDefaultsSaving(true);
+    try {
+      const ref = doc(db, p.recruiterAccount(tenantId, accountId));
+      await setDoc(ref, {
+        defaults: {
           billing: { ...defaultBilling },
         },
         updatedAt: serverTimestamp(),
         updatedBy: user?.uid ?? null,
       }, { merge: true });
     } catch (err) {
-      console.error('RecruiterAccountDetails: save defaults error', err);
+      console.error('RecruiterAccountDetails: save billing defaults error', err);
     } finally {
       setDefaultsSaving(false);
     }
@@ -3615,6 +3748,51 @@ const RecruiterAccountDetails: React.FC = () => {
     return [...groupRows, ...applicantRows];
   }, [account?.associations, laborPoolOptions, jobOrders, accountJobOrders]);
 
+  // Pipe the account name + favorite star into the global top bar — same
+  // pattern as User Group Details / Smart Group Details. Falls back to
+  // "Account Details" until the doc loads so the bar never goes blank.
+  const topBarAccountTitle = account?.name?.trim() || 'Account Details';
+  const topBarTitleNode = useMemo(
+    () => (
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
+        <Typography
+          sx={{
+            fontSize: '20px',
+            fontWeight: 600,
+            color: 'inherit',
+            lineHeight: 1.2,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            maxWidth: { xs: 220, sm: 360, md: 520 },
+          }}
+        >
+          {topBarAccountTitle}
+        </Typography>
+        {account?.id && (
+          <FavoriteButton
+            itemId={account.id}
+            favoriteType="accounts"
+            isFavorite={isFavorite}
+            toggleFavorite={toggleFavorite}
+            size="small"
+            tooltipText={{
+              favorited: 'Remove account from favorites',
+              notFavorited: 'Add account to favorites',
+            }}
+            sx={{
+              p: 0.25,
+              color: 'inherit',
+              '& .MuiSvgIcon-root': { fontSize: 18, color: 'inherit' },
+            }}
+          />
+        )}
+      </Box>
+    ),
+    [topBarAccountTitle, account?.id, isFavorite, toggleFavorite],
+  );
+  useSetTopBarTitle(topBarTitleNode);
+
   if (loading && !account) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 320, p: 3 }}>
@@ -3772,187 +3950,168 @@ const RecruiterAccountDetails: React.FC = () => {
             >
               {isChildAccount && parentAccount ? (parentAccount.label?.charAt(0)?.toUpperCase() || 'P') : initial}
             </Avatar>
-            <Box sx={{ flex: 1, minWidth: 0, minHeight: 108, display: 'flex', flexDirection: 'column' }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, width: '100%' }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, flex: 1 }}>
-                  <Typography
-                    variant="h6"
-                    sx={{
-                      fontSize: { xs: '20px', md: '24px' },
-                      fontWeight: 600,
-                      lineHeight: 1.2,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      minWidth: 0,
-                    }}
-                  >
-                    {displayName}
+            <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+              {/* Account Details summary — vertical stack lives flush against
+                  the top of the column (next to the avatar). The full
+                  account name + favorite star ride in the global top bar;
+                  the contextual action buttons (New Order, Sync, Edit,
+                  Back) ride in PageHeader's `titleRightActions` slot so
+                  they don't introduce whitespace above this line. */}
+              <Box
+                sx={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 0.5,
+                  minWidth: 0,
+                }}
+              >
+                {/* Each line uses `recordHeaderBodyTextSx` (0.74rem / 400 /
+                    #5A6372) — same scale as the user record header body
+                    text, so account + worker headers feel uniform. Values
+                    pick up `text.primary` for a touch of contrast. */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                  <Typography component="span" sx={recordHeaderBodyTextSx}>
+                    Status:
                   </Typography>
-                  {account.id && (
-                    <FavoriteButton
-                      itemId={account.id}
-                      favoriteType="accounts"
-                      isFavorite={isFavorite}
-                      toggleFavorite={toggleFavorite}
-                      size="small"
-                    />
-                  )}
-                  {account.accountType === 'national' && companyIds.length > 0 && (
-                    <Tooltip title="Create a child account for each company location under your linked companies. Skips locations that already have a child account.">
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        onClick={() => {
-                          setNationalBackfillStep('confirm');
-                          setNationalBackfillError(null);
-                          setNationalBackfillSummary(null);
-                          setNationalBackfillOpen(true);
-                        }}
-                        sx={{ textTransform: 'none', flexShrink: 0, ml: 0.5 }}
-                      >
-                        Locations → children
-                      </Button>
-                    </Tooltip>
-                  )}
+                  <Chip
+                    label={account.active ? 'Active' : 'Inactive'}
+                    color={account.active ? 'success' : 'default'}
+                    size="small"
+                    variant={account.active ? 'filled' : 'outlined'}
+                    sx={{ fontWeight: 500, height: 18, fontSize: '0.7rem', '& .MuiChip-label': { px: 0.85 } }}
+                  />
                 </Box>
-                {tabValue === 7 && (
-                  <Button
-                    variant="contained"
-                    startIcon={<AddIcon />}
-                    onClick={() => setShowNewJobOrderModal(true)}
-                    sx={{
-                      textTransform: 'none',
-                      borderRadius: '24px',
-                      height: '40px',
-                      px: 2.5,
-                      whiteSpace: 'nowrap',
-                      flexShrink: 0,
-                      fontWeight: 500,
-                      fontSize: '14px',
-                      bgcolor: '#0057B8',
-                      '&:hover': { bgcolor: '#004a9f' },
-                    }}
-                  >
-                    New Order
-                  </Button>
-                )}
-                <UniversalBackButton to="/accounts" />
-              </Box>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.5, flexWrap: 'wrap' }}>
-                {parentAccount && (
-                  <Tooltip title={parentAccount.label ? `View parent account: ${parentAccount.label}` : 'View parent account'}>
-                    <IconButton
-                      size="small"
-                      onClick={() => navigate(`/accounts/${parentAccount.id}`)}
-                      sx={{
-                        p: 1,
-                        color: 'primary.main',
-                        bgcolor: 'action.hover',
-                        borderRadius: 1,
-                        '&:hover': {
-                          color: 'primary.dark',
-                          bgcolor: 'primary.light',
-                          transform: 'translateY(-1px)',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                        },
-                        transition: 'all 0.2s ease',
-                      }}
-                    >
-                      <AccountTreeIcon sx={{ fontSize: 20 }} />
-                    </IconButton>
-                  </Tooltip>
-                )}
-                {associatedCompanies.map((c) => (
-                  <Tooltip key={`company-${c.id}`} title={c.label ? `View company: ${c.label}` : 'View company'}>
-                    <IconButton
-                      size="small"
-                      onClick={() => navigate(`/companies/${c.id}`)}
-                      sx={{
-                        p: 1,
-                        color: 'primary.main',
-                        bgcolor: 'action.hover',
-                        borderRadius: 1,
-                        '&:hover': {
-                          color: 'primary.dark',
-                          bgcolor: 'primary.light',
-                          transform: 'translateY(-1px)',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                        },
-                        transition: 'all 0.2s ease',
-                      }}
-                    >
-                      <BusinessIcon sx={{ fontSize: 20 }} />
-                    </IconButton>
-                  </Tooltip>
-                ))}
-                {associatedLocations.map((loc) => (
-                  <Tooltip key={`location-${loc.companyId}-${loc.locationId}`} title={loc.label ? `View location: ${loc.label}` : 'View company location'}>
-                    <IconButton
-                      size="small"
-                      onClick={() => navigate(`/companies/${loc.companyId}/locations/${loc.locationId}`)}
-                      sx={{
-                        p: 1,
-                        color: 'primary.main',
-                        bgcolor: 'action.hover',
-                        borderRadius: 1,
-                        '&:hover': {
-                          color: 'primary.dark',
-                          bgcolor: 'primary.light',
-                          transform: 'translateY(-1px)',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                        },
-                        transition: 'all 0.2s ease',
-                      }}
-                    >
-                      <LocationOnIcon sx={{ fontSize: 20 }} />
-                    </IconButton>
-                  </Tooltip>
-                ))}
-                <Tooltip title={notesCount > 0 ? `${notesCount} note${notesCount !== 1 ? 's' : ''}` : 'Add note'}>
-                  <Badge badgeContent={notesCount > 0 ? notesCount : undefined} color="primary">
-                    <IconButton
-                      size="small"
-                      onClick={() => setShowAddNoteDialog(true)}
-                      sx={{
-                        p: 1,
-                        color: 'primary.main',
-                        bgcolor: 'action.hover',
-                        borderRadius: 1,
-                        '&:hover': {
-                          color: 'primary.dark',
-                          bgcolor: 'primary.light',
-                          transform: 'translateY(-1px)',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                        },
-                        transition: 'all 0.2s ease',
-                      }}
-                    >
-                      <NoteIcon sx={{ fontSize: 20 }} />
-                    </IconButton>
-                  </Badge>
-                </Tooltip>
-              </Box>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.75, flexWrap: 'wrap' }}>
-                <Chip
-                  label={account.active ? 'Active' : 'Inactive'}
-                  color={account.active ? 'success' : 'default'}
-                  size="small"
-                  variant={account.active ? 'filled' : 'outlined'}
-                  sx={{ fontWeight: 500 }}
-                />
-                <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
-                  Account type: {account.accountType === 'national' ? 'National account' : account.accountType === 'child' ? 'Child account' : 'Standalone'}
-                </Typography>
-                {billingEntityName && (
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
-                    Hiring Entity: {billingEntityName}
+                {associatedCompanies.length > 0 && (
+                  <Typography component="div" sx={recordHeaderBodyTextSx}>
+                    Company:{' '}
+                    {associatedCompanies.map((c, idx) => (
+                      <React.Fragment key={`hdr-company-${c.id}`}>
+                        {idx > 0 && <Box component="span" sx={{ color: 'text.primary' }}>, </Box>}
+                        <Box
+                          component="a"
+                          onClick={(e: React.MouseEvent<HTMLElement>) => {
+                            e.preventDefault();
+                            navigate(`/companies/${c.id}`);
+                          }}
+                          sx={{
+                            color: '#0057B8',
+                            cursor: 'pointer',
+                            fontWeight: 500,
+                            textDecoration: 'none',
+                            '&:hover': { textDecoration: 'underline' },
+                          }}
+                        >
+                          {c.label || 'Company'}
+                        </Box>
+                      </React.Fragment>
+                    ))}
                   </Typography>
                 )}
+                <Typography component="div" sx={recordHeaderBodyTextSx}>
+                  Type:{' '}
+                  <Box component="span" sx={{ color: 'text.primary' }}>
+                    {account.accountType === 'national'
+                      ? 'National Account'
+                      : account.accountType === 'child'
+                        ? 'Child Account'
+                        : 'Standalone'}
+                  </Box>
+                </Typography>
+                <Typography component="div" sx={recordHeaderBodyTextSx}>
+                  Hiring Entity:{' '}
+                  <Box component="span" sx={{ color: 'text.primary' }}>
+                    {displayHiringEntityName}
+                  </Box>
+                </Typography>
+                {account.accountType === 'national' && (
+                  <Tooltip title="When enabled, each new location added to this account's connected company will automatically create a child account linked to that location. Future locations only.">
+                    <Typography
+                      component="div"
+                      sx={{ ...recordHeaderBodyTextSx, cursor: 'help', display: 'inline-block' }}
+                    >
+                      Auto-Create Child Accounts:{' '}
+                      <Box component="span" sx={{ color: 'text.primary' }}>
+                        {account.autoCreateChildAccountsForLocations === true ? 'On' : 'Off'}
+                      </Box>
+                    </Typography>
+                  </Tooltip>
+                )}
               </Box>
-              {/* Row 4 (associations: people, sub-accounts, locations, etc.) hidden per design */}
             </Box>
           </Box>
+        }
+        titleRightActions={
+          <>
+            {tabValue === 7 && (
+              <Button
+                variant="contained"
+                startIcon={<AddIcon />}
+                onClick={() => setShowNewJobOrderModal(true)}
+                sx={{
+                  textTransform: 'none',
+                  borderRadius: '24px',
+                  height: '40px',
+                  px: 2.5,
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
+                  fontWeight: 500,
+                  fontSize: '14px',
+                  bgcolor: '#0057B8',
+                  '&:hover': { bgcolor: '#004a9f' },
+                }}
+              >
+                New Order
+              </Button>
+            )}
+            {account.accountType === 'national' && companyIds.length > 0 && (
+              <Tooltip title="Sync locations to children — create a child account for each company location under your linked companies. Skips locations that already have a child account.">
+                <IconButton
+                  onClick={() => {
+                    setNationalBackfillStep('confirm');
+                    setNationalBackfillError(null);
+                    setNationalBackfillSummary(null);
+                    setNationalBackfillOpen(true);
+                  }}
+                  aria-label="Sync locations to children"
+                  sx={{
+                    width: 32,
+                    height: 32,
+                    border: '1px solid',
+                    borderColor: 'rgba(0, 87, 184, 0.5)',
+                    color: '#0057B8',
+                    flexShrink: 0,
+                    '&:hover': {
+                      borderColor: '#0057B8',
+                      bgcolor: 'rgba(0, 87, 184, 0.04)',
+                    },
+                  }}
+                >
+                  <SyncIcon sx={{ fontSize: 18 }} />
+                </IconButton>
+              </Tooltip>
+            )}
+            <Tooltip title="Edit account details">
+              <IconButton
+                onClick={() => setIsEditingDetails(true)}
+                aria-label="Edit account details"
+                sx={{
+                  width: 32,
+                  height: 32,
+                  border: '1px solid',
+                  borderColor: 'rgba(0, 87, 184, 0.5)',
+                  color: '#0057B8',
+                  flexShrink: 0,
+                  '&:hover': {
+                    borderColor: '#0057B8',
+                    bgcolor: 'rgba(0, 87, 184, 0.04)',
+                  },
+                }}
+              >
+                <EditIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Tooltip>
+            <UniversalBackButton to="/accounts" />
+          </>
         }
         filters={
           <Box
@@ -3975,40 +4134,17 @@ const RecruiterAccountDetails: React.FC = () => {
               scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
             }}
           >
-            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
-              <Button
-                variant={tabValue === 0 ? 'contained' : 'text'}
-                onClick={() => setAccountTab(0)}
-                startIcon={<BusinessIcon fontSize="small" />}
-                sx={{
-                  borderRadius: '18px',
-                  textTransform: 'none',
-                  fontWeight: 500,
-                  px: 2.5,
-                  py: 0.75,
-                  height: 36,
-                  ...(tabValue === 0
-                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
-                }}
-              >
-                Overview
-              </Button>
+            <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
+              {/* Overview tab retired — Calendar is now the default landing
+                  tab for an account. The TabPanel index={0} body is left
+                  dormant; legacy `?tab=overview` (and bare account URLs with
+                  no `?tab=`) are redirected to `?tab=calendar` in the
+                  tabFromUrl resolver / URL-normalization effect. */}
               <Button
                 variant={tabValue === 1 ? 'contained' : 'text'}
                 onClick={() => setAccountTab(1)}
                 startIcon={<CalendarIcon fontSize="small" />}
-                sx={{
-                  borderRadius: '18px',
-                  textTransform: 'none',
-                  fontWeight: 500,
-                  px: 2.5,
-                  py: 0.75,
-                  height: 36,
-                  ...(tabValue === 1
-                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
-                }}
+                sx={tabPillSx(tabValue === 1)}
               >
                 Calendar
               </Button>
@@ -4016,17 +4152,7 @@ const RecruiterAccountDetails: React.FC = () => {
                 variant={tabValue === 2 ? 'contained' : 'text'}
                 onClick={() => setAccountTab(2)}
                 startIcon={<GroupWorkIcon fontSize="small" />}
-                sx={{
-                  borderRadius: '18px',
-                  textTransform: 'none',
-                  fontWeight: 500,
-                  px: 2.5,
-                  py: 0.75,
-                  height: 36,
-                  ...(tabValue === 2
-                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
-                }}
+                sx={tabPillSx(tabValue === 2)}
               >
                 Workforce
               </Button>
@@ -4035,17 +4161,7 @@ const RecruiterAccountDetails: React.FC = () => {
                   variant={tabValue === 3 ? 'contained' : 'text'}
                   onClick={() => setAccountTab(3)}
                   startIcon={isNationalAccount ? <AccountTreeIcon fontSize="small" /> : <LocationOnIcon fontSize="small" />}
-                  sx={{
-                    borderRadius: '18px',
-                    textTransform: 'none',
-                    fontWeight: 500,
-                    px: 2.5,
-                    py: 0.75,
-                    height: 36,
-                    ...(tabValue === 3
-                      ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                      : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
-                  }}
+                  sx={tabPillSx(tabValue === 3)}
                 >
                   {isNationalAccount ? 'Sub Accounts' : 'Locations'}
                 </Button>
@@ -4054,17 +4170,7 @@ const RecruiterAccountDetails: React.FC = () => {
                 variant={tabValue === 4 ? 'contained' : 'text'}
                 onClick={() => setAccountTab(4)}
                 startIcon={<PersonIcon fontSize="small" />}
-                sx={{
-                  borderRadius: '18px',
-                  textTransform: 'none',
-                  fontWeight: 500,
-                  px: 2.5,
-                  py: 0.75,
-                  height: 36,
-                  ...(tabValue === 4
-                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
-                }}
+                sx={tabPillSx(tabValue === 4)}
               >
                 Contacts
               </Button>
@@ -4073,72 +4179,32 @@ const RecruiterAccountDetails: React.FC = () => {
                   variant={tabValue === 5 ? 'contained' : 'text'}
                   onClick={() => setAccountTab(5)}
                   startIcon={<AccountTreeIcon fontSize="small" />}
-                  sx={{
-                    borderRadius: '18px',
-                    textTransform: 'none',
-                    fontWeight: 500,
-                    px: 2.5,
-                    py: 0.75,
-                    height: 36,
-                    ...(tabValue === 5
-                      ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                      : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
-                  }}
+                  sx={tabPillSx(tabValue === 5)}
                 >
                   Children
                 </Button>
               )}
-              <Button
-                variant={tabValue === 6 ? 'contained' : 'text'}
-                onClick={() => setAccountTab(6)}
-                startIcon={<AttachMoneyIcon fontSize="small" />}
-                sx={{
-                  borderRadius: '18px',
-                  textTransform: 'none',
-                  fontWeight: 500,
-                  px: 2.5,
-                  py: 0.75,
-                  height: 36,
-                  ...(tabValue === 6
-                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
-                }}
-              >
-                Pricing
-              </Button>
+              {/* Pricing is now a section inside the Docs & Settings tab
+                  (Settings → Billing → Pricing). The TabPanel index={6}
+                  body is left dormant for safety; legacy `?tab=pricing`
+                  URLs are redirected to `?tab=settings&section=pricing`
+                  in the URL-normalization effect above. */}
               <Button
                 variant={tabValue === 7 ? 'contained' : 'text'}
                 onClick={() => setAccountTab(7)}
                 startIcon={<WorkIcon fontSize="small" />}
-                sx={{
-                  borderRadius: '18px',
-                  textTransform: 'none',
-                  fontWeight: 500,
-                  px: 2.5,
-                  py: 0.75,
-                  height: 36,
-                  ...(tabValue === 7
-                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
-                }}
+                sx={tabPillSx(tabValue === 7)}
               >
                 Job Orders
               </Button>
+              {/* Jobs Board + Labor Pool tabs hidden per UI cleanup pass —
+                  surfaces deemed not yet ready for production. Re-enable by
+                  uncommenting both Buttons below.
               <Button
                 variant={tabValue === 8 ? 'contained' : 'text'}
                 onClick={() => setAccountTab(8)}
                 startIcon={<BadgeIcon fontSize="small" />}
-                sx={{
-                  borderRadius: '18px',
-                  textTransform: 'none',
-                  fontWeight: 500,
-                  px: 2.5,
-                  py: 0.75,
-                  height: 36,
-                  ...(tabValue === 8
-                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
-                }}
+                sx={tabPillSx(tabValue === 8)}
               >
                 Jobs Board
               </Button>
@@ -4146,127 +4212,58 @@ const RecruiterAccountDetails: React.FC = () => {
                 variant={tabValue === 9 ? 'contained' : 'text'}
                 onClick={() => setAccountTab(9)}
                 startIcon={<GroupWorkIcon fontSize="small" />}
-                sx={{
-                  borderRadius: '18px',
-                  textTransform: 'none',
-                  fontWeight: 500,
-                  px: 2.5,
-                  py: 0.75,
-                  height: 36,
-                  ...(tabValue === 9
-                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
-                }}
+                sx={tabPillSx(tabValue === 9)}
               >
                 Labor Pool
               </Button>
+              */}
               <Button
                 variant={tabValue === 10 ? 'contained' : 'text'}
                 onClick={() => setAccountTab(10)}
                 startIcon={<SettingsIcon fontSize="small" />}
-                sx={{
-                  borderRadius: '18px',
-                  textTransform: 'none',
-                  fontWeight: 500,
-                  px: 2.5,
-                  py: 0.75,
-                  height: 36,
-                  ...(tabValue === 10
-                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
-                }}
+                sx={tabPillSx(tabValue === 10)}
               >
-                Settings
+                Docs &amp; Settings
               </Button>
               {canAccessInvoicing && (
                 <Button
                   variant={tabValue === 11 ? 'contained' : 'text'}
                   onClick={() => setAccountTab(11)}
                   startIcon={<ReceiptIcon fontSize="small" />}
-                  sx={{
-                    borderRadius: '18px',
-                    textTransform: 'none',
-                    fontWeight: 500,
-                    px: 2.5,
-                    py: 0.75,
-                    height: 36,
-                    ...(tabValue === 11
-                      ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                      : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
-                  }}
+                  sx={tabPillSx(tabValue === 11)}
                 >
                   Invoicing
                 </Button>
               )}
-              <Button
-                variant={tabValue === 12 ? 'contained' : 'text'}
-                onClick={() => setAccountTab(12)}
-                startIcon={<DescriptionIcon fontSize="small" />}
-                sx={{
-                  borderRadius: '18px',
-                  textTransform: 'none',
-                  fontWeight: 500,
-                  px: 2.5,
-                  py: 0.75,
-                  height: 36,
-                  ...(tabValue === 12
-                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
-                }}
-              >
-                Order Defaults
-              </Button>
+              {/* Order Defaults is now two sections inside the Docs &
+                  Settings tab (Settings → Order Defaults → Order Details
+                  / Staff Instructions). TabPanel index={12} is left
+                  dormant for safety; legacy `?tab=order-defaults` URLs
+                  are redirected to `?tab=settings&section=order-details`. */}
               <Button
                 variant={tabValue === 13 ? 'contained' : 'text'}
                 onClick={() => setAccountTab(13)}
                 startIcon={<ReportsIcon fontSize="small" />}
-                sx={{
-                  borderRadius: '18px',
-                  textTransform: 'none',
-                  fontWeight: 500,
-                  px: 2.5,
-                  py: 0.75,
-                  height: 36,
-                  ...(tabValue === 13
-                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
-                }}
+                sx={tabPillSx(tabValue === 13)}
               >
                 Reports
               </Button>
+              {/* Activity tab hidden per UI cleanup pass — re-enable by
+                  uncommenting the Button below.
               <Button
                 variant={tabValue === 14 ? 'contained' : 'text'}
                 onClick={() => setAccountTab(14)}
                 startIcon={<DashboardIcon fontSize="small" />}
-                sx={{
-                  borderRadius: '18px',
-                  textTransform: 'none',
-                  fontWeight: 500,
-                  px: 2.5,
-                  py: 0.75,
-                  height: 36,
-                  ...(tabValue === 14
-                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
-                }}
+                sx={tabPillSx(tabValue === 14)}
               >
                 Activity
               </Button>
+              */}
               <Button
                 variant={tabValue === 15 ? 'contained' : 'text'}
                 onClick={() => setAccountTab(15)}
                 startIcon={<NotesIcon fontSize="small" />}
-                sx={{
-                  borderRadius: '18px',
-                  textTransform: 'none',
-                  fontWeight: 500,
-                  px: 2.5,
-                  py: 0.75,
-                  height: 36,
-                  ...(tabValue === 15
-                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
-                }}
+                sx={tabPillSx(tabValue === 15)}
               >
                 Notes {notesCount > 0 ? `(${notesCount})` : ''}
               </Button>
@@ -4609,6 +4606,121 @@ const RecruiterAccountDetails: React.FC = () => {
         defaultParentAccountId={account?.id ?? null}
       />
 
+      {/* Edit Account Details modal — opened by the Edit pencil in the
+          page header. Mirrors the form that used to live in the inline
+          Account Details card on the Overview tab. Field changes still
+          autosave via `updateAccountField`, matching the rest of the app;
+          "Done" just closes the modal. */}
+      <Dialog
+        open={isEditingDetails}
+        onClose={() => setIsEditingDetails(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Edit Account Details</DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+            <TextField
+              label="Account Name"
+              defaultValue={account.name}
+              onBlur={(e) => {
+                const v = e.target.value.trim();
+                if (v !== account.name) updateAccountField('name', v);
+              }}
+              size="small"
+              fullWidth
+              autoFocus
+            />
+            <FormControl fullWidth size="small">
+              <InputLabel>Account type</InputLabel>
+              <Select
+                label="Account type"
+                value={account.accountType ?? 'standalone'}
+                onChange={(e) => updateAccountField('accountType', e.target.value || null)}
+                disabled={saving}
+              >
+                <MenuItem value="standalone">Standalone</MenuItem>
+                <MenuItem value="national">National account</MenuItem>
+                <MenuItem value="child">Child account (of a national)</MenuItem>
+              </Select>
+            </FormControl>
+            {/* E-Verify is set by the Hiring Entity (Settings > Entities) and is read-only here. */}
+            {displayEntityLoading ? (
+              <Typography variant="body2" color="text.secondary">Loading entity…</Typography>
+            ) : displayEntity ? (
+              <FormControlLabel
+                control={<Checkbox checked={displayEntity.everifyRequired} disabled />}
+                label={
+                  <Box>
+                    <Typography variant="body2">E-Verify Required</Typography>
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      Set by Hiring Entity (Settings → Entities). Cannot be changed on the account.
+                    </Typography>
+                  </Box>
+                }
+              />
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                Select a Hiring Entity to see E-Verify setting.
+              </Typography>
+            )}
+            <FormControl fullWidth size="small">
+              <InputLabel>Hiring Entity</InputLabel>
+              <Select
+                label="Hiring Entity"
+                value={account?.hiringEntityId ?? ''}
+                onChange={(e) => updateAccountField('hiringEntityId', e.target.value || null)}
+                disabled={saving}
+              >
+                <MenuItem value="">
+                  <em>None</em>
+                </MenuItem>
+                {entityOptions.map((ent) => (
+                  <MenuItem key={ent.id} value={ent.id}>
+                    {ent.name} {ent.entityCode ? `(${ent.entityCode} · ${ent.workerType})` : ''}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={account.active}
+                  onChange={(e) => updateAccountField('active', e.target.checked)}
+                  disabled={saving}
+                />
+              }
+              label="Active"
+            />
+            {account.accountType === 'national' ? (
+              <Box>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={account.autoCreateChildAccountsForLocations === true}
+                      onChange={(e) =>
+                        updateAccountField('autoCreateChildAccountsForLocations', e.target.checked)
+                      }
+                      disabled={saving}
+                    />
+                  }
+                  label="Auto-create child accounts for new company locations"
+                />
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ pl: 4.5, maxWidth: 520 }}>
+                  When enabled, each new location added to this account's connected company will automatically create a
+                  child account linked to that location. Future locations only.
+                </Typography>
+              </Box>
+            ) : null}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setIsEditingDetails(false)} disabled={saving}>
+            Done
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <Dialog
         open={nationalBackfillOpen}
         onClose={() => {
@@ -4715,190 +4827,11 @@ const RecruiterAccountDetails: React.FC = () => {
         <TabPanel value={tabValue} index={0}>
           <Grid container spacing={3}>
             <Grid item xs={12} md={9}>
-              <Card>
-                <CardHeader
-                  title="Account Details"
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 600 }}
-                  action={
-                    <IconButton
-                      size="small"
-                      onClick={() => setIsEditingDetails(!isEditingDetails)}
-                      sx={{ color: isEditingDetails ? 'primary.main' : 'text.secondary' }}
-                    >
-                      <EditIcon fontSize="small" />
-                    </IconButton>
-                  }
-                />
-                <CardContent sx={{ pt: 0 }}>
-                  {isEditingDetails ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <TextField
-                        label="Account Name"
-                        defaultValue={account.name}
-                        onBlur={(e) => {
-                          const v = e.target.value.trim();
-                          if (v !== account.name) updateAccountField('name', v);
-                        }}
-                        size="small"
-                        fullWidth
-                        autoFocus
-                      />
-                      <FormControl fullWidth size="small">
-                        <InputLabel>Account type</InputLabel>
-                        <Select
-                          label="Account type"
-                          value={account.accountType ?? 'standalone'}
-                          onChange={(e) => updateAccountField('accountType', e.target.value || null)}
-                          disabled={saving}
-                        >
-                          <MenuItem value="standalone">Standalone</MenuItem>
-                          <MenuItem value="national">National account</MenuItem>
-                          <MenuItem value="child">Child account (of a national)</MenuItem>
-                        </Select>
-                      </FormControl>
-                      {/* E-Verify is set by the Hiring Entity (Settings > Entities) and is read-only here. */}
-                      {displayEntityLoading ? (
-                        <Typography variant="body2" color="text.secondary">Loading entity…</Typography>
-                      ) : displayEntity ? (
-                        <FormControlLabel
-                          control={<Checkbox checked={displayEntity.everifyRequired} disabled />}
-                          label={
-                            <Box>
-                              <Typography variant="body2">E-Verify Required</Typography>
-                              <Typography variant="caption" color="text.secondary" display="block">
-                                Set by Hiring Entity (Settings → Entities). Cannot be changed on the account.
-                              </Typography>
-                            </Box>
-                          }
-                        />
-                      ) : (
-                        <Typography variant="body2" color="text.secondary">
-                          Select a Hiring Entity to see E-Verify setting.
-                        </Typography>
-                      )}
-                      <FormControl fullWidth size="small">
-                        <InputLabel>Hiring Entity</InputLabel>
-                        <Select
-                          label="Hiring Entity"
-                          value={account?.hiringEntityId ?? ''}
-                          onChange={(e) => updateAccountField('hiringEntityId', e.target.value || null)}
-                          disabled={saving}
-                        >
-                          <MenuItem value="">
-                            <em>None</em>
-                          </MenuItem>
-                          {entityOptions.map((ent) => (
-                            <MenuItem key={ent.id} value={ent.id}>
-                              {ent.name} {ent.entityCode ? `(${ent.entityCode} · ${ent.workerType})` : ''}
-                            </MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
-                      <FormControlLabel
-                        control={
-                          <Switch
-                            checked={account.active}
-                            onChange={(e) => updateAccountField('active', e.target.checked)}
-                            disabled={saving}
-                          />
-                        }
-                        label="Active"
-                      />
-                      {account.accountType === 'national' ? (
-                        <Box>
-                          <FormControlLabel
-                            control={
-                              <Switch
-                                checked={account.autoCreateChildAccountsForLocations === true}
-                                onChange={(e) =>
-                                  updateAccountField('autoCreateChildAccountsForLocations', e.target.checked)
-                                }
-                                disabled={saving}
-                              />
-                            }
-                            label="Auto-create child accounts for new company locations"
-                          />
-                          <Typography variant="caption" color="text.secondary" display="block" sx={{ pl: 4.5, maxWidth: 520 }}>
-                            When enabled, each new location added to this account's connected company will automatically create a
-                            child account linked to that location. Future locations only.
-                          </Typography>
-                        </Box>
-                      ) : null}
-                    </Box>
-                  ) : (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        {account.accountType === 'child' ? (
-                          <AccountTreeIcon sx={{ color: 'text.secondary', fontSize: 20 }} />
-                        ) : (
-                          <BusinessIcon sx={{ color: 'text.secondary', fontSize: 20 }} />
-                        )}
-                        <Typography variant="body1" fontWeight={500}>
-                          {account.name || '—'}
-                        </Typography>
-                      </Box>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography variant="body2" color="text.secondary">
-                          Account type:
-                        </Typography>
-                        <Typography variant="body2">
-                          {account.accountType === 'national'
-                            ? 'National account'
-                            : account.accountType === 'child'
-                              ? 'Child account'
-                              : 'Standalone'}
-                        </Typography>
-                      </Box>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography variant="body2" color="text.secondary">
-                          E-Verify:
-                        </Typography>
-                        <Typography variant="body2">
-                          {displayEVerify ? 'Yes' : 'No'}
-                        </Typography>
-                      </Box>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography variant="body2" color="text.secondary">
-                          Hiring Entity:
-                        </Typography>
-                        <Typography variant="body2">
-                          {displayHiringEntityName}
-                        </Typography>
-                      </Box>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography variant="body2" color="text.secondary">
-                          Status:
-                        </Typography>
-                        <Chip
-                          label={account.active ? 'Active' : 'Inactive'}
-                          color={account.active ? 'success' : 'default'}
-                          size="small"
-                          variant={account.active ? 'filled' : 'outlined'}
-                        />
-                      </Box>
-                      {account.accountType === 'national' ? (
-                        <Box sx={{ mt: 0.5 }}>
-                          <Typography variant="body2" color="text.secondary" display="block">
-                            Auto-create child accounts for new company locations
-                          </Typography>
-                          <Typography variant="body2">
-                            {account.autoCreateChildAccountsForLocations === true ? 'On' : 'Off'}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary" display="block" sx={{ maxWidth: 520 }}>
-                            When enabled, each new location added to this account's connected company will automatically create a
-                            child account linked to that location. Future locations only.
-                          </Typography>
-                        </Box>
-                      ) : null}
-                      {account.createdAt && (
-                        <Typography variant="caption" color="text.secondary">
-                          Created {account.createdAt?.toDate?.()?.toLocaleString?.() ?? '—'}
-                        </Typography>
-                      )}
-                    </Box>
-                  )}
-                </CardContent>
-              </Card>
+              {/* Account Details card removed — the read-only summary lives
+                  in the page header (next to the avatar) and editing now
+                  happens in the modal opened by the Edit pencil up there.
+                  See the `<Dialog open={isEditingDetails}>` block near the
+                  bottom of this component. */}
 
               {/* Worksite Location card - when account has a worksite linked */}
               {worksiteDetailsLoading ? (
@@ -4972,88 +4905,9 @@ const RecruiterAccountDetails: React.FC = () => {
                 </Card>
               ) : null}
 
-              {/* File uploads card */}
-              <Card sx={{ mt: 3 }}>
-                <CardHeader
-                  title="File uploads"
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 600 }}
-                />
-                <CardContent sx={{ pt: 0 }}>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2 }}>
-                      <TextField
-                        size="small"
-                        label="Name"
-                        placeholder="e.g. Contract"
-                        value={uploadLabel}
-                        onChange={(e) => setUploadLabel(e.target.value)}
-                        sx={{ minWidth: 180 }}
-                      />
-                      <input
-                        key={uploadFileKey}
-                        ref={uploadInputRef}
-                        type="file"
-                        accept="*/*"
-                        style={{ display: 'none' }}
-                        onChange={handleUploadFile}
-                      />
-                      <Button
-                        variant="outlined"
-                        component="span"
-                        startIcon={uploading ? <CircularProgress size={16} /> : <UploadIcon />}
-                        disabled={uploading}
-                        onClick={() => uploadInputRef.current?.click()}
-                        sx={{ textTransform: 'none' }}
-                      >
-                        {uploading ? 'Uploading…' : 'Choose file'}
-                      </Button>
-                    </Box>
-                    {accountUploads.length === 0 ? (
-                      <Typography variant="body2" color="text.secondary">
-                        No uploads yet. Add a name (e.g. Contract) and choose a file to upload.
-                      </Typography>
-                    ) : (
-                      <TableContainer component={Paper} variant="outlined" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
-                        <Table size="small">
-                          <TableHead>
-                            <TableRow>
-                              <TableCell sx={{ fontWeight: 600 }}>Name</TableCell>
-                              <TableCell sx={{ fontWeight: 600 }}>File</TableCell>
-                              <TableCell sx={{ fontWeight: 600, width: 140 }} align="right">Actions</TableCell>
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            {accountUploads.map((row) => (
-                              <TableRow key={row.id}>
-                                <TableCell>{row.name}</TableCell>
-                                <TableCell>{row.fileName}</TableCell>
-                                <TableCell align="right">
-                                  <IconButton
-                                    size="small"
-                                    title="Open in new tab"
-                                    onClick={() => window.open(row.url, '_blank')}
-                                    sx={{ color: 'text.secondary' }}
-                                  >
-                                    <OpenInNewIcon fontSize="small" />
-                                  </IconButton>
-                                  <IconButton
-                                    size="small"
-                                    title="Delete"
-                                    onClick={() => setDeleteConfirmUploadId(row.id)}
-                                    sx={{ color: 'error.main' }}
-                                  >
-                                    <DeleteIcon fontSize="small" />
-                                  </IconButton>
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </TableContainer>
-                    )}
-                  </Box>
-                </CardContent>
-              </Card>
+              {/* File uploads moved to Docs & Settings → Documents → File
+                  Uploads. Same component, same Firestore path; just relocated
+                  for IA cleanup. */}
             </Grid>
             {/* Sidebar: adding back widgets 1–2 at a time to find nav bug. Currently: Recent Activity + Company. */}
             <Grid item xs={12} md={3}>
@@ -7237,32 +7091,105 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
           </Grid>
         </TabPanel>
         <TabPanel value={tabValue} index={10}>
+          {/*
+            Docs & Settings tab — consolidates the old top-level Settings,
+            Pricing, and Order Defaults tabs into one surface with a left
+            vertical nav (per ./config/accountSettingsNavigation.ts), mirroring
+            the pattern used by the global /settings page.
+
+            Layout: 3-column Grid — left nav (md=3) | section content (md=6)
+            | AccountSidebar (md=3). Each section is gated by `selectedSection`
+            and inlines its own content; legacy ?tab=pricing and
+            ?tab=order-defaults URLs are normalized into ?tab=settings&section=…
+            in the URL-redirect effect near the top of the component.
+          */}
           <Grid container spacing={3}>
-            <Grid item xs={12} md={9}>
-              <Grid container spacing={3}>
-                {/* Recruiting roles card — Scheduler assignment per
-                    docs/RECRUITING_ROLE_MODEL.md §2.2. Schedulers picked
-                    here own order flow for this account and get stamped
-                    onto new orders' jobOrder.schedulerUid (Phase 4). */}
-                <Grid item xs={12} md={7}>
-                  <AccountRecruitingRolesCard
-                    tenantId={tenantId}
-                    accountId={account.id!}
-                    initialSchedulerIds={account?.roles?.schedulerIds ?? []}
-                    recruiterOptions={recruitersOptions}
-                    onSaved={(nextSchedulerIds) => {
-                      setAccount((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              roles: { ...(prev.roles ?? {}), schedulerIds: nextSchedulerIds },
-                            }
-                          : prev,
-                      );
-                    }}
-                  />
-                </Grid>
-                <Grid item xs={12} md={7}>
+            <Grid item xs={12} md={3}>
+              <Card variant="outlined" sx={{ position: { md: 'sticky' }, top: { md: 16 } }}>
+                <List
+                  subheader={<li />}
+                  sx={{
+                    py: 0,
+                    '& ul': { padding: 0, listStyle: 'none', margin: 0 },
+                  }}
+                >
+                  {ACCOUNT_SETTINGS_NAV_GROUPS.map((group) => (
+                    <li key={group.id}>
+                      <ul>
+                        <ListSubheader
+                          disableSticky
+                          sx={{
+                            bgcolor: 'transparent',
+                            color: 'text.secondary',
+                            fontSize: '0.7rem',
+                            fontWeight: 700,
+                            letterSpacing: '0.08em',
+                            textTransform: 'uppercase',
+                            lineHeight: 1.5,
+                            pt: 1.25,
+                            pb: 0.5,
+                            px: 2,
+                          }}
+                        >
+                          {group.label}
+                        </ListSubheader>
+                        {group.items.map((item) => (
+                          <ListItemButton
+                            key={item.key}
+                            selected={selectedSection === item.key}
+                            onClick={() => setSettingsSection(item.key)}
+                            sx={{
+                              py: 0.75,
+                              px: 2,
+                              borderLeft: '3px solid transparent',
+                              '&.Mui-selected': {
+                                bgcolor: 'rgba(0, 87, 184, 0.08)',
+                                borderLeftColor: '#0057B8',
+                                '&:hover': { bgcolor: 'rgba(0, 87, 184, 0.12)' },
+                              },
+                            }}
+                          >
+                            <ListItemText
+                              primary={item.label}
+                              primaryTypographyProps={{
+                                variant: 'body2',
+                                fontWeight: selectedSection === item.key ? 600 : 400,
+                                color: selectedSection === item.key ? '#0057B8' : 'text.primary',
+                              }}
+                            />
+                          </ListItemButton>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </List>
+              </Card>
+            </Grid>
+
+            <Grid item xs={12} md={6}>
+              {/* Roles & Schedulers */}
+              {selectedSection === 'roles' && (
+                <AccountRecruitingRolesCard
+                  tenantId={tenantId}
+                  accountId={account.id!}
+                  initialSchedulerIds={account?.roles?.schedulerIds ?? []}
+                  recruiterOptions={recruitersOptions}
+                  onSaved={(nextSchedulerIds) => {
+                    setAccount((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            roles: { ...(prev.roles ?? {}), schedulerIds: nextSchedulerIds },
+                          }
+                        : prev,
+                    );
+                  }}
+                />
+              )}
+
+              {/* Customer Rules & Policies */}
+              {selectedSection === 'customer-rules' && (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                   <Card>
                     <CardHeader title="Customer Rules & Policies (Defaults)" />
                     <CardContent>
@@ -7369,8 +7296,423 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                       </Grid>
                     </CardContent>
                   </Card>
-                </Grid>
-                <Grid item xs={12} md={5}>
+                  <Box>
+                    <Button
+                      variant="contained"
+                      startIcon={defaultsSaving ? <CircularProgress size={20} /> : <SaveIcon />}
+                      onClick={saveCustomerRules}
+                      disabled={defaultsSaving}
+                    >
+                      {defaultsSaving ? 'Saving…' : 'Save Customer Rules'}
+                    </Button>
+                  </Box>
+                </Box>
+              )}
+
+              {/* Pricing — full content lifted from former Pricing tab */}
+              {selectedSection === 'pricing' && (
+                <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Define how this account is billed: flat markup for all positions (e.g. Sodexo, Black Caviar) or job-title-specific pay and bill rates. Positions here are the only job titles available when creating job orders for this account.
+                  </Typography>
+                  {account.accountType === 'national' && (
+                    <Card sx={{ mb: 3 }}>
+                      <CardHeader title="National account pricing" titleTypographyProps={{ variant: 'h6', fontWeight: 600 }} />
+                      <CardContent sx={{ pt: 0 }}>
+                        <FormControlLabel
+                          control={
+                            <Checkbox
+                              checked={pricingSubAccountsManageOwn}
+                              onChange={(e) => setPricingSubAccountsManageOwn(e.target.checked)}
+                            />
+                          }
+                          label="Sub-accounts manage their own pricing (e.g. Oakland Arena has specific bill rates per title; uncheck for a single flat markup across all sub-accounts)"
+                        />
+                        {!pricingSubAccountsManageOwn && (
+                          <Box sx={{ mt: 2 }}>
+                            <TextField
+                              size="small"
+                              type="number"
+                              label="Flat markup %"
+                              value={pricingFlatMarkupPercent}
+                              onChange={(e) => setPricingFlatMarkupPercent(e.target.value === '' ? '' : Number(e.target.value))}
+                              inputProps={{ min: 0, step: 0.5 }}
+                              sx={{ width: 160, ...numberInputNoSpinnerSx }}
+                              helperText="Applied to all job positions across all sub-accounts (e.g. 45 = 45% over pay rate)"
+                            />
+                          </Box>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
+                  <Card sx={{ mb: 3 }}>
+                    <CardHeader title="Pricing Notes" titleTypographyProps={{ variant: 'h6', fontWeight: 600 }} />
+                    <CardContent sx={{ pt: 0 }}>
+                      <TextField
+                        fullWidth
+                        multiline
+                        minRows={3}
+                        maxRows={8}
+                        label="Notes"
+                        placeholder="e.g. special billing instructions, rate notes..."
+                        value={pricingNotes}
+                        onChange={(e) => setPricingNotes(e.target.value)}
+                        onBlur={() => savePricingNotes(pricingNotes)}
+                        disabled={pricingNotesSaving}
+                        helperText={pricingNotesSaving ? 'Saving…' : 'Saved on blur. Flows downstream (e.g. National → Child → Job Order).'}
+                      />
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardHeader
+                      title="Positions table"
+                      subheader="Job titles and rates for this account. WC code and rate auto-fill when job title + state match in Settings → Workers Comp; or enter them manually. At sub-account or standalone level, workers comp and (for C1 Workforce / C1 Select) SUTA/FUTA apply."
+                      titleTypographyProps={{ variant: 'h6', fontWeight: 600 }}
+                      action={
+                        <Button
+                          size="small"
+                          startIcon={<AddIcon />}
+                          onClick={() =>
+                            setPricingPositions((prev) => [
+                              ...prev,
+                              {
+                                id: `pos-${Date.now()}`,
+                                jobTitle: '',
+                                payRate: 0,
+                                markupPercent: null,
+                                billRate: 0,
+                                workersCompCode: '',
+                                workersCompRate: null,
+                                sutaRate: null,
+                                futaRate: null,
+                                jobDescriptionFromClient: '',
+                              },
+                            ])
+                          }
+                        >
+                          Add position
+                        </Button>
+                      }
+                    />
+                    <CardContent sx={{ pt: 0 }}>
+                      {showSutaFutaOnPricingPositions && (
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 2 }}>
+                          <FormControl size="small" sx={{ minWidth: 140 }}>
+                            <InputLabel>Worksite state</InputLabel>
+                            <Select
+                              value={pricingSutaFutaState || ''}
+                              onChange={(e) => setPricingSutaFutaState(e.target.value)}
+                              label="Worksite state"
+                            >
+                              <MenuItem value="">
+                                <em>Select state</em>
+                              </MenuItem>
+                              {US_STATE_CODES.map((code) => (
+                                <MenuItem key={code} value={code}>
+                                  {code}
+                                </MenuItem>
+                              ))}
+                            </Select>
+                          </FormControl>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => {
+                              const stateCode = pricingSutaFutaState || normalizeStateCode(worksiteDetails?.state);
+                              if (!stateCode) return;
+                              const suta = getSutaRateByState(stateCode);
+                              const futa = getFutaRateByState(stateCode);
+                              setPricingPositions((prev) =>
+                                prev.map((row) => ({
+                                  ...row,
+                                  sutaRate: suta ?? row.sutaRate,
+                                  futaRate: futa,
+                                }))
+                              );
+                            }}
+                            disabled={!pricingSutaFutaState && !normalizeStateCode(worksiteDetails?.state)}
+                            sx={{ textTransform: 'none' }}
+                          >
+                            Apply SUTA/FUTA from state
+                          </Button>
+                          <Typography variant="caption" color="text.secondary">
+                            Uses estimated new-employer SUTA and FUTA rates for the selected state.
+                          </Typography>
+                        </Box>
+                      )}
+                      <TableContainer component={Paper} variant="outlined" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                        <Table size="small">
+                          <TableHead>
+                            <TableRow sx={{ bgcolor: 'grey.50' }}>
+                              <TableCell sx={{ fontWeight: 600 }}>Job title</TableCell>
+                              <TableCell sx={{ fontWeight: 600 }} align="right">Pay rate</TableCell>
+                              <TableCell sx={{ fontWeight: 600 }} align="right">Markup %</TableCell>
+                              <TableCell sx={{ fontWeight: 600 }} align="right">Bill rate</TableCell>
+                              <TableCell sx={{ fontWeight: 600 }}>WC Code</TableCell>
+                              <TableCell sx={{ fontWeight: 600 }} align="right">WC Rate %</TableCell>
+                              {showSutaFutaOnPricingPositions && (
+                                <>
+                                  <TableCell sx={{ fontWeight: 600 }} align="right">SUTA %</TableCell>
+                                  <TableCell sx={{ fontWeight: 600 }} align="right">FUTA %</TableCell>
+                                </>
+                              )}
+                              <TableCell sx={{ fontWeight: 600 }} align="right">Net margin</TableCell>
+                              <TableCell sx={{ width: 56 }} />
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {pricingPositions.map((row, idx) => {
+                              const markupVal = row.markupPercent;
+                              const markup = markupVal == null ? null : Number(markupVal);
+                              const markupNum = typeof markup === 'number' && !Number.isNaN(markup) ? markup : null;
+                              const pay = Number(row.payRate) || 0;
+                              const bill = markupNum != null ? pay * (1 + markupNum / 100) : (Number(row.billRate) || 0);
+                              const pricingStateCode = (pricingSutaFutaState || normalizeStateCode(worksiteDetails?.state) || '').trim().toUpperCase();
+                              const wcCode = (row.workersCompCode ?? '').trim();
+                              const effectiveWcRate = (pricingStateCode && wcCode ? wcRatesByKey[`${pricingStateCode}_${wcCode}`] : undefined) ?? row.workersCompRate;
+                              const wc = (Number(effectiveWcRate) || 0) / 100;
+                              const suta = (Number(row.sutaRate) || 0) / 100;
+                              const futa = (Number(row.futaRate) || 0) / 100;
+                              const margin = bill - pay - pay * wc - pay * suta - pay * futa;
+                              return (
+                                <TableRow key={row.id || idx}>
+                                  <TableCell sx={{ minWidth: 260, maxWidth: 360, verticalAlign: 'top' }}>
+                                    <Stack spacing={1}>
+                                      <Autocomplete
+                                        freeSolo
+                                        size="small"
+                                        options={jobTitlesData as string[]}
+                                        value={row.jobTitle}
+                                        onInputChange={(_, v) => {
+                                          const stateCode = (pricingSutaFutaState || normalizeStateCode(worksiteDetails?.state) || '').trim().toUpperCase();
+                                          const lookup =
+                                            stateCode && v
+                                              ? pickWorkersCompJobTitleLookup(
+                                                  wcJobTitleMaps,
+                                                  stateCode,
+                                                  String(v),
+                                                  wcModifierAccountIdForPricing,
+                                                )
+                                              : undefined;
+                                          setPricingPositions((prev) => {
+                                            const next = [...prev];
+                                            next[idx] = { ...next[idx], jobTitle: v };
+                                            if (lookup) {
+                                              next[idx].workersCompCode = lookup.code;
+                                              next[idx].workersCompRate = lookup.rate;
+                                            }
+                                            return next;
+                                          });
+                                        }}
+                                        renderInput={(params) => <TextField {...params} placeholder="e.g. Chef" />}
+                                        sx={{ minWidth: 200 }}
+                                      />
+                                      <TextField
+                                        size="small"
+                                        fullWidth
+                                        multiline
+                                        minRows={2}
+                                        maxRows={6}
+                                        label="Client job description"
+                                        placeholder="Customer’s official JD or notes for AI job description / postings"
+                                        value={row.jobDescriptionFromClient ?? ''}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          setPricingPositions((prev) => {
+                                            const next = [...prev];
+                                            next[idx] = { ...next[idx], jobDescriptionFromClient: v || '' };
+                                            return next;
+                                          });
+                                        }}
+                                      />
+                                    </Stack>
+                                  </TableCell>
+                                  <TableCell align="right">
+                                    <TextField
+                                      size="small"
+                                      type="number"
+                                      value={row.payRate || ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value === '' ? 0 : Number(e.target.value);
+                                        setPricingPositions((prev) => {
+                                          const next = [...prev];
+                                          next[idx] = { ...next[idx], payRate: v };
+                                          const m = next[idx].markupPercent;
+                                          if (m != null) {
+                                            const mNum = Number(m);
+                                            if (!Number.isNaN(mNum)) next[idx].billRate = v * (1 + mNum / 100);
+                                          }
+                                          return next;
+                                        });
+                                      }}
+                                      inputProps={{ min: 0, step: 0.01 }}
+                                      sx={{ width: 90, ...numberInputNoSpinnerSx }}
+                                    />
+                                  </TableCell>
+                                  <TableCell align="right">
+                                    <TextField
+                                      size="small"
+                                      type="number"
+                                      value={row.markupPercent ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value === '' ? null : Number(e.target.value);
+                                        setPricingPositions((prev) => {
+                                          const next = [...prev];
+                                          next[idx] = {
+                                            ...next[idx],
+                                            markupPercent: v,
+                                            billRate: v != null ? (Number(next[idx].payRate) || 0) * (1 + v / 100) : next[idx].billRate,
+                                          };
+                                          return next;
+                                        });
+                                      }}
+                                      inputProps={{ min: 0, step: 0.5 }}
+                                      sx={{ width: 80, ...numberInputNoSpinnerSx }}
+                                      placeholder="—"
+                                    />
+                                  </TableCell>
+                                  <TableCell align="right">
+                                    <TextField
+                                      size="small"
+                                      type="number"
+                                      value={markupNum != null ? bill.toFixed(2) : (row.billRate ?? '')}
+                                      disabled={markupNum != null}
+                                      onChange={(e) => {
+                                        if (markupNum != null) return;
+                                        const v = e.target.value === '' ? 0 : Number(e.target.value);
+                                        setPricingPositions((prev) => {
+                                          const next = [...prev];
+                                          next[idx] = { ...next[idx], billRate: v };
+                                          return next;
+                                        });
+                                      }}
+                                      inputProps={{ min: 0, step: 0.01 }}
+                                      sx={{ width: 90, ...numberInputNoSpinnerSx }}
+                                    />
+                                  </TableCell>
+                                  <TableCell>
+                                    <TextField
+                                      size="small"
+                                      value={row.workersCompCode ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value.trim();
+                                        setPricingPositions((prev) => {
+                                          const next = [...prev];
+                                          next[idx] = { ...next[idx], workersCompCode: v || undefined };
+                                          return next;
+                                        });
+                                      }}
+                                      sx={{ width: 100 }}
+                                      placeholder="e.g. 8810"
+                                      helperText="Auto from Workers Comp when job title + state match; or enter manually"
+                                    />
+                                  </TableCell>
+                                  <TableCell align="right">
+                                    <TextField
+                                      size="small"
+                                      type="number"
+                                      value={
+                                        (() => {
+                                          const sc = (pricingSutaFutaState || normalizeStateCode(worksiteDetails?.state) || '').trim().toUpperCase();
+                                          const code = (row.workersCompCode ?? '').trim();
+                                          const fromMaster = sc && code ? wcRatesByKey[`${sc}_${code}`] : undefined;
+                                          return fromMaster != null ? fromMaster : (row.workersCompRate ?? '');
+                                        })()
+                                      }
+                                      onChange={(e) => {
+                                        const v = e.target.value === '' ? null : Number(e.target.value);
+                                        setPricingPositions((prev) => {
+                                          const next = [...prev];
+                                          next[idx] = { ...next[idx], workersCompRate: v != null && !Number.isNaN(v) ? v : undefined };
+                                          return next;
+                                        });
+                                      }}
+                                      inputProps={{ min: 0, step: 0.1 }}
+                                      sx={{ width: 70, ...numberInputNoSpinnerSx }}
+                                      placeholder="—"
+                                      helperText="Auto from Workers Comp or enter manually"
+                                    />
+                                  </TableCell>
+                                  {showSutaFutaOnPricingPositions && (
+                                    <>
+                                      <TableCell align="right">
+                                        <TextField
+                                          size="small"
+                                          type="number"
+                                          value={row.sutaRate ?? ''}
+                                          onChange={(e) => {
+                                            const v = e.target.value === '' ? null : Number(e.target.value);
+                                            setPricingPositions((prev) => {
+                                              const next = [...prev];
+                                              next[idx] = { ...next[idx], sutaRate: v };
+                                              return next;
+                                            });
+                                          }}
+                                          inputProps={{ min: 0, step: 0.1 }}
+                                          sx={{ width: 70, ...numberInputNoSpinnerSx }}
+                                          placeholder="—"
+                                        />
+                                      </TableCell>
+                                      <TableCell align="right">
+                                        <TextField
+                                          size="small"
+                                          type="number"
+                                          value={row.futaRate ?? ''}
+                                          onChange={(e) => {
+                                            const v = e.target.value === '' ? null : Number(e.target.value);
+                                            setPricingPositions((prev) => {
+                                              const next = [...prev];
+                                              next[idx] = { ...next[idx], futaRate: v };
+                                              return next;
+                                            });
+                                          }}
+                                          inputProps={{ min: 0, step: 0.1 }}
+                                          sx={{ width: 70, ...numberInputNoSpinnerSx }}
+                                          placeholder="—"
+                                        />
+                                      </TableCell>
+                                    </>
+                                  )}
+                                  <TableCell align="right">
+                                    <Typography variant="body2">{isNaN(margin) ? '—' : `$${margin.toFixed(2)}`}</Typography>
+                                  </TableCell>
+                                  <TableCell>
+                                    <IconButton
+                                      size="small"
+                                      onClick={() => setPricingPositions((prev) => prev.filter((_, i) => i !== idx))}
+                                      sx={{ color: 'error.main' }}
+                                    >
+                                      <DeleteIcon fontSize="small" />
+                                    </IconButton>
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                      {pricingPositions.length === 0 && (
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+                          No positions yet. Add job titles and pay/bill rates (or markup %) to define pricing. These titles will be the only ones available when creating job orders for this account.
+                        </Typography>
+                      )}
+                      <Button
+                        variant="contained"
+                        startIcon={pricingSaving ? <CircularProgress size={20} /> : <SaveIcon />}
+                        onClick={savePricing}
+                        disabled={pricingSaving}
+                        sx={{ mt: 2 }}
+                      >
+                        {pricingSaving ? 'Saving…' : 'Save pricing'}
+                      </Button>
+                    </CardContent>
+                  </Card>
+                </Box>
+              )}
+
+              {/* Billing & Invoicing */}
+              {selectedSection === 'billing' && (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                   <Card>
                     <CardHeader title="Billing & Invoicing (Defaults)" />
                     <CardContent>
@@ -7457,14 +7799,224 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                       </Grid>
                     </CardContent>
                   </Card>
-                </Grid>
-                <Grid item xs={12}>
-                  <Button variant="contained" startIcon={defaultsSaving ? <CircularProgress size={20} /> : <SaveIcon />} onClick={saveAccountDefaults} disabled={defaultsSaving}>
-                    {defaultsSaving ? 'Saving…' : 'Save Defaults'}
-                  </Button>
-                </Grid>
-              </Grid>
+                  <Box>
+                    <Button
+                      variant="contained"
+                      startIcon={defaultsSaving ? <CircularProgress size={20} /> : <SaveIcon />}
+                      onClick={saveBillingDefaults}
+                      disabled={defaultsSaving}
+                    >
+                      {defaultsSaving ? 'Saving…' : 'Save Billing & Invoicing'}
+                    </Button>
+                  </Box>
+                </Box>
+              )}
+
+              {/* Order Details — single-form section, no toggle (former subview promoted) */}
+              {selectedSection === 'order-details' && (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Set default order details for this account. They flow to child accounts and locations, then to job orders.
+                  </Typography>
+                  <AccountOrderDetailsForm
+                    account={account}
+                    accountId={accountId!}
+                    tenantId={tenantId!}
+                    userId={user?.uid || ''}
+                    contacts={contacts}
+                    inheritanceParentAccount={orderDefaultsInheritanceParent}
+                  />
+                </Box>
+              )}
+
+              {/* Staff Instructions — 7 cards (former subview promoted) */}
+              {selectedSection === 'staff-instructions' && (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Default staff instructions for this account. They flow to child accounts and locations, then to job orders.
+                  </Typography>
+                  <Grid container spacing={3}>
+                    <Grid item xs={12}>
+                      <AccountOrderDefaultsCard
+                        title="First Day Instructions"
+                        fieldKey="firstDay"
+                        placeholder="Enter first day instructions (e.g., arrival time, what to bring, who to meet, orientation details...)"
+                        uploadPlaceholder="Upload first day schedules, orientation materials, or related documents"
+                        account={account}
+                        accountId={accountId!}
+                        tenantId={tenantId!}
+                        userId={user?.uid || ''}
+                        onRefresh={loadAccount}
+                      />
+                    </Grid>
+                    <Grid item xs={12}>
+                      <AccountOrderDefaultsCard
+                        title="Parking Instructions"
+                        fieldKey="parking"
+                        placeholder="Enter parking instructions for staff (e.g., where to park, parking pass requirements, visitor parking location...)"
+                        uploadPlaceholder="Upload parking maps, diagrams, or related documents"
+                        account={account}
+                        accountId={accountId!}
+                        tenantId={tenantId!}
+                        userId={user?.uid || ''}
+                        onRefresh={loadAccount}
+                      />
+                    </Grid>
+                    <Grid item xs={12}>
+                      <AccountOrderDefaultsCard
+                        title="Check-In Instructions"
+                        fieldKey="checkIn"
+                        placeholder="Enter check-in instructions (e.g., where to report, who to ask for, required documents...)"
+                        uploadPlaceholder="Upload check-in forms, maps, or related documents"
+                        account={account}
+                        accountId={accountId!}
+                        tenantId={tenantId!}
+                        userId={user?.uid || ''}
+                        onRefresh={loadAccount}
+                      />
+                    </Grid>
+                    <Grid item xs={12}>
+                      <AccountOrderDefaultsCard
+                        title="Uniform Instructions"
+                        fieldKey="uniform"
+                        placeholder="Enter uniform and dress code requirements (e.g., specific colors, safety gear, PPE requirements...)"
+                        uploadPlaceholder="Upload uniform photos, dress code guides, or related documents"
+                        account={account}
+                        accountId={accountId!}
+                        tenantId={tenantId!}
+                        userId={user?.uid || ''}
+                        onRefresh={loadAccount}
+                      />
+                    </Grid>
+                    <Grid item xs={12}>
+                      <AccountOrderDefaultsCard
+                        title="Credential Instructions"
+                        fieldKey="credentials"
+                        placeholder="Enter credential requirements (e.g., badge pickup, wristband issuance, ID requirements...)"
+                        uploadPlaceholder="Upload credential forms, badge photos, or related documents"
+                        account={account}
+                        accountId={accountId!}
+                        tenantId={tenantId!}
+                        userId={user?.uid || ''}
+                        onRefresh={loadAccount}
+                      />
+                    </Grid>
+                    <Grid item xs={12}>
+                      <AccountOrderDefaultsCard
+                        title="Other Instructions"
+                        fieldKey="other"
+                        placeholder="Enter any additional instructions or important information for staff..."
+                        uploadPlaceholder="Upload any other relevant documents"
+                        account={account}
+                        accountId={accountId!}
+                        tenantId={tenantId!}
+                        userId={user?.uid || ''}
+                        onRefresh={loadAccount}
+                      />
+                    </Grid>
+                    <Grid item xs={12}>
+                      <AccountOrderDefaultsCard
+                        title="Other Attachments"
+                        fieldKey="attachments"
+                        placeholder=""
+                        uploadPlaceholder="Upload any other relevant documents for job orders under this account"
+                        account={account}
+                        accountId={accountId!}
+                        tenantId={tenantId!}
+                        userId={user?.uid || ''}
+                        onRefresh={loadAccount}
+                      />
+                    </Grid>
+                  </Grid>
+                </Box>
+              )}
+
+              {/* File Uploads — lifted out of Overview; same Firestore path. */}
+              {selectedSection === 'files' && (
+                <Card>
+                  <CardHeader
+                    title="File uploads"
+                    titleTypographyProps={{ variant: 'h6', fontWeight: 600 }}
+                  />
+                  <CardContent sx={{ pt: 0 }}>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2 }}>
+                        <TextField
+                          size="small"
+                          label="Name"
+                          placeholder="e.g. Contract"
+                          value={uploadLabel}
+                          onChange={(e) => setUploadLabel(e.target.value)}
+                          sx={{ minWidth: 180 }}
+                        />
+                        <input
+                          key={uploadFileKey}
+                          ref={uploadInputRef}
+                          type="file"
+                          accept="*/*"
+                          style={{ display: 'none' }}
+                          onChange={handleUploadFile}
+                        />
+                        <Button
+                          variant="outlined"
+                          component="span"
+                          startIcon={uploading ? <CircularProgress size={16} /> : <UploadIcon />}
+                          disabled={uploading}
+                          onClick={() => uploadInputRef.current?.click()}
+                          sx={{ textTransform: 'none' }}
+                        >
+                          {uploading ? 'Uploading…' : 'Choose file'}
+                        </Button>
+                      </Box>
+                      {accountUploads.length === 0 ? (
+                        <Typography variant="body2" color="text.secondary">
+                          No uploads yet. Add a name (e.g. Contract) and choose a file to upload.
+                        </Typography>
+                      ) : (
+                        <TableContainer component={Paper} variant="outlined" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                          <Table size="small">
+                            <TableHead>
+                              <TableRow>
+                                <TableCell sx={{ fontWeight: 600 }}>Name</TableCell>
+                                <TableCell sx={{ fontWeight: 600 }}>File</TableCell>
+                                <TableCell sx={{ fontWeight: 600, width: 140 }} align="right">Actions</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {accountUploads.map((row) => (
+                                <TableRow key={row.id}>
+                                  <TableCell>{row.name}</TableCell>
+                                  <TableCell>{row.fileName}</TableCell>
+                                  <TableCell align="right">
+                                    <IconButton
+                                      size="small"
+                                      title="Open in new tab"
+                                      onClick={() => window.open(row.url, '_blank')}
+                                      sx={{ color: 'text.secondary' }}
+                                    >
+                                      <OpenInNewIcon fontSize="small" />
+                                    </IconButton>
+                                    <IconButton
+                                      size="small"
+                                      title="Delete"
+                                      onClick={() => setDeleteConfirmUploadId(row.id)}
+                                      sx={{ color: 'error.main' }}
+                                    >
+                                      <DeleteIcon fontSize="small" />
+                                    </IconButton>
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      )}
+                    </Box>
+                  </CardContent>
+                </Card>
+              )}
             </Grid>
+
             <Grid item xs={12} md={3}>
               <AccountSidebar
                 account={account}

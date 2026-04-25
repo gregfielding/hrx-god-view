@@ -19,10 +19,6 @@ import {
   Paper,
   CircularProgress,
   Chip,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   IconButton,
 } from '@mui/material';
 import {
@@ -31,14 +27,12 @@ import {
   Add as AddIcon,
   Star,
   StarBorder,
-  AccountBalance as AccountBalanceIcon,
-  Person as PersonIcon,
 } from '@mui/icons-material';
 import { useOutletContext, useSearchParams, useNavigate } from 'react-router-dom';
 import { collection, query, orderBy, getDocs, addDoc, serverTimestamp, doc, updateDoc, arrayUnion } from 'firebase/firestore';
 
 import { useAuth } from '../contexts/AuthContext';
-import type { RecruiterOutletContext } from './RecruiterDashboard';
+import type { AccountsOutletContext } from './AccountsDashboard';
 import { db } from '../firebase';
 import { p } from '../data/firestorePaths';
 import type { RecruiterAccount, RecruiterAccountFormData } from '../types/recruiter/account';
@@ -53,16 +47,26 @@ interface RecruiterAccountsProps {
 
 const RecruiterAccounts: React.FC<RecruiterAccountsProps> = ({ onlyMyAccounts = false }) => {
   const { user, tenantId } = useAuth();
-  const outletCtx = useOutletContext<RecruiterOutletContext | null>();
+  const outletCtx = useOutletContext<AccountsOutletContext | null>();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const headerSearch = outletCtx?.search ?? '';
   const headerShowFavoritesOnly = outletCtx?.showFavoritesOnly ?? false;
+  // Status / Sort By live in the parent <AccountsDashboard /> so they can
+  // render on the same toolbar row as search + Add. We still need the setter
+  // for `sortField` because the table column headers act as a secondary
+  // sort affordance.
+  const statusFilter = outletCtx?.statusFilter ?? 'all';
+  const sortField = outletCtx?.sortField ?? 'name';
+  const setSortField = useCallback(
+    (value: 'name' | 'createdAt') => {
+      outletCtx?.setSortField(value);
+    },
+    [outletCtx],
+  );
 
   const [accounts, setAccounts] = useState<RecruiterAccount[]>([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [sortField, setSortField] = useState<'name' | 'createdAt'>('name');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
@@ -244,108 +248,13 @@ const RecruiterAccounts: React.FC<RecruiterAccountsProps> = ({ onlyMyAccounts = 
         flexDirection: 'column',
         overflow: 'hidden',
         px: { xs: 2, md: 3 },
-        pt: 1,
+        pt: 0,
       }}
     >
-      {/* Filter bar – same pattern as Companies (State Filter row) */}
-      <Box
-        sx={{
-          mt: 0,
-          mb: 0,
-          px: 1.5,
-          py: 1.25,
-          backgroundColor: '#F9FAFB',
-          borderRadius: 0,
-          border: '1px solid #E5E7EB',
-          borderBottom: '1px solid #EAEEF4',
-          overflowX: 'auto',
-          overflowY: 'hidden',
-        }}
-      >
-        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
-          {/* Tab pills (Accounts / My Accounts) live on the left of the
-              filter row, with the Status / Sort By dropdowns to their right.
-              They used to live in the page header above; moving them here
-              lets the table take the full page width. */}
-          {[
-            { id: 'accounts' as const, label: 'Accounts', icon: <AccountBalanceIcon fontSize="small" />, to: '/accounts' },
-            { id: 'my-accounts' as const, label: 'My Accounts', icon: <PersonIcon fontSize="small" />, to: '/accounts/my' },
-          ].map((tab) => {
-            const isActive = onlyMyAccounts ? tab.id === 'my-accounts' : tab.id === 'accounts';
-            return (
-              <Button
-                key={tab.id}
-                startIcon={tab.icon}
-                onClick={() => navigate(tab.to)}
-                variant="text"
-                sx={{
-                  textTransform: 'none',
-                  borderRadius: '999px',
-                  fontSize: '13px',
-                  fontWeight: isActive ? 600 : 400,
-                  color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
-                  bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
-                  px: 1.25,
-                  py: 0.5,
-                  minHeight: 30,
-                  height: 30,
-                  minWidth: 'auto',
-                  whiteSpace: 'nowrap',
-                  '& .MuiButton-startIcon': {
-                    mr: 0.35,
-                    '& svg': { fontSize: 16 },
-                  },
-                  '&:hover': {
-                    bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
-                  },
-                }}
-              >
-                {tab.label}
-              </Button>
-            );
-          })}
-
-          <FormControl size="small" sx={{ minWidth: 160, height: 36 }}>
-            <InputLabel sx={{ fontSize: '0.875rem' }}>Status</InputLabel>
-            <Select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              label="Status"
-              sx={{
-                height: 36,
-                borderRadius: '6px',
-                backgroundColor: 'white',
-                fontSize: '0.875rem',
-                '& .MuiOutlinedInput-notchedOutline': { borderColor: '#E5E7EB' },
-                '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#D1D5DB' },
-              }}
-            >
-              <MenuItem value="all">All</MenuItem>
-              <MenuItem value="active">Active</MenuItem>
-              <MenuItem value="inactive">Inactive</MenuItem>
-            </Select>
-          </FormControl>
-          <FormControl size="small" sx={{ minWidth: 160, height: 36 }}>
-            <InputLabel sx={{ fontSize: '0.875rem' }}>Sort By</InputLabel>
-            <Select
-              value={sortField}
-              onChange={(e) => setSortField(e.target.value as 'name' | 'createdAt')}
-              label="Sort By"
-              sx={{
-                height: 36,
-                borderRadius: '6px',
-                backgroundColor: 'white',
-                fontSize: '0.875rem',
-                '& .MuiOutlinedInput-notchedOutline': { borderColor: '#E5E7EB' },
-                '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#D1D5DB' },
-              }}
-            >
-              <MenuItem value="name">Name</MenuItem>
-              <MenuItem value="createdAt">Date Created</MenuItem>
-            </Select>
-          </FormControl>
-        </Box>
-      </Box>
+      {/* Pill tabs (Accounts / My Accounts) and the Status / Sort By
+          dropdowns now live in the AccountsDashboard PageHeader so they
+          share a row with the universal search + Add button.
+          See <AccountsDashboard /> for that toolbar. */}
 
       {/* Full-width table – CompanyTable-style.
           Bottom spacing comes from LayoutOutlet (16px). Don't double-pad here
