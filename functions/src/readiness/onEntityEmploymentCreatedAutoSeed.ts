@@ -25,8 +25,9 @@ import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 
 import {
-  BASELINE_W2_REQUIREMENTS,
-  BASELINE_1099_REQUIREMENTS,
+  BASELINE_SELECT_REQUIREMENTS,
+  BASELINE_WORKFORCE_REQUIREMENTS,
+  BASELINE_EVENTS_REQUIREMENTS,
   type SeedEmployeeReadinessRequirementSpec,
 } from '../shared/seedEmployeeReadinessItems';
 import { runEmployeeReadinessSeed } from './seedEmployeeReadinessItemsRunner';
@@ -138,21 +139,58 @@ function readEntityConfig(raw: Record<string, unknown>): EntityConfig {
   };
 }
 
-function buildRequirementSetForEntity(cfg: EntityConfig): SeedEmployeeReadinessRequirementSpec[] {
-  const baseline =
-    cfg.workerType === '1099' ? BASELINE_1099_REQUIREMENTS.slice() : BASELINE_W2_REQUIREMENTS.slice();
+/**
+ * Resolve the entity to one of three keys based on its `name`. Mirrors
+ * `deriveEntityKeyFromName` in `functions/src/onboarding/workerOnboardingPipeline.ts`.
+ *
+ * Priority — substring of the entity's name (case-insensitive):
+ *   - "select" → 'select'  (W-2 with E-Verify)
+ *   - "event"  → 'events'  (1099 contractor)
+ *   - else     → 'workforce' (W-2 without E-Verify; default for legacy
+ *                names that don't match either)
+ *
+ * Falls back to workerType for entities that lack a recognizable name —
+ * a 1099 entity called "Foo LLC" still gets the events baseline rather
+ * than the W-2 default.
+ */
+function deriveEntityKey(cfg: EntityConfig): 'select' | 'workforce' | 'events' {
+  const name = (cfg.name || '').toLowerCase();
+  if (name.includes('select')) return 'select';
+  if (name.includes('event')) return 'events';
+  if (cfg.workerType === '1099') return 'events';
+  return 'workforce';
+}
 
-  // E-Verify is config-driven per entity (C1 Select = always true, C1 Events / C1 Workforce may differ).
-  // Drop it when the entity says not required.
-  let requirements = baseline;
+function buildRequirementSetForEntity(cfg: EntityConfig): SeedEmployeeReadinessRequirementSpec[] {
+  // Pick the baseline by entity. The three lists are explicit (no
+  // everifyRequired trim hack) — see `docs/READINESS_MODEL.md` §3 and
+  // `shared/seedEmployeeReadinessItems.ts`.
+  const entityKey = deriveEntityKey(cfg);
+  let requirements: SeedEmployeeReadinessRequirementSpec[];
+  switch (entityKey) {
+    case 'select':
+      requirements = BASELINE_SELECT_REQUIREMENTS.slice();
+      break;
+    case 'workforce':
+      requirements = BASELINE_WORKFORCE_REQUIREMENTS.slice();
+      break;
+    case 'events':
+      requirements = BASELINE_EVENTS_REQUIREMENTS.slice();
+      break;
+  }
+
+  // Per-entity override: if `everifyRequired` is explicitly set on the
+  // entity doc, honor it. Lets a tenant turn E-Verify off on Select for
+  // testing, or on Workforce if they want it (rare). Without this
+  // override, Select includes E-Verify and Workforce / Events don't.
   if (cfg.everifyRequired === false) {
     requirements = requirements.filter((r) => r.requirementType !== 'e_verify');
+  } else if (cfg.everifyRequired === true && !requirements.some((r) => r.requirementType === 'e_verify')) {
+    requirements = [...requirements, { requirementType: 'e_verify' }];
   }
 
   // `everee_profile` only makes sense when the entity actually uses Everee.
-  // Tenants still on TempWorks / ADP etc. can add their own custom onboarding
-  // step as a follow-up; we drop the Everee-specific one to avoid a phantom
-  // requirement that doesn't map to real user work.
+  // Drop it for tenants still on TempWorks / ADP etc.
   if (cfg.payrollProvider && cfg.payrollProvider !== 'everee') {
     requirements = requirements.filter((r) => r.requirementType !== 'everee_profile');
   }

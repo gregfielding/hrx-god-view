@@ -21,7 +21,7 @@ import type { ActionItemOwnership } from './actionItemOwnership';
 
 export const EMPLOYEE_READINESS_ITEM_V1_VERSION = 1;
 
-/** The requirement a single EmployeeReadinessItem tracks. Keep in sync with the readiness rethink doc. */
+/** The requirement a single EmployeeReadinessItem tracks. Keep in sync with `docs/READINESS_MODEL.md` §3. */
 export type EmployeeReadinessRequirementType =
   | 'i9_section_1'
   | 'i9_section_2'
@@ -39,6 +39,8 @@ export type EmployeeReadinessRequirementType =
   | 'phone_verified'
   | 'emergency_contact'
   | 'address_confirmed'
+  /** C1 Events 1099 only — Independent Contractor Agreement signed. */
+  | 'ic_agreement'
   /** Escape hatch for tenant-custom requirements not in the canonical list. */
   | 'custom';
 
