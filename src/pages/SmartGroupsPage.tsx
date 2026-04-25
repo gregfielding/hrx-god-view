@@ -169,7 +169,12 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
   const radiusAutocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [entityFilter, setEntityFilter] = useState<SmartGroupsEntityFilterKey>(() => {
+  // The Entity selector is hidden in the toolbar, but keep the state + cache
+  // hydration so already-saved smart groups (which may carry a non-`all`
+  // `entityFilter`) continue to behave as before. The setter is intentionally
+  // unused while the UI is hidden; restore the destructure when the selector
+  // is re-enabled.
+  const [entityFilter] = useState<SmartGroupsEntityFilterKey>(() => {
     const raw = (cacheState as { entityFilter?: string }).entityFilter;
     if (raw === 'select' || raw === 'workforce' || raw === 'events') return raw;
     return 'all';
@@ -241,7 +246,7 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
     setSelectedIds(new Set());
     setSelectAllResults(false);
     clearCache();
-  }, [clearCache]);
+  }, [clearCache, setResidenceRows]);
 
   const loadResidenceData = useCallback(async () => {
     if (!tenantId) return;
@@ -375,15 +380,27 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
     setResidenceRows,
   ]);
 
+  // Tracks whether the user has explicitly clicked "Build Report" during
+  // this mount of the page. We need this because `reportBuilt` is rehydrated
+  // from `usePageCache` on every mount — without this guard the auto-rebuild
+  // effect below would fire a fresh search the instant the Smart Groups tab
+  // is opened, even though the user hasn't asked for one yet.
+  const userTriggeredBuildRef = useRef(false);
+
   const handleBuildReport = () => {
+    userTriggeredBuildRef.current = true;
     setReportBuilt(true);
     setTablePage(0);
     loadResidenceData();
   };
 
-  // Auto-rebuild report when filters change (debounced)
+  // Auto-rebuild report when filters change (debounced).
+  // Only runs after the user has clicked Build Report at least once in this
+  // session — cached results from a previous visit are shown as-is until
+  // the user explicitly asks for a fresh search.
   useEffect(() => {
     if (!reportBuilt) return;
+    if (!userTriggeredBuildRef.current) return;
 
     const timeoutId = setTimeout(() => {
       setTablePage(0);
@@ -642,6 +659,14 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
             >
               <TextField
                 size="small"
+                // Force the outlined variant — the global theme defaults
+                // MuiTextField to `filled`, which is why this field used
+                // to render as just a bottom underline. Outlined matches
+                // the universal search bar treatment (full border, white
+                // interior, padded), with the corner radius dialed in to
+                // 6px so it visually pairs with the Radius / Entity
+                // dropdowns sitting next to it.
+                variant="outlined"
                 label="Address"
                 placeholder="Search city, state or full address"
                 value={radiusAddress}
@@ -666,16 +691,41 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
                     </IconButton>
                   ) : undefined,
                 }}
-                sx={{ minWidth: 280 }}
+                sx={{
+                  minWidth: 280,
+                  '& .MuiOutlinedInput-root': {
+                    height: 36,
+                    borderRadius: '6px',
+                    backgroundColor: '#ffffff',
+                    fontSize: '0.875rem',
+                    '& fieldset': {
+                      borderColor: 'rgba(0, 0, 0, 0.23)',
+                    },
+                    '&:hover fieldset': {
+                      borderColor: 'rgba(0, 0, 0, 0.4)',
+                    },
+                    '&.Mui-focused fieldset': {
+                      borderColor: 'primary.main',
+                      borderWidth: '1px',
+                    },
+                  },
+                  '& .MuiInputLabel-root': {
+                    fontSize: '0.875rem',
+                  },
+                }}
               />
             </GooglePlacesAutocomplete>
-            <FormControl size="small" sx={{ minWidth: 100 }}>
-              <InputLabel id="smart-radius-label">Radius</InputLabel>
+            <FormControl size="small" sx={{ minWidth: 100, height: 36 }}>
+              <InputLabel id="smart-radius-label" sx={{ fontSize: '0.875rem' }}>Radius</InputLabel>
               <Select
                 labelId="smart-radius-label"
                 value={radiusMiles}
                 label="Radius"
                 onChange={(e) => setRadiusMiles(Number(e.target.value))}
+                // Match the Entity dropdown styling — white fill, 6px
+                // square-ish corners, 36px height, 0.875rem text — so the
+                // two filters render as a matched pair.
+                sx={{ height: 36, borderRadius: '6px', backgroundColor: 'white', fontSize: '0.875rem' }}
               >
                 {RADIUS_OPTIONS.map((m) => (
                   <MenuItem key={m} value={m}>
@@ -685,6 +735,11 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
               </Select>
             </FormControl>
 
+            {/* Entity selector hidden per product request — `entityFilter`
+                state stays wired up (default `'all'`, persisted in the page
+                cache, still threaded into the search/save calls below) so
+                results behave as if the viewer chose "All entities". Re-add
+                this <FormControl> to expose the selector again.
             <FormControl size="small" sx={{ minWidth: 180, height: 36 }}>
               <InputLabel sx={{ fontSize: '0.875rem' }}>Entity</InputLabel>
               <Select
@@ -703,8 +758,13 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
                 <MenuItem value="events">C1 Events</MenuItem>
               </Select>
             </FormControl>
+            */}
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 'auto' }}>
+          {/* Compact pill button shared by Save / Clear / Build — sized to
+              match the Users hub tab pills above (30px tall, 13px text,
+              999px radius, 16px icons). Build Report inherits the base
+              and just overrides colour for the contained variant. */}
           {hasResults && (
             <Button
               variant="outlined"
@@ -712,6 +772,18 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
                 setSaveGroupName('');
                 setSaveError(null);
                 setSaveDialogOpen(true);
+              }}
+              sx={{
+                textTransform: 'none',
+                borderRadius: '999px',
+                fontSize: '13px',
+                fontWeight: 500,
+                px: 1.5,
+                py: 0.5,
+                minHeight: 30,
+                height: 30,
+                minWidth: 'auto',
+                whiteSpace: 'nowrap',
               }}
             >
               Save Smart Search
@@ -725,13 +797,19 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
               disabled={loading}
               sx={{
                 textTransform: 'none',
-                borderRadius: '24px',
-                px: 2.5,
-                py: 1,
-                height: '40px',
+                borderRadius: '999px',
+                fontSize: '13px',
                 fontWeight: 500,
-                fontSize: '14px',
+                px: 1.5,
+                py: 0.5,
+                minHeight: 30,
+                height: 30,
+                minWidth: 'auto',
                 whiteSpace: 'nowrap',
+                '& .MuiButton-startIcon': {
+                  mr: 0.5,
+                  '& svg': { fontSize: 16 },
+                },
               }}
             >
               Clear results
@@ -744,19 +822,25 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
             disabled={loading}
             sx={{
               textTransform: 'none',
-              borderRadius: '24px',
-              px: 2.5,
-              py: 1,
-              height: '40px',
-              fontWeight: 500,
-              fontSize: '14px',
+              borderRadius: '999px',
+              fontSize: '13px',
+              fontWeight: 600,
+              px: 1.5,
+              py: 0.5,
+              minHeight: 30,
+              height: 30,
+              minWidth: 'auto',
+              whiteSpace: 'nowrap',
               bgcolor: '#0057B8',
-              boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
+              boxShadow: 'none',
               '&:hover': {
                 bgcolor: '#004a9f',
-                boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
+                boxShadow: 'none',
               },
-              whiteSpace: 'nowrap',
+              '& .MuiButton-startIcon': {
+                mr: 0.5,
+                '& svg': { fontSize: 16 },
+              },
             }}
           >
             Build Report
@@ -787,9 +871,11 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
             minHeight: 0,
             display: 'flex',
             flexDirection: 'column',
-            border: '1px solid',
-            borderColor: 'divider',
-            borderRadius: 2,
+            // Border is owned by the TableContainer below (1px solid
+            // #EAEEF4) so the Smart Groups results surface matches the
+            // User Groups table exactly — single thin divider, no double
+            // line, no rounded corners.
+            borderRadius: 0,
             overflow: 'hidden',
           }}
         >
@@ -803,10 +889,12 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
                 px: 2,
                 py: 1.5,
                 backgroundColor: 'action.selected',
-                border: '1px solid',
-                borderColor: 'divider',
+                // Match the table chrome below — single thin top/left/right
+                // line in the same #EAEEF4 colour, no bottom border so it
+                // shares the line with the TableContainer.
+                border: '1px solid #EAEEF4',
                 borderBottom: 'none',
-                borderRadius: '8px 8px 0 0',
+                borderRadius: 0,
               }}
             >
               <Typography variant="body2" sx={{ fontWeight: 500 }}>
@@ -866,8 +954,7 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
               width: '100%',
               px: 0,
               border: '1px solid #EAEEF4',
-              borderRadius: selectedCount > 0 ? 0 : 2,
-              ...(selectedCount > 0 && { borderRadius: '0 0 8px 8px' }),
+              borderRadius: 0,
               '&::-webkit-scrollbar': { width: '8px', height: '8px' },
               '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)', borderRadius: '4px' },
               '&::-webkit-scrollbar-thumb': { background: 'rgba(0, 0, 0, 0.15)', borderRadius: '4px', '&:hover': { background: 'rgba(0, 0, 0, 0.25)' } },

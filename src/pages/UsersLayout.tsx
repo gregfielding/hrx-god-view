@@ -35,6 +35,13 @@ export interface UsersLayoutOutletContext {
   setShowFavoritesOnly?: (value: boolean) => void;
   openCreateGroupForm?: boolean;
   setOpenCreateGroupForm?: (value: boolean) => void;
+  /**
+   * Detail outlet pages (e.g. `SavedSmartGroupDetailPage`) can register a node
+   * here to be rendered in the tabs row's right-actions slot. When set, this
+   * overrides the layout's default search/create actions for that route.
+   * Pass `null` to clear (the child should call this on unmount).
+   */
+  setOutletRightActions: (node: React.ReactNode | null) => void;
 }
 
 const UsersLayout: React.FC = () => {
@@ -57,7 +64,13 @@ const UsersLayout: React.FC = () => {
   const [usersShowFavoritesOnly, setUsersShowFavoritesOnly] = useState(persisted.usersListFavoritesOnly);
   const [groupsSearch, setGroupsSearch] = useState(persisted.userGroupsSearch);
   const [groupsShowFavoritesOnly, setGroupsShowFavoritesOnly] = useState(persisted.userGroupsFavoritesOnly);
+  // Smart Groups list tabs share a single search box (All Smart Groups + My
+  // Smart Groups). No favorites companion — see `usersLayoutPersistence.ts`.
+  const [smartGroupsSearch, setSmartGroupsSearch] = useState(persisted.smartGroupsSearch);
   const [openCreateGroupForm, setOpenCreateGroupForm] = useState(false);
+  // Slot for child outlet pages to inject their own right-side actions into
+  // the tabs row. Cleared when the child unmounts. See `UsersLayoutOutletContext`.
+  const [outletRightActions, setOutletRightActions] = useState<React.ReactNode | null>(null);
 
   useEffect(() => {
     if (pathIsUsersListPath(pathname)) {
@@ -71,8 +84,9 @@ const UsersLayout: React.FC = () => {
       usersListFavoritesOnly: usersShowFavoritesOnly,
       userGroupsSearch: groupsSearch,
       userGroupsFavoritesOnly: groupsShowFavoritesOnly,
+      smartGroupsSearch,
     });
-  }, [usersSearch, usersShowFavoritesOnly, groupsSearch, groupsShowFavoritesOnly]);
+  }, [usersSearch, usersShowFavoritesOnly, groupsSearch, groupsShowFavoritesOnly, smartGroupsSearch]);
 
   const isUsersTab = activeTab === 'all' || activeTab === 'my';
   // The "All / Mine" pair for user groups shares the same search +
@@ -80,6 +94,10 @@ const UsersLayout: React.FC = () => {
   // canonical `user-groups` tab gets the Create button.
   const isUserGroupsTab = activeTab === 'user-groups' || activeTab === 'my-user-groups';
   const isCreatableUserGroupsTab = activeTab === 'user-groups';
+  // The "All / Mine" pair for smart-group LISTS share a search box too.
+  // The standalone Add Smart Group builder (`/users/smart-groups`) is its
+  // own thing and doesn't get a header search.
+  const isSmartGroupsListTab = activeTab === 'all-smart-groups' || activeTab === 'my-smart-groups';
 
   const outletContext: UsersLayoutOutletContext = {
     usersTab: activeTab,
@@ -97,9 +115,17 @@ const UsersLayout: React.FC = () => {
       openCreateGroupForm,
       setOpenCreateGroupForm,
     }),
+    ...(isSmartGroupsListTab && {
+      search: smartGroupsSearch,
+      setSearch: setSmartGroupsSearch,
+    }),
+    setOutletRightActions,
   };
 
-  const rightActions =
+  // Detail outlet pages (e.g. Smart Group detail) can take over the right
+  // side of the tabs row by calling `setOutletRightActions(...)`. When they
+  // do, their node wins over the layout's default search/create actions.
+  const rightActions = outletRightActions ?? (
     isUsersTab ? (
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
         {/* I-9 reminders (all onboarding) — hidden per product request; restore with OnCallI9SupportingReminderDialog + state above
@@ -123,6 +149,21 @@ const UsersLayout: React.FC = () => {
           favoriteType="users"
           showFavoritesOnly={usersShowFavoritesOnly}
           onToggleFavorites={setUsersShowFavoritesOnly}
+        />
+      </Box>
+    ) : isSmartGroupsListTab ? (
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+        <UniversalSearchBar
+          value={smartGroupsSearch}
+          onChange={setSmartGroupsSearch}
+          onSearch={setSmartGroupsSearch}
+          placeholder={
+            activeTab === 'my-smart-groups'
+              ? 'Search my smart groups...'
+              : 'Search smart groups...'
+          }
+          // No favorites concept on smart groups yet — the universal bar
+          // gracefully shows the ⌘K hint where the star would be.
         />
       </Box>
     ) : isUserGroupsTab ? (
@@ -156,7 +197,8 @@ const UsersLayout: React.FC = () => {
           </Tooltip>
         )}
       </Box>
-    ) : null;
+    ) : null
+  );
 
   return (
     <Box
@@ -184,9 +226,10 @@ const UsersLayout: React.FC = () => {
         // provides enough visual separation, and removing it gives the
         // page a cleaner "single surface" feel.
         showDivider={false}
-        // Dense pt is 7px (0.875 * 8); bump it by 2px so the tab pills
-        // don't sit flush against the app bar.
-        sx={{ pt: '9px' }}
+        // Uniform 8px gutter above and below the tabs row — keeps the
+        // header area visually balanced with the tabbed navigation pills
+        // sitting in the middle.
+        sx={{ pt: '8px', pb: '8px' }}
         title=""
         filters={
           <Box sx={{ display: 'flex', gap: 0.35, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -231,11 +274,11 @@ const UsersLayout: React.FC = () => {
           overflowX: 'auto',
           display: 'flex',
           flexDirection: 'column',
-          paddingTop: '8px',
-          // No bottom padding here — the global Layout outlet
-          // (src/components/Layout.tsx) already adds 16px of pb to every
-          // authenticated page, so anything here would double-stack.
-          pb: 0,
+          paddingTop: 0,
+          // 4px of bottom padding — small breathing room above the global
+          // Layout outlet pb (src/components/Layout.tsx adds 16px of pb to
+          // every authenticated page), without double-stacking.
+          pb: '4px',
           '&::-webkit-scrollbar': { width: '8px', height: '8px' },
           '&::-webkit-scrollbar-track': {
             background: 'rgba(0, 0, 0, 0.02)',

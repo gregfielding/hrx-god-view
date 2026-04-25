@@ -22,8 +22,8 @@ export const USERS_LAYOUT_TAB_CONFIG: { tab: UsersTab; path: string; label: stri
   // { tab: 'invite-users', path: '/users/invite-users', label: 'Invite Users' },
   { tab: 'user-groups', path: '/users/user-groups', label: 'User Groups' },
   { tab: 'my-user-groups', path: '/users/my-user-groups', label: 'My User Groups' },
-  { tab: 'smart-groups', path: '/users/smart-groups', label: 'Smart Groups' },
-  { tab: 'all-smart-groups', path: '/users/all-smart-groups', label: 'All Smart Groups' },
+  { tab: 'smart-groups', path: '/users/smart-groups', label: 'Add Smart Group' },
+  { tab: 'all-smart-groups', path: '/users/all-smart-groups', label: 'Smart Groups' },
   { tab: 'my-smart-groups', path: '/users/my-smart-groups', label: 'My Smart Groups' },
 ];
 
@@ -38,6 +38,12 @@ export type UsersLayoutPersistedState = {
   usersListFavoritesOnly: boolean;
   userGroupsSearch: string;
   userGroupsFavoritesOnly: boolean;
+  /**
+   * Shared header search for the Smart Groups list tabs (All Smart Groups +
+   * My Smart Groups). Smart Groups don't have a favorites concept yet, so
+   * there's no `smartGroupsFavoritesOnly` companion.
+   */
+  smartGroupsSearch: string;
 };
 
 const DEFAULT_STATE: UsersLayoutPersistedState = {
@@ -47,6 +53,7 @@ const DEFAULT_STATE: UsersLayoutPersistedState = {
   usersListFavoritesOnly: false,
   userGroupsSearch: '',
   userGroupsFavoritesOnly: false,
+  smartGroupsSearch: '',
 };
 
 export function pathIsUsersListPath(pathname: string): boolean {
