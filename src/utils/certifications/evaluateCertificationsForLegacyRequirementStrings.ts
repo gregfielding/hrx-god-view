@@ -112,7 +112,9 @@ export async function computeEngineGapForPhase1Requirements(input: {
 
 /**
  * Async helper — loads canonical records, runs bridge + engine, returns user-facing gap labels.
- * Used by `checkMissingCertifications` / apply flows when `REACT_APP_CERT_ENGINE_READINESS` is on.
+ * Used by `checkMissingCertificationsWithEngine` (apply flow). Phase B.4 removed
+ * the legacy fuzzy `checkMissingCertifications` and the `REACT_APP_CERT_ENGINE_READINESS`
+ * gate on this surface — engine is now always on for the apply flow.
  */
 export async function computeEngineGapLabelsForLegacyJobStrings(input: {
   workerUid: string;
