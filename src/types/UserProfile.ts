@@ -187,6 +187,32 @@ export interface UserProfile {
     storagePath: string; // Firebase Storage path
     downloadUrl?: string; // Generated download URL (optional, can be generated client-side)
   };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 🆕 Typed schema additions (Phase B — job requirement matchers)
+  //
+  // These supersede the freeform legacy fields above (`educationLevel`,
+  // `languages`, and the cert-or-license string mash inside `certifications`).
+  // Both shapes coexist during migration; matchers read the V2 field first,
+  // falling back to the legacy field via the parsers in:
+  //
+  //   - `shared/educationLevel.ts`         → `parseLegacyEducationLevel()`
+  //   - `shared/languageProficiency.ts`    → `parseLegacyLanguageString()`
+  //   - `shared/licenseRecord.ts`          → no parser; greenfield
+  //
+  // See `docs/READINESS_EXECUTION_MATRIX.md` §4.2, §4.4, §4.5.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** Typed education level. Supersedes the freeform `educationLevel` legacy field. */
+  educationLevelV2?: import('../shared/educationLevel').EducationLevel;
+  /** Typed language proficiencies. Supersedes the untyped `languages: string[]` legacy field. */
+  languagesV2?: import('../shared/languageProficiency').LanguageProficiencyV1[];
+  /**
+   * Typed license records. Greenfield — split out of the legacy `certifications[]`
+   * mash (which previously held both certs and license strings). Holds CDL,
+   * forklift, food-handler, OSHA-30, etc., with class + endorsements + expiration.
+   */
+  licenses?: import('../shared/licenseRecord').LicenseRecordV1[];
 }
 
 // Form interface for editing user profiles

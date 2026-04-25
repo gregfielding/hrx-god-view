@@ -101,6 +101,16 @@ export interface JobOrder {
   educationRequired?: string;
   languagesRequired?: string[];
   skillsRequired?: string[];
+  // 🆕 Typed schema additions (Phase B — job requirement matchers).
+  // Supersede the freeform fields above. Matchers read these first, falling
+  // back to the legacy fields via the parsers in shared/. Both coexist during
+  // migration. See docs/READINESS_EXECUTION_MATRIX.md §4.2, §4.4, §4.5.
+  /** Minimum required education level (typed). Supersedes the freeform `educationRequired`. */
+  educationLevelRequiredV2?: import('../../shared/educationLevel').EducationLevel;
+  /** Languages required, with minimum proficiency per language. Supersedes `languagesRequired: string[]`. */
+  languagesRequiredV2?: import('../../shared/languageProficiency').RequiredLanguageV1[];
+  /** Required licenses with class + required endorsements. Supersedes `requiredLicenses: string[]`. */
+  requiredLicensesV2?: import('../../shared/licenseRecord').RequiredLicenseV1[];
   physicalRequirements?: string;
   ppeRequirements?: string;
   ppeProvidedBy: 'company' | 'worker' | 'both';
