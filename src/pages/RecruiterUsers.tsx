@@ -79,6 +79,7 @@ import { userMatchesSearchTerm } from '../utils/recruiterUserSearchMatch';
 import RecruiterUserAiScoreCell from '../components/recruiter/RecruiterUserAiScoreCell';
 import { WorkHistoryJobTitlesCell } from '../components/recruiter/ApplicantsUsersStyleTableCells';
 import OrderInterviewInlineAction from '../components/recruiter/OrderInterviewInlineAction';
+import BulkOrderInterviewButton from '../components/recruiter/BulkOrderInterviewButton';
 import CertificationIntelligencePanel from '../components/recruiter/CertificationIntelligencePanel';
 
 /** C1 tenant entities — keys match `entity_employments.entityKey` and the recruiter callable. */
@@ -1224,6 +1225,18 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
               >
                 Bulk SMS
               </Button>
+              {/* Order Interviews — same payload as the per-row CTA,
+                  looped over the eligible subset of the current
+                  selection. The button hides itself when no one in
+                  the selection is eligible (already interviewed / no
+                  phone / internal staff). */}
+              <BulkOrderInterviewButton
+                selectedUsers={
+                  selectAllResults
+                    ? filteredUsers
+                    : filteredUsers.filter((u) => selectedIds.has(u.id))
+                }
+              />
             </Box>
           )}
 
@@ -1560,9 +1573,9 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                       const tip = rp?.topRisks?.length ? workerRiskTooltipContent(rp) : '';
                       const body = (
                         <Typography
-                          variant="body2"
+                          variant="caption"
                           color={muted ? 'text.secondary' : 'text.primary'}
-                          sx={{ fontWeight: 400, fontSize: '0.8125rem', lineHeight: 1.3 }}
+                          sx={{ fontWeight: 400, fontSize: '0.65rem', lineHeight: 1.3, fontFamily: 'inherit', display: 'block' }}
                         >
                           {concern}
                         </Typography>

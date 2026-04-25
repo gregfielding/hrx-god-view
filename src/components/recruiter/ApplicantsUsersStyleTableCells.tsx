@@ -294,7 +294,11 @@ export const ApplicantsUsersStyleTableBodyCells: React.FC<ApplicantsUsersStyleTa
           const muted = concern === 'None';
           const tip = rp?.topRisks?.length ? workerRiskTooltipContent(rp) : '';
           const body = (
-            <Typography variant="body2" color={muted ? 'text.secondary' : 'text.primary'} sx={{ fontWeight: 400, fontSize: '0.8125rem', lineHeight: 1.3 }}>
+            <Typography
+              variant="caption"
+              color={muted ? 'text.secondary' : 'text.primary'}
+              sx={{ fontWeight: 400, fontSize: '0.65rem', lineHeight: 1.3, fontFamily: 'inherit', display: 'block' }}
+            >
               {concern}
             </Typography>
           );
