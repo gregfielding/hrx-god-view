@@ -817,6 +817,7 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
                 <TableCell sx={{ fontWeight: 700 }}>Time</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>Job Title</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>Staff Needed</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>PO Number</TableCell>
                 <TableCell sx={{ fontWeight: 700 }} align="right">Actions</TableCell>
               </TableRow>
@@ -890,6 +891,40 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
                         {shift.totalStaffRequested}
                       </Typography>
                     </Stack>
+                  </TableCell>
+                  <TableCell>
+                    {/* Status chip — mirrors the Status dropdown options on
+                        the edit dialog (Open / Filled / Closed / Cancelled).
+                        Missing / unknown values render as "Open" since that's
+                        the default state on shift creation. */}
+                    {(() => {
+                      const raw = String((shift as any).status || 'open').toLowerCase();
+                      const label =
+                        raw === 'filled'
+                          ? 'Filled'
+                          : raw === 'closed'
+                            ? 'Closed'
+                            : raw === 'cancelled' || raw === 'canceled'
+                              ? 'Cancelled'
+                              : 'Open';
+                      const color: 'success' | 'info' | 'default' | 'error' =
+                        label === 'Open'
+                          ? 'success'
+                          : label === 'Filled'
+                            ? 'info'
+                            : label === 'Cancelled'
+                              ? 'error'
+                              : 'default';
+                      return (
+                        <Chip
+                          label={label}
+                          size="small"
+                          color={color}
+                          variant={color === 'default' ? 'outlined' : 'filled'}
+                          sx={{ fontWeight: 500 }}
+                        />
+                      );
+                    })()}
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2" color="text.secondary">
