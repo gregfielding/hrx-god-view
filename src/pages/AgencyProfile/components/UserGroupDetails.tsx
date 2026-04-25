@@ -252,7 +252,13 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
         setEditForm(nextMeta);
         lastSavedGroupMetaRef.current = nextMeta;
         setMemberIds(data.memberIds || []);
-        setGroupManagerIds(data.groupManagerIds || []);
+        // Prefer the new `roles.csaIds` field — that's the source of truth
+        // the recruiting role model resolver reads. Fall back to the legacy
+        // `groupManagerIds` for groups that haven't been migrated yet so the
+        // panel still shows existing assignments while the backfill runs.
+        const csaIds: string[] = Array.isArray(data?.roles?.csaIds) ? data.roles.csaIds : [];
+        const legacyManagerIds: string[] = Array.isArray(data?.groupManagerIds) ? data.groupManagerIds : [];
+        setGroupManagerIds(csaIds.length > 0 ? csaIds : legacyManagerIds);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to fetch group');
@@ -394,13 +400,25 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   };
 
   const handleManagersChange = async (newValue: any[]) => {
-    setGroupManagerIds(newValue.map((u: any) => u.id));
+    // Single picker — now writes "Candidate Success Agents" into the new
+    // `roles.csaIds` field that the recruiting role model uses, while also
+    // dual-writing to the legacy `groupManagerIds` so older readers (the
+    // pre-Phase-4 ownership resolver, the readiness seed runners, anything
+    // we haven't migrated yet) keep working until the bandaid comes off.
+    // Phase 4b's onUserGroupRolesOrMembersChange trigger watches roles.csaIds
+    // and will fan out recomputePrimaryForWorker for every existing member
+    // of the group as soon as this update lands.
+    const ids = newValue.map((u: any) => u.id);
+    setGroupManagerIds(ids);
     try {
       const groupRef = doc(db, 'tenants', tenantId, 'userGroups', groupId);
-      await updateDoc(groupRef, { groupManagerIds: newValue.map((u: any) => u.id) });
+      await updateDoc(groupRef, {
+        'roles.csaIds': ids,
+        groupManagerIds: ids, // legacy mirror — drop in a follow-up release
+      });
       setSuccess(true);
     } catch (err: any) {
-      setError(err.message || 'Failed to update group managers');
+      setError(err.message || 'Failed to update Candidate Success Agents');
     }
   };
 
@@ -1775,7 +1793,12 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                 '& .MuiCardContent-root': { p: 1 },
               }}
             >
-              <CardHeader title="Group managers" titleTypographyProps={{ fontWeight: 800 }} />
+              <CardHeader
+                title="Candidate Success Agents"
+                subheader="These users own the relationship for every member of this group."
+                titleTypographyProps={{ fontWeight: 800 }}
+                subheaderTypographyProps={{ variant: 'caption', color: 'text.secondary' }}
+              />
               <CardContent>
         <Autocomplete
           multiple
@@ -1784,7 +1807,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
           value={agencyUsers.filter((u) => groupManagerIds.includes(u.id))}
           onChange={(_, newValue) => handleManagersChange(newValue)}
           renderInput={(params) => (
-                    <TextField {...params} label="Managers" placeholder="Select managers" fullWidth />
+                    <TextField {...params} label="Candidate Success Agents" placeholder="Select CSAs" fullWidth />
           )}
           renderTags={(value, getTagProps) =>
             value.map((option, index) => (

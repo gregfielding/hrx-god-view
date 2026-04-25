@@ -249,8 +249,20 @@ async function loadOwnershipInput(args: {
         .where(admin.firestore.FieldPath.documentId(), 'in', chunk)
         .get();
       gsnap.docs.forEach((d) => {
-        const mids = uniqueStringList(((d.data() as Record<string, unknown>).groupManagerIds as unknown[]) ?? []);
-        if (mids.length > 0) userGroups.push({ id: d.id, groupManagerIds: mids });
+        const data = d.data() as Record<string, unknown>;
+        // Prefer the new `roles.csaIds` field; fall back to legacy
+        // `groupManagerIds` for groups that haven't been migrated yet.
+        // The UI dual-writes both, so once a group is touched the two
+        // arrays are in sync — this fallback only matters for stale data.
+        const rolesObj = (data.roles && typeof data.roles === 'object')
+          ? (data.roles as Record<string, unknown>)
+          : null;
+        const csaIds = uniqueStringList((rolesObj?.csaIds as unknown[]) ?? []);
+        const legacyIds = uniqueStringList((data.groupManagerIds as unknown[]) ?? []);
+        const ids = csaIds.length > 0 ? csaIds : legacyIds;
+        if (ids.length > 0) {
+          userGroups.push({ id: d.id, csaIds, groupManagerIds: legacyIds });
+        }
       });
     } catch (err) {
       logger.warn('loadOwnershipInput: userGroups lookup failed for chunk', {

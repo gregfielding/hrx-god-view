@@ -53,6 +53,9 @@ export type ResolveOwnershipInput = {
   };
   userGroups?: Array<{
     id: string;
+    /** Preferred: `tenants/{tid}/userGroups/{id}.roles.csaIds` */
+    csaIds?: string[];
+    /** Legacy: `tenants/{tid}/userGroups/{id}.groupManagerIds` (fallback). */
     groupManagerIds: string[];
     recruiterAssociations?: ActionItemOwnershipAssociation[];
   }>;

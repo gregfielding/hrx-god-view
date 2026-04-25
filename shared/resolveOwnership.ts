@@ -113,7 +113,12 @@ export function gatherTierCandidates(input: ResolveOwnershipInput): OwnershipTie
     const seen = new Set<string>();
     const allAssocs: ActionItemOwnershipAssociation[] = [];
     for (const g of input.userGroups) {
-      for (const r of g.groupManagerIds ?? []) {
+      // Prefer the new `roles.csaIds` field. Fall back to legacy
+      // `groupManagerIds` for groups that haven't been migrated yet —
+      // the UI now dual-writes both, so this fallback is only relevant
+      // for stale groups until the backfill runs.
+      const ids = (g.csaIds && g.csaIds.length > 0) ? g.csaIds : (g.groupManagerIds ?? []);
+      for (const r of ids) {
         if (r) seen.add(r);
       }
       if (g.recruiterAssociations) allAssocs.push(...g.recruiterAssociations);

@@ -20,7 +20,7 @@ export type ActionItemOwnershipPrimarySource =
   | 'job_order'
   /** From `account.associations.recruiterIds`. */
   | 'account'
-  /** From `userGroup.groupManagerIds` on one of the worker's groups. */
+  /** From `userGroup.roles.csaIds` (or legacy `groupManagerIds`) on one of the worker's groups. */
   | 'user_group'
   /** From `tenants/{tid}/messagingConfig/ownershipDefaults.defaultRecruiterId`. */
   | 'tenant_default'
@@ -100,10 +100,20 @@ export type ResolveOwnershipInput = {
     recruiterIds: string[];
     recruiterAssociations?: ActionItemOwnershipAssociation[];
   };
-  /** User-group memberships relevant to the worker (+ their `groupManagerIds`). */
+  /** User-group memberships relevant to the worker (+ their CSAs). */
   userGroups?: Array<{
     id: string;
-    /** `tenants/{tid}/userGroups/{id}.groupManagerIds` */
+    /**
+     * Preferred: `tenants/{tid}/userGroups/{id}.roles.csaIds` — the recruiting
+     * role model's source of truth. Resolver consults this first.
+     */
+    csaIds?: string[];
+    /**
+     * Legacy: `tenants/{tid}/userGroups/{id}.groupManagerIds`. Kept as a
+     * fallback for groups that haven't been migrated yet. The UI now
+     * dual-writes both fields, so this will always match `csaIds` for
+     * groups updated under the new model.
+     */
     groupManagerIds: string[];
     recruiterAssociations?: ActionItemOwnershipAssociation[];
   }>;
