@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { doc, getDoc, getDocs, onSnapshot, collection, query, where, orderBy, limit, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, collection, query, where, orderBy, limit } from 'firebase/firestore';
 import {
   Avatar,
   Box,
@@ -53,7 +53,6 @@ import SellIcon from '@mui/icons-material/Sell';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
-import AlternateEmailIcon from '@mui/icons-material/AlternateEmail';
 import PersonIcon from '@mui/icons-material/Person';
 import CheckIcon from '@mui/icons-material/Check';
 import Menu from '@mui/material/Menu';
@@ -64,14 +63,12 @@ import { SlackHashIcon } from './icons/SlackHashIcon';
 
 import { db, functions } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
-import { useThemeMode } from '../theme/theme';
 import { useAuth } from '../contexts/AuthContext';
 import { useHeartbeatPresence } from '../hooks/useHeartbeatPresence';
 import { getAccessRole } from '../utils/AccessRoles'; // Import AccessRoles helpers
-import { generateMenuItems, MenuItem as MenuItemType, filterMenuItemsByClaims } from '../utils/menuGenerator';
+import { generateMenuItems, MenuItem as MenuItemType } from '../utils/menuGenerator';
 import { Role, SecurityLevel } from '../utils/AccessRoles';
 
-import TenantSwitcher from './TenantSwitcher';
 import GoogleConnectionChip from './GoogleConnectionChip';
 import { GoogleStatusProvider, useGoogleStatus } from '../contexts/GoogleStatusContext';
 import MessengerIconButton from './messenger/MessengerIconButton';
@@ -82,9 +79,6 @@ import ChatGPTDrawer from './chatgpt/ChatGPTDrawer';
 import { pathIsUsersListPath } from '../utils/usersLayoutPersistence';
 import TopBarTitleContext from '../contexts/TopBarTitleContext';
 
-const drawerFullWidth = 240;
-const drawerCollapsedWidth = 64;
-const appBarHeight = 64;
 /** Charcoal for staff (0-4) shell icons and text */
 const STAFF_SHELL_CHARCOAL = '#36454F';
 
@@ -191,7 +185,9 @@ const LayoutOutlet: React.FC = () => {
         flexDirection: 'column',
         minHeight: 0,
         minWidth: 0,
-        mt: '64px',
+        // Match the fixed top bar height below — keep these two values in
+        // sync so the page content sits flush beneath the bar.
+        mt: '48px',
         pb: '16px',
       }}
     >
@@ -202,7 +198,6 @@ const LayoutOutlet: React.FC = () => {
 
 const Layout: React.FC = function Layout() {
   // REMOVED: Excessive logging causing re-renders
-  const { toggleMode, mode } = useThemeMode();
   const { 
     user, 
     role, 
@@ -242,8 +237,12 @@ const Layout: React.FC = function Layout() {
       : firestoreInboxTotal
   );
   const [messagesUnreadCount, setMessagesUnreadCount] = useState(0);
-  const [alertsUnreadCount, setAlertsUnreadCount] = useState(0);
-  const [alertsCriticalCount, setAlertsCriticalCount] = useState(0);
+  // Alerts/notifications counts: values are still rendered as badges + tooltips
+  // in the top bar, but nothing currently writes to them. Setters are dropped
+  // until the alerts feed is wired up — re-add `setAlertsUnreadCount` /
+  // `setAlertsCriticalCount` here when that lands.
+  const [alertsUnreadCount] = useState(0);
+  const [alertsCriticalCount] = useState(0);
   const [avatarMenuAnchorEl, setAvatarMenuAnchorEl] = useState<null | HTMLElement>(null);
   const [alertsDrawerOpen, setAlertsDrawerOpen] = useState(false);
   const { count: mentionsUnreadCount } = useUnreadMentionsCount(user?.uid || null);
@@ -397,23 +396,18 @@ const Layout: React.FC = function Layout() {
   );
 
   const [open, setOpen] = useState(true);
-  const setOpenWithLog = (value) => { console.log('setOpen', value); setOpen(value); };
-  const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
-  const setMenuAnchorElWithLog = (value) => { console.log('setMenuAnchorEl', value); setMenuAnchorEl(value); };
   const [firstName, setFirstName] = useState<string | null>(null);
-  const setFirstNameWithLog = (value) => { console.log('setFirstName', value); setFirstName(value); };
   const [lastName, setLastName] = useState<string | null>(null);
-  const setLastNameWithLog = (value) => { console.log('setLastName', value); setLastName(value); };
-  // Development role switcher state
-  const [devRole, setDevRole] = useState<Role>(role);
-  const setDevRoleWithLog = (value) => { console.log('setDevRole', value); setDevRole(value); };
-  const [devSecurityLevel, setDevSecurityLevel] = useState<SecurityLevel>(securityLevel);
-  const setDevSecurityLevelWithLog = (value) => { console.log('setDevSecurityLevel', value); setDevSecurityLevel(value); };
-  const [devOrgType, setDevOrgType] = useState<'Agency' | 'Customer' | 'HRX' | 'Tenant' | null>(orgType);
-  const setDevOrgTypeWithLog = (value) => { console.log('setDevOrgType', value); setDevOrgType(value); };
+  // Development role switcher state — the dev override UI was removed but we
+  // preserve the indirection so any future re-introduction of the switcher
+  // doesn't have to re-thread `role`/`securityLevel` through every consumer.
+  const [devRole] = useState<Role>(role);
+  const [devSecurityLevel] = useState<SecurityLevel>(securityLevel);
 
-  // Tenant state
-  const [tenants, setTenants] = useState<any[]>([]); // TODO: type Tenant
+  // Tenant state — the array itself isn't read anywhere (we only need the
+  // setter so we can populate `activeTenant` once below); keep the setter via
+  // an empty destructure so React still owns the state for re-renders.
+  const [, setTenants] = useState<any[]>([]); // TODO: type Tenant
   const [tenantsLoading, setTenantsLoading] = useState(false);
 
   // Add a ref to track if we've already set the initial tenant
@@ -421,15 +415,12 @@ const Layout: React.FC = function Layout() {
 
   // Always use collapsed width for dark shell (64-72px)
   const drawerWidth = 76; // Fixed width for always-collapsed sidebar (per logo spec)
-  const isMenuOpen = Boolean(menuAnchorEl);
 
   // Use development values for testing, fallback to real values
   const effectiveRole = devRole || role;
   const effectiveSecurityLevel = devSecurityLevel || securityLevel;
-  const effectiveOrgType = devOrgType || orgType;
   const userAccessRole = getAccessRole(effectiveRole, effectiveSecurityLevel);
   const isApplicant = currentClaimsSecurityLevel === '2' || effectiveSecurityLevel === '2';
-  const isLowSecurityLevel = (currentClaimsSecurityLevel && parseInt(currentClaimsSecurityLevel) < 5) || (effectiveSecurityLevel && parseInt(effectiveSecurityLevel) < 5);
 
   // Determine if user should listen to module status for current tenant
   const shouldListenToModules = useMemo(() => {
@@ -452,12 +443,10 @@ const Layout: React.FC = function Layout() {
     return false;
   }, [effectiveSecurityLevel, activeTenant?.id, tenantIds]);
 
-  const [showChat, setShowChat] = useState(false);
-  // For now, default to showing the chat button unless user?.hideChatbot is true
-  const showChatbotButton = !(user && (user as any).hideChatbot);
-  const setShowChatWithLog = (value) => { console.log('setShowChat', value); setShowChat(value); };
-
-  const [agencyLogoUrl, setAgencyLogoUrl] = useState<string | null>(null);
+  // Tenant logo fetch is kept (the listener still warms the avatar/branding
+  // path), but we don't currently render `agencyLogoUrl` anywhere — keep just
+  // the setter so the effect below stays correct without warning.
+  const [, setAgencyLogoUrl] = useState<string | null>(null);
 
   // Gmail mailbox counts loader — kept in a ref so the Firestore listener can
   // eagerly call it when read state changes locally (no more 30s badge lag
@@ -742,26 +731,15 @@ const Layout: React.FC = function Layout() {
       };
               fetchTenantsDirectly();
       }
-    }, [authLoading, user, tenantIds, tenantId]); // Removed tenantsLoading from dependencies to prevent infinite loop
-
-  // Simplify handleSetActiveTenant to only call setActiveTenant
-  const handleSetActiveTenant = (tenant) => {
-    setActiveTenant(tenant);
-  };
+    // Intentional one-shot — `tenantsLoading` is excluded to prevent the
+    // setTenantsLoading(true)/setTenantsLoading(false) cycle from re-firing
+    // this effect (infinite loop), and `activeTenant`/`setActiveTenant` are
+    // excluded so a user-driven tenant switch doesn't get clobbered by a
+    // re-fetch that resets back to the default initial tenant.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [authLoading, user, tenantIds, tenantId]);
 
   const toggleDrawer = () => setOpen((prev) => !prev);
-  const handleMenuClick = (event: React.MouseEvent<HTMLElement>) =>
-    setMenuAnchorEl(event.currentTarget);
-  const handleMenuClose = () => setMenuAnchorEl(null);
-  const handleLogout = async () => {
-    await logout();
-    handleMenuClose();
-    navigate('/login');
-  };
-  const handleSettings = () => {
-    if (user) navigate(`/users/${user.uid}`);
-    handleMenuClose();
-  };
 
   // SPA-safe navigation helper for sidebar/topbar actions.
   const navigateSafe = (target: string) => {
@@ -1130,15 +1108,6 @@ const Layout: React.FC = function Layout() {
 
   // REMOVED: Excessive logging causing re-renders
 
-  // Ensure only allowed values for devOrgType, devRole, devSecurityLevel
-  const allowedOrgTypes = ['Agency', 'Customer', 'HRX', 'Tenant'];
-  const allowedRoles = ['Worker', 'Agency', 'Customer', 'HRX'];
-  const allowedSecurityLevels = ['0', '1', '2', '3', '4', '5', '6', '7'];
-
-  const safeDevOrgType = allowedOrgTypes.includes(devOrgType) ? devOrgType : '';
-  const safeDevRole = allowedRoles.includes(devRole) ? devRole : '';
-  const safeDevSecurityLevel = allowedSecurityLevels.includes(devSecurityLevel) ? devSecurityLevel : '';
-
   // Staff (0-4) see white shell + charcoal icons; admins (5-7) see dark shell + white icons
   const isStaffShell = !hasAdminLevel;
 
@@ -1199,8 +1168,8 @@ const Layout: React.FC = function Layout() {
           },
         }}
       >
-        {/* Logo removed - now in top bar; pad so nav icons sit below the 64px app bar */}
-        <List sx={{ flexGrow: 1, pb: '80px', paddingTop: '64px' }}>
+        {/* Logo removed - now in top bar; pad so nav icons sit below the 48px app bar */}
+        <List sx={{ flexGrow: 1, pb: '80px', paddingTop: '48px' }}>
           {/* Dashboard shortcut for security levels 5-7 (at the top) */}
           {(() => {
             const secLevel = currentClaimsSecurityLevel || securityLevel;
@@ -1697,12 +1666,17 @@ const Layout: React.FC = function Layout() {
             borderBottom: isStaffShell ? '1px solid rgba(0,0,0,0.08)' : 'none',
             boxShadow: isStaffShell ? '0 1px 3px rgba(0,0,0,0.06)' : '0 2px 8px rgba(0,0,0,.07)',
             pl: 0, // No left padding - logo aligns with sidebar
-            pr: { xs: 2, md: 4 }, // Keep right padding
+            // Right gutter: 16px on phones, 24px from md and up.
+            // (Was md:4 = 32px; trimmed to keep top bar visually compact.)
+            pr: { xs: 2, md: 3 },
             py: 1,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            height: 64, // Top bar height
+            // Top bar height — paired with the page content `mt: '48px'`
+            // and the sidebar List `paddingTop: '48px'` above. Update all
+            // three together if you change this.
+            height: 48,
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
