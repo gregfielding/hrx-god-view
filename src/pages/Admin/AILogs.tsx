@@ -40,7 +40,6 @@ import {
   FilterList as FilterIcon,
   Visibility as VisibilityIcon,
   Download as DownloadIcon,
-  ArrowBack as ArrowBackIcon,
   ExpandMore as ExpandMoreIcon,
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon,
@@ -53,6 +52,7 @@ import {
   Settings as SettingsIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { app } from '../../firebase';
@@ -319,15 +319,7 @@ const AILogs: React.FC = () => {
         <Typography variant="h3">
           AI Logs
         </Typography>
-        <Button
-          variant="outlined"
-          color="primary"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/admin/ai')}
-          sx={{ fontWeight: 600 }}
-        >
-          Back to Launchpad
-        </Button>
+        <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
       </Box>
 
       <Typography variant="subtitle1" color="text.secondary" mb={3}>

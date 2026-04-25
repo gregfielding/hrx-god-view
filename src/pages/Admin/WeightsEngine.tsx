@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Box, Typography, Paper, Button, Divider } from '@mui/material';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import Snackbar from '@mui/material/Snackbar';
 import MuiAlert from '@mui/material/Alert';
@@ -149,15 +149,7 @@ const WeightsEngine: React.FC = () => {
         <Typography variant="h3">
           Weights Engine
         </Typography>
-        <Button
-          variant="outlined"
-          color="primary"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/admin/ai')}
-          sx={{ fontWeight: 600 }}
-        >
-          Back to Launchpad
-        </Button>
+        <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
       </Box>
       <Typography variant="subtitle1" color="text.secondary" mb={3}>
         Fine-tune how the AI balances admin rules, customer context, and employee feedback.

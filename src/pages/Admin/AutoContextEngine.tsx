@@ -23,13 +23,13 @@ import {
 import {
   ExpandMore as ExpandMoreIcon,
   PlayArrow as PlayArrowIcon,
-  ArrowBack as ArrowBackIcon,
   History as HistoryIcon,
   ContentCopy as ContentCopyIcon,
   CheckCircle as CheckCircleIcon,
 } from '@mui/icons-material';
 import { httpsCallable , getFunctions } from 'firebase/functions';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 
 const functions = getFunctions();
 
@@ -141,14 +141,7 @@ const AutoContextEngine: React.FC = () => {
           prompts with full traceability.
           </Typography>
         </Box>
-        <Button
-          variant="outlined"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/admin/ai')}
-          sx={{ height: 40 }}
-        >
-          Back to Launchpad
-        </Button>
+        <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
       </Box>
 
       <Grid container spacing={3}>

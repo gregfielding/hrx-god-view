@@ -33,7 +33,6 @@ import {
   Build as BuildIcon,
   PlayArrow as PlayArrowIcon,
   Save as SaveIcon,
-  ArrowBack as ArrowBackIcon,
   ExpandMore as ExpandMoreIcon,
   ContentCopy as CopyIcon,
   Visibility as VisibilityIcon,
@@ -44,6 +43,7 @@ import {
   Error as ErrorIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { app } from '../../firebase';
@@ -426,15 +426,7 @@ const PromptBuilder: React.FC = () => {
         <Typography variant="h4" fontWeight={600}>
           Prompt Builder
         </Typography>
-        <Button
-          variant="outlined"
-          color="primary"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/admin/ai')}
-          sx={{ fontWeight: 600 }}
-        >
-          Back to Launchpad
-        </Button>
+        <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
       </Box>
 
       <Typography variant="subtitle1" color="text.secondary" mb={3}>

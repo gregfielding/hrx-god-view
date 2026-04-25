@@ -11,10 +11,10 @@ import {
   CardContent,
   Divider,
 } from '@mui/material';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import SaveIcon from '@mui/icons-material/Save';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 
 import { db } from '../../firebase';
 import { LoggableSlider, LoggableTextField, LoggableSelect, LoggableSwitch } from '../../components/LoggableField';
@@ -142,14 +142,7 @@ const ToneSettings: React.FC = () => {
             Configure the global tone and personality of AI interactions across the platform.
           </Typography>
         </Box>
-        <Button
-          variant="outlined"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/admin/ai')}
-          sx={{ height: 40 }}
-        >
-          Back to Launchpad
-        </Button>
+        <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
       </Box>
 
       {loading ? (

@@ -35,8 +35,8 @@ import {
   Save as SaveIcon,
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 
 interface HelloMessageSettings {
   templates: {
@@ -172,15 +172,7 @@ const HelloMessageConfig: React.FC = () => {
         <Typography variant="h3">
           Hello Message Config
         </Typography>
-        <Button
-          variant="outlined"
-          color="primary"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/admin/ai')}
-          sx={{ fontWeight: 600 }}
-        >
-          Back to Launchpad
-        </Button>
+        <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
       </Box>
       {/* <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
         <IconButton onClick={() => navigate('/admin')} sx={{ mr: 2 }}>

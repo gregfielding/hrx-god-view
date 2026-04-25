@@ -31,11 +31,11 @@ import {
   Send as SendIcon,
   Visibility as ViewIcon,
   Delete as DeleteIcon,
-  ArrowBack as ArrowBackIcon,
   Add as AddIcon
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 
 interface Broadcast {
   id: string;
@@ -226,15 +226,7 @@ const BroadcastManagement: React.FC = () => {
         <Typography variant="h3">
        Broadcast Management
         </Typography>
-        <Button
-          variant="outlined"
-          color="primary"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/admin/ai')}
-          sx={{ fontWeight: 600 }}
-        >
-          Back to Launchpad
-        </Button>
+        <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
       </Box>
       
       {error && (

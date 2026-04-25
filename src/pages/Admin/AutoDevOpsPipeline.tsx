@@ -41,9 +41,9 @@ import {
   Monitor,
   Restore
 } from '@mui/icons-material';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -254,15 +254,7 @@ const AutoDevOpsPipeline: React.FC = () => {
         <Typography variant="h3">
         AutoDevOps Pipeline
         </Typography>
-        <Button
-          variant="outlined"
-          color="primary"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/admin/ai')}
-          sx={{ fontWeight: 600 }}
-        >
-          Back to Launchpad
-        </Button>
+        <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
       </Box>
       
       {/* Pipeline Status Card */}

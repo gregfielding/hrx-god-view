@@ -14,10 +14,10 @@ import {
   Card,
   CardContent,
 } from '@mui/material';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 
 import { app } from '../../firebase';
 
@@ -183,15 +183,7 @@ const FeedbackEngine: React.FC = () => {
             Launch targeted, AI-powered feedback campaigns for workers and teams.
           </Typography>
         </Box>
-        <Button
-          variant="outlined"
-          color="primary"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/admin/ai')}
-          sx={{ fontWeight: 600 }}
-        >
-          BACK TO LAUNCHPAD
-        </Button>
+        <UniversalBackButton to="/admin/ai" tooltip="BACK TO LAUNCHPAD" />
       </Box>
       <Grid container spacing={4}>
         <Grid item xs={12} md={7}>

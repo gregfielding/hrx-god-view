@@ -34,7 +34,6 @@ import {
   Error as ErrorIcon,
   CheckCircle as CheckCircleIcon,
   Refresh as RefreshIcon,
-  ArrowBack as ArrowBackIcon,
   Assessment as AssessmentIcon,
   Business as BusinessIcon,
   LocationOn as LocationOnIcon,
@@ -42,6 +41,7 @@ import {
   Group as GroupIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import {
   collection,
@@ -294,15 +294,7 @@ const AIAnalytics: React.FC = () => {
         <Typography variant="h4" fontWeight={600}>
           AI Analytics Dashboard
         </Typography>
-        <Button
-          variant="outlined"
-          color="primary"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/admin/ai')}
-          sx={{ fontWeight: 600 }}
-        >
-          Back to Launchpad
-        </Button>
+        <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
       </Box>
       <Typography variant="subtitle1" color="text.secondary" mb={3}>
         Comprehensive analytics and insights from AI system logs for performance optimization and
