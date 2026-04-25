@@ -56,6 +56,7 @@ import { useNavigate } from 'react-router-dom';
 import StandardTablePagination from '../components/StandardTablePagination';
 import FavoriteButton from '../components/FavoriteButton';
 import RecruiterUserTableContactBlock from '../components/tables/RecruiterUserTableContactBlock';
+import { useTenantRecruiterNamesByUid } from '../hooks/useTenantRecruiterNamesByUid';
 import OrderInterviewInlineAction from '../components/recruiter/OrderInterviewInlineAction';
 import BulkOrderInterviewButton from '../components/recruiter/BulkOrderInterviewButton';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
@@ -370,6 +371,10 @@ const GroupMembersTable: React.FC<GroupMembersTableProps> = ({
     groupTitleLookup,
   } = rowDataLookups;
 
+  // Tenant-wide recruiter name map; surfaces "CSA: <name>" on each row
+  // (CSA = `users.{uid}.primaryRecruiterId` per RECRUITING_ROLE_MODEL §4.5).
+  const recruiterNameByUid = useTenantRecruiterNamesByUid(tenantId);
+
   const handleOpenGroupStatusMenu = useCallback(
     (event: React.MouseEvent<HTMLElement>, userId: string) => {
       event.stopPropagation();
@@ -670,6 +675,7 @@ const GroupMembersTable: React.FC<GroupMembersTableProps> = ({
                             user={u as Record<string, unknown>}
                             latestNote={(latestNoteByUserId?.get(u.id) ?? null) as any}
                             groupTitleLookup={groupTitleLookup}
+                            recruiterNameByUid={recruiterNameByUid}
                             formatDate={formatDate}
                           />
                         </Box>

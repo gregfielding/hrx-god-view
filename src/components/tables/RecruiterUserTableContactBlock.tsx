@@ -8,6 +8,7 @@ import { Box, IconButton, Stack, Tooltip, Typography } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
 import StickyNote2OutlinedIcon from '@mui/icons-material/StickyNote2Outlined';
+import GroupsOutlinedIcon from '@mui/icons-material/GroupsOutlined';
 import UserTableResumeIcon from './UserTableResumeIcon';
 import UserTableIndeedFlexBadge from './UserTableIndeedFlexBadge';
 import { pickResumeFromUserDoc } from '../../utils/userResumeOpen';
@@ -64,9 +65,12 @@ export type RecruiterUserTableContactBlockProps = {
     preferredLanguage?: string;
     transportMethod?: string;
     phoneVerified?: boolean;
+    primaryRecruiterId?: string;
   };
   latestNote: RecruiterUserTableLatestNote;
   groupTitleLookup: Map<string, string>;
+  /** Optional uid -> display name map; surfaces the worker's CSA on a "CSA: <name>" line. */
+  recruiterNameByUid?: Map<string, string>;
   formatDate: (d: unknown) => string;
 };
 
@@ -74,6 +78,7 @@ const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockPro
   user,
   latestNote,
   groupTitleLookup,
+  recruiterNameByUid,
   formatDate,
 }) => {
   const userGroupIds = Array.isArray(user.userGroupIds) ? user.userGroupIds : [];
@@ -119,40 +124,37 @@ const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockPro
 
   const noteMeta = [latestNote?.timestamp?.toLocaleString(), latestNote?.authorName].filter(Boolean).join(' · ');
 
+  // CSA = the worker's `primaryRecruiterId` scalar (per RECRUITING_ROLE_MODEL §4.5).
+  // Tables only carry the uid; the parent passes a tenant-wide name map so each
+  // row can resolve "CSA: <name>" without its own getDoc.
+  const csaUidRaw = typeof user.primaryRecruiterId === 'string' ? user.primaryRecruiterId.trim() : '';
+  const csaUid = csaUidRaw || null;
+  const csaName = csaUid ? recruiterNameByUid?.get(csaUid) ?? csaUid : null;
+
+  // Renderable city/state pair — pulled out so the new vertical order
+  // (city → phone → email → joined → icons → CSA) reads top-to-bottom.
+  const cityState = [
+    user.city ?? (user.address as { city?: string })?.city,
+    user.state ?? (user.address as { state?: string })?.state,
+  ]
+    .filter(Boolean)
+    .join(', ');
+
+  // Stop propagation on the icon row so clicking a tooltip target doesn't
+  // also navigate the row's onClick handler.
+  const stopRowEvents = {
+    onClick: (e: React.MouseEvent) => e.stopPropagation(),
+    onKeyDown: (e: React.KeyboardEvent) => e.stopPropagation(),
+  };
+
+  const groupNamesForTooltip = userGroupIds.map((id) => groupTitleLookup.get(id) || id);
+  const hasGroups = userGroupIds.length > 0;
+
   return (
     <Stack spacing={0.125} alignItems="stretch" sx={{ width: '100%' }}>
-      {emailRaw ? (
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={0}
-          sx={{ alignSelf: 'flex-start', minWidth: 0, maxWidth: '100%', gap: 0.25 }}
-        >
-          <Typography variant="caption" color="text.secondary" noWrap display="block" sx={{ ...tightCaptionSx, minWidth: 0 }}>
-            {emailRaw}
-          </Typography>
-          <Tooltip title="Copy email" arrow placement="top" componentsProps={recordHeaderTooltipComponentsProps}>
-            <IconButton
-              size="small"
-              aria-label="Copy email"
-              onClick={(e) => void handleCopy(emailRaw, e)}
-              sx={copyIconButtonSx}
-            >
-              <ContentCopyIcon sx={copyIconGlyphSx} />
-            </IconButton>
-          </Tooltip>
-        </Stack>
-      ) : (
-        <Typography variant="caption" color="text.secondary" noWrap display="block" sx={tightCaptionSx}>
-          —
-        </Typography>
-      )}
-
-      {(user.city || user.state || (user.address && (user.address as { city?: string }).city)) && (
+      {cityState && (
         <Typography variant="caption" color="text.secondary" display="block" sx={tightCaptionSx}>
-          {[user.city ?? (user.address as { city?: string })?.city, user.state ?? (user.address as { state?: string })?.state]
-            .filter(Boolean)
-            .join(', ')}
+          {cityState}
         </Typography>
       )}
 
@@ -180,113 +182,151 @@ const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockPro
         </Stack>
       ) : null}
 
-      <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.35, rowGap: 0.125 }}>
-        {user.createdAt && (
-          <Typography variant="caption" color="text.secondary" component="span" sx={tightCaptionSx}>
-            Joined {formatDate(user.createdAt)}
-          </Typography>
-        )}
-        <Box
-          component="span"
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => e.stopPropagation()}
-          sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.25, flexWrap: 'wrap' }}
+      {emailRaw ? (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0}
+          sx={{ alignSelf: 'flex-start', minWidth: 0, maxWidth: '100%', gap: 0.25 }}
         >
-          {hasResume && <UserTableResumeIcon user={user as Record<string, unknown>} />}
-          {hasSkills && (
-            <Tooltip
-              title={
-                <Box sx={{ py: 0.25, maxWidth: 320 }}>
-                  <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
-                    Skills
-                  </Typography>
-                  {skillsArr.map((s: string) => (
-                    <Typography key={s} variant="body2" sx={{ display: 'block' }}>
-                      {s}
-                    </Typography>
-                  ))}
-                </Box>
-              }
-              placement="top"
-              enterDelay={400}
+          <Typography variant="caption" color="text.secondary" noWrap display="block" sx={{ ...tightCaptionSx, minWidth: 0 }}>
+            {emailRaw}
+          </Typography>
+          <Tooltip title="Copy email" arrow placement="top" componentsProps={recordHeaderTooltipComponentsProps}>
+            <IconButton
+              size="small"
+              aria-label="Copy email"
+              onClick={(e) => void handleCopy(emailRaw, e)}
+              sx={copyIconButtonSx}
             >
-              <Box
-                component="span"
-                sx={{ display: 'inline-flex', alignItems: 'center', color: 'text.secondary', cursor: 'default', verticalAlign: 'middle' }}
-              >
-                <BuildOutlinedIcon sx={{ fontSize: 12, opacity: 0.72 }} />
-              </Box>
-            </Tooltip>
-          )}
-          {hasNote && latestNote && (
-            <Tooltip
-              title={
-                <Box sx={{ py: 0.25, maxWidth: 320 }}>
-                  {noteMeta ? (
-                    <Typography variant="caption" color="inherit" sx={{ display: 'block', mb: 0.5 }}>
-                      {noteMeta}
-                    </Typography>
-                  ) : null}
-                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                    {latestNote.content}
-                  </Typography>
-                </Box>
-              }
-              placement="top"
-              enterDelay={400}
-            >
-              <Box
-                component="span"
-                sx={{ display: 'inline-flex', alignItems: 'center', color: 'text.secondary', cursor: 'default', verticalAlign: 'middle' }}
-              >
-                <StickyNote2OutlinedIcon sx={{ fontSize: 12, opacity: 0.72 }} />
-              </Box>
-            </Tooltip>
-          )}
-          <Box sx={compactSignalScaleSx}>
-            <RecordHeaderLanguagePreferenceBadge language={preferredLanguage} />
-          </Box>
-          <Box sx={compactSignalScaleSx}>
-            <RecordHeaderTransportMethodIcon transportMethod={transportMethod} />
-          </Box>
-        </Box>
-      </Box>
+              <ContentCopyIcon sx={copyIconGlyphSx} />
+            </IconButton>
+          </Tooltip>
+        </Stack>
+      ) : (
+        <Typography variant="caption" color="text.secondary" noWrap display="block" sx={tightCaptionSx}>
+          —
+        </Typography>
+      )}
 
-      {userGroupIds.length > 0 && (
-        <Tooltip
-          title={
-            userGroupIds.length <= 1 ? (
-              groupTitleLookup.get(userGroupIds[0]) || userGroupIds[0]
-            ) : (
-              <Box component="span" sx={{ display: 'block', maxHeight: 320, overflowY: 'auto', py: 0.5 }}>
-                {userGroupIds.map((id) => (
-                  <Typography key={id} component="span" variant="body2" sx={{ display: 'block' }}>
-                    {groupTitleLookup.get(id) || id}
+      {user.createdAt && (
+        <Typography variant="caption" color="text.secondary" display="block" sx={tightCaptionSx}>
+          Joined {formatDate(user.createdAt)}
+        </Typography>
+      )}
+
+      {/* Dedicated icon row — moved off the "Joined" line so all signal glyphs
+          live together in a predictable place. Order: resume, skills (wrench),
+          note, group membership, language, transport. The transport icon is
+          always rendered (even for null) to mirror the user record header. */}
+      <Box
+        component="span"
+        {...stopRowEvents}
+        sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap', mt: 0.125 }}
+      >
+        {hasResume && <UserTableResumeIcon user={user as Record<string, unknown>} />}
+        {hasSkills && (
+          <Tooltip
+            title={
+              <Box sx={{ py: 0.25, maxWidth: 320 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
+                  Skills
+                </Typography>
+                {skillsArr.map((s: string) => (
+                  <Typography key={s} variant="body2" sx={{ display: 'block' }}>
+                    {s}
                   </Typography>
                 ))}
               </Box>
-            )
-          }
-          placement="top"
-          enterDelay={300}
-        >
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            noWrap
-            onClick={(e) => e.stopPropagation()}
-            sx={{ display: 'block', ...tightCaptionSx, cursor: 'default' }}
+            }
+            placement="top"
+            enterDelay={400}
           >
-            {groupTitleLookup.get(userGroupIds[0]) || userGroupIds[0]}
-            {userGroupIds.length > 1 ? ` +${userGroupIds.length - 1}` : ''}
-          </Typography>
-        </Tooltip>
+            <Box
+              component="span"
+              sx={{ display: 'inline-flex', alignItems: 'center', color: 'text.secondary', cursor: 'default', verticalAlign: 'middle' }}
+            >
+              <BuildOutlinedIcon sx={{ fontSize: 12, opacity: 0.72 }} />
+            </Box>
+          </Tooltip>
+        )}
+        {hasNote && latestNote && (
+          <Tooltip
+            title={
+              <Box sx={{ py: 0.25, maxWidth: 320 }}>
+                {noteMeta ? (
+                  <Typography variant="caption" color="inherit" sx={{ display: 'block', mb: 0.5 }}>
+                    {noteMeta}
+                  </Typography>
+                ) : null}
+                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                  {latestNote.content}
+                </Typography>
+              </Box>
+            }
+            placement="top"
+            enterDelay={400}
+          >
+            <Box
+              component="span"
+              sx={{ display: 'inline-flex', alignItems: 'center', color: 'text.secondary', cursor: 'default', verticalAlign: 'middle' }}
+            >
+              <StickyNote2OutlinedIcon sx={{ fontSize: 12, opacity: 0.72 }} />
+            </Box>
+          </Tooltip>
+        )}
+        {hasGroups && (
+          <Tooltip
+            title={
+              <Box sx={{ py: 0.25, maxWidth: 320, color: 'common.white' }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5, color: 'common.white' }}>
+                  User groups
+                </Typography>
+                {groupNamesForTooltip.map((name, i) => (
+                  <Typography
+                    key={`${userGroupIds[i]}:${name}`}
+                    variant="body2"
+                    sx={{ display: 'block', color: 'common.white' }}
+                  >
+                    {name}
+                  </Typography>
+                ))}
+              </Box>
+            }
+            placement="top"
+            enterDelay={300}
+          >
+            <Box
+              component="span"
+              sx={{ display: 'inline-flex', alignItems: 'center', color: 'text.secondary', cursor: 'default', verticalAlign: 'middle' }}
+            >
+              <GroupsOutlinedIcon sx={{ fontSize: 13, opacity: 0.72 }} />
+            </Box>
+          </Tooltip>
+        )}
+        <Box sx={compactSignalScaleSx}>
+          <RecordHeaderLanguagePreferenceBadge language={preferredLanguage} />
+        </Box>
+        <Box sx={compactSignalScaleSx}>
+          <RecordHeaderTransportMethodIcon transportMethod={transportMethod} />
+        </Box>
+      </Box>
+
+      {csaName && (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          display="block"
+          sx={{ ...tightCaptionSx, mt: 0.125 }}
+          noWrap
+        >
+          CSA: {csaName}
+        </Typography>
       )}
 
       <Box
         component="span"
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
+        {...stopRowEvents}
         sx={{ display: 'block' }}
       >
         <UserTableIndeedFlexBadge user={user as Record<string, unknown>} compact />

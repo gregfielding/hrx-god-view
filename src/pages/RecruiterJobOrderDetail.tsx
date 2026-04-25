@@ -204,6 +204,7 @@ import {
   ApplicantsUsersStyleTableBodyCells,
   type ApplicantsUsersStyleMaps,
 } from '../components/recruiter/ApplicantsUsersStyleTableCells';
+import { useTenantRecruiterNamesByUid } from '../hooks/useTenantRecruiterNamesByUid';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -484,6 +485,8 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     });
   }, []);
 
+  const recruiterNameByUid = useTenantRecruiterNamesByUid(tenantId);
+
   const applicantsUsersStyleMaps: ApplicantsUsersStyleMaps = useMemo(
     () => ({
       entityEmploymentChipsByUser,
@@ -493,6 +496,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       latestBackgroundByUserId,
       categoryScoresByUserId: categoryScoresCurrentByUserId,
       groupTitleLookup,
+      recruiterNameByUid,
     }),
     [
       entityEmploymentChipsByUser,
@@ -502,6 +506,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       latestBackgroundByUserId,
       categoryScoresCurrentByUserId,
       groupTitleLookup,
+      recruiterNameByUid,
     ],
   );
 

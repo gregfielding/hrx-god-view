@@ -40,6 +40,7 @@ import { useFavorites } from '../../../hooks/useFavorites';
 import StandardTablePagination from '../../StandardTablePagination';
 import { TABLE_AVATAR_SIZE } from '../../../utils/uiConstants';
 import RecruiterUserTableContactBlock from '../../tables/RecruiterUserTableContactBlock';
+import { useTenantRecruiterNamesByUid } from '../../../hooks/useTenantRecruiterNamesByUid';
 import { formatOneDecimal } from '../../../utils/scoreSummary';
 import { getRecruiterMasterDisplayForAdminUi } from '../../../utils/scoring/recruiterMasterScoreDisplay';
 import { getRecruiterScoreDisplayForAdminUi } from '../../../utils/scoring/recruiterScoreSnapshot';
@@ -117,6 +118,10 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
     tenantGroupRows.forEach((g) => m.set(g.id, g.title || g.id));
     return m;
   }, [tenantGroupRows]);
+
+  // Tenant-wide recruiter name map; surfaces "CSA: <name>" on each row
+  // (CSA = `users.{uid}.primaryRecruiterId` per RECRUITING_ROLE_MODEL §4.5).
+  const recruiterNameByUid = useTenantRecruiterNamesByUid(tenantId);
 
   const membersInput = useMemo(() => {
     const q = (searchQuery || '').trim().toLowerCase();
@@ -729,7 +734,6 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
                     paginatedMembers.map((u, idx) => {
                       const memberPrefStatus = getMemberPreferenceStatus(u);
                       const groupStatusChip = getGroupStatusChipProps(memberPrefStatus);
-                      const userGroupIds = Array.isArray(u.userGroupIds) ? u.userGroupIds : [];
                       const entityItems = entityEmploymentChipsByUser.get(u.id);
                       const wrChips = getWorkReadinessEntityChipsDisplay(entityItems);
                       const rp = normalizeRiskProfileFromUserDoc(u.riskProfile);
@@ -796,6 +800,7 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
                                   user={u as Record<string, unknown>}
                                   latestNote={latestNoteByUserId.get(u.id) ?? null}
                                   groupTitleLookup={groupTitleLookup}
+                                  recruiterNameByUid={recruiterNameByUid}
                                   formatDate={formatDate}
                                 />
                               </Box>

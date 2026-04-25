@@ -54,6 +54,7 @@ import { useRecruiterUsersLatestBackgroundChecks } from '../hooks/useRecruiterUs
 import { useRecruiterUsersEntityEmploymentChips } from '../hooks/useRecruiterUsersEntityEmploymentChips';
 import { compareWorkReadinessForEntity } from '../utils/recruiterUsersEntityWorkReadiness';
 import { buildWorkHistoryJobTitles } from '../utils/workHistoryJobTitles';
+import { useSetTopBarTitle } from '../contexts/TopBarTitleContext';
 
 type MemberStatus = 'preferred' | 'member' | 'not_preferred';
 
@@ -169,6 +170,36 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
   const radiusAutocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
 
   const RADIUS_OPTIONS = [5, 10, 25, 50];
+
+  // Pipe the smart group name into the global top bar — same pattern
+  // as User Group Details, minus the favorite star (smart groups don't
+  // currently have a favorites concept). Falls back to "Smart Group"
+  // until the doc loads, and uses `editName` while the modal is open
+  // so the bar updates optimistically as the user types.
+  const smartGroupDisplayTitle =
+    (editDialogOpen && editName.trim()) || group?.name || 'Smart Group';
+  const topBarTitleNode = useMemo(
+    () => (
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
+        <Typography
+          sx={{
+            fontSize: '20px',
+            fontWeight: 600,
+            color: 'inherit',
+            lineHeight: 1.2,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            maxWidth: { xs: 220, sm: 360, md: 520 },
+          }}
+        >
+          {smartGroupDisplayTitle}
+        </Typography>
+      </Box>
+    ),
+    [smartGroupDisplayTitle],
+  );
+  useSetTopBarTitle(topBarTitleNode);
 
   useEffect(() => {
     if (!tenantId || !groupId) return;
@@ -1057,7 +1088,28 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
     if (filters.selectedCertifications && filters.selectedCertifications.length > 0) {
       parts.push(`Certifications: ${filters.selectedCertifications.join(', ')}`);
     }
-    
+
+    // Fallback for copies / older docs whose `residenceSubMode` wasn't set
+    // even though a `radiusAddress` (or other locality field) is present.
+    // Without this, a copy of a radius search renders "No filters applied"
+    // and the user loses sight of where the search is rooted.
+    if (parts.length === 0) {
+      const radius = filters.radiusMiles ?? 10;
+      const fallbackAddress =
+        filters.radiusAddress?.trim() ||
+        filters.cityFilter?.trim() ||
+        filters.areaFilter?.trim() ||
+        filters.metroFilter?.trim() ||
+        '';
+      if (fallbackAddress) {
+        parts.push(
+          filters.radiusAddress?.trim()
+            ? `Location: ${radius} miles from ${fallbackAddress}`
+            : `Location: ${formatKeyToDisplayName(fallbackAddress)}`,
+        );
+      }
+    }
+
     return parts.length > 0 ? parts.join(' • ') : 'No filters applied';
   };
 
@@ -1067,29 +1119,33 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
         <Box sx={{ flex: 1 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Typography variant="h6">{group.name}</Typography>
-            <IconButton
-              size="small"
-              onClick={openEditDialog}
-              sx={{ ml: 0.5, p: 0.25 }}
-              title="Edit smart group"
-            >
-              <EditIcon sx={{ fontSize: 14 }} />
-            </IconButton>
-            {/* The standalone delete trash icon was removed — destructive
-                delete now lives inside the edit modal (with confirmation),
-                so the header stays free of duplicate actions. The "Unsave"
-                button is still surfaced here for groups copied from another
-                user's smart group, since unsave is a distinct action. */}
-            {copiedFromGroupId && (
-              <Button
-                size="small"
-                variant="outlined"
-                color="secondary"
-                onClick={() => setUnsaveDialogOpen(true)}
-                sx={{ textTransform: 'none', ml: 0.5 }}
-              >
-                Unsave
-              </Button>
+            {/* Header action: edit pencil for groups I created (opens the edit
+                modal); trash icon for groups I added from someone else's
+                Smart Groups (a copy doc, identified by `copiedFromGroupId`).
+                Copies are non-editable — removing them only unlinks the copy
+                from My Smart Groups, leaving the original untouched. */}
+            {copiedFromGroupId ? (
+              <Tooltip title="Remove from My Smart Groups">
+                <IconButton
+                  size="small"
+                  onClick={() => setUnsaveDialogOpen(true)}
+                  sx={{ ml: 0.5, p: 0.25 }}
+                  aria-label="Remove from My Smart Groups"
+                >
+                  <DeleteIcon sx={{ fontSize: 14 }} />
+                </IconButton>
+              </Tooltip>
+            ) : (
+              <Tooltip title="Edit smart group">
+                <IconButton
+                  size="small"
+                  onClick={openEditDialog}
+                  sx={{ ml: 0.5, p: 0.25 }}
+                  aria-label="Edit smart group"
+                >
+                  <EditIcon sx={{ fontSize: 14 }} />
+                </IconButton>
+              </Tooltip>
             )}
           </Box>
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
@@ -1305,18 +1361,18 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
       </Dialog>
 
       <Dialog open={unsaveDialogOpen} onClose={() => setUnsaveDialogOpen(false)}>
-        <DialogTitle>Unsave Smart Group</DialogTitle>
+        <DialogTitle>Remove from My Smart Groups</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            Remove &quot;{group.name}&quot; from My Smart Groups? The group will no longer appear in your list, but the original (if any) is unchanged.
+            Remove &quot;{group.name}&quot; from My Smart Groups? The group will no longer appear in your list. The original is unchanged.
           </DialogContentText>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setUnsaveDialogOpen(false)} disabled={unsaving}>
             Cancel
           </Button>
-          <Button onClick={handleUnsaveGroup} color="primary" disabled={unsaving} variant="contained">
-            {unsaving ? 'Removing…' : 'Unsave'}
+          <Button onClick={handleUnsaveGroup} color="error" disabled={unsaving} variant="contained">
+            {unsaving ? 'Removing…' : 'Remove'}
           </Button>
         </DialogActions>
       </Dialog>

@@ -34,6 +34,8 @@ export interface ApplicantsUsersStyleMaps {
   latestBackgroundByUserId: Map<string, BackgroundCheckRecord>;
   categoryScoresByUserId: Record<string, PrescreenCategoryScoresV1 | null>;
   groupTitleLookup: Map<string, string>;
+  /** Optional uid -> display name; powers the "CSA: <name>" line on the Person cell. */
+  recruiterNameByUid?: Map<string, string>;
 }
 
 /** Table header cells for the Users-style columns (after checkbox). */
@@ -90,6 +92,7 @@ export const ApplicantsUsersStyleTableBodyCells: React.FC<ApplicantsUsersStyleTa
     latestBackgroundByUserId,
     categoryScoresByUserId,
     groupTitleLookup,
+    recruiterNameByUid,
   } = maps;
 
   const notePreview = latestNoteByUserId.get(user.id);
@@ -161,6 +164,7 @@ export const ApplicantsUsersStyleTableBodyCells: React.FC<ApplicantsUsersStyleTa
               user={user as unknown as Record<string, unknown>}
               latestNote={latestNote}
               groupTitleLookup={groupTitleLookup}
+              recruiterNameByUid={recruiterNameByUid}
               formatDate={formatDate}
             />
           </Box>

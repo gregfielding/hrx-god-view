@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Avatar,
-  Autocomplete,
   Box,
   Button,
   Checkbox,
@@ -20,7 +19,6 @@ import {
   TableHead,
   TableRow,
   TableSortLabel,
-  TextField,
   Tooltip,
   Typography,
   Chip,
@@ -47,6 +45,7 @@ import { formatPhoneNumber } from '../utils/formatPhone';
 import { normalizeUsStateCode } from '../utils/usStateNormalize';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 import RecruiterUserTableContactBlock from '../components/tables/RecruiterUserTableContactBlock';
+import { useTenantRecruiterNamesByUid } from '../hooks/useTenantRecruiterNamesByUid';
 import type { RecruiterOutletContext } from './RecruiterDashboard';
 import { normalizeScoreSummary, getCanonicalStoredAiScore } from '../utils/scoreSummary';
 import { getRecruiterPrimaryScore100FromSummary } from '../utils/scoring/recruiterOperationalScore';
@@ -186,7 +185,12 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     if (raw === 'select' || raw === 'workforce' || raw === 'events') return raw;
     return 'all';
   });
-  const [groupFilter, setGroupFilter] = useState<string>(cacheState.groupFilter || 'all');
+  // `setGroupFilter` was used by the inline User Group Autocomplete that
+  // we removed from the All Users / My Users filter row. The state itself
+  // still flows through load/filter logic (and the persisted cache), so we
+  // keep `groupFilter` as a read-only value pinned to whatever the cache
+  // hands back — typically `'all'`.
+  const [groupFilter] = useState<string>(cacheState.groupFilter || 'all');
   const [stateFilter, setStateFilter] = useState<string>(cacheState.stateFilter || 'all');
   const [sortBy, setSortBy] = useState<RecruiterUsersSortKey>((cacheState.sortBy as RecruiterUsersSortKey) || 'accountCreated');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(cacheState.sortDirection || 'desc');
@@ -232,6 +236,11 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     });
     return m;
   }, [groupLookup]);
+
+  // Map of recruiter uid -> display name; powers the "CSA: <name>" line on
+  // each Person cell (the row only carries `users.{uid}.primaryRecruiterId`,
+  // and we want a name without N getDocs).
+  const recruiterNameByUid = useTenantRecruiterNamesByUid(activeTenant?.id ?? null);
 
   // Reset pagination when core filters (excluding search) change
   useEffect(() => {
@@ -997,51 +1006,34 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                 })}
               </Box>
             )}
-            {effectiveScope === 'all' && (
-              <FormControl size="small" sx={{ minWidth: 180, height: 36 }}>
-                <InputLabel sx={{ fontSize: '0.875rem' }}>Entity</InputLabel>
-                <Select
-                  label="Entity"
-                  value={entityFilter}
-                  onChange={(e) => {
-                    const newFilter = e.target.value as RecruiterUsersEntityFilterKey;
-                    setEntityFilter(newFilter);
-                    updateCache({ entityFilter: newFilter });
-                  }}
-                  sx={{
-                    height: 36,
-                    borderRadius: '6px',
-                    backgroundColor: 'white',
-                    fontSize: '0.875rem',
-                  }}
-                >
-                  <MenuItem value="all">All entities</MenuItem>
-                  <MenuItem value="select">C1 Select</MenuItem>
-                  <MenuItem value="workforce">C1 Workforce</MenuItem>
-                  <MenuItem value="events">C1 Events</MenuItem>
-                </Select>
-              </FormControl>
-            )}
-
-            <Autocomplete
-              size="small"
-              options={groups}
-              getOptionLabel={(option) => option.title || option.id || 'Unnamed Group'}
-              value={groupFilter === 'all' ? null : groups.find(g => g.id === groupFilter) || null}
-              onChange={(_, newValue) => {
-                const newFilter = newValue ? newValue.id : 'all';
-                setGroupFilter(newFilter);
-                updateCache({ groupFilter: newFilter });
-              }}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label="User Group"
-                  placeholder="Search groups..."
-                  sx={{ minWidth: 160 }}
-                />
-              )}
-            />
+            {/* Entity filter — shown on both All Users and My Users.
+                The underlying `groupFilter` state is left in place (it's
+                consumed by load/filter logic) but no longer surfaced as a
+                UI control on these tabs; the dedicated User Groups tabs
+                cover that picker. */}
+            <FormControl size="small" sx={{ minWidth: 180, height: 36 }}>
+              <InputLabel sx={{ fontSize: '0.875rem' }}>Entity</InputLabel>
+              <Select
+                label="Entity"
+                value={entityFilter}
+                onChange={(e) => {
+                  const newFilter = e.target.value as RecruiterUsersEntityFilterKey;
+                  setEntityFilter(newFilter);
+                  updateCache({ entityFilter: newFilter });
+                }}
+                sx={{
+                  height: 36,
+                  borderRadius: '6px',
+                  backgroundColor: 'white',
+                  fontSize: '0.875rem',
+                }}
+              >
+                <MenuItem value="all">All entities</MenuItem>
+                <MenuItem value="select">C1 Select</MenuItem>
+                <MenuItem value="workforce">C1 Workforce</MenuItem>
+                <MenuItem value="events">C1 Events</MenuItem>
+              </Select>
+            </FormControl>
 
             {/* State Filter */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -1433,6 +1425,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                           user={user as unknown as Record<string, unknown>}
                           latestNote={latestNoteByUserId.get(user.id) ?? null}
                           groupTitleLookup={groupTitleLookup}
+                          recruiterNameByUid={recruiterNameByUid}
                           formatDate={formatDate}
                         />
                       </Box>
