@@ -321,6 +321,10 @@ export {
 export { onUserGroupRolesOrMembersChangeRecomputeWorkersPrimary } from './recruiting/onUserGroupRolesOrMembersChange';
 export { onJobOrderWriteStampScheduler } from './recruiting/onJobOrderWriteStampScheduler';
 export { onAccountRolesChangeRestampSchedulers } from './recruiting/onAccountRolesChangeRestampSchedulers';
+// Tenant role defaults — atomic add/remove for the four arrays on
+// tenants/{tid}/settings/roleDefaults. Powers the inline chip toggles
+// on the Workforce settings table.
+export { setTenantRoleDefaultMembership } from './recruiting/setTenantRoleDefaultMembership';
 export {
   syncHrxReadinessSnapshotV1OnPayrollWrite,
   syncHrxReadinessSnapshotV1OnWorkerOnboardingWrite,
