@@ -22,8 +22,7 @@ import { db, functions } from '../firebase';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import PageHeader from '../components/PageHeader';
 import CompanyTable from '../components/CompanyTable';
-import InboxSearchBar, { compactInboxSearchBarSx } from '../components/InboxSearchBar';
-import FavoritesFilter from '../components/FavoritesFilter';
+import UniversalSearchBar from '../components/UniversalSearchBar';
 import { useFavorites } from '../hooks/useFavorites';
 import { usePageCache } from '../hooks/usePageCache';
 import FormControl from '@mui/material/FormControl';
@@ -31,6 +30,7 @@ import InputLabel from '@mui/material/InputLabel';
 import Select from '@mui/material/Select';
 import MenuItem from '@mui/material/MenuItem';
 import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
 import ClearIcon from '@mui/icons-material/Clear';
 import BusinessIcon from '@mui/icons-material/Business';
 
@@ -887,26 +887,7 @@ const CompaniesPage: React.FC = () => {
         }
         rightActions={
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
-            <FavoritesFilter
-              favoriteType="companies"
-              showFavoritesOnly={showFavoritesOnly}
-              onToggle={(value) => {
-                setShowFavoritesOnly(value);
-                updateCache({ showFavoritesOnly: value });
-              }}
-              showText={false}
-              size="small"
-              sx={{
-                minWidth: '32px',
-                width: '32px',
-                height: '32px',
-                borderRadius: '50%',
-                '&:hover': {
-                  backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover',
-                },
-              }}
-            />
-            <InboxSearchBar
+            <UniversalSearchBar
               value={search}
               onChange={(value) => {
                 setSearch(value);
@@ -922,33 +903,30 @@ const CompaniesPage: React.FC = () => {
                 }
               }}
               placeholder="Search companies..."
-              sx={compactInboxSearchBarSx}
-            />
-            <Button
-              variant="contained"
-              startIcon={<AddIcon sx={{ fontSize: 16 }} />}
-              onClick={() => setShowAddCompanyDialog(true)}
-              sx={{
-                textTransform: 'none',
-                borderRadius: '999px',
-                px: 1.5,
-                py: 0.5,
-                minHeight: 30,
-                height: 30,
-                fontWeight: 600,
-                fontSize: '13px',
-                bgcolor: '#0057B8',
-                boxShadow: 'none',
-                '& .MuiButton-startIcon': { mr: 0.35 },
-                '&:hover': {
-                  bgcolor: '#004a9f',
-                  boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
-                },
-                whiteSpace: 'nowrap',
+              favoriteType="companies"
+              showFavoritesOnly={showFavoritesOnly}
+              onToggleFavorites={(value) => {
+                setShowFavoritesOnly(value);
+                updateCache({ showFavoritesOnly: value });
               }}
-            >
-              Add Company
-            </Button>
+            />
+            {/* Universal icon-only Add button — matches the canonical
+                pattern on /accounts and /users/user-groups so every
+                top-of-page Add action looks identical. */}
+            <Tooltip title="Add company">
+              <IconButton
+                onClick={() => setShowAddCompanyDialog(true)}
+                sx={{
+                  width: 32,
+                  height: 32,
+                  bgcolor: '#0057B8',
+                  color: '#fff',
+                  '&:hover': { bgcolor: '#004a9f' },
+                }}
+              >
+                <AddIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Tooltip>
           </Box>
         }
       />

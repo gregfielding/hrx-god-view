@@ -21,6 +21,7 @@ import {
   Chip,
   Alert,
   Snackbar,
+  Tooltip,
 } from '@mui/material';
 import {
   Clear as ClearIcon,
@@ -42,8 +43,7 @@ import ContactTable from '../components/ContactTable';
 import ContactTableRow from '../components/ContactTableRow';
 import type { RecruiterOutletContext } from './RecruiterDashboard';
 import PageHeader from '../components/PageHeader';
-import InboxSearchBar, { compactInboxSearchBarSx } from '../components/InboxSearchBar';
-import FavoritesFilter from '../components/FavoritesFilter';
+import UniversalSearchBar from '../components/UniversalSearchBar';
 import { normalizeUsStateCode } from '../utils/usStateNormalize';
 
 interface Contact {
@@ -958,54 +958,32 @@ const RecruiterContacts: React.FC = () => {
         }
         rightActions={
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
-            <FavoritesFilter
-              favoriteType="contacts"
-              showFavoritesOnly={headerShowFavoritesOnly}
-              onToggle={setHeaderShowFavoritesOnly}
-              showText={false}
-              size="small"
-              sx={{
-                minWidth: '32px',
-                width: '32px',
-                height: '32px',
-                borderRadius: '50%',
-                '&:hover': {
-                  backgroundColor: headerShowFavoritesOnly ? 'primary.dark' : 'action.hover',
-                },
-              }}
-            />
-            <InboxSearchBar
+            <UniversalSearchBar
               value={headerSearch}
               onChange={setHeaderSearch}
               onSearch={setHeaderSearch}
               placeholder="Search contacts..."
-              sx={compactInboxSearchBarSx}
+              favoriteType="contacts"
+              showFavoritesOnly={headerShowFavoritesOnly}
+              onToggleFavorites={setHeaderShowFavoritesOnly}
             />
-            <Button
-              variant="contained"
-              startIcon={<AddIcon sx={{ fontSize: 16 }} />}
-              onClick={handleAddNew}
-              sx={{
-                textTransform: 'none',
-                borderRadius: '999px',
-                px: 1.5,
-                py: 0.5,
-                minHeight: 30,
-                height: 30,
-                fontWeight: 600,
-                fontSize: '13px',
-                bgcolor: '#0057B8',
-                boxShadow: 'none',
-                '& .MuiButton-startIcon': { mr: 0.35 },
-                '&:hover': {
-                  bgcolor: '#004a9f',
-                  boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
-                },
-                whiteSpace: 'nowrap',
-              }}
-            >
-              Add Contact
-            </Button>
+            {/* Universal icon-only Add button — matches the canonical
+                pattern on /accounts and /users/user-groups so every
+                top-of-page Add action looks identical. */}
+            <Tooltip title="Add contact">
+              <IconButton
+                onClick={handleAddNew}
+                sx={{
+                  width: 32,
+                  height: 32,
+                  bgcolor: '#0057B8',
+                  color: '#fff',
+                  '&:hover': { bgcolor: '#004a9f' },
+                }}
+              >
+                <AddIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Tooltip>
           </Box>
         }
       />

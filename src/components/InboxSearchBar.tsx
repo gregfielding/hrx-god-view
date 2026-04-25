@@ -37,16 +37,17 @@ interface SearchSuggestion {
  * `<InboxSearchBar sx={compactInboxSearchBarSx} ... />` to render the
  * search bar at the same scale as the small icon controls used in
  * record-page toolbars (32px high, ~240px wide, pill outline).
+ *
+ * Sizing only — visual treatment (white bg, full light border) is owned
+ * by the component itself so every caller stays consistent.
  */
 export const compactInboxSearchBarSx: SxProps<Theme> = {
   width: { xs: '100%', sm: 240 },
   minWidth: { xs: 'auto', sm: 220 },
   maxWidth: { xs: '100%', sm: 260 },
   '& .MuiOutlinedInput-root': {
-    borderRadius: '999px',
     height: 32,
     fontSize: '13px',
-    backgroundColor: 'background.paper',
   },
   '& .MuiOutlinedInput-input': {
     py: 0,
@@ -70,6 +71,15 @@ interface InboxSearchBarProps {
    * the search input (the default sizing is tuned for the email inbox).
    */
   sx?: SxProps<Theme>;
+  /**
+   * Optional inline trailing slot. When provided, replaces the
+   * `⌘K` / `Ctrl+K` keyboard-shortcut hint at the right edge of the
+   * input. Used by list pages to tuck the favorites toggle (and any
+   * other compact filter glyphs) inside the search bar so the toolbar
+   * row stays a single visual element. The Clear button still appears
+   * to the *left* of this slot once the user has typed something.
+   */
+  endAdornment?: React.ReactNode;
 }
 
 const InboxSearchBar: React.FC<InboxSearchBarProps> = ({
@@ -80,6 +90,7 @@ const InboxSearchBar: React.FC<InboxSearchBarProps> = ({
   placeholder = 'Search emails...',
   disabled = false,
   sx,
+  endAdornment,
 }) => {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -182,6 +193,10 @@ const InboxSearchBar: React.FC<InboxSearchBarProps> = ({
         inputRef={inputRef}
         fullWidth
         size="small"
+        // Force outlined — the app theme defaults TextField to `filled`,
+        // which would render only an underline and ignore our pill +
+        // border styling below.
+        variant="outlined"
         placeholder={placeholder}
         value={value}
         onChange={(e) => handleChange(e.target.value)}
@@ -191,16 +206,20 @@ const InboxSearchBar: React.FC<InboxSearchBarProps> = ({
         disabled={disabled}
         sx={{
           '& .MuiOutlinedInput-root': {
-            borderRadius: '24px',
-            backgroundColor: 'background.paper',
-            boxShadow: focused ? '0 2px 8px rgba(0, 0, 0, 0.1)' : '0 1px 3px rgba(0, 0, 0, 0.05)',
-            transition: 'all 0.2s ease',
+            borderRadius: '999px',
+            backgroundColor: '#ffffff',
+            // Full light border on every state, replacing the prior
+            // bottom-shadow look. Slightly stronger on hover/focus so
+            // the field still gives interaction feedback without
+            // changing the page's vertical rhythm.
+            boxShadow: 'none',
+            transition: 'border-color 0.15s ease',
             '& fieldset': {
-              borderColor: focused ? 'primary.main' : 'transparent',
-              borderWidth: focused ? 1 : 0,
+              borderColor: 'rgba(0, 0, 0, 0.12)',
+              borderWidth: 1,
             },
             '&:hover fieldset': {
-              borderColor: 'primary.main',
+              borderColor: 'rgba(0, 0, 0, 0.24)',
               borderWidth: 1,
             },
             '&.Mui-focused fieldset': {
@@ -215,35 +234,48 @@ const InboxSearchBar: React.FC<InboxSearchBarProps> = ({
               <SearchIcon fontSize="small" sx={{ color: 'text.secondary' }} />
             </InputAdornment>
           ),
-          endAdornment: value ? (
-            <InputAdornment position="end">
-              <IconButton
-                size="small"
-                onClick={handleClear}
-                sx={{ p: 0.5 }}
-                aria-label="Clear search"
-              >
-                <ClearIcon fontSize="small" />
-              </IconButton>
-            </InputAdornment>
-          ) : !focused && !value ? (
-            <InputAdornment position="end">
-              <Typography
-                variant="caption"
-                sx={{
-                  color: 'text.disabled',
-                  fontSize: '0.7rem',
-                  fontFamily: 'monospace',
-                  px: 1,
-                  py: 0.5,
-                  bgcolor: 'rgba(0, 0, 0, 0.04)',
-                  borderRadius: 1,
-                }}
-              >
-                {shortcutKey}
-              </Typography>
-            </InputAdornment>
-          ) : null,
+          endAdornment: (() => {
+            // The right edge of the input renders, in order:
+            //  1. A Clear (×) button when the user has typed something.
+            //  2. The caller-provided trailing slot (e.g. favorites star)
+            //     if any — this *replaces* the ⌘K hint when supplied.
+            //  3. Otherwise, the ⌘K / Ctrl+K shortcut hint when the
+            //     field is empty and unfocused.
+            const showClear = !!value;
+            const showHint = !endAdornment && !focused && !value;
+            if (!showClear && !endAdornment && !showHint) return null;
+            return (
+              <InputAdornment position="end" sx={{ gap: 0.25 }}>
+                {showClear && (
+                  <IconButton
+                    size="small"
+                    onClick={handleClear}
+                    sx={{ p: 0.5 }}
+                    aria-label="Clear search"
+                  >
+                    <ClearIcon fontSize="small" />
+                  </IconButton>
+                )}
+                {endAdornment}
+                {showHint && (
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: 'text.disabled',
+                      fontSize: '0.7rem',
+                      fontFamily: 'monospace',
+                      px: 1,
+                      py: 0.5,
+                      bgcolor: 'rgba(0, 0, 0, 0.04)',
+                      borderRadius: 1,
+                    }}
+                  >
+                    {shortcutKey}
+                  </Typography>
+                )}
+              </InputAdornment>
+            );
+          })(),
         }}
       />
 

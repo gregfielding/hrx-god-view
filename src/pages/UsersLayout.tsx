@@ -14,8 +14,7 @@ import AddIcon from '@mui/icons-material/Add';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 // import { OnCallI9SupportingReminderDialog } from '../components/staffOnboarding/OnCallI9SupportingReminderDialog';
-import InboxSearchBar, { compactInboxSearchBarSx } from '../components/InboxSearchBar';
-import FavoritesFilter from '../components/FavoritesFilter';
+import UniversalSearchBar from '../components/UniversalSearchBar';
 import {
   USERS_LAYOUT_TAB_CONFIG,
   getActiveUsersTab,
@@ -76,7 +75,11 @@ const UsersLayout: React.FC = () => {
   }, [usersSearch, usersShowFavoritesOnly, groupsSearch, groupsShowFavoritesOnly]);
 
   const isUsersTab = activeTab === 'all' || activeTab === 'my';
-  const isUserGroupsTab = activeTab === 'user-groups';
+  // The "All / Mine" pair for user groups shares the same search +
+  // favorites state so toggling between them feels seamless. Only the
+  // canonical `user-groups` tab gets the Create button.
+  const isUserGroupsTab = activeTab === 'user-groups' || activeTab === 'my-user-groups';
+  const isCreatableUserGroupsTab = activeTab === 'user-groups';
 
   const outletContext: UsersLayoutOutletContext = {
     usersTab: activeTab,
@@ -112,69 +115,46 @@ const UsersLayout: React.FC = () => {
           </Button>
         </Tooltip>
         */}
-        <InboxSearchBar
+        <UniversalSearchBar
           value={usersSearch}
           onChange={setUsersSearch}
           onSearch={setUsersSearch}
           placeholder="Search by name, email, or phone..."
-          sx={compactInboxSearchBarSx}
-        />
-        <FavoritesFilter
           favoriteType="users"
           showFavoritesOnly={usersShowFavoritesOnly}
-          onToggle={setUsersShowFavoritesOnly}
-          showText={false}
-          size="small"
-          sx={{
-            minWidth: '32px',
-            width: '32px',
-            height: '32px',
-            borderRadius: '50%',
-            '&:hover': {
-              backgroundColor: usersShowFavoritesOnly ? 'primary.dark' : 'action.hover',
-            },
-          }}
+          onToggleFavorites={setUsersShowFavoritesOnly}
         />
       </Box>
     ) : isUserGroupsTab ? (
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-        <InboxSearchBar
+        <UniversalSearchBar
           value={groupsSearch}
           onChange={setGroupsSearch}
           onSearch={setGroupsSearch}
-          placeholder="Search groups..."
-          sx={compactInboxSearchBarSx}
-        />
-        <FavoritesFilter
+          placeholder={activeTab === 'my-user-groups' ? 'Search my groups...' : 'Search groups...'}
           favoriteType="userGroups"
           showFavoritesOnly={groupsShowFavoritesOnly}
-          onToggle={setGroupsShowFavoritesOnly}
-          showText={false}
-          size="small"
-          sx={{
-            minWidth: '32px',
-            width: '32px',
-            height: '32px',
-            borderRadius: '50%',
-            '&:hover': {
-              backgroundColor: groupsShowFavoritesOnly ? 'primary.dark' : 'action.hover',
-            },
-          }}
+          onToggleFavorites={setGroupsShowFavoritesOnly}
         />
-        <Tooltip title="Create new group">
-          <IconButton
-            onClick={() => setOpenCreateGroupForm(true)}
-            sx={{
-              width: 32,
-              height: 32,
-              bgcolor: '#0057B8',
-              color: '#fff',
-              '&:hover': { bgcolor: '#004a9f' },
-            }}
-          >
-            <AddIcon sx={{ fontSize: 18 }} />
-          </IconButton>
-        </Tooltip>
+        {/* Create button is only meaningful on the unfiltered All view —
+            on /users/my-user-groups the user is just reviewing their own
+            managed groups, so we omit it. */}
+        {isCreatableUserGroupsTab && (
+          <Tooltip title="Create new group">
+            <IconButton
+              onClick={() => setOpenCreateGroupForm(true)}
+              sx={{
+                width: 32,
+                height: 32,
+                bgcolor: '#0057B8',
+                color: '#fff',
+                '&:hover': { bgcolor: '#004a9f' },
+              }}
+            >
+              <AddIcon sx={{ fontSize: 18 }} />
+            </IconButton>
+          </Tooltip>
+        )}
       </Box>
     ) : null;
 
@@ -200,6 +180,13 @@ const UsersLayout: React.FC = () => {
       <PageHeader
         hideHeading
         dense
+        // No divider line under the toolbar — the table below already
+        // provides enough visual separation, and removing it gives the
+        // page a cleaner "single surface" feel.
+        showDivider={false}
+        // Dense pt is 7px (0.875 * 8); bump it by 2px so the tab pills
+        // don't sit flush against the app bar.
+        sx={{ pt: '9px' }}
         title=""
         filters={
           <Box sx={{ display: 'flex', gap: 0.35, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -245,7 +232,10 @@ const UsersLayout: React.FC = () => {
           display: 'flex',
           flexDirection: 'column',
           paddingTop: '8px',
-          pb: 2,
+          // No bottom padding here — the global Layout outlet
+          // (src/components/Layout.tsx) already adds 16px of pb to every
+          // authenticated page, so anything here would double-stack.
+          pb: 0,
           '&::-webkit-scrollbar': { width: '8px', height: '8px' },
           '&::-webkit-scrollbar-track': {
             background: 'rgba(0, 0, 0, 0.02)',
