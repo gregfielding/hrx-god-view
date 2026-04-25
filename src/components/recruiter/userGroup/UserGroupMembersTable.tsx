@@ -68,6 +68,7 @@ import { useRecruiterUsersLatestBackgroundChecks } from '../../../hooks/useRecru
 import { useRecruiterUsersEntityEmploymentChips } from '../../../hooks/useRecruiterUsersEntityEmploymentChips';
 import { WorkHistoryJobTitlesCell } from '../ApplicantsUsersStyleTableCells';
 import OrderInterviewInlineAction from '../OrderInterviewInlineAction';
+import BulkOrderInterviewButton from '../BulkOrderInterviewButton';
 export type MemberPreferenceStatus = 'preferred' | 'member' | 'not_preferred';
 
 export type UserGroupMembersTableProps = {
@@ -589,6 +590,19 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
                 >
                   Bulk SMS
                 </Button>
+                {/* Order Interviews — same payload as the per-row CTA,
+                    looped over the eligible subset of the current
+                    selection. The button hides itself when no one in
+                    the selection is eligible (already interviewed / no
+                    phone / internal staff). */}
+                <BulkOrderInterviewButton
+                  tenantId={tenantId}
+                  selectedUsers={
+                    selectAllResults
+                      ? sortedMembers
+                      : sortedMembers.filter((m) => selectedIds.has(m.id))
+                  }
+                />
               </Box>
             )}
             <TableContainer
@@ -875,18 +889,18 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
                             {concernTip ? (
                               <Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{concernTip}</span>} placement="top" enterDelay={350}>
                                 <Typography
-                                  variant="body2"
+                                  variant="caption"
                                   color={concernMuted ? 'text.secondary' : 'text.primary'}
-                                  sx={{ fontWeight: 400, fontSize: '0.8125rem', lineHeight: 1.3 }}
+                                  sx={{ fontWeight: 400, fontSize: '0.65rem', lineHeight: 1.3, fontFamily: 'inherit', display: 'block' }}
                                 >
                                   {concern}
                                 </Typography>
                               </Tooltip>
                             ) : (
                               <Typography
-                                variant="body2"
+                                variant="caption"
                                 color={concernMuted ? 'text.secondary' : 'text.primary'}
-                                sx={{ fontWeight: 400, fontSize: '0.8125rem', lineHeight: 1.3 }}
+                                sx={{ fontWeight: 400, fontSize: '0.65rem', lineHeight: 1.3, fontFamily: 'inherit', display: 'block' }}
                               >
                                 {concern}
                               </Typography>

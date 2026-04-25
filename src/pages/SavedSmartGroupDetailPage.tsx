@@ -2,87 +2,58 @@
  * Saved Smart Group detail: member list with status and "Update results".
  */
 
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import {
   Box,
   Typography,
   Button,
   CircularProgress,
   Alert,
-  Paper,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Chip,
-  Menu,
   MenuItem,
-  Avatar,
-  Tooltip,
   IconButton,
   FormControl,
   InputLabel,
   Select,
-  Autocomplete,
   TextField,
-  ToggleButtonGroup,
-  ToggleButton,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogContentText,
   DialogActions,
-  Checkbox,
+  Tooltip,
 } from '@mui/material';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import SaveIcon from '@mui/icons-material/Save';
-import CancelIcon from '@mui/icons-material/Cancel';
-import EmailIcon from '@mui/icons-material/Email';
-import PhoneIcon from '@mui/icons-material/Phone';
-import LocationOnIcon from '@mui/icons-material/LocationOn';
-import WorkIcon from '@mui/icons-material/Work';
-import InsightsIcon from '@mui/icons-material/Insights';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import { toChipLabel } from '../utils/chipLabel';
-import BlockIcon from '@mui/icons-material/Block';
-import ClearIcon from '@mui/icons-material/Clear';
-import SmsIcon from '@mui/icons-material/Sms';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
+import type { UsersLayoutOutletContext } from './UsersLayout';
 import { doc, getDoc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { runSavedSmartGroupSearch, type SavedSmartGroupFilters } from '../services/runSavedSmartGroupSearch';
-import { useSmartGroupSettings, type CustomMetrosMap } from '../hooks/useSmartGroupSettings';
+// Only the type from `useSmartGroupSettings` is needed now — the radius-mode
+// modal doesn't expose metro/area/city pickers, so we no longer subscribe to
+// the per-tenant custom-metros doc on this page.
+import type { CustomMetrosMap } from '../hooks/useSmartGroupSettings';
 import { formatPhoneNumber } from '../utils/formatPhone';
-import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
-import UserTableResumeIcon from '../components/tables/UserTableResumeIcon';
-import UserTableIndeedFlexBadge from '../components/tables/UserTableIndeedFlexBadge';
-import { formatOneDecimal, normalizeScoreSummary } from '../utils/scoreSummary';
 import { getRecruiterMasterDisplayForAdminUi } from '../utils/scoring/recruiterMasterScoreDisplay';
-import { getWorkAuthorizedStatus } from '../utils/workAuthorizedDisplay';
-import { getEVerifyComfortStatusFromUserData } from '../utils/eVerifyComfortDisplay';
-import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
-import EVerifyComfortChip from '../components/EVerifyComfortChip';
 import MessageDrawer, { type MessageRecipient } from '../components/MessageDrawer';
-import FavoriteButton from '../components/FavoriteButton';
-import InterviewCell from '../components/InterviewCell';
 import { useFavorites } from '../hooks/useFavorites';
-import {
-  getMergedMetroOptions,
-  getMergedSubareaOptionsForMetro,
-  getMergedCityOptionsForSubarea,
-  formatGeoLabel,
-} from '../data/metroSubareaSchema';
-import { useActiveAssignmentUserIds } from '../hooks/useActiveAssignmentUserIds';
-import { getWorkStatusColumnDisplay } from '../utils/workStatusColumnDisplay';
-import { getMetroDisplayLabel } from '../data/metroMaster';
 import { Autocomplete as GooglePlacesAutocomplete } from '@react-google-maps/api';
-import { geocodeAddress } from '../utils/geocodeAddress';
+import GroupMembersTable, {
+  type GroupMembersSortKey,
+  type GroupMemberPreferenceStatus,
+} from '../componentBlocks/GroupMembersTable';
+import UniversalBackButton from '../components/common/UniversalBackButton';
+import UniversalSearchBar from '../components/UniversalSearchBar';
+import { userMatchesSearchTerm } from '../utils/recruiterUserSearchMatch';
+import { useCategoryScoresCurrentMap } from '../hooks/useCategoryScoresCurrentMap';
+import { useRecruiterUsersRowExtras } from '../hooks/useRecruiterUsersRowExtras';
+import { useRecruiterUsersLatestBackgroundChecks } from '../hooks/useRecruiterUsersLatestBackgroundChecks';
+import { useRecruiterUsersEntityEmploymentChips } from '../hooks/useRecruiterUsersEntityEmploymentChips';
+import { compareWorkReadinessForEntity } from '../utils/recruiterUsersEntityWorkReadiness';
+import { buildWorkHistoryJobTitles } from '../utils/workHistoryJobTitles';
 
 type MemberStatus = 'preferred' | 'member' | 'not_preferred';
 
@@ -94,6 +65,12 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
   const navigate = useNavigate();
   const { groupId } = useParams<{ groupId: string }>();
   const { tenantId, user } = useAuth();
+  // Mounted as a child of `UsersLayout` (`/users/my-smart-groups/:groupId`),
+  // so we can pipe our action buttons up into the tabs row's right slot. If
+  // this page is ever rendered outside that layout, `useOutletContext` returns
+  // null and we fall back to rendering the actions inline (handled below).
+  const outletContext = useOutletContext<UsersLayoutOutletContext | null>();
+  const setOutletRightActions = outletContext?.setOutletRightActions;
   const [group, setGroup] = useState<{
     name: string;
     memberIds: string[];
@@ -122,13 +99,20 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
     employeeOnboardStatus?: string;
     contractorOnboardStatus?: string;
     onboardingType?: string;
+    // Interview-completion signals — drive both the per-row "Order Interview"
+    // CTA and the new bulk button. Pulled directly from the user doc when we
+    // hydrate members below; absent for users that never interviewed.
+    hasWorkerAiPrescreenInterview?: boolean;
+    interviewStatus?: string;
+    lastInterviewCompletedAt?: any;
+    recruiterOrderInterviewSmsLastSentAt?: any;
+    /** Pre-computed job titles surfaced in the Work History column. */
+    workHistoryJobTitles?: string[];
   }>>([]);
-  const [statusMenuAnchor, setStatusMenuAnchor] = useState<{ [userId: string]: HTMLElement | null }>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
-  const [isEditing, setIsEditing] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [unsaveDialogOpen, setUnsaveDialogOpen] = useState(false);
@@ -145,35 +129,45 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
   const [selectAllResults, setSelectAllResults] = useState(false);
   const [bulkDrawerOpen, setBulkDrawerOpen] = useState(false);
   const [bulkDrawerChannel, setBulkDrawerChannel] = useState<'email' | 'sms'>('email');
+
+  // Search / favorites / sort / pagination state for the shared
+  // GroupMembersTable. The search + favorites toggle live in the universal
+  // search bar piped into `UsersLayout`'s tab-row right slot (see the actions
+  // useEffect below); the sort dropdown sits next to it. Filtering happens
+  // here in `filteredMembers`, then sort, then pagination — same flow as
+  // `UserGroupDetails` so behavior matches between the two detail pages.
+  const [membersSearch, setMembersSearch] = useState('');
+  const [membersShowFavoritesOnly, setMembersShowFavoritesOnly] = useState(false);
+  const [membersSortBy, setMembersSortBy] = useState<GroupMembersSortKey>('hrxSignup');
+  const [membersSortDirection, setMembersSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [membersPage, setMembersPage] = useState(0);
+  const [membersRowsPerPage, setMembersRowsPerPage] = useState(20);
+
+  // Reset to page 0 whenever the visible row set could shrink, otherwise
+  // `membersPage` can land past the end of `paginatedMembers`.
+  useEffect(() => {
+    setMembersPage(0);
+  }, [membersSearch, membersShowFavoritesOnly]);
   
-  // Favorites
-  const { favorites, isFavorite, toggleFavorite } = useFavorites('users');
+  // Favorites — `favorites` array isn't read directly here; the table cell
+  // checks membership via `isFavorite` and mutates via `toggleFavorite`.
+  const { isFavorite, toggleFavorite } = useFavorites('users');
   
-  // Edit mode filter state
-  const [editFilterMode, setEditFilterMode] = useState<'residence' | 'application'>('residence');
-  const [editResidenceSubMode, setEditResidenceSubMode] = useState<'area' | 'radius'>('area');
-  const [editMetroFilter, setEditMetroFilter] = useState<string | null>(null);
-  const [editAreaFilter, setEditAreaFilter] = useState<string | null>(null);
-  const [editCityFilter, setEditCityFilter] = useState<string | null>(null);
-  const [editCategoryFilter, setEditCategoryFilter] = useState<string | null>(null);
+  // Edit dialog state. The pencil in the page header opens a small modal
+  // with just the name + address + radius — the only fields a recruiter
+  // typically edits after the group is saved. Saving here re-writes the
+  // filters as a clean radius-mode config (regardless of how the group was
+  // originally built) and re-runs the search. Other filter shapes
+  // (residence-area, application-metro, etc.) are still settable from the
+  // Add Smart Group builder.
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editName, setEditName] = useState('');
   const [editRadiusAddress, setEditRadiusAddress] = useState('');
   const [editRadiusLat, setEditRadiusLat] = useState<number | null>(null);
   const [editRadiusLng, setEditRadiusLng] = useState<number | null>(null);
   const [editRadiusMiles, setEditRadiusMiles] = useState(10);
-  const [editSelectedSkills, setEditSelectedSkills] = useState<string[]>([]);
-  const [editSelectedCertifications, setEditSelectedCertifications] = useState<string[]>([]);
   const radiusAutocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
-  
-  const { customMetros } = useSmartGroupSettings(tenantId);
-  const metroOptions = getMergedMetroOptions(customMetros);
-  const areaOptions = editMetroFilter && editMetroFilter !== '__other__' 
-    ? getMergedSubareaOptionsForMetro(editMetroFilter, customMetros)
-    : [];
-  const cityOptions = editAreaFilter && editMetroFilter && editMetroFilter !== '__other__'
-    ? getMergedCityOptionsForSubarea(editMetroFilter, editAreaFilter, customMetros)
-    : [];
-  
-  const OTHER_METRO_VALUE = '__other__';
+
   const RADIUS_OPTIONS = [5, 10, 25, 50];
 
   useEffect(() => {
@@ -199,19 +193,12 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
           memberStatusById,
           filters,
         });
-        // Initialize edit state from filters
-        setEditFilterMode(filters.filterMode || 'residence');
-        setEditResidenceSubMode(filters.residenceSubMode || 'area');
-        setEditMetroFilter(filters.metroFilter ?? null);
-        setEditAreaFilter(filters.areaFilter ?? null);
-        setEditCityFilter(filters.cityFilter ?? null);
-        setEditCategoryFilter(filters.categoryFilter ?? null);
+        // Seed the edit modal's local state from the saved filters so a
+        // re-open of the pencil pre-populates with the current values.
         setEditRadiusAddress(filters.radiusAddress || '');
         setEditRadiusLat(filters.radiusLat ?? null);
         setEditRadiusLng(filters.radiusLng ?? null);
         setEditRadiusMiles(filters.radiusMiles ?? 10);
-        setEditSelectedSkills(filters.selectedSkills || []);
-        setEditSelectedCertifications(filters.selectedCertifications || []);
         const createdBy = data?.createdBy ?? null;
         const copiedFrom = data?.copiedFromGroupId ?? null;
         setCreatedByUid(createdBy);
@@ -263,6 +250,11 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
           employeeOnboardStatus?: string;
           contractorOnboardStatus?: string;
           onboardingType?: string;
+          hasWorkerAiPrescreenInterview?: boolean;
+          interviewStatus?: string;
+          lastInterviewCompletedAt?: any;
+          recruiterOrderInterviewSmsLastSentAt?: any;
+          workHistoryJobTitles?: string[];
         }> = [];
         for (const uid of memberIds) {
           const userSnap = await getDoc(doc(db, 'users', uid));
@@ -293,6 +285,13 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
               employeeOnboardStatus: d?.employeeOnboardStatus,
               contractorOnboardStatus: d?.contractorOnboardStatus,
               onboardingType: d?.onboardingType,
+              hasWorkerAiPrescreenInterview: d?.hasWorkerAiPrescreenInterview === true,
+              interviewStatus: d?.interviewStatus,
+              lastInterviewCompletedAt: d?.lastInterviewCompletedAt,
+              recruiterOrderInterviewSmsLastSentAt: d?.recruiterOrderInterviewSmsLastSentAt,
+              // Precompute the table's job-titles column so we don't have
+              // to ship the entire `workExperience` array down per row.
+              workHistoryJobTitles: buildWorkHistoryJobTitles(d),
             });
           } else {
             users.push({ id: uid });
@@ -320,80 +319,65 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
     }
   };
 
-  // Load skills and certifications options from members
-  const skillsOptions = useMemo(() => {
-    const skillsSet = new Set<string>();
-    membersData.forEach(m => {
-      if (Array.isArray(m.skills)) {
-        m.skills.forEach(s => {
-          const label = toChipLabel(s);
-          if (label) skillsSet.add(label);
-        });
-      }
-    });
-    return Array.from(skillsSet).sort();
-  }, [membersData]);
-
-  const certOptions = useMemo(() => {
-    // We'll need to load certifications from user data
-    // For now, use empty array - can be enhanced later
-    return [];
-  }, []);
-
-  const memberIdsForAssignments = useMemo(() => membersData.map((m) => m.id), [membersData]);
-  const activeAssignmentUserIds = useActiveAssignmentUserIds(tenantId ?? undefined, memberIdsForAssignments);
-
   const handleSaveFilters = async () => {
     if (!tenantId || !groupId || !group) return;
+    // Modal-based edit: a name + radius-mode address/miles are the only
+    // things the modal can change. Bail with a friendly error rather than
+    // wiping the group's address out from under the user.
+    const trimmedName = editName.trim();
+    if (!trimmedName) {
+      setSaveError('Name is required.');
+      return;
+    }
+    if (!editRadiusAddress.trim() || editRadiusLat == null || editRadiusLng == null) {
+      setSaveError('Pick an address from the suggestions to save.');
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     try {
+      // Always normalise to a clean radius-mode filter — the modal doesn't
+      // expose the metro/area/city/skills shape, so saving here intentionally
+      // collapses any prior shape into a "within N miles of address" group.
       const filters: SavedSmartGroupFilters = {
-        filterMode: editFilterMode,
-        metroFilter: editMetroFilter ?? null,
-        areaFilter: editAreaFilter ?? null,
-        cityFilter: editCityFilter ?? null,
-        categoryFilter: editCategoryFilter ?? null,
-        selectedSkills: editSelectedSkills,
-        selectedCertifications: editSelectedCertifications,
+        filterMode: 'residence',
+        residenceSubMode: 'radius',
+        metroFilter: null,
+        areaFilter: null,
+        cityFilter: null,
+        categoryFilter: null,
+        selectedSkills: [],
+        selectedCertifications: [],
+        radiusAddress: editRadiusAddress.trim(),
+        radiusMiles: editRadiusMiles,
+        radiusLat: editRadiusLat,
+        radiusLng: editRadiusLng,
       };
-      if (editFilterMode === 'residence') {
-        filters.residenceSubMode = editResidenceSubMode;
-        if (editResidenceSubMode === 'radius') {
-          filters.radiusAddress = editRadiusAddress;
-          filters.radiusMiles = editRadiusMiles;
-          // Save geocoded coordinates if available
-          if (editRadiusLat != null && editRadiusLng != null) {
-            filters.radiusLat = editRadiusLat;
-            filters.radiusLng = editRadiusLng;
-          }
-        }
-      }
-      
-      // Re-run search with new filters
+
       let customMetrosMap: CustomMetrosMap = {};
       try {
         const settingsSnap = await getDoc(doc(db, 'tenants', tenantId, 'settings', 'smartGroups'));
         const settings = settingsSnap.data();
         customMetrosMap = (settings?.customMetros ?? {}) as CustomMetrosMap;
       } catch (_) {}
-      
+
       const newMemberIds = await runSavedSmartGroupSearch(tenantId, filters, customMetrosMap);
       const existing = group.memberStatusById;
       const memberStatusById: Record<string, MemberStatus> = {};
       newMemberIds.forEach((id) => {
         memberStatusById[id] = (existing[id] as MemberStatus) ?? 'member';
       });
-      
+
       const ref = doc(db, 'tenants', tenantId, 'savedSmartGroups', groupId);
       await updateDoc(ref, {
+        name: trimmedName,
         filters,
         memberIds: newMemberIds,
         memberStatusById,
         updatedAt: serverTimestamp(),
       });
-      
-      setGroup({ ...group, filters, memberIds: newMemberIds, memberStatusById });
+
+      setGroup({ ...group, name: trimmedName, filters, memberIds: newMemberIds, memberStatusById });
       
       // Reload members data
       const users: Array<{
@@ -418,6 +402,11 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
         employeeOnboardStatus?: string;
         contractorOnboardStatus?: string;
         onboardingType?: string;
+        hasWorkerAiPrescreenInterview?: boolean;
+        interviewStatus?: string;
+        lastInterviewCompletedAt?: any;
+        recruiterOrderInterviewSmsLastSentAt?: any;
+        workHistoryJobTitles?: string[];
       }> = [];
       for (const uid of newMemberIds) {
         const userSnap = await getDoc(doc(db, 'users', uid));
@@ -447,13 +436,18 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
             employeeOnboardStatus: d?.employeeOnboardStatus,
             contractorOnboardStatus: d?.contractorOnboardStatus,
             onboardingType: d?.onboardingType,
+            hasWorkerAiPrescreenInterview: d?.hasWorkerAiPrescreenInterview === true,
+            interviewStatus: d?.interviewStatus,
+            lastInterviewCompletedAt: d?.lastInterviewCompletedAt,
+            recruiterOrderInterviewSmsLastSentAt: d?.recruiterOrderInterviewSmsLastSentAt,
+            workHistoryJobTitles: buildWorkHistoryJobTitles(d),
           });
         } else {
           users.push({ id: uid });
         }
       }
       setMembersData(users);
-      setIsEditing(false);
+      setEditDialogOpen(false);
     } catch (err: any) {
       setSaveError(err?.message ?? 'Failed to save filters');
     } finally {
@@ -489,22 +483,22 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
     }
   };
 
-  const handleCancelEdit = () => {
+  // Open the edit modal pre-populated from the saved group. We always seed
+  // the modal in radius mode — that's the only shape the modal can save —
+  // even if the group was originally built with a metro/area/skills filter.
+  const openEditDialog = () => {
     if (!group) return;
-    // Reset edit state to original filters
-    setEditFilterMode(group.filters.filterMode || 'residence');
-    setEditResidenceSubMode(group.filters.residenceSubMode || 'area');
-    setEditMetroFilter(group.filters.metroFilter ?? null);
-    setEditAreaFilter(group.filters.areaFilter ?? null);
-    setEditCityFilter(group.filters.cityFilter ?? null);
-    setEditCategoryFilter(group.filters.categoryFilter ?? null);
+    setEditName(group.name || '');
     setEditRadiusAddress(group.filters.radiusAddress || '');
     setEditRadiusLat(group.filters.radiusLat ?? null);
     setEditRadiusLng(group.filters.radiusLng ?? null);
     setEditRadiusMiles(group.filters.radiusMiles ?? 10);
-    setEditSelectedSkills(group.filters.selectedSkills || []);
-    setEditSelectedCertifications(group.filters.selectedCertifications || []);
-    setIsEditing(false);
+    setSaveError(null);
+    setEditDialogOpen(true);
+  };
+
+  const handleCancelEdit = () => {
+    setEditDialogOpen(false);
     setSaveError(null);
   };
 
@@ -532,6 +526,24 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
         updatedAt: serverTimestamp(),
       });
       setGroup((g) => (g ? { ...g, memberIds: newMemberIds, memberStatusById } : null));
+
+      // Fast path: when the matched set hasn't changed AND we already have
+      // those rows hydrated from the initial load, skip the slow per-user
+      // re-fetch below. The list on screen is already correct, so spinning
+      // for another 10–30s of sequential `getDoc`s just to overwrite the
+      // same data is wasted work — and visually misleading. The auto-refresh
+      // on mount hits this path almost every time, which is exactly when
+      // users are most likely to notice the lingering spinner.
+      const previousMemberIdsSet = new Set(group.memberIds || []);
+      const memberIdsUnchanged =
+        newMemberIds.length === previousMemberIdsSet.size &&
+        newMemberIds.every((id) => previousMemberIdsSet.has(id));
+      const allRowsHydrated =
+        memberIdsUnchanged &&
+        membersData.length === newMemberIds.length &&
+        newMemberIds.every((id) => membersData.some((m) => m.id === id));
+      if (allRowsHydrated) return;
+
       const users: Array<{
         id: string;
         firstName?: string;
@@ -554,6 +566,11 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
         employeeOnboardStatus?: string;
         contractorOnboardStatus?: string;
         onboardingType?: string;
+        hasWorkerAiPrescreenInterview?: boolean;
+        interviewStatus?: string;
+        lastInterviewCompletedAt?: any;
+        recruiterOrderInterviewSmsLastSentAt?: any;
+        workHistoryJobTitles?: string[];
       }> = [];
       for (const uid of newMemberIds) {
         const userSnap = await getDoc(doc(db, 'users', uid));
@@ -583,6 +600,11 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
             employeeOnboardStatus: d?.employeeOnboardStatus,
             contractorOnboardStatus: d?.contractorOnboardStatus,
             onboardingType: d?.onboardingType,
+            hasWorkerAiPrescreenInterview: d?.hasWorkerAiPrescreenInterview === true,
+            interviewStatus: d?.interviewStatus,
+            lastInterviewCompletedAt: d?.lastInterviewCompletedAt,
+            recruiterOrderInterviewSmsLastSentAt: d?.recruiterOrderInterviewSmsLastSentAt,
+            workHistoryJobTitles: buildWorkHistoryJobTitles(d),
           });
         } else {
           users.push({ id: uid });
@@ -602,24 +624,146 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
     }
   };
 
-  // Selection handlers (must be before early return)
-  const selectedCount = selectAllResults ? membersData.length : selectedIds.size;
-  const allOnPageSelected = membersData.length > 0 && (selectAllResults || membersData.every((m) => selectedIds.has(m.id)));
-  const someOnPageSelected = !selectAllResults && membersData.some((m) => selectedIds.has(m.id));
-
-  const handleSelectAllOnPage = () => {
-    if (allOnPageSelected) {
-      const next = new Set(selectedIds);
-      membersData.forEach((m) => next.delete(m.id));
-      setSelectedIds(next);
-      setSelectAllResults(false);
-    } else {
-      const next = new Set(selectedIds);
-      membersData.forEach((m) => next.add(m.id));
-      setSelectedIds(next);
-    }
+  // Pipe the page's primary actions (search, sort, refresh, back) up into
+  // the `UsersLayout` tabs row so they sit on the same line as the tab
+  // pills, right-justified. Cancel/Save live inside the edit modal instead
+  // of in this row. We use a ref for the handler so the registered node
+  // only changes when a visible state primitive flips — otherwise this
+  // would loop back through `setOutletRightActions` every render.
+  const actionHandlersRef = useRef({
+    handleUpdateResults,
+  });
+  actionHandlersRef.current = {
+    handleUpdateResults,
   };
+  useEffect(() => {
+    if (!setOutletRightActions) return;
+    const memberOrderValue =
+      membersSortBy === 'hrxSignup' || membersSortBy === 'name'
+        ? `${membersSortBy}:${membersSortDirection}`
+        : '';
+    const node = (
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
+          flexShrink: 0,
+          flexWrap: 'nowrap',
+          justifyContent: 'flex-end',
+        }}
+      >
+        <UniversalSearchBar
+          value={membersSearch}
+          onChange={setMembersSearch}
+          onSearch={setMembersSearch}
+          placeholder="Search members..."
+          favoriteType="users"
+          showFavoritesOnly={membersShowFavoritesOnly}
+          onToggleFavorites={setMembersShowFavoritesOnly}
+        />
+        <FormControl size="small" sx={{ minWidth: 220 }}>
+          <InputLabel id="smart-group-member-order-label">Order members</InputLabel>
+          <Select
+            labelId="smart-group-member-order-label"
+            label="Order members"
+            value={memberOrderValue}
+            displayEmpty
+            renderValue={(v) => {
+              if (v === 'hrxSignup:desc') return 'HRX signup (newest first)';
+              if (v === 'hrxSignup:asc') return 'HRX signup (oldest first)';
+              if (v === 'name:asc') return 'Name (A–Z)';
+              if (v === 'name:desc') return 'Name (Z–A)';
+              return 'Column sort (see headers)';
+            }}
+            onChange={(e) => {
+              const raw = String(e.target.value);
+              const [k, d] = raw.split(':') as ['hrxSignup' | 'name', 'asc' | 'desc'];
+              if (k === 'hrxSignup' || k === 'name') {
+                setMembersSortBy(k);
+                setMembersSortDirection(d);
+                setMembersPage(0);
+              }
+            }}
+          >
+            <MenuItem value="hrxSignup:desc">HRX signup (newest first)</MenuItem>
+            <MenuItem value="hrxSignup:asc">HRX signup (oldest first)</MenuItem>
+            <MenuItem value="name:asc">Name (A–Z)</MenuItem>
+            <MenuItem value="name:desc">Name (Z–A)</MenuItem>
+          </Select>
+        </FormControl>
+        <Tooltip title={updating ? 'Updating…' : 'Update results'}>
+          <span>
+            <IconButton
+              onClick={() => actionHandlersRef.current.handleUpdateResults()}
+              disabled={updating}
+              aria-label="Update results"
+              sx={{
+                width: 32,
+                height: 32,
+                border: '1px solid',
+                borderColor: 'rgba(0, 87, 184, 0.5)',
+                color: '#0057B8',
+                '&:hover': {
+                  borderColor: '#0057B8',
+                  bgcolor: 'rgba(0, 87, 184, 0.04)',
+                },
+                '&.Mui-disabled': {
+                  borderColor: 'rgba(0, 87, 184, 0.2)',
+                  color: 'rgba(0, 87, 184, 0.3)',
+                },
+              }}
+            >
+              {/* Spin the icon in place while updating instead of swapping
+                  to a CircularProgress — keeps the button glyph consistent
+                  and signals "the same action is running". */}
+              <RefreshIcon
+                sx={{
+                  fontSize: 18,
+                  animation: updating ? 'smartGroupRefreshSpin 0.9s linear infinite' : 'none',
+                  '@keyframes smartGroupRefreshSpin': {
+                    from: { transform: 'rotate(0deg)' },
+                    to: { transform: 'rotate(360deg)' },
+                  },
+                }}
+              />
+            </IconButton>
+          </span>
+        </Tooltip>
+        <UniversalBackButton to="/users/my-smart-groups" />
+      </Box>
+    );
+    setOutletRightActions(node);
+    return () => setOutletRightActions(null);
+  }, [
+    setOutletRightActions,
+    updating,
+    membersSearch,
+    membersShowFavoritesOnly,
+    membersSortBy,
+    membersSortDirection,
+  ]);
 
+  // Auto-refresh the member list once the saved group has loaded. Keyed on
+  // `groupId` (not `group`) so re-fetching after `handleUpdateResults` finishes
+  // — which calls `setGroup(...)` — doesn't retrigger the auto-refresh and
+  // loop. We intentionally read `handleUpdateResults` through the ref so this
+  // effect's dep array stays minimal and the auto-refresh only fires on first
+  // mount per group.
+  const autoRefreshedGroupIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!groupId || !group) return;
+    if (autoRefreshedGroupIdRef.current === groupId) return;
+    autoRefreshedGroupIdRef.current = groupId;
+    // Fire-and-forget — `handleUpdateResults` flips the `updating` flag, which
+    // drives the spinning RefreshIcon up in the tab row.
+    void actionHandlersRef.current.handleUpdateResults();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupId, group]);
+
+  // Selection handlers (must be before early return). Page-aware checkbox
+  // logic now lives in `handleSelectAllOnPagePaginated` below — this lower-
+  // level row toggle is wrapped by `handleSelectRowSingle` for the table.
   const handleSelectRow = (userId: string, checked: boolean) => {
     if (selectAllResults) {
       if (checked) return;
@@ -657,6 +801,180 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
     return { recipients, recipientUserIds };
   }, [selectAllResults, selectedIds, membersData]);
 
+  // Helpers for sorting (mirror UserGroupDetails so sort behavior matches).
+  const memberIdsForLookup = useMemo(() => membersData.map((m) => m.id), [membersData]);
+  const { scoresByUserId: categoryScoresByUserId } = useCategoryScoresCurrentMap(memberIdsForLookup);
+  const {
+    itemsByUserId: entityEmploymentChipsByUser,
+    employmentBreakdownByUserId,
+  } = useRecruiterUsersEntityEmploymentChips(tenantId ?? '', memberIdsForLookup);
+
+  // Apply favorites + search filter before sort. Mirrors `UserGroupDetails`
+  // (`filteredMembers` there) so the two detail pages stay in sync.
+  const filteredMembers = useMemo(() => {
+    let list = membersData;
+    if (membersShowFavoritesOnly) {
+      list = list.filter((u) => isFavorite(u.id));
+    }
+    const q = membersSearch.trim();
+    if (q) {
+      list = list.filter((u) => userMatchesSearchTerm(u as any, q));
+    }
+    return list;
+  }, [membersData, membersShowFavoritesOnly, membersSearch, isFavorite]);
+
+  const sortedMembers = useMemo(() => {
+    const toMillis = (input: any): number => {
+      if (!input) return 0;
+      if (input instanceof Date) return input.getTime();
+      if (typeof input === 'number') return input;
+      if (typeof input === 'string') {
+        const parsed = Date.parse(input);
+        return Number.isNaN(parsed) ? 0 : parsed;
+      }
+      if (typeof input === 'object') {
+        if (typeof input.toDate === 'function') return input.toDate().getTime();
+        if (typeof input._seconds === 'number') return input._seconds * 1000;
+      }
+      return 0;
+    };
+    const getNameKey = (u: any): string => {
+      const first = String(u?.firstName || '').trim().toLowerCase();
+      const last = String(u?.lastName || '').trim().toLowerCase();
+      return `${last}|${first}|${String(u?.id || '')}`;
+    };
+    const getScoreNumber = (u: any): number => {
+      // Reuse the master display logic so the Score column sort matches what
+      // the cell renders. We don't need the full display; just the numeric.
+      const cat = (categoryScoresByUserId as Record<string, any>)[u.id];
+      const masterDisp = getRecruiterMasterDisplayForAdminUi({
+        recruiterMasterScoreRaw: u.recruiterMasterScore,
+        recruiterScoreSnapshotRaw: u.recruiterScoreSnapshot,
+        userData: {
+          scoreSummary: u.scoreSummary,
+          riskProfile: u.riskProfile,
+          ...(cat ? { categoryScoresCurrent: cat } : {}),
+        },
+        latestPrescreenInterviewAi: null,
+      });
+      return masterDisp.score100 != null && !Number.isNaN(masterDisp.score100)
+        ? masterDisp.score100
+        : -1;
+    };
+    const getGroupStatusKey = (u: any): number => {
+      const raw = group?.memberStatusById?.[u.id];
+      if (raw === 'preferred') return 0;
+      if (raw === 'not_preferred') return 2;
+      return 1;
+    };
+    const copy = [...filteredMembers];
+    copy.sort((a: any, b: any) => {
+      if (membersSortBy === 'workReadiness') {
+        return compareWorkReadinessForEntity(
+          entityEmploymentChipsByUser?.get(a.id) as any,
+          entityEmploymentChipsByUser?.get(b.id) as any,
+          'select',
+          membersSortDirection,
+        );
+      }
+      let cmp = 0;
+      switch (membersSortBy) {
+        case 'hrxSignup':
+          cmp = toMillis(a?.createdAt) - toMillis(b?.createdAt);
+          break;
+        case 'name':
+          cmp = getNameKey(a).localeCompare(getNameKey(b));
+          break;
+        case 'score':
+          cmp = getScoreNumber(a) - getScoreNumber(b);
+          break;
+        case 'groupStatus':
+          cmp = getGroupStatusKey(a) - getGroupStatusKey(b);
+          break;
+        case 'lastLogin':
+          cmp = toMillis((a as any)?.lastLoginAt) - toMillis((b as any)?.lastLoginAt);
+          break;
+        default:
+          cmp = 0;
+      }
+      return membersSortDirection === 'asc' ? cmp : -cmp;
+    });
+    return copy;
+    // The `group` reference is intentionally elided — sort only needs to react
+    // to membership/score changes; status updates are flushed through the chip
+    // optimistic update path.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredMembers, membersSortBy, membersSortDirection, entityEmploymentChipsByUser, categoryScoresByUserId]);
+
+  const paginatedMembers = useMemo(
+    () => sortedMembers.slice(membersPage * membersRowsPerPage, membersPage * membersRowsPerPage + membersRowsPerPage),
+    [sortedMembers, membersPage, membersRowsPerPage],
+  );
+  const paginatedMemberIds = useMemo(() => paginatedMembers.map((m) => m.id), [paginatedMembers]);
+
+  const { latestNoteByUserId, latestInterviewByUserId } = useRecruiterUsersRowExtras(paginatedMemberIds);
+  const { latestByUserId: latestBackgroundByUserId } = useRecruiterUsersLatestBackgroundChecks(
+    tenantId ?? '',
+    paginatedMemberIds,
+  );
+
+  // Smart groups don't surface "in user groups" lines on this view, so we
+  // pass an empty Map. Wiring the tenant userGroups subscription here is a
+  // future enhancement if/when product wants the parity column.
+  const groupTitleLookup = useMemo(() => new Map<string, string>(), []);
+
+  // Reset pagination whenever the underlying member list changes so the user
+  // doesn't end up on an empty page after an "Update results" run.
+  useEffect(() => {
+    setMembersPage(0);
+  }, [membersData.length]);
+
+  const getMemberPreferenceStatus = useCallback(
+    (u: any): GroupMemberPreferenceStatus => {
+      const raw = group?.memberStatusById?.[u.id];
+      if (raw === 'preferred' || raw === 'not_preferred') return raw;
+      return 'member';
+    },
+    [group?.memberStatusById],
+  );
+
+  const handleMembersSort = useCallback(
+    (key: GroupMembersSortKey) => {
+      if (membersSortBy === key) {
+        setMembersSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+        setMembersPage(0);
+        return;
+      }
+      setMembersSortBy(key);
+      setMembersSortDirection(key === 'name' ? 'asc' : 'desc');
+      setMembersPage(0);
+    },
+    [membersSortBy],
+  );
+
+  const handleSelectRowSingle = useCallback(
+    (id: string) => {
+      handleSelectRow(id, !(selectAllResults || selectedIds.has(id)));
+    },
+    // handleSelectRow is defined above and stable enough for this purpose.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedIds, selectAllResults],
+  );
+
+  const handleSelectAllOnPagePaginated = useCallback(() => {
+    const allOnPage = paginatedMembers.length > 0 && paginatedMembers.every((m) => selectAllResults || selectedIds.has(m.id));
+    if (allOnPage) {
+      const next = new Set(selectedIds);
+      paginatedMembers.forEach((m) => next.delete(m.id));
+      setSelectedIds(next);
+      setSelectAllResults(false);
+    } else {
+      const next = new Set(selectedIds);
+      paginatedMembers.forEach((m) => next.add(m.id));
+      setSelectedIds(next);
+    }
+  }, [paginatedMembers, selectedIds, selectAllResults]);
+
   if (loading || !group) {
     return (
       <Box sx={{ pt: 2, px: 2, pb: 2 }}>
@@ -674,56 +992,11 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
     );
   }
 
-  const getStatus = (id: string): MemberStatus =>
-    group.memberStatusById[id] === 'preferred' || group.memberStatusById[id] === 'not_preferred'
-      ? group.memberStatusById[id]
-      : 'member';
-
-  const getGroupStatusChipProps = (status: MemberStatus) => {
-    if (status === 'preferred') return { label: 'Preferred' as const, sx: { bgcolor: '#0057B8', color: '#FFFFFF', fontWeight: 700 } };
-    if (status === 'not_preferred') return { label: 'Not Preferred' as const, sx: { bgcolor: '#D14343', color: '#FFFFFF', fontWeight: 700 } };
-    return { label: 'Member' as const, sx: { fontWeight: 700 } };
-  };
-
-  const formatDate = (timestamp: any) => {
-    if (!timestamp) return 'N/A';
-    try {
-      const date = timestamp?.toDate ? timestamp.toDate() : timestamp instanceof Date ? timestamp : new Date(timestamp);
-      return isNaN(date.getTime()) ? 'N/A' : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    } catch {
-      return 'N/A';
-    }
-  };
-
-  const getWorkStatusDisplay = (m: (typeof membersData)[0]) =>
-    getWorkStatusColumnDisplay(m, { hasActiveAssignment: activeAssignmentUserIds.has(m.id) });
-
-  const renderAiScore = (m: (typeof membersData)[0]) => {
-    const md = getRecruiterMasterDisplayForAdminUi({
-      recruiterMasterScoreRaw: m.recruiterMasterScore,
-      recruiterScoreSnapshotRaw: m.recruiterScoreSnapshot,
-      userData: {
-        scoreSummary: m.scoreSummary,
-        riskProfile: m.riskProfile,
-      },
-      latestPrescreenInterviewAi: null,
-    });
-    const score = md.score100 != null && !Number.isNaN(md.score100) ? md.score100 : null;
-    if (score === undefined || score === null || Number.isNaN(score)) {
-      return <Typography variant="body2" color="text.secondary">—</Typography>;
-    }
-    const color: 'default' | 'success' | 'warning' | 'error' = score >= 80 ? 'success' : score >= 60 ? 'warning' : 'default';
-    return (
-      <Chip
-        icon={<InsightsIcon sx={{ fontSize: 16 }} />}
-        label={`${Math.round(score)}`}
-        color={color}
-        size="small"
-        variant={color === 'default' ? 'outlined' : 'filled'}
-        sx={{ minWidth: 96, justifyContent: 'flex-start' }}
-      />
-    );
-  };
+  // Per-row Group Status / Score / WorkStatus / formatDate rendering used to
+  // live here. They've migrated into <GroupMembersTable /> and the bespoke
+  // sort logic above (`renderAiScore`/`getWorkStatusDisplay` are no longer
+  // referenced from this file). `activeAssignmentUserIds` is still consumed
+  // by the table via its own hooks.
 
   const formatKeyToDisplayName = (key: string): string => {
     if (!key) return '';
@@ -788,114 +1061,52 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
     return parts.length > 0 ? parts.join(' • ') : 'No filters applied';
   };
 
-  const clearEditMetro = () => {
-    setEditMetroFilter(null);
-    setEditAreaFilter(null);
-    setEditCityFilter(null);
-  };
-  const clearEditArea = () => {
-    setEditAreaFilter(null);
-    setEditCityFilter(null);
-  };
-  const clearEditCity = () => setEditCityFilter(null);
-
   return (
-    <Box sx={{ pt: 2, px: 2, pb: 2 }}>
+    <Box sx={{ pt: '4px', px: 2, pb: 2 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, flexWrap: 'wrap' }}>
-        <Button
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/users/my-smart-groups')}
-          sx={{ textTransform: 'none' }}
-        >
-          Back
-        </Button>
         <Box sx={{ flex: 1 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Typography variant="h6">{group.name}</Typography>
-            {!isEditing && (
-              <>
-                <IconButton
-                  size="small"
-                  onClick={() => setIsEditing(true)}
-                  sx={{ ml: 0.5 }}
-                  title="Edit filters"
-                >
-                  <EditIcon fontSize="small" />
-                </IconButton>
-                {copiedFromGroupId ? (
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    color="secondary"
-                    onClick={() => setUnsaveDialogOpen(true)}
-                    sx={{ textTransform: 'none', ml: 0.5 }}
-                  >
-                    Unsave
-                  </Button>
-                ) : (
-                  <IconButton
-                    size="small"
-                    onClick={() => setDeleteDialogOpen(true)}
-                    color="error"
-                    title="Delete group"
-                  >
-                    <DeleteIcon fontSize="small" />
-                  </IconButton>
-                )}
-              </>
+            <IconButton
+              size="small"
+              onClick={openEditDialog}
+              sx={{ ml: 0.5, p: 0.25 }}
+              title="Edit smart group"
+            >
+              <EditIcon sx={{ fontSize: 14 }} />
+            </IconButton>
+            {/* The standalone delete trash icon was removed — destructive
+                delete now lives inside the edit modal (with confirmation),
+                so the header stays free of duplicate actions. The "Unsave"
+                button is still surfaced here for groups copied from another
+                user's smart group, since unsave is a distinct action. */}
+            {copiedFromGroupId && (
+              <Button
+                size="small"
+                variant="outlined"
+                color="secondary"
+                onClick={() => setUnsaveDialogOpen(true)}
+                sx={{ textTransform: 'none', ml: 0.5 }}
+              >
+                Unsave
+              </Button>
             )}
           </Box>
-          {!isEditing && (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              {formatFiltersSummary(group.filters)}
-            </Typography>
-          )}
-          {!isEditing && (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-              {copiedFromGroupId
-                ? (originalCreatorName != null ? `Original creator: ${originalCreatorName}` : 'Original creator: …')
-                : createdByUid === user?.uid
-                  ? 'Created by: me'
-                  : creatorDisplayName != null
-                    ? `Created by: ${creatorDisplayName}`
-                    : createdByUid
-                      ? 'Created by: …'
-                      : null}
-            </Typography>
-          )}
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+            {formatFiltersSummary(group.filters)}
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+            {copiedFromGroupId
+              ? (originalCreatorName != null ? `Original creator: ${originalCreatorName}` : 'Original creator: …')
+              : createdByUid === user?.uid
+                ? 'Created by: me'
+                : creatorDisplayName != null
+                  ? `Created by: ${creatorDisplayName}`
+                  : createdByUid
+                    ? 'Created by: …'
+                    : null}
+          </Typography>
         </Box>
-        {isEditing ? (
-          <Box sx={{ display: 'flex', gap: 1, ml: 'auto' }}>
-            <Button
-              variant="outlined"
-              startIcon={<CancelIcon />}
-              onClick={handleCancelEdit}
-              disabled={saving}
-              sx={{ textTransform: 'none' }}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="contained"
-              startIcon={<SaveIcon />}
-              onClick={handleSaveFilters}
-              disabled={saving}
-              sx={{ textTransform: 'none' }}
-            >
-              {saving ? 'Saving…' : 'Save'}
-            </Button>
-          </Box>
-        ) : (
-          <Button
-            variant="contained"
-            startIcon={<RefreshIcon />}
-            onClick={handleUpdateResults}
-            disabled={updating}
-            sx={{ textTransform: 'none', ml: 'auto' }}
-          >
-            {updating ? 'Updating…' : 'Update results'}
-          </Button>
-        )}
       </Box>
       
       {saveError && (
@@ -904,573 +1115,175 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
         </Alert>
       )}
       
-      {isEditing && (
-        <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-          <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
-            Edit Filters
-          </Typography>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <ToggleButtonGroup
-              value={editFilterMode}
-              exclusive
-              onChange={(_, v) => v && setEditFilterMode(v)}
-              size="small"
-            >
-              <ToggleButton value="application">
-                <WorkIcon sx={{ mr: 0.5 }} /> By application location
-              </ToggleButton>
-              <ToggleButton value="residence">
-                <LocationOnIcon sx={{ mr: 0.5 }} /> By where users live
-              </ToggleButton>
-            </ToggleButtonGroup>
-            
-            {editFilterMode === 'residence' && (
-              <ToggleButtonGroup
-                value={editResidenceSubMode}
-                exclusive
-                onChange={(_, v) => v && setEditResidenceSubMode(v)}
-                size="small"
-              >
-                <ToggleButton value="area">In an area</ToggleButton>
-                <ToggleButton value="radius">Within radius of address</ToggleButton>
-              </ToggleButtonGroup>
-            )}
-            
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center' }}>
-              {editFilterMode === 'application' && (
-                <>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <FormControl size="small" sx={{ minWidth: 180 }}>
-                      <InputLabel>Metro</InputLabel>
-                      <Select
-                        value={editMetroFilter ?? ''}
-                        label="Metro"
-                        onChange={(e) => {
-                          const v = e.target.value as string;
-                          setEditMetroFilter(v || null);
-                          setEditAreaFilter(null);
-                          setEditCityFilter(null);
-                        }}
-                      >
-                        <MenuItem value="">All metros</MenuItem>
-                        {metroOptions.map((m) => (
-                          <MenuItem key={m} value={m}>
-                            {getMetroDisplayLabel(m)}
-                          </MenuItem>
-                        ))}
-                        <MenuItem value={OTHER_METRO_VALUE}>Other (non-metro)</MenuItem>
-                      </Select>
-                    </FormControl>
-                    {editMetroFilter && (
-                      <IconButton size="small" onClick={clearEditMetro} sx={{ p: 0.5 }}>
-                        <ClearIcon fontSize="small" />
-                      </IconButton>
-                    )}
-                  </Box>
-                  
-                  {editMetroFilter && editMetroFilter !== OTHER_METRO_VALUE && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <FormControl size="small" sx={{ minWidth: 160 }}>
-                        <InputLabel>Area</InputLabel>
-                        <Select
-                          value={editAreaFilter ?? ''}
-                          label="Area"
-                          displayEmpty
-                          renderValue={(v) => (v === '' ? 'All Areas' : formatGeoLabel(v))}
-                          onChange={(e) => {
-                            const v = e.target.value as string;
-                            setEditAreaFilter(v || null);
-                            setEditCityFilter(null);
-                          }}
-                        >
-                          <MenuItem value="">All Areas</MenuItem>
-                          {areaOptions.map((a) => (
-                            <MenuItem key={a} value={a}>
-                              {formatGeoLabel(a)}
-                            </MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
-                      {editAreaFilter && (
-                        <IconButton size="small" onClick={clearEditArea} sx={{ p: 0.5 }}>
-                          <ClearIcon fontSize="small" />
-                        </IconButton>
-                      )}
-                    </Box>
-                  )}
-                  
-                  {editAreaFilter && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <FormControl size="small" sx={{ minWidth: 160 }}>
-                        <InputLabel>City</InputLabel>
-                        <Select
-                          value={editCityFilter ?? ''}
-                          label="City"
-                          displayEmpty
-                          renderValue={(v) => (v === '' ? 'All Cities' : formatGeoLabel(v))}
-                          onChange={(e) => setEditCityFilter((e.target.value as string) || null)}
-                        >
-                          <MenuItem value="">All Cities</MenuItem>
-                          {cityOptions.map((c) => (
-                            <MenuItem key={c} value={c}>
-                              {formatGeoLabel(c)}
-                            </MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
-                      {editCityFilter && (
-                        <IconButton size="small" onClick={clearEditCity} sx={{ p: 0.5 }}>
-                          <ClearIcon fontSize="small" />
-                        </IconButton>
-                      )}
-                    </Box>
-                  )}
-                  
-                  <FormControl size="small" sx={{ minWidth: 160 }}>
-                    <InputLabel>Category</InputLabel>
-                    <Select
-                      value={editCategoryFilter ?? ''}
-                      label="Category"
-                      displayEmpty
-                      renderValue={(v) => (v === '' ? 'All Categories' : formatKeyToDisplayName(v))}
-                      onChange={(e) => setEditCategoryFilter((e.target.value as string) || null)}
-                    >
-                      <MenuItem value="">All Categories</MenuItem>
-                      <MenuItem value="industrial">Industrial</MenuItem>
-                      <MenuItem value="hospitality">Hospitality</MenuItem>
-                      <MenuItem value="janitorial">Janitorial</MenuItem>
-                      <MenuItem value="other">Other</MenuItem>
-                    </Select>
-                  </FormControl>
-                </>
-              )}
-              
-              {editFilterMode === 'residence' && editResidenceSubMode === 'area' && (
-                <>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <FormControl size="small" sx={{ minWidth: 180 }}>
-                      <InputLabel>Metro</InputLabel>
-                      <Select
-                        value={editMetroFilter ?? ''}
-                        label="Metro"
-                        onChange={(e) => {
-                          const v = e.target.value as string;
-                          setEditMetroFilter(v || null);
-                          setEditAreaFilter(null);
-                          setEditCityFilter(null);
-                        }}
-                      >
-                        <MenuItem value="">All metros</MenuItem>
-                        {metroOptions.map((m) => (
-                          <MenuItem key={m} value={m}>
-                            {getMetroDisplayLabel(m)}
-                          </MenuItem>
-                        ))}
-                        <MenuItem value={OTHER_METRO_VALUE}>Other (non-metro)</MenuItem>
-                      </Select>
-                    </FormControl>
-                    {editMetroFilter && (
-                      <IconButton size="small" onClick={clearEditMetro} sx={{ p: 0.5 }}>
-                        <ClearIcon fontSize="small" />
-                      </IconButton>
-                    )}
-                  </Box>
-                  
-                  {editMetroFilter && editMetroFilter !== OTHER_METRO_VALUE && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <FormControl size="small" sx={{ minWidth: 160 }}>
-                        <InputLabel>Area</InputLabel>
-                        <Select
-                          value={editAreaFilter ?? ''}
-                          label="Area"
-                          displayEmpty
-                          renderValue={(v) => (v === '' ? 'All Areas' : formatGeoLabel(v))}
-                          onChange={(e) => {
-                            const v = e.target.value as string;
-                            setEditAreaFilter(v || null);
-                            setEditCityFilter(null);
-                          }}
-                        >
-                          <MenuItem value="">All Areas</MenuItem>
-                          {areaOptions.map((a) => (
-                            <MenuItem key={a} value={a}>
-                              {formatGeoLabel(a)}
-                            </MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
-                      {editAreaFilter && (
-                        <IconButton size="small" onClick={clearEditArea} sx={{ p: 0.5 }}>
-                          <ClearIcon fontSize="small" />
-                        </IconButton>
-                      )}
-                    </Box>
-                  )}
-                  
-                  {editAreaFilter && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <FormControl size="small" sx={{ minWidth: 160 }}>
-                        <InputLabel>City</InputLabel>
-                        <Select
-                          value={editCityFilter ?? ''}
-                          label="City"
-                          displayEmpty
-                          renderValue={(v) => (v === '' ? 'All Cities' : formatGeoLabel(v))}
-                          onChange={(e) => setEditCityFilter((e.target.value as string) || null)}
-                        >
-                          <MenuItem value="">All Cities</MenuItem>
-                          {cityOptions.map((c) => (
-                            <MenuItem key={c} value={c}>
-                              {formatGeoLabel(c)}
-                            </MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
-                      {editCityFilter && (
-                        <IconButton size="small" onClick={clearEditCity} sx={{ p: 0.5 }}>
-                          <ClearIcon fontSize="small" />
-                        </IconButton>
-                      )}
-                    </Box>
-                  )}
-                </>
-              )}
-              
-              {editFilterMode === 'residence' && editResidenceSubMode === 'radius' && (
-                <>
-                  <GooglePlacesAutocomplete
-                    onLoad={(autocomplete) => {
-                      radiusAutocompleteRef.current = autocomplete;
-                    }}
-                    onPlaceChanged={() => {
-                      const place = radiusAutocompleteRef.current?.getPlace();
-                      if (!place) return;
-                      const loc = place.geometry?.location;
-                      if (loc) {
-                        const lat = typeof loc.lat === 'function' ? loc.lat() : loc.lat;
-                        const lng = typeof loc.lng === 'function' ? loc.lng() : loc.lng;
-                        if (typeof lat === 'number' && typeof lng === 'number') {
-                          setEditRadiusAddress(place.formatted_address ?? '');
-                          setEditRadiusLat(lat);
-                          setEditRadiusLng(lng);
-                        }
-                      }
-                    }}
-                    options={{
-                      types: ['geocode'],
-                      fields: ['geometry', 'formatted_address'],
-                    }}
-                  >
-                    <TextField
-                      size="small"
-                      label="Address"
-                      placeholder="Search city, state or full address"
-                      value={editRadiusAddress}
-                      onChange={(e) => setEditRadiusAddress(e.target.value)}
-                      sx={{ minWidth: 280 }}
-                    />
-                  </GooglePlacesAutocomplete>
-                  <FormControl size="small" sx={{ minWidth: 100 }}>
-                    <InputLabel>Radius</InputLabel>
-                    <Select
-                      value={editRadiusMiles}
-                      label="Radius"
-                      onChange={(e) => setEditRadiusMiles(Number(e.target.value))}
-                    >
-                      {RADIUS_OPTIONS.map((m) => (
-                        <MenuItem key={m} value={m}>
-                          {m} mi
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </>
-              )}
-              
-              <Autocomplete
-                multiple
-                size="small"
-                options={skillsOptions}
-                value={editSelectedSkills}
-                onChange={(_, v) => setEditSelectedSkills(v)}
-                renderInput={(params) => (
-                  <TextField {...params} label="Skills" placeholder={editSelectedSkills.length ? '' : 'Any'} />
-                )}
-                sx={{ minWidth: 180 }}
-              />
-              <Autocomplete
-                multiple
-                size="small"
-                options={certOptions}
-                value={editSelectedCertifications}
-                onChange={(_, v) => setEditSelectedCertifications(v)}
-                renderInput={(params) => (
-                  <TextField {...params} label="Certifications" placeholder={editSelectedCertifications.length ? '' : 'Any'} />
-                )}
-                sx={{ minWidth: 180 }}
-              />
-            </Box>
-          </Box>
-        </Paper>
-      )}
       {updateError && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setUpdateError(null)}>
           {updateError}
         </Alert>
       )}
-      <Paper
-        variant="outlined"
-        elevation={0}
-        sx={{
-          border: '1px solid #EAEEF4',
-          borderRadius: 2,
-          overflow: 'hidden',
-          display: 'flex',
-          flexDirection: 'column',
+      <GroupMembersTable
+        tenantId={tenantId ?? ''}
+        members={sortedMembers}
+        paginatedMembers={paginatedMembers}
+        loading={false}
+        selectedIds={selectedIds}
+        selectAllResults={selectAllResults}
+        onSelectRow={handleSelectRowSingle}
+        onSelectAllOnPage={handleSelectAllOnPagePaginated}
+        onClearSelection={handleClearSelection}
+        onSelectAllResults={handleSelectAllResults}
+        onBulkEmail={() => {
+          setBulkDrawerChannel('email');
+          setBulkDrawerOpen(true);
         }}
+        onBulkSms={() => {
+          setBulkDrawerChannel('sms');
+          setBulkDrawerOpen(true);
+        }}
+        sortBy={membersSortBy}
+        sortDirection={membersSortDirection}
+        onSortChange={handleMembersSort}
+        page={membersPage}
+        rowsPerPage={membersRowsPerPage}
+        onPageChange={setMembersPage}
+        onRowsPerPageChange={(rows) => {
+          setMembersRowsPerPage(rows);
+          setMembersPage(0);
+        }}
+        rowDataLookups={{
+          entityEmploymentChipsByUser,
+          employmentBreakdownByUserId,
+          latestNoteByUserId,
+          latestInterviewByUserId,
+          latestBackgroundByUserId,
+          categoryScoresByUserId,
+          groupTitleLookup,
+        }}
+        isUserFavorite={isFavorite}
+        toggleUserFavorite={toggleFavorite}
+        getMemberPreferenceStatus={getMemberPreferenceStatus}
+        onChangeGroupStatus={handleStatusChange}
+        emptyStateText={'No members. Click "Update results" to re-run the saved search.'}
+      />
+
+      {/*
+        Edit modal — replaces the prior in-page edit panel. Intentionally
+        narrow: name + radius address + radius miles only. Saving collapses
+        whatever filter shape the group originally had into a clean
+        radius-mode search (see `handleSaveFilters`).
+      */}
+      <Dialog
+        open={editDialogOpen}
+        onClose={() => {
+          if (!saving) handleCancelEdit();
+        }}
+        fullWidth
+        maxWidth="sm"
       >
-        {selectedCount > 0 && (
-          <Box
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 2,
-              flexWrap: 'wrap',
-              px: 2,
-              py: 1.5,
-              backgroundColor: 'action.selected',
-              borderBottom: '1px solid',
-              borderColor: 'divider',
-            }}
+        <DialogTitle>Edit Smart Group</DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+            <TextField
+              label="Name"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              fullWidth
+              size="small"
+              autoFocus
+              disabled={saving}
+            />
+            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+              <GooglePlacesAutocomplete
+                onLoad={(autocomplete) => {
+                  radiusAutocompleteRef.current = autocomplete;
+                }}
+                onPlaceChanged={() => {
+                  const place = radiusAutocompleteRef.current?.getPlace();
+                  if (!place) return;
+                  const loc = place.geometry?.location;
+                  if (loc) {
+                    const lat = typeof loc.lat === 'function' ? loc.lat() : loc.lat;
+                    const lng = typeof loc.lng === 'function' ? loc.lng() : loc.lng;
+                    if (typeof lat === 'number' && typeof lng === 'number') {
+                      setEditRadiusAddress(place.formatted_address ?? '');
+                      setEditRadiusLat(lat);
+                      setEditRadiusLng(lng);
+                    }
+                  }
+                }}
+                options={{
+                  types: ['geocode'],
+                  fields: ['geometry', 'formatted_address'],
+                }}
+              >
+                <TextField
+                  label="Address"
+                  placeholder="Search city, state or full address"
+                  value={editRadiusAddress}
+                  onChange={(e) => {
+                    // Typing invalidates the previously-geocoded coords; the
+                    // user must pick a place from the dropdown for save to
+                    // be allowed (see `handleSaveFilters`).
+                    setEditRadiusAddress(e.target.value);
+                    setEditRadiusLat(null);
+                    setEditRadiusLng(null);
+                  }}
+                  size="small"
+                  disabled={saving}
+                  sx={{ flex: 1, minWidth: 240 }}
+                />
+              </GooglePlacesAutocomplete>
+              <FormControl size="small" sx={{ minWidth: 120 }} disabled={saving}>
+                <InputLabel id="edit-smart-group-radius-label">Radius</InputLabel>
+                <Select
+                  labelId="edit-smart-group-radius-label"
+                  label="Radius"
+                  value={editRadiusMiles}
+                  onChange={(e) => setEditRadiusMiles(Number(e.target.value))}
+                >
+                  {RADIUS_OPTIONS.map((m) => (
+                    <MenuItem key={m} value={m}>{m} mi</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Box>
+            {saveError && (
+              <Alert severity="error" onClose={() => setSaveError(null)}>
+                {saveError}
+              </Alert>
+            )}
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2, justifyContent: 'space-between' }}>
+          <Button
+            onClick={() => setDeleteDialogOpen(true)}
+            color="error"
+            disabled={saving || deleting}
+            startIcon={<DeleteIcon />}
+            sx={{ textTransform: 'none' }}
           >
-            <Typography variant="body2" sx={{ fontWeight: 500 }}>
-              {selectAllResults
-                ? `All ${membersData.length} result${membersData.length === 1 ? '' : 's'} selected`
-                : `${selectedCount} selected`}
-            </Typography>
-            <Button size="small" onClick={handleClearSelection} sx={{ textTransform: 'none' }}>
-              Clear selection
-            </Button>
+            Delete
+          </Button>
+          <Box sx={{ display: 'flex', gap: 1 }}>
             <Button
-              size="small"
-              variant="outlined"
-              startIcon={<EmailIcon />}
-              onClick={() => {
-                setBulkDrawerChannel('email');
-                setBulkDrawerOpen(true);
-              }}
+              onClick={handleCancelEdit}
+              disabled={saving}
               sx={{ textTransform: 'none' }}
             >
-              Bulk Email
+              Cancel
             </Button>
             <Button
-              size="small"
-              variant="outlined"
-              startIcon={<SmsIcon />}
-              onClick={() => {
-                setBulkDrawerChannel('sms');
-                setBulkDrawerOpen(true);
-              }}
+              onClick={handleSaveFilters}
+              variant="contained"
+              disabled={saving}
+              startIcon={<SaveIcon />}
               sx={{ textTransform: 'none' }}
             >
-              Bulk SMS
+              {saving ? 'Saving…' : 'Save'}
             </Button>
           </Box>
-        )}
-        <TableContainer sx={{ overflowX: 'auto', '&::-webkit-scrollbar': { width: 8, height: 8 } }}>
-          <Table size="small" stickyHeader sx={{ width: '100%' }}>
-            <TableHead sx={{ position: 'sticky', top: 0, zIndex: 10, backgroundColor: 'background.paper' }}>
-              <TableRow sx={{ backgroundColor: 'background.paper' }}>
-                <TableCell padding="checkbox" sx={{ width: 48, bgcolor: '#FFFFFF' }}>
-                  <Checkbox
-                    size="small"
-                    checked={allOnPageSelected}
-                    indeterminate={someOnPageSelected}
-                    onChange={handleSelectAllOnPage}
-                    aria-label="Select all on page"
-                  />
-                </TableCell>
-                <TableCell sx={{ width: 48, bgcolor: '#FFFFFF' }} />
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Person</TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Contact</TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Auth</TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Documented</TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Work Status</TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Score</TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Interview</TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Group Status</TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Skills</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {membersData.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={11} sx={{ py: 4, textAlign: 'center', color: 'text.secondary' }}>
-                    No members. Click &quot;Update results&quot; to re-run the saved search.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                membersData.map((m, idx) => {
-                  const status = getStatus(m.id);
-                  const chipProps = getGroupStatusChipProps(status);
-                  const ws = getWorkStatusDisplay(m);
-                  const skills = m.skills ?? [];
-                  return (
-                    <TableRow
-                      key={m.id}
-                      hover
-                      sx={{
-                        cursor: 'pointer',
-                        backgroundColor: idx % 2 === 0 ? 'background.paper' : 'action.hover',
-                        '&:hover': { backgroundColor: 'action.selected' },
-                      }}
-                      onClick={() => navigate(`/users/${m.id}`)}
-                    >
-                      <TableCell padding="checkbox" onClick={(e) => e.stopPropagation()} sx={{ width: 48 }}>
-                        <Checkbox
-                          size="small"
-                          checked={selectAllResults || selectedIds.has(m.id)}
-                          onChange={(_, checked) => handleSelectRow(m.id, checked)}
-                          onClick={(e) => e.stopPropagation()}
-                          aria-label={`Select ${[m.firstName, m.lastName].filter(Boolean).join(' ').trim() || m.id}`}
-                        />
-                      </TableCell>
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        <FavoriteButton
-                          itemId={m.id}
-                          favoriteType="users"
-                          isFavorite={isFavorite}
-                          toggleFavorite={toggleFavorite}
-                          size="small"
-                          tooltipText={{
-                            favorited: 'Remove from favorites',
-                            notFavorited: 'Add to favorites',
-                          }}
-                        />
-                      </TableCell>
-                      <TableCell sx={{ minWidth: 200 }} onClick={() => navigate(`/users/${m.id}`)}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                          <Avatar src={m.avatar} sx={{ width: TABLE_AVATAR_SIZE, height: TABLE_AVATAR_SIZE }}>
-                            {String(m.firstName || '').charAt(0)}
-                          </Avatar>
-                          <Box sx={{ minWidth: 0 }}>
-                            <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap>
-                              {[m.firstName, m.lastName].filter(Boolean).join(' ').trim() || m.id}
-                            </Typography>
-                            <Box
-                              sx={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                flexWrap: 'nowrap',
-                                gap: '6px',
-                                mt: 0.25,
-                              }}
-                            >
-                              <Typography
-                                variant="caption"
-                                color="text.secondary"
-                                component="span"
-                                sx={{ lineHeight: 1.2 }}
-                              >
-                                {m.createdAt ? formatDate(m.createdAt) : '—'}
-                              </Typography>
-                              <UserTableResumeIcon user={m as Record<string, unknown>} />
-                            </Box>
-                            <UserTableIndeedFlexBadge user={m as Record<string, unknown>} />
-                          </Box>
-                        </Box>
-                      </TableCell>
-                      <TableCell>
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                          {m.email && (
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                              <EmailIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-                              <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>{m.email}</Typography>
-                            </Box>
-                          )}
-                          {m.phone && (
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                              <PhoneIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-                              <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>{formatPhoneNumber(m.phone)}</Typography>
-                            </Box>
-                          )}
-                          {(m.city || m.state) && (
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                              <LocationOnIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-                              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.85rem' }}>{[m.city, m.state].filter(Boolean).join(', ')}</Typography>
-                            </Box>
-                          )}
-                          {!m.email && !m.phone && !m.city && !m.state && '—'}
-                        </Box>
-                      </TableCell>
-                      <TableCell>
-                        <WorkAuthorizedChip status={getWorkAuthorizedStatus(m)} />
-                      </TableCell>
-                      <TableCell>
-                        <EVerifyComfortChip status={getEVerifyComfortStatusFromUserData(m)} />
-                      </TableCell>
-                      <TableCell><Chip size="small" label={ws.label} color={ws.color} /></TableCell>
-                      <TableCell>{renderAiScore(m)}</TableCell>
-                      <TableCell>
-                        <InterviewCell
-                          userId={m.id}
-                          scoreSummary={m.scoreSummary}
-                          formatDate={formatDate}
-                        />
-                      </TableCell>
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        <Chip
-                          size="small"
-                          label={chipProps.label}
-                          variant={status === 'member' ? 'outlined' : 'filled'}
-                          onClick={(e) => { e.stopPropagation(); setStatusMenuAnchor((prev) => ({ ...prev, [m.id]: e.currentTarget })); }}
-                          sx={{ cursor: 'pointer', ...(chipProps.sx || {}) }}
-                        />
-                        <Menu
-                          anchorEl={statusMenuAnchor[m.id]}
-                          open={Boolean(statusMenuAnchor[m.id])}
-                          onClose={() => setStatusMenuAnchor((prev) => ({ ...prev, [m.id]: null }))}
-                          anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-                          transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-                        >
-                          <MenuItem onClick={() => { handleStatusChange(m.id, 'member'); setStatusMenuAnchor((prev) => ({ ...prev, [m.id]: null })); }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <CheckCircleIcon fontSize="small" />
-                              Member
-                            </Box>
-                          </MenuItem>
-                          <MenuItem onClick={() => { handleStatusChange(m.id, 'preferred'); setStatusMenuAnchor((prev) => ({ ...prev, [m.id]: null })); }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <CheckCircleIcon fontSize="small" />
-                              Preferred
-                            </Box>
-                          </MenuItem>
-                          <MenuItem onClick={() => { handleStatusChange(m.id, 'not_preferred'); setStatusMenuAnchor((prev) => ({ ...prev, [m.id]: null })); }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <BlockIcon fontSize="small" />
-                              Not Preferred
-                            </Box>
-                          </MenuItem>
-                        </Menu>
-                      </TableCell>
-                      <TableCell>
-                        {skills.length === 0 ? (
-                          <Typography variant="body2" color="text.secondary">—</Typography>
-                        ) : (
-                          <Tooltip title={skills.length <= 1 ? toChipLabel(skills[0]) : <Box component="span" sx={{ display: 'block', maxHeight: 320, overflowY: 'auto', py: 0.5 }}>{skills.map((s, i) => <Typography key={`${toChipLabel(s)}-${i}`} component="span" variant="body2" sx={{ display: 'block' }}>{toChipLabel(s)}</Typography>)}</Box>} placement="top" enterDelay={300}>
-                            <Typography variant="body2" noWrap component="span" sx={{ display: 'block' }}>{toChipLabel(skills[0])}{skills.length > 1 ? '…' : ''}</Typography>
-                          </Tooltip>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </Paper>
-      
+        </DialogActions>
+      </Dialog>
+
       <Dialog
         open={deleteDialogOpen}
         onClose={() => setDeleteDialogOpen(false)}
