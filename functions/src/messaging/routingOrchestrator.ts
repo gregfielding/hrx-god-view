@@ -655,11 +655,27 @@ async function deliverSMS(
         }
       }
     } else {
-      // Use provided message or default
-      messageContent = context.variables?.message || `You have a new message from ${messageTypeConfig.label}.`;
+      // Non-template, non-direct path (e.g. bulk_message coming through
+      // sendLegacyGroupMessage / sendLegacyShiftMessage / similar legacy
+      // helpers). Those callers stash the actual body under `_rawMessage`
+      // — match the direct-message branch above and prefer it. Falls
+      // back to the legacy `message` variable, then to a generic body.
+      // Without this, every legacy-helper SMS for a non-template
+      // message type would silently send "You have a new message from
+      // <Label>" instead of the real content.
+      const rawMessageVar = context.variables?._rawMessage;
+      const rawMessage =
+        typeof rawMessageVar === 'string' && rawMessageVar.trim() !== ''
+          ? rawMessageVar.trim()
+          : null;
+      messageContent =
+        rawMessage ||
+        context.variables?.message ||
+        `You have a new message from ${messageTypeConfig.label}.`;
 
-      // Add STOP footer if replies allowed
-      if (messageTypeConfig.allowReply) {
+      // Add STOP footer if replies allowed (skip when caller already
+      // included a STOP footer in `_rawMessage` to avoid double-stamping).
+      if (messageTypeConfig.allowReply && !/\bstop\b/i.test(messageContent)) {
         messageContent += ' Reply STOP to unsubscribe, HELP for help.';
       }
     }
