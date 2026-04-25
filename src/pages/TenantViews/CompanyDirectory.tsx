@@ -6,11 +6,12 @@ import {
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, doc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
 
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import WorkersTable from '../../componentBlocks/WorkersTable';
+import type { TenantRoleDefaultsDoc } from '../../shared/tenantRoleDefaults';
 
 interface CompanyDirectoryProps {
   search?: string;
@@ -32,6 +33,18 @@ const CompanyDirectory: React.FC<CompanyDirectoryProps> = ({
   const [divisions, setDivisions] = useState<any[]>([]);
   const [regions, setRegions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  // tenants/{tid}/settings/roleDefaults — drives the inline Roles chips
+  // on the Workforce table. The doc is optional; treat missing as `{}` so
+  // the chips render as "no one assigned" instead of crashing.
+  const [tenantRoleDefaults, setTenantRoleDefaults] = useState<TenantRoleDefaultsDoc>({});
+  // tenants/{tid}/settings/workforceDirectory — currently just an
+  // `allowedEmailDomains: string[]` whitelist used to hide external /
+  // partner / vendor users (e.g. legacy admins from acquired tools)
+  // from the company directory. When the array is empty or missing,
+  // the filter is a no-op so existing tenants don't suddenly empty
+  // out. Set via Firestore console for now; a settings UI is a
+  // follow-up.
+  const [allowedEmailDomains, setAllowedEmailDomains] = useState<string[]>([]);
 
   // Create breadcrumb path
   const breadcrumbPath = [
@@ -43,6 +56,60 @@ const CompanyDirectory: React.FC<CompanyDirectoryProps> = ({
     if (effectiveTenantId) {
       fetchData();
     }
+  }, [effectiveTenantId]);
+
+  // Live subscription to the four tenant-role-default arrays so the chips
+  // in the Workforce table update immediately when an admin flips a toggle
+  // (including from another tab). `onSnapshot` is one read + cheap deltas
+  // — fine to keep mounted for the life of this page.
+  useEffect(() => {
+    if (!effectiveTenantId) {
+      setTenantRoleDefaults({});
+      return;
+    }
+    const ref = doc(db, 'tenants', effectiveTenantId, 'settings', 'roleDefaults');
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        setTenantRoleDefaults(snap.exists() ? (snap.data() as TenantRoleDefaultsDoc) : {});
+      },
+      (err) => {
+        console.warn('roleDefaults subscription failed:', err);
+        setTenantRoleDefaults({});
+      },
+    );
+    return () => unsub();
+  }, [effectiveTenantId]);
+
+  // Live subscription to tenants/{tid}/settings/workforceDirectory.
+  // Currently we only consume `allowedEmailDomains: string[]`. Empty /
+  // missing means "show everyone" — the filter only kicks in when the
+  // tenant has explicitly configured a whitelist, so we don't break
+  // tenants that haven't opted in.
+  useEffect(() => {
+    if (!effectiveTenantId) {
+      setAllowedEmailDomains([]);
+      return;
+    }
+    const ref = doc(db, 'tenants', effectiveTenantId, 'settings', 'workforceDirectory');
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        const data = snap.exists() ? (snap.data() as Record<string, unknown>) : {};
+        const raw = data.allowedEmailDomains;
+        const list = Array.isArray(raw)
+          ? raw
+              .filter((v): v is string => typeof v === 'string' && v.trim() !== '')
+              .map((v) => v.trim().toLowerCase())
+          : [];
+        setAllowedEmailDomains(list);
+      },
+      (err) => {
+        console.warn('workforceDirectory subscription failed:', err);
+        setAllowedEmailDomains([]);
+      },
+    );
+    return () => unsub();
   }, [effectiveTenantId]);
 
   const fetchData = async () => {
@@ -159,11 +226,20 @@ const CompanyDirectory: React.FC<CompanyDirectoryProps> = ({
     }
   };
 
-  // Filter for company directory workers (security levels 5, 6, 7).
-  // Memoized so the per-contact scan only re-runs when the inputs actually
-  // change (previously this re-ran on every render because it was a plain
-  // function called inline in JSX).
+  // Filter for company directory workers. Two stages:
+  //   1) Security level 5, 6, or 7 (per-tenant or legacy field).
+  //   2) Optional email-domain whitelist from
+  //      `tenants/{tid}/settings/workforceDirectory.allowedEmailDomains`.
+  //      When empty/missing, the email filter is a no-op so existing
+  //      tenants don't suddenly empty out. Hides external/partner/vendor
+  //      users (e.g. legacy admins from acquired tools) without needing
+  //      to flag each one individually.
+  // Memoized so the per-contact scan only re-runs when the inputs
+  // actually change (previously this re-ran on every render because it
+  // was a plain function called inline in JSX).
   const companyDirectoryWorkers = useMemo(() => {
+    const domains = allowedEmailDomains;
+    const filterByDomain = domains.length > 0;
     return contacts.filter((c: any) => {
       let workerLevel: any = null;
 
@@ -176,13 +252,27 @@ const CompanyDirectory: React.FC<CompanyDirectoryProps> = ({
         workerLevel = c.securityLevel;
       }
 
-      // Check if worker has security level 5, 6, or 7
-      return (
-        workerLevel === 5 || workerLevel === 6 || workerLevel === 7 ||
-        workerLevel === '5' || workerLevel === '6' || workerLevel === '7'
-      );
+      const securityOk =
+        workerLevel === 5 ||
+        workerLevel === 6 ||
+        workerLevel === 7 ||
+        workerLevel === '5' ||
+        workerLevel === '6' ||
+        workerLevel === '7';
+      if (!securityOk) return false;
+
+      if (!filterByDomain) return true;
+
+      // Strip `+alias` from the local part before extracting domain so
+      // common alias-style addresses (`first+work@c1staffing.com`) match.
+      const email = typeof c.email === 'string' ? c.email.trim().toLowerCase() : '';
+      if (!email) return false;
+      const at = email.lastIndexOf('@');
+      if (at === -1 || at === email.length - 1) return false;
+      const domain = email.slice(at + 1);
+      return domains.includes(domain);
     });
-  }, [contacts, effectiveTenantId]);
+  }, [contacts, effectiveTenantId, allowedEmailDomains]);
 
   if (loading) {
     return (
@@ -212,6 +302,7 @@ const CompanyDirectory: React.FC<CompanyDirectoryProps> = ({
         search={search}
         onSearchChange={onSearchChange || (() => {})}
         effectiveTenantId={effectiveTenantId}
+        tenantRoleDefaults={tenantRoleDefaults}
       />
     </Box>
   );
