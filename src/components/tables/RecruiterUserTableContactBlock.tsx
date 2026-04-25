@@ -92,7 +92,26 @@ const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockPro
   };
 
   const hasResume = Boolean(pickResumeFromUserDoc(user as Record<string, unknown>));
-  const skillsArr = Array.isArray(user.skills) ? user.skills : [];
+  // Skills can land here in two shapes depending on which ingestion path
+  // produced the user doc:
+  //   - plain strings (canonical, what the resume parser writes today)
+  //   - `{ name: string, ... }` objects (legacy Onet-style docs and some
+  //     manually edited records)
+  // Coerce both into clean strings so the tooltip never tries to render an
+  // object as Typography children (which trips a React PropTypes warning).
+  const skillsArr: string[] = Array.isArray(user.skills)
+    ? (user.skills as unknown[])
+        .map((s): string => {
+          if (typeof s === 'string') return s;
+          if (s && typeof s === 'object') {
+            const obj = s as Record<string, unknown>;
+            const name = obj.name ?? obj.skill ?? obj.label ?? obj.title;
+            if (typeof name === 'string') return name;
+          }
+          return '';
+        })
+        .filter((s) => s.trim().length > 0)
+    : [];
   const hasSkills = skillsArr.length > 0;
   const hasNote = Boolean(latestNote?.content);
   const preferredLanguage: 'en' | 'es' = user.preferredLanguage === 'es' ? 'es' : 'en';
