@@ -1169,8 +1169,13 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             showExperience: !!jobOrderData.experienceRequired,
             educationLevels: jobOrderData.educationRequired ? (() => {
               // Map education value to full label
+              // 'high_school' is the canonical EducationLevel value (Phase B.1).
+              // 'highschool' (no underscore) is kept as a transition alias so
+              // existing job orders that haven't been re-saved still render
+              // the human label. Safe to drop after a backfill.
               const eduMap: Record<string, string> = {
                 'none': 'No Formal Education Required',
+                'high_school': 'High School Diploma or Equivalent',
                 'highschool': 'High School Diploma or Equivalent',
                 'associate': 'Associate Degree',
                 'bachelor': 'Bachelor\'s Degree',

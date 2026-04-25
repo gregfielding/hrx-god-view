@@ -31,7 +31,7 @@ const MAX_TASKS = 3;
 /** Education dropdown options (value matches experienceOptions / profile). */
 export const EDUCATION_OPTIONS: Array<{ value: string; labelKey: string }> = [
   { value: 'none', labelKey: 'jobReadiness.educationNone' },
-  { value: 'highschool', labelKey: 'jobReadiness.educationHighSchool' },
+  { value: 'high_school', labelKey: 'jobReadiness.educationHighSchool' },
   { value: 'some_college', labelKey: 'jobReadiness.educationSomeCollege' },
   { value: 'associate', labelKey: 'jobReadiness.educationAssociate' },
   { value: 'bachelor', labelKey: 'jobReadiness.educationBachelor' },
