@@ -34,6 +34,14 @@ export type SeedAssignmentReadinessRequirementSpec = {
   ctaTarget?: AssignmentReadinessItem['ctaTarget'];
   status?: AssignmentReadinessItemStatus;
   externalRef?: string;
+  /**
+   * **Phase C** — milliseconds since epoch when the underlying record expires.
+   * Stamped through to the seeded item. Only meaningful for `license_match`,
+   * `screening_package_match`, and (after B.5.1) `cert_match`. Daily reconciler
+   * uses this to flip `complete_pass` items to `expired`. See
+   * `shared/assignmentReadinessItemV1.ts` for the field's full doc.
+   */
+  expiresAtMs?: number;
 };
 
 export type SeedAssignmentReadinessItemsInput = {
@@ -131,6 +139,11 @@ function buildItem(
   if (spec.ctaTarget) item.ctaTarget = spec.ctaTarget;
   if (input.source) item.source = input.source;
   if (spec.externalRef) item.externalRef = spec.externalRef;
+  // Phase C: stamp expiration when caller supplied it. Reconciler queries on
+  // this; absent → item is not subject to time-based expiry sweeps.
+  if (typeof spec.expiresAtMs === 'number' && spec.expiresAtMs > 0) {
+    item.expiresAtMs = spec.expiresAtMs;
+  }
 
   return item;
 }

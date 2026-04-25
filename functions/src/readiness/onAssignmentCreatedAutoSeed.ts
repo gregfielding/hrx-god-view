@@ -40,6 +40,8 @@ import {
   loadScreeningEvalForJobOrder,
   loadWorkerForMatching,
 } from './jobRequirementMatcherHelpers';
+import { stampExpiryOnSpecs } from './assignmentMatchExpiryHelpers';
+import type { RequiredLicenseV1 } from '../shared/licenseRecord';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -114,6 +116,16 @@ export const onAssignmentCreatedAutoSeedReadiness = onDocumentCreated(
       screeningEval,
       todayISO,
       todayMs,
+    });
+
+    // Phase C: stamp expiresAtMs on license_match + screening_package_match
+    // specs so the daily reconciler can flip them to 'expired' once they age
+    // out. Other match types skip; cert_match folds in after Phase B.5.1.
+    stampExpiryOnSpecs({
+      specs: matchRequirements,
+      workerLicenses: worker.licenses,
+      requiredLicensesV2: pickRequiredLicensesForExpiry(joData.requiredLicensesV2),
+      screeningEval,
     });
     const requirements = [...baseRequirements, ...matchRequirements];
 
@@ -216,4 +228,21 @@ function pickString(...candidates: unknown[]): string {
     if (typeof v === 'string' && v.trim().length > 0) return v.trim();
   }
   return '';
+}
+
+/**
+ * Phase C — defensive reader for `JobOrder.requiredLicensesV2` used by the
+ * expiry-stamping helper. Same shape as the equivalent in
+ * `jobRequirementMatcherHelpers.ts` but inlined here to avoid importing from
+ * a file Cursor is concurrently editing for B.5.1.
+ */
+function pickRequiredLicensesForExpiry(v: unknown): RequiredLicenseV1[] {
+  if (!Array.isArray(v)) return [];
+  const out: RequiredLicenseV1[] = [];
+  for (const e of v) {
+    if (e && typeof e === 'object' && typeof (e as { licenseClass?: unknown }).licenseClass === 'string') {
+      out.push({ licenseClass: (e as { licenseClass: string }).licenseClass });
+    }
+  }
+  return out;
 }

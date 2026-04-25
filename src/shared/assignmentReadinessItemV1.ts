@@ -132,6 +132,23 @@ export type AssignmentReadinessItem = {
   externalRef?: string;
   completedAt?: string;
   blockedAt?: string;
+  /**
+   * **Phase C** — milliseconds since epoch when the underlying record this item
+   * derives from goes stale and needs re-verification. Only stamped for items
+   * whose source data carries an expiration:
+   *   - `license_match` — from `LicenseRecordV1.expirationDate`
+   *   - `screening_package_match` — from the BG check eval's `expiresAtMs`
+   *   - `cert_match` — from `CertificationRecordV1.expirationDate` (Phase B.5.1)
+   *
+   * Other types (skills, education, languages, shift_confirmation, etc.) leave
+   * this undefined — they don't have a meaningful expiration.
+   *
+   * Daily reconciler queries on this field to flip ripe items to `expired`.
+   * Convention: when set, `expiresAtMs > 0`. Reconciler index:
+   * `(expiresAtMs ASC, status ASC)` on the `assignmentReadinessItems`
+   * collection group.
+   */
+  expiresAtMs?: number;
 };
 
 /**
