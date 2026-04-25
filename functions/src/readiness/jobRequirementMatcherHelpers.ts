@@ -1,23 +1,24 @@
 /**
- * Phase B.5 helpers — load worker / background-check data and run the
- * `shared/jobRequirementMatchers/` over a JO's requirements at
- * assignment-creation time.
+ * Phase B.5 / B.5.1 helpers — load worker / background-check / cert-record
+ * data and run the `shared/jobRequirementMatchers/` over a JO's requirements
+ * at assignment-creation time.
  *
  * Returns a list of `SeedAssignmentReadinessRequirementSpec` entries, one per
  * applicable Phase B match item. The trigger concatenates these with the
  * existing flag-based requirements (background_check, drug_screen, etc.)
  * before invoking the seed runner.
  *
- * **Scope (Phase B.5):** five of six matchers are fully wired — Education,
- * Languages, Skills, Licenses, Screening Package. `cert_match` items are
- * seeded as N shells (one per required cert) with status='incomplete' because
- * the cert engine (`evaluateCertificationRequirement`) currently lives in
- * `src/utils/certifications/` and is not importable from `functions/`. Phase
- * B.5.1 promotes the engine to `shared/` and wires the matcher; until then
- * cert items behave like the pre-B.5 single `required_certification` shell —
- * status is `incomplete` and resolves via worker action / future trigger.
+ * **Scope (Phase B.5.1):** all six matchers are wired — Education, Languages,
+ * Skills, Licenses, Screening Package, and **Certifications**. The cert
+ * engine (`evaluateCertificationRequirement`) lives in `shared/certifications/`
+ * (promoted in B.5.1) and runs server-side here at seed time. Worker
+ * `certification_records` are pre-loaded from `users/{uid}/certification_records`
+ * and indexed by `catalogEntryId`; legacy JO requirement strings get mapped
+ * via the catalog manifest (`buildCertificationRequirementsFromJobOrder`),
+ * unmapped ones surface as `needs_review` so a CSA looks at them.
  *
  * @see docs/READINESS_EXECUTION_MATRIX.md §7 Phase B
+ * @see shared/certifications/evaluateCertificationRequirement.ts (engine)
  */
 
 import * as admin from 'firebase-admin';
@@ -39,6 +40,10 @@ import {
   matchScreeningPackage,
   type ScreeningEvalResult,
 } from '../shared/jobRequirementMatchers/matchScreeningPackage';
+import {
+  matchCertifications,
+  type CertificationEvalStatus,
+} from '../shared/jobRequirementMatchers/matchCertifications';
 import type { MatcherResult } from '../shared/jobRequirementMatchers/types';
 
 import {
@@ -51,6 +56,24 @@ import {
   type RequiredLanguageV1,
 } from '../shared/languageProficiency';
 import type { LicenseRecordV1, RequiredLicenseV1 } from '../shared/licenseRecord';
+
+// B.5.1 — cert engine + catalog-string mapper, both promoted to shared/
+// (functions reads via the functions/src/shared symlink).
+import { buildCertificationRequirementsFromJobOrder } from '../shared/certifications/buildCertificationRequirementsFromJobOrder';
+import {
+  evaluateCertificationRequirement,
+  type CertificationEvaluationResult,
+} from '../shared/certifications/evaluateCertificationRequirement';
+import type { CertificationCatalogManifestV1 } from '../shared/certifications/certificationCatalogManifest';
+import type { CertificationRecordV1 } from '../shared/certifications/certificationRecord';
+
+// Static-import the generated catalog manifest. It's a build-time-baked JSON
+// file (see scripts/buildCertificationCatalogManifest.ts) — no Firestore
+// loader needed; if we ever want runtime per-tenant overrides we'd add one
+// here. resolveJsonModule is enabled in functions/tsconfig.json so this
+// resolves at compile time.
+import catalogManifestJson from '../shared/data/certificationCatalogManifest.v1.json';
+const CERTIFICATION_CATALOG_MANIFEST = catalogManifestJson as CertificationCatalogManifestV1;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Worker projection — narrow what the matchers need from the user doc.
@@ -219,6 +242,62 @@ export async function loadScreeningEvalForJobOrder(
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// B.5.1 — worker certification records loader (cert engine input).
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Worker cert records indexed by `catalogEntryId` (with doc id retained for the engine). */
+export type WorkerCertRecordsIndex = Map<
+  string,
+  { record: CertificationRecordV1; certificationRecordId: string }
+>;
+
+/**
+ * Load all of a worker's canonical certification records and index by
+ * `catalogEntryId` for O(1) lookup at match time. Mirrors the canonical
+ * client-side reader (`getCanonicalCertificationRecordsWithIds`) but uses
+ * the admin SDK and orders newest-first so duplicates resolve to the most
+ * recent record per catalog id.
+ *
+ * Returns an empty index on read failure; matchers degrade to `missing`
+ * (mapped → `incomplete`) when the worker has no record for a given cert,
+ * which is the correct behaviour either way.
+ */
+export async function loadWorkerCertRecords(
+  db: admin.firestore.Firestore,
+  workerUid: string,
+): Promise<WorkerCertRecordsIndex> {
+  const index: WorkerCertRecordsIndex = new Map();
+
+  let snap: admin.firestore.QuerySnapshot;
+  try {
+    snap = await db
+      .collection('users')
+      .doc(workerUid)
+      .collection('certification_records')
+      .orderBy('updatedAt', 'desc')
+      .get();
+  } catch (err) {
+    logger.warn('loadWorkerCertRecords: query failed; treating worker as no-records', {
+      workerUid,
+      err: (err as Error).message,
+    });
+    return index;
+  }
+
+  for (const doc of snap.docs) {
+    const data = doc.data() as CertificationRecordV1 | undefined;
+    if (!data || typeof data.catalogEntryId !== 'string' || data.catalogEntryId.length === 0) {
+      continue;
+    }
+    if (!index.has(data.catalogEntryId)) {
+      index.set(data.catalogEntryId, { record: data, certificationRecordId: doc.id });
+    }
+  }
+
+  return index;
+}
+
 function bgRecordMillis(r: BgLike): number {
   const u = r.updatedAt as unknown as { toMillis?: () => number } | null | undefined;
   if (u && typeof u.toMillis === 'function') {
@@ -248,6 +327,15 @@ export interface BuildPhaseBMatchSpecsArgs {
   worker: WorkerForMatching;
   /** Pre-loaded screening eval result (from `loadScreeningEvalForJobOrder`). */
   screeningEval: ScreeningEvalResult | null;
+  /**
+   * Pre-loaded worker certification records, indexed by `catalogEntryId`
+   * (from `loadWorkerCertRecords`). Cert engine consumes one record per
+   * requirement; missing entries → engine returns `missing` → matcher
+   * emits `incomplete`. **Optional** for backward compat — when omitted,
+   * the engine sees `null` for every requirement (always `missing`), which
+   * matches the pre-B.5.1 behaviour of seeding bare cert shells.
+   */
+  workerCertRecords?: WorkerCertRecordsIndex;
   /** Today as ISO YYYY-MM-DD (for license expiration). */
   todayISO: string;
   /** Today as ms since epoch (for screening validity window). */
@@ -255,17 +343,22 @@ export interface BuildPhaseBMatchSpecsArgs {
 }
 
 /**
- * Run all five wired matchers against the JO + worker and return one spec per
+ * Run all six wired matchers against the JO + worker and return one spec per
  * applicable Phase B requirement. Skips items that come back `not_applicable`
  * (matcher's way of saying "this requirement doesn't apply").
  *
- * Emits N×cert_match shells with status='incomplete' for each entry in
- * `JobOrder.requiredCertifications` — engine wire-up is deferred to B.5.1.
+ * **B.5.1:** `cert_match` is now engine-driven. JO `requiredCertifications`
+ * strings flow through `buildCertificationRequirementsFromJobOrder` to map
+ * against the catalog manifest; each resolved requirement is evaluated by
+ * `evaluateCertificationRequirement` against the worker's records, and the
+ * adapter (`matchCertifications`) translates the engine status to a
+ * readiness status. Unmapped strings emit a `cert_match` with
+ * `status='needs_review'` so a CSA can fix the JO config.
  */
 export function buildPhaseBMatchSpecs(
   args: BuildPhaseBMatchSpecsArgs,
 ): SeedAssignmentReadinessRequirementSpec[] {
-  const { jo, worker, screeningEval, todayISO, todayMs } = args;
+  const { jo, worker, screeningEval, workerCertRecords, todayISO, todayMs } = args;
   const specs: SeedAssignmentReadinessRequirementSpec[] = [];
 
   // Education — single instance per JO.
@@ -326,16 +419,52 @@ export function buildPhaseBMatchSpecs(
     });
   }
 
-  // Cert shells — one per required cert. Status left 'incomplete' until B.5.1
-  // promotes the cert engine to functions-side.
+  // Certifications — engine-driven (B.5.1). Map JO freeform strings to
+  // catalog requirements, then evaluate each against the worker's records.
+  // Pass ONLY `requiredCertifications` (not `requiredLicenses`) — licenses
+  // are owned by `license_match` above; mixing would double-count.
   const requiredCerts = pickStringArray(jo.requiredCertifications);
-  for (const cert of requiredCerts) {
-    specs.push({
-      requirementType: 'cert_match',
-      customKey: slugify(cert),
-      requirementLabel: cert,
-      // status omitted → defaults to 'incomplete' in the seed runner.
-    });
+  if (requiredCerts.length > 0) {
+    const { requirements: certRequirements, unmappedStrings } =
+      buildCertificationRequirementsFromJobOrder({
+        jobOrder: { requiredCertifications: requiredCerts, requiredLicenses: null },
+        manifest: CERTIFICATION_CATALOG_MANIFEST,
+      });
+
+    for (const requirement of certRequirements) {
+      const indexed = workerCertRecords?.get(requirement.catalogEntryId) ?? null;
+      const evalResult: CertificationEvaluationResult = evaluateCertificationRequirement({
+        requirement,
+        record: indexed?.record ?? null,
+        certificationRecordId: indexed?.certificationRecordId,
+        context: 'assignment',
+        todayISO,
+      });
+
+      const matched = matchCertifications({
+        catalogEntryId: requirement.catalogEntryId,
+        evalStatus: evalResult.status as CertificationEvalStatus,
+        evalReason: evalResult.reason,
+      });
+
+      pushIfApplicable(specs, matched, {
+        requirementType: 'cert_match',
+        customKey: slugify(requirement.catalogEntryId),
+        requirementLabel: requirement.legacySourceLabel ?? requirement.catalogEntryId,
+      });
+    }
+
+    // Unmapped legacy strings → emit a `needs_review` cert_match so a CSA
+    // sees them and either fixes the JO or adds a catalog alias. Without
+    // this, unmapped requirements would silently disappear.
+    for (const raw of unmappedStrings) {
+      specs.push({
+        requirementType: 'cert_match',
+        customKey: slugify(raw),
+        requirementLabel: raw,
+        status: 'needs_review',
+      });
+    }
   }
 
   // Screening package — single instance per JO.

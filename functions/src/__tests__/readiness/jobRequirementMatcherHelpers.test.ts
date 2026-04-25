@@ -15,10 +15,12 @@ import { expect } from 'chai';
 import {
   buildPhaseBMatchSpecs,
   slugify,
+  type WorkerCertRecordsIndex,
   type WorkerForMatching,
 } from '../../readiness/jobRequirementMatcherHelpers';
 import type { ScreeningEvalResult } from '../../shared/jobRequirementMatchers/matchScreeningPackage';
 import type { LicenseRecordV1 } from '../../shared/licenseRecord';
+import type { CertificationRecordV1 } from '../../shared/certifications/certificationRecord';
 
 const TODAY_ISO = '2026-04-25';
 const TODAY_MS = Date.UTC(2026, 3, 25);
@@ -33,14 +35,34 @@ const blankWorker: WorkerForMatching = {
   licenses: null,
 };
 
-function buildSpecs(jo: Record<string, unknown>, worker: Partial<WorkerForMatching> = {}, screeningEval: ScreeningEvalResult | null = null) {
+function buildSpecs(
+  jo: Record<string, unknown>,
+  worker: Partial<WorkerForMatching> = {},
+  screeningEval: ScreeningEvalResult | null = null,
+  workerCertRecords?: WorkerCertRecordsIndex,
+) {
   return buildPhaseBMatchSpecs({
     jo,
     worker: { ...blankWorker, ...worker },
     screeningEval,
+    workerCertRecords,
     todayISO: TODAY_ISO,
     todayMs: TODAY_MS,
   });
+}
+
+/** Build a minimal `WorkerCertRecordsIndex` from a list of {catalogEntryId, record} pairs. */
+function certIndex(
+  entries: Array<{ catalogEntryId: string; record: CertificationRecordV1; recordId?: string }>,
+): WorkerCertRecordsIndex {
+  const map: WorkerCertRecordsIndex = new Map();
+  for (const e of entries) {
+    map.set(e.catalogEntryId, {
+      record: e.record,
+      certificationRecordId: e.recordId ?? `rec_${e.catalogEntryId}`,
+    });
+  }
+  return map;
 }
 
 describe('slugify', () => {
@@ -195,21 +217,142 @@ describe('buildPhaseBMatchSpecs — license_match', () => {
   });
 });
 
-describe('buildPhaseBMatchSpecs — cert_match (B.5 shells)', () => {
-  it('seeds N cert_match items, one per requiredCertifications entry, all incomplete', () => {
-    const specs = buildSpecs({ requiredCertifications: ['Forklift', 'OSHA-30'] });
+describe('buildPhaseBMatchSpecs — cert_match (B.5.1 engine-driven)', () => {
+  // 'OSHA-30' normalizes via the catalog manifest to catalogEntryId 'osha-30'.
+  // 'OSHA 10' → 'osha-10'. 'Forklift' (bare word) does NOT match the manifest's
+  // 'Forklift Certification (Class I–VII)' entry — it surfaces as unmapped, so
+  // we use it intentionally below to exercise the unmapped-string path.
+  const OSHA_30_ID = 'osha-30';
+  const OSHA_10_ID = 'osha-10';
+
+  /** Build a `CertificationRecordV1` with sensible defaults; override fields per test. */
+  function rec(overrides: Partial<CertificationRecordV1> & { catalogEntryId: string }): CertificationRecordV1 {
+    return {
+      schemaVersion: 1,
+      catalogEntryId: overrides.catalogEntryId,
+      expirationDate: '2030-01-01',
+      review: { status: 'approved' },
+      recordStatus: 'active',
+      source: 'worker_upload',
+      evidenceFileRefs: [{ storageUrl: 'https://example.com/file.pdf' }],
+      ...overrides,
+    };
+  }
+
+  it('emits one cert_match per resolved requirement; missing record → incomplete', () => {
+    const specs = buildSpecs({ requiredCertifications: ['OSHA-30', 'OSHA 10'] });
     const certSpecs = specs.filter((s) => s.requirementType === 'cert_match');
     expect(certSpecs).to.have.length(2);
     for (const s of certSpecs) {
-      // Status omitted → seed runner defaults to 'incomplete' (B.5.1 wires engine)
-      expect(s.status).to.be.undefined;
+      expect(s.status).to.equal('incomplete');
     }
-    expect(certSpecs[0].customKey).to.equal('Forklift');
-    expect(certSpecs[1].customKey).to.equal('OSHA_30');
+    // customKey is the slugified catalogEntryId (canonical) — not the raw JO string.
+    expect(certSpecs.map((s) => s.customKey).sort()).to.deep.equal(['osha_10', 'osha_30']);
+    // requirementLabel preserves the original JO string for display continuity.
+    expect(certSpecs.map((s) => s.requirementLabel).sort()).to.deep.equal(['OSHA 10', 'OSHA-30']);
+  });
+
+  it('approved active record → complete_pass', () => {
+    const specs = buildSpecs(
+      { requiredCertifications: ['OSHA-30'] },
+      {},
+      null,
+      certIndex([{ catalogEntryId: OSHA_30_ID, record: rec({ catalogEntryId: OSHA_30_ID }) }]),
+    );
+    const cert = specs.find((s) => s.requirementType === 'cert_match');
+    expect(cert!.status).to.equal('complete_pass');
+  });
+
+  it('expired record → complete_fail', () => {
+    const specs = buildSpecs(
+      { requiredCertifications: ['OSHA-30'] },
+      {},
+      null,
+      certIndex([
+        {
+          catalogEntryId: OSHA_30_ID,
+          record: rec({ catalogEntryId: OSHA_30_ID, expirationDate: '2020-01-01' }),
+        },
+      ]),
+    );
+    const cert = specs.find((s) => s.requirementType === 'cert_match');
+    expect(cert!.status).to.equal('complete_fail');
+  });
+
+  it('rejected record → complete_fail', () => {
+    const specs = buildSpecs(
+      { requiredCertifications: ['OSHA-30'] },
+      {},
+      null,
+      certIndex([
+        {
+          catalogEntryId: OSHA_30_ID,
+          record: rec({
+            catalogEntryId: OSHA_30_ID,
+            recordStatus: 'rejected',
+            review: { status: 'rejected', rejectionReason: 'unreadable' },
+          }),
+        },
+      ]),
+    );
+    const cert = specs.find((s) => s.requirementType === 'cert_match');
+    expect(cert!.status).to.equal('complete_fail');
+  });
+
+  it('pending review record → needs_review', () => {
+    const specs = buildSpecs(
+      { requiredCertifications: ['OSHA-30'] },
+      {},
+      null,
+      certIndex([
+        {
+          catalogEntryId: OSHA_30_ID,
+          record: rec({
+            catalogEntryId: OSHA_30_ID,
+            recordStatus: 'pending_review',
+            review: { status: 'submitted' },
+          }),
+        },
+      ]),
+    );
+    const cert = specs.find((s) => s.requirementType === 'cert_match');
+    expect(cert!.status).to.equal('needs_review');
+  });
+
+  it('unmapped JO string → emits a needs_review cert_match (so a CSA notices)', () => {
+    // 'Forklift' (bare) doesn't match the manifest entry's lookup key.
+    const specs = buildSpecs({ requiredCertifications: ['Forklift'] });
+    const cert = specs.find((s) => s.requirementType === 'cert_match');
+    expect(cert, 'unmapped string still produces a cert_match item').to.exist;
+    expect(cert!.status).to.equal('needs_review');
+    expect(cert!.requirementLabel).to.equal('Forklift');
+    expect(cert!.customKey).to.equal('Forklift');
+  });
+
+  it('mixed mapped + unmapped + missing → one item per JO string', () => {
+    const specs = buildSpecs(
+      { requiredCertifications: ['OSHA-30', 'OSHA 10', 'Forklift'] },
+      {},
+      null,
+      certIndex([{ catalogEntryId: OSHA_30_ID, record: rec({ catalogEntryId: OSHA_30_ID }) }]),
+    );
+    const certSpecs = specs.filter((s) => s.requirementType === 'cert_match');
+    expect(certSpecs).to.have.length(3);
+    const byKey = new Map(certSpecs.map((s) => [s.customKey, s.status]));
+    expect(byKey.get('osha_30')).to.equal('complete_pass');
+    expect(byKey.get('osha_10')).to.equal('incomplete');
+    expect(byKey.get('Forklift')).to.equal('needs_review');
   });
 
   it('skips empty / whitespace-only cert entries', () => {
-    const specs = buildSpecs({ requiredCertifications: ['', 'Forklift'] });
+    const specs = buildSpecs({ requiredCertifications: ['', '   ', 'OSHA-30'] });
+    expect(specs.filter((s) => s.requirementType === 'cert_match')).to.have.length(1);
+  });
+
+  it('deduplicates JO strings that resolve to the same catalogEntryId', () => {
+    // Both 'OSHA-30' and 'osha 30' normalize to the same catalog id; the
+    // engine's mapper deduplicates → one cert_match emitted.
+    const specs = buildSpecs({ requiredCertifications: ['OSHA-30', 'osha 30'] });
     expect(specs.filter((s) => s.requirementType === 'cert_match')).to.have.length(1);
   });
 });
@@ -245,12 +388,14 @@ describe('buildPhaseBMatchSpecs — screening_package_match', () => {
 
 describe('buildPhaseBMatchSpecs — composite JO', () => {
   it('emits the right cardinality across all requirement categories', () => {
+    // Cert path: 'OSHA-30' maps → catalog id 'osha-30'; 'OSHA 10' maps → 'osha-10'.
+    // Both resolve cleanly → 2 cert_match items, both 'incomplete' (no records supplied).
     const specs = buildSpecs(
       {
         educationLevelRequiredV2: 'bachelor',
         languagesRequiredV2: [{ language: 'Spanish', minLevel: 'fluent' }],
         skillsRequired: ['forklift', 'pallet jack'],
-        requiredCertifications: ['Forklift', 'OSHA-30'],
+        requiredCertifications: ['OSHA-30', 'OSHA 10'],
         requiredLicensesV2: [{ licenseClass: 'Forklift' }],
         screeningPackageId: 'CORT_PLUS',
       },

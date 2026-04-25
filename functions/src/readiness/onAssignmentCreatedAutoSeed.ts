@@ -38,6 +38,7 @@ import { runAssignmentReadinessSeed } from './seedAssignmentReadinessItemsRunner
 import {
   buildPhaseBMatchSpecs,
   loadScreeningEvalForJobOrder,
+  loadWorkerCertRecords,
   loadWorkerForMatching,
 } from './jobRequirementMatcherHelpers';
 import { stampExpiryOnSpecs } from './assignmentMatchExpiryHelpers';
@@ -99,7 +100,7 @@ export const onAssignmentCreatedAutoSeedReadiness = onDocumentCreated(
     const todayMs = Date.now();
     const todayISO = new Date(todayMs).toISOString().slice(0, 10);
 
-    const [worker, screeningEval] = await Promise.all([
+    const [worker, screeningEval, workerCertRecords] = await Promise.all([
       loadWorkerForMatching(db, workerUid),
       loadScreeningEvalForJobOrder(db, {
         tenantId,
@@ -107,6 +108,7 @@ export const onAssignmentCreatedAutoSeedReadiness = onDocumentCreated(
         requiredPackageId: typeof joData.screeningPackageId === 'string' ? joData.screeningPackageId : null,
         requiredPackageName: typeof joData.screeningPackageName === 'string' ? joData.screeningPackageName : null,
       }),
+      loadWorkerCertRecords(db, workerUid),
     ]);
 
     const baseRequirements = buildRequirementsForJobOrder(joData);
@@ -114,13 +116,15 @@ export const onAssignmentCreatedAutoSeedReadiness = onDocumentCreated(
       jo: joData,
       worker,
       screeningEval,
+      workerCertRecords,
       todayISO,
       todayMs,
     });
 
     // Phase C: stamp expiresAtMs on license_match + screening_package_match
     // specs so the daily reconciler can flip them to 'expired' once they age
-    // out. Other match types skip; cert_match folds in after Phase B.5.1.
+    // out. Other match types skip; cert_match expiry is handled inside the
+    // engine (B.5.1) which already considers expiration in its status output.
     stampExpiryOnSpecs({
       specs: matchRequirements,
       workerLicenses: worker.licenses,
