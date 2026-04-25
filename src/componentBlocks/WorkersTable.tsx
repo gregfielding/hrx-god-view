@@ -1,8 +1,20 @@
 import React from 'react';
-import { Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box, TableSortLabel, Chip, Avatar } from '@mui/material';
+import { Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box, TableSortLabel, Chip, Avatar, Stack, Tooltip, Snackbar, Alert, FormControl, Select, MenuItem, Checkbox, ListItemText, OutlinedInput } from '@mui/material';
+import type { SelectChangeEvent } from '@mui/material/Select';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import StandardTablePagination from '../components/StandardTablePagination';
 import PersonIcon from '@mui/icons-material/Person';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
+import { useAuth } from '../contexts/AuthContext';
+import {
+  TENANT_ROLE_DEFAULTS,
+  TENANT_ROLE_DEFAULT_LABELS,
+  TENANT_ROLE_DEFAULT_DESCRIPTIONS,
+  TENANT_ROLE_DEFAULT_FIELD,
+  tenantRoleDefaultMembershipForUser,
+  type TenantRoleDefault,
+  type TenantRoleDefaultsDoc,
+} from '../shared/tenantRoleDefaults';
 
 export interface WorkersTableProps {
   contacts: any[];
@@ -19,7 +31,28 @@ export interface WorkersTableProps {
   search: string;
   onSearchChange: (value: string) => void;
   effectiveTenantId?: string; // Add tenant ID for nested data access
+  /**
+   * Live `tenants/{tid}/settings/roleDefaults` doc. Drives the inline
+   * Roles chips. Optional — when undefined we render the chips as if
+   * no one is assigned (still useful so the column lines up).
+   */
+  tenantRoleDefaults?: TenantRoleDefaultsDoc;
 }
+
+// Compact chip color per role — matches the legend used elsewhere in the
+// admin UI so the chip means the same thing on every page.
+const chipColorFor = (r: TenantRoleDefault): 'info' | 'success' | 'default' =>
+  r === 'hrx_systems_operator' ? 'info'
+  : r === 'payroll_coordinator' ? 'success'
+  : 'default';
+
+// Short labels — full names blow out the column width with four chips.
+const chipShortLabel = (r: TenantRoleDefault): string => ({
+  hrx_systems_operator: 'HRX Op',
+  payroll_coordinator: 'Payroll',
+  csa_fallback: 'CSA fb',
+  scheduler_fallback: 'Sched fb',
+}[r]);
 
 // Helper function to get tenant-dependent field from nested structure
 const getTenantField = (contact: any, field: string, effectiveTenantId?: string) => {
@@ -134,11 +167,105 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
   search,
   onSearchChange,
   effectiveTenantId,
+  tenantRoleDefaults,
 }) => {
+  const { tenantRolesFromProfile, securityLevel: callerActiveSecurityLevel } = useAuth();
   const [order, setOrder] = React.useState<'asc' | 'desc'>('asc');
   const [orderBy, setOrderBy] = React.useState<string>('firstName');
   const [page, setPage] = React.useState(0);
   const [rowsPerPage, setRowsPerPage] = React.useState(20);
+
+  // Whether the *caller* (logged-in user) can edit role-defaults for this
+  // tenant. The chips are still rendered for everyone — they're useful as
+  // read-only context — but only level-5+ users get the click handler.
+  const callerCanEditRoles = React.useMemo(() => {
+    const raw =
+      (effectiveTenantId && tenantRolesFromProfile?.[effectiveTenantId]?.securityLevel) ||
+      callerActiveSecurityLevel ||
+      '0';
+    return parseInt(String(raw), 10) >= 5;
+  }, [effectiveTenantId, tenantRolesFromProfile, callerActiveSecurityLevel]);
+
+  // Optimistic overlay over the live `tenantRoleDefaults` doc. Keyed by
+  // `${uid}:${role}`. We flip the chip immediately on click, then remove
+  // the entry when the snapshot updates (or when the callable rejects and
+  // we revert). Without this the chip would lag a network round-trip
+  // behind the user's click.
+  const [pendingMembership, setPendingMembership] = React.useState<
+    Record<string, boolean>
+  >({});
+  // Tracks in-flight callables so we can disable the chip and avoid
+  // double-fires on rapid clicks.
+  const [busyChips, setBusyChips] = React.useState<Record<string, boolean>>({});
+
+  // Snackbar for "Role updated" / error messages. Local — the parent
+  // doesn't need to know about role-default writes.
+  const [snackbar, setSnackbar] = React.useState<{
+    open: boolean;
+    message: string;
+    severity: 'success' | 'error';
+  }>({ open: false, message: '', severity: 'success' });
+
+  const handleRoleChipClick = React.useCallback(
+    async (uid: string, role: TenantRoleDefault, currentMember: boolean) => {
+      if (!effectiveTenantId || !callerCanEditRoles) return;
+      const key = `${uid}:${role}`;
+      if (busyChips[key]) return;
+      const next = !currentMember;
+      setPendingMembership((prev) => ({ ...prev, [key]: next }));
+      setBusyChips((prev) => ({ ...prev, [key]: true }));
+      try {
+        const fn = httpsCallable(getFunctions(), 'setTenantRoleDefaultMembership');
+        await fn({ tenantId: effectiveTenantId, uid, role, isMember: next });
+        setSnackbar({ open: true, message: 'Role updated', severity: 'success' });
+        // Don't clear the optimistic entry yet — we wait for the next
+        // onSnapshot tick from the parent so there's no flash back to the
+        // old value. The effect below clears it once the doc agrees.
+      } catch (err: any) {
+        setPendingMembership((prev) => {
+          const copy = { ...prev };
+          delete copy[key];
+          return copy;
+        });
+        setSnackbar({
+          open: true,
+          message: err?.message || 'Failed to update role',
+          severity: 'error',
+        });
+      } finally {
+        setBusyChips((prev) => {
+          const copy = { ...prev };
+          delete copy[key];
+          return copy;
+        });
+      }
+    },
+    [effectiveTenantId, callerCanEditRoles, busyChips],
+  );
+
+  // Reconcile the optimistic overlay with the live doc — drop keys whose
+  // pending value already matches the snapshot so subsequent renders read
+  // straight from the doc.
+  React.useEffect(() => {
+    if (!tenantRoleDefaults) return;
+    setPendingMembership((prev) => {
+      let mutated = false;
+      const next = { ...prev };
+      for (const key of Object.keys(prev)) {
+        const [uid, role] = key.split(':') as [string, TenantRoleDefault];
+        const fieldName = TENANT_ROLE_DEFAULT_FIELD[role];
+        const liveMembers = (tenantRoleDefaults as any)[fieldName] as
+          | string[]
+          | undefined;
+        const liveIsMember = (liveMembers ?? []).includes(uid);
+        if (liveIsMember === prev[key]) {
+          delete next[key];
+          mutated = true;
+        }
+      }
+      return mutated ? next : prev;
+    });
+  }, [tenantRoleDefaults]);
 
   const handleRequestSort = (property: string) => {
     const isAsc = orderBy === property && order === 'asc';
@@ -447,6 +574,10 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
                       Role
                     </TableSortLabel>
                   </TableCell>
+                  {/* Roles (tenant-role-defaults chips) */}
+                  <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}>
+                    Roles
+                  </TableCell>
                   {/* Module Access */}
                   <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}>
                     Module Access
@@ -610,6 +741,124 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
                   );
                 })()}
               </TableCell>
+              {/* Roles (tenant-role-defaults — multi-select dropdown) */}
+              <TableCell onClick={(e) => e.stopPropagation()} sx={{ cursor: 'default' }}>
+                {(() => {
+                  const baseMembership = tenantRoleDefaultMembershipForUser(
+                    tenantRoleDefaults,
+                    contact.id,
+                  );
+                  // Resolve effective membership per role with the
+                  // optimistic overlay applied (so the chip + checkbox
+                  // flip the moment the user clicks, not after the
+                  // callable resolves).
+                  const activeRoles: TenantRoleDefault[] = TENANT_ROLE_DEFAULTS.filter(
+                    (role) => {
+                      const key = `${contact.id}:${role}`;
+                      return key in pendingMembership
+                        ? pendingMembership[key]
+                        : baseMembership[role];
+                    },
+                  );
+                  const anyBusy = TENANT_ROLE_DEFAULTS.some(
+                    (role) => busyChips[`${contact.id}:${role}`],
+                  );
+                  const interactive = callerCanEditRoles;
+
+                  return (
+                    <FormControl size="small" sx={{ minWidth: 200, maxWidth: 320 }}>
+                      <Select<TenantRoleDefault[]>
+                        multiple
+                        displayEmpty
+                        value={activeRoles}
+                        disabled={!interactive || anyBusy}
+                        input={
+                          <OutlinedInput
+                            sx={{
+                              '& .MuiOutlinedInput-input': {
+                                py: 0.5,
+                                fontSize: '0.75rem',
+                              },
+                            }}
+                          />
+                        }
+                        // MUI's Select dispatches one change per click on
+                        // a MenuItem with the *full* next array, so we
+                        // diff against the previous array to figure out
+                        // which single role flipped — then route through
+                        // the same single-role callable as before.
+                        onChange={(e: SelectChangeEvent<TenantRoleDefault[]>) => {
+                          const raw = e.target.value;
+                          const next = (
+                            typeof raw === 'string' ? raw.split(',') : raw
+                          ) as TenantRoleDefault[];
+                          const prev = new Set(activeRoles);
+                          const after = new Set(next);
+                          const toggled: TenantRoleDefault[] = TENANT_ROLE_DEFAULTS.filter(
+                            (role) => prev.has(role) !== after.has(role),
+                          );
+                          for (const role of toggled) {
+                            handleRoleChipClick(contact.id, role, prev.has(role));
+                          }
+                        }}
+                        renderValue={(selected) => {
+                          if (!selected || selected.length === 0) {
+                            return (
+                              <Typography
+                                variant="body2"
+                                sx={{ color: 'text.secondary', fontSize: '0.75rem' }}
+                              >
+                                No roles
+                              </Typography>
+                            );
+                          }
+                          return (
+                            <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap', rowGap: 0.5 }}>
+                              {(selected as TenantRoleDefault[]).map((role) => (
+                                <Chip
+                                  key={role}
+                                  label={chipShortLabel(role)}
+                                  size="small"
+                                  variant="filled"
+                                  color={chipColorFor(role)}
+                                  sx={{ fontSize: '0.65rem', height: 20 }}
+                                />
+                              ))}
+                            </Stack>
+                          );
+                        }}
+                        MenuProps={{
+                          PaperProps: { sx: { maxWidth: 320 } },
+                        }}
+                      >
+                        {TENANT_ROLE_DEFAULTS.map((role) => {
+                          const key = `${contact.id}:${role}`;
+                          const checked =
+                            key in pendingMembership
+                              ? pendingMembership[key]
+                              : baseMembership[role];
+                          const busy = !!busyChips[key];
+                          return (
+                            <MenuItem key={role} value={role} disabled={busy}>
+                              <Checkbox checked={checked} size="small" />
+                              <Tooltip
+                                title={TENANT_ROLE_DEFAULT_DESCRIPTIONS[role]}
+                                placement="right"
+                                arrow
+                              >
+                                <ListItemText
+                                  primary={TENANT_ROLE_DEFAULT_LABELS[role]}
+                                  primaryTypographyProps={{ fontSize: '0.8rem' }}
+                                />
+                              </Tooltip>
+                            </MenuItem>
+                          );
+                        })}
+                      </Select>
+                    </FormControl>
+                  );
+                })()}
+              </TableCell>
               {/* Module Access */}
               <TableCell>
                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
@@ -634,7 +883,7 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
           ))}
           {sortedContacts.length === 0 && (
             <TableRow>
-              <TableCell colSpan={11} align="center">
+              <TableCell colSpan={12} align="center">
                 No workers found. Add your first worker using the button above.
               </TableCell>
             </TableRow>
@@ -654,6 +903,22 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
           setPage(0);
         }}
       />
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={3000}
+        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+      >
+        <Alert
+          severity={snackbar.severity}
+          variant="filled"
+          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+          sx={{ width: '100%' }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };
