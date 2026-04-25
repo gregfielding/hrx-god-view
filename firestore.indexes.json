@@ -1275,6 +1275,14 @@
       "collectionGroup": "users",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "gmailPushEnabled", "order": "ASCENDING" },
+        { "fieldPath": "gmailWatchExpiration", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "interviewStatus", "order": "ASCENDING" },
         { "fieldPath": "interviewInviteScheduledAt", "order": "ASCENDING" }
       ]

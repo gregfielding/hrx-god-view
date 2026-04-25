@@ -1137,7 +1137,7 @@ export const getGmailUnreadInboxCount = onCall(
  * Cached on the user doc to avoid rate limits.
  */
 export const getGmailMailboxCounts = onCall(
-  { cors: true, memory: '256MiB', concurrency: 20 },
+  { cors: true, memory: '512MiB', concurrency: 20 },
   async (request) => {
     const { userId, maxAgeMs = 25000 } = request.data || {};
     if (!userId) {
