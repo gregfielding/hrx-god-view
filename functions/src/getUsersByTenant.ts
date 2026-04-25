@@ -7,7 +7,14 @@ const USERS_BY_TENANT_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes cache
 
 export const getUsersByTenant = onCall({
   maxInstances: 5,
-  timeoutSeconds: 60
+  timeoutSeconds: 60,
+  memory: '512MiB',
+  // CORS allowlist — the page lives at hrxone.com in prod and localhost
+  // during dev. Without an explicit list a 500 from the handler strips
+  // the CORS header on the error response, which the browser then
+  // surfaces as "blocked by CORS policy" — masking the underlying
+  // memory exhaustion that triggered the 500 in the first place.
+  cors: true,
 }, async (request) => {
   // Check if user is authenticated
   if (!request.auth) {
@@ -35,31 +42,34 @@ export const getUsersByTenant = onCall({
     }
 
     const db = admin.firestore();
-    
-    // First, get users with direct tenantId field (old structure)
-    const directTenantQuery = db.collection('users')
-      .where('tenantId', '==', tenantId);
-    
-    const directTenantSnapshot = await directTenantQuery.get();
+
+    // Two parallel indexed queries — much cheaper than the previous
+    // full-collection scan, which OOM'd as the users collection grew
+    // and caused the function to 500 (which strips CORS headers and
+    // surfaces in the browser as a misleading "CORS policy" error).
+    //
+    // 1) Legacy structure: top-level `tenantId` field.
+    // 2) New structure: a key on the `tenantIds` map. Firestore lets us
+    //    query nested maps with dotted paths — `tenantIds.{tid}.role`
+    //    is a stable scalar that all in-tenant users have set
+    //    (Admin / Tenant / Worker / etc.). `where('!=', null)` is
+    //    supported and uses the auto-built single-field index, so no
+    //    composite index is required.
+    const [directTenantSnapshot, mapTenantSnapshot] = await Promise.all([
+      db.collection('users').where('tenantId', '==', tenantId).get(),
+      db.collection('users').where(`tenantIds.${tenantId}.role`, '!=', null).get(),
+    ]);
+
     const directTenantUsers = directTenantSnapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data()
     }));
 
-    // Then, get all users and filter for those with tenantId in tenantIds map (new structure)
-    // Note: This requires admin privileges to read all users
-    const allUsersQuery = db.collection('users');
-    const allUsersSnapshot = await allUsersQuery.get();
-    
-    const usersWithTenantInMap = allUsersSnapshot.docs
-      .map(doc => ({ id: doc.id, ...doc.data() }))
-      .filter((user: any) => 
-        user.tenantIds && 
-        user.tenantIds[tenantId] && 
-        !directTenantUsers.find(directUser => directUser.id === user.id) // Avoid duplicates
-      );
+    const directIds = new Set(directTenantUsers.map(u => u.id));
+    const usersWithTenantInMap = mapTenantSnapshot.docs
+      .filter(doc => !directIds.has(doc.id)) // dedupe across both queries
+      .map(doc => ({ id: doc.id, ...doc.data() }));
 
-    // Combine both results
     const allUsersForTenant = [...directTenantUsers, ...usersWithTenantInMap];
 
     console.log(`Found ${allUsersForTenant.length} users for tenant ${tenantId}:`, {
