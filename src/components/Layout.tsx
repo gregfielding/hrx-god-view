@@ -55,7 +55,6 @@ import BarChartIcon from '@mui/icons-material/BarChart';
 import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
 import AlternateEmailIcon from '@mui/icons-material/AlternateEmail';
 import PersonIcon from '@mui/icons-material/Person';
-import LanguageIcon from '@mui/icons-material/Language';
 import CheckIcon from '@mui/icons-material/Check';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
@@ -246,7 +245,6 @@ const Layout: React.FC = function Layout() {
   const [alertsUnreadCount, setAlertsUnreadCount] = useState(0);
   const [alertsCriticalCount, setAlertsCriticalCount] = useState(0);
   const [avatarMenuAnchorEl, setAvatarMenuAnchorEl] = useState<null | HTMLElement>(null);
-  const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<null | HTMLElement>(null);
   const [alertsDrawerOpen, setAlertsDrawerOpen] = useState(false);
   const { count: mentionsUnreadCount } = useUnreadMentionsCount(user?.uid || null);
   
@@ -406,8 +404,6 @@ const Layout: React.FC = function Layout() {
   const setFirstNameWithLog = (value) => { console.log('setFirstName', value); setFirstName(value); };
   const [lastName, setLastName] = useState<string | null>(null);
   const setLastNameWithLog = (value) => { console.log('setLastName', value); setLastName(value); };
-  const [preferredLanguage, setPreferredLanguage] = useState<'en' | 'es'>('en');
-  
   // Development role switcher state
   const [devRole, setDevRole] = useState<Role>(role);
   const setDevRoleWithLog = (value) => { console.log('setDevRole', value); setDevRole(value); };
@@ -656,8 +652,6 @@ const Layout: React.FC = function Layout() {
           const data = userSnap.data();
           setFirstName(data.firstName || null);
           setLastName(data.lastName || null);
-          const lang = data.preferredLanguage === 'es' ? 'es' : 'en';
-          setPreferredLanguage(lang);
         }
       }
     };
@@ -1949,24 +1943,6 @@ const Layout: React.FC = function Layout() {
                 </Tooltip>
               )}
               
-              {/* Calendar Icon - Only for security levels 5-7 */}
-              {hasAdminLevel && (
-                <Tooltip title="Calendar">
-                  <IconButton
-                    onClick={() => navigateSafe('/calendar')}
-                    sx={{
-                      backgroundColor: 'transparent !important',
-                      color: location.pathname.startsWith('/calendar') ? '#FFFFFF' : 'rgba(255,255,255,.8)',
-                      '&:hover': { 
-                        backgroundColor: 'transparent !important',
-                        color: '#FFFFFF',
-                      },
-                    }}
-                  >
-                    <CalendarMonthIcon sx={{ fontSize: 20 }} />
-                  </IconButton>
-                </Tooltip>
-              )}
               
               {/* ChatGPT Icon - Only for security levels 5-7 (temporarily hidden) */}
               {/* {hasAdminLevel && (
@@ -1992,26 +1968,6 @@ const Layout: React.FC = function Layout() {
                 <MessengerIconButton />
               )}
 
-              {/* Language (flag/globe) - preferred message language */}
-              {user && (
-                <Tooltip title={preferredLanguage === 'es' ? 'Message language: Español' : 'Message language: English'}>
-                  <IconButton
-                    onClick={(e) => setLanguageMenuAnchorEl(e.currentTarget)}
-                    sx={{
-                      p: 0.5,
-                      backgroundColor: 'transparent !important',
-                      color: languageMenuAnchorEl ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)'),
-                      '&:hover': {
-                        backgroundColor: 'transparent !important',
-                        color: languageMenuAnchorEl ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF'),
-                      },
-                    }}
-                    aria-label="Preferred message language"
-                  >
-                    <LanguageIcon sx={{ fontSize: 22 }} />
-                  </IconButton>
-                </Tooltip>
-              )}
               
               {/* 👤 Avatar Menu */}
               {shouldProvideGoogleStatus ? (
@@ -2146,53 +2102,6 @@ const Layout: React.FC = function Layout() {
               </MenuItem>
             </Menu>
 
-            {/* Language menu (opened from globe icon next to avatar) */}
-            <Menu
-              anchorEl={languageMenuAnchorEl}
-              open={Boolean(languageMenuAnchorEl)}
-              onClose={() => setLanguageMenuAnchorEl(null)}
-              anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-              transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-            >
-              <MenuItem
-                selected={preferredLanguage === 'en'}
-                onClick={async () => {
-                  setLanguageMenuAnchorEl(null);
-                  if (preferredLanguage === 'en') return;
-                  setPreferredLanguage('en');
-                  if (user?.uid) {
-                    try {
-                      const userRef = doc(db, 'users', user.uid);
-                      await updateDoc(userRef, { preferredLanguage: 'en', updatedAt: new Date() });
-                    } catch (err) {
-                      console.error('Failed to update preferred language:', err);
-                      setPreferredLanguage(preferredLanguage);
-                    }
-                  }
-                }}
-              >
-                English
-              </MenuItem>
-              <MenuItem
-                selected={preferredLanguage === 'es'}
-                onClick={async () => {
-                  setLanguageMenuAnchorEl(null);
-                  if (preferredLanguage === 'es') return;
-                  setPreferredLanguage('es');
-                  if (user?.uid) {
-                    try {
-                      const userRef = doc(db, 'users', user.uid);
-                      await updateDoc(userRef, { preferredLanguage: 'es', updatedAt: new Date() });
-                    } catch (err) {
-                      console.error('Failed to update preferred language:', err);
-                      setPreferredLanguage(preferredLanguage);
-                    }
-                  }
-                }}
-              >
-                Español
-              </MenuItem>
-            </Menu>
           </Box>
         </Box>
 

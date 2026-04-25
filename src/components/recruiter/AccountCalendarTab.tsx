@@ -28,6 +28,7 @@ import { p } from '../../data/firestorePaths';
 import { useGigJobOrdersCalendar, getColorForJobOrderId } from '../../hooks/useGigJobOrdersCalendar';
 import type { CalendarEvent, CalendarView } from '../../types/calendar';
 import type { RecruiterAccount } from '../../types/recruiter/account';
+import { renderShiftTooltip } from '../../utils/calendarShiftTooltip';
 
 function getCalendarRange(view: CalendarView, currentDate: Date): { start: Date; end: Date } {
   if (view === 'day') {
@@ -63,65 +64,6 @@ function getEventLocalDate(event: CalendarEvent, useStart = true): Date | null {
 function getEventColor(event: CalendarEvent): { backgroundColor: string; foregroundColor: string } {
   const hex = event.colorId ? getColorForJobOrderId(event.colorId) : '#5c6bc0';
   return { backgroundColor: hex, foregroundColor: '#ffffff' };
-}
-
-/** Convert "HH:mm" (24h) to "h:mm a". Returns the raw string on parse failure. */
-function formatTimeLabel(hhmm: string | undefined): string | null {
-  if (!hhmm || !/^\d{1,2}:\d{2}$/.test(hhmm)) return hhmm || null;
-  const [hRaw, mRaw] = hhmm.split(':');
-  const h = Number(hRaw);
-  const m = Number(mRaw);
-  if (Number.isNaN(h) || Number.isNaN(m)) return hhmm;
-  const period = h >= 12 ? 'PM' : 'AM';
-  const h12 = h % 12 === 0 ? 12 : h % 12;
-  return `${h12}:${String(m).padStart(2, '0')} ${period}`;
-}
-
-/**
- * Tooltip contents for a calendar bar on the Account calendar: worksite name,
- * shift hours, and requested/assigned counts. Gracefully skips fields that
- * aren't available (e.g. Gig job-order range bars have no shift-level data).
- */
-function renderShiftTooltip(event: CalendarEvent): React.ReactNode {
-  const hrx = event.hrx;
-  if (!hrx) return null;
-  const worksite = hrx.worksiteName?.trim();
-  const start = formatTimeLabel(hrx.shiftStartTime);
-  const end = formatTimeLabel(hrx.shiftEndTime);
-  const hours = start && end ? `${start} – ${end}` : start || end || null;
-  const requested = typeof hrx.requestedStaff === 'number' ? hrx.requestedStaff : null;
-  const assigned = typeof hrx.assignedStaff === 'number' ? hrx.assignedStaff : null;
-
-  const hasAnything = Boolean(worksite || hours || requested != null || assigned != null);
-  if (!hasAnything) return null;
-
-  const staffLine =
-    requested != null || assigned != null
-      ? `${requested ?? '—'} Requested / ${assigned ?? 0} Assigned`
-      : null;
-
-  return (
-    <Box sx={{ p: 0.25, fontSize: '0.75rem', lineHeight: 1.35 }}>
-      <Typography variant="subtitle2" sx={{ fontWeight: 600, fontSize: '0.8rem', mb: 0.25 }}>
-        {event.summary}
-      </Typography>
-      {worksite && (
-        <Typography variant="caption" display="block" sx={{ color: 'inherit' }}>
-          {worksite}
-        </Typography>
-      )}
-      {hours && (
-        <Typography variant="caption" display="block" sx={{ color: 'inherit' }}>
-          {hours}
-        </Typography>
-      )}
-      {staffLine && (
-        <Typography variant="caption" display="block" sx={{ color: 'inherit' }}>
-          {staffLine}
-        </Typography>
-      )}
-    </Box>
-  );
 }
 
 export interface AccountCalendarTabProps {
@@ -457,9 +399,11 @@ function MonthView({
                         display: 'flex',
                         alignItems: 'center',
                         bgcolor: eventColor.backgroundColor,
-                        color: eventColor.foregroundColor,
+                        // Always white so the shift name is legible across all bar colors.
+                        color: '#ffffff',
                         borderRadius: 0.5,
                         fontSize: '0.75rem',
+                        fontWeight: 500,
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
@@ -534,9 +478,11 @@ function MonthView({
                             px: 1,
                             py: 0.5,
                             bgcolor: eventColor.backgroundColor,
-                            color: eventColor.foregroundColor,
+                            // Always white so the shift name is legible across all chip colors.
+                            color: '#ffffff',
                             borderRadius: 0.5,
                             fontSize: '0.75rem',
+                            fontWeight: 500,
                             cursor: 'pointer',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',

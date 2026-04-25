@@ -772,6 +772,7 @@ function App() {
           <Route path="my" element={<RecruiterUsers hideHeader scope="my" />} />
           <Route path="invite-users" element={<InviteUsersPage hideHeader />} />
           <Route path="user-groups" element={<TenantUserGroups hideHeader />} />
+          <Route path="my-user-groups" element={<TenantUserGroups hideHeader scope="mine" />} />
           <Route path="smart-groups" element={<SmartGroupsPage hideHeader />} />
           <Route path="all-smart-groups" element={<AllSmartGroupsPage hideHeader />} />
           <Route path="my-smart-groups" element={<MySmartGroupsListPage hideHeader />} />

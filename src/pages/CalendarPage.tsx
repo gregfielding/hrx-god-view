@@ -26,6 +26,7 @@ import {
   Paper,
   Divider,
   CircularProgress,
+  Tooltip,
 } from '@mui/material';
 import {
   ChevronLeft as ChevronLeftIcon,
@@ -44,6 +45,7 @@ import EventModal from '../components/calendar/EventModal';
 import type { CalendarEvent, CalendarView, CalendarSummary } from '../types/calendar';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import { renderShiftTooltip } from '../utils/calendarShiftTooltip';
 
 /**
  * Calculate date range for calendar view
@@ -888,7 +890,8 @@ const CalendarPage: React.FC = () => {
                 >
                   {segments.map((seg) => {
                     const eventColor = getEventColor(seg.event);
-                    return (
+                    const tooltipContent = renderShiftTooltip(seg.event);
+                    const bar = (
                       <Box
                         key={`seg-${seg.event.id}-${seg.startIdx}-${seg.endIdx}-${seg.row}`}
                         onClick={(e) => {
@@ -903,9 +906,11 @@ const CalendarPage: React.FC = () => {
                           display: 'flex',
                           alignItems: 'center',
                           bgcolor: eventColor.backgroundColor,
-                          color: eventColor.foregroundColor,
+                          // Always white so the shift name reads cleanly across all bar colors.
+                          color: '#ffffff',
                           borderRadius: 0.5,
                           fontSize: '0.75rem',
+                          fontWeight: 500,
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
                           whiteSpace: 'nowrap',
@@ -919,6 +924,18 @@ const CalendarPage: React.FC = () => {
                       >
                         {seg.event.summary}
                       </Box>
+                    );
+                    if (!tooltipContent) return bar;
+                    return (
+                      <Tooltip
+                        key={`seg-${seg.event.id}-${seg.startIdx}-${seg.endIdx}-${seg.row}`}
+                        title={tooltipContent}
+                        arrow
+                        placement="top"
+                        enterDelay={150}
+                      >
+                        {bar}
+                      </Tooltip>
                     );
                   })}
                 </Box>
@@ -976,7 +993,8 @@ const CalendarPage: React.FC = () => {
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mt: 0.5 }}>
                       {dayEvents.slice(0, 3).map((event) => {
                         const eventColor = getEventColor(event);
-                        return (
+                        const tooltipContent = renderShiftTooltip(event);
+                        const chip = (
                           <Box
                             key={event.id}
                             ref={(el: HTMLDivElement | null) => {
@@ -990,9 +1008,11 @@ const CalendarPage: React.FC = () => {
                               px: 1,
                               py: 0.5,
                               bgcolor: eventColor.backgroundColor,
-                              color: eventColor.foregroundColor,
+                              // Always white so the shift name reads cleanly across all chip colors.
+                              color: '#ffffff',
                               borderRadius: 0.5,
                               fontSize: '0.75rem',
+                              fontWeight: 500,
                               cursor: 'pointer',
                               overflow: 'hidden',
                               textOverflow: 'ellipsis',
@@ -1005,6 +1025,18 @@ const CalendarPage: React.FC = () => {
                           >
                             {event.summary}
                           </Box>
+                        );
+                        if (!tooltipContent) return chip;
+                        return (
+                          <Tooltip
+                            key={event.id}
+                            title={tooltipContent}
+                            arrow
+                            placement="top"
+                            enterDelay={150}
+                          >
+                            {chip}
+                          </Tooltip>
                         );
                       })}
                       {dayEvents.length > 3 && (
@@ -1314,7 +1346,8 @@ const CalendarPage: React.FC = () => {
           >
             {allDayEvents.map((event) => {
               const eventColor = getEventColor(event);
-              return (
+              const tooltipContent = renderShiftTooltip(event);
+              const chip = (
                 <Box
                   key={event.id}
                   ref={(el: HTMLDivElement | null) => {
@@ -1326,9 +1359,10 @@ const CalendarPage: React.FC = () => {
                     py: 0.75,
                     mb: 0.5,
                     bgcolor: eventColor.backgroundColor,
-                    color: eventColor.foregroundColor,
+                    color: '#ffffff',
                     borderRadius: 0.5,
                     fontSize: '0.875rem',
+                    fontWeight: 500,
                     cursor: 'pointer',
                     boxShadow: event.id === highlightedEventId 
                       ? '0 0 0 2px rgba(59, 130, 246, 0.9)' 
@@ -1339,6 +1373,18 @@ const CalendarPage: React.FC = () => {
                 >
                   {event.summary}
                 </Box>
+              );
+              if (!tooltipContent) return chip;
+              return (
+                <Tooltip
+                  key={event.id}
+                  title={tooltipContent}
+                  arrow
+                  placement="top"
+                  enterDelay={150}
+                >
+                  {chip}
+                </Tooltip>
               );
             })}
           </Box>
@@ -1438,7 +1484,8 @@ const CalendarPage: React.FC = () => {
                 }
               }
 
-              return (
+              const tooltipContent = renderShiftTooltip(event);
+              const block = (
                 <Box
                   key={event.id}
                   ref={(el: HTMLDivElement | null) => {
@@ -1456,7 +1503,7 @@ const CalendarPage: React.FC = () => {
                     height: `${heightPx}px`,
                     minHeight: 32,
                     bgcolor: eventColor.backgroundColor,
-                    color: eventColor.foregroundColor,
+                    color: '#ffffff',
                     borderRadius: 1,
                     p: 1,
                     cursor: 'pointer',
@@ -1469,10 +1516,10 @@ const CalendarPage: React.FC = () => {
                     '&:hover': { opacity: 0.9, zIndex: 2, boxShadow: 2 },
                   }}
                 >
-                  <Typography variant="body2" fontWeight={600} noWrap>
+                  <Typography variant="body2" fontWeight={600} noWrap sx={{ color: '#ffffff' }}>
                     {event.summary}
                   </Typography>
-                  <Typography variant="caption" sx={{ opacity: 0.9 }}>
+                  <Typography variant="caption" sx={{ opacity: 0.9, color: '#ffffff' }}>
                     {(() => {
                       const localStart = getEventLocalDate(event, true);
                       const localEnd = getEventLocalDate(event, false);
@@ -1482,11 +1529,24 @@ const CalendarPage: React.FC = () => {
                     })()}
                   </Typography>
                   {event.location && (
-                    <Typography variant="caption" sx={{ opacity: 0.8, display: 'block', mt: 0.5 }}>
+                    <Typography variant="caption" sx={{ opacity: 0.8, display: 'block', mt: 0.5, color: '#ffffff' }}>
                       {event.location}
                     </Typography>
                   )}
                 </Box>
+              );
+              return tooltipContent ? (
+                <Tooltip
+                  key={event.id}
+                  title={tooltipContent}
+                  arrow
+                  placement="top"
+                  enterDelay={150}
+                >
+                  {block}
+                </Tooltip>
+              ) : (
+                block
               );
             })}
           </Box>
