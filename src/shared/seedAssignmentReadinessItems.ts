@@ -60,8 +60,18 @@ const DEFAULT_REQUIREMENT_DEFAULTS: Record<AssignmentReadinessRequirementType, R
   drug_screen: { actor: 'vendor', blocking: true },
   e_verify: { actor: 'system', blocking: true },
   // Shift-specific qualifications — worker-owned, blocking.
-  required_certification: { actor: 'worker', blocking: true },
+  required_certification: { actor: 'worker', blocking: true }, // @deprecated — see type doc; replaced by cert_match
   orientation: { actor: 'worker', blocking: true },
+  // Phase B match items — initial status computed at seed time via the matchers
+  // in shared/jobRequirementMatchers/. The actor reflects who'd resolve a
+  // complete_fail: cert/license/edu/lang are worker-supplied; skill is
+  // recruiter-adjudicated; screening_package is vendor-fulfilled.
+  cert_match: { actor: 'worker', blocking: true },
+  license_match: { actor: 'worker', blocking: true },
+  skill_match: { actor: 'recruiter', blocking: true },
+  education_match: { actor: 'worker', blocking: true },
+  language_match: { actor: 'worker', blocking: true },
+  screening_package_match: { actor: 'vendor', blocking: true },
   // Acknowledgements — worker-owned, typically blocking for first shift.
   ppe_acknowledgement: { actor: 'worker', blocking: true },
   safety_briefing: { actor: 'worker', blocking: true },
