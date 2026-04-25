@@ -3,18 +3,30 @@
  * Watches `tenants/{tenantId}/assignments/{assignmentId}` for creates and
  * invokes the shared assignment seed runner with `'system'` as the actor uid.
  *
- * Reads the associated job order + the shift (if present) to decide which
- * requirements to seed:
+ * Reads the associated job order to decide which requirements to seed in
+ * two passes:
+ *
+ * **(1) Flag-based requirements** (`buildRequirementsForJobOrder`):
  *   - Always seeds `shift_confirmation` (the cadence YES/HERE flow).
- *   - If the job order's package requires `backgroundCheckRequired` /
- *     `drugScreeningRequired` → add those items. Otherwise skip.
- *   - If the job order has `requiredPpe` / `safetyBriefingRequired` /
- *     `orientationRequired` flags → add those items.
+ *   - `backgroundCheckRequired` / `drugScreeningRequired` → those items.
+ *   - `eVerifyRequired` → e_verify item.
+ *   - `requiredPpe` / `safetyBriefingRequired` / `orientationRequired` flags.
+ *
+ * **(2) Phase B match items** (`buildPhaseBMatchSpecs`, since 2026-04):
+ *   Loads the worker doc once, then runs the matchers in
+ *   `shared/jobRequirementMatchers/` over the JO's requirement categories
+ *   (certs, licenses, skills, education, languages, screening package). Each
+ *   produces a per-requirement readiness item with status pre-computed at
+ *   seed time. Replaces the legacy single `required_certification` item.
+ *
+ *   B.5 wires 5 of 6 matchers; cert_match items are seeded as `incomplete`
+ *   shells until B.5.1 promotes the cert engine to functions-side.
  *
  * Idempotent — the runner skips existing item ids.
  *
  * @see functions/src/readiness/seedAssignmentReadinessItemsRunner.ts
- * @see recruiter-ownership-model.md §4b (JO-tier ownership resolution)
+ * @see functions/src/readiness/jobRequirementMatcherHelpers.ts (Phase B work)
+ * @see docs/READINESS_EXECUTION_MATRIX.md §7 Phase B
  */
 
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
@@ -23,6 +35,11 @@ import * as admin from 'firebase-admin';
 
 import type { SeedAssignmentReadinessRequirementSpec } from '../shared/seedAssignmentReadinessItems';
 import { runAssignmentReadinessSeed } from './seedAssignmentReadinessItemsRunner';
+import {
+  buildPhaseBMatchSpecs,
+  loadScreeningEvalForJobOrder,
+  loadWorkerForMatching,
+} from './jobRequirementMatcherHelpers';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -73,7 +90,33 @@ export const onAssignmentCreatedAutoSeedReadiness = onDocumentCreated(
       });
     }
 
-    const requirements = buildRequirementsForJobOrder(joData);
+    // Phase B.5: load worker + (when applicable) the worker's most-recent
+    // background-check eval so the matchers can compute initial status at
+    // seed time. Worker load is best-effort; matchers degrade to `incomplete`
+    // when fields are missing.
+    const todayMs = Date.now();
+    const todayISO = new Date(todayMs).toISOString().slice(0, 10);
+
+    const [worker, screeningEval] = await Promise.all([
+      loadWorkerForMatching(db, workerUid),
+      loadScreeningEvalForJobOrder(db, {
+        tenantId,
+        workerUid,
+        requiredPackageId: typeof joData.screeningPackageId === 'string' ? joData.screeningPackageId : null,
+        requiredPackageName: typeof joData.screeningPackageName === 'string' ? joData.screeningPackageName : null,
+      }),
+    ]);
+
+    const baseRequirements = buildRequirementsForJobOrder(joData);
+    const matchRequirements = buildPhaseBMatchSpecs({
+      jo: joData,
+      worker,
+      screeningEval,
+      todayISO,
+      todayMs,
+    });
+    const requirements = [...baseRequirements, ...matchRequirements];
+
     if (requirements.length === 0) {
       logger.info('onAssignmentCreatedAutoSeedReadiness: no requirements apply — skipping', {
         tenantId,
@@ -100,6 +143,8 @@ export const onAssignmentCreatedAutoSeedReadiness = onDocumentCreated(
         jobOrderId,
         itemsCreated: result.itemsCreated,
         itemsSkippedExisting: result.itemsSkippedExisting,
+        baseRequirementsCount: baseRequirements.length,
+        phaseBMatchSpecsCount: matchRequirements.length,
         primarySource: result.ownership.primarySource,
         primaryRecruiterId: result.ownership.primaryRecruiterId,
       });
@@ -116,11 +161,17 @@ export const onAssignmentCreatedAutoSeedReadiness = onDocumentCreated(
 );
 
 /**
- * Decide the requirement set for an assignment from the job order's flags.
+ * Decide the flag-based requirement set for an assignment from the job order.
  *
  * Always includes `shift_confirmation` — every assignment needs the worker
  * to confirm (YES/HERE flow, tracked by the cadence system). The rest is
- * opt-in based on JO config.
+ * opt-in based on JO config flags.
+ *
+ * **Phase B.5:** the per-requirement match items (`cert_match`, `license_match`,
+ * `skill_match`, `education_match`, `language_match`, `screening_package_match`)
+ * are produced by `buildPhaseBMatchSpecs` instead and concatenated by the
+ * caller. The legacy single `required_certification` seed was removed —
+ * cert items are now N×`cert_match` shells (one per required cert).
  */
 function buildRequirementsForJobOrder(jo: Record<string, unknown>): SeedAssignmentReadinessRequirementSpec[] {
   const requirements: SeedAssignmentReadinessRequirementSpec[] = [
@@ -145,9 +196,9 @@ function buildRequirementsForJobOrder(jo: Record<string, unknown>): SeedAssignme
   if (hasNonEmptyArray(jo.requiredPpe) || readBool(jo.showRequiredPpe)) {
     requirements.push({ requirementType: 'ppe_acknowledgement' });
   }
-  if (hasNonEmptyArray(jo.requiredCertifications) || hasNonEmptyArray(jo.licensesCerts)) {
-    requirements.push({ requirementType: 'required_certification' });
-  }
+  // `required_certification` removed — replaced by N×`cert_match` shells in
+  // `buildPhaseBMatchSpecs`. See type-union deprecation note in
+  // `shared/assignmentReadinessItemV1.ts`.
 
   return requirements;
 }
