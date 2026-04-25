@@ -308,6 +308,11 @@ export { onEvereeWorkerWriteUpdateReadiness } from './readiness/onEvereeWorkerWr
 export { onOnboardingStepVerifiedUpdateReadiness } from './readiness/onOnboardingStepVerifiedUpdateReadiness';
 export { onUserFieldChangeUpdateReadiness } from './readiness/onUserFieldChangeUpdateReadiness';
 
+// Phase C — refresh AssignmentReadiness match items when worker records change.
+// Bridges the gap matrix §6 hole #7 names: snapshot built once and never
+// refreshed. Daily reconciler (Phase C.2) handles the time-passes path.
+export { onUserLicensesChangeRefreshAssignments } from './readiness/onUserLicensesChangeRefreshAssignments';
+
 // Workforce domain (Phase 2 of docs/WORKFORCE_DOMAIN_MODEL.md).
 // - Trigger maintains AccountWorkforce docs from assignment writes.
 // - Callable flips status (active/inactive) with optional assignment cascade.
