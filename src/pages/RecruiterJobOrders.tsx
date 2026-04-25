@@ -64,7 +64,6 @@ import type { JobOrderStatus } from '../types/recruiter/jobOrder';
 import FavoriteButton from '../components/FavoriteButton';
 import { useFavorites } from '../hooks/useFavorites';
 import type { RecruiterOutletContext } from './RecruiterDashboard';
-import { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderChecklist';
 import { hasJobBoardSyndicationUrl } from '../utils/jobBoardSyndicationUrls';
 import JobBoardSyndicationIconRow from '../components/JobBoardSyndicationIconRow';
 import { JobsBoardService } from '../services/recruiter/jobsBoardService';
@@ -145,7 +144,87 @@ function formatJobOrderStatusLabel(s: string): string {
   return toCanonicalJobOrderStatus(s).replace(/_/g, ' ');
 }
 
-const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({ 
+/* -------------------------------------------------------------------------
+ * Next-shift helpers — mirrored from RecruiterAccountDetails.tsx so the main
+ * Job Orders table can show "Next shift: <date · time>" on Gig rows in place
+ * of the legacy "Order Setup: x/y" caption. Handles single-day, multi-day
+ * (with per-date dateSchedule) and multi-day (with weekly day-of-week
+ * schedule) shapes. Returns earliest enabled occurrence at or after `now`
+ * across all of a JO's shifts, or null if none.
+ * ------------------------------------------------------------------------- */
+function parseYyyyMmDdLocal(s: string | undefined | null): Date | null {
+  if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [y, m, d] = s.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+function formatYyyyMmDdLocal(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function makeShiftDateTime(day: Date, hhmm: string): Date | null {
+  if (!/^\d{1,2}:\d{2}$/.test(hhmm)) return null;
+  const [h, m] = hhmm.split(':').map(Number);
+  const out = new Date(day);
+  out.setHours(h, m, 0, 0);
+  return out;
+}
+function nextShiftStartForJobOrder(shifts: Array<Record<string, any>>, now: Date): Date | null {
+  let best: Date | null = null;
+  for (const shift of shifts) {
+    const shiftDate = typeof shift.shiftDate === 'string' ? shift.shiftDate : '';
+    const endDate = typeof shift.endDate === 'string' ? shift.endDate : '';
+    const defStart = typeof shift.defaultStartTime === 'string' ? shift.defaultStartTime : '00:00';
+    const startD = parseYyyyMmDdLocal(shiftDate);
+    if (!startD) continue;
+    // Cancelled / closed shifts shouldn't drive "next shift".
+    const status = typeof shift.status === 'string' ? shift.status.toLowerCase() : '';
+    if (status === 'cancelled' || status === 'canceled' || status === 'closed') continue;
+
+    const isMulti = shift.shiftMode === 'multi' && !!endDate && endDate !== shiftDate;
+    const endD = isMulti ? parseYyyyMmDdLocal(endDate) : startD;
+    if (!endD) continue;
+    const dateSched =
+      shift.dateSchedule && typeof shift.dateSchedule === 'object'
+        ? (shift.dateSchedule as Record<string, { enabled?: boolean; startTime?: string }>)
+        : null;
+    const weekly =
+      shift.weeklySchedule && typeof shift.weeklySchedule === 'object'
+        ? (shift.weeklySchedule as Record<string, { enabled?: boolean; startTime?: string }>)
+        : null;
+    const cursor = new Date(startD);
+    while (cursor.getTime() <= endD.getTime()) {
+      const dateStr = formatYyyyMmDdLocal(cursor);
+      let enabled = true;
+      let startTime = defStart;
+      if (dateSched && dateSched[dateStr]) {
+        const entry = dateSched[dateStr];
+        if (entry.enabled === false) enabled = false;
+        else if (entry.startTime) startTime = entry.startTime;
+      } else if (weekly) {
+        const dow = String(cursor.getDay());
+        const sched = weekly[dow];
+        if (sched?.enabled === false) enabled = false;
+        else if (sched?.startTime) startTime = sched.startTime;
+      }
+      if (enabled) {
+        const dt = makeShiftDateTime(cursor, startTime);
+        if (dt && dt.getTime() >= now.getTime()) {
+          if (!best || dt.getTime() < best.getTime()) best = dt;
+        }
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  }
+  return best;
+}
+/** "Apr 30 · 7:00 AM" — compact label used in the row caption. */
+function formatNextShiftLabel(d: Date): string {
+  const dateLabel = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const timeLabel = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return `${dateLabel} · ${timeLabel}`;
+}
+
+const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
   search: searchProp = '', 
   showFavoritesOnly: showFavoritesOnlyProp = false,
   onlyMyOrders: onlyMyOrdersProp
@@ -564,6 +643,68 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
   }, [filteredJobOrders, page, rowsPerPage]);
 
   const [jobPostsByJobOrderId, setJobPostsByJobOrderId] = useState<Record<string, any[]>>({});
+
+  /**
+   * Earliest future enabled shift datetime per Gig JO on the current page.
+   * Drives the "Next shift: <date · time>" caption that replaces the legacy
+   * "Order Setup: x/y" line. Career JOs are skipped (no shift concept) and
+   * absent entries simply render no caption.
+   */
+  const [nextShiftByJobOrderId, setNextShiftByJobOrderId] = useState<Record<string, Date>>({});
+
+  /**
+   * Fan-out fetch of shifts for each Gig JO currently on the visible page.
+   * Career orders are skipped. Processed in chunks of 10 so we don't slam
+   * Firestore for tenants with many gig orders. Aborts cleanly on unmount /
+   * pagination so stale results don't overwrite a newer fetch.
+   */
+  useEffect(() => {
+    if (!tenantId) return;
+    const gigJobOrderIds = paginatedJobOrders
+      .filter((jo) => (jo as any).jobType === 'gig')
+      .map((jo) => jo.id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+    if (gigJobOrderIds.length === 0) {
+      setNextShiftByJobOrderId({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const result: Record<string, Date> = {};
+      const now = new Date();
+      const CHUNK = 10;
+      for (let i = 0; i < gigJobOrderIds.length; i += CHUNK) {
+        if (cancelled) return;
+        const chunk = gigJobOrderIds.slice(i, i + CHUNK);
+        await Promise.all(
+          chunk.map(async (joId) => {
+            try {
+              const shiftsRef = collection(
+                db,
+                'tenants',
+                tenantId,
+                'job_orders',
+                joId,
+                'shifts',
+              );
+              const snap = await getDocs(shiftsRef);
+              const shifts = snap.docs.map((d) => d.data() as Record<string, any>);
+              const next = nextShiftStartForJobOrder(shifts, now);
+              if (next) result[joId] = next;
+            } catch {
+              // Ignore per-JO failures — missing `next shift` just means the
+              // row falls back to no caption instead of a stale or wrong value.
+            }
+          }),
+        );
+      }
+      if (!cancelled) setNextShiftByJobOrderId(result);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, paginatedJobOrders]);
 
   // Load jobs board posts for currently visible job orders (chunked to respect Firestore 'in' limits)
   useEffect(() => {
@@ -1160,29 +1301,6 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                         </Box>
                         {(() => {
                           const jobPosts = jobPostsByJobOrderId[jobOrder.id] || [];
-                          const associatedContacts =
-                            (jobOrder as any)?.deal?.associations?.contacts ||
-                            (jobOrder as any)?.deal?.associations?.contactsIds ||
-                            [];
-                          const locationObj = jobOrder.locationName ? { name: jobOrder.locationName } : undefined;
-                          const shiftsCount = Number(
-                            (jobOrder as any)?.shiftsCount ??
-                              (jobOrder as any)?.shiftCount ??
-                              (jobOrder as any)?.shifts?.length ??
-                              0
-                          );
-
-                          const progress = getJobOrderChecklistProgress({
-                            jobOrder: jobOrder as any,
-                            location: locationObj,
-                            associatedContacts: Array.isArray(associatedContacts) ? associatedContacts : [],
-                            recruiterUsers: [],
-                            jobPosts: jobPosts as any[],
-                            shiftsCount,
-                            indeedUrl: (jobOrder as any)?.indeedUrl,
-                            craigslistUrl: (jobOrder as any)?.craigslistUrl,
-                          });
-
                           const indeedFromPosts = (jobPosts as any[])
                             .map((p) => (typeof p?.indeedUrl === 'string' ? p.indeedUrl.trim() : ''))
                             .find(Boolean);
@@ -1199,6 +1317,18 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                             undefined;
                           const showSyndication = hasJobBoardSyndicationUrl(indeedUrl, craigslistUrl);
 
+                          // Replaces the old "Order Setup: x/y" caption (which
+                          // wasn't pulling its weight in this list view). For Gig
+                          // JOs with an upcoming shift today or later, surface
+                          // the next-shift datetime. Career orders / Gig JOs
+                          // with no future shifts render only the syndication
+                          // icons (when present) and no caption text.
+                          const isGig = (jobOrder as any).jobType === 'gig';
+                          const nextShift = isGig ? nextShiftByJobOrderId[jobOrder.id] : null;
+                          const showNextShift = isGig && nextShift instanceof Date;
+
+                          if (!showNextShift && !showSyndication) return null;
+
                           return (
                             <Box
                               sx={{
@@ -1209,9 +1339,16 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                                 lineHeight: 1.2,
                               }}
                             >
-                              <Typography variant="caption" color="text.secondary" component="span">
-                                Order Setup: {progress.completed}/{progress.total}
-                              </Typography>
+                              {showNextShift ? (
+                                <Typography
+                                  variant="caption"
+                                  color="text.secondary"
+                                  component="span"
+                                  sx={{ lineHeight: 1.2 }}
+                                >
+                                  Next shift: {formatNextShiftLabel(nextShift as Date)}
+                                </Typography>
+                              ) : null}
                               {showSyndication ? (
                                 <JobBoardSyndicationIconRow
                                   indeedUrl={indeedUrl}
