@@ -298,6 +298,16 @@ export { syncAssignmentReadinessV1OnOnboardingInstanceWrite } from './readiness/
 export { syncAssignmentReadinessV1OnSignatureEnvelopeWrite } from './readiness/assignmentReadinessOnSignatureEnvelopeWrite';
 export { syncAssignmentReadinessV1OnBackgroundCheckWrite } from './readiness/assignmentReadinessOnBackgroundCheckWrite';
 
+// Phase A reconciliation triggers — bridge vendor / source data flows
+// into employee_readiness_items.{...}.status. Each is a thin wrapper
+// around a Phase E pure translator + the shared updateReadinessItemStatus
+// helper. See docs/READINESS_EXECUTION_MATRIX.md §6 / §7.
+export { onBackgroundCheckWriteUpdateReadiness } from './readiness/onBackgroundCheckWriteUpdateReadiness';
+export { onEverifyCaseWriteUpdateReadiness } from './readiness/onEverifyCaseWriteUpdateReadiness';
+export { onEvereeWorkerWriteUpdateReadiness } from './readiness/onEvereeWorkerWriteUpdateReadiness';
+export { onOnboardingStepVerifiedUpdateReadiness } from './readiness/onOnboardingStepVerifiedUpdateReadiness';
+export { onUserFieldChangeUpdateReadiness } from './readiness/onUserFieldChangeUpdateReadiness';
+
 // Workforce domain (Phase 2 of docs/WORKFORCE_DOMAIN_MODEL.md).
 // - Trigger maintains AccountWorkforce docs from assignment writes.
 // - Callable flips status (active/inactive) with optional assignment cascade.
