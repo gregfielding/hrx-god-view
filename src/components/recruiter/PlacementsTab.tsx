@@ -47,6 +47,7 @@ import {
   Fingerprint as FingerprintIcon,
   Science as ScienceIcon,
   History as HistoryIcon,
+  OpenInNew as OpenInNewIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -3527,23 +3528,51 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                               ) : (
                                 <Box sx={{ minHeight: 0 }} />
                               )}
-                              <Button
-                                variant="outlined"
-                                size="small"
-                                onClick={() => handleAssignToShift(worker, selectedShift)}
-                                disabled={!selectedShift}
+                              <Box
                                 sx={{
                                   mt: 'auto',
-                                  minWidth: 56,
-                                  height: 24,
-                                  py: 0.25,
-                                  px: 0.75,
-                                  fontSize: '0.6875rem',
-                                  lineHeight: 1,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 0.5,
                                 }}
                               >
-                                Assign
-                              </Button>
+                                {/* Open user record in a new tab — handy when the
+                                    recruiter wants to vet skills / history without
+                                    losing their place in the Placements board. */}
+                                <Tooltip title="Open user record in new tab" {...placementTileTooltipSlotProps}>
+                                  <IconButton
+                                    size="small"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      window.open(`/users/${worker.id}`, '_blank', 'noopener,noreferrer');
+                                    }}
+                                    sx={{
+                                      width: 24,
+                                      height: 24,
+                                      color: 'text.secondary',
+                                    }}
+                                    aria-label="Open user record in new tab"
+                                  >
+                                    <OpenInNewIcon sx={{ fontSize: 16 }} />
+                                  </IconButton>
+                                </Tooltip>
+                                <Button
+                                  variant="outlined"
+                                  size="small"
+                                  onClick={() => handleAssignToShift(worker, selectedShift)}
+                                  disabled={!selectedShift}
+                                  sx={{
+                                    minWidth: 56,
+                                    height: 24,
+                                    py: 0.25,
+                                    px: 0.75,
+                                    fontSize: '0.6875rem',
+                                    lineHeight: 1,
+                                  }}
+                                >
+                                  Assign
+                                </Button>
+                              </Box>
                             </Box>
                           </Paper>
                         );
