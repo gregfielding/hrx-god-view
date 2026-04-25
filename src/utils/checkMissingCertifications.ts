@@ -15,13 +15,13 @@
  * who needs that string-only matcher today should think twice and call the
  * engine path instead.
  *
- * @see src/utils/certifications/evaluateCertificationRequirement.ts (engine)
+ * @see shared/certifications/evaluateCertificationRequirement.ts (engine)
  * @see shared/jobRequirementMatchers/matchCertifications.ts (readiness adapter)
  * @see docs/READINESS_EXECUTION_MATRIX.md §4.1, §6 hole #14
  */
 
-import certificationCatalogManifest from '../data/generated/certificationCatalogManifest.v1.json';
-import type { CertificationCatalogManifestV1 } from '../types/certifications/certificationCatalogManifest';
+import certificationCatalogManifest from '../shared/data/certificationCatalogManifest.v1.json';
+import type { CertificationCatalogManifestV1 } from '../shared/certifications/certificationCatalogManifest';
 import {
   computeEngineGapForPhase1Requirements,
   computeEngineGapLabelsForLegacyJobStrings,
@@ -30,7 +30,7 @@ import {
   buildCertificationRequirementsFromJobPosting,
   type JobPostingLike,
 } from './certifications/buildCertificationRequirementsFromJobPosting';
-import { normalizeDateToISODateString } from './certifications/normalizeDateToISODateString';
+import { normalizeDateToISODateString } from '../shared/certifications/normalizeDateToISODateString';
 
 const defaultManifest = certificationCatalogManifest as CertificationCatalogManifestV1;
 

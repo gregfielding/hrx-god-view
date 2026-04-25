@@ -1,15 +1,15 @@
-import certificationCatalogManifest from '../../data/generated/certificationCatalogManifest.v1.json';
-import type { CertificationCatalogManifestV1 } from '../../types/certifications/certificationCatalogManifest';
-import type { EvaluationContext, Phase1CertificationRequirement } from '../../types/certifications/certificationRequirement';
+import certificationCatalogManifest from '../../shared/data/certificationCatalogManifest.v1.json';
+import type { CertificationCatalogManifestV1 } from '../../shared/certifications/certificationCatalogManifest';
+import type { EvaluationContext, Phase1CertificationRequirement } from '../../shared/certifications/certificationRequirement';
 import { readinessSurfaceLabelsForNonSatisfiedEngineRows } from './certificationReadinessSurfaceLabels';
-import { buildCertificationRequirementsFromLegacyStrings } from './buildCertificationRequirementsFromLegacyStrings';
+import { buildCertificationRequirementsFromLegacyStrings } from '../../shared/certifications/buildCertificationRequirementsFromLegacyStrings';
 import {
   evaluateCertificationsForRequirements,
   type CanonicalRecordWithId,
   type RequirementEvaluationRow,
 } from './evaluateCertificationsForRequirements';
 import { getCanonicalCertificationRecordsWithIds } from './getCanonicalCertificationRecords';
-import { normalizeDateToISODateString } from './normalizeDateToISODateString';
+import { normalizeDateToISODateString } from '../../shared/certifications/normalizeDateToISODateString';
 
 export type LegacyCertificationEvaluationSummary = {
   missingRequiredCount: number;

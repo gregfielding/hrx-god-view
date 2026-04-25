@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { warnLegacyCertUsageDetected } from '../../../../utils/certifications/certificationsLogging';
+import { warnLegacyCertUsageDetected } from '../../../../shared/certifications/certificationsLogging';
 import { toChipLabel } from '../../../../utils/chipLabel';
 import { logger } from '../../../../utils/logger';
 import { doc, onSnapshot, updateDoc } from 'firebase/firestore';

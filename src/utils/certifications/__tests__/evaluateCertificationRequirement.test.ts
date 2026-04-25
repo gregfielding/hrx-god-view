@@ -1,10 +1,10 @@
-import type { CertificationRecordV1 } from '../../../types/certifications/certificationRecord';
-import type { Phase1CertificationRequirement } from '../../../types/certifications/certificationRequirement';
-import { deriveCertificationConfidence } from '../deriveCertificationConfidence';
+import type { CertificationRecordV1 } from '../../../shared/certifications/certificationRecord';
+import type { Phase1CertificationRequirement } from '../../../shared/certifications/certificationRequirement';
+import { deriveCertificationConfidence } from '../../../shared/certifications/deriveCertificationConfidence';
 import {
   evaluateCertificationRequirement,
   EXPIRING_SOON_DAYS,
-} from '../evaluateCertificationRequirement';
+} from '../../../shared/certifications/evaluateCertificationRequirement';
 
 const cat = 'forklift-certification';
 

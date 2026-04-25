@@ -7,7 +7,7 @@
 import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 
 import { db } from '../../firebase';
-import type { CertificationRecordV1 } from '../../types/certifications/certificationRecord';
+import type { CertificationRecordV1 } from '../../shared/certifications/certificationRecord';
 
 /** Firestore doc id under `certification_records` — same value as `certificationRecordId` on legacy rows after dual-write. */
 export type CanonicalCertificationRecordDoc = {

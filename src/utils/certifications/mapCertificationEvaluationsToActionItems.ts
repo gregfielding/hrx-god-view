@@ -1,4 +1,4 @@
-import type { CertificationCatalogManifestV1 } from '../../types/certifications/certificationCatalogManifest';
+import type { CertificationCatalogManifestV1 } from '../../shared/certifications/certificationCatalogManifest';
 import type { ActionBlocking, ActionItem, ActionSeverity } from '../../types/actionItems';
 import { makeActionItem } from '../userActionItems/actionItemFactory';
 import type { RequirementEvaluationRow } from './evaluateCertificationsForRequirements';

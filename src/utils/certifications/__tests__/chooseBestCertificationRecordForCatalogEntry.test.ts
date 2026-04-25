@@ -1,4 +1,4 @@
-import type { CertificationRecordV1 } from '../../../types/certifications/certificationRecord';
+import type { CertificationRecordV1 } from '../../../shared/certifications/certificationRecord';
 import {
   chooseBestCertificationRecordForCatalogEntry,
 } from '../chooseBestCertificationRecordForCatalogEntry';

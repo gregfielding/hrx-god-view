@@ -1,14 +1,14 @@
 import { useEffect, useState, useMemo } from 'react';
-import type { EvaluationContext } from '../types/certifications/certificationRequirement';
-import type { Phase1CertificationRequirement } from '../types/certifications/certificationRequirement';
-import certificationCatalogManifest from '../data/generated/certificationCatalogManifest.v1.json';
-import type { CertificationCatalogManifestV1 } from '../types/certifications/certificationCatalogManifest';
+import type { EvaluationContext } from '../shared/certifications/certificationRequirement';
+import type { Phase1CertificationRequirement } from '../shared/certifications/certificationRequirement';
+import certificationCatalogManifest from '../shared/data/certificationCatalogManifest.v1.json';
+import type { CertificationCatalogManifestV1 } from '../shared/certifications/certificationCatalogManifest';
 import { getCanonicalCertificationRecordsWithIds } from '../utils/certifications/getCanonicalCertificationRecords';
 import type { CanonicalRecordWithId } from '../utils/certifications/evaluateCertificationsForRequirements';
 import { buildWorkforceCertificationSummary } from '../utils/certifications/buildWorkforceCertificationSummary';
 import { detectCertificationRisk } from '../utils/certifications/detectCertificationRisk';
 import { buildCertificationPriorityQueue } from '../utils/certifications/buildCertificationPriorityQueue';
-import { normalizeDateToISODateString } from '../utils/certifications/normalizeDateToISODateString';
+import { normalizeDateToISODateString } from '../shared/certifications/normalizeDateToISODateString';
 
 const manifest = certificationCatalogManifest as CertificationCatalogManifestV1;
 

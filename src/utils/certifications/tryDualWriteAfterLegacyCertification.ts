@@ -1,14 +1,14 @@
-import type { CertificationCatalogManifestV1 } from '../../types/certifications/certificationCatalogManifest';
-import type { CertificationSourcePhase1 } from '../../types/certifications/certificationEnums';
+import type { CertificationCatalogManifestV1 } from '../../shared/certifications/certificationCatalogManifest';
+import type { CertificationSourcePhase1 } from '../../shared/certifications/certificationEnums';
 import { createOrUpdateCertificationRecord } from './createOrUpdateCertificationRecord';
 import { extractEvidenceFiles, type LegacyEvidenceInput } from './extractEvidenceFiles';
 import { getCatalogEntryById } from './getCatalogEntryById';
 import { isCertRecordsDualWriteEnabled } from './isCertRecordsDualWriteEnabled';
 import { resolveCatalogEntryOrWarn } from './resolveCatalogEntryOrWarn';
-import { warnCertifications } from './certificationsLogging';
+import { warnCertifications } from '../../shared/certifications/certificationsLogging';
 
 /** Lazy manifest import for bundle (same JSON as Phase 1A). */
-import certificationCatalogManifest from '../../data/generated/certificationCatalogManifest.v1.json';
+import certificationCatalogManifest from '../../shared/data/certificationCatalogManifest.v1.json';
 
 const manifest = certificationCatalogManifest as CertificationCatalogManifestV1;
 

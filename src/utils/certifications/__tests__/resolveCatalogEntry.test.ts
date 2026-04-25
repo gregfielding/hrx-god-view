@@ -1,6 +1,6 @@
-import type { CertificationCatalogManifestV1 } from '../../../types/certifications/certificationCatalogManifest';
-import { CERTIFICATION_CATALOG_SCHEMA_VERSION } from '../../../types/certifications/certificationCatalogManifest';
-import { buildCatalogResolveIndex, resolveCatalogEntryId } from '../resolveCatalogEntry';
+import type { CertificationCatalogManifestV1 } from '../../../shared/certifications/certificationCatalogManifest';
+import { CERTIFICATION_CATALOG_SCHEMA_VERSION } from '../../../shared/certifications/certificationCatalogManifest';
+import { buildCatalogResolveIndex, resolveCatalogEntryId } from '../../../shared/certifications/resolveCatalogEntry';
 
 const tinyManifest: CertificationCatalogManifestV1 = {
   _meta: {

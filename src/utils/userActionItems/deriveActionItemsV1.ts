@@ -1,6 +1,6 @@
 import type { ActionItem } from '../../types/actionItems';
-import certificationCatalogManifest from '../../data/generated/certificationCatalogManifest.v1.json';
-import type { CertificationCatalogManifestV1 } from '../../types/certifications/certificationCatalogManifest';
+import certificationCatalogManifest from '../../shared/data/certificationCatalogManifest.v1.json';
+import type { CertificationCatalogManifestV1 } from '../../shared/certifications/certificationCatalogManifest';
 import { mapCertificationEvaluationsToActionItems } from '../certifications/mapCertificationEvaluationsToActionItems';
 import type { ActionItemsV1Input } from './actionItemsV1Input';
 import { dedupeActionItems, sortActionItemsForDisplay } from './dedupeAndPrecedence';

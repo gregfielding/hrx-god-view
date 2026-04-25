@@ -41,18 +41,18 @@ import credentialsSeed from '../../../data/credentialsSeed.json';
 import { isUploadRequiredCert, getCertificationVerificationStatus } from '../../../utils/certificationVerification';
 import { tryDualWriteAfterLegacyCertification } from '../../../utils/certifications/tryDualWriteAfterLegacyCertification';
 import { tryDeleteCanonicalCertificationRecord } from '../../../utils/certifications/tryDeleteCanonicalCertificationRecord';
-import { warnCertifications } from '../../../utils/certifications/certificationsLogging';
+import { warnCertifications } from '../../../shared/certifications/certificationsLogging';
 import {
   getWorkerCertificationsUnified,
   type GetWorkerCertificationsUnifiedResult,
 } from '../../../utils/certifications/getWorkerCertificationsUnified';
-import certificationCatalogManifest from '../../../data/generated/certificationCatalogManifest.v1.json';
-import type { CertificationCatalogManifestV1 } from '../../../types/certifications/certificationCatalogManifest';
+import certificationCatalogManifest from '../../../shared/data/certificationCatalogManifest.v1.json';
+import type { CertificationCatalogManifestV1 } from '../../../shared/certifications/certificationCatalogManifest';
 import { compareCertificationEvaluationWithLegacy } from '../../../utils/certifications/compareCertificationEvaluationWithLegacy';
 import { evaluateCertificationsForRequirements } from '../../../utils/certifications/evaluateCertificationsForRequirements';
 import { getCanonicalCertificationRecordsWithIds } from '../../../utils/certifications/getCanonicalCertificationRecords';
 import { getCatalogEntryById } from '../../../utils/certifications/getCatalogEntryById';
-import { normalizeDateToISODateString } from '../../../utils/certifications/normalizeDateToISODateString';
+import { normalizeDateToISODateString } from '../../../shared/certifications/normalizeDateToISODateString';
 import { PREVIEW_SAMPLE_CERTIFICATION_REQUIREMENTS } from '../../../utils/certifications/previewSampleCertificationRequirements';
 import { useT } from '../../../i18n';
 

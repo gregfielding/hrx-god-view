@@ -1,5 +1,5 @@
-import type { CertificationConfidence, CertificationEvaluationStatus } from '../../types/certifications/certificationEnums';
-import type { CertificationRecordV1 } from '../../types/certifications/certificationRecord';
+import type { CertificationConfidence, CertificationEvaluationStatus } from './certificationEnums';
+import type { CertificationRecordV1 } from './certificationRecord';
 
 function evidenceCount(record: CertificationRecordV1 | null): number {
   if (!record?.evidenceFileRefs?.length) return 0;

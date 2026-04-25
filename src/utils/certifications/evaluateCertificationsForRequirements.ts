@@ -1,10 +1,10 @@
-import type { CertificationRecordV1 } from '../../types/certifications/certificationRecord';
-import type { EvaluationContext, Phase1CertificationRequirement } from '../../types/certifications/certificationRequirement';
+import type { CertificationRecordV1 } from '../../shared/certifications/certificationRecord';
+import type { EvaluationContext, Phase1CertificationRequirement } from '../../shared/certifications/certificationRequirement';
 import { chooseBestCertificationRecordForCatalogEntry } from './chooseBestCertificationRecordForCatalogEntry';
 import {
   evaluateCertificationRequirement,
   type CertificationEvaluationResult,
-} from './evaluateCertificationRequirement';
+} from '../../shared/certifications/evaluateCertificationRequirement';
 import { firestoreTimestampToMs } from './firestoreTimestampToMs';
 
 export type CanonicalRecordWithId = {

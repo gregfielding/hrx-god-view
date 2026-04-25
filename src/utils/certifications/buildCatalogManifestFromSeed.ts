@@ -1,9 +1,9 @@
 import type {
   CatalogManifestEntryV1,
   CertificationCatalogManifestV1,
-} from '../../types/certifications/certificationCatalogManifest';
-import { CERTIFICATION_CATALOG_SCHEMA_VERSION } from '../../types/certifications/certificationCatalogManifest';
-import { normalizeCertificationNameForLookup } from './normalizeCertificationNameForLookup';
+} from '../../shared/certifications/certificationCatalogManifest';
+import { CERTIFICATION_CATALOG_SCHEMA_VERSION } from '../../shared/certifications/certificationCatalogManifest';
+import { normalizeCertificationNameForLookup } from '../../shared/certifications/normalizeCertificationNameForLookup';
 import { stableJsonStringify } from './stableJsonStringify';
 
 /** Raw seed row from `credentialsSeed.json` — only fields we read. */

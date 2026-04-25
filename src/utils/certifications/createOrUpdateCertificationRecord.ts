@@ -7,12 +7,12 @@
 import { collection, doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 
 import { db } from '../../firebase';
-import { CERTIFICATION_CATALOG_SCHEMA_VERSION } from '../../types/certifications/certificationCatalogManifest';
-import type { CertificationRecordV1 } from '../../types/certifications/certificationRecord';
-import type { CertificationSourcePhase1 } from '../../types/certifications/certificationEnums';
-import { normalizeDateToISODateString } from './normalizeDateToISODateString';
+import { CERTIFICATION_CATALOG_SCHEMA_VERSION } from '../../shared/certifications/certificationCatalogManifest';
+import type { CertificationRecordV1 } from '../../shared/certifications/certificationRecord';
+import type { CertificationSourcePhase1 } from '../../shared/certifications/certificationEnums';
+import { normalizeDateToISODateString } from '../../shared/certifications/normalizeDateToISODateString';
 import { computeCertificationWriteDefaults } from './computeCertificationWriteDefaults';
-import type { CertificationEvidenceFileRefV1 } from '../../types/certifications/certificationRecord';
+import type { CertificationEvidenceFileRefV1 } from '../../shared/certifications/certificationRecord';
 
 export type CreateOrUpdateCertificationRecordInput = {
   uid: string;

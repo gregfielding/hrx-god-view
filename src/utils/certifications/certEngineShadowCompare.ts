@@ -2,7 +2,7 @@ import type {
   CertificationShadowRequirementSource,
   CertificationShadowSurface,
 } from '../../types/certifications/certEngineShadowEvent';
-import { warnCertifications } from './certificationsLogging';
+import { warnCertifications } from '../../shared/certifications/certificationsLogging';
 import { persistCertEngineShadowEvent } from './persistCertEngineShadowEvent';
 import {
   CERT_ENGINE_SHADOW_SAMPLE_RATE,

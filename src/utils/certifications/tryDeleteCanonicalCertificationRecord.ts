@@ -2,7 +2,7 @@ import { deleteDoc, doc } from 'firebase/firestore';
 
 import { db } from '../../firebase';
 import { isCertRecordsDualWriteEnabled } from './isCertRecordsDualWriteEnabled';
-import { warnCertifications } from './certificationsLogging';
+import { warnCertifications } from '../../shared/certifications/certificationsLogging';
 
 /** Best-effort delete canonical doc when legacy row is removed; does not throw. */
 export async function tryDeleteCanonicalCertificationRecord(

@@ -4,7 +4,7 @@
  * `CertificationEvaluationStatus` into a `MatchedReadinessStatus`.
  *
  * Like `matchScreeningPackage`, this is a **split-adapter pattern**: the real
- * evaluation lives in `src/utils/certifications/evaluateCertificationRequirement.ts`
+ * evaluation lives in `shared/certifications/evaluateCertificationRequirement.ts`
  * (and is the canonical, well-tested cert engine — locked per its file header).
  * This matcher is runtime-neutral, accepting the eval result as input. The
  * caller (Phase B.5 trigger) runs the engine and passes the result here.
@@ -24,7 +24,7 @@
  *   `attested_only`   → `needs_review` (worker claimed but no upload)
  *   `missing`         → `incomplete`
  *
- * @see src/utils/certifications/evaluateCertificationRequirement.ts (engine)
+ * @see shared/certifications/evaluateCertificationRequirement.ts (engine)
  * @see docs/READINESS_EXECUTION_MATRIX.md §4.1
  */
 
@@ -32,7 +32,7 @@ import { matcherResult, type MatcherResult, type MatchedReadinessStatus } from '
 
 /**
  * Mirror of `CertificationEvaluationStatus` from
- * `src/types/certifications/certificationEnums.ts`. Redeclared here (instead
+ * `shared/certifications/certificationEnums.ts`. Redeclared here (instead
  * of imported) so this file stays runtime-neutral / outside the certifications
  * module's import graph. Keep these in sync — the source enum is locked, so
  * additions are rare and would surface in type-check failures here.

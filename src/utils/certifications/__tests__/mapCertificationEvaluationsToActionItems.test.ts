@@ -1,5 +1,5 @@
 import { mapCertificationEvaluationsToActionItems } from '../mapCertificationEvaluationsToActionItems';
-import certificationCatalogManifest from '../../../data/generated/certificationCatalogManifest.v1.json';
+import certificationCatalogManifest from '../../../shared/data/certificationCatalogManifest.v1.json';
 
 const manifest = certificationCatalogManifest;
 

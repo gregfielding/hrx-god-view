@@ -1,4 +1,4 @@
-import type { CertificationRecordV1 } from '../../types/certifications/certificationRecord';
+import type { CertificationRecordV1 } from '../../shared/certifications/certificationRecord';
 
 /** Lightweight guard for adapter + engine boundaries (Phase 1B+). */
 export function isCertificationRecordV1(obj: unknown): obj is CertificationRecordV1 {

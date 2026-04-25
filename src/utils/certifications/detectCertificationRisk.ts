@@ -1,5 +1,5 @@
-import type { CertificationCatalogManifestV1 } from '../../types/certifications/certificationCatalogManifest';
-import type { Phase1CertificationRequirement } from '../../types/certifications/certificationRequirement';
+import type { CertificationCatalogManifestV1 } from '../../shared/certifications/certificationCatalogManifest';
+import type { Phase1CertificationRequirement } from '../../shared/certifications/certificationRequirement';
 import { certificationDisplayNameForCatalogId } from './certificationReadinessSurfaceLabels';
 import type { WorkforceCertificationSummary } from './buildWorkforceCertificationSummary';
 import {

@@ -1,22 +1,22 @@
 import { doc, getDoc } from 'firebase/firestore';
 
 import { db } from '../../firebase';
-import certificationCatalogManifest from '../../data/generated/certificationCatalogManifest.v1.json';
-import type { CertificationCatalogManifestV1 } from '../../types/certifications/certificationCatalogManifest';
-import type { CertificationRecordStatus, CertificationReviewStatus } from '../../types/certifications/certificationEnums';
-import type { CertificationRecordV1 } from '../../types/certifications/certificationRecord';
+import certificationCatalogManifest from '../../shared/data/certificationCatalogManifest.v1.json';
+import type { CertificationCatalogManifestV1 } from '../../shared/certifications/certificationCatalogManifest';
+import type { CertificationRecordStatus, CertificationReviewStatus } from '../../shared/certifications/certificationEnums';
+import type { CertificationRecordV1 } from '../../shared/certifications/certificationRecord';
 import {
   chooseBestCertificationRecordForCatalogEntry,
   type ChooseCertificationCandidate,
 } from './chooseBestCertificationRecordForCatalogEntry';
-import { warnCertifications } from './certificationsLogging';
+import { warnCertifications } from '../../shared/certifications/certificationsLogging';
 import { firestoreTimestampToMs } from './firestoreTimestampToMs';
 import type { CanonicalCertificationRecordDoc } from './getCanonicalCertificationRecords';
 import { getCanonicalCertificationRecordsWithIds } from './getCanonicalCertificationRecords';
 import { getCatalogEntryById } from './getCatalogEntryById';
-import { normalizeDateToISODateString } from './normalizeDateToISODateString';
+import { normalizeDateToISODateString } from '../../shared/certifications/normalizeDateToISODateString';
 import { normalizeLegacyCertificationRow } from './normalizeLegacyCertificationRow';
-import { buildCatalogResolveIndex } from './resolveCatalogEntry';
+import { buildCatalogResolveIndex } from '../../shared/certifications/resolveCatalogEntry';
 
 export type UnifiedCertificationProvenance = 'canonical' | 'legacy_only' | 'merged';
 

@@ -1,5 +1,5 @@
-import type { CertificationCatalogManifestV1 } from '../../../types/certifications/certificationCatalogManifest';
-import { CERTIFICATION_CATALOG_SCHEMA_VERSION } from '../../../types/certifications/certificationCatalogManifest';
+import type { CertificationCatalogManifestV1 } from '../../../shared/certifications/certificationCatalogManifest';
+import { CERTIFICATION_CATALOG_SCHEMA_VERSION } from '../../../shared/certifications/certificationCatalogManifest';
 import { getCatalogEntryById } from '../getCatalogEntryById';
 
 const tiny: CertificationCatalogManifestV1 = {

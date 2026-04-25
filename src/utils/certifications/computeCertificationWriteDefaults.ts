@@ -2,7 +2,7 @@ import type {
   CertificationRecordStatus,
   CertificationReviewStatus,
   CertificationSourcePhase1,
-} from '../../types/certifications/certificationEnums';
+} from '../../shared/certifications/certificationEnums';
 
 export type CertificationWriteDefaults = {
   reviewStatus: CertificationReviewStatus;

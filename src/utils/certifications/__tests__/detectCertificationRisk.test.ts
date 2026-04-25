@@ -8,7 +8,7 @@ import {
   CERT_RISK_MEDIUM_PENDING_SHARE,
 } from '../certificationIntelligenceConstants';
 import { buildTestManifest } from '../certificationIntelligenceFixtures';
-import type { Phase1CertificationRequirement } from '../../../types/certifications/certificationRequirement';
+import type { Phase1CertificationRequirement } from '../../../shared/certifications/certificationRequirement';
 
 describe('detectCertificationRisk', () => {
   const CAT = 'forklift-certification';

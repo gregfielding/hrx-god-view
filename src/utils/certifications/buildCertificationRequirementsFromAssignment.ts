@@ -1,8 +1,8 @@
-import type { CertificationCatalogManifestV1 } from '../../types/certifications/certificationCatalogManifest';
+import type { CertificationCatalogManifestV1 } from '../../shared/certifications/certificationCatalogManifest';
 import type { JobOrder } from '../../types/recruiter/jobOrder';
-import type { Phase1CertificationRequirement } from '../../types/certifications/certificationRequirement';
-import { buildCertificationRequirementsFromJobOrder } from './buildCertificationRequirementsFromJobOrder';
-import { warnCertifications } from './certificationsLogging';
+import type { Phase1CertificationRequirement } from '../../shared/certifications/certificationRequirement';
+import { buildCertificationRequirementsFromJobOrder } from '../../shared/certifications/buildCertificationRequirementsFromJobOrder';
+import { warnCertifications } from '../../shared/certifications/certificationsLogging';
 
 export type AssignmentLike = {
   id?: string;

@@ -1,4 +1,4 @@
-import type { CertificationCatalogManifestV1 } from '../../types/certifications/certificationCatalogManifest';
+import type { CertificationCatalogManifestV1 } from '../../shared/certifications/certificationCatalogManifest';
 import type { RequirementEvaluationRow } from './evaluateCertificationsForRequirements';
 import { certificationDisplayNameForCatalogId } from './certificationReadinessSurfaceLabels';
 import { formatCertificationReadinessSurfaceLabel } from './certificationReadinessSurfaceLabels';

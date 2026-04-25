@@ -1,4 +1,4 @@
-import { normalizeCertificationNameForLookup } from '../normalizeCertificationNameForLookup';
+import { normalizeCertificationNameForLookup } from '../../../shared/certifications/normalizeCertificationNameForLookup';
 
 describe('normalizeCertificationNameForLookup', () => {
   const foodHandlerKey = 'food handler card';

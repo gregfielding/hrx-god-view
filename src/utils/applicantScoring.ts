@@ -6,7 +6,7 @@
  * 2. Fit Score (0-100): AI-powered job-specific qualification match
  */
 
-import { warnLegacyCertUsageDetected } from './certifications/certificationsLogging';
+import { warnLegacyCertUsageDetected } from '../shared/certifications/certificationsLogging';
 
 interface UserProfile {
   firstName?: string;

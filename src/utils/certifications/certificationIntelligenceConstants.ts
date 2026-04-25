@@ -1,4 +1,4 @@
-import { EXPIRING_SOON_DAYS } from './evaluateCertificationRequirement';
+import { EXPIRING_SOON_DAYS } from '../../shared/certifications/evaluateCertificationRequirement';
 
 /**
  * Intelligence-layer thresholds (insight only — not execution gating).

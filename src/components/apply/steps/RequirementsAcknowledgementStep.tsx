@@ -13,7 +13,7 @@ import {
   buildCertificationUploadWritePatch,
 } from '../../../utils/workerReadinessWriteModel';
 import { formatWorkerFacingScreeningPackage } from '../../../utils/backgroundChecks/formatWorkerFacingScreeningPackage';
-import { warnLegacyCertUsageDetected } from '../../../utils/certifications/certificationsLogging';
+import { warnLegacyCertUsageDetected } from '../../../shared/certifications/certificationsLogging';
 
 type Props = {
   requirements: {

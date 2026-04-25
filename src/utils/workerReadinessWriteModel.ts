@@ -2,7 +2,7 @@ import { serverTimestamp } from 'firebase/firestore';
 import {
   scheduleIntentOptionsToSchedulePreferences,
 } from './workerPreferencesCanonical';
-import { warnLegacyCertUsageDetected } from './certifications/certificationsLogging';
+import { warnLegacyCertUsageDetected } from '../shared/certifications/certificationsLogging';
 
 type AnyMap = Record<string, unknown>;
 

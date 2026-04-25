@@ -2,7 +2,7 @@ import type { ScoreSummary } from '../scoreSummary';
 import type { WorkerInterviewAiBlock } from '../../types/workerAiPrescreenInterview';
 import type { UserListEntityOnboardingItem } from '../userListEntityEmploymentStatus';
 import type { EntityEmploymentActionSignal } from './entitySignalsFromEmploymentDocs';
-import type { CertificationCatalogManifestV1 } from '../../types/certifications/certificationCatalogManifest';
+import type { CertificationCatalogManifestV1 } from '../../shared/certifications/certificationCatalogManifest';
 import type { RequirementEvaluationRow } from '../certifications/evaluateCertificationsForRequirements';
 import type { CertificationActionSurfaceContext } from '../certifications/mapCertificationEvaluationsToActionItems';
 

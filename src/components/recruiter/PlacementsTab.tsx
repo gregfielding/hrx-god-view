@@ -96,13 +96,13 @@ import {
   selectPlacementCertBlockerLabelsLegacyFromSnapshot,
   type PlacementEmploymentChipModel,
 } from '../../utils/placementQualificationChipsModel';
-import certificationCatalogManifest from '../../data/generated/certificationCatalogManifest.v1.json';
-import type { CertificationCatalogManifestV1 } from '../../types/certifications/certificationCatalogManifest';
-import { warnCertifications } from '../../utils/certifications/certificationsLogging';
-import { buildCertificationRequirementsFromJobOrder } from '../../utils/certifications/buildCertificationRequirementsFromJobOrder';
+import certificationCatalogManifest from '../../shared/data/certificationCatalogManifest.v1.json';
+import type { CertificationCatalogManifestV1 } from '../../shared/certifications/certificationCatalogManifest';
+import { warnCertifications } from '../../shared/certifications/certificationsLogging';
+import { buildCertificationRequirementsFromJobOrder } from '../../shared/certifications/buildCertificationRequirementsFromJobOrder';
 import { computeEngineGapForPhase1Requirements } from '../../utils/certifications/evaluateCertificationsForLegacyRequirementStrings';
 import { logCertEngineShadowMismatch } from '../../utils/certifications/certEngineShadowCompare';
-import { normalizeDateToISODateString } from '../../utils/certifications/normalizeDateToISODateString';
+import { normalizeDateToISODateString } from '../../shared/certifications/normalizeDateToISODateString';
 import { isCertEngineReadinessEnabled } from '../../utils/certifications/certEngineReadinessFlag';
 
 const PLACEMENT_CERT_MANIFEST = certificationCatalogManifest as CertificationCatalogManifestV1;

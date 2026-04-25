@@ -1,7 +1,7 @@
-import certificationCatalogManifest from '../../../data/generated/certificationCatalogManifest.v1.json';
-import type { CertificationCatalogManifestV1 } from '../../../types/certifications/certificationCatalogManifest';
+import certificationCatalogManifest from '../../../shared/data/certificationCatalogManifest.v1.json';
+import type { CertificationCatalogManifestV1 } from '../../../shared/certifications/certificationCatalogManifest';
 import { buildCertificationRequirementsFromAssignment } from '../buildCertificationRequirementsFromAssignment';
-import { buildCertificationRequirementsFromJobOrder } from '../buildCertificationRequirementsFromJobOrder';
+import { buildCertificationRequirementsFromJobOrder } from '../../../shared/certifications/buildCertificationRequirementsFromJobOrder';
 import { buildCertificationRequirementsFromJobPosting } from '../buildCertificationRequirementsFromJobPosting';
 
 const manifest = certificationCatalogManifest as CertificationCatalogManifestV1;

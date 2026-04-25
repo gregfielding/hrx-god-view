@@ -16,11 +16,11 @@ jest.mock('../getCanonicalCertificationRecords', () => ({
   getCanonicalCertificationRecordsWithIds: (uid: string) => mockGetCanonicalCertificationRecordsWithIds(uid),
 }));
 
-jest.mock('../certificationsLogging', () => ({
+jest.mock('../../../shared/certifications/certificationsLogging', () => ({
   warnCertifications: jest.fn(),
 }));
 
-import type { CertificationRecordV1 } from '../../../types/certifications/certificationRecord';
+import type { CertificationRecordV1 } from '../../../shared/certifications/certificationRecord';
 import { getWorkerCertificationsUnified } from '../getWorkerCertificationsUnified';
 
 function baseRecord(partial: Partial<CertificationRecordV1>): CertificationRecordV1 {

@@ -1,4 +1,4 @@
-import type { CertificationEvidenceFileRefV1 } from '../../types/certifications/certificationRecord';
+import type { CertificationEvidenceFileRefV1 } from '../../shared/certifications/certificationRecord';
 
 export type LegacyEvidenceInput = {
   fileUrl?: string | null;

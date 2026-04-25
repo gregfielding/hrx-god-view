@@ -5,7 +5,7 @@ import {
   CERT_GAP_PENDING_WORKFORCE_SHARE,
   CERT_MIN_APPROVED_WORKERS,
 } from '../certificationIntelligenceConstants';
-import { EXPIRING_SOON_DAYS } from '../evaluateCertificationRequirement';
+import { EXPIRING_SOON_DAYS } from '../../../shared/certifications/evaluateCertificationRequirement';
 import {
   approvedActiveRecord,
   EXPIRING_SOON_DATE_ISO,

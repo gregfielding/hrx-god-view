@@ -1,6 +1,6 @@
-import type { CertificationEvaluationStatus } from '../../types/certifications/certificationEnums';
-import type { CertificationCatalogManifestV1 } from '../../types/certifications/certificationCatalogManifest';
-import type { Phase1CertificationRequirement } from '../../types/certifications/certificationRequirement';
+import type { CertificationEvaluationStatus } from '../../shared/certifications/certificationEnums';
+import type { CertificationCatalogManifestV1 } from '../../shared/certifications/certificationCatalogManifest';
+import type { Phase1CertificationRequirement } from '../../shared/certifications/certificationRequirement';
 import { getCatalogEntryById } from './getCatalogEntryById';
 import type { RequirementEvaluationRow } from './evaluateCertificationsForRequirements';
 

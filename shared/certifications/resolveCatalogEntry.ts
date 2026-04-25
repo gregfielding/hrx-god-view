@@ -1,4 +1,4 @@
-import type { CertificationCatalogManifestV1 } from '../../types/certifications/certificationCatalogManifest';
+import type { CertificationCatalogManifestV1 } from './certificationCatalogManifest';
 import { normalizeCertificationNameForLookup } from './normalizeCertificationNameForLookup';
 import { warnCertifications } from './certificationsLogging';
 

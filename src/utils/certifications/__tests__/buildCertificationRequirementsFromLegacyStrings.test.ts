@@ -1,6 +1,6 @@
-import manifestJson from '../../../data/generated/certificationCatalogManifest.v1.json';
-import type { CertificationCatalogManifestV1 } from '../../../types/certifications/certificationCatalogManifest';
-import { buildCertificationRequirementsFromLegacyStrings } from '../buildCertificationRequirementsFromLegacyStrings';
+import manifestJson from '../../../shared/data/certificationCatalogManifest.v1.json';
+import type { CertificationCatalogManifestV1 } from '../../../shared/certifications/certificationCatalogManifest';
+import { buildCertificationRequirementsFromLegacyStrings } from '../../../shared/certifications/buildCertificationRequirementsFromLegacyStrings';
 
 const manifest = manifestJson as CertificationCatalogManifestV1;
 

@@ -1,6 +1,6 @@
-import type { CertificationCatalogManifestV1 } from '../../types/certifications/certificationCatalogManifest';
-import type { Phase1CertificationRequirement } from '../../types/certifications/certificationRequirement';
-import { buildCertificationRequirementsFromLegacyStrings } from './buildCertificationRequirementsFromLegacyStrings';
+import type { CertificationCatalogManifestV1 } from '../../shared/certifications/certificationCatalogManifest';
+import type { Phase1CertificationRequirement } from '../../shared/certifications/certificationRequirement';
+import { buildCertificationRequirementsFromLegacyStrings } from '../../shared/certifications/buildCertificationRequirementsFromLegacyStrings';
 
 /**
  * Job-board / public posting shape (loose — mirrors `JobsBoardPost`, `JobPostingDetail` custom data).

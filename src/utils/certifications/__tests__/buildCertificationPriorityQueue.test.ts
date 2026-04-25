@@ -12,7 +12,7 @@ import {
   reqRequiredTemplate,
   expiredRecord,
 } from '../certificationIntelligenceFixtures';
-import type { Phase1CertificationRequirement } from '../../../types/certifications/certificationRequirement';
+import type { Phase1CertificationRequirement } from '../../../shared/certifications/certificationRequirement';
 
 describe('buildCertificationPriorityQueue', () => {
   const catA = 'cat-a-missing';

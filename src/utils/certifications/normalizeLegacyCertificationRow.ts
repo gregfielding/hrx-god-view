@@ -4,14 +4,14 @@
  *
  * Unified adapter principle (discipline §8): this helper does not mutate Firestore; canonical wins later at read time.
  */
-import type { CertificationCatalogManifestV1 } from '../../types/certifications/certificationCatalogManifest';
+import type { CertificationCatalogManifestV1 } from '../../shared/certifications/certificationCatalogManifest';
 import {
   buildCatalogResolveIndex,
   resolveCatalogEntryId,
   type CatalogResolveIndex,
-} from './resolveCatalogEntry';
-import { normalizeCertificationNameForLookup } from './normalizeCertificationNameForLookup';
-import { normalizeDateToISODateString } from './normalizeDateToISODateString';
+} from '../../shared/certifications/resolveCatalogEntry';
+import { normalizeCertificationNameForLookup } from '../../shared/certifications/normalizeCertificationNameForLookup';
+import { normalizeDateToISODateString } from '../../shared/certifications/normalizeDateToISODateString';
 
 export type LegacyCertificationRowInput = {
   name?: unknown;

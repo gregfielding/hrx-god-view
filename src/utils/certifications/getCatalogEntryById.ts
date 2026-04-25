@@ -1,7 +1,7 @@
 import type {
   CatalogManifestEntryV1,
   CertificationCatalogManifestV1,
-} from '../../types/certifications/certificationCatalogManifest';
+} from '../../shared/certifications/certificationCatalogManifest';
 
 /**
  * Single lookup for catalog row by id — avoids ad hoc `.entries.find` at call sites (Phase 1B+).

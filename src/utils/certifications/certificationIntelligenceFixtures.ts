@@ -1,6 +1,6 @@
-import type { CertificationCatalogManifestV1 } from '../../types/certifications/certificationCatalogManifest';
-import { CERTIFICATION_CATALOG_SCHEMA_VERSION } from '../../types/certifications/certificationCatalogManifest';
-import type { Phase1CertificationRequirement } from '../../types/certifications/certificationRequirement';
+import type { CertificationCatalogManifestV1 } from '../../shared/certifications/certificationCatalogManifest';
+import { CERTIFICATION_CATALOG_SCHEMA_VERSION } from '../../shared/certifications/certificationCatalogManifest';
+import type { Phase1CertificationRequirement } from '../../shared/certifications/certificationRequirement';
 import type { CanonicalRecordWithId } from './evaluateCertificationsForRequirements';
 
 /** Fixed “today” for reproducible expiration math (matches `EXPIRING_SOON_DAYS` window checks). */

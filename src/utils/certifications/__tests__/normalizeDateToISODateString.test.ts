@@ -1,4 +1,4 @@
-import { normalizeDateToISODateString } from '../normalizeDateToISODateString';
+import { normalizeDateToISODateString } from '../../../shared/certifications/normalizeDateToISODateString';
 
 describe('normalizeDateToISODateString', () => {
   it('parses YYYY-MM-DD and returns UTC date string', () => {

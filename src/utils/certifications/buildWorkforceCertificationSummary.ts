@@ -1,5 +1,5 @@
-import type { EvaluationContext, Phase1CertificationRequirement } from '../../types/certifications/certificationRequirement';
-import type { CertificationEvaluationStatus } from '../../types/certifications/certificationEnums';
+import type { EvaluationContext, Phase1CertificationRequirement } from '../../shared/certifications/certificationRequirement';
+import type { CertificationEvaluationStatus } from '../../shared/certifications/certificationEnums';
 import type { CanonicalRecordWithId } from './evaluateCertificationsForRequirements';
 import { evaluateCertificationsForRequirements } from './evaluateCertificationsForRequirements';
 import {

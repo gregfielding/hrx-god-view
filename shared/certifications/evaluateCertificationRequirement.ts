@@ -11,9 +11,9 @@
 
 import { addDays, format, parseISO } from 'date-fns';
 
-import type { CertificationConfidence, CertificationEvaluationStatus } from '../../types/certifications/certificationEnums';
-import type { CertificationRecordV1 } from '../../types/certifications/certificationRecord';
-import type { EvaluationContext, Phase1CertificationRequirement } from '../../types/certifications/certificationRequirement';
+import type { CertificationConfidence, CertificationEvaluationStatus } from './certificationEnums';
+import type { CertificationRecordV1 } from './certificationRecord';
+import type { EvaluationContext, Phase1CertificationRequirement } from './certificationRequirement';
 import { deriveCertificationConfidence } from './deriveCertificationConfidence';
 import { normalizeDateToISODateString } from './normalizeDateToISODateString';
 

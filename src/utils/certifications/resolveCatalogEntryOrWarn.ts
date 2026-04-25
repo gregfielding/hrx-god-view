@@ -1,7 +1,7 @@
-import type { CertificationCatalogManifestV1 } from '../../types/certifications/certificationCatalogManifest';
-import { buildCatalogResolveIndex, resolveCatalogEntryId, type CatalogResolveIndex } from './resolveCatalogEntry';
-import { normalizeCertificationNameForLookup } from './normalizeCertificationNameForLookup';
-import { warnCertifications } from './certificationsLogging';
+import type { CertificationCatalogManifestV1 } from '../../shared/certifications/certificationCatalogManifest';
+import { buildCatalogResolveIndex, resolveCatalogEntryId, type CatalogResolveIndex } from '../../shared/certifications/resolveCatalogEntry';
+import { normalizeCertificationNameForLookup } from '../../shared/certifications/normalizeCertificationNameForLookup';
+import { warnCertifications } from '../../shared/certifications/certificationsLogging';
 
 /**
  * Resolves `catalogEntryId` from a display name, or logs and returns null (caller skips canonical write).

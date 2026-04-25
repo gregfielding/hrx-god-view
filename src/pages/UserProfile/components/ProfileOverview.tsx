@@ -13,15 +13,15 @@ import {
 import OverviewActionItemsCard from './OverviewActionItemsCard';
 import UserScoreRefreshButton from './UserScoreRefreshButton';
 import { deriveActionItemsV1 } from '../../../utils/userActionItems/deriveActionItemsV1';
-import certificationCatalogManifestJson from '../../../data/generated/certificationCatalogManifest.v1.json';
-import type { CertificationCatalogManifestV1 } from '../../../types/certifications/certificationCatalogManifest';
+import certificationCatalogManifestJson from '../../../shared/data/certificationCatalogManifest.v1.json';
+import type { CertificationCatalogManifestV1 } from '../../../shared/certifications/certificationCatalogManifest';
 import { PREVIEW_SAMPLE_CERTIFICATION_REQUIREMENTS } from '../../../utils/certifications/previewSampleCertificationRequirements';
 import {
   evaluateCertificationsForRequirements,
   type RequirementEvaluationRow,
 } from '../../../utils/certifications/evaluateCertificationsForRequirements';
 import { getCanonicalCertificationRecordsWithIds } from '../../../utils/certifications/getCanonicalCertificationRecords';
-import { normalizeDateToISODateString } from '../../../utils/certifications/normalizeDateToISODateString';
+import { normalizeDateToISODateString } from '../../../shared/certifications/normalizeDateToISODateString';
 import {
   buildRecruiterCertificationTrustSignals,
   certificationOperationalSummaryCounts,

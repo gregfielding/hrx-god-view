@@ -1,5 +1,5 @@
 import seed from '../../../data/credentialsSeed.json';
-import { CERTIFICATION_CATALOG_SCHEMA_VERSION } from '../../../types/certifications/certificationCatalogManifest';
+import { CERTIFICATION_CATALOG_SCHEMA_VERSION } from '../../../shared/certifications/certificationCatalogManifest';
 import { buildCatalogManifestFromSeed } from '../buildCatalogManifestFromSeed';
 
 describe('buildCatalogManifestFromSeed', () => {

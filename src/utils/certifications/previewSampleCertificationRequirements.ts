@@ -1,4 +1,4 @@
-import type { Phase1CertificationRequirement } from '../../types/certifications/certificationRequirement';
+import type { Phase1CertificationRequirement } from '../../shared/certifications/certificationRequirement';
 
 /** Preview-only mock requirements — not wired to job orders (Phase 2 shadow). */
 export const PREVIEW_SAMPLE_CERTIFICATION_REQUIREMENTS: Phase1CertificationRequirement[] = [

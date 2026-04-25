@@ -1,6 +1,6 @@
-import manifestJson from '../../../data/generated/certificationCatalogManifest.v1.json';
-import type { CertificationCatalogManifestV1 } from '../../../types/certifications/certificationCatalogManifest';
-import { buildCatalogResolveIndex } from '../resolveCatalogEntry';
+import manifestJson from '../../../shared/data/certificationCatalogManifest.v1.json';
+import type { CertificationCatalogManifestV1 } from '../../../shared/certifications/certificationCatalogManifest';
+import { buildCatalogResolveIndex } from '../../../shared/certifications/resolveCatalogEntry';
 import { normalizeLegacyCertificationRow } from '../normalizeLegacyCertificationRow';
 
 const manifest = manifestJson as CertificationCatalogManifestV1;

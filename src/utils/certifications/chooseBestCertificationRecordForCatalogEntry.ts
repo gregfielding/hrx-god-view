@@ -1,6 +1,6 @@
-import type { CertificationRecordStatus, CertificationReviewStatus } from '../../types/certifications/certificationEnums';
-import type { CertificationRecordV1 } from '../../types/certifications/certificationRecord';
-import { normalizeDateToISODateString } from './normalizeDateToISODateString';
+import type { CertificationRecordStatus, CertificationReviewStatus } from '../../shared/certifications/certificationEnums';
+import type { CertificationRecordV1 } from '../../shared/certifications/certificationRecord';
+import { normalizeDateToISODateString } from '../../shared/certifications/normalizeDateToISODateString';
 
 /**
  * Deterministic precedence for duplicate `catalogEntryId` rows (Phase 1C / readiness engine input).

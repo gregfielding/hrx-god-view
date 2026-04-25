@@ -4,7 +4,7 @@ import {
   isUploadRequiredCert,
   type CertificationVerificationStatus,
 } from '../certificationVerification';
-import type { CertificationEvaluationResult } from './evaluateCertificationRequirement';
+import type { CertificationEvaluationResult } from '../../shared/certifications/evaluateCertificationRequirement';
 
 export type CertificationShadowComparisonRow = {
   requirementId: string;

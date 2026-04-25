@@ -28,7 +28,7 @@ import { useT } from '../../../i18n';
 import credentialsSeed from '../../../data/credentialsSeed.json';
 import { tryDualWriteAfterLegacyCertification } from '../../../utils/certifications/tryDualWriteAfterLegacyCertification';
 import { tryDeleteCanonicalCertificationRecord } from '../../../utils/certifications/tryDeleteCanonicalCertificationRecord';
-import { warnCertifications } from '../../../utils/certifications/certificationsLogging';
+import { warnCertifications } from '../../../shared/certifications/certificationsLogging';
 
 type Props = {
   value: any;
