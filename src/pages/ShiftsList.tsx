@@ -22,6 +22,8 @@ import {
   Chip,
   CircularProgress,
   IconButton,
+  Menu,
+  MenuItem,
   Paper,
   Stack,
   Table,
@@ -30,13 +32,16 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TextField,
   Tooltip,
   Typography,
 } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import CheckIcon from '@mui/icons-material/Check';
+import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { useOutletContext } from 'react-router-dom';
 
+import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import StandardTablePagination from '../components/StandardTablePagination';
 import ShiftPlacementsDrawer from '../components/shifts/ShiftPlacementsDrawer';
@@ -46,6 +51,7 @@ import {
   formatWeeklyScheduleDays,
   statusChipColor,
   type ShiftRow,
+  type ShiftStatus,
 } from '../utils/shifts/shiftRow';
 import type { ShiftsOutletContext } from './Shifts';
 
@@ -166,6 +172,283 @@ const fmtPct = (n: number | undefined): string => {
   return `${trimmed}%`;
 };
 
+/**
+ * Inline-editable PO# cell.
+ *
+ * - Click anywhere on the cell to edit (does NOT open the row drawer).
+ * - Enter / blur saves; Escape cancels.
+ * - Persists to `tenants/{tid}/job_orders/{joId}/shifts/{shiftId}.poNumber`.
+ *   We deliberately write to the shift, not the JO — `shiftRow.ts` documents
+ *   that a single JO can have shifts billed against different POs.
+ * - The list view doesn't use a Firestore listener (it's `getDocs`-driven via
+ *   `useActiveShifts`), so we keep an optimistic local override that paints
+ *   the new value immediately and survives until the next refresh.
+ *
+ * Empty input clears the override (writes `''` to Firestore so the JO-level
+ * fallback shows again on next render).
+ */
+interface PoNumberCellProps {
+  tenantId: string | null | undefined;
+  jobOrderId: string;
+  shiftId: string;
+  /** Current shift-level PO (after applying the optimistic override). */
+  shiftPoNumber: string;
+  /** JO-level fallback shown when shift-level is blank. */
+  jobOrderPoNumber: string;
+  /** Optimistic update so the cell reflects the save without re-fetching. */
+  onSaved: (joId: string, shiftId: string, value: string) => void;
+}
+
+const PoNumberCell: React.FC<PoNumberCellProps> = ({
+  tenantId,
+  jobOrderId,
+  shiftId,
+  shiftPoNumber,
+  jobOrderPoNumber,
+  onSaved,
+}) => {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(shiftPoNumber);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // If the source value changes (refetch / sibling edit) and we're not
+  // actively editing, sync the draft so the next click starts from the
+  // latest persisted value.
+  useEffect(() => {
+    if (!editing) setDraft(shiftPoNumber);
+  }, [shiftPoNumber, editing]);
+
+  const beginEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!tenantId) return;
+    setError(null);
+    setDraft(shiftPoNumber);
+    setEditing(true);
+  };
+
+  const commit = async () => {
+    const next = draft.trim();
+    if (next === shiftPoNumber.trim()) {
+      setEditing(false);
+      return;
+    }
+    if (!tenantId) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await updateDoc(
+        doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts', shiftId),
+        { poNumber: next, updatedAt: serverTimestamp() },
+      );
+      onSaved(jobOrderId, shiftId, next);
+      setEditing(false);
+    } catch (err) {
+      console.warn('[ShiftsList] Failed to save PO#:', err);
+      setError(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const cancel = () => {
+    setDraft(shiftPoNumber);
+    setError(null);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <TextField
+        autoFocus
+        size="small"
+        value={draft}
+        disabled={saving}
+        onChange={(e) => setDraft(e.target.value)}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            void commit();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancel();
+          }
+        }}
+        onBlur={() => {
+          // commit on blur — but ignore the blur that happens because the
+          // input is being unmounted by `cancel()` (Escape). `cancel`
+          // sets `editing=false` synchronously, so by the time onBlur
+          // fires the input is already torn down and this callback
+          // doesn't run. Safe.
+          void commit();
+        }}
+        placeholder="PO#"
+        inputProps={{ 'aria-label': 'PO number' }}
+        error={Boolean(error)}
+        helperText={error ?? undefined}
+        sx={{ width: 100 }}
+      />
+    );
+  }
+
+  const display = shiftPoNumber || jobOrderPoNumber || '—';
+  return (
+    <Tooltip title="Click to edit PO#" arrow disableInteractive>
+      <Box
+        role="button"
+        tabIndex={0}
+        onClick={beginEdit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            beginEdit(e as unknown as React.MouseEvent);
+          }
+        }}
+        sx={{
+          display: 'inline-block',
+          minWidth: 60,
+          px: 0.5,
+          py: 0.25,
+          borderRadius: 0.5,
+          cursor: tenantId ? 'text' : 'default',
+          color: shiftPoNumber || jobOrderPoNumber ? 'text.primary' : 'text.disabled',
+          '&:hover': tenantId
+            ? { bgcolor: 'rgba(0, 87, 184, 0.08)' }
+            : undefined,
+        }}
+      >
+        <Typography variant="body2" component="span">
+          {display}
+        </Typography>
+      </Box>
+    </Tooltip>
+  );
+};
+
+/**
+ * Inline-editable Status cell.
+ *
+ * - Click the chip to open a small menu with the four `ShiftStatus`
+ *   values; selecting one persists to Firestore and stops here (does
+ *   NOT open the row drawer).
+ * - Persists to `tenants/{tid}/job_orders/{joId}/shifts/{shiftId}.status`.
+ * - Same optimistic-override pattern as `PoNumberCell` — `useActiveShifts`
+ *   doesn't subscribe, so we paint the new value locally and let the
+ *   next refresh confirm.
+ *
+ * Note: choosing `closed` or `cancelled` will cause the shift to drop
+ * out of the active dataset entirely on the next refresh (see
+ * `buildActiveRowMeta` in `shiftRow.ts`). That's intentional — the row
+ * remains visible until the user navigates / refilters, so they can
+ * still react if they picked the wrong status.
+ */
+const SHIFT_STATUS_OPTIONS: ReadonlyArray<{ value: ShiftStatus; label: string }> = [
+  { value: 'open', label: 'Open' },
+  { value: 'filled', label: 'Filled' },
+  { value: 'closed', label: 'Closed' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+
+interface StatusSelectCellProps {
+  tenantId: string | null | undefined;
+  jobOrderId: string;
+  shiftId: string;
+  status: ShiftStatus;
+  onSaved: (joId: string, shiftId: string, value: ShiftStatus) => void;
+}
+
+const StatusSelectCell: React.FC<StatusSelectCellProps> = ({
+  tenantId,
+  jobOrderId,
+  shiftId,
+  status,
+  onSaved,
+}) => {
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  const [saving, setSaving] = useState(false);
+  const open = Boolean(anchorEl);
+
+  const handleOpen = (e: React.MouseEvent<HTMLElement>) => {
+    e.stopPropagation();
+    if (!tenantId || saving) return;
+    setAnchorEl(e.currentTarget);
+  };
+  const handleClose = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setAnchorEl(null);
+  };
+
+  const handlePick = async (e: React.MouseEvent, next: ShiftStatus) => {
+    e.stopPropagation();
+    setAnchorEl(null);
+    if (!tenantId || next === status) return;
+    setSaving(true);
+    try {
+      await updateDoc(
+        doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts', shiftId),
+        { status: next, updatedAt: serverTimestamp() },
+      );
+      onSaved(jobOrderId, shiftId, next);
+    } catch (err) {
+      console.warn('[ShiftsList] Failed to save shift status:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <Chip
+        size="small"
+        label={status}
+        color={statusChipColor(status)}
+        onClick={handleOpen}
+        // Keep keyboard a11y on the chip itself; the row's onClick
+        // also opens the drawer on Enter, so we explicitly stop the
+        // event there too.
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.stopPropagation();
+          }
+        }}
+        sx={{
+          textTransform: 'capitalize',
+          cursor: tenantId ? 'pointer' : 'default',
+          opacity: saving ? 0.6 : 1,
+        }}
+      />
+      <Menu
+        anchorEl={anchorEl}
+        open={open}
+        onClose={() => handleClose()}
+        // Stop the row click from firing when the user clicks
+        // anywhere inside the menu (including the backdrop).
+        onClick={(e) => e.stopPropagation()}
+        slotProps={{ paper: { sx: { minWidth: 140 } } }}
+      >
+        {SHIFT_STATUS_OPTIONS.map((opt) => (
+          <MenuItem
+            key={opt.value}
+            selected={opt.value === status}
+            onClick={(e) => void handlePick(e, opt.value)}
+          >
+            <Chip
+              size="small"
+              label={opt.label}
+              color={statusChipColor(opt.value)}
+              sx={{ mr: 1, pointerEvents: 'none' }}
+            />
+          </MenuItem>
+        ))}
+      </Menu>
+    </>
+  );
+};
+
 const ShiftsList: React.FC = () => {
   const { tenantId } = useAuth();
   const ctx = useOutletContext<ShiftsOutletContext | null>();
@@ -183,6 +466,32 @@ const ShiftsList: React.FC = () => {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
   const [openRow, setOpenRow] = useState<ShiftRow | null>(null);
+
+  // Optimistic, per-row PO# overrides keyed by `${joId}:${shiftId}`. Filled
+  // by `PoNumberCell` after a successful Firestore write so the new value
+  // shows immediately without waiting for `useActiveShifts` to re-fetch.
+  // Cleared (set back to '') makes the cell fall back to the JO-level PO.
+  const [poOverrides, setPoOverrides] = useState<Record<string, string>>({});
+
+  const handlePoSaved = (joId: string, shiftId: string, value: string) => {
+    setPoOverrides((prev) => ({ ...prev, [`${joId}:${shiftId}`]: value }));
+  };
+
+  // Same optimistic pattern for status edits — see `StatusSelectCell`.
+  // Note that selecting `closed` / `cancelled` would normally remove
+  // the row from the Active dataset on next refresh; the override
+  // keeps the visible chip in sync until that happens.
+  const [statusOverrides, setStatusOverrides] = useState<
+    Record<string, ShiftStatus>
+  >({});
+
+  const handleStatusSaved = (
+    joId: string,
+    shiftId: string,
+    value: ShiftStatus,
+  ) => {
+    setStatusOverrides((prev) => ({ ...prev, [`${joId}:${shiftId}`]: value }));
+  };
 
   const filteredRows = useMemo(() => {
     return rows.filter((r) => {
@@ -398,10 +707,27 @@ const ShiftsList: React.FC = () => {
                           '—'
                         )}
                       </TableCell>
-                      <TableCell>
-                        <Typography variant="body2">
-                          {shift.poNumber || jobOrder.poNumber || '—'}
-                        </Typography>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        {/* `poOverrides` lets a freshly-saved PO show
+                            without waiting for the next refetch from
+                            `useActiveShifts`. */}
+                        {(() => {
+                          const overrideKey = `${jobOrder.id}:${shift.id}`;
+                          const shiftPo =
+                            overrideKey in poOverrides
+                              ? poOverrides[overrideKey]
+                              : shift.poNumber ?? '';
+                          return (
+                            <PoNumberCell
+                              tenantId={tenantId}
+                              jobOrderId={jobOrder.id}
+                              shiftId={shift.id}
+                              shiftPoNumber={shiftPo}
+                              jobOrderPoNumber={jobOrder.poNumber ?? ''}
+                              onSaved={handlePoSaved}
+                            />
+                          );
+                        })()}
                       </TableCell>
                       <TableCell>
                         <Stack spacing={0.25}>
@@ -630,13 +956,23 @@ const ShiftsList: React.FC = () => {
                           </Typography>
                         </Stack>
                       </TableCell>
-                      <TableCell>
-                        <Chip
-                          size="small"
-                          label={shift.status ?? 'open'}
-                          color={statusChipColor(shift.status)}
-                          sx={{ textTransform: 'capitalize' }}
-                        />
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        {(() => {
+                          const overrideKey = `${jobOrder.id}:${shift.id}`;
+                          const status: ShiftStatus =
+                            statusOverrides[overrideKey] ??
+                            shift.status ??
+                            'open';
+                          return (
+                            <StatusSelectCell
+                              tenantId={tenantId}
+                              jobOrderId={jobOrder.id}
+                              shiftId={shift.id}
+                              status={status}
+                              onSaved={handleStatusSaved}
+                            />
+                          );
+                        })()}
                       </TableCell>
                     </TableRow>
                   );

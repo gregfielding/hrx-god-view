@@ -9,27 +9,34 @@
  * shift always shows fresh data.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   Avatar,
   Box,
+  Button,
   CircularProgress,
   Divider,
   Drawer,
+  Grid,
   IconButton,
   Stack,
-  Tab,
-  Tabs,
   Tooltip,
   Typography,
 } from '@mui/material';
-import { Close as CloseIcon, OpenInNew as OpenInNewIcon } from '@mui/icons-material';
-import { doc, getDoc } from 'firebase/firestore';
+import {
+  Close as CloseIcon,
+  NotificationsOff as NotificationsOffIcon,
+  NotificationsActive as NotificationsActiveIcon,
+  OpenInNew as OpenInNewIcon,
+} from '@mui/icons-material';
+import { doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 
 import { db } from '../../firebase';
 import { p } from '../../data/firestorePaths';
+import { useAuth } from '../../contexts/AuthContext';
 import PlacementsTab from '../recruiter/PlacementsTab';
+import StaffInstructionCard from '../recruiter/StaffInstructionCard';
 import type { JobOrder } from '../../types/recruiter/jobOrder';
 import EditShiftForm, { type ShiftFormShift } from './EditShiftForm';
 
@@ -136,15 +143,16 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
   shift,
   onClose,
 }) => {
+  const { user } = useAuth();
   const [jobOrder, setJobOrder] = useState<JobOrder | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Active drawer tab. Resets to 'assignments' whenever the drawer
   // reopens against a new shift so a recruiter never lands on a stale
   // tab they last touched on a previous shift.
-  const [activeTab, setActiveTab] = useState<'assignments' | 'settings'>(
-    'assignments',
-  );
+  const [activeTab, setActiveTab] = useState<
+    'assignments' | 'settings' | 'instructions' | 'promotion'
+  >('assignments');
   // Full shift doc loaded for the Settings tab. The drawer's `shift`
   // prop is a *summary* (the shape used by the /shifts table rows) and
   // doesn't carry the full edit-time fields (weeklySchedule,
@@ -158,6 +166,14 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
   // Lightweight inline status message after a successful save inside
   // the Settings tab. Cleared on next save / shift / close.
   const [settingsSaveMessage, setSettingsSaveMessage] = useState<string | null>(null);
+
+  // Mute-notifications toggle. The state lives on the JO doc
+  // (`muted: boolean`); we read from `jobOrder` and write back via
+  // `updateDoc`. Mirrors `PlacementsTab.handleTogglePlacementNotificationsMuted`
+  // so the JO Detail page and the drawer stay in sync.
+  const placementNotificationsMuted = Boolean((jobOrder as { muted?: boolean } | null)?.muted);
+  const [togglingMute, setTogglingMute] = useState(false);
+  const [muteError, setMuteError] = useState<string | null>(null);
 
   // Reset the active tab whenever the drawer opens against a new
   // shift. We key on `shift?.id` (not `open`) so toggling the same
@@ -226,6 +242,29 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ]);
 
+  // Refetch the JO doc. Exposed as a callback so child panels (e.g.
+  // `StaffInstructionCard`'s `onRefresh`) can pull fresh data after
+  // mutating the JO without us having to wire a Firestore subscription
+  // into the drawer.
+  const refreshJobOrder = useCallback(async (): Promise<void> => {
+    if (!tenantId || !jobOrderId) return;
+    try {
+      const snap = await getDoc(doc(db, p.jobOrder(tenantId, jobOrderId)));
+      if (!snap.exists()) {
+        setError('Job order no longer exists.');
+        setJobOrder(null);
+        return;
+      }
+      // Cast — the Firestore doc shape is broader than the TS interface,
+      // but PlacementsTab tolerates extra fields and the few fields it
+      // strictly needs are all present on real JO docs.
+      setJobOrder({ id: snap.id, ...(snap.data() as object) } as JobOrder);
+    } catch (err) {
+      console.error('Failed to refresh job order for shift drawer:', err);
+      setError(err instanceof Error ? err.message : 'Failed to refresh job order');
+    }
+  }, [tenantId, jobOrderId]);
+
   // Load the JO doc whenever a new (tenant, jobOrderId) pair opens.
   // PlacementsTab wants a fully populated JobOrder, not an empty shell —
   // empty would crash several `jobOrder.requiredCertifications` etc. lookups.
@@ -246,9 +285,6 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
           setError('Job order no longer exists.');
           setJobOrder(null);
         } else {
-          // Cast — the Firestore doc shape is broader than the TS interface,
-          // but PlacementsTab tolerates extra fields and the few fields it
-          // strictly needs are all present on real JO docs.
           setJobOrder({ id: snap.id, ...(snap.data() as object) } as JobOrder);
         }
       } catch (err) {
@@ -271,6 +307,26 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
     // close the drawer because they're explicitly going to a separate
     // tab; closing would lose their place in the table on return.
     window.open(`/jobs/job-orders/${jobOrderId}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleToggleMute = async () => {
+    if (!tenantId || !jobOrderId) return;
+    setTogglingMute(true);
+    setMuteError(null);
+    try {
+      const next = !placementNotificationsMuted;
+      await updateDoc(doc(db, 'tenants', tenantId, 'job_orders', jobOrderId), {
+        muted: next,
+        updatedAt: serverTimestamp(),
+      });
+      // Optimistic local update so the button label flips before the
+      // JO doc reload propagates. The drawer's load effect will reconcile.
+      setJobOrder((prev) => (prev ? ({ ...prev, muted: next } as JobOrder) : prev));
+    } catch (err) {
+      setMuteError(err instanceof Error ? err.message : 'Failed to update mute setting');
+    } finally {
+      setTogglingMute(false);
+    }
   };
 
   return (
@@ -327,7 +383,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
           {shift &&
             (shift.confirmedCount != null || shift.totalStaffRequested != null) && (
               <Typography
-                variant="caption"
+                variant="body2"
                 color="text.secondary"
                 sx={{ fontWeight: 500, whiteSpace: 'nowrap' }}
               >
@@ -499,24 +555,91 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
 
       <Divider />
 
-      <Tabs
-        value={activeTab}
-        onChange={(_, value) => setActiveTab(value as typeof activeTab)}
+      <Box
         sx={{
-          px: 2.5,
-          minHeight: 40,
-          '& .MuiTab-root': {
-            minHeight: 40,
-            textTransform: 'none',
-            fontWeight: 500,
-          },
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          pl: 2.5,
+          pr: 2.5,
+          py: 1.25,
+          gap: 1.25,
         }}
       >
-        <Tab value="assignments" label="Assignments" />
-        <Tab value="settings" label="Settings" />
-      </Tabs>
+        {/* Pill tabs styled to match /shifts (Active/Past/Recurring/Drafts) */}
+        <Box sx={{ display: 'flex', gap: 0.35, alignItems: 'center' }}>
+          {(
+            [
+              { id: 'assignments', label: 'Assignments' },
+              { id: 'settings', label: 'Settings' },
+              { id: 'instructions', label: 'Instructions' },
+              { id: 'promotion', label: 'Promotion' },
+            ] as const
+          ).map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <Button
+                key={tab.id}
+                variant="text"
+                onClick={() => setActiveTab(tab.id)}
+                sx={{
+                  textTransform: 'none',
+                  borderRadius: '999px',
+                  fontSize: '13px',
+                  fontWeight: isActive ? 600 : 400,
+                  color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                  bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                  px: 1.25,
+                  py: 0.5,
+                  minHeight: 30,
+                  minWidth: 'auto',
+                  whiteSpace: 'nowrap',
+                  '&:hover': {
+                    bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                  },
+                }}
+              >
+                {tab.label}
+              </Button>
+            );
+          })}
+        </Box>
+        {jobOrder && (
+          <Button
+            size="small"
+            disableRipple
+            onClick={() => void handleToggleMute()}
+            disabled={togglingMute || loading}
+            startIcon={
+              placementNotificationsMuted ? (
+                <NotificationsOffIcon fontSize="small" />
+              ) : (
+                <NotificationsActiveIcon fontSize="small" />
+              )
+            }
+            sx={{
+              textTransform: 'none',
+              fontWeight: 500,
+              px: 1,
+              minWidth: 'auto',
+              color: placementNotificationsMuted ? 'warning.main' : 'text.secondary',
+              '&:hover': {
+                background: 'transparent',
+                color: placementNotificationsMuted ? 'warning.dark' : 'text.primary',
+              },
+            }}
+          >
+            {placementNotificationsMuted ? 'Notifications Muted' : 'Mute Notifications'}
+          </Button>
+        )}
+      </Box>
 
       <Divider />
+      {muteError && (
+        <Alert severity="error" sx={{ mx: 2.5, mt: 1 }} onClose={() => setMuteError(null)}>
+          {muteError}
+        </Alert>
+      )}
 
       <Box sx={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
         {loading && (
@@ -549,6 +672,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
                 connectedJobPostIds={[]}
                 hiringEntityName={null}
                 placementHiringEntityId={null}
+                lockedShiftId={shift?.id ?? null}
               />
             </Box>
             {activeTab === 'settings' && (
@@ -598,6 +722,131 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
                     />
                   </>
                 )}
+              </Box>
+            )}
+            {activeTab === 'instructions' && (
+              // Mirrors the JO Detail page's "Staff Instructions" tab
+              // (`RecruiterJobOrderDetail.tsx` line 5339+). Reads/writes
+              // directly to the parent JO doc — `StaffInstructionCard`
+              // owns its own debounced save against `staffInstructions`
+              // on the JO. After save it calls `refreshJobOrder` so the
+              // drawer's local copy stays in sync.
+              //
+              // CASCADING NOTE: the JO's `staffInstructions` are
+              // already the resolved, post-merge values that the
+              // recruiter accepted at JO creation time (cascaded down
+              // from Account → Child Account → JO). Per-shift
+              // overrides will land here once the cascade engine
+              // (O.2/O.3) is wired in — at that point we'll switch
+              // the cards to read the resolved value via
+              // `resolveCascadedField` and write the override to
+              // `tenants/{tid}/job_orders/{joId}/shifts/{sid}` instead
+              // of the JO doc.
+              <Box sx={{ px: 2.5, py: 2.5 }}>
+                {!jobOrder || !tenantId || !jobOrderId ? (
+                  <Alert severity="info">Loading job order…</Alert>
+                ) : (
+                  <Grid container spacing={3}>
+                    <Grid item xs={12}>
+                      <StaffInstructionCard
+                        title="First Day Instructions"
+                        fieldKey="firstDay"
+                        placeholder="Enter first day instructions (e.g., arrival time, what to bring, who to meet, orientation details...)"
+                        uploadPlaceholder="Upload first day schedules, orientation materials, or related documents"
+                        jobOrder={jobOrder}
+                        jobOrderId={jobOrderId}
+                        tenantId={tenantId}
+                        userId={user?.uid || ''}
+                        onRefresh={refreshJobOrder}
+                      />
+                    </Grid>
+                    <Grid item xs={12}>
+                      <StaffInstructionCard
+                        title="Parking Instructions"
+                        fieldKey="parking"
+                        placeholder="Enter parking instructions for staff (e.g., where to park, parking pass requirements, visitor parking location...)"
+                        uploadPlaceholder="Upload parking maps, diagrams, or related documents"
+                        jobOrder={jobOrder}
+                        jobOrderId={jobOrderId}
+                        tenantId={tenantId}
+                        userId={user?.uid || ''}
+                        onRefresh={refreshJobOrder}
+                      />
+                    </Grid>
+                    <Grid item xs={12}>
+                      <StaffInstructionCard
+                        title="Check-In Instructions"
+                        fieldKey="checkIn"
+                        placeholder="Enter check-in instructions (e.g., where to report, who to ask for, required documents...)"
+                        uploadPlaceholder="Upload check-in forms, maps, or related documents"
+                        jobOrder={jobOrder}
+                        jobOrderId={jobOrderId}
+                        tenantId={tenantId}
+                        userId={user?.uid || ''}
+                        onRefresh={refreshJobOrder}
+                      />
+                    </Grid>
+                    <Grid item xs={12}>
+                      <StaffInstructionCard
+                        title="Uniform Instructions"
+                        fieldKey="uniform"
+                        placeholder="Enter uniform and dress code requirements (e.g., specific colors, safety gear, PPE requirements...)"
+                        uploadPlaceholder="Upload uniform photos, dress code guides, or related documents"
+                        jobOrder={jobOrder}
+                        jobOrderId={jobOrderId}
+                        tenantId={tenantId}
+                        userId={user?.uid || ''}
+                        onRefresh={refreshJobOrder}
+                      />
+                    </Grid>
+                    <Grid item xs={12}>
+                      <StaffInstructionCard
+                        title="Credential Instructions"
+                        fieldKey="credentials"
+                        placeholder="Enter credential requirements (e.g., badge pickup, wristband issuance, ID requirements...)"
+                        uploadPlaceholder="Upload credential forms, badge photos, or related documents"
+                        jobOrder={jobOrder}
+                        jobOrderId={jobOrderId}
+                        tenantId={tenantId}
+                        userId={user?.uid || ''}
+                        onRefresh={refreshJobOrder}
+                      />
+                    </Grid>
+                    <Grid item xs={12}>
+                      <StaffInstructionCard
+                        title="Other Instructions"
+                        fieldKey="other"
+                        placeholder="Enter any additional instructions or important information for staff..."
+                        uploadPlaceholder="Upload any other relevant documents"
+                        jobOrder={jobOrder}
+                        jobOrderId={jobOrderId}
+                        tenantId={tenantId}
+                        userId={user?.uid || ''}
+                        onRefresh={refreshJobOrder}
+                      />
+                    </Grid>
+                    <Grid item xs={12}>
+                      <StaffInstructionCard
+                        title="Other Attachments"
+                        fieldKey="attachments"
+                        placeholder=""
+                        uploadPlaceholder="Upload any other relevant documents for this job order"
+                        jobOrder={jobOrder}
+                        jobOrderId={jobOrderId}
+                        tenantId={tenantId}
+                        userId={user?.uid || ''}
+                        onRefresh={refreshJobOrder}
+                      />
+                    </Grid>
+                  </Grid>
+                )}
+              </Box>
+            )}
+            {activeTab === 'promotion' && (
+              <Box sx={{ px: 2.5, py: 4 }}>
+                <Typography variant="body2" color="text.secondary">
+                  Promotion — coming soon.
+                </Typography>
               </Box>
             )}
           </>

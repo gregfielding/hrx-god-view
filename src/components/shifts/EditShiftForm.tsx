@@ -47,6 +47,7 @@ import {
   collection,
   deleteField,
   doc,
+  getDoc,
   serverTimestamp,
   updateDoc,
 } from 'firebase/firestore';
@@ -180,6 +181,92 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
   const { user } = useAuth();
   const isGigJob = jobOrder?.jobType === 'gig';
   const editingShift = shift ?? null;
+
+  /* --- Account label (read-only) -----------------------------------
+   * Mirror the JO Detail page's Account dropdown exactly, which reads
+   * from `tenants/{tid}/recruiter_accounts/{id}` and composes
+   * `{name} — {parentName}` (see `JobOrderForm.tsx` line 572). The
+   * persisted `accountName`/`parentAccountName` on the JO doc are
+   * sourced from `crm_companies` and don't always match the recruiter-
+   * account display name (e.g. CRM company name "Savannah …" vs.
+   * recruiter-account name "CORT Savannah …"). So we prefer the
+   * recruiter-accounts lookup when `recruiterAccountId` is present
+   * and fall back to the JO denorms / `companyName` otherwise.
+   * ----------------------------------------------------------------- */
+  const [resolvedAccountLabel, setResolvedAccountLabel] = useState<string>('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const jo = jobOrder as
+      | {
+          recruiterAccountId?: string | null;
+          accountName?: string;
+          parentAccountName?: string | null;
+          companyName?: string;
+        }
+      | null
+      | undefined;
+
+    const fallback = (() => {
+      const sub = jo?.accountName?.trim() || '';
+      const parent = jo?.parentAccountName?.trim() || '';
+      if (sub) return parent ? `${sub} — ${parent}` : sub;
+      return jo?.companyName?.trim() || '';
+    })();
+
+    const accountId = jo?.recruiterAccountId?.trim();
+    if (!tenantId || !accountId) {
+      setResolvedAccountLabel(fallback);
+      return;
+    }
+
+    setResolvedAccountLabel(fallback);
+
+    (async () => {
+      try {
+        const accSnap = await getDoc(
+          doc(db, 'tenants', tenantId, 'recruiter_accounts', accountId),
+        );
+        if (cancelled || !accSnap.exists()) return;
+        const accData = accSnap.data() as {
+          name?: string;
+          parentAccountId?: string | null;
+        };
+        const name = String(accData.name ?? '').trim();
+        const parentId =
+          typeof accData.parentAccountId === 'string'
+            ? accData.parentAccountId.trim()
+            : '';
+
+        let parentName = '';
+        if (parentId) {
+          const parentSnap = await getDoc(
+            doc(db, 'tenants', tenantId, 'recruiter_accounts', parentId),
+          );
+          if (cancelled) return;
+          if (parentSnap.exists()) {
+            parentName = String(
+              (parentSnap.data() as { name?: string }).name ?? '',
+            ).trim();
+          }
+        }
+
+        if (cancelled) return;
+        const label = name
+          ? parentName
+            ? `${name} — ${parentName}`
+            : name
+          : fallback;
+        setResolvedAccountLabel(label);
+      } catch (err) {
+        console.warn('[EditShiftForm] account label lookup failed:', err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, jobOrder]);
 
   /* --- Available positions (derived from JO) ------------------------ */
   const availablePositions = useMemo<Position[]>(() => {
@@ -684,6 +771,22 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
       )}
 
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+        {/* Account (read-only). Composed by `resolvedAccountLabel`
+            above so the value matches the JO Detail page's Account
+            dropdown one-to-one. Fallback chain (also handled there):
+            recruiter_accounts lookup → JO denorms → companyName. */}
+        {(() => {
+          return (
+            <TextField
+              fullWidth
+              label="Account"
+              value={resolvedAccountLabel}
+              InputProps={{ readOnly: true }}
+              variant="outlined"
+            />
+          );
+        })()}
+
         {/* Shift Title (left) + Status (right) */}
         <Grid container spacing={2}>
           <Grid item xs={12} md={6}>

@@ -152,6 +152,14 @@ interface PlacementsTabProps {
    * When set, `entity_employments` rows are matched by this id; overrides `jobOrder.hiringEntityId` when absent on the JO doc.
    */
   placementHiringEntityId?: string | null;
+  /**
+   * When set, the tab is pinned to this shift — the shift selector
+   * UI is hidden and persisted/derived selections never deviate
+   * from this id. Used by `ShiftPlacementsDrawer` so a recruiter
+   * always sees placements for the row they clicked, never another
+   * shift on the same JO.
+   */
+  lockedShiftId?: string | null;
 }
 
 interface Shift {
@@ -574,6 +582,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   connectedJobPostIds = [],
   hiringEntityName = null,
   placementHiringEntityId = null,
+  lockedShiftId = null,
 }) => {
   // Only present in hrx-god-view workspace build (Assign All + Export + Preview Email)
   if (typeof console !== 'undefined' && console.log) {
@@ -605,7 +614,15 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
 
   const persistedFilters = loadPersistedFilters();
   const [selectedShiftId, setSelectedShiftId] = useState<string>(persistedFilters.shiftId);
-  const [selectedWorkforce, setSelectedWorkforce] = useState<string>(persistedFilters.workforce);
+  // In drawer mode (`lockedShiftId`) the worker pool is always
+  // scoped to a specific shift, so default the Workforce filter to
+  // "Shift Applicants" rather than rehydrating from the JO Detail
+  // page's persisted preference. Recruiters can still pick another
+  // option inside the drawer; we just don't carry their JO-Detail
+  // choice over because the drawer's mental model is per-shift.
+  const [selectedWorkforce, setSelectedWorkforce] = useState<string>(
+    lockedShiftId ? 'shift_applicants' : persistedFilters.workforce,
+  );
   const [selectedDay, setSelectedDay] = useState<string>(persistedFilters.day ?? '');
   // Data state
   const [shifts, setShifts] = useState<Shift[]>([]);
@@ -1144,8 +1161,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     loadUserGroups();
   }, [tenantId]);
 
-  // Persist filters to localStorage whenever they change
+  // Persist filters to localStorage whenever they change. Skipped
+  // in drawer mode (`lockedShiftId`) — otherwise the drawer's
+  // per-shift defaults (forced shift id + "Shift Applicants"
+  // workforce) would clobber the JO Detail page's saved preference
+  // every time a recruiter clicked into a shift row.
   useEffect(() => {
+    if (lockedShiftId) return;
     try {
       localStorage.setItem(storageKey, JSON.stringify({
         shiftId: selectedShiftId,
@@ -1155,7 +1177,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     } catch (err) {
       console.error('Error saving filters to localStorage:', err);
     }
-  }, [selectedShiftId, selectedWorkforce, selectedDay, storageKey]);
+  }, [lockedShiftId, selectedShiftId, selectedWorkforce, selectedDay, storageKey]);
 
   // Load confirmed applications count for selected shift
   useEffect(() => {
@@ -1277,8 +1299,14 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         // Keep an existing valid selection; otherwise default to the first available shift.
         // Use functional updates so this effect does NOT need `selectedShiftId` in deps — including it
         // re-ran the whole fetch on every dropdown change and raced with assignment listeners.
+        // When `lockedShiftId` is set (drawer mode), force the
+        // selection to that shift regardless of persistence so a
+        // recruiter never sees placements for a different shift.
         setSelectedShiftId((prev) => {
           if (sortedShifts.length === 0) return '';
+          if (lockedShiftId && sortedShifts.some((s) => s.id === lockedShiftId)) {
+            return lockedShiftId;
+          }
           if (prev && sortedShifts.some((s) => s.id === prev)) return prev;
           return sortedShifts[0].id;
         });
@@ -1291,7 +1319,17 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     };
 
     loadShifts();
-  }, [tenantId, jobOrderId]);
+  }, [tenantId, jobOrderId, lockedShiftId]);
+
+  // Re-pin to `lockedShiftId` if the drawer reopens against a
+  // different shift while shifts are already loaded — guards
+  // against the user opening the drawer for shift A, closing,
+  // then opening for shift B before `loadShifts` re-runs.
+  useEffect(() => {
+    if (!lockedShiftId) return;
+    if (!shifts.some((s) => s.id === lockedShiftId)) return;
+    setSelectedShiftId((prev) => (prev === lockedShiftId ? prev : lockedShiftId));
+  }, [lockedShiftId, shifts]);
 
   // Load workforce based on selected option
   useEffect(() => {
@@ -2695,7 +2733,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             minWidth: 0,
           }}
         >
-          {showContent && shifts.length > 0 && (
+          {showContent && shifts.length > 0 && !lockedShiftId && (
             <FormControl size="small" sx={{ minWidth: 280 }}>
               <InputLabel>Shift</InputLabel>
               <Select
@@ -2758,7 +2796,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
               </Select>
             </FormControl>
           )}
-          {selectedShift && !(isGigMultiDay && selectedDay === '') && (
+          {/* Schedule + staff summary. Hidden in drawer mode (`lockedShiftId`)
+              because the same info already lives in the drawer's header
+              strip (DATE/TIME + Staff cells), so showing it again here
+              just creates redundant noise above the assignments board. */}
+          {!lockedShiftId && selectedShift && !(isGigMultiDay && selectedDay === '') && (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
               {(() => {
                 const dayEntry = selectedDay && dayOptions.length > 0 ? dayOptions.find((d) => d.date === selectedDay) : null;
@@ -2803,7 +2845,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             </Box>
           )}
         </Box>
-        {showContent && shifts.length > 0 && (
+        {showContent && shifts.length > 0 && !lockedShiftId && (
           <Button
             size="small"
             variant={placementNotificationsMuted ? 'contained' : 'outlined'}
@@ -2824,13 +2866,44 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           </Alert>
         )}
 
-        {/* Content Area - two column board */}
+        {/* Content Area - two column board.
+            Drawer mode (`lockedShiftId`) drops the Card chrome and
+            tightens the gutter so the two columns read as a clean
+            split rather than two boxes-in-a-box. The JO Detail page
+            keeps the elevated Card look. */}
         {showContent && (
-          <Grid container spacing={3}>
+          <Grid container spacing={lockedShiftId ? 1.5 : 3}>
             {/* Left: Assignments */}
             <Grid item xs={12} lg={6}>
-              <Card sx={{ height: '100%' }}>
-                <CardContent sx={{ p: '16px', '&:last-child': { pb: '16px' }, overflow: 'visible' }}>
+              <Card
+                elevation={lockedShiftId ? 0 : 1}
+                sx={{
+                  height: '100%',
+                  // Drawer mode: strip the theme's default Card chrome.
+                  // `createBaseTheme` registers `MuiCard.styleOverrides`
+                  // with `border: '1px solid …'`, `boxShadow: …` and a
+                  // hard-coded `padding: 24`, plus a `:hover` state that
+                  // re-applies the shadow. Theme styleOverrides outweigh
+                  // a plain sx value here, so we use !important to win.
+                  ...(lockedShiftId && {
+                    border: 'none !important',
+                    boxShadow: 'none !important',
+                    backgroundColor: 'transparent !important',
+                    padding: '0 !important',
+                    '&:hover': {
+                      boxShadow: 'none !important',
+                      borderColor: 'transparent !important',
+                    },
+                  }),
+                }}
+              >
+                <CardContent
+                  sx={{
+                    p: lockedShiftId ? 0 : '16px',
+                    '&:last-child': { pb: lockedShiftId ? 0 : '16px' },
+                    overflow: 'visible',
+                  }}
+                >
                   <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', mb: 0.5, overflow: 'visible' }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, flex: '0 1 auto' }}>
                       {selectedShiftId && displayedAssignedWorkers.length > 0 && (
@@ -2958,13 +3031,21 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                     onDrop={handleAssignmentsDrop}
                     sx={{
                       borderRadius: 1,
-                      border: '1px dashed',
+                      // Drawer mode keeps the dropzone visually flat:
+                      // resting state has no border / no shadow / 8px
+                      // padding. The drag-over state still flips the
+                      // border + bgcolor so the affordance survives.
+                      border: lockedShiftId
+                        ? isAssignmentDragOver
+                          ? '1px dashed'
+                          : 'none'
+                        : '1px dashed',
                       borderColor: isAssignmentDragOver ? 'primary.main' : 'divider',
                       bgcolor: isAssignmentDragOver ? 'rgba(0,0,0,0.06)' : 'rgba(0,0,0,0.02)',
                       minHeight: 220,
                       p: 1,
                       transition: 'all 0.15s ease',
-                      boxShadow: isAssignmentDragOver ? 2 : 0,
+                      boxShadow: lockedShiftId ? 0 : isAssignmentDragOver ? 2 : 0,
                     }}
                   >
                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
@@ -2988,16 +3069,25 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         return (
                           <Paper
                             key={worker.id}
-                            variant="outlined"
+                            // Drop the outlined variant in drawer
+                            // mode so the variant's `1px solid …`
+                            // border can't win the cascade against
+                            // our sx override.
+                            variant={lockedShiftId ? undefined : 'outlined'}
+                            elevation={lockedShiftId ? 0 : 1}
                             draggable={canDragBackToPool}
                             onDragStart={(event) => handleWorkerDragStart(event, worker.id)}
                             sx={{
-                              p: 0.5,
+                              p: lockedShiftId ? 1 : 0.5,
                               display: 'flex',
                               justifyContent: 'space-between',
                               alignItems: 'center',
                               gap: 1,
                               cursor: canDragBackToPool ? 'grab' : 'default',
+                              ...(lockedShiftId && {
+                                border: 'none',
+                                boxShadow: 'none',
+                              }),
                             }}
                           >
                             <Checkbox
@@ -3187,8 +3277,30 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
 
             {/* Right: Worker Pool */}
             <Grid item xs={12} lg={6}>
-              <Card sx={{ height: '100%' }}>
-                <CardContent sx={{ p: '16px', '&:last-child': { pb: '16px' } }}>
+              <Card
+                elevation={lockedShiftId ? 0 : 1}
+                sx={{
+                  height: '100%',
+                  // See note on the Assignments Card above — same theme
+                  // override needs the same !important treatment.
+                  ...(lockedShiftId && {
+                    border: 'none !important',
+                    boxShadow: 'none !important',
+                    backgroundColor: 'transparent !important',
+                    padding: '0 !important',
+                    '&:hover': {
+                      boxShadow: 'none !important',
+                      borderColor: 'transparent !important',
+                    },
+                  }),
+                }}
+              >
+                <CardContent
+                  sx={{
+                    p: lockedShiftId ? 0 : '16px',
+                    '&:last-child': { pb: lockedShiftId ? 0 : '16px' },
+                  }}
+                >
                   <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
                     Worker Pool ({availableWorkers.length})
                   </Typography>
@@ -3290,13 +3402,19 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                     onDrop={handleWorkerPoolDrop}
                     sx={{
                       borderRadius: 1,
-                      border: '1px dashed',
+                      // Same drawer-flat treatment as the
+                      // assignments dropzone (above).
+                      border: lockedShiftId
+                        ? isWorkerPoolDragOver
+                          ? '1px dashed'
+                          : 'none'
+                        : '1px dashed',
                       borderColor: isWorkerPoolDragOver ? 'warning.main' : 'divider',
                       bgcolor: isWorkerPoolDragOver ? 'rgba(255, 152, 0, 0.08)' : 'rgba(0,0,0,0.02)',
                       minHeight: 220,
                       p: 1,
                       transition: 'all 0.15s ease',
-                      boxShadow: isWorkerPoolDragOver ? 2 : 0,
+                      boxShadow: lockedShiftId ? 0 : isWorkerPoolDragOver ? 2 : 0,
                     }}
                   >
                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
@@ -3348,16 +3466,21 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         return (
                           <Paper
                             key={worker.id}
-                            variant="outlined"
+                            variant={lockedShiftId ? undefined : 'outlined'}
+                            elevation={lockedShiftId ? 0 : 1}
                             draggable
                             onDragStart={(event) => handleWorkerDragStart(event, worker.id)}
                             sx={{
-                              p: 0.5,
+                              p: lockedShiftId ? 1 : 0.5,
                               display: 'flex',
                               flexDirection: 'row',
                               alignItems: 'stretch',
                               gap: 0.5,
                               cursor: 'grab',
+                              ...(lockedShiftId && {
+                                border: 'none',
+                                boxShadow: 'none',
+                              }),
                             }}
                           >
                             <Box sx={{ flex: 1, minWidth: 0, pr: 0 }}>
