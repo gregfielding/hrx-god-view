@@ -664,12 +664,48 @@ const ShiftsList: React.FC = () => {
         jobOrderId={openRow?.jobOrder.id ?? null}
         shift={
           openRow
-            ? {
-                id: openRow.shift.id,
-                shiftTitle: openRow.shift.shiftTitle,
-                dateLabel: openRow.dateLabel,
-                timeLabel: openRow.timeLabel,
-              }
+            ? (() => {
+                const jo = openRow.jobOrder;
+                const street = jo.worksiteAddress?.street?.trim() || '';
+                const city = jo.worksiteAddress?.city?.trim() || '';
+                const state = jo.worksiteAddress?.state?.trim() || '';
+                const zip = jo.worksiteAddress?.zipCode?.trim() || '';
+                // Same "City, ST zip" composition rule as the Worksite
+                // column so the drawer header matches the table row.
+                const cityStateZip = [
+                  [city, state].filter(Boolean).join(', '),
+                  zip,
+                ]
+                  .filter(Boolean)
+                  .join(' ');
+                return {
+                  id: openRow.shift.id,
+                  shiftTitle: openRow.shift.shiftTitle,
+                  jobTitle: openRow.shift.defaultJobTitle?.trim() || jo.jobTitle,
+                  dateLabel: openRow.dateLabel,
+                  timeLabel: openRow.timeLabel,
+                  poNumber: openRow.shift.poNumber || jo.poNumber,
+                  worksiteName: jo.worksiteName,
+                  worksiteStreet: street || undefined,
+                  worksiteCityStateZip: cityStateZip || undefined,
+                  companyName: jo.companyName,
+                  companyLogoUrl: jo.companyLogoUrl,
+                  // Financials are JO-level — every shift on the same JO
+                  // shares the same pay/bill/tax rates, so reading
+                  // straight off the JO matches the table cell exactly.
+                  payRate: jo.payRate ?? null,
+                  billRate: jo.billRate ?? null,
+                  markupPercent: jo.markupPercent ?? null,
+                  wcRate: jo.wcRate ?? null,
+                  sutaRate: jo.sutaRate ?? null,
+                  futaRate: jo.futaRate ?? null,
+                  // Counts are shift-level — useActiveShifts hydrates
+                  // applicantsCount + confirmedCount from the
+                  // applications fan-out.
+                  totalStaffRequested: openRow.shift.totalStaffRequested,
+                  confirmedCount: openRow.confirmedCount,
+                };
+              })()
             : null
         }
         onClose={() => setOpenRow(null)}
