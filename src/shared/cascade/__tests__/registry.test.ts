@@ -60,6 +60,21 @@ describe('CASCADE_REGISTRY shape lock', () => {
       }
     });
 
+    it('defaults, when set, is a plain object (not null/array)', () => {
+      // `defaults` is consumed by Account-creation seed flows
+      // (handoff §15.3). Disallow `null` / arrays so the seed
+      // flow can spread the value into Firestore writes without
+      // type-narrowing every call site. Restrict to merge_deep
+      // shapes — the only strategy with a meaningful nested
+      // default surface.
+      if (spec.defaults !== undefined) {
+        expect(spec.defaults).not.toBeNull();
+        expect(Array.isArray(spec.defaults)).toBe(false);
+        expect(typeof spec.defaults).toBe('object');
+        expect(spec.strategy).toBe('merge_deep');
+      }
+    });
+
     if (spec.strategy === 'keyed_list') {
       it('declares an identityKey for keyed_list', () => {
         expect(typeof spec.identityKey).toBe('string');
@@ -200,6 +215,54 @@ describe('CASCADE_REGISTRY shape lock', () => {
         const sub = CASCADE_REGISTRY.positions.itemFields[fieldName] as CascadeFieldSpec;
         expect(sub.requiredForCompleteness).toBeUndefined();
       }
+    });
+  });
+
+  describe('posting cascade additions (handoff §15.3)', () => {
+    it('postingVisibility is merge_deep, editable at account/child/jo', () => {
+      expect(CASCADE_REGISTRY).toHaveProperty('postingVisibility');
+      const spec = CASCADE_REGISTRY.postingVisibility;
+      expect(spec.strategy).toBe('merge_deep');
+      expect([...spec.editableAt].sort()).toEqual(['account', 'child', 'jo']);
+    });
+
+    it('postingVisibility seeds the 16 toggles with the spec defaults', () => {
+      // Defaults are the contract handed to the Account-creation
+      // seed flow. Drift here = the public board flips a category
+      // visible/hidden by default for every new tenant. Pin the
+      // exact values from handoff §15.3.
+      const spec = CASCADE_REGISTRY.postingVisibility as CascadeFieldSpec;
+      expect(spec.defaults).toEqual({
+        showPayRate: true,
+        showStartDate: true,
+        showEndDate: false,
+        showShiftTimes: true,
+        showSkills: true,
+        showLicensesCerts: true,
+        showExperience: false,
+        showEducation: false,
+        showLanguages: false,
+        showPhysicalRequirements: true,
+        showUniformRequirements: true,
+        showPpe: true,
+        showBackgroundChecks: false,
+        showDrugScreening: false,
+        showAdditionalScreenings: false,
+        showEVerify: false,
+      });
+    });
+
+    it('postingPolicy is merge_deep, editable at account/child/jo, no defaults', () => {
+      expect(CASCADE_REGISTRY).toHaveProperty('postingPolicy');
+      const spec = CASCADE_REGISTRY.postingPolicy as CascadeFieldSpec;
+      expect(spec.strategy).toBe('merge_deep');
+      expect([...spec.editableAt].sort()).toEqual(['account', 'child', 'jo']);
+      // Handoff §15.3 deliberately omits a `defaults` block on
+      // policy — the absence of a value means "feature off"
+      // per-tenant. Lock that decision so a future contributor
+      // doesn't quietly enable auto-publish for every tenant by
+      // adding a default.
+      expect(spec.defaults).toBeUndefined();
     });
   });
 });

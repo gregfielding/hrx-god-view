@@ -100,6 +100,66 @@ export const CASCADE_REGISTRY = {
     label: 'Customer-Specific Rules',
   },
 
+  // -- Posting (handoff §15.3) ---------------------------------------
+
+  // Per-section show/hide toggles for the public job board. Cascades
+  // Account → Child → JO via merge_deep so a tenant can set "default
+  // hide education" at the Account level and override per-JO. The
+  // forward-sync trigger (P.2) reads these resolved values into the
+  // posting doc; the engine itself does NOT layer `defaults` into the
+  // resolved value — they're only consumed by the Account-creation
+  // seed flow (handoff §15.3 + decision 2026-04-26 Q3=a).
+  //
+  // Naming note: registry key is camelCase flat (`postingVisibility`)
+  // per decision 2026-04-26 Q2 — matches existing keys like
+  // `screeningPackageId`, `shiftTemplate`. Spec text uses dotted
+  // `posting.visibility` for the conceptual grouping; the registry
+  // is flat. Value shape lives on `PostingVisibility` in `./types.ts`.
+  postingVisibility: {
+    strategy: 'merge_deep',
+    editableAt: ['account', 'child', 'jo'],
+    label: 'Posting Visibility',
+    defaults: {
+      // Compensation & timing
+      showPayRate: true,
+      showStartDate: true,
+      showEndDate: false,
+      showShiftTimes: true,
+      // Requirements
+      showSkills: true,
+      showLicensesCerts: true,
+      showExperience: false,
+      showEducation: false,
+      showLanguages: false,
+      showPhysicalRequirements: true,
+      showUniformRequirements: true,
+      showPpe: true,
+      // Screening
+      showBackgroundChecks: false,
+      showDrugScreening: false,
+      showAdditionalScreenings: false,
+      showEVerify: false,
+    },
+  },
+
+  // Posting lifecycle policy. Read by:
+  //  - `gigJobOrderStatusSync` for auto-publish / auto-unpublish on
+  //    open-shift transitions (handoff §15.7).
+  //  - The auto-create-posting flow (handoff §14.3 / §15.7) for
+  //    `defaultExpirationDays` and `autoAddToUserGroup`.
+  //  - The Posting form to seed expiration / max-applications.
+  //
+  // No `defaults` block — handoff §15.3 deliberately omits them so
+  // policy stays opt-in per tenant; the absence of a value means
+  // "feature off". `merge_deep` lets descendants explicitly clear an
+  // ancestor's setting via `null` (e.g. Child sets
+  // `defaultExpirationDays: null` to override Account's 30).
+  postingPolicy: {
+    strategy: 'merge_deep',
+    editableAt: ['account', 'child', 'jo'],
+    label: 'Posting Policy',
+  },
+
   // -- Positions (keyed_list — the hard case) ------------------------
 
   // Per handoff §5: Account defines the "header" fields (job title,

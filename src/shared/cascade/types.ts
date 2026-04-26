@@ -125,6 +125,17 @@ export interface CascadeFieldSpec {
    * queryable per §14.4 and decouples it from the editing tier.
    */
   requiredForCompleteness?: boolean;
+  /**
+   * Account-level seed defaults for `merge_deep` fields. Consumed
+   * by the Account-creation flow (and similar onboarding paths)
+   * to populate sensible initial values; the cascade engine itself
+   * does NOT layer these in at resolve time — defaults still live
+   * inside an actual `account` deltas blob if/when seeded. Adding
+   * them to the registry rather than a parallel seed file keeps
+   * everything for one field in one place (handoff §15.3 +
+   * confirm 2026-04-26).
+   */
+  defaults?: Record<string, unknown>;
   /** Display label for provenance / debug tools. */
   label: string;
 }
@@ -184,6 +195,65 @@ export type DayOfWeek =
   | 'friday'
   | 'saturday'
   | 'sunday';
+
+/**
+ * Per-section show/hide toggles for what a public job-board posting
+ * exposes (handoff §15.3). Cascades via `merge_deep` across
+ * Account → Child → JO so a tenant can set "default to hide
+ * education" at the Account level and override per-JO when a
+ * specific JO needs to surface it.
+ *
+ * Every field is optional so partially-configured levels still
+ * resolve cleanly — the public board treats missing keys as
+ * "use the registry default" (see `CASCADE_REGISTRY.postingVisibility.defaults`).
+ */
+export interface PostingVisibility {
+  // Compensation & timing
+  showPayRate?: boolean;
+  showStartDate?: boolean;
+  showEndDate?: boolean;
+  showShiftTimes?: boolean;
+  // Requirements
+  showSkills?: boolean;
+  showLicensesCerts?: boolean;
+  showExperience?: boolean;
+  showEducation?: boolean;
+  showLanguages?: boolean;
+  showPhysicalRequirements?: boolean;
+  showUniformRequirements?: boolean;
+  showPpe?: boolean;
+  // Screening
+  showBackgroundChecks?: boolean;
+  showDrugScreening?: boolean;
+  showAdditionalScreenings?: boolean;
+  showEVerify?: boolean;
+}
+
+/**
+ * Posting lifecycle policy (handoff §15.3 + §15.7). Cascades via
+ * `merge_deep` across Account → Child → JO. Read by:
+ *
+ *  - `gigJobOrderStatusSync` (auto-publish on open shifts,
+ *    auto-unpublish when no future shifts) — §15.7.
+ *  - The auto-create-posting flow — §14.3 / §15.7.
+ *  - The Posting form — to seed expiration / max-applications
+ *    inputs.
+ *
+ * Nullable scalars (`defaultExpirationDays`, `maxApplicationsDefault`,
+ * `autoAddToUserGroup`) use `null` rather than `undefined` so a
+ * descendant level can explicitly clear an ancestor's setting via
+ * `merge_deep` (e.g. Child says "no expiration" overriding
+ * Account's 30-day default).
+ */
+export interface PostingPolicy {
+  /** §14.1 hook into gigJobOrderStatusSync. */
+  autoPublishOnOpenShifts?: boolean;
+  autoUnpublishWhenNoOpenShifts?: boolean;
+  /** `null` = never expires (gig JOs). */
+  defaultExpirationDays?: number | null;
+  maxApplicationsDefault?: number | null;
+  autoAddToUserGroup?: string | null;
+}
 
 /**
  * JO-level template that pre-populates the click-to-create-shift

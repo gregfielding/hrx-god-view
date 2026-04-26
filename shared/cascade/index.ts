@@ -18,6 +18,8 @@ export type {
   EditableLevel,
   ItemIdentity,
   LevelType,
+  PostingPolicy,
+  PostingVisibility,
   ProvenanceEntry,
   ResolvedCascadeValue,
   ShiftTemplate,
