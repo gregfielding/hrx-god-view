@@ -132,14 +132,19 @@ export const CASCADE_REGISTRY = {
       // Pay/bill/tax rates live exclusively at the location
       // (`child`) tier per handoff §13.3. Engine refuses to honour
       // these at any other level via the `editableAt` guard.
+      // `requiredForCompleteness: true` flags these as the gate the
+      // auto-JO-creator (handoff §14.1) checks before auto-selecting
+      // a position on a generated JO.
       payRate: {
         strategy: 'replace',
         editableAt: ['child'],
+        requiredForCompleteness: true,
         label: 'Pay Rate',
       },
       billRate: {
         strategy: 'replace',
         editableAt: ['child'],
+        requiredForCompleteness: true,
         label: 'Bill Rate',
       },
       markupPercentage: {
@@ -150,16 +155,19 @@ export const CASCADE_REGISTRY = {
       futa: {
         strategy: 'replace',
         editableAt: ['child'],
+        requiredForCompleteness: true,
         label: 'FUTA',
       },
       suta: {
         strategy: 'replace',
         editableAt: ['child'],
+        requiredForCompleteness: true,
         label: 'SUTA',
       },
       workersCompRate: {
         strategy: 'replace',
         editableAt: ['child'],
+        requiredForCompleteness: true,
         label: "Workers' Comp",
       },
     },
@@ -174,6 +182,18 @@ export const CASCADE_REGISTRY = {
     strategy: 'level_only',
     editableAt: ['jo'],
     label: 'Selected Positions',
+  },
+
+  // JO-level template that pre-populates the click-to-create-shift
+  // form (handoff §14.2). The cascade engine treats this like any
+  // other `level_only` field: read from the JO, return as-is, no
+  // ancestor walking. The value's structure is documented by the
+  // `ShiftTemplate` interface in `./types.ts` — kept off the
+  // registry because the engine doesn't need to know about it.
+  shiftTemplate: {
+    strategy: 'level_only',
+    editableAt: ['jo'],
+    label: 'Shift Template',
   },
 } as const satisfies Record<string, CascadeFieldSpec>;
 

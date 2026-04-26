@@ -112,6 +112,19 @@ export interface CascadeFieldSpec {
   itemIdentity?: ItemIdentity;
   /** For `keyed_list` — sub-spec per field on the item. */
   itemFields?: Record<string, CascadeFieldSpec>;
+  /**
+   * Marks a leaf field as required for the parent record to be
+   * "complete" enough for downstream automation. Currently used by
+   * the planned auto-JO-creator (handoff §14.1) to decide whether
+   * a position is eligible for inclusion: a position is only
+   * auto-selected on a JO once every `requiredForCompleteness`
+   * sub-field has a value resolved through the cascade. Today this
+   * is set on the child-level pricing fields inside
+   * `positions.itemFields`. Surfacing it on the registry — rather
+   * than deriving from `editableAt: ['child']` — keeps the rule
+   * queryable per §14.4 and decouples it from the editing tier.
+   */
+  requiredForCompleteness?: boolean;
   /** Display label for provenance / debug tools. */
   label: string;
 }
@@ -154,6 +167,48 @@ export interface ProvenanceEntry {
 export interface ResolvedCascadeValue<T = unknown> {
   value: T;
   provenance: ProvenanceEntry[];
+}
+
+// ---- Downstream consumer types (handoff §14) ----------------------
+
+/**
+ * Day-of-week tokens used by `ShiftTemplate.defaultDaysOfWeek`.
+ * Lowercased to match the existing `weeklySchedule` Firestore
+ * convention used by the recruiter shift form.
+ */
+export type DayOfWeek =
+  | 'monday'
+  | 'tuesday'
+  | 'wednesday'
+  | 'thursday'
+  | 'friday'
+  | 'saturday'
+  | 'sunday';
+
+/**
+ * JO-level template that pre-populates the click-to-create-shift
+ * form (handoff §14.2). Stored under the `shiftTemplate` field on
+ * each JO doc; never cascades — the auto-creator just reads it raw.
+ *
+ * Every field is optional so partially-configured JOs still produce
+ * a usable template (the shift form falls back to its existing
+ * defaults for whatever's missing).
+ */
+export interface ShiftTemplate {
+  /** Pre-selects from `selectedPositionIds`. */
+  defaultPositionId?: string;
+  /** "HH:mm" 24-hour format, e.g. "07:00". */
+  defaultStartTime?: string;
+  /** "HH:mm" 24-hour format, e.g. "15:30". */
+  defaultEndTime?: string;
+  /** Alternative to `defaultEndTime` — engine prefers explicit end. */
+  defaultDurationMinutes?: number;
+  /** Workers requested per shift. */
+  defaultHeadcount?: number;
+  /** Recurring-shift creation pre-fill. */
+  defaultDaysOfWeek?: ReadonlyArray<DayOfWeek>;
+  /** Unpaid break length, in minutes. */
+  defaultBreakMinutes?: number;
 }
 
 // ---- Type guards ---------------------------------------------------

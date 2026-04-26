@@ -50,6 +50,16 @@ describe('CASCADE_REGISTRY shape lock', () => {
       expect(set.size).toBe(spec.editableAt.length);
     });
 
+    it('requiredForCompleteness, when set, is strictly boolean true', () => {
+      // The flag is binary by design (handoff §14.1). We never
+      // store `false` — absence of the property means "not
+      // required." Catching `false` here keeps the registry tidy
+      // and the auto-JO-creator's truthy-check robust.
+      if (spec.requiredForCompleteness !== undefined) {
+        expect(spec.requiredForCompleteness).toBe(true);
+      }
+    });
+
     if (spec.strategy === 'keyed_list') {
       it('declares an identityKey for keyed_list', () => {
         expect(typeof spec.identityKey).toBe('string');
@@ -144,6 +154,52 @@ describe('CASCADE_REGISTRY shape lock', () => {
       // up in O.4. The registry must not register the alias.
       expect(CASCADE_REGISTRY).toHaveProperty('screeningPackageId');
       expect(CASCADE_REGISTRY).not.toHaveProperty('backgroundCheckPackageId');
+    });
+  });
+
+  describe('downstream consumer hooks (handoff §14)', () => {
+    it('shiftTemplate is registered as JO-only level_only (no cascade)', () => {
+      // §14.2 — JO-level template that pre-populates the
+      // click-to-create-shift form. Engine returns the value as-is.
+      expect(CASCADE_REGISTRY).toHaveProperty('shiftTemplate');
+      const spec = CASCADE_REGISTRY.shiftTemplate;
+      expect(spec.strategy).toBe('level_only');
+      expect([...spec.editableAt]).toEqual(['jo']);
+    });
+
+    it('positions completeness gate is encoded as a queryable flag (§14.4)', () => {
+      // §14.1 lists payRate / billRate / futa / suta /
+      // workersCompRate as the explicit child-level required-fields
+      // set the auto-JO-creator must check before auto-selecting
+      // a position. Encoding it on the registry (rather than
+      // deriving from `editableAt`) keeps the rule queryable per
+      // §14.4 and decouples it from the editing tier.
+      const required = ['payRate', 'billRate', 'futa', 'suta', 'workersCompRate'] as const;
+      for (const fieldName of required) {
+        const sub = CASCADE_REGISTRY.positions.itemFields[fieldName];
+        expect(sub.requiredForCompleteness).toBe(true);
+      }
+    });
+
+    it('header & markup fields on positions are NOT required for completeness', () => {
+      // markupPercentage is account/child editable; jobTitle /
+      // jobDescription / rateMode are header fields. None gate
+      // auto-JO inclusion at the child tier — the gate is
+      // exclusively on the pricing tax fields.
+      const notRequired = [
+        'jobTitle',
+        'jobDescription',
+        'rateMode',
+        'markupPercentage',
+      ] as const;
+      for (const fieldName of notRequired) {
+        // Cast through CascadeFieldSpec — the registry's
+        // `as const satisfies` narrows literal types to omit
+        // unset optional properties, so we widen back to the
+        // declared spec interface to ask the question.
+        const sub = CASCADE_REGISTRY.positions.itemFields[fieldName] as CascadeFieldSpec;
+        expect(sub.requiredForCompleteness).toBeUndefined();
+      }
     });
   });
 });

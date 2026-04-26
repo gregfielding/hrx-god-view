@@ -14,11 +14,13 @@ export type {
   CascadeFieldSpec,
   CascadeStrategy,
   ContributionKind,
+  DayOfWeek,
   EditableLevel,
   ItemIdentity,
   LevelType,
   ProvenanceEntry,
   ResolvedCascadeValue,
+  ShiftTemplate,
 } from './types';
 
 export {
