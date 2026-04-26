@@ -10,7 +10,7 @@
 | Compliance signal derivation | `src/utils/workerComplianceActionDerivers.ts` |
 | Job signals (assignments, TempWorks fields) | `src/utils/workerJobRequirementSignals.ts` |
 | Builder (merge global priority → cap 3) | `src/utils/workerDashboardActionItems.ts` |
-| AI pre-screen (post-reminder) | `src/utils/workerAiPrescreenDashboardActions.ts`, `src/hooks/useWorkerAiPrescreenSurfaceSignals.ts` |
+| AI pre-screen (post-reminder; suppressed for 30 days after any completed prescreen interview) | `src/utils/workerAiPrescreenDashboardActions.ts`, `src/hooks/useWorkerAiPrescreenSurfaceSignals.ts` |
 | Firestore dismissals | `src/utils/workerDashboardDismissals.ts` |
 | SMS context | `src/utils/workerSmsAlertsContext.ts` |
 | Profile photo | `src/utils/workerProfilePrerequisites.ts` → `userDocHasProfilePhoto` |

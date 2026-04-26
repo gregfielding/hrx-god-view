@@ -221,6 +221,18 @@ export function getBaseTheme() {
           root: { background: 'transparent' },
         },
       },
+      MuiTableCell: {
+        styleOverrides: {
+          // App-wide table density: body cells render at 12px (down from
+          // the MUI body2 default of 14px). Head cells set their own 12px
+          // weight in MuiTableHead below; this override is the single
+          // source of truth for body cell sizing across every table in
+          // the admin app.
+          root: {
+            fontSize: 12,
+          },
+        },
+      },
       MuiTableHead: {
         styleOverrides: {
           root: {
@@ -230,7 +242,7 @@ export function getBaseTheme() {
               letterSpacing: '0.5px',
               color: '#5A6372',
               borderBottom: '1px solid rgba(0,0,0,0.08)',
-              padding: '14px 12px',
+              padding: '4px 12px',
             },
           },
         },
@@ -244,8 +256,38 @@ export function getBaseTheme() {
             '& .MuiTableCell-root': {
               borderBottom: '1px solid rgba(0,0,0,0.06)',
               color: '#0B0D12',
-              padding: '14px 12px',
+              padding: '4px 12px',
             },
+          },
+        },
+      },
+      MuiTablePagination: {
+        styleOverrides: {
+          // Footer text density should match body cell text (12px).
+          // Without these explicit selectors the MUI default of 0.875rem
+          // (14px) sneaks back in via the inner Typography elements that
+          // TablePagination uses for "Rows per page" / "1–18 of 18".
+          root: {
+            fontSize: 12,
+          },
+          toolbar: {
+            fontSize: 12,
+            minHeight: 44,
+          },
+          selectLabel: {
+            fontSize: 12,
+          },
+          displayedRows: {
+            fontSize: 12,
+          },
+          select: {
+            fontSize: 12,
+          },
+          input: {
+            fontSize: 12,
+          },
+          actions: {
+            '& .MuiSvgIcon-root': { fontSize: '1.25rem' },
           },
         },
       },

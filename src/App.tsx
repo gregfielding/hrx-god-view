@@ -146,9 +146,18 @@ import WorkerAssignments from './pages/WorkerAssignments';
 import FlexSettings from './pages/FlexSettings';
 import RecruiterSettings from './pages/RecruiterSettings';
 import RecruiterDashboard from './pages/RecruiterDashboard';
+import Shifts from './pages/Shifts';
+import ShiftsList from './pages/ShiftsList';
+import ShiftsCalendar from './pages/ShiftsCalendar';
+import Workforce from './pages/Workforce';
+import WorkforceEmployeeReadiness from './pages/WorkforceEmployeeReadiness';
+import WorkforceJobReadiness from './pages/WorkforceJobReadiness';
 import AccountsDashboard from './pages/AccountsDashboard';
 import RecruiterMain from './pages/RecruiterMain';
-import RecruiterMyQueue from './pages/RecruiterMyQueue';
+// RecruiterMyQueue is no longer routed from App.tsx — `/jobs/my-queue`
+// redirects directly via <Navigate>. The file is kept as a deprecated
+// thin wrapper for any code that imports the component directly. See
+// src/pages/RecruiterMyQueue.tsx for the cleanup timeline.
 import RecruiterJobOrders from './pages/RecruiterJobOrders';
 import RecruiterAccounts from './pages/RecruiterAccounts';
 import RecruiterJobOrderDetail from './pages/RecruiterJobOrderDetail';
@@ -1267,9 +1276,13 @@ function App() {
           <Route index element={<Navigate to="/jobs/job-orders" replace />} />
           <Route path="job-orders" element={<RecruiterJobOrders />} />
           <Route path="my-orders" element={<RecruiterJobOrders />} />
-          {/* Phase 1 readiness: recruiter action queue across all readiness items I own.
-              Lives under the Recruiter hub so nav + auth chrome match the rest of /jobs/*. */}
-          <Route path="my-queue" element={<RecruiterMyQueue />} />
+          {/* Phase 1 readiness: legacy recruiter action queue, replaced by
+              Phase D Workforce. Redirect at route level so the navigation
+              happens before any component mounts. The deprecated
+              `RecruiterMyQueue` component itself also Navigates as a safety
+              net for direct imports — both paths can be removed in the
+              cleanup PR after one release with no traffic on either. */}
+          <Route path="my-queue" element={<Navigate to="/readiness/employee-readiness" replace />} />
           <Route path="onboarding" element={<Navigate to="/jobs/job-orders" replace />} />
           <Route path="job-orders/new" element={<NewJobOrder />} />
           <Route path="job-orders/:jobOrderId" element={<RecruiterJobOrderDetail />} />
@@ -1298,6 +1311,49 @@ function App() {
             <RecruiterApplications />
           </ProtectedRoute>
         } /> */}
+
+        {/* Shifts — cross-job-order shift dashboard. Mirrors the /jobs Outlet
+            pattern: a parent layout with tabbed nav and an Outlet for the
+            active tab. Sec 5+ only (matches the sidebar gate). */}
+        <Route path="shifts" element={
+          <ProtectedRoute requiredSecurityLevel="5">
+            <Shifts />
+          </ProtectedRoute>
+        }>
+          <Route index element={<Navigate to="/shifts/list" replace />} />
+          <Route path="list" element={<ShiftsList />} />
+          <Route path="calendar" element={<ShiftsCalendar />} />
+          {/* Legacy `/shifts/active` URL — kept as a redirect to the new
+              `/shifts/list` view. The Active tab was the original v1 of
+              this dashboard before the List/Calendar split. Safe to drop
+              after one release with no traffic on /active. */}
+          <Route path="active" element={<Navigate to="/shifts/list" replace />} />
+        </Route>
+
+        {/* Workforce — Phase D CSA workspace.
+            Same Outlet pattern as /shifts: parent layout with two pill tabs
+            and an Outlet for the active tab. Sec 5+ only (matches the
+            sidebar gate in menuGenerator.ts).
+            URL prefix is /readiness (NOT /workforce) because /workforce/*
+            was already in use for the tenant company directory
+            (WorkforceDashboard). The user-facing nav label stays "Workforce"
+            per the spec naming-lock — see Workforce.tsx header for the
+            rationale. */}
+        <Route path="readiness" element={
+          <ProtectedRoute requiredSecurityLevel="5">
+            <Workforce />
+          </ProtectedRoute>
+        }>
+          <Route index element={<Navigate to="/readiness/employee-readiness" replace />} />
+          <Route path="employee-readiness" element={<WorkforceEmployeeReadiness />} />
+          <Route path="job-readiness" element={<WorkforceJobReadiness />} />
+          {/* D.4 sub-route stub. The Job Readiness detail surface is a
+              full-page sub-route per Greg's 2026-04-25 D.1 answer
+              (jo_readiness_detail = sub_route). D.4 swaps this stub for the
+              real <WorkforceJobReadinessDetail /> page. */}
+          <Route path="job-readiness/:jobOrderId" element={<WorkforceJobReadiness />} />
+        </Route>
+
 
         <Route path="recruiter-settings" element={
           <ProtectedRoute requiredSecurityLevel="4">

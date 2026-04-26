@@ -50,12 +50,19 @@ const FavoriteButton: React.FC<FavoriteButtonProps> = ({
       onClick={handleClick}
       sx={{
         color: favorited ? `${color}.main` : 'text.secondary',
+        // Globally lock the star glyph at 1.2rem so favorite stars read
+        // as a compact inline marker across every table / card / toolbar
+        // — without this the icon defaults to 1.5rem and dwarfs the
+        // 12px table cell text.
+        '& .MuiSvgIcon-root': {
+          fontSize: '1.2rem',
+        },
         '&:hover': {
           color: `${color}.main`,
           backgroundColor: `${color}.light`,
-          opacity: 0.8
+          opacity: 0.8,
         },
-        ...sx
+        ...sx,
       }}
     >
       {favorited ? <Star /> : <StarBorder />}

@@ -244,6 +244,29 @@ export async function generateMenuItems(
         icon: 'people',
         requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[], // Recruiter area access
       }]),
+      // Shifts — cross-job-order shift dashboard for internal staff. Sits
+      // directly under Jobs since it's an alternative slice of the same
+      // job-order subgraph (shift docs live under each JO). Sec 5+ only.
+      ...((effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) ? [{
+        text: 'Shifts',
+        to: '/shifts',
+        icon: 'swap_horiz',
+        requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
+      }] : []),
+      // Workforce — Phase D CSA workspace (Employee Readiness + Job Readiness
+      // queues). Sits directly under Shifts because both are operational
+      // dashboards for internal staff over the same worker × job-order graph.
+      // Sec 5+ only — this is the CSA daily driver, not a worker-facing page.
+      // The user-facing label stays "Workforce" (spec naming-lock); the URL
+      // is `/readiness` because `/workforce/*` was already in use for the
+      // tenant company directory (`WorkforceDashboard`) when Phase D started.
+      // See `src/pages/Workforce.tsx` header for the full rationale.
+      ...((effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) ? [{
+        text: 'Workforce',
+        to: '/readiness',
+        icon: 'speed',
+        requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
+      }] : []),
       // Finances & Budgeting: internal team (security levels 5, 6, 7)
       ...([{
         text: 'Finances and Budgeting',

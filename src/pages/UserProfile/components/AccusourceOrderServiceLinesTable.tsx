@@ -5,6 +5,7 @@
  */
 import React, { useMemo, useState } from 'react';
 import {
+  Alert,
   Box,
   Button,
   Chip,
@@ -254,6 +255,10 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
   const [overrideVerdict, setOverrideVerdict] = useState<AccusourceManualVerdict>(null);
   const [overrideReason, setOverrideReason] = useState<string>('');
   const [submittingOverride, setSubmittingOverride] = useState(false);
+  // Local error so the recruiter sees *something* if the callable fails. The parent
+  // also surfaces an error snackbar, but it lives inside another (often closed)
+  // modal — so without this the dialog just sits there with no feedback.
+  const [overrideError, setOverrideError] = useState<string | null>(null);
   // Per-line detail drawer — opens when a line needs review but has no
   // clickable report URL and the parent final PDF isn't ready yet. Shows
   // every field AccuSource sent us so the recruiter has something to
@@ -276,6 +281,7 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
     setOverrideLine(line);
     setOverrideVerdict(verdict);
     setOverrideReason(line.adjudication?.overrideReason ?? '');
+    setOverrideError(null);
   };
 
   const beginClearOverride = async (line: AccusourceScreeningLineItem) => {
@@ -293,11 +299,13 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
     setOverrideLine(null);
     setOverrideVerdict(null);
     setOverrideReason('');
+    setOverrideError(null);
   };
 
   const submitOverride = async () => {
     if (!overrideLine || !overrideVerdict || !onSetAdjudication) return;
     setSubmittingOverride(true);
+    setOverrideError(null);
     try {
       await onSetAdjudication(
         record.id,
@@ -308,8 +316,13 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
       setOverrideLine(null);
       setOverrideVerdict(null);
       setOverrideReason('');
-    } catch {
-      // Parent surfaces error; keep modal open so the recruiter can adjust.
+    } catch (err) {
+      // Show the failure right inside the dialog. The parent's snackbar lives
+      // inside another (usually closed) modal so without this the user sees
+      // "nothing happens".
+      const message =
+        err instanceof Error && err.message ? err.message : 'Failed to save override.';
+      setOverrideError(message);
     } finally {
       setSubmittingOverride(false);
     }
@@ -614,6 +627,15 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
             This override is reversible — any recruiter with the same access can later revert to the
             system verdict.
           </Typography>
+          {overrideError && (
+            <Alert
+              severity="error"
+              onClose={() => setOverrideError(null)}
+              sx={{ mt: 2 }}
+            >
+              {overrideError}
+            </Alert>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={closeOverrideDialog} disabled={submittingOverride}>

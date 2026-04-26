@@ -366,6 +366,7 @@
     },
     "signInPrompt": "Inicia sesión para completar esta entrevista.",
     "backToDashboard": "Volver al panel",
+    "browseJobsBoard": "Ver empleos",
     "successTitle": "Entrevista enviada",
     "successBody1": "Tus respuestas se guardaron. Nuestro equipo puede revisarlas con tu solicitud.",
     "successBody2": "Qué sigue: vuelve a tu panel. Si un reclutador necesita más información, se comunicará con los datos de tu perfil.",

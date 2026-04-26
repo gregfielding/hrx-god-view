@@ -3748,48 +3748,25 @@ const RecruiterAccountDetails: React.FC = () => {
     return [...groupRows, ...applicantRows];
   }, [account?.associations, laborPoolOptions, jobOrders, accountJobOrders]);
 
-  // Pipe the account name + favorite star into the global top bar — same
-  // pattern as User Group Details / Smart Group Details. Falls back to
-  // "Account Details" until the doc loads so the bar never goes blank.
-  const topBarAccountTitle = account?.name?.trim() || 'Account Details';
+  // Top bar shows the static section label "Account Details". The
+  // per-account name + favorite star live next to the avatar in the page
+  // body (see the title slot of <PageHeader/> below) — same layout the
+  // recruiter screens used before the brief experiment with piping the
+  // name into the global top bar.
   const topBarTitleNode = useMemo(
     () => (
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
-        <Typography
-          sx={{
-            fontSize: '20px',
-            fontWeight: 600,
-            color: 'inherit',
-            lineHeight: 1.2,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            maxWidth: { xs: 220, sm: 360, md: 520 },
-          }}
-        >
-          {topBarAccountTitle}
-        </Typography>
-        {account?.id && (
-          <FavoriteButton
-            itemId={account.id}
-            favoriteType="accounts"
-            isFavorite={isFavorite}
-            toggleFavorite={toggleFavorite}
-            size="small"
-            tooltipText={{
-              favorited: 'Remove account from favorites',
-              notFavorited: 'Add account to favorites',
-            }}
-            sx={{
-              p: 0.25,
-              color: 'inherit',
-              '& .MuiSvgIcon-root': { fontSize: 18, color: 'inherit' },
-            }}
-          />
-        )}
-      </Box>
+      <Typography
+        sx={{
+          fontSize: '20px',
+          fontWeight: 600,
+          color: 'inherit',
+          lineHeight: 1.2,
+        }}
+      >
+        Account Details
+      </Typography>
     ),
-    [topBarAccountTitle, account?.id, isFavorite, toggleFavorite],
+    [],
   );
   useSetTopBarTitle(topBarTitleNode);
 
@@ -3952,11 +3929,12 @@ const RecruiterAccountDetails: React.FC = () => {
             </Avatar>
             <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
               {/* Account Details summary — vertical stack lives flush against
-                  the top of the column (next to the avatar). The full
-                  account name + favorite star ride in the global top bar;
-                  the contextual action buttons (New Order, Sync, Edit,
-                  Back) ride in PageHeader's `titleRightActions` slot so
-                  they don't introduce whitespace above this line. */}
+                  the top of the column (next to the avatar). The first
+                  line is the account name + favorite star (large heading
+                  treatment); the rest is the meta strip (Status, Company,
+                  Type, etc.). Contextual action buttons ride in
+                  PageHeader's `titleRightActions` slot so they don't
+                  introduce whitespace above this line. */}
               <Box
                 sx={{
                   display: 'flex',
@@ -3965,6 +3943,45 @@ const RecruiterAccountDetails: React.FC = () => {
                   minWidth: 0,
                 }}
               >
+                {/* Account name + favorite star — the visual title of the
+                    page now that the global top bar holds the static
+                    "Account Details" label. Falls back to a placeholder
+                    while the doc is still loading so the layout doesn't
+                    jump when the name resolves. */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0, mb: 0.25 }}>
+                  <Typography
+                    component="h1"
+                    sx={{
+                      fontSize: '24px',
+                      fontWeight: 700,
+                      lineHeight: 1.2,
+                      color: 'text.primary',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      maxWidth: { xs: 220, sm: 360, md: 520 },
+                    }}
+                  >
+                    {account?.name?.trim() || 'Account Details'}
+                  </Typography>
+                  {account?.id && (
+                    <FavoriteButton
+                      itemId={account.id}
+                      favoriteType="accounts"
+                      isFavorite={isFavorite}
+                      toggleFavorite={toggleFavorite}
+                      size="small"
+                      tooltipText={{
+                        favorited: 'Remove account from favorites',
+                        notFavorited: 'Add account to favorites',
+                      }}
+                      sx={{
+                        p: 0.25,
+                        '& .MuiSvgIcon-root': { fontSize: 20 },
+                      }}
+                    />
+                  )}
+                </Box>
                 {/* Each line uses `recordHeaderBodyTextSx` (0.74rem / 400 /
                     #5A6372) — same scale as the user record header body
                     text, so account + worker headers feel uniform. Values

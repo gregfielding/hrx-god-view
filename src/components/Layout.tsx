@@ -33,6 +33,7 @@ import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
 import HowToRegIcon from '@mui/icons-material/HowToReg';
 import GroupsIcon from '@mui/icons-material/Groups';
 import Diversity3Icon from '@mui/icons-material/Diversity3';
+import SpeedIcon from '@mui/icons-material/Speed';
 import WavesIcon from '@mui/icons-material/Waves';
 import CampaignIcon from '@mui/icons-material/Campaign';
 import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOver';
@@ -53,6 +54,7 @@ import SellIcon from '@mui/icons-material/Sell';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
+import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import PersonIcon from '@mui/icons-material/Person';
 import CheckIcon from '@mui/icons-material/Check';
 import Menu from '@mui/material/Menu';
@@ -1044,7 +1046,7 @@ const Layout: React.FC = function Layout() {
       'Jobs': <WorkIcon />,
       'Finances and Budgeting': <BarChartIcon />,
       'Onboarding': <HowToRegIcon />,
-      'Workforce': <PeopleIcon />,
+      'Workforce': <SpeedIcon />,
       'Users': <GroupsIcon />,
       'Accounts': <AccountBalanceIcon />,
       'Invoicing': <AttachMoneyIcon />,
@@ -1052,6 +1054,7 @@ const Layout: React.FC = function Layout() {
       'Contacts': <PersonIcon />,
       'Companies': <BusinessIcon />,
       'Job Orders': <AssignmentIcon />,
+      'Shifts': <SwapHorizIcon />,
       'Flex Jobs': <AssignmentIcon />,
       'Jobs Board': <WorkIcon />,
       'Sales CRM': <SellIcon />,

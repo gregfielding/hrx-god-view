@@ -1,7 +1,7 @@
 // Universal Favorites Service
 // Supports different types of favorites: jobPosts, users, jobOrders, etc.
 
-export type FavoriteType = 'jobPosts' | 'users' | 'jobOrders' | 'companies' | 'accounts' | 'worksites' | 'applications' | 'userGroups' | 'contacts';
+export type FavoriteType = 'jobPosts' | 'users' | 'jobOrders' | 'companies' | 'accounts' | 'worksites' | 'applications' | 'userGroups' | 'contacts' | 'shifts';
 
 export interface FavoritesData {
   [key: string]: string[]; // tenantId -> array of favorite IDs

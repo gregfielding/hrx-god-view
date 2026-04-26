@@ -9,6 +9,24 @@
       ]
     },
     {
+      "collectionGroup": "employeeReadinessItems",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "ownership.primaryRecruiterId", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "updatedAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "employeeReadinessItems",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "hiringEntityId", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "updatedAt", "order": "DESCENDING"}
+      ]
+    },
+    {
       "collectionGroup": "calendar_events",
       "queryScope": "COLLECTION",
       "fields": [

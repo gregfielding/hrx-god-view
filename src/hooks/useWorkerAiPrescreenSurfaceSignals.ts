@@ -5,6 +5,7 @@ import type { WorkerDashboardActionItem } from '../utils/workerDashboardActionIt
 import {
   buildWorkerAiPrescreenDashboardActions,
   interviewApplicationIdsFromUserInterviews,
+  latestWorkerAiPrescreenInterviewAtMs,
 } from '../utils/workerAiPrescreenDashboardActions';
 import { mergeResolvedHiringInterview } from '../utils/mergeResolvedHiringInterview';
 
@@ -81,9 +82,19 @@ export function useWorkerAiPrescreenSurfaceSignals(
         const intSnap = await getDocs(query(collection(db, 'users', uid, 'interviews'), limit(60)));
         const intRows = intSnap.docs.map((d) => d.data() as Record<string, unknown>);
         const completedApplicationIds = interviewApplicationIdsFromUserInterviews(intRows);
+        // 30-day system-interview suppression — see
+        // `DEFAULT_PRESCREEN_FRESHNESS_WINDOW_MS` in
+        // workerAiPrescreenDashboardActions.ts. Captures profile-first
+        // interviews (no applicationId) so the dashboard doesn't nag the
+        // worker to redo their interview per-application.
+        const latestPrescreenAtMs = latestWorkerAiPrescreenInterviewAtMs(intRows);
 
         const rawItems = outreachOn
-          ? buildWorkerAiPrescreenDashboardActions({ applications, completedApplicationIds })
+          ? buildWorkerAiPrescreenDashboardActions({
+              applications,
+              completedApplicationIds,
+              latestPrescreenInterviewAtMs: latestPrescreenAtMs,
+            })
           : [];
         const items = rawItems.filter((it) => {
           const aid = it.qaEvaluatedFields?.applicationId;

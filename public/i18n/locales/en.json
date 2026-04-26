@@ -366,6 +366,7 @@
     },
     "signInPrompt": "Sign in to complete this interview.",
     "backToDashboard": "Back to dashboard",
+    "browseJobsBoard": "Browse jobs",
     "successTitle": "Interview submitted",
     "successBody1": "Your answers were saved. Our team can review them with your application.",
     "successBody2": "What happens next: go back to your dashboard. If a recruiter needs more information, they will reach out using the contact info on your profile.",
