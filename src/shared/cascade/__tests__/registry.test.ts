@@ -1,9 +1,11 @@
 import { CASCADE_REGISTRY } from '../registry';
-import type { CascadeFieldSpec } from '../types';
+import type { CascadeFieldSpec, PropagationPolicy } from '../types';
 import {
   isCascadeStrategy,
   isEditableLevel,
   isItemIdentity,
+  isPropagationPolicy,
+  isSnapshotPolicy,
 } from '../types';
 
 /**
@@ -263,6 +265,131 @@ describe('CASCADE_REGISTRY shape lock', () => {
       // doesn't quietly enable auto-publish for every tenant by
       // adding a default.
       expect(spec.defaults).toBeUndefined();
+    });
+  });
+
+  describe('propagation policy assignments (handoff §16 / §16.1)', () => {
+    // The §16.1 minimum slice locks the snapshot-policy field set
+    // explicitly. Drift here means CORT / National Account edits
+    // either silently propagate to active JOs (false-negative on a
+    // snapshot field) or unexpectedly freeze a "live" field. Both
+    // are blast-radius regressions, so the test is exhaustive
+    // rather than parameterised — it should hurt to change it.
+
+    /**
+     * Top-level fields the spec puts under
+     * `propagation: 'snapshot-on-activation'`. Per §16.1 L9.
+     */
+    const SNAPSHOT_TOP_LEVEL = [
+      'hiringEntityId',
+      'eVerifyRequired',
+      'workersCompCode',
+      'screeningPackageId',
+      'additionalScreenings',
+      'selectedPositionIds',
+      'positions',
+    ] as const;
+
+    /**
+     * `positions.itemFields` snapshotting decisions per §16.1 L9.
+     * `jobTitle` / `jobDescription` are header fields and stay live;
+     * everything else freezes at activation.
+     */
+    const POSITION_SNAPSHOT_FIELDS = [
+      'rateMode',
+      'payRate',
+      'billRate',
+      'futa',
+      'suta',
+      'workersCompRate',
+      'markupPercentage',
+    ] as const;
+    const POSITION_LIVE_FIELDS = ['jobTitle', 'jobDescription'] as const;
+
+    it('every entry has a recognised propagation policy (or omits it = live default)', () => {
+      // The `as const satisfies` narrowing in registry.ts strips
+      // optional properties that aren't set on a given literal.
+      // Widen each spec back to the declared interface to ask
+      // structural questions about the optional field.
+      const entries = Object.entries(CASCADE_REGISTRY) as Array<[string, CascadeFieldSpec]>;
+      for (const [key, spec] of entries) {
+        if (spec.propagation !== undefined) {
+          expect(isPropagationPolicy(spec.propagation)).toBe(true);
+          expect(['live', 'live-until-active', 'snapshot-on-activation']).toContain(
+            spec.propagation,
+          );
+        }
+        if (spec.strategy === 'keyed_list' && spec.itemFields) {
+          for (const sub of Object.values(spec.itemFields) as CascadeFieldSpec[]) {
+            if (sub.propagation !== undefined) {
+              expect(isPropagationPolicy(sub.propagation)).toBe(true);
+            }
+          }
+        }
+        expect(typeof key).toBe('string');
+      }
+    });
+
+    it.each(SNAPSHOT_TOP_LEVEL)(
+      '"%s" is propagation: snapshot-on-activation (top-level snapshot field)',
+      (fieldKey) => {
+        const spec = (CASCADE_REGISTRY as Record<string, CascadeFieldSpec>)[fieldKey];
+        expect(spec).toBeDefined();
+        expect(spec.propagation).toBe('snapshot-on-activation');
+        expect(isSnapshotPolicy(spec.propagation as PropagationPolicy)).toBe(true);
+      },
+    );
+
+    it.each(POSITION_SNAPSHOT_FIELDS)(
+      'positions.itemFields.%s is propagation: snapshot-on-activation',
+      (fieldName) => {
+        const sub = CASCADE_REGISTRY.positions.itemFields[fieldName];
+        expect(sub).toBeDefined();
+        expect((sub as CascadeFieldSpec).propagation).toBe('snapshot-on-activation');
+      },
+    );
+
+    it.each(POSITION_LIVE_FIELDS)(
+      'positions.itemFields.%s stays propagation: live (header fields propagate to draft JOs)',
+      (fieldName) => {
+        const sub = CASCADE_REGISTRY.positions.itemFields[fieldName] as CascadeFieldSpec;
+        expect(sub).toBeDefined();
+        // Either explicit 'live' or omitted (default = live).
+        const policy = sub.propagation;
+        expect(policy === undefined || policy === 'live').toBe(true);
+      },
+    );
+
+    it('non-snapshot top-level fields stay live (no surprise freezes)', () => {
+      // Anything top-level NOT in SNAPSHOT_TOP_LEVEL must be live
+      // (or unset = live default). Catches the common mistake of
+      // accidentally setting a posting/uniform/instructions field
+      // to snapshot-on-activation.
+      const snapshotSet = new Set<string>(SNAPSHOT_TOP_LEVEL);
+      const entries = Object.entries(CASCADE_REGISTRY) as Array<[string, CascadeFieldSpec]>;
+      for (const [k, spec] of entries) {
+        if (snapshotSet.has(k)) continue;
+        const policy = spec.propagation;
+        expect(policy === undefined || policy === 'live').toBe(true);
+      }
+    });
+
+    it('workersCompCode is registered (§16.1 L3 — added in this slice)', () => {
+      // workersCompCode was missing from the registry pre-§16.1.
+      // The brief explicitly listed it as a snapshot field, so
+      // registry membership is non-negotiable.
+      expect(CASCADE_REGISTRY).toHaveProperty('workersCompCode');
+      const spec = (CASCADE_REGISTRY as Record<string, CascadeFieldSpec>).workersCompCode;
+      expect(spec.strategy).toBe('replace');
+      expect([...spec.editableAt].sort()).toEqual(['account', 'child']);
+      expect(spec.propagation).toBe('snapshot-on-activation');
+    });
+
+    it('isSnapshotPolicy correctly classifies the three enum values', () => {
+      expect(isSnapshotPolicy('snapshot-on-activation')).toBe(true);
+      expect(isSnapshotPolicy('live-until-active')).toBe(true);
+      expect(isSnapshotPolicy('live')).toBe(false);
+      expect(isSnapshotPolicy(undefined)).toBe(false);
     });
   });
 });

@@ -320,8 +320,69 @@ export function screeningLocationKeyCandidates(
 
 // --- “Already satisfied” — structured for future validity windows + package equivalency ---
 
-/** Policy placeholder: when validity rules ship, compare `Date.now()` to `expiresAtMs`. */
-export const PLACEHOLDER_SCREENING_VALIDITY_DAYS = 365;
+/**
+ * **R.10** — Default number of days a completed background check stays
+ * "satisfied" before the daily expiry sweep flips its readiness items to
+ * `'expired'`. Overridable per-Account / per-Location / per-JobOrder via
+ * `mergeScreeningValidityDaysFromLayers` (server). Pre-R.10 this exported
+ * as `PLACEHOLDER_SCREENING_VALIDITY_DAYS`; the old name is kept as a
+ * deprecated alias for one cycle.
+ */
+export const DEFAULT_SCREENING_VALIDITY_DAYS = 365;
+
+/** @deprecated R.10 — use `DEFAULT_SCREENING_VALIDITY_DAYS`. */
+export const PLACEHOLDER_SCREENING_VALIDITY_DAYS = DEFAULT_SCREENING_VALIDITY_DAYS;
+
+/**
+ * **R.10** — Client mirror of the server's `mergeScreeningValidityDaysFromLayers`.
+ * Used by order-preview UIs that want to show "this check will be valid for N days"
+ * before submission. Server is the source of truth; this exists for client preview
+ * only — never enforce expiry from the client.
+ *
+ * Same precedence as the server: job_order → location_defaults → account → default.
+ */
+export interface ScreeningValidityDaysMergeResult {
+  validityDays: number;
+  source: 'job_order' | 'location_defaults' | 'account' | 'default';
+}
+
+function coerceValidityDays(raw: unknown): number | null {
+  if (typeof raw !== 'number') return null;
+  if (!Number.isFinite(raw)) return null;
+  if (raw <= 0) return null;
+  if (!Number.isInteger(raw)) return null;
+  return raw;
+}
+
+function readScreeningValidityDaysFromOrderDefaults(
+  layer: Record<string, unknown> | undefined,
+): number | null {
+  if (!layer) return null;
+  const od = layer.orderDefaults as Record<string, unknown> | undefined;
+  if (!od || typeof od !== 'object') return null;
+  return coerceValidityDays(od.screeningValidityDays);
+}
+
+function readScreeningValidityDaysTopLevel(
+  layer: Record<string, unknown> | undefined,
+): number | null {
+  if (!layer) return null;
+  return coerceValidityDays(layer.screeningValidityDays);
+}
+
+export function mergeScreeningValidityDaysFromLayers(
+  jobOrder: Record<string, unknown> | undefined,
+  locationDefaults: Record<string, unknown> | undefined,
+  account: Record<string, unknown> | undefined,
+): ScreeningValidityDaysMergeResult {
+  const jo = readScreeningValidityDaysTopLevel(jobOrder);
+  if (jo != null) return { validityDays: jo, source: 'job_order' };
+  const loc = readScreeningValidityDaysFromOrderDefaults(locationDefaults);
+  if (loc != null) return { validityDays: loc, source: 'location_defaults' };
+  const acc = readScreeningValidityDaysFromOrderDefaults(account);
+  if (acc != null) return { validityDays: acc, source: 'account' };
+  return { validityDays: DEFAULT_SCREENING_VALIDITY_DAYS, source: 'default' };
+}
 
 export type ScreeningSatisfiedReasonCode =
   | 'none'

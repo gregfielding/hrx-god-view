@@ -20,6 +20,7 @@ export type {
   LevelType,
   PostingPolicy,
   PostingVisibility,
+  PropagationPolicy,
   ProvenanceEntry,
   ResolvedCascadeValue,
   ShiftTemplate,
@@ -30,6 +31,8 @@ export {
   isEditableLevel,
   isItemIdentity,
   isLevelType,
+  isPropagationPolicy,
+  isSnapshotPolicy,
 } from './types';
 
 export { CASCADE_REGISTRY } from './registry';

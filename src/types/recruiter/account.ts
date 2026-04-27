@@ -167,6 +167,15 @@ export interface RecruiterAccount {
     /** AccuSource provider package id from synced catalog (`integrations_accusource/catalog`). */
     screeningPackageId?: string | null;
     screeningPackageName?: string | null;
+    /**
+     * **R.10** — Account-level override for the background-check expiry
+     * threshold (days). When unset, the cascade falls through to
+     * `location_defaults.screeningValidityDays` (if any) and then to
+     * `DEFAULT_SCREENING_VALIDITY_DAYS` (365). Resolved per-check at sweep
+     * time via `mergeScreeningValidityDaysFromLayers`. See
+     * `docs/READINESS_R10_HANDOFF.md` L4.R10.
+     */
+    screeningValidityDays?: number | null;
     orderDetails?: Record<string, unknown>;
   };
   /** Billing/hiring defaults (E-Verify, etc.). Stored in Firestore as defaults; may be mirrored at top level for display. */

@@ -31,6 +31,18 @@ import { backgroundCheckOptions, additionalScreeningOptions } from '../../data/s
 import { getOptionsForField } from '../../utils/fieldOptions';
 import { getRequirementPackIds, JOB_REQUIREMENT_PACKS } from '../../data/jobRequirementPacks';
 import { AccusourcePackageSelector } from './AccusourcePackageSelector';
+// **R.16.1 Phase 8** — Snapshot-policy field edits at the Account
+// level don't propagate to active JOs (the snapshot trigger
+// captures values at activation; subsequent edits are
+// "live-until-active" → no-op for already-active JOs). The banner
+// surfaces this gap and lets an admin opt into Push-to-Active for
+// the dirty field. Only Account-level edits surface the banner;
+// Location-level edits don't (they only affect the location-merged
+// effective value, not the cascaded snapshot field set captured at
+// activation). See docs/CASCADE_PROPAGATION_R16.1_HANDOFF.md §L9.
+import PushToActiveBanner, {
+  type PushToActiveBannerPayload,
+} from './PushToActiveBanner';
 
 const PHYSICAL_OPTIONS = [
   'Standing', 'Walking', 'Sitting', 'Lifting 25 lbs', 'Lifting 50 lbs', 'Lifting 75 lbs', 'Lifting 100+ lbs',
@@ -100,6 +112,25 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
   const [screeningPackageName, setScreeningPackageName] = useState(mergedScreening.name);
   const formRef = useRef<OrderDetailsData>(form);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // R.16.1 Phase 8 — banner state. Set after a saved-to-Firestore
+  // edit on a snapshot-policy field. Cleared either by the banner's
+  // X button (`onDismiss`) or by closing the dialog. Only one
+  // payload at a time — if the admin edits screening then
+  // additionalScreenings before reviewing the first, the second
+  // edit replaces the banner. Multi-field push isn't supported in
+  // V1 (§L9 — pushed one fieldKey per call), and stacking banners
+  // hurts comprehension more than it helps.
+  const [pushBanner, setPushBanner] = useState<PushToActiveBannerPayload | null>(null);
+  // Latest *server-saved* values for snapshot-policy fields. We
+  // compare against these on save to decide whether to fire the
+  // banner. We don't compare against `form` directly because
+  // unsaved typing in the multi-select shouldn't strobe the banner.
+  const lastSavedScreeningRef = useRef<string>(mergedScreening.id);
+  const lastSavedAdditionalScreeningsRef = useRef<string[]>(
+    Array.isArray(effective.additionalScreenings)
+      ? [...effective.additionalScreenings]
+      : [],
+  );
 
   useEffect(() => {
     formRef.current = form;
@@ -122,6 +153,9 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
     const data = formRef.current;
     const sid = screeningPackageId.trim();
     const sname = screeningPackageName.trim();
+    const nextAdditionalScreenings = Array.isArray(data.additionalScreenings)
+      ? data.additionalScreenings
+      : [];
     try {
       const payload: Record<string, unknown> = {
         'orderDefaults.orderDetails': data,
@@ -142,6 +176,42 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
       } else {
         const accountRef = doc(db, p.recruiterAccount(tenantId, accountId));
         await updateDoc(accountRef, payload);
+      }
+
+      // R.16.1 Phase 8 — surface the banner only at the Account
+      // level. Location-level saves don't carry snapshot-policy
+      // semantics in this dialog: snapshot fields capture the
+      // resolved cascade at activation time, and the
+      // location-merged value is incidentally observable through
+      // that capture but isn't itself a push surface in V1.
+      if (!locationKey) {
+        const prevSid = lastSavedScreeningRef.current;
+        if (sid !== prevSid) {
+          setPushBanner({
+            fieldKey: 'screeningPackageId',
+            positionId: null,
+            previousValue: prevSid || null,
+            newValue: sid || null,
+            fieldLabel: 'AccuSource Screening Package',
+          });
+          lastSavedScreeningRef.current = sid;
+        } else {
+          const prevAdd = lastSavedAdditionalScreeningsRef.current;
+          const sameLength = prevAdd.length === nextAdditionalScreenings.length;
+          const sameContents =
+            sameLength &&
+            [...prevAdd].sort().every((v, i) => v === [...nextAdditionalScreenings].sort()[i]);
+          if (!sameContents) {
+            setPushBanner({
+              fieldKey: 'additionalScreenings',
+              positionId: null,
+              previousValue: prevAdd,
+              newValue: nextAdditionalScreenings,
+              fieldLabel: 'Additional Screenings',
+            });
+            lastSavedAdditionalScreeningsRef.current = [...nextAdditionalScreenings];
+          }
+        }
       }
     } catch (err: any) {
       console.error('Save order details error:', err);
@@ -185,6 +255,18 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           These defaults flow to job orders. Set at account or location level; job orders can override.
         </Typography>
+
+        {/* R.16.1 Phase 8 — Push-to-Active banner. Only renders at
+            the Account level (location-level edits don't surface a
+            push prompt; see save() above for the rationale). */}
+        {!locationKey && (
+          <PushToActiveBanner
+            tenantId={tenantId}
+            accountId={accountId}
+            payload={pushBanner}
+            onDismiss={() => setPushBanner(null)}
+          />
+        )}
 
         <Typography variant="subtitle1" fontWeight={600} sx={{ mt: 2, mb: 1 }}>Compliance & Requirements</Typography>
         <Grid container spacing={2}>

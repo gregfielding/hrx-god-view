@@ -1274,6 +1274,22 @@
       ]
     },
     {
+      "collectionGroup": "backgroundChecks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "tenantId", "order": "ASCENDING" },
+        { "fieldPath": "jobOrderId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "backgroundChecks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "tenantId", "order": "ASCENDING" },
+        { "fieldPath": "hasPendingPackageDrift", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "assignments",
       "queryScope": "COLLECTION",
       "fields": [

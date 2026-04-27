@@ -182,6 +182,16 @@ export interface JobOrder {
   /** AccuSource screening package (provider id + display name from synced catalog). Merges with account/location orderDefaults in mergeScreeningPackageFromLayers. */
   screeningPackageId?: string;
   screeningPackageName?: string;
+  /**
+   * **R.10** — JobOrder-level override for the background-check expiry
+   * threshold (days). Beats both Location and Account overrides in the
+   * cascade. When unset, falls through to `location_defaults.orderDefaults.screeningValidityDays`,
+   * then `account.orderDefaults.screeningValidityDays`, then
+   * `DEFAULT_SCREENING_VALIDITY_DAYS` (365). Top-level (not nested under
+   * `orderDefaults`) to match how `screeningPackageId` is exposed on JOs.
+   * See `docs/READINESS_R10_HANDOFF.md` L4.R10.
+   */
+  screeningValidityDays?: number;
   /** Gig jobs board: when true, public post lists catalog services for the selected package. */
   showScreeningPackageOnPost?: boolean;
   screeningPackageServiceNames?: string[];
@@ -277,6 +287,82 @@ export interface JobOrder {
 
   // Placements tab: last workforce group selected via "Choose Group" (for quick re-select)
   placementsLastGroup?: { id: string; groupName: string };
+
+  /**
+   * §16.1 propagation-policy snapshot. Populated by
+   * `onJobOrderStatusTransitionSnapshot` at the first draft→active
+   * transition (and by the `backfillJoSnapshotFields` migration for
+   * pre-§16.1 active JOs). Shape: see `JobOrderSnapshot` below.
+   *
+   * Reads of any snapshot-policy field on a non-draft JO should
+   * prefer `snapshot.{field}` over the cascade-resolved value via
+   * `getEffectiveJobOrderField()`. The slice as shipped does NOT
+   * rewire production editors — see `docs/CASCADE_PROPAGATION_R16.1_HANDOFF.md`
+   * §L2 for the consumer-rewire follow-up plan.
+   */
+  snapshot?: JobOrderSnapshot | null;
+}
+
+/**
+ * §16.1 — frozen-at-activation envelope on the JO doc.
+ *
+ * One snapshot is captured at the first transition out of `draft`
+ * (excluding `cancelled` — see §16.1 L6). The snapshot is one-shot:
+ * subsequent draft↔active oscillations do not re-resolve. The only
+ * post-snapshot mutation paths are the Push-to-Active callable (an
+ * admin action with audit trail) and a forced backfill re-run
+ * (admin-only, audit-logged).
+ *
+ * Field set is the union of all top-level `snapshot-on-activation`
+ * registry entries (see `src/shared/cascade/registry.ts`). The
+ * `positions` blob carries the resolved+filtered (by
+ * `selectedPositionIds`) positions list with every position's
+ * sub-fields included.
+ */
+export interface JobOrderSnapshot {
+  /** Idempotency key — first-snapshot timestamp. */
+  capturedAt: Date | FieldValue;
+  /** How this snapshot was created. `'trigger'` = `onJobOrderStatusTransitionSnapshot`; `'backfill'` = migration script. */
+  capturedBy: 'trigger' | 'backfill';
+  /** Bumped on every Push-to-Active that touches this JO. `null` = never pushed. */
+  lastPushedAt?: Date | FieldValue | null;
+
+  // Top-level snapshot fields (registry: snapshot-on-activation)
+  hiringEntityId?: string | null;
+  eVerifyRequired?: boolean | null;
+  workersCompCode?: string | null;
+  screeningPackageId?: string | null;
+  additionalScreenings?: string[] | null;
+  selectedPositionIds?: string[] | null;
+
+  /**
+   * Resolved+filtered positions list, one entry per id in
+   * `selectedPositionIds` at activation time. Each entry includes
+   * the full set of position sub-fields (pricing, tax, header).
+   * Order matches `selectedPositionIds`.
+   */
+  positions?: ResolvedPositionSnapshot[];
+}
+
+/**
+ * One position inside `JobOrderSnapshot.positions`. Mirrors the
+ * `positions.itemFields` set in the cascade registry. Every field
+ * is the resolved value from the cascade chain at activation —
+ * pricing/tax fields come from the Child level (the only level
+ * those are editable at), header fields can come from Account or
+ * Child.
+ */
+export interface ResolvedPositionSnapshot {
+  positionId: string;
+  jobTitle?: string | null;
+  jobDescription?: string | null;
+  rateMode?: string | null;
+  payRate?: number | null;
+  billRate?: number | null;
+  futa?: number | null;
+  suta?: number | null;
+  workersCompRate?: number | null;
+  markupPercentage?: number | null;
 }
 
 /** Persisted on job orders / tenant / groups; merged tenant → posting → container. */

@@ -49,9 +49,13 @@ import { useNavigate, useOutletContext } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import StandardTablePagination from '../components/StandardTablePagination';
 import WorkforceScopeToggle from '../components/workforce/WorkforceScopeToggle';
+import WorkforceViewToggle, {
+  type WorkforceReadinessView,
+} from '../components/workforce/WorkforceViewToggle';
 import WorkforceStatusChips from '../components/workforce/WorkforceStatusChips';
 import WorkforceEntityFilter from '../components/workforce/WorkforceEntityFilter';
 import WorkerReadinessRow from '../components/workforce/WorkerReadinessRow';
+import MatrixView from '../components/workforce/MatrixView';
 import useEmployeeReadinessItems from '../hooks/useEmployeeReadinessItems';
 import {
   expandStatusFilters,
@@ -92,6 +96,14 @@ const WorkforceEmployeeReadiness: React.FC = () => {
     setEntityFilter,
     search,
   } = ctx;
+
+  // **R.8** — primary view is the per-worker triage list. The matrix is
+  // a secondary view for cross-worker, per-category bulk actions (D1.R8 —
+  // matrix is a SECONDARY view via toggle, not a replacement). The
+  // selection lives in component state intentionally; persisting it in
+  // the outlet context would couple the matrix to the Job Readiness
+  // page, which doesn't have a matrix.
+  const [view, setView] = useState<WorkforceReadinessView>('list');
 
   // The hook's in-memory chip / entity / search filters are bypassed —
   // worker-level filtering happens here, after grouping. We still rely on
@@ -208,29 +220,47 @@ const WorkforceEmployeeReadiness: React.FC = () => {
         flexWrap="wrap"
       >
         <WorkforceScopeToggle value={scope} onChange={setScope} />
-        <WorkforceStatusChips
-          selected={statusFilters}
-          onChange={setStatusFilters}
-          showComplete={showComplete}
-          onShowCompleteChange={setShowComplete}
-        />
-        <WorkforceEntityFilter value={entityFilter} onChange={setEntityFilter} rows={allRows} />
+        <WorkforceViewToggle value={view} onChange={setView} />
+        {/* List-view chips/entity filter: matrix view has its own filter
+            bar (severity / JO / worksite). Hiding these in matrix mode
+            keeps the toolbar from looking double-stacked, since matrix
+            ignores the chip / entity filters. */}
+        {view === 'list' && (
+          <>
+            <WorkforceStatusChips
+              selected={statusFilters}
+              onChange={setStatusFilters}
+              showComplete={showComplete}
+              onShowCompleteChange={setShowComplete}
+            />
+            <WorkforceEntityFilter
+              value={entityFilter}
+              onChange={setEntityFilter}
+              rows={allRows}
+            />
+          </>
+        )}
         <Box sx={{ flex: 1 }} />
-        <Typography variant="caption" color="text.secondary">
-          {loading
-            ? 'Loading…'
-            : `${filteredGroups.length} worker${filteredGroups.length === 1 ? '' : 's'}${
-                filteredGroups.length !== groups.length ? ` of ${groups.length}` : ''
-              }`}
-        </Typography>
+        {view === 'list' && (
+          <Typography variant="caption" color="text.secondary">
+            {loading
+              ? 'Loading…'
+              : `${filteredGroups.length} worker${filteredGroups.length === 1 ? '' : 's'}${
+                  filteredGroups.length !== groups.length ? ` of ${groups.length}` : ''
+                }`}
+          </Typography>
+        )}
       </Stack>
 
-      {error && (
+      {view === 'matrix' && <MatrixView scope={scope} />}
+
+      {view === 'list' && error && (
         <Alert severity="error" sx={{ mb: 0.5 }}>
           {error}
         </Alert>
       )}
 
+      {view === 'list' && (
       <TableContainer
         sx={{
           border: '1px solid',
@@ -298,6 +328,7 @@ const WorkforceEmployeeReadiness: React.FC = () => {
           />
         )}
       </TableContainer>
+      )}
 
       {/* Drawer placeholder — D.2 swaps in the worker × entity matrix.
           Surface the most urgent item in the group so the placeholder

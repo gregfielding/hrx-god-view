@@ -69,6 +69,15 @@ export type QueueRow = {
   /** Origin attribution (audit / debug). */
   sourceKind?: string;
   sourceRef?: string;
+  /**
+   * **R.8** — Vendor case id (`everify_cases/{id}`, `backgroundChecks/{id}`,
+   * etc.). Lifted from `EmployeeReadinessItem.externalRef` so the matrix
+   * cell can deep-link straight into the right vendor drawer (R.5 / R.6)
+   * without re-fetching the underlying item.
+   *
+   * Not populated for assignment items.
+   */
+  externalRef?: string;
   /** Optional row-level deep link surfaced by the row's CTA. */
   ctaTarget?: {
     kind: string;
@@ -113,6 +122,7 @@ export function normalizeEmployeeItem(id: string, data: EmployeeReadinessItem): 
     history: normalizeOwnershipHistory(data.ownership?.history),
     sourceKind: data.source?.kind,
     sourceRef: data.source?.ref,
+    externalRef: typeof data.externalRef === 'string' ? data.externalRef : undefined,
     ctaTarget: data.ctaTarget,
     createdAtMs: toMs(data.createdAt),
     updatedAtMs: toMs(data.updatedAt),

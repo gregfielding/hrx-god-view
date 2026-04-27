@@ -79,6 +79,41 @@ export type CascadeStrategy =
 export type ItemIdentity = 'string_exact' | 'slug';
 
 /**
+ * Propagation policy (handoff §16). Controls whether cascade-level
+ * edits propagate to active job orders or get frozen at activation.
+ *
+ *  - `live`                   default. Always reads from the cascade.
+ *                             Edits at any ancestor level surface
+ *                             immediately on every JO that resolves
+ *                             through that level.
+ *  - `live-until-active`      reads live while the JO is in `draft`.
+ *                             At draft→active transition, the
+ *                             resolved value is frozen as a JO-level
+ *                             snapshot at `jo.snapshot.{fieldKey}`
+ *                             and reads prefer the snapshot
+ *                             thereafter (subject to consumer
+ *                             adoption — see §16.1 L2).
+ *  - `snapshot-on-activation` same freeze behaviour at activation as
+ *                             `live-until-active`. The semantic
+ *                             distinction (this field is "not meant
+ *                             to be edited at draft" vs "may be
+ *                             edited at draft") is documentation-
+ *                             level only in §16.1; reserved for
+ *                             stricter UI enforcement in a later
+ *                             phase. Trigger logic treats both
+ *                             non-`live` values identically.
+ *
+ * Engine itself remains propagation-blind in §16.1 — the snapshot
+ * is written by the `onJobOrderStatusTransitionSnapshot` cloud
+ * function, and consumers opt into snapshot preference via the
+ * `getEffectiveJobOrderField` helper.
+ */
+export type PropagationPolicy =
+  | 'live'
+  | 'live-until-active'
+  | 'snapshot-on-activation';
+
+/**
  * How a given level contributed to the resolved value. Surfaced in
  * `ProvenanceEntry.contribution` so the UI can render
  * "(set by Account)" / "(overrode at JO)" / "(removed at Shift)"
@@ -136,6 +171,21 @@ export interface CascadeFieldSpec {
    * confirm 2026-04-26).
    */
   defaults?: Record<string, unknown>;
+  /**
+   * §16 propagation policy. Optional — registry default is `'live'`
+   * when omitted. The cascade engine itself does not enforce this;
+   * the snapshot trigger (`onJobOrderStatusTransitionSnapshot`),
+   * the `getEffectiveJobOrderField` helper, and the Push-to-Active
+   * callable read this field to drive freeze / read-preference /
+   * pushable-set behaviour respectively.
+   *
+   * For `keyed_list` entries, this applies to whether the entire
+   * resolved+filtered list is snapshotted at activation. Per-item
+   * sub-fields can declare their own `propagation`, but in §16.1
+   * the trigger snapshots the whole list as one blob — sub-field
+   * policies are advisory documentation only.
+   */
+  propagation?: PropagationPolicy;
   /** Display label for provenance / debug tools. */
   label: string;
 }
@@ -311,6 +361,12 @@ const ITEM_IDENTITIES: ReadonlySet<ItemIdentity> = new Set<ItemIdentity>([
   'slug',
 ]);
 
+const PROPAGATION_POLICIES: ReadonlySet<PropagationPolicy> = new Set<PropagationPolicy>([
+  'live',
+  'live-until-active',
+  'snapshot-on-activation',
+]);
+
 export function isLevelType(value: unknown): value is LevelType {
   return typeof value === 'string' && LEVEL_TYPES.has(value as LevelType);
 }
@@ -325,4 +381,20 @@ export function isCascadeStrategy(value: unknown): value is CascadeStrategy {
 
 export function isItemIdentity(value: unknown): value is ItemIdentity {
   return typeof value === 'string' && ITEM_IDENTITIES.has(value as ItemIdentity);
+}
+
+export function isPropagationPolicy(value: unknown): value is PropagationPolicy {
+  return typeof value === 'string' && PROPAGATION_POLICIES.has(value as PropagationPolicy);
+}
+
+/**
+ * Convenience predicate for the snapshot trigger and consumer
+ * helpers. Returns true for `'live-until-active'` and
+ * `'snapshot-on-activation'` — both freeze at draft→active, and
+ * §16.1 treats them identically.
+ */
+export function isSnapshotPolicy(
+  value: PropagationPolicy | undefined,
+): value is 'live-until-active' | 'snapshot-on-activation' {
+  return value === 'live-until-active' || value === 'snapshot-on-activation';
 }

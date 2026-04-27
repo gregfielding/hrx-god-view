@@ -18,9 +18,18 @@
  *   - `hrxStatus`
  *   - `markedCompleteOutsideHrx`
  *   - any service-line `adjudication.autoVerdict`
+ *   - `expired` (R.10) — sweep-stamped expiry flag
+ *
+ * **R.10** — When `expired === true`, the handler short-circuits the
+ * AccuSource translator entirely and forces readiness to `'expired'`. This
+ * is the only path that emits `'expired'` to readiness items today, and
+ * once flipped, only ordering a new check (a different doc) unblocks the
+ * worker.
  *
  * @see shared/readinessStatusFromAccuSource.ts (translator)
  * @see updateReadinessItemStatus.ts (shared write helper)
+ * @see readiness/dailyReconcileExpiredReadiness.ts (R.10 sweep)
+ * @see docs/READINESS_R10_HANDOFF.md L3.R10
  */
 
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
@@ -32,6 +41,7 @@ import {
   type AccuSourceHrxStatus,
   type AccuSourceLineVerdict,
 } from '../shared/readinessStatusFromAccuSource';
+import type { EmployeeReadinessItemStatus } from '../shared/employeeReadinessItemV1';
 import { updateReadinessItemStatusForEntities } from './updateReadinessItemStatus';
 
 if (!admin.apps.length) {
@@ -77,6 +87,11 @@ function readinessFingerprint(data: Record<string, unknown> | null): string {
     data.hrxStatus ?? '',
     data.markedCompleteOutsideHrx ? '1' : '0',
     verdicts,
+    // **R.10** — `expired` flips drive a status change to `'expired'` via
+    // the short-circuit below. Without this entry, a sweep write that only
+    // toggles `expired:true` would be deduped here and never propagate to
+    // readiness items.
+    data.expired === true ? '1' : '0',
   ].join('::');
 }
 
@@ -131,13 +146,28 @@ export const onBackgroundCheckWriteUpdateReadiness = onDocumentWritten(
       return;
     }
 
-    const newStatus = accuSourceToReadinessStatus({
-      hrxStatus: (afterData.hrxStatus as AccuSourceHrxStatus | null | undefined) ?? null,
-      serviceVerdicts: extractServiceVerdicts(
-        afterData.providerServiceOrderStatus as Record<string, unknown> | null,
-      ),
-      markedCompleteOutsideHrx: afterData.markedCompleteOutsideHrx === true,
-    });
+    // **R.10 short-circuit** — once a check is stamped `expired: true` by
+    // the daily sweep, force readiness to `'expired'` and skip the
+    // AccuSource translator entirely.
+    //
+    // Late-webhook semantics: if an AccuSource webhook arrives AFTER the
+    // sweep stamped expiry (e.g. a re-screen result lands days late), this
+    // short-circuit means readiness stays `'expired'` regardless of what
+    // the webhook says. That is the right behavior — once expired, only
+    // ordering a NEW check (which lives in a different `backgroundChecks`
+    // doc and follows its own readiness flow) unblocks the worker. The
+    // original check's late updates can't un-expire it. Don't second-guess
+    // this: see `docs/READINESS_R10_HANDOFF.md` L3.R10.
+    const newStatus: EmployeeReadinessItemStatus =
+      afterData.expired === true
+        ? 'expired'
+        : accuSourceToReadinessStatus({
+            hrxStatus: (afterData.hrxStatus as AccuSourceHrxStatus | null | undefined) ?? null,
+            serviceVerdicts: extractServiceVerdicts(
+              afterData.providerServiceOrderStatus as Record<string, unknown> | null,
+            ),
+            markedCompleteOutsideHrx: afterData.markedCompleteOutsideHrx === true,
+          });
 
     // Find every entity employment for this worker in this tenant. A
     // background check is a person-level fact — once it passes, every

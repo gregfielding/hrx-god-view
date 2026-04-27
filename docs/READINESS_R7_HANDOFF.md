@@ -221,3 +221,108 @@ These are not blocking R.7 and are not on the "what to look for" list — captur
 - **R.3** — Generalize CSA action endpoints (confirm / waive / markFailed): once these exist, the chip popover + the per-row drawer can offer inline CSA actions where the recruiter has scope.
 - **R.8** — CSA cross-worker readiness matrix UI: uses `<JobReadinessChip size="inline" />` per cell; reuses the same `readinessSnapshotV1.jobReadinessChip` field; benefits from R.3 endpoints.
 - **R.9** — Worker profile-edit UI in Flutter: worker-side counterpart for re-attesting; the auto-resolution side of R.3.
+
+---
+
+## Post-deploy chip-stuck investigation (2026-04-27)
+
+**Context.** Greg reported placement tiles stuck on `"Job Ready (computing…)"` for assignments created before R.4 shipped (specifically Al Gaymon / Wazir Zaimah on a CORT JO). Two hypothesised causes were filed in the bug report:
+
+1. **Stale snapshot docs** — `readinessSnapshotV1.jobReadinessChip` field absent on docs that haven't been rewritten since R.4 shipped. `syncHrxReadinessSnapshotV1` only fires on change to its inputs, so untouched assignments never get the new field.
+2. **Pre-R.1 readiness items missing `severity` / `resolutionMethod`** — the R.1 backfill callable was deployed but never run with `--no-dry-run` in production.
+
+Investigation confirmed both, plus uncovered a third (legacy assignments that never had readiness items created at all). The chip-stuck repro case (Al Gaymon CORT JO 506570) is **fixed** end-to-end. This section captures what was learned so future `readinessSnapshotV1` field additions don't repeat the loop.
+
+### Runbook for future `readinessSnapshotV1` field additions
+
+This is the single most important takeaway. Any future schema-level addition to `readinessSnapshotV1` (a new field on the snapshot doc, a new sub-shape on `jobReadinessChip`, etc.) MUST follow this order. Skipping a step or running them out of order is what produced the stuck-on-`'computing'` window for ~3 weeks after R.4 shipped.
+
+**Step 1 — Deploy the Cloud Functions bundle FIRST.**
+
+```bash
+firebase deploy --only functions:syncHrxReadinessSnapshotV1,functions:onAssignmentReadinessItemWrite,functions:onEmployeeReadinessItemWrite,functions:onAssignmentCreatedAutoSeedReadiness
+```
+
+The deployed trigger and any backfill / refresh script MUST share the same snapshot shape. If you backfill before the deploy, a subsequent assignment write fires the **stale** trigger and overwrites the freshly-backfilled snapshot with the pre-migration shape — silent data regression.
+
+**Step 2 — Verify the deploy is live.**
+
+```bash
+gcloud functions describe syncHrxReadinessSnapshotV1 \
+  --region=us-central1 --gen2 \
+  --format='value(updateTime)'
+# → ISO timestamp must be AFTER your local merge time.
+```
+
+`firebase deploy` exits 0 on partial / cached deploys. Treat the gcloud `updateTime` as ground truth, not the CLI's "Deploy complete" line.
+
+**Step 3 — Run any item-shape backfills (R.1-style, dry-run first).**
+
+These complete the **inputs** the snapshot writer reads. Skipping this leaves the writer aggregating over data that's missing classification fields, so the chip lands in a degraded state even after refresh.
+
+```bash
+node scripts/backfillAssignmentReadinessItems.js --tenant=<tid>            # dry-run
+node scripts/backfillAssignmentReadinessItems.js --tenant=<tid> --no-dry-run
+```
+
+**Step 4 — Run the snapshot-refresh script (dry-run first).**
+
+This script (see "Established pattern" below) re-invokes the deployed recompute over assignments whose snapshot is stale or missing the new field. It is internally idempotent — a second pass against an up-to-date tenant should report `written=0`.
+
+```bash
+node scripts/refreshAssignmentReadinessSnapshotV1.js --tenant=<tid>           # dry-run
+node scripts/refreshAssignmentReadinessSnapshotV1.js --tenant=<tid> --no-dry-run
+node scripts/refreshAssignmentReadinessSnapshotV1.js --tenant=<tid> --no-dry-run  # idempotency check
+```
+
+**Step 5 — Smoke-test one repro case.**
+
+Pick an assignment that originally exhibited the user-visible symptom (the placement tile) and confirm the chip lands on a real state, not `'computing'`. The smoke test is the only end-to-end signal that catches semantic regressions the script's own classification can't see.
+
+### Established pattern: `scripts/refreshAssignmentReadinessSnapshotV1.js`
+
+This script is the canonical pattern for any future field migration on `readinessSnapshotV1`. Future additions should be modelled on it directly rather than reinventing the structure.
+
+**What it does:**
+
+- Pages over `tenants/{tid}/assignments` (snapshot subset only — doesn't read items directly; the recompute does that).
+- Pre-classifies each assignment as `missing_snapshot` / `missing_chip` / `chip_computing` / `current` and skips already-current docs by default. `--force` overrides for full re-runs.
+- Invokes the SAME `recomputeHrxReadinessSnapshotForAssignment` function the deployed trigger uses, loaded via the local esbuild bundle at `functions/lib/readiness/syncHrxReadinessSnapshotV1.cjs`. Single source of truth — script and trigger always write the same shape.
+- Internal idempotency: `recomputeHrxReadinessSnapshotForAssignment` JSON-equality-checks the existing snapshot and skips writes when unchanged (this is what `recompute_no_change` reports in the output).
+
+**Critical gotcha — dual `firebase-admin` trees.** The repo ships TWO copies of `firebase-admin`:
+
+- Repo root `node_modules/firebase-admin` — major 13.x.
+- `functions/node_modules/firebase-admin` — major 11.x.
+
+The esbuild bundle was built with `--external:firebase-admin`, so at runtime it resolves `require('firebase-admin')` from `functions/node_modules`. If an ops script naively does `require('firebase-admin')` from the repo root, it gets the 13.x copy, the bundle gets the 11.x copy, and any SDK sentinel created by the bundle (e.g. `FieldValue.serverTimestamp()`) is rejected by the script's Firestore client as a foreign-prototype `ServerTimestampTransform`. The error message is opaque ("Couldn't serialize object of type ServerTimestampTransform"), so this bites silently.
+
+**Fix (already in the script header at `scripts/refreshAssignmentReadinessSnapshotV1.js` lines 110–129):** force both paths through the SAME `firebase-admin` instance the bundle loads.
+
+```js
+const path = require('path');
+const admin = require(
+  path.resolve(__dirname, '..', 'functions', 'node_modules', 'firebase-admin'),
+);
+```
+
+Any future script that imports a function-bundle export MUST do this. Don't `require('firebase-admin')` directly. The script's header documents the rationale; preserve it verbatim when copying as a template.
+
+### Three follow-ups filed (none blocking R.8)
+
+- **R.4.1 — recompute idempotency on chip-bearing snapshots.** `tryParseComparable` round-trip appears to diverge on empty-contributor chips, causing the recompute to write a byte-equivalent snapshot back instead of skipping. Symptom: `recompute_no_change=0` on idempotency re-runs of the refresh script for assignments where the chip is `'computing'`. Wasted Firestore writes; no data corruption (`errors=0` always). Likely culprits in priority order: (a) `tryParseComparable` rejects what `buildReadinessSnapshotV1Comparable` produces fresh, (b) key insertion order differs between Firestore-read and fresh-build, (c) some non-deterministic field in the chip / summary. **Priority: low.** Tracked because each manual `--no-dry-run` re-run on a clean tenant burns ~40 wasted writes.
+
+- **R.4.2 — legacy assignment readiness coverage gap.** 29 active (confirmed / proposed / pending) assignments in `BCiP2bQ9CgVOCTfV6MhD` are pre-R.1 era: they have `readinessSeededAt: null`, `hiringEntityId: null`, and zero readiness items. The R.1 seeder shipped after these assignments existed, AND assignment-create back then didn't write `hiringEntityId`, so even retroactive seeding requires a two-stage backfill: (a) resolve and stamp `hiringEntityId` from the JO/account cascade, (b) run the seeder. The chip correctly emits `'computing'` for these — `computeJobReadinessChip` returns `'computing'` when there are zero contributors AND `readinessSeeded` is false, which is exactly the state of these assignments. **Priority: medium.** Only this fully resolves the user-visible "spinner forever" symptom for legacy-era confirmed placements; the Al Gaymon CORT JO repro case happens to land on the `current` bucket (it had a single I-9 employee item), which is why the chip-stuck investigation closed without needing R.4.2 first. Bucketing analysis is in `.scratch/bucketR8ComputingChip.js`.
+
+- **R.4.3 — defensive chip UX for legacy-era `'computing'`.** Even after R.4.1 + R.4.2 ship, future legacy data could re-introduce the same shape. Add a defensive branch to `JobReadinessChip` (and `computeJobReadinessChip`) so when an assignment is `createdAt < <R.1 deploy date>` AND the chip would otherwise be `'computing'`, render a distinct "Legacy — needs review" state instead of the indefinite spinner. Surfaces the data gap as a finite, actionable state. **Priority: low–medium.** Cheap insurance against a class of bug recurring without reusing the same investigation loop.
+
+### Longer-term concern: dual `firebase-admin` major versions in the repo
+
+The root tree pins `firebase-admin@13.x` (used by build / deploy / scripts) and `functions/` pins `firebase-admin@11.x` (used by the deployed function bundle and any ops script that loads function exports). They co-exist today only because:
+
+- `functions/` has its own `node_modules` that the function bundle is wired to via `--external:firebase-admin`.
+- Ops scripts that interoperate with function exports explicitly require from `functions/node_modules` (per the gotcha above).
+
+Bumping `functions/` to 13.x is a real upgrade PR with non-trivial regression scope (the SDK changed `Timestamp` semantics, `FieldValue.serverTimestamp()` behaviour at write-merge boundaries, and BulkWriter error retry shape across this major). Don't do it as a side-effect of another change. **Track here as a known split, not active work.** When someone proposes "let's just bump it", point them at this section so they understand the regression surface before opening the PR.
+
+The pragmatic test for whether this matters: as long as ops scripts always import via `require(path.resolve(__dirname, '..', 'functions', 'node_modules', 'firebase-admin'))` and the `firebase-functions` peer pin in `functions/package.json` is compatible, the split is invisible to production. The cost is one extra line of boilerplate at the top of every ops script that touches function bundles.

@@ -9,6 +9,7 @@ export { markAccusourceBackgroundCheckCompleteOutside } from './markBackgroundCh
 export { getAccusourceBackgroundCheckPdf } from './getAccusourceBackgroundCheckPdf';
 export { setAccusourceLineAdjudication } from './setAccusourceLineAdjudication';
 export { syncAccusourcePackageCatalog, ACCUSOURCE_CATALOG_DOC_PATH } from './syncPackageCatalog';
+export { acknowledgeBackgroundCheckPackageDriftCallable } from './acknowledgePackageDrift';
 export type {
   AccusourceEnvironment,
   AccusourceProviderConfig,

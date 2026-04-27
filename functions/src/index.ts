@@ -279,7 +279,31 @@ export {
   getAccusourceBackgroundCheckPdf,
   setAccusourceLineAdjudication,
   syncAccusourcePackageCatalog,
+  // R.11 — CSA "Keep current check" acknowledgment for screening-package drift.
+  acknowledgeBackgroundCheckPackageDriftCallable,
 } from './integrations/accusource';
+// R.11 — JO write trigger that detects screening-package drift on in-flight BG checks.
+export { onJobOrderWriteDetectScreeningPackageDrift } from './readiness/onJobOrderWriteDetectScreeningPackageDrift';
+// R.16.1 — Cascade-propagation snapshot trigger. Freezes
+// `snapshot-on-activation` cascade fields when a JO transitions
+// out of `draft` (excluding `cancelled`). See
+// docs/CASCADE_PROPAGATION_R16.1_HANDOFF.md §L1, §L6, §L7, §L10.
+export { onJobOrderStatusTransitionSnapshot } from './jobOrders/onJobOrderStatusTransitionSnapshot';
+// **R.16.1 Phase 4** — Admin backfill for pre-§16.1 active JOs missing
+// `jo.snapshot.*`. Dry-run default, security level 7 gated, --force
+// escape hatch. See docs/CASCADE_PROPAGATION_R16.1_HANDOFF.md §L7.
+export { backfillJoSnapshotFieldsCallable } from './jobOrders/backfillJoSnapshotFieldsCallable';
+// **R.16.1 Phase 5** — Push-to-Active. `previewPushToActiveCallable`
+// is read-only and powers the dialog's affected-JO list. The write
+// twin `pushToActiveJobOrdersCallable` re-runs the preview server-
+// side, gates on security level 7 + a non-empty reason ≤ 2000
+// chars, writes per-JO transactionally, and emits one
+// `cascadeAuditLog` entry per JO + one summary row per call. See
+// docs/CASCADE_PROPAGATION_R16.1_HANDOFF.md §L9, §L10.
+export {
+  previewPushToActiveCallable,
+  pushToActiveJobOrdersCallable,
+} from './jobOrders/pushToActive';
 export { syncC1WorkerHomeReadinessSnapshot } from './readiness/homeSnapshotTrigger';
 export { logC1WorkerReadinessDomainChanges } from './readiness/homeSnapshotTriggerStub';
 export { syncWorkerProfileReadinessV1 } from './readiness/profileReadinessTrigger';

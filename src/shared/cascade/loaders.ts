@@ -48,10 +48,16 @@ const FIELD_PATHS_BY_LEVEL: Record<
     additionalScreenings: 'orderDefaults.orderDetails.additionalScreenings',
     screeningPackageId: 'orderDefaults.screeningPackageId',
     eVerifyRequired: 'orderDefaults.eVerify.eVerifyRequired',
+    hiringEntityId: 'orderDefaults.hiringEntityId',
+    workersCompCode: 'workersCompCode',
     uniformRequirements: 'orderDefaults.orderDetails.dressCode',
     customerSpecificRules: 'orderDefaults.customerSpecificRules',
     postingVisibility: 'orderDefaults.postingVisibility',
     postingPolicy: 'orderDefaults.postingPolicy',
+    // Pricing tab positions (handoff §5 + §16.1 snapshot envelope).
+    // Path matches `extractAccountPricingPositions` in
+    // `src/utils/accountPricingForJobOrder.ts`.
+    positions: 'pricing.positions',
   },
   // Same shape as `account` — child accounts share the recruiter
   // account doc layout. The only difference is the levelType tag,
@@ -62,10 +68,16 @@ const FIELD_PATHS_BY_LEVEL: Record<
     additionalScreenings: 'orderDefaults.orderDetails.additionalScreenings',
     screeningPackageId: 'orderDefaults.screeningPackageId',
     eVerifyRequired: 'orderDefaults.eVerify.eVerifyRequired',
+    hiringEntityId: 'orderDefaults.hiringEntityId',
+    workersCompCode: 'workersCompCode',
     uniformRequirements: 'orderDefaults.orderDetails.dressCode',
     customerSpecificRules: 'orderDefaults.customerSpecificRules',
     postingVisibility: 'orderDefaults.postingVisibility',
     postingPolicy: 'orderDefaults.postingPolicy',
+    // Pricing tab positions (handoff §5 + §16.1 snapshot envelope).
+    // Child overrides parent's positions per
+    // `fetchResolvedAccountPricingPositions` precedence rule.
+    positions: 'pricing.positions',
   },
   // Location override for standalone accounts
   // (`accounts/{rid}/location_defaults/{cid_wid}`). Same nesting as
@@ -78,11 +90,16 @@ const FIELD_PATHS_BY_LEVEL: Record<
     customerSpecificRules: 'orderDefaults.customerSpecificRules',
   },
   // JO doc (`tenants/{tid}/job_orders/{joId}`). Fields live at the
-  // top level — the JO's own form writes them flat.
+  // top level — the JO's own form writes them flat. Note: snapshot-
+  // policy fields live ALSO under `jo.snapshot.{fieldKey}` post-
+  // activation; the loader reads the cascade-level fields only —
+  // snapshot resolution is the consumer's job (via
+  // `getEffectiveJobOrderField`).
   jo: {
     staffInstructions: 'staffInstructions',
     additionalScreenings: 'additionalScreenings',
     screeningPackageId: 'screeningPackageId',
+    workersCompCode: 'workersCompCode',
     selectedPositionIds: 'selectedPositionIds',
     shiftTemplate: 'shiftTemplate',
     uniformRequirements: 'uniformRequirements',

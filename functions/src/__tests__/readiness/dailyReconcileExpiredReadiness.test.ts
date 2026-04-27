@@ -9,7 +9,11 @@
  */
 
 import { expect } from 'chai';
-import { decideReconcileAction } from '../../readiness/dailyReconcileExpiredReadiness';
+import {
+  decideReconcileAction,
+  decideBackgroundCheckExpiryAction,
+  runBackgroundCheckExpiryPass,
+} from '../../readiness/dailyReconcileExpiredReadiness';
 import type { AssignmentReadinessItem } from '../../shared/assignmentReadinessItemV1';
 
 const NOW = Date.UTC(2026, 3, 26); // 2026-04-26 midnight UTC
@@ -98,5 +102,27 @@ describe('decideReconcileAction — race precedence', () => {
     if (a.kind === 'skip') {
       expect(a.reason).to.equal('race_condition_status_moved');
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// R.10 — orchestrator wiring smoke (deep semantics live in
+// `backgroundCheckExpiryPass.test.ts`).
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('R.10 wiring — orchestrator exports both passes', () => {
+  it('exports decideBackgroundCheckExpiryAction as a callable function', () => {
+    expect(typeof decideBackgroundCheckExpiryAction).to.equal('function');
+  });
+
+  it('exports runBackgroundCheckExpiryPass as a callable function', () => {
+    expect(typeof runBackgroundCheckExpiryPass).to.equal('function');
+  });
+
+  it('decideBackgroundCheckExpiryAction is independent from decideReconcileAction', () => {
+    // Independence check — the two passes share infrastructure (cron,
+    // idempotency guard) but not query logic. Their decision functions
+    // operate on different shapes and should not be confused.
+    expect(decideBackgroundCheckExpiryAction).to.not.equal(decideReconcileAction);
   });
 });

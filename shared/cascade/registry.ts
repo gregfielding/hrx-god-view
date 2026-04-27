@@ -40,32 +40,60 @@ export const CASCADE_REGISTRY = {
     editableAt: ['account', 'child', 'jo', 'shift'],
     label: 'Scheduler',
   },
+  // Compliance anchor: changing the hiring entity on a live JO
+  // changes which legal entity workers are paid by. Snapshot at
+  // activation; admin uses Push-to-Active for explicit propagation.
   hiringEntityId: {
     strategy: 'replace',
     editableAt: ['account', 'child'],
     label: 'Hiring Entity',
+    propagation: 'snapshot-on-activation',
   },
+  // I-9/E-Verify cohort ruling for the JO. Snapshot at activation
+  // so a workforce already past onboarding doesn't suddenly need
+  // E-Verify enrolment because Account toggled the flag.
   eVerifyRequired: {
     strategy: 'replace',
     editableAt: ['account', 'child'],
     label: 'E-Verify Required',
+    propagation: 'snapshot-on-activation',
+  },
+  // §16.1 L3 — added to the registry alongside `workersCompRate`
+  // (which lives at the position level). Top-level field on both
+  // `RecruiterAccount` and `JobOrder`. Snapshot at activation —
+  // changing WC code retroactively could mis-classify in-flight
+  // workers' comp claims.
+  workersCompCode: {
+    strategy: 'replace',
+    editableAt: ['account', 'child'],
+    label: "Workers' Comp Code",
+    propagation: 'snapshot-on-activation',
   },
   // AccuSource screening package id (matches Phase B's existing usage; UI label
   // "AccuSource screening package"). The codebase has both `screeningPackageId`
   // and `backgroundCheckPackageId` floating around — `screeningPackageId` is
   // the canonical name (handoff §13.1); the alias is renamed during O.4.
+  //
+  // Snapshot at activation: once a JO is open and we've ordered
+  // checks against a package, downstream changes to the parent's
+  // package shouldn't retroactively re-define what the JO required.
+  // R.11 drift detection still fires — see §16.1 L5 for the
+  // snapshot-aware update.
   screeningPackageId: {
     strategy: 'replace',
     editableAt: ['account', 'child', 'jo'],
     label: 'AccuSource Screening Package',
+    propagation: 'snapshot-on-activation',
   },
   // Add-on screenings layered on top of the AccuSource package
   // (healthcare, credentials, etc.). UI dropdown "Additional Screenings".
+  // Same snapshot rationale as `screeningPackageId`.
   additionalScreenings: {
     strategy: 'union_with_remove',
     itemIdentity: 'string_exact',
     editableAt: ['account', 'child', 'jo'],
     label: 'Additional Screenings',
+    propagation: 'snapshot-on-activation',
   },
 
   billingContact: {
@@ -168,26 +196,45 @@ export const CASCADE_REGISTRY = {
   // pricing — it selects which positions to use via
   // `selectedPositionIds` below. Hazard-pay scenarios duplicate the
   // position at the Child level under a different positionId.
+  //
+  // Top-level propagation: 'snapshot-on-activation' — at draft→active,
+  // the snapshot trigger captures the resolved+filtered positions
+  // list (filtered by `selectedPositionIds`) as one blob into
+  // `jo.snapshot.positions`. Per-item sub-field propagation policies
+  // below are advisory documentation in §16.1; the trigger snapshots
+  // the whole list as one unit. See §16.1 L1 for rationale.
   positions: {
     strategy: 'keyed_list',
     identityKey: 'positionId',
     editableAt: ['account', 'child'],
     label: 'Positions',
+    propagation: 'snapshot-on-activation',
     itemFields: {
+      // Header fields live at account/child; spec §16.3 considers
+      // them "live" (editing the title/description on the parent
+      // legitimately propagates to draft JOs that haven't activated).
+      // Once a JO activates, the snapshot blob carries the title/
+      // description forward unchanged — that part is a side-effect
+      // of `positions` itself being snapshotted at the parent level.
       jobTitle: {
         strategy: 'replace',
         editableAt: ['account', 'child'],
         label: 'Job Title',
+        propagation: 'live',
       },
       jobDescription: {
         strategy: 'replace',
         editableAt: ['account', 'child'],
         label: 'Job Description',
+        propagation: 'live',
       },
+      // rateMode change retroactively would re-classify how billing
+      // computes from pay/bill/markup. Snapshot at activation.
       rateMode: {
         strategy: 'replace',
         editableAt: ['account', 'child'],
         label: 'Rate Mode',
+        propagation: 'snapshot-on-activation',
       },
       // Pay/bill/tax rates live exclusively at the location
       // (`child`) tier per handoff §13.3. Engine refuses to honour
@@ -195,40 +242,52 @@ export const CASCADE_REGISTRY = {
       // `requiredForCompleteness: true` flags these as the gate the
       // auto-JO-creator (handoff §14.1) checks before auto-selecting
       // a position on a generated JO.
+      //
+      // All five pricing/tax fields snapshot at activation — these
+      // are the financial blast-radius fields §16.1 was scoped to
+      // protect. Account-level edits to any of them on a CORT
+      // National Account would silently re-bill every active JO
+      // without §16 in place.
       payRate: {
         strategy: 'replace',
         editableAt: ['child'],
         requiredForCompleteness: true,
         label: 'Pay Rate',
+        propagation: 'snapshot-on-activation',
       },
       billRate: {
         strategy: 'replace',
         editableAt: ['child'],
         requiredForCompleteness: true,
         label: 'Bill Rate',
+        propagation: 'snapshot-on-activation',
       },
       markupPercentage: {
         strategy: 'replace',
         editableAt: ['account', 'child'],
         label: 'Markup %',
+        propagation: 'snapshot-on-activation',
       },
       futa: {
         strategy: 'replace',
         editableAt: ['child'],
         requiredForCompleteness: true,
         label: 'FUTA',
+        propagation: 'snapshot-on-activation',
       },
       suta: {
         strategy: 'replace',
         editableAt: ['child'],
         requiredForCompleteness: true,
         label: 'SUTA',
+        propagation: 'snapshot-on-activation',
       },
       workersCompRate: {
         strategy: 'replace',
         editableAt: ['child'],
         requiredForCompleteness: true,
         label: "Workers' Comp",
+        propagation: 'snapshot-on-activation',
       },
     },
   },
@@ -238,10 +297,17 @@ export const CASCADE_REGISTRY = {
   // Which positions (defined upstream) are used for THIS job order.
   // No cascade — set on the JO directly. References positionIds
   // from the merged Account+Child set.
+  //
+  // Snapshot at activation: even though it's `level_only` to begin
+  // with, freezing the selection at activation gives Push-to-Active
+  // a consistent surface to operate over. Pre-activation edits via
+  // the JO form continue to work as before; the snapshot is read-
+  // through after activation.
   selectedPositionIds: {
     strategy: 'level_only',
     editableAt: ['jo'],
     label: 'Selected Positions',
+    propagation: 'snapshot-on-activation',
   },
 
   // JO-level template that pre-populates the click-to-create-shift

@@ -62,6 +62,7 @@ import MoreVertIcon from '@mui/icons-material/MoreVert';
 import RestoreIcon from '@mui/icons-material/Restore';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../../../firebase';
@@ -261,6 +262,14 @@ const BackgroundCheckCaseDrawer: React.FC<BackgroundCheckCaseDrawerProps> = ({
   const [markClearedError, setMarkClearedError] = useState<string | null>(null);
   const [markClearedSuccess, setMarkClearedSuccess] = useState<string | null>(null);
 
+  // **R.11** — "Keep current check" acknowledge dialog state. Opens when
+  // the CSA clicks the warning Alert's button on a doc with unacknowledged
+  // `packageDrift`. See `acknowledgeBackgroundCheckPackageDriftCallable`.
+  const [ackDriftOpen, setAckDriftOpen] = useState(false);
+  const [ackDriftNote, setAckDriftNote] = useState('');
+  const [ackDriftSubmitting, setAckDriftSubmitting] = useState(false);
+  const [ackDriftError, setAckDriftError] = useState<string | null>(null);
+
   // Sync `initialCheck` prop → state so reopening for a different row
   // doesn't render the prior case while the listener spins up.
   useEffect(() => {
@@ -307,6 +316,10 @@ const BackgroundCheckCaseDrawer: React.FC<BackgroundCheckCaseDrawerProps> = ({
       setMarkClearedError(null);
       setMarkClearedSuccess(null);
       setActionError(null);
+      setAckDriftOpen(false);
+      setAckDriftNote('');
+      setAckDriftSubmitting(false);
+      setAckDriftError(null);
     }
   }, [open]);
 
@@ -474,7 +487,47 @@ const BackgroundCheckCaseDrawer: React.FC<BackgroundCheckCaseDrawerProps> = ({
     }
   };
 
+  /**
+   * **R.11** — Submit "Keep current check" acknowledgment. Idempotent on
+   * the server; we still gate locally so the UI doesn't re-fire on rapid
+   * double-click. Note is optional but encouraged.
+   */
+  const submitAcknowledgeDrift = useCallback(async () => {
+    if (!checkDoc) return;
+    if (!checkDoc.packageDrift || checkDoc.packageDrift.acknowledgedAt) return;
+    setAckDriftSubmitting(true);
+    setAckDriftError(null);
+    try {
+      const fn = httpsCallable<
+        { checkId: string; note?: string },
+        { ok: boolean; alreadyAcknowledged: boolean; noDriftToAcknowledge: boolean }
+      >(functions, 'acknowledgeBackgroundCheckPackageDriftCallable');
+      const note = ackDriftNote.trim();
+      await fn({ checkId: checkDoc.id, note: note || undefined });
+      setAckDriftOpen(false);
+      setAckDriftNote('');
+      onActionApplied?.();
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message ? err.message : 'Failed to acknowledge package drift.';
+      setAckDriftError(message);
+    } finally {
+      setAckDriftSubmitting(false);
+    }
+  }, [checkDoc, ackDriftNote, onActionApplied]);
+
   const menuLine = menuLineId ? lines.find((l) => l.id === menuLineId) ?? null : null;
+
+  /**
+   * **R.11** — Whether to surface the package-drift warning Alert + actions.
+   * Drift state lives on the BG check doc; we only show it when it's
+   * present AND not yet acknowledged. Acknowledged drift is preserved on
+   * the doc for audit but the surface stops nagging.
+   */
+  const pendingDrift =
+    checkDoc?.packageDrift && !checkDoc.packageDrift.acknowledgedAt
+      ? checkDoc.packageDrift
+      : null;
 
   const hrxStatusPalette =
     (checkDoc?.hrxStatus && HRX_STATUS_PALETTE[checkDoc.hrxStatus]) ?? {
@@ -576,6 +629,76 @@ const BackgroundCheckCaseDrawer: React.FC<BackgroundCheckCaseDrawerProps> = ({
                 </Typography>
               )}
             </Stack>
+          )}
+
+          {/*
+            **R.11** — Package-drift warning. Detected by
+            `onJobOrderWriteDetectScreeningPackageDrift`; cleared by
+            `acknowledgeBackgroundCheckPackageDriftCallable`. We only render
+            for unacknowledged drift; acknowledged drift remains on the
+            doc for audit but stops nagging here. Reorder action is
+            disabled in V1 (see L4.R11) — surfaces the urgent-reorder ops
+            channel as the interim escape hatch.
+          */}
+          {pendingDrift && (
+            <Alert
+              severity="warning"
+              icon={<WarningAmberIcon fontSize="inherit" />}
+              sx={{ alignItems: 'flex-start' }}
+            >
+              <Typography variant="subtitle2" fontWeight={700} gutterBottom>
+                Job order screening package changed
+              </Typography>
+              <Typography variant="body2" sx={{ mb: 1 }}>
+                The job order&apos;s screening package was updated to{' '}
+                <strong>
+                  {pendingDrift.expectedPackageName ||
+                    pendingDrift.expectedPackageId ||
+                    'a different package'}
+                </strong>{' '}
+                while this check is still in-flight against{' '}
+                <strong>
+                  {checkDoc.requestedPackageName ||
+                    (checkDoc.requestedPackageId
+                      ? String(checkDoc.requestedPackageId)
+                      : 'the prior package')}
+                </strong>
+                .{' '}
+                {pendingDrift.driftKind === 'incomparable'
+                  ? 'We could not determine if the older package covers the new one (often a legacy check missing service detail), so we flagged it conservatively for your review.'
+                  : 'The new package adds at least one service the existing check does not cover.'}
+              </Typography>
+              <Stack direction="row" spacing={1} flexWrap="wrap" alignItems="center">
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="warning"
+                  disabled={!canManageEffective || ackDriftSubmitting}
+                  onClick={() => {
+                    setAckDriftError(null);
+                    setAckDriftNote('');
+                    setAckDriftOpen(true);
+                  }}
+                >
+                  Keep current check
+                </Button>
+                <Tooltip
+                  title="Reordering with the new package is coming in a follow-up release. For urgent reorders, contact ops via the standard escalation channel."
+                >
+                  {/* span wrapper required for Tooltip on disabled button */}
+                  <span>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      color="warning"
+                      disabled
+                    >
+                      Reorder with new package
+                    </Button>
+                  </span>
+                </Tooltip>
+              </Stack>
+            </Alert>
           )}
 
           {actionError && (
@@ -995,6 +1118,69 @@ const BackgroundCheckCaseDrawer: React.FC<BackgroundCheckCaseDrawerProps> = ({
             disabled={markClearedSubmitting}
           >
             {markClearedSubmitting ? 'Saving…' : 'Mark cleared'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/*
+        **R.11** — "Keep current check" acknowledge dialog. Optional note;
+        callable is idempotent so double-submit is safe. We close the
+        dialog only on success — error stays visible inline so the CSA can
+        retry without losing context.
+      */}
+      <Dialog
+        open={ackDriftOpen}
+        onClose={() => {
+          if (ackDriftSubmitting) return;
+          setAckDriftOpen(false);
+          setAckDriftError(null);
+        }}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>Keep current background check</DialogTitle>
+        <DialogContent>
+          <DialogContentText sx={{ mb: 2 }}>
+            Mark this background check as sufficient despite the job order&apos;s screening
+            package change. The check stays open and progresses normally; the workforce
+            matrix banner stops nagging once acknowledged.
+          </DialogContentText>
+          <TextField
+            fullWidth
+            multiline
+            minRows={2}
+            maxRows={6}
+            label="Acknowledgment note (optional)"
+            placeholder="e.g. older package was the same scope as the new one for this jurisdiction."
+            value={ackDriftNote}
+            onChange={(e) => setAckDriftNote(e.target.value)}
+            disabled={ackDriftSubmitting}
+            inputProps={{ maxLength: 2000 }}
+          />
+          {ackDriftError && (
+            <Alert severity="error" sx={{ mt: 2 }} onClose={() => setAckDriftError(null)}>
+              {ackDriftError}
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              if (ackDriftSubmitting) return;
+              setAckDriftOpen(false);
+              setAckDriftError(null);
+            }}
+            disabled={ackDriftSubmitting}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="warning"
+            onClick={submitAcknowledgeDrift}
+            disabled={ackDriftSubmitting}
+          >
+            {ackDriftSubmitting ? 'Saving…' : 'Keep current check'}
           </Button>
         </DialogActions>
       </Dialog>
