@@ -57,7 +57,10 @@ export {
   backfillChecklistTasksForTenantAdmins,
 } from './jobOrderChecklistTasks';
 
-export { jobOrderAutoMessagingOnShiftCreated } from './jobOrderAutoMessaging';
+export {
+  jobOrderAutoMessagingOnShiftCreated,
+  sendJobOrderShiftPostedResendCallable,
+} from './jobOrderAutoMessaging';
 
 // Dashboard internal notifications (recruiter signals)
 export {
@@ -247,7 +250,9 @@ export {
   everifyExceptionAction,
   everifyMarkEmployeeNotified,
   everifyMarkContested,
+  everifyRecordWorkerDecision,
   everifyMarkReferralInitiated,
+  everifyRecordNoticeGenerated,
   everifyCloseCaseManual,
   everifySoapCreateCase,
   onUserEmploymentUpdatedEverify,
@@ -313,6 +318,17 @@ export { onUserFieldChangeUpdateReadiness } from './readiness/onUserFieldChangeU
 // refreshed. Daily reconciler (Phase C.2) handles the time-passes path.
 export { onUserLicensesChangeRefreshAssignments } from './readiness/onUserLicensesChangeRefreshAssignments';
 export { dailyReconcileExpiredReadiness } from './readiness/dailyReconcileExpiredReadiness';
+
+// R.3 — generalized CSA readiness-item action callables. Cover the gap
+// R.5 (E-Verify) and R.6 (AccuSource) leave: confirm / waive / mark failed
+// for willingness items, *_match items, custom items. AccuSource and
+// E-Verify types are explicitly rejected with a hint pointing at their
+// dedicated callables. See docs/READINESS_R3_HANDOFF.md.
+export {
+  confirmReadinessItem,
+  waiveReadinessItem,
+  markReadinessItemFailed,
+} from './readiness/csaActions';
 
 // Workforce domain (Phase 2 of docs/WORKFORCE_DOMAIN_MODEL.md).
 // - Trigger maintains AccountWorkforce docs from assignment writes.
@@ -11818,6 +11834,21 @@ export { onApplicationCreated, onApplicationStatusChanged } from './applicationS
 // FCM push on application created / assignment updated (test automated push delivery)
 export { onApplicationCreatedPush } from './triggers/onApplicationCreatedPush';
 export { onAssignmentUpdatedPush } from './triggers/onAssignmentUpdatedPush';
+
+// R.0b: server-side safety-net sync of application → workerAttestations on profile
+// (see docs/READINESS_R0_HANDOFF.md)
+export { onApplicationSubmittedSyncProfile } from './triggers/onApplicationSubmittedSyncProfile';
+
+// R.0c: admin-callable backfill of workerAttestations from existing applications
+// (see docs/READINESS_R0_HANDOFF.md)
+export { backfillWorkerAttestationsCallable } from './backfillWorkerAttestationsCallable';
+
+// R.1: admin-callable backfill of assignmentReadinessItems severity +
+// resolutionMethod fields. Dry-run by default; ships deployable but should
+// not be invoked with `dryRun: false` in production until the dry-run report
+// is signed off.
+// (see docs/READINESS_R1_R2_HANDOFF.md)
+export { backfillAssignmentReadinessItemsCallable } from './backfillAssignmentReadinessItemsCallable';
 export {
   syncAssignmentScheduledNotifications,
   dispatchScheduledAssignmentNotifications,

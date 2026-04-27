@@ -17,6 +17,7 @@ import {
   readinessSnapshotV1ComparableJson,
   type ReadinessSnapshotV1Comparable,
 } from '../../../src/shared/readinessSnapshotV1';
+import type { JobReadinessChipData } from '../../../src/shared/jobReadinessChip/types';
 import { loadHrxReadinessBuildArgsAdmin } from './hrxReadinessSnapshotLoadContext';
 
 function tryParseComparable(raw: unknown): ReadinessSnapshotV1Comparable | null {
@@ -34,6 +35,14 @@ function tryParseComparable(raw: unknown): ReadinessSnapshotV1Comparable | null 
     return null;
   }
   if (!Array.isArray(o.requirements)) return null;
+  // R.4 — round-trip `jobReadinessChip` if present so the JSON-equality
+  // write-skip optimization correctly recognises an unchanged chip on the
+  // existing doc. Pre-R.4 docs will simply not have the field; the next
+  // recompute will write it once and then the equality check sticks.
+  const chip =
+    o.jobReadinessChip && typeof o.jobReadinessChip === 'object'
+      ? (o.jobReadinessChip as JobReadinessChipData)
+      : undefined;
   return {
     state: o.state as ReadinessSnapshotV1Comparable['state'],
     sourceVersion: o.sourceVersion as number,
@@ -43,6 +52,7 @@ function tryParseComparable(raw: unknown): ReadinessSnapshotV1Comparable | null 
       completed: s.completed as number,
     },
     requirements: o.requirements as ReadinessSnapshotV1Comparable['requirements'],
+    ...(chip ? { jobReadinessChip: chip } : {}),
   };
 }
 

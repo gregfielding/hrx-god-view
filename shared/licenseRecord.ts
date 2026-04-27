@@ -65,4 +65,13 @@ export type RequiredLicenseV1 = {
    * requirement.
    */
   requiredEndorsements?: string[];
+  /**
+   * **R.1 (D4.R1)** — Per-instance severity override for the seeded
+   * `license_match` readiness item. Falls through to
+   * `JobOrder.requirementSeverityOverrides.license_match` then to the
+   * `'hard'` type default. Operators set this when the JO calls for a CDL
+   * the worker actually has but the operator wants to deprioritize a
+   * specific endorsement.
+   */
+  severity?: 'hard' | 'soft';
 };

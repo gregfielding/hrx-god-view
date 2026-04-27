@@ -12,6 +12,14 @@ export type Phase1CertificationRequirement = {
   gracePeriodDays?: number;
   /** First legacy job-order string that mapped to this row (bridge only). */
   legacySourceLabel?: string;
+  /**
+   * **R.1 (D4.R1)** — Per-instance severity override for the seeded
+   * `cert_match` readiness item. Falls through to
+   * `JobOrder.requirementSeverityOverrides.cert_match` then to the `'hard'`
+   * type default. Set explicitly on `scope: 'preferred'` requirements when the
+   * operator wants the chip to show preferred items as soft contributors.
+   */
+  severity?: 'hard' | 'soft';
 };
 
 export type EvaluationContext = 'apply' | 'assignment' | 'generic';

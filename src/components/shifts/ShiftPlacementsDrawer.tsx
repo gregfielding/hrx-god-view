@@ -15,12 +15,14 @@ import {
   Avatar,
   Box,
   Button,
+  Chip,
   CircularProgress,
   Divider,
   Drawer,
   Grid,
   IconButton,
   Stack,
+  TextField,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -29,16 +31,100 @@ import {
   NotificationsOff as NotificationsOffIcon,
   NotificationsActive as NotificationsActiveIcon,
   OpenInNew as OpenInNewIcon,
+  Description as DescriptionIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  limit as fsLimit,
+  orderBy,
+  query,
+  serverTimestamp,
+  updateDoc,
+  where,
+} from 'firebase/firestore';
+import { format } from 'date-fns';
 
 import { db } from '../../firebase';
 import { p } from '../../data/firestorePaths';
-import { useAuth } from '../../contexts/AuthContext';
 import PlacementsTab from '../recruiter/PlacementsTab';
-import StaffInstructionCard from '../recruiter/StaffInstructionCard';
+import JobOrderAutoMessagingTab from '../recruiter/JobOrderAutoMessagingTab';
+import { experienceOptions, educationOptions } from '../../data/experienceOptions';
+import { JOB_REQUIREMENT_PACKS } from '../../data/jobRequirementPacks';
 import type { JobOrder } from '../../types/recruiter/jobOrder';
 import EditShiftForm, { type ShiftFormShift } from './EditShiftForm';
+
+// Instructions tab section config. Mirrors the JO Detail page's
+// "Staff Instructions" tab (`RecruiterJobOrderDetail.tsx`) so the
+// drawer's vocabulary stays in lock-step. Order matters — these are
+// the seven `staffInstructions` keys the cascade engine expects to
+// see on a JO doc (firstDay, parking, checkIn, uniform, credentials,
+// other, attachments). Adding a new section? Update both lists.
+const INSTRUCTION_SECTIONS: ReadonlyArray<{
+  title: string;
+  fieldKey: string;
+  placeholder: string;
+  uploadPlaceholder: string;
+}> = [
+  {
+    title: 'First Day Instructions',
+    fieldKey: 'firstDay',
+    placeholder:
+      'Enter first day instructions (e.g., arrival time, what to bring, who to meet, orientation details...)',
+    uploadPlaceholder:
+      'Upload first day schedules, orientation materials, or related documents',
+  },
+  {
+    title: 'Parking Instructions',
+    fieldKey: 'parking',
+    placeholder:
+      'Enter parking instructions for staff (e.g., where to park, parking pass requirements, visitor parking location...)',
+    uploadPlaceholder:
+      'Upload parking maps, diagrams, or related documents',
+  },
+  {
+    title: 'Check-In Instructions',
+    fieldKey: 'checkIn',
+    placeholder:
+      'Enter check-in instructions (e.g., where to report, who to ask for, required documents...)',
+    uploadPlaceholder:
+      'Upload check-in forms, maps, or related documents',
+  },
+  {
+    title: 'Uniform Instructions',
+    fieldKey: 'uniform',
+    placeholder:
+      'Enter uniform and dress code requirements (e.g., specific colors, safety gear, PPE requirements...)',
+    uploadPlaceholder:
+      'Upload uniform photos, dress code guides, or related documents',
+  },
+  {
+    title: 'Credential Instructions',
+    fieldKey: 'credentials',
+    placeholder:
+      'Enter credential requirements (e.g., badge pickup, wristband issuance, ID requirements...)',
+    uploadPlaceholder:
+      'Upload credential forms, badge photos, or related documents',
+  },
+  {
+    title: 'Other Instructions',
+    fieldKey: 'other',
+    placeholder:
+      'Enter any additional instructions or important information for staff...',
+    uploadPlaceholder: 'Upload any other relevant documents',
+  },
+  {
+    title: 'Other Attachments',
+    fieldKey: 'attachments',
+    // Empty placeholder hides the text area on this card — see
+    // StaffInstructionCard's conditional render. Attachments-only.
+    placeholder: '',
+    uploadPlaceholder:
+      'Upload any other relevant documents for this job order',
+  },
+];
 
 // Money + percent formatters duplicated from the /shifts table so the
 // drawer's Financials field reads identically to the table cell. (If
@@ -143,7 +229,6 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
   shift,
   onClose,
 }) => {
-  const { user } = useAuth();
   const [jobOrder, setJobOrder] = useState<JobOrder | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -151,7 +236,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
   // reopens against a new shift so a recruiter never lands on a stale
   // tab they last touched on a previous shift.
   const [activeTab, setActiveTab] = useState<
-    'assignments' | 'settings' | 'instructions' | 'promotion'
+    'assignments' | 'settings' | 'instructions' | 'requirements' | 'promotion'
   >('assignments');
   // Full shift doc loaded for the Settings tab. The drawer's `shift`
   // prop is a *summary* (the shape used by the /shifts table rows) and
@@ -573,6 +658,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
               { id: 'assignments', label: 'Assignments' },
               { id: 'settings', label: 'Settings' },
               { id: 'instructions', label: 'Instructions' },
+              { id: 'requirements', label: 'Requirements' },
               { id: 'promotion', label: 'Promotion' },
             ] as const
           ).map((tab) => {
@@ -725,134 +811,539 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
               </Box>
             )}
             {activeTab === 'instructions' && (
-              // Mirrors the JO Detail page's "Staff Instructions" tab
-              // (`RecruiterJobOrderDetail.tsx` line 5339+). Reads/writes
-              // directly to the parent JO doc — `StaffInstructionCard`
-              // owns its own debounced save against `staffInstructions`
-              // on the JO. After save it calls `refreshJobOrder` so the
-              // drawer's local copy stays in sync.
-              //
-              // CASCADING NOTE: the JO's `staffInstructions` are
-              // already the resolved, post-merge values that the
-              // recruiter accepted at JO creation time (cascaded down
-              // from Account → Child Account → JO). Per-shift
-              // overrides will land here once the cascade engine
-              // (O.2/O.3) is wired in — at that point we'll switch
-              // the cards to read the resolved value via
-              // `resolveCascadedField` and write the override to
-              // `tenants/{tid}/job_orders/{joId}/shifts/{sid}` instead
-              // of the JO doc.
               <Box sx={{ px: 2.5, py: 2.5 }}>
-                {!jobOrder || !tenantId || !jobOrderId ? (
+                {!jobOrder ? (
                   <Alert severity="info">Loading job order…</Alert>
                 ) : (
-                  <Grid container spacing={3}>
-                    <Grid item xs={12}>
-                      <StaffInstructionCard
-                        title="First Day Instructions"
-                        fieldKey="firstDay"
-                        placeholder="Enter first day instructions (e.g., arrival time, what to bring, who to meet, orientation details...)"
-                        uploadPlaceholder="Upload first day schedules, orientation materials, or related documents"
-                        jobOrder={jobOrder}
-                        jobOrderId={jobOrderId}
-                        tenantId={tenantId}
-                        userId={user?.uid || ''}
-                        onRefresh={refreshJobOrder}
-                      />
-                    </Grid>
-                    <Grid item xs={12}>
-                      <StaffInstructionCard
-                        title="Parking Instructions"
-                        fieldKey="parking"
-                        placeholder="Enter parking instructions for staff (e.g., where to park, parking pass requirements, visitor parking location...)"
-                        uploadPlaceholder="Upload parking maps, diagrams, or related documents"
-                        jobOrder={jobOrder}
-                        jobOrderId={jobOrderId}
-                        tenantId={tenantId}
-                        userId={user?.uid || ''}
-                        onRefresh={refreshJobOrder}
-                      />
-                    </Grid>
-                    <Grid item xs={12}>
-                      <StaffInstructionCard
-                        title="Check-In Instructions"
-                        fieldKey="checkIn"
-                        placeholder="Enter check-in instructions (e.g., where to report, who to ask for, required documents...)"
-                        uploadPlaceholder="Upload check-in forms, maps, or related documents"
-                        jobOrder={jobOrder}
-                        jobOrderId={jobOrderId}
-                        tenantId={tenantId}
-                        userId={user?.uid || ''}
-                        onRefresh={refreshJobOrder}
-                      />
-                    </Grid>
-                    <Grid item xs={12}>
-                      <StaffInstructionCard
-                        title="Uniform Instructions"
-                        fieldKey="uniform"
-                        placeholder="Enter uniform and dress code requirements (e.g., specific colors, safety gear, PPE requirements...)"
-                        uploadPlaceholder="Upload uniform photos, dress code guides, or related documents"
-                        jobOrder={jobOrder}
-                        jobOrderId={jobOrderId}
-                        tenantId={tenantId}
-                        userId={user?.uid || ''}
-                        onRefresh={refreshJobOrder}
-                      />
-                    </Grid>
-                    <Grid item xs={12}>
-                      <StaffInstructionCard
-                        title="Credential Instructions"
-                        fieldKey="credentials"
-                        placeholder="Enter credential requirements (e.g., badge pickup, wristband issuance, ID requirements...)"
-                        uploadPlaceholder="Upload credential forms, badge photos, or related documents"
-                        jobOrder={jobOrder}
-                        jobOrderId={jobOrderId}
-                        tenantId={tenantId}
-                        userId={user?.uid || ''}
-                        onRefresh={refreshJobOrder}
-                      />
-                    </Grid>
-                    <Grid item xs={12}>
-                      <StaffInstructionCard
-                        title="Other Instructions"
-                        fieldKey="other"
-                        placeholder="Enter any additional instructions or important information for staff..."
-                        uploadPlaceholder="Upload any other relevant documents"
-                        jobOrder={jobOrder}
-                        jobOrderId={jobOrderId}
-                        tenantId={tenantId}
-                        userId={user?.uid || ''}
-                        onRefresh={refreshJobOrder}
-                      />
-                    </Grid>
-                    <Grid item xs={12}>
-                      <StaffInstructionCard
-                        title="Other Attachments"
-                        fieldKey="attachments"
-                        placeholder=""
-                        uploadPlaceholder="Upload any other relevant documents for this job order"
-                        jobOrder={jobOrder}
-                        jobOrderId={jobOrderId}
-                        tenantId={tenantId}
-                        userId={user?.uid || ''}
-                        onRefresh={refreshJobOrder}
-                      />
-                    </Grid>
-                  </Grid>
+                  <InstructionsSummary jobOrder={jobOrder} />
+                )}
+              </Box>
+            )}
+            {activeTab === 'requirements' && (
+              <Box sx={{ px: 2.5, py: 2.5 }}>
+                {!jobOrder ? (
+                  <Alert severity="info">Loading job order…</Alert>
+                ) : (
+                  <RequirementsSummary jobOrder={jobOrder} />
                 )}
               </Box>
             )}
             {activeTab === 'promotion' && (
-              <Box sx={{ px: 2.5, py: 4 }}>
-                <Typography variant="body2" color="text.secondary">
-                  Promotion — coming soon.
-                </Typography>
+              <Box sx={{ px: 2.5, py: 2.5 }}>
+                {!jobOrder || !tenantId || !jobOrderId ? (
+                  <Alert severity="info">Loading job order…</Alert>
+                ) : (
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    <PostingUrlsCard tenantId={tenantId} jobOrderId={jobOrderId} />
+                    <JobOrderAutoMessagingTab
+                      tenantId={tenantId}
+                      jobOrderId={jobOrderId}
+                      jobOrder={jobOrder}
+                      onJobOrderUpdated={() => {
+                        void refreshJobOrder();
+                      }}
+                    />
+                  </Box>
+                )}
               </Box>
             )}
           </>
         )}
       </Box>
     </Drawer>
+  );
+};
+
+// Read-only mirror of the JO Detail page's "Staff Instructions" tab.
+// Reads `jobOrder.staffInstructions[fieldKey]` (same shape `StaffInstructionCard`
+// writes: `{ text, files }`). Edits live on the JO Staff Instructions tab; this
+// view simply surfaces whatever's there per section, with a dash for empty
+// fields and read-only "View" links for attachments. Mirrors the
+// `RequirementsSummary` design (uppercase section heading, body row, dash
+// fallback) so the drawer's read-only tabs feel consistent.
+const InstructionsSummary: React.FC<{ jobOrder: JobOrder }> = ({ jobOrder }) => {
+  const jo = jobOrder as unknown as Record<string, unknown>;
+  const staffInstructions =
+    (jo.staffInstructions as Record<string, unknown> | undefined) ?? {};
+
+  // Match `StaffInstructionCard.instructionTextToString` so legacy shapes
+  // (`{ en, instructions, text: { en } }`) all collapse to a clean string.
+  const toText = (value: unknown): string => {
+    if (value == null) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      const o = value as Record<string, unknown>;
+      if (typeof o.en === 'string') return o.en;
+      if (typeof o.instructions === 'string') return o.instructions;
+      if (typeof o.text === 'string') return o.text;
+      const nested = o.text as Record<string, unknown> | undefined;
+      if (nested && typeof nested.en === 'string') return nested.en;
+    }
+    return '';
+  };
+
+  type InstructionFile = {
+    label?: string;
+    name?: string;
+    url?: string;
+    uploadedAt?: string | number | Date | null;
+  };
+  const filesFor = (entry: unknown): InstructionFile[] => {
+    if (!entry || typeof entry !== 'object') return [];
+    const raw = (entry as { files?: unknown }).files;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .filter((f): f is InstructionFile => !!f && typeof f === 'object')
+      .filter((f) => typeof f.url === 'string' && f.url.trim().length > 0);
+  };
+
+  const dash = '—';
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <Typography variant="body2" color="text.secondary">
+        Reflects the parent job order&apos;s Staff Instructions. Edit on the Job Order
+        Staff Instructions tab.
+      </Typography>
+      {INSTRUCTION_SECTIONS.map((section) => {
+        const entry = staffInstructions[section.fieldKey];
+        const rawText = entry == null ? '' : toText(
+          (entry as { text?: unknown })?.text ?? entry,
+        );
+        const text = rawText.trim();
+        const files = filesFor(entry);
+        const hasAnything = text.length > 0 || files.length > 0;
+        // Skip the dedicated attachments-only card (`section.placeholder === ''`)
+        // when no files are attached — keeps the read-only view compact.
+        if (section.placeholder === '' && files.length === 0) return null;
+
+        return (
+          <Box key={section.fieldKey}>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{
+                display: 'block',
+                mb: 1,
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+              }}
+            >
+              {section.title}
+            </Typography>
+            {section.placeholder !== '' && (
+              <Typography
+                variant="body2"
+                color={text ? 'text.primary' : 'text.secondary'}
+                sx={{ whiteSpace: 'pre-wrap', mb: files.length > 0 ? 1 : 0 }}
+              >
+                {text || dash}
+              </Typography>
+            )}
+            {files.length > 0 && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                {files.map((file, idx) => {
+                  const label =
+                    (file.label && file.label.trim()) ||
+                    (file.name && file.name.trim()) ||
+                    'Attachment';
+                  const uploaded = (() => {
+                    if (!file.uploadedAt) return '';
+                    try {
+                      return format(new Date(file.uploadedAt), 'MMM dd, yyyy');
+                    } catch {
+                      return '';
+                    }
+                  })();
+                  return (
+                    <Box
+                      key={`${section.fieldKey}-${idx}`}
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                        p: 1,
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        borderRadius: 1,
+                        bgcolor: 'grey.50',
+                      }}
+                    >
+                      <DescriptionIcon fontSize="small" color="primary" />
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Typography variant="body2" fontWeight={500} noWrap>
+                          {label}
+                        </Typography>
+                        {(file.name || uploaded) && (
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ display: 'block' }}
+                          >
+                            {[file.name, uploaded].filter(Boolean).join(' • ')}
+                          </Typography>
+                        )}
+                      </Box>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<OpenInNewIcon fontSize="small" />}
+                        onClick={() =>
+                          file.url &&
+                          window.open(file.url, '_blank', 'noopener,noreferrer')
+                        }
+                        sx={{ textTransform: 'none', borderRadius: '20px' }}
+                      >
+                        View
+                      </Button>
+                    </Box>
+                  );
+                })}
+              </Box>
+            )}
+            {/* In the rare case where text is empty but the section is shown
+                because of file presence, keep layout tidy: nothing else to add. */}
+            {!hasAnything && section.placeholder !== '' ? null : null}
+          </Box>
+        );
+      })}
+    </Box>
+  );
+};
+
+// Read-only mirror of the JO Overview "Compliance & Requirements" section.
+// Reads top-level JO fields (preferred — those are what `JobOrderForm` writes
+// alongside its denormalized `stageData.scoping.compliance.*` paths) with the
+// `stageData.scoping.compliance` shape as a fallback. Edits live on the
+// JO Overview tab; this view reflects whatever the JO doc currently holds.
+const RequirementsSummary: React.FC<{ jobOrder: JobOrder }> = ({ jobOrder }) => {
+  const jo = jobOrder as unknown as Record<string, unknown>;
+  const scoping =
+    ((jo.stageData as Record<string, unknown> | undefined)?.scoping as
+      | Record<string, unknown>
+      | undefined) ||
+    ((jo.deal as { stageData?: { scoping?: Record<string, unknown> } } | undefined)?.stageData
+      ?.scoping as Record<string, unknown> | undefined) ||
+    {};
+  const compliance = (scoping.compliance as Record<string, unknown> | undefined) ?? {};
+
+  const asArray = (...candidates: unknown[]): string[] => {
+    for (const c of candidates) {
+      if (Array.isArray(c)) {
+        const list = c.filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
+        if (list.length) return list;
+      } else if (typeof c === 'string' && c.trim().length > 0) {
+        return [c.trim()];
+      }
+    }
+    return [];
+  };
+  const asScalar = (...candidates: unknown[]): string => {
+    for (const c of candidates) {
+      if (typeof c === 'string' && c.trim().length > 0) return c.trim();
+      if (typeof c === 'number') return String(c);
+      if (typeof c === 'boolean') return c ? 'Yes' : 'No';
+    }
+    return '';
+  };
+
+  const labelForOption = (
+    options: ReadonlyArray<{ value: string; label: string }>,
+    value: string,
+  ) => options.find((o) => o.value === value)?.label ?? value;
+
+  const screeningPackageId = asScalar(jo.screeningPackageId);
+  const screeningPackageName = asScalar(jo.screeningPackageName);
+  const screeningPackageLabel = screeningPackageId
+    ? screeningPackageName
+      ? `${screeningPackageName} (${screeningPackageId})`
+      : screeningPackageId
+    : '';
+
+  const backgroundCheckPackages = Array.from(
+    new Set(asArray(jo.backgroundCheckPackages, compliance.backgroundCheckPackages)),
+  );
+  // R.0d (Apr 2026): drugScreeningPanels removed from the requirements
+  // summary — soft-deprecated by the Readiness Rebuild; subsumed by the
+  // AccuSource package + Additional Screenings rows. Existing JO data
+  // remains in Firestore but is no longer surfaced here. See
+  // docs/READINESS_R0_HANDOFF.md.
+  const additionalScreenings = Array.from(
+    new Set(asArray(jo.additionalScreenings, compliance.additionalScreenings)),
+  );
+  const licensesCerts = Array.from(
+    new Set(
+      asArray(
+        jo.licensesCerts,
+        jo.requiredLicenses,
+        jo.requiredCertifications,
+        compliance.licensesCerts,
+        scoping.licensesCerts,
+      ),
+    ),
+  );
+  const skills = Array.from(
+    new Set(asArray(jo.skillsRequired, compliance.skills, scoping.skills)),
+  );
+  const languages = Array.from(
+    new Set(asArray(jo.languagesRequired, compliance.languages, scoping.languages)),
+  );
+  const physicalRequirements = Array.from(
+    new Set(asArray(jo.physicalRequirements, compliance.physicalRequirements, scoping.physicalRequirements)),
+  );
+  const ppeRequirements = Array.from(
+    new Set(asArray(jo.ppeRequirements, compliance.ppe, scoping.ppe)),
+  );
+  const uniformRequirements = Array.from(
+    new Set(asArray(jo.uniformRequirements, scoping.uniformRequirements)),
+  );
+
+  const experienceRaw = asScalar(jo.experienceRequired, compliance.experience, scoping.experience);
+  const experienceLabel = experienceRaw ? labelForOption(experienceOptions, experienceRaw) : '';
+  const educationRaw = asScalar(jo.educationRequired, compliance.education);
+  const educationLabel = educationRaw ? labelForOption(educationOptions, educationRaw) : '';
+  const ppeProvidedByRaw = asScalar(jo.ppeProvidedBy, compliance.ppeProvidedBy);
+  const ppeProvidedByLabel = ppeProvidedByRaw
+    ? ppeProvidedByRaw.charAt(0).toUpperCase() + ppeProvidedByRaw.slice(1)
+    : '';
+  const customUniformRequirements = asScalar(
+    jo.customUniformRequirements,
+    scoping.customUniformRequirements,
+  );
+  const requirementPackId = asScalar(jo.requirementPackId);
+  const requirementPackLabel = requirementPackId
+    ? JOB_REQUIREMENT_PACKS[requirementPackId as keyof typeof JOB_REQUIREMENT_PACKS]?.name ??
+      requirementPackId
+    : '';
+
+  const eVerifyLabel = asScalar(
+    jo.eVerifyRequired,
+    compliance.eVerify,
+    (jo as { eVerify?: unknown }).eVerify,
+  );
+
+  type Row =
+    | { kind: 'chips'; label: string; values: string[] }
+    | { kind: 'text'; label: string; value: string };
+
+  const sections: Array<{ heading: string; rows: Row[] }> = [
+    {
+      heading: 'Screening',
+      rows: [
+        { kind: 'text', label: 'AccuSource Package', value: screeningPackageLabel },
+        { kind: 'chips', label: 'Background Check Packages', values: backgroundCheckPackages },
+        { kind: 'chips', label: 'Additional Screenings', values: additionalScreenings },
+        { kind: 'text', label: 'E-Verify', value: eVerifyLabel },
+      ],
+    },
+    {
+      heading: 'Qualifications',
+      rows: [
+        { kind: 'text', label: 'Experience Required', value: experienceLabel },
+        { kind: 'text', label: 'Education Required', value: educationLabel },
+        { kind: 'chips', label: 'Licenses & Certifications', values: licensesCerts },
+        { kind: 'chips', label: 'Languages Required', values: languages },
+        { kind: 'chips', label: 'Skills Required', values: skills },
+      ],
+    },
+    {
+      heading: 'Workplace',
+      rows: [
+        { kind: 'chips', label: 'Physical Requirements', values: physicalRequirements },
+        { kind: 'chips', label: 'PPE Requirements', values: ppeRequirements },
+        { kind: 'text', label: 'PPE Provided By', value: ppeProvidedByLabel },
+        { kind: 'chips', label: 'Uniform / Dress Code', values: uniformRequirements },
+        { kind: 'text', label: 'Custom Uniform Notes', value: customUniformRequirements },
+        { kind: 'text', label: 'Job Score Requirement Pack', value: requirementPackLabel },
+      ],
+    },
+  ];
+
+  const dash = '—';
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <Typography variant="body2" color="text.secondary">
+        Reflects the parent job order&apos;s Compliance &amp; Requirements. Edit on the Job Order
+        Overview tab.
+      </Typography>
+      {sections.map((section) => (
+        <Box key={section.heading}>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{
+              display: 'block',
+              mb: 1,
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              textTransform: 'uppercase',
+              letterSpacing: '0.5px',
+            }}
+          >
+            {section.heading}
+          </Typography>
+          <Grid container spacing={2}>
+            {section.rows.map((row) => (
+              <Grid item xs={12} md={6} key={row.label}>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: 'block', fontSize: '0.75rem', fontWeight: 500, mb: 0.5 }}
+                >
+                  {row.label}
+                </Typography>
+                {row.kind === 'chips' ? (
+                  row.values.length === 0 ? (
+                    <Typography variant="body2" color="text.secondary">
+                      {dash}
+                    </Typography>
+                  ) : (
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                      {row.values.map((v) => (
+                        <Chip key={v} label={v} size="small" variant="outlined" />
+                      ))}
+                    </Box>
+                  )
+                ) : (
+                  <Typography variant="body2" sx={{ fontWeight: row.value ? 500 : 400 }} color={row.value ? 'text.primary' : 'text.secondary'}>
+                    {row.value || dash}
+                  </Typography>
+                )}
+              </Grid>
+            ))}
+          </Grid>
+        </Box>
+      ))}
+    </Box>
+  );
+};
+
+// Read-only card showing the JO's external job-board URLs (Craigslist, Indeed)
+// plus a button to open the public Jobs Board posting in a new tab.
+// We pull these from the latest `job_postings` doc linked to the job order.
+// External URLs are edited on the Job Posting itself; the public Jobs Board
+// link follows the canonical `/c1/jobs-board/{postId}` route.
+const PostingUrlsCard: React.FC<{ tenantId: string; jobOrderId: string }> = ({
+  tenantId,
+  jobOrderId,
+}) => {
+  const [craigslistUrl, setCraigslistUrl] = useState<string>('');
+  const [indeedUrl, setIndeedUrl] = useState<string>('');
+  const [postId, setPostId] = useState<string>('');
+  const [loading, setLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (!tenantId || !jobOrderId) return;
+      setLoading(true);
+      try {
+        const postingsRef = collection(db, 'tenants', tenantId, 'job_postings');
+        // Most recent posting wins; if multiple have URLs we take the newest one.
+        let snap;
+        try {
+          snap = await getDocs(
+            query(
+              postingsRef,
+              where('jobOrderId', '==', jobOrderId),
+              orderBy('createdAt', 'desc'),
+              fsLimit(5),
+            ),
+          );
+        } catch {
+          // Fallback if the composite index isn't available yet.
+          snap = await getDocs(query(postingsRef, where('jobOrderId', '==', jobOrderId)));
+        }
+        if (cancelled) return;
+        let craig = '';
+        let indeed = '';
+        let firstPostId = '';
+        for (const d of snap.docs) {
+          if (!firstPostId) firstPostId = d.id;
+          const data = d.data() as { craigslistUrl?: unknown; indeedUrl?: unknown };
+          if (!craig && typeof data.craigslistUrl === 'string' && data.craigslistUrl.trim()) {
+            craig = data.craigslistUrl.trim();
+          }
+          if (!indeed && typeof data.indeedUrl === 'string' && data.indeedUrl.trim()) {
+            indeed = data.indeedUrl.trim();
+          }
+          if (craig && indeed) break;
+        }
+        setPostId(firstPostId);
+        setCraigslistUrl(craig);
+        setIndeedUrl(indeed);
+      } catch (e) {
+        console.error('Failed to load job posting URLs', e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, jobOrderId]);
+
+  const renderField = (label: string, value: string) => (
+    <TextField
+      label={label}
+      value={loading ? '' : value}
+      placeholder={loading ? 'Loading…' : 'Not set'}
+      fullWidth
+      size="small"
+      InputProps={{
+        readOnly: true,
+        endAdornment: value ? (
+          <Tooltip title="Open in new tab">
+            <IconButton
+              size="small"
+              onClick={() => window.open(value, '_blank', 'noopener,noreferrer')}
+            >
+              <OpenInNewIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        ) : undefined,
+      }}
+    />
+  );
+
+  const publicPostingUrl = postId
+    ? `${window.location.origin}/c1/jobs-board/${postId}`
+    : '';
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <Box>
+        <Button
+          variant="outlined"
+          size="small"
+          startIcon={<OpenInNewIcon fontSize="small" />}
+          disabled={loading || !publicPostingUrl}
+          onClick={() =>
+            publicPostingUrl &&
+            window.open(publicPostingUrl, '_blank', 'noopener,noreferrer')
+          }
+          sx={{ textTransform: 'none', borderRadius: '24px' }}
+        >
+          {loading
+            ? 'Loading…'
+            : publicPostingUrl
+              ? 'Open Public Posting'
+              : 'No public posting yet'}
+        </Button>
+      </Box>
+      <Grid container spacing={2}>
+        <Grid item xs={12} md={6}>
+          {renderField('Craigslist URL', craigslistUrl)}
+        </Grid>
+        <Grid item xs={12} md={6}>
+          {renderField('Indeed URL', indeedUrl)}
+        </Grid>
+      </Grid>
+    </Box>
   );
 };
 

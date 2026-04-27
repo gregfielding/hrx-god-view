@@ -34,3 +34,10 @@ export {
 
 export { CASCADE_REGISTRY } from './registry';
 export type { CascadingFieldKey } from './registry';
+
+export {
+  provenanceForKey,
+  resolveCascadedField,
+  resolveCascadedFieldWithSpec,
+} from './resolveCascadedField';
+export type { ResolveOptions } from './resolveCascadedField';

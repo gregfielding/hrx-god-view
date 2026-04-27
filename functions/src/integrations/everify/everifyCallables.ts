@@ -25,6 +25,13 @@ import { createEverifyCase } from './everifyCases';
 import { EverifySoapEmployeeDataSchema, EverifySoapError } from './everifyTypes';
 import { canManageOnboarding } from '../../onboarding/workerOnboardingPipeline';
 import { sanitizeCaseCreatorNameForIca } from './everifyIcaSanitize';
+import {
+  caseLinkageFromDoc,
+  clearWorkerActionMarker,
+  isoFromTimestampLike,
+  setTncPendingDecisionMarker,
+} from './everifyTncWorkerAction';
+import { createNotification } from '../../utils/createNotification';
 
 const db = admin.firestore();
 
@@ -542,7 +549,24 @@ async function everifyCaseAction(
   });
 }
 
-/** Admin: mark employee notified (TNC workflow) */
+/**
+ * Admin: mark employee notified (TNC workflow).
+ *
+ * **R.5** — idempotent: if `everifyCaseActions.employeeNotifiedAt` is already
+ * set we still re-write the readiness `workerAction` marker (so a recruiter
+ * who hits the button twice during a deadline rollover lands on a
+ * consistent state) but we *skip* the user-facing notification to avoid
+ * double-pinging the worker.
+ *
+ * Side-effects:
+ *  1. Append `EMPLOYEE_NOTIFIED` event + set `everifyCaseActions.employeeNotifiedAt`.
+ *  2. Write `workerAction = { kind: 'everify_tnc_pending_decision', ... }`
+ *     on the matching `employee_readiness_items/{uid}__{entity}__e_verify`
+ *     and flip `actor='worker'` so the Flutter app (R.9) renders the
+ *     decision card and the recruiter dashboards stop nagging the recruiter.
+ *  3. `createNotification({ recipientType: 'user', recipientId: workerUid, type: 'everify_tnc_action_required' })`
+ *     — only on first invocation (gated by prior `employeeNotifiedAt`).
+ */
 export const everifyMarkEmployeeNotified = onCall(
   EVERIFY_ADMIN_ONCALL_OPTS,
   async (request) => {
@@ -553,13 +577,91 @@ export const everifyMarkEmployeeNotified = onCall(
     if (!(await canManageOnboarding(auth as any, tenantId, auth.uid))) {
       throw new HttpsError('permission-denied', EverifyErrorCode.UNAUTHORIZED);
     }
+
+    const caseRef = db.collection('tenants').doc(tenantId).collection('everify_cases').doc(caseId);
+    const caseSnap = await caseRef.get();
+    if (!caseSnap.exists) throw new HttpsError('not-found', 'Case not found');
+    const caseData = caseSnap.data() as Record<string, unknown>;
+    const existingActions = (caseData.everifyCaseActions as Record<string, unknown> | undefined) ?? {};
+    const alreadyNotified = Boolean(existingActions.employeeNotifiedAt);
+
     const actor = (auth.token?.email as string) || 'admin';
-    await everifyCaseAction(tenantId, caseId, 'EMPLOYEE_NOTIFIED', { employeeNotifiedAt: admin.firestore.FieldValue.serverTimestamp() }, actor);
-    return { ok: true, message: 'Employee notified recorded' };
+    const nowIso = new Date().toISOString();
+    await everifyCaseAction(
+      tenantId,
+      caseId,
+      'EMPLOYEE_NOTIFIED',
+      { employeeNotifiedAt: admin.firestore.FieldValue.serverTimestamp() },
+      actor,
+    );
+
+    const linkage = caseLinkageFromDoc({ tenantId, caseId, caseData });
+    let markerWritten = false;
+    if (linkage) {
+      const deadlines = (caseData.deadlines as Record<string, unknown> | undefined) ?? {};
+      const tncResponseDueAt = isoFromTimestampLike(deadlines.tncResponseDueAt);
+      const referralDueAt = isoFromTimestampLike(deadlines.referralDueAt);
+      const result = await setTncPendingDecisionMarker({
+        ...linkage,
+        notifiedAt: nowIso,
+        tncResponseDueAt,
+        referralDueAt,
+      });
+      markerWritten = result.written;
+    } else {
+      logger.warn('[everifyMarkEmployeeNotified] case missing userId/entityId; skipped readiness marker', {
+        tenantId,
+        caseId,
+      });
+    }
+
+    let notificationCreated = false;
+    if (!alreadyNotified && linkage) {
+      try {
+        await createNotification({
+          recipientType: 'user',
+          recipientId: linkage.workerUid,
+          type: 'everify_tnc_action_required',
+          message:
+            'Action required for your work eligibility verification. Please open the HRX worker app to review and respond within the deadline.',
+          relatedId: caseId,
+          actions: ['open_everify_tnc'],
+        });
+        notificationCreated = true;
+      } catch (err) {
+        // Notification is best-effort — log and continue. The readiness
+        // marker is the load-bearing surface; the Flutter app (R.9) will
+        // still render the action card from that.
+        logger.warn('[everifyMarkEmployeeNotified] notification failed', {
+          tenantId,
+          caseId,
+          workerUid: linkage.workerUid,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    return {
+      ok: true,
+      message: alreadyNotified ? 'Employee notified re-recorded (idempotent)' : 'Employee notified recorded',
+      idempotent: alreadyNotified,
+      markerWritten,
+      notificationCreated,
+    };
   }
 );
 
-/** Admin: mark employee contests (TNC workflow) */
+/**
+ * Admin: mark employee contests (TNC workflow).
+ *
+ * **Status (R.5):** kept for back-compat with the existing inline TNC
+ * buttons in `EverifyAdminOpsPage.tsx` and any external integrations that
+ * may already wire to it. New code should call `everifyRecordWorkerDecision`
+ * (which handles both contest and decline branches and emits the canonical
+ * `WORKER_DECISION_RECORDED` event). This callable now ALSO writes the
+ * decision marker behavior (clear `workerAction`, flip actor) so the two
+ * code paths stay in lockstep.
+ */
 export const everifyMarkContested = onCall(
   EVERIFY_ADMIN_ONCALL_OPTS,
   async (request) => {
@@ -571,12 +673,129 @@ export const everifyMarkContested = onCall(
       throw new HttpsError('permission-denied', EverifyErrorCode.UNAUTHORIZED);
     }
     const actor = (auth.token?.email as string) || 'admin';
-    await everifyCaseAction(tenantId, caseId, 'CONTESTED', { employeeContests: true }, actor);
+    await everifyCaseAction(
+      tenantId,
+      caseId,
+      'CONTESTED',
+      {
+        employeeContests: true,
+        workerDecisionAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      actor,
+    );
+
+    // Mirror the readiness state — contest = decision recorded.
+    const caseSnap = await db
+      .collection('tenants')
+      .doc(tenantId)
+      .collection('everify_cases')
+      .doc(caseId)
+      .get();
+    if (caseSnap.exists) {
+      const linkage = caseLinkageFromDoc({ tenantId, caseId, caseData: caseSnap.data() ?? {} });
+      if (linkage) {
+        await clearWorkerActionMarker({
+          ...linkage,
+          reason: 'worker_decision_recorded',
+          newActor: 'recruiter',
+        });
+      }
+    }
     return { ok: true, message: 'Contested recorded' };
   }
 );
 
-/** Admin: mark referral initiated (TNC workflow) */
+/**
+ * **R.5** — Admin records the worker's TNC decision (contest or decline).
+ * Canonical replacement for `everifyMarkContested` / a worker-app callable
+ * for the contest=true branch and the only existing way to record
+ * decline=false.
+ *
+ * Side-effects:
+ *   - `everifyCaseActions.employeeContests = contests`
+ *   - `everifyCaseActions.workerDecisionAt = now`
+ *   - Append `WORKER_DECISION_RECORDED` event with `data.contests`.
+ *   - On the matching readiness item: clear `workerAction` marker, flip
+ *     `actor='recruiter'` (recruiter must initiate the referral or close).
+ */
+export const everifyRecordWorkerDecision = onCall(
+  EVERIFY_ADMIN_ONCALL_OPTS,
+  async (request) => {
+    const auth = request.auth;
+    if (!auth) throw new HttpsError('unauthenticated', 'Must be authenticated');
+    const { tenantId, caseId, contests } = (request.data || {}) as {
+      tenantId: string;
+      caseId: string;
+      contests: boolean;
+    };
+    if (!tenantId || !caseId) throw new HttpsError('invalid-argument', 'tenantId and caseId required');
+    if (typeof contests !== 'boolean') {
+      throw new HttpsError('invalid-argument', 'contests (boolean) required');
+    }
+    if (!(await canManageOnboarding(auth as any, tenantId, auth.uid))) {
+      throw new HttpsError('permission-denied', EverifyErrorCode.UNAUTHORIZED);
+    }
+
+    const actor = (auth.token?.email as string) || 'admin';
+    const caseRef = db.collection('tenants').doc(tenantId).collection('everify_cases').doc(caseId);
+    const caseSnap = await caseRef.get();
+    if (!caseSnap.exists) throw new HttpsError('not-found', 'Case not found');
+
+    await everifyCaseAction(
+      tenantId,
+      caseId,
+      'WORKER_DECISION_RECORDED',
+      {
+        employeeContests: contests,
+        workerDecisionAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      actor,
+    );
+
+    // Append data on the WORKER_DECISION_RECORDED event so audit consumers
+    // can disambiguate without re-reading the actions object. We do this
+    // as a separate write because everifyCaseAction's `add` doesn't take
+    // event data today; rather than refactor it for one caller, we patch
+    // the most-recent matching event.
+    const recentEvents = await caseRef
+      .collection('events')
+      .where('type', '==', 'WORKER_DECISION_RECORDED')
+      .orderBy('at', 'desc')
+      .limit(1)
+      .get();
+    if (!recentEvents.empty) {
+      await recentEvents.docs[0].ref.update({ data: { contests } });
+    }
+
+    const linkage = caseLinkageFromDoc({ tenantId, caseId, caseData: caseSnap.data() ?? {} });
+    let markerCleared = false;
+    if (linkage) {
+      const result = await clearWorkerActionMarker({
+        ...linkage,
+        reason: 'worker_decision_recorded',
+        newActor: 'recruiter',
+      });
+      markerCleared = result.written;
+    }
+
+    return {
+      ok: true,
+      contests,
+      markerCleared,
+      message: `Worker decision recorded (${contests ? 'contests' : 'declines to contest'})`,
+    };
+  }
+);
+
+/**
+ * Admin: mark referral initiated (TNC workflow).
+ *
+ * **R.5** — also clears the `workerAction` marker idempotently (in case
+ * the worker decision wasn't recorded as its own discrete event — e.g. an
+ * admin shortcut that goes straight from "notified" to "referral filed").
+ * Leaves `actor='recruiter'` because the recruiter / system is now waiting
+ * on USCIS verification, not the worker.
+ */
 export const everifyMarkReferralInitiated = onCall(
   EVERIFY_ADMIN_ONCALL_OPTS,
   async (request) => {
@@ -588,8 +807,68 @@ export const everifyMarkReferralInitiated = onCall(
       throw new HttpsError('permission-denied', EverifyErrorCode.UNAUTHORIZED);
     }
     const actor = (auth.token?.email as string) || 'admin';
-    await everifyCaseAction(tenantId, caseId, 'REFERRAL_INITIATED', { referralInitiatedAt: admin.firestore.FieldValue.serverTimestamp() }, actor);
+    await everifyCaseAction(
+      tenantId,
+      caseId,
+      'REFERRAL_INITIATED',
+      { referralInitiatedAt: admin.firestore.FieldValue.serverTimestamp() },
+      actor,
+    );
+
+    const caseSnap = await db
+      .collection('tenants')
+      .doc(tenantId)
+      .collection('everify_cases')
+      .doc(caseId)
+      .get();
+    if (caseSnap.exists) {
+      const linkage = caseLinkageFromDoc({ tenantId, caseId, caseData: caseSnap.data() ?? {} });
+      if (linkage) {
+        await clearWorkerActionMarker({
+          ...linkage,
+          reason: 'referral_initiated',
+        });
+      }
+    }
     return { ok: true, message: 'Referral initiated recorded' };
+  }
+);
+
+/**
+ * **R.5** — Admin opened the FAN (Further Action Notice) printable view.
+ *
+ * Per Q-R5-3 lock the printable is HTML + `window.print()` rather than a
+ * server-rendered PDF stored in Cloud Storage; this callable exists so the
+ * audit trail still records that a notice was generated and is the hook
+ * we'll wire to e-sign / Cloud Storage later without changing callers.
+ *
+ * Side-effects:
+ *   - Append `NOTICE_PACKET_GENERATED` event.
+ *   - Set `everifyCaseActions.noticePacketGeneratedAt = now`.
+ *
+ * Idempotent — multiple opens append separate events (useful audit trail
+ * if a recruiter regenerates after a stale draft) but only the latest
+ * timestamp is tracked on the action object.
+ */
+export const everifyRecordNoticeGenerated = onCall(
+  EVERIFY_ADMIN_ONCALL_OPTS,
+  async (request) => {
+    const auth = request.auth;
+    if (!auth) throw new HttpsError('unauthenticated', 'Must be authenticated');
+    const { tenantId, caseId } = (request.data || {}) as { tenantId: string; caseId: string };
+    if (!tenantId || !caseId) throw new HttpsError('invalid-argument', 'tenantId and caseId required');
+    if (!(await canManageOnboarding(auth as any, tenantId, auth.uid))) {
+      throw new HttpsError('permission-denied', EverifyErrorCode.UNAUTHORIZED);
+    }
+    const actor = (auth.token?.email as string) || 'admin';
+    await everifyCaseAction(
+      tenantId,
+      caseId,
+      'NOTICE_PACKET_GENERATED',
+      { noticePacketGeneratedAt: admin.firestore.FieldValue.serverTimestamp() },
+      actor,
+    );
+    return { ok: true, message: 'Notice packet generation recorded' };
   }
 );
 

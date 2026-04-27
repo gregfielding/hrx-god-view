@@ -55,6 +55,14 @@ export type RequiredLanguageV1 = {
   language: string;
   /** Minimum acceptable proficiency. `'basic'` = most lenient. */
   minLevel: LanguageProficiencyLevel;
+  /**
+   * **R.1 (D4.R1)** — Per-instance severity override for the seeded
+   * `language_match` readiness item. Falls through to
+   * `JobOrder.requirementSeverityOverrides.language_match` then to the
+   * `'soft'` type default (per D3.R1 — language matches are soft by default
+   * because comprehension fluency rarely hard-blocks operationally).
+   */
+  severity?: 'hard' | 'soft';
 };
 
 /**

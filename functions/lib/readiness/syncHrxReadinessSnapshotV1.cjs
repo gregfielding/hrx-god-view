@@ -37,19 +37,248 @@ var admin = __toESM(require("firebase-admin"));
 var import_https = require("firebase-functions/v2/https");
 var logger = __toESM(require("firebase-functions/logger"));
 
+// ../src/shared/jobReadinessChip/labels.ts
+var ASSIGNMENT_LABELS = {
+  background_check: "Background check",
+  drug_screen: "Drug screen",
+  e_verify: "E-Verify",
+  required_certification: "Required certification",
+  cert_match: "Certification",
+  license_match: "License",
+  skill_match: "Skill",
+  education_match: "Education",
+  language_match: "Language",
+  screening_package_match: "Screening package",
+  orientation: "Orientation",
+  ppe_acknowledgement: "PPE acknowledgement",
+  safety_briefing: "Safety briefing",
+  shift_confirmation: "Shift confirmation",
+  physical_willingness: "Physical requirements",
+  uniform_willingness: "Uniform requirements",
+  ppe_willingness: "Required PPE",
+  language_willingness: "Working language",
+  custom: "Requirement"
+};
+var EMPLOYEE_JOB_LEVEL_LABELS = {
+  background_check: "Background check",
+  drug_screen: "Drug screen",
+  e_verify: "E-Verify"
+};
+function jobReadinessChipLabelFor(source, requirementType, override) {
+  const cleaned = (override ?? "").trim();
+  if (cleaned.length > 0) return cleaned;
+  if (source === "assignment") {
+    return ASSIGNMENT_LABELS[requirementType] ?? "Requirement";
+  }
+  return EMPLOYEE_JOB_LEVEL_LABELS[requirementType] ?? "Requirement";
+}
+var EMPLOYEE_JOB_LEVEL_REQUIREMENT_TYPES = /* @__PURE__ */ new Set([
+  "background_check",
+  "drug_screen",
+  "e_verify"
+]);
+
+// ../src/shared/jobReadinessChip/computeJobReadinessChip.ts
+var PASSING_STATUSES = /* @__PURE__ */ new Set([
+  "complete_pass",
+  "complete",
+  // legacy
+  "not_applicable"
+]);
+var FAILING_STATUSES = /* @__PURE__ */ new Set([
+  "complete_fail"
+]);
+var NEEDS_REVIEW_STATUSES = /* @__PURE__ */ new Set([
+  "needs_review"
+]);
+var EXPIRED_STATUSES = /* @__PURE__ */ new Set([
+  "expired"
+]);
+var PENDING_STATUSES = /* @__PURE__ */ new Set([
+  "incomplete",
+  "in_progress",
+  "blocked"
+]);
+function classifyContribution(args) {
+  const { status, severity, resolutionMethod } = args;
+  if (resolutionMethod === "csa_waived") {
+    return { contribution: "green", detail: "Waived by recruiter" };
+  }
+  if (PASSING_STATUSES.has(status)) {
+    return { contribution: "green", detail: "Satisfied" };
+  }
+  if (FAILING_STATUSES.has(status)) {
+    return severity === "hard" ? { contribution: "red", detail: "Failed" } : { contribution: "yellow", detail: "Failed (soft requirement)" };
+  }
+  if (NEEDS_REVIEW_STATUSES.has(status)) {
+    return severity === "hard" ? { contribution: "red", detail: "Needs review" } : { contribution: "yellow", detail: "Needs review (soft requirement)" };
+  }
+  if (EXPIRED_STATUSES.has(status)) {
+    return severity === "hard" ? { contribution: "red", detail: "Expired" } : { contribution: "yellow", detail: "Expired (soft requirement)" };
+  }
+  if (PENDING_STATUSES.has(status)) {
+    if (severity === "hard") {
+      const detail2 = status === "in_progress" ? "In progress" : status === "blocked" ? "Blocked" : "Pending";
+      return { contribution: "red", detail: detail2 };
+    }
+    const detail = resolutionMethod === "self_attest" ? "Worker has not answered yet" : status === "in_progress" ? "In progress" : "Pending";
+    return { contribution: "yellow", detail };
+  }
+  return { contribution: "yellow", detail: "Unknown status" };
+}
+var CONTRIBUTION_RANK = {
+  red: 0,
+  yellow: 1,
+  green: 2
+};
+function typeSortKey(t) {
+  return String(t);
+}
+function compareContributors(a, b) {
+  const tierDelta = CONTRIBUTION_RANK[a.contribution] - CONTRIBUTION_RANK[b.contribution];
+  if (tierDelta !== 0) return tierDelta;
+  const typeDelta = typeSortKey(a.requirementType).localeCompare(typeSortKey(b.requirementType));
+  if (typeDelta !== 0) return typeDelta;
+  return a.itemId.localeCompare(b.itemId);
+}
+function fromAssignmentItem(item) {
+  const severity = item.severity ?? "soft";
+  const resolutionMethod = item.resolutionMethod ?? null;
+  const { contribution, detail } = classifyContribution({
+    status: item.status,
+    severity,
+    resolutionMethod
+  });
+  return {
+    source: "assignment",
+    itemId: item.id,
+    workerUid: item.workerUid,
+    requirementType: item.requirementType,
+    requirementLabel: jobReadinessChipLabelFor("assignment", item.requirementType, item.requirementLabel),
+    contribution,
+    status: item.status,
+    resolutionMethod,
+    severity,
+    detail
+  };
+}
+function fromEmployeeItem(item) {
+  if (!EMPLOYEE_JOB_LEVEL_REQUIREMENT_TYPES.has(item.requirementType)) return null;
+  const severity = "hard";
+  const resolutionMethod = null;
+  let contribution;
+  let detail;
+  if (item.requirementType === "e_verify" && item.status === "in_progress") {
+    contribution = "yellow";
+    detail = "USCIS verifying";
+  } else {
+    const cls = classifyContribution({
+      status: item.status,
+      severity,
+      resolutionMethod
+    });
+    contribution = cls.contribution;
+    detail = cls.detail;
+  }
+  const caseId = item.requirementType === "e_verify" && typeof item.externalRef === "string" && item.externalRef.length > 0 ? item.externalRef : void 0;
+  return {
+    source: "employee",
+    itemId: item.id,
+    workerUid: item.workerUid,
+    requirementType: item.requirementType,
+    requirementLabel: jobReadinessChipLabelFor("employee", item.requirementType, item.requirementLabel),
+    contribution,
+    status: item.status,
+    resolutionMethod,
+    severity,
+    detail,
+    ...caseId ? { caseId } : {}
+  };
+}
+function buildText(state, pendingCount) {
+  switch (state) {
+    case "computing":
+      return "Job Ready (computing\u2026)";
+    case "red":
+      return "Job Not Ready";
+    case "yellow":
+      return pendingCount > 0 ? `Job Ready (${pendingCount} pending)` : "Job Ready";
+    case "green":
+    default:
+      return "Job Ready";
+  }
+}
+function computeJobReadinessChip(args) {
+  const contributors = [];
+  for (const item of args.assignmentReadinessItems) {
+    contributors.push(fromAssignmentItem(item));
+  }
+  for (const item of args.employeeReadinessItems) {
+    const c = fromEmployeeItem(item);
+    if (c) contributors.push(c);
+  }
+  if (contributors.length === 0) {
+    if (!args.readinessSeeded) {
+      return {
+        state: "computing",
+        text: buildText("computing", 0),
+        pendingCount: 0,
+        blockerCount: 0,
+        contributors: []
+      };
+    }
+    return {
+      state: "red",
+      text: buildText("red", 0),
+      pendingCount: 0,
+      blockerCount: 0,
+      contributors: []
+    };
+  }
+  let blockerCount = 0;
+  let pendingCount = 0;
+  for (const c of contributors) {
+    if (c.contribution === "red") blockerCount += 1;
+    else if (c.contribution === "yellow") pendingCount += 1;
+  }
+  contributors.sort(compareContributors);
+  let state;
+  if (blockerCount > 0) state = "red";
+  else if (pendingCount > 0) state = "yellow";
+  else state = "green";
+  return {
+    state,
+    text: buildText(state, pendingCount),
+    pendingCount,
+    blockerCount,
+    contributors
+  };
+}
+
 // ../src/shared/buildAssignmentReadiness.ts
 function buildAssignmentReadiness({
   user,
   employment,
   assignment,
   screening,
-  certifications
+  certifications,
+  assignmentReadinessItems,
+  employeeReadinessItems,
+  readinessSeeded
 }) {
+  const computeChip = assignmentReadinessItems !== void 0 && employeeReadinessItems !== void 0;
   if (!assignment?.id) {
     return {
       readiness: "PENDING_INITIALIZATION",
       requirements: [],
-      summary: { blockers: 0, warnings: 0, completed: 0 }
+      summary: { blockers: 0, warnings: 0, completed: 0 },
+      ...computeChip ? {
+        jobReadinessChip: computeJobReadinessChip({
+          assignmentReadinessItems: assignmentReadinessItems ?? [],
+          employeeReadinessItems: employeeReadinessItems ?? [],
+          readinessSeeded: Boolean(readinessSeeded)
+        })
+      } : {}
     };
   }
   const requirements = [];
@@ -152,7 +381,14 @@ function buildAssignmentReadiness({
       blockers: requirements.filter((r) => r.severity === "hard_block" && r.status !== "complete").length,
       warnings: requirements.filter((r) => r.severity === "warning" && r.status !== "complete").length,
       completed: requirements.filter((r) => r.status === "complete").length
-    }
+    },
+    ...computeChip ? {
+      jobReadinessChip: computeJobReadinessChip({
+        assignmentReadinessItems: assignmentReadinessItems ?? [],
+        employeeReadinessItems: employeeReadinessItems ?? [],
+        readinessSeeded: Boolean(readinessSeeded)
+      })
+    } : {}
   };
 }
 
@@ -163,7 +399,8 @@ function buildReadinessSnapshotV1Comparable(result) {
     state: result.readiness,
     sourceVersion: READINESS_SNAPSHOT_V1_SOURCE_VERSION,
     summary: { ...result.summary },
-    requirements: result.requirements.map(requirementToSnapshotRow)
+    requirements: result.requirements.map(requirementToSnapshotRow),
+    ...result.jobReadinessChip ? { jobReadinessChip: result.jobReadinessChip } : {}
   };
 }
 function requirementToSnapshotRow(r) {
@@ -912,12 +1149,27 @@ async function loadHrxReadinessBuildArgsAdmin(db, params) {
   const certifications = mergeJobOrderSyntheticCertificationDemands(jobOrderData, certificationsFromCompliance);
   const bgRecords = bgSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const screening = screeningForAssignment(assignmentId, bgRecords);
+  const [assignmentReadinessItemsSnap, employeeReadinessItemsSnap] = await Promise.all([
+    db.collection(`tenants/${tenantId}/assignmentReadinessItems`).where("assignmentId", "==", assignmentId).get(),
+    hiringEntityId ? db.collection(`tenants/${tenantId}/employeeReadinessItems`).where("workerUid", "==", workerUserId).where("hiringEntityId", "==", hiringEntityId).get() : Promise.resolve(null)
+  ]);
+  const assignmentReadinessItems = assignmentReadinessItemsSnap.docs.map(
+    (d) => ({ id: d.id, ...d.data() })
+  );
+  const employeeReadinessItems = employeeReadinessItemsSnap ? employeeReadinessItemsSnap.docs.map(
+    (d) => ({ id: d.id, ...d.data() })
+  ) : [];
+  const readinessSeededAt = a.readinessSeededAt;
+  const readinessSeeded = Boolean(readinessSeededAt) || assignmentReadinessItems.length > 0;
   return {
     user: userInput,
     employment: employmentInput,
     assignment: assignmentInput,
     screening,
-    certifications
+    certifications,
+    assignmentReadinessItems,
+    employeeReadinessItems,
+    readinessSeeded
   };
 }
 
@@ -933,6 +1185,7 @@ function tryParseComparable(raw) {
     return null;
   }
   if (!Array.isArray(o.requirements)) return null;
+  const chip = o.jobReadinessChip && typeof o.jobReadinessChip === "object" ? o.jobReadinessChip : void 0;
   return {
     state: o.state,
     sourceVersion: o.sourceVersion,
@@ -941,7 +1194,8 @@ function tryParseComparable(raw) {
       warnings: s.warnings,
       completed: s.completed
     },
-    requirements: o.requirements
+    requirements: o.requirements,
+    ...chip ? { jobReadinessChip: chip } : {}
   };
 }
 async function recomputeHrxReadinessSnapshotForAssignment(db, tenantId, assignmentId) {

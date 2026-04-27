@@ -3,7 +3,7 @@
  * Admin/HRX only. Product scope: E-Verify is a Select hiring track; other entities do not use this flow in UX.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Typography,
@@ -36,6 +36,7 @@ import { collection, query, where, orderBy, limit, getDocs } from 'firebase/fire
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
+import { EverifyCaseDrawer } from '../../components/recruiter/everify';
 
 interface EverifyCaseRow {
   id: string;
@@ -83,6 +84,12 @@ const EverifyAdminOpsPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
   const [snack, setSnack] = useState<{ message: string; severity: 'success' | 'error' } | null>(null);
   const [anchorEl, setAnchorEl] = useState<{ el: HTMLElement; caseRow: EverifyCaseRow } | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  /** **R.5** — single source of truth for the per-case TNC drawer. */
+  const [drawerCaseId, setDrawerCaseId] = useState<string | null>(null);
+  const drawerInitialCase = useMemo<EverifyCaseRow | null>(
+    () => (drawerCaseId ? cases.find((c) => c.id === drawerCaseId) ?? null : null),
+    [drawerCaseId, cases],
+  );
   const [authLoading, setAuthLoading] = useState(false);
   const [dryRunLoading, setDryRunLoading] = useState(false);
   const [dryRunResult, setDryRunResult] = useState<{
@@ -222,24 +229,6 @@ const EverifyAdminOpsPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
     const m = (d as { toMillis?: () => number }).toMillis;
     if (typeof m !== 'function') return '—';
     return new Date(m()).toLocaleDateString();
-  };
-
-  const handleTncAction = async (
-    row: EverifyCaseRow,
-    callableName: 'everifyMarkEmployeeNotified' | 'everifyMarkContested' | 'everifyMarkReferralInitiated' | 'everifyCloseCaseManual',
-    payload?: { note?: string }
-  ) => {
-    setActionLoading(true);
-    try {
-      const fn = httpsCallable(functions, callableName);
-      await fn({ tenantId: effectiveTenantId, caseId: row.id, ...payload });
-      setSnack({ message: 'Action recorded', severity: 'success' });
-      loadCases();
-    } catch (err: unknown) {
-      setSnack({ message: err instanceof Error ? err.message : 'Action failed', severity: 'error' });
-    } finally {
-      setActionLoading(false);
-    }
   };
 
   if (!isAdmin) {
@@ -412,50 +401,22 @@ const EverifyAdminOpsPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
                               {actions?.employeeNotifiedAt && (
                                 <Chip size="small" label="Notified" variant="outlined" />
                               )}
-                              {actions?.employeeContests && (
-                                <Chip size="small" label="Contested" variant="outlined" />
+                              {actions?.employeeContests === true && (
+                                <Chip size="small" label="Contests" variant="outlined" color="warning" />
+                              )}
+                              {actions?.employeeContests === false && (
+                                <Chip size="small" label="Declined" variant="outlined" />
                               )}
                               {actions?.referralInitiatedAt && (
                                 <Chip size="small" label="Referral" variant="outlined" />
                               )}
-                              {!actions?.employeeNotifiedAt && (
-                                <Button
-                                  size="small"
-                                  variant="outlined"
-                                  disabled={actionLoading}
-                                  onClick={() => handleTncAction(row, 'everifyMarkEmployeeNotified')}
-                                >
-                                  Mark employee notified
-                                </Button>
-                              )}
-                              {!actions?.employeeContests && (
-                                <Button
-                                  size="small"
-                                  variant="outlined"
-                                  disabled={actionLoading}
-                                  onClick={() => handleTncAction(row, 'everifyMarkContested')}
-                                >
-                                  Mark contested
-                                </Button>
-                              )}
-                              {!actions?.referralInitiatedAt && (
-                                <Button
-                                  size="small"
-                                  variant="outlined"
-                                  disabled={actionLoading}
-                                  onClick={() => handleTncAction(row, 'everifyMarkReferralInitiated')}
-                                >
-                                  Mark referral initiated
-                                </Button>
-                              )}
                               <Button
                                 size="small"
-                                variant="outlined"
-                                color="secondary"
-                                disabled={actionLoading}
-                                onClick={() => handleTncAction(row, 'everifyCloseCaseManual')}
+                                variant="contained"
+                                color="warning"
+                                onClick={() => setDrawerCaseId(row.id)}
                               >
-                                Close case
+                                Manage TNC
                               </Button>
                             </Box>
                           </TableCell>
@@ -501,6 +462,16 @@ const EverifyAdminOpsPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
           {snack?.message}
         </Alert>
       </Snackbar>
+
+      <EverifyCaseDrawer
+        open={!!drawerCaseId}
+        onClose={() => setDrawerCaseId(null)}
+        tenantId={effectiveTenantId}
+        caseId={drawerCaseId}
+        canManage={isAdmin}
+        initialCase={drawerInitialCase ?? undefined}
+        onActionApplied={loadCases}
+      />
     </Box>
   );
 };

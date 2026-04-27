@@ -1265,6 +1265,24 @@ const UserProfilePage = () => {
     navigate(`${location.pathname}${q ? `?${q}` : ''}`, { replace: true });
   }, [searchParams, availableTabLabels, location.pathname, navigate]);
 
+  /**
+   * **R.7** — `?tab=readiness&assignmentId=&itemId=&type=&source=` deep-link
+   * from the R.4 placement-chip popover. We only consume `tab` here (so the
+   * Readiness tab gets selected); the readiness-specific keys
+   * (`assignmentId` / `itemId` / `type` / `source`) are consumed by
+   * `ProfileReadinessTabContent` itself and stripped there once handled.
+   */
+  useEffect(() => {
+    const tabParam = (searchParams.get('tab') || '').toLowerCase();
+    if (tabParam !== 'readiness' || availableTabLabels.length === 0) return;
+    if (!availableTabLabels.includes('Readiness')) return;
+    setTabValue('Readiness');
+    const next = new URLSearchParams(searchParams);
+    next.delete('tab');
+    const q = next.toString();
+    navigate(`${location.pathname}${q ? `?${q}` : ''}`, { replace: true });
+  }, [searchParams, availableTabLabels, location.pathname, navigate]);
+
   /** `?tab=employment&focus=i9` — open Employment tab and scroll to I-9 / work authorization checklist (Readiness deep-link). */
   useEffect(() => {
     const tabParam = (searchParams.get('tab') || '').toLowerCase();

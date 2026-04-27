@@ -30,7 +30,14 @@ import {
   type BgLike,
   type ScreeningSatisfiedEvaluation,
 } from '../compliance/screeningAutomationShared';
-import type { SeedAssignmentReadinessRequirementSpec } from '../shared/seedAssignmentReadinessItems';
+import {
+  DEFAULT_REQUIREMENT_SEVERITY,
+  type SeedAssignmentReadinessRequirementSpec,
+} from '../shared/seedAssignmentReadinessItems';
+import type {
+  AssignmentReadinessRequirementType,
+  AssignmentReadinessSeverity,
+} from '../shared/assignmentReadinessItemV1';
 
 import { matchEducation } from '../shared/jobRequirementMatchers/matchEducation';
 import { matchLanguages } from '../shared/jobRequirementMatchers/matchLanguages';
@@ -44,6 +51,12 @@ import {
   matchCertifications,
   type CertificationEvalStatus,
 } from '../shared/jobRequirementMatchers/matchCertifications';
+// R.2 — willingness matchers (worker self-attestations).
+import { matchPhysicalWillingness } from '../shared/jobRequirementMatchers/matchPhysicalWillingness';
+import { matchPpeWillingness } from '../shared/jobRequirementMatchers/matchPpeWillingness';
+import { matchLanguageWillingness } from '../shared/jobRequirementMatchers/matchLanguageWillingness';
+import { matchUniformWillingness } from '../shared/jobRequirementMatchers/matchUniformWillingness';
+import type { WillingnessInput } from '../shared/jobRequirementMatchers/willingness';
 import type { MatcherResult } from '../shared/jobRequirementMatchers/types';
 
 import {
@@ -79,6 +92,24 @@ const CERTIFICATION_CATALOG_MANIFEST = catalogManifestJson as CertificationCatal
 // Worker projection — narrow what the matchers need from the user doc.
 // ─────────────────────────────────────────────────────────────────────────
 
+/**
+ * **R.2** — Narrow projection of the `workerAttestations` sub-object for
+ * the willingness matchers. Mirrors a subset of
+ * `WorkerAttestations` from `src/types/UserProfile.ts` — kept inline so the
+ * runtime-neutral `shared/` matcher layer doesn't import client types.
+ *
+ * Values are passed through as-is (Title-Case from the wizard, lowercase
+ * from typed clients, `''` / `undefined` when the worker hasn't picked).
+ * `normalizeWillingness` inside the matchers handles the variance.
+ */
+export interface WorkerAttestationsForMatching {
+  physicalRequirementWillingness?: WillingnessInput;
+  uniformRequirementWillingness?: WillingnessInput;
+  customUniformRequirementWillingness?: WillingnessInput;
+  requiredPpeWillingness?: WillingnessInput;
+  languageRequirementWillingness?: WillingnessInput;
+}
+
 /** Subset of `users/{uid}` projected for Phase B matcher input. */
 export interface WorkerForMatching {
   uid: string;
@@ -88,6 +119,12 @@ export interface WorkerForMatching {
   legacyLanguages: string[] | null;
   skills: Array<string | { name?: string }> | null;
   licenses: LicenseRecordV1[] | null;
+  /**
+   * **R.2** — Worker self-attestations. `null` when the user doc has no
+   * `workerAttestations` sub-object (pre-R.0 / never applied) — the
+   * willingness matchers degrade to `'incomplete'` in that case.
+   */
+  workerAttestations: WorkerAttestationsForMatching | null;
 }
 
 /**
@@ -107,6 +144,7 @@ export async function loadWorkerForMatching(
     legacyLanguages: null,
     skills: null,
     licenses: null,
+    workerAttestations: null,
   };
 
   try {
@@ -122,6 +160,7 @@ export async function loadWorkerForMatching(
       legacyLanguages: pickLegacyLanguages(u.languages),
       skills: Array.isArray(u.skills) ? (u.skills as Array<string | { name?: string }>) : null,
       licenses: pickLicenses(u.licenses),
+      workerAttestations: pickWorkerAttestations(u.workerAttestations),
     };
   } catch (err) {
     logger.warn('loadWorkerForMatching: read failed; defaulting to blank worker', {
@@ -361,6 +400,14 @@ export function buildPhaseBMatchSpecs(
   const { jo, worker, screeningEval, workerCertRecords, todayISO, todayMs } = args;
   const specs: SeedAssignmentReadinessRequirementSpec[] = [];
 
+  // R.1 — Pre-extract the JO's parallel severity-override surfaces so each
+  // matcher block can resolve severity without re-reading them. Validates
+  // shape defensively (the JO payload is `Record<string, unknown>`).
+  const skillSeverityOverrides = pickSeverityRecord(jo.skillsRequiredSeverityOverrides);
+  const requirementTypeOverrides = pickSeverityRecord(jo.requirementSeverityOverrides) as Partial<
+    Record<AssignmentReadinessRequirementType, AssignmentReadinessSeverity>
+  >;
+
   // Education — single instance per JO.
   const educationLevelRequiredV2 = pickEducationLevelV2(jo.educationLevelRequiredV2);
   if (educationLevelRequiredV2) {
@@ -372,10 +419,11 @@ export function buildPhaseBMatchSpecs(
     pushIfApplicable(specs, result, {
       requirementType: 'education_match',
       requirementLabel: `Education: ${educationLevelRequiredV2}`,
+      severity: resolveSeverity('education_match', undefined, undefined, requirementTypeOverrides),
     });
   }
 
-  // Languages — N per JO.
+  // Languages — N per JO. Per-instance severity comes from `RequiredLanguageV1.severity`.
   const languagesRequired = pickLanguagesRequiredV2(jo.languagesRequiredV2);
   for (const req of languagesRequired) {
     const result = matchLanguages({
@@ -387,24 +435,35 @@ export function buildPhaseBMatchSpecs(
       requirementType: 'language_match',
       customKey: slugify(req.language),
       requirementLabel: `${req.language} (${req.minLevel})`,
+      severity: resolveSeverity('language_match', req.severity, undefined, requirementTypeOverrides),
     });
   }
 
-  // Skills — N per JO. Strictness defaults to matcher default ('tokenized').
+  // Skills — N per JO. Per-instance severity is keyed by the same slug we use
+  // for the readiness item (`slugify(skill)`) on the parallel
+  // `skillsRequiredSeverityOverrides` map (Q-R1-1).
   const skillsRequired = pickStringArray(jo.skillsRequired);
   for (const skill of skillsRequired) {
     const result = matchSkills({
       required: skill,
       workerSkills: worker.skills,
     });
+    const skillKey = slugify(skill);
     pushIfApplicable(specs, result, {
       requirementType: 'skill_match',
-      customKey: slugify(skill),
+      customKey: skillKey,
       requirementLabel: skill,
+      severity: resolveSeverity(
+        'skill_match',
+        skillSeverityOverrides[skillKey],
+        undefined,
+        requirementTypeOverrides,
+      ),
     });
   }
 
-  // Licenses — N per JO from V2 typed field.
+  // Licenses — N per JO from V2 typed field. Per-instance severity from
+  // `RequiredLicenseV1.severity`.
   const licensesRequired = pickRequiredLicensesV2(jo.requiredLicensesV2);
   for (const req of licensesRequired) {
     const result = matchLicenses({
@@ -416,6 +475,7 @@ export function buildPhaseBMatchSpecs(
       requirementType: 'license_match',
       customKey: slugify(req.licenseClass),
       requirementLabel: req.licenseClass,
+      severity: resolveSeverity('license_match', req.severity, undefined, requirementTypeOverrides),
     });
   }
 
@@ -451,6 +511,12 @@ export function buildPhaseBMatchSpecs(
         requirementType: 'cert_match',
         customKey: slugify(requirement.catalogEntryId),
         requirementLabel: requirement.legacySourceLabel ?? requirement.catalogEntryId,
+        severity: resolveSeverity(
+          'cert_match',
+          requirement.severity,
+          undefined,
+          requirementTypeOverrides,
+        ),
       });
     }
 
@@ -463,6 +529,11 @@ export function buildPhaseBMatchSpecs(
         customKey: slugify(raw),
         requirementLabel: raw,
         status: 'needs_review',
+        severity: resolveSeverity('cert_match', undefined, undefined, requirementTypeOverrides),
+        // R.1 — Unmapped strings still resolve via the matcher pathway once a
+        // CSA fixes the catalog. Stamp 'auto' so the chip groups them with
+        // other matcher-derived items.
+        resolutionMethod: 'auto',
       });
     }
   }
@@ -478,19 +549,201 @@ export function buildPhaseBMatchSpecs(
     pushIfApplicable(specs, result, {
       requirementType: 'screening_package_match',
       requirementLabel: `Screening package: ${requiredPackageId}`,
+      severity: resolveSeverity(
+        'screening_package_match',
+        undefined,
+        undefined,
+        requirementTypeOverrides,
+      ),
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // R.2 — Willingness self-attestations (D9.R2 gating).
+  //
+  // Each block independently checks whether the JO declares a
+  // corresponding requirement field (lockede via Q-R2-4 grounding pass —
+  // see `READINESS_R1_R2_HANDOFF.md`). When the gate is open, run the
+  // matcher against the worker's `workerAttestations.*Willingness` answer
+  // and stamp `resolutionMethod: 'self_attest'`. When the gate is closed,
+  // the willingness item simply doesn't seed — the chip aggregator (R.4)
+  // sees no item and treats it as N/A.
+  //
+  // Severity defaults to `'soft'` for all four (D10.R2). Per-JO overrides
+  // via `requirementSeverityOverrides[<type>]` flip to hard for tenants
+  // that genuinely consider the willingness blocking.
+  // ─────────────────────────────────────────────────────────────────────
+
+  const attestations = worker.workerAttestations;
+
+  // Physical — JO field is `physicalRequirements` (declared `string` but
+  // production is `string[]`). Gate accepts both shapes.
+  if (jobHasNonEmptyText(jo.physicalRequirements)) {
+    const result = matchPhysicalWillingness({
+      willingness: attestations?.physicalRequirementWillingness,
+    });
+    pushIfApplicable(specs, result, {
+      requirementType: 'physical_willingness',
+      requirementLabel: 'Physical requirements',
+      severity: resolveSeverity(
+        'physical_willingness',
+        undefined,
+        undefined,
+        requirementTypeOverrides,
+      ),
+      resolutionMethod: 'self_attest',
+    });
+  }
+
+  // PPE — JO field is `ppeRequirements` (also string|string[] in
+  // production). Distinct from `ppe_acknowledgement` (per-shift, hard).
+  if (jobHasNonEmptyText(jo.ppeRequirements)) {
+    const result = matchPpeWillingness({
+      willingness: attestations?.requiredPpeWillingness,
+    });
+    pushIfApplicable(specs, result, {
+      requirementType: 'ppe_willingness',
+      requirementLabel: 'Required PPE',
+      severity: resolveSeverity(
+        'ppe_willingness',
+        undefined,
+        undefined,
+        requirementTypeOverrides,
+      ),
+      resolutionMethod: 'self_attest',
+    });
+  }
+
+  // Language — gate on either the legacy `languagesRequired` or the
+  // structured `languagesRequiredV2`. Language willingness lives alongside
+  // `language_match` (Q-R2-3 — they answer different questions).
+  const hasLanguageGate =
+    jobHasNonEmptyArray(jo.languagesRequired) || jobHasNonEmptyArray(jo.languagesRequiredV2);
+  if (hasLanguageGate) {
+    const result = matchLanguageWillingness({
+      willingness: attestations?.languageRequirementWillingness,
+    });
+    pushIfApplicable(specs, result, {
+      requirementType: 'language_willingness',
+      requirementLabel: 'Working language',
+      severity: resolveSeverity(
+        'language_willingness',
+        undefined,
+        undefined,
+        requirementTypeOverrides,
+      ),
+      resolutionMethod: 'self_attest',
+    });
+  }
+
+  // Uniform — single matcher with worse-of combination. Library and
+  // custom JO fields are independent; the worker has separate willingness
+  // answers for each. The matcher itself decides which side(s) to read
+  // based on the gate flags we pass.
+  const jobHasLibraryUniform =
+    jobHasNonEmptyText(jo.dressCode) || jobHasNonEmptyText(jo.uniformRequirements);
+  const jobHasCustomUniform = jobHasNonEmptyText(jo.customUniformRequirements);
+  if (jobHasLibraryUniform || jobHasCustomUniform) {
+    const result = matchUniformWillingness({
+      jobHasLibraryUniform,
+      jobHasCustomUniform,
+      libraryWillingness: attestations?.uniformRequirementWillingness,
+      customWillingness: attestations?.customUniformRequirementWillingness,
+    });
+    pushIfApplicable(specs, result, {
+      requirementType: 'uniform_willingness',
+      requirementLabel: 'Uniform requirements',
+      severity: resolveSeverity(
+        'uniform_willingness',
+        undefined,
+        undefined,
+        requirementTypeOverrides,
+      ),
+      resolutionMethod: 'self_attest',
     });
   }
 
   return specs;
 }
 
+/**
+ * **R.1** — Resolve severity for a Phase B match item via the locked
+ * three-insertion-point rule (D4.R1):
+ *
+ *   1. `perInstance` (e.g. `RequiredLicenseV1.severity`,
+ *      `Phase1CertificationRequirement.severity`,
+ *      `RequiredLanguageV1.severity`, or — for skills — the parallel slug map
+ *      `JobOrder.skillsRequiredSeverityOverrides[slug]`)
+ *   2. `requirementTypeOverride` (`JobOrder.requirementSeverityOverrides[type]`)
+ *   3. `DEFAULT_REQUIREMENT_SEVERITY[type]` (the locked D3.R1 table)
+ *
+ * Caller passes the per-instance value where applicable; the function picks
+ * the highest-priority defined value. Returns `'soft'` only when the chain
+ * lands on the type-default's `'soft'`; never undefined.
+ */
+function resolveSeverity(
+  requirementType: Exclude<AssignmentReadinessRequirementType, 'custom'>,
+  perInstance: AssignmentReadinessSeverity | undefined,
+  // Parallel-map override — currently only used by skill_match, threaded as
+  // `perInstance` for that case. Keeping the slot here so future call sites
+  // (e.g. R.2 willingness items keyed by attestation field) can plug in.
+  _parallelMapOverride: AssignmentReadinessSeverity | undefined,
+  requirementTypeOverrides: Partial<
+    Record<AssignmentReadinessRequirementType, AssignmentReadinessSeverity>
+  >,
+): AssignmentReadinessSeverity {
+  if (perInstance === 'hard' || perInstance === 'soft') return perInstance;
+  const typeOverride = requirementTypeOverrides[requirementType];
+  if (typeOverride === 'hard' || typeOverride === 'soft') return typeOverride;
+  return DEFAULT_REQUIREMENT_SEVERITY[requirementType];
+}
+
+/**
+ * Defensive shape coercion for the JO's severity-override surfaces. Both
+ * `skillsRequiredSeverityOverrides` and `requirementSeverityOverrides` ride on
+ * a `Record<string, unknown>` JO doc, so we filter to the typed values
+ * (`'hard' | 'soft'`) here once.
+ */
+function pickSeverityRecord(v: unknown): Record<string, AssignmentReadinessSeverity> {
+  if (!v || typeof v !== 'object') return {};
+  const out: Record<string, AssignmentReadinessSeverity> = {};
+  for (const [key, val] of Object.entries(v)) {
+    if (val === 'hard' || val === 'soft') out[key] = val;
+  }
+  return out;
+}
+
+/**
+ * **R.1 / R.2** — Push a matcher result onto the spec list, stamping the
+ * partner `resolutionMethod`.
+ *
+ * Two shapes:
+ *
+ *   - **Auto-resolution items (R.1)** — the default. Phase B matchers
+ *     derive readiness from the worker's typed records + the JO's typed
+ *     requirements. Caller passes a base WITHOUT `resolutionMethod`; we
+ *     stamp `'auto'`.
+ *   - **Self-attest items (R.2)** — willingness matchers derive readiness
+ *     from `workerAttestations`. Caller passes
+ *     `{ ...base, resolutionMethod: 'self_attest' }`; we honour the
+ *     explicit value.
+ *
+ * Future R.3 CSA actions adjust to `'csa_confirmed'` / `'csa_waived'`
+ * post-seed via a separate write surface.
+ */
 function pushIfApplicable(
   specs: SeedAssignmentReadinessRequirementSpec[],
   result: MatcherResult<unknown>,
-  base: Omit<SeedAssignmentReadinessRequirementSpec, 'status'>,
+  base:
+    | Omit<SeedAssignmentReadinessRequirementSpec, 'status' | 'resolutionMethod'>
+    | (Omit<SeedAssignmentReadinessRequirementSpec, 'status' | 'resolutionMethod'> & {
+        resolutionMethod: NonNullable<SeedAssignmentReadinessRequirementSpec['resolutionMethod']>;
+      }),
 ): void {
   if (result.status === 'not_applicable') return;
-  specs.push({ ...base, status: result.status });
+  const resolutionMethod =
+    'resolutionMethod' in base && base.resolutionMethod ? base.resolutionMethod : 'auto';
+  specs.push({ ...base, status: result.status, resolutionMethod });
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -518,10 +771,15 @@ function pickLanguagesRequiredV2(v: unknown): RequiredLanguageV1[] {
       typeof (e as { language?: unknown }).language === 'string' &&
       isLanguageProficiencyLevel((e as { minLevel?: unknown }).minLevel)
     ) {
-      out.push({
+      const req: RequiredLanguageV1 = {
         language: (e as { language: string }).language,
         minLevel: (e as { minLevel: RequiredLanguageV1['minLevel'] }).minLevel,
-      });
+      };
+      // R.1 — Carry the per-instance severity through so the matcher's
+      // resolveSeverity() chain can see it.
+      const sev = (e as { severity?: unknown }).severity;
+      if (sev === 'hard' || sev === 'soft') req.severity = sev;
+      out.push(req);
     }
   }
   return out;
@@ -540,6 +798,10 @@ function pickRequiredLicensesV2(v: unknown): RequiredLicenseV1[] {
         const endorsements = re.filter((s): s is string => typeof s === 'string');
         if (endorsements.length > 0) req.requiredEndorsements = endorsements;
       }
+      // R.1 — Carry the per-instance severity through so the matcher's
+      // resolveSeverity() chain can see it (D4.R1 priority 1).
+      const sev = (e as { severity?: unknown }).severity;
+      if (sev === 'hard' || sev === 'soft') req.severity = sev;
       out.push(req);
     }
   }
@@ -553,4 +815,62 @@ function pickRequiredLicensesV2(v: unknown): RequiredLicenseV1[] {
  */
 export function slugify(s: string): string {
   return s.trim().replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// R.2 — Worker attestations + JO gate readers.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Defensive shape coercion for `users/{uid}.workerAttestations`. */
+function pickWorkerAttestations(
+  v: unknown,
+): WorkerForMatching['workerAttestations'] {
+  if (!v || typeof v !== 'object') return null;
+  const src = v as Record<string, unknown>;
+  // Pass through string fields; the matcher's `normalizeWillingness`
+  // tolerates Title-Case + `''` + unknown values. We don't pre-validate
+  // against the canonical enum here because production data has both
+  // wizard-Title-Case and typed-lowercase shapes (Q-R2-2 grounding).
+  const out: WorkerAttestationsForMatching = {};
+  if (typeof src.physicalRequirementWillingness === 'string') {
+    out.physicalRequirementWillingness = src.physicalRequirementWillingness;
+  }
+  if (typeof src.uniformRequirementWillingness === 'string') {
+    out.uniformRequirementWillingness = src.uniformRequirementWillingness;
+  }
+  if (typeof src.customUniformRequirementWillingness === 'string') {
+    out.customUniformRequirementWillingness = src.customUniformRequirementWillingness;
+  }
+  if (typeof src.requiredPpeWillingness === 'string') {
+    out.requiredPpeWillingness = src.requiredPpeWillingness;
+  }
+  if (typeof src.languageRequirementWillingness === 'string') {
+    out.languageRequirementWillingness = src.languageRequirementWillingness;
+  }
+  return out;
+}
+
+/**
+ * **R.2 — D9.R2 gate helper.** Whether a JO field has any text content.
+ *
+ * The JO's `physicalRequirements` / `ppeRequirements` / `dressCode` /
+ * `uniformRequirements` / `customUniformRequirements` fields are typed as
+ * `string` on `JobOrder` but production data persists `string[]` for the
+ * multi-select ones (Q-R2-4 grounding). Accepts both:
+ *
+ *   - non-empty trimmed string                       → true
+ *   - array containing at least one non-empty string → true
+ *   - everything else                                → false
+ */
+function jobHasNonEmptyText(v: unknown): boolean {
+  if (typeof v === 'string') return v.trim().length > 0;
+  if (Array.isArray(v)) {
+    return v.some((s) => typeof s === 'string' && s.trim().length > 0);
+  }
+  return false;
+}
+
+/** Whether a JO field is a non-empty array (used for `languagesRequired*`). */
+function jobHasNonEmptyArray(v: unknown): boolean {
+  return Array.isArray(v) && v.length > 0;
 }

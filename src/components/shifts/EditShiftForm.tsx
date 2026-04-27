@@ -48,12 +48,17 @@ import {
   deleteField,
   doc,
   getDoc,
+  getDocs,
+  limit as fsLimit,
+  query,
   serverTimestamp,
   updateDoc,
+  where,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 
 import { db, functions } from '../../firebase';
+import { p } from '../../data/firestorePaths';
 import { JobsBoardService } from '../../services/recruiter/jobsBoardService';
 import { useAuth } from '../../contexts/AuthContext';
 import { getDateRange, formatDayAndDate, dateHasHours } from '../../utils/dateSchedule';
@@ -203,6 +208,7 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
           accountName?: string;
           parentAccountName?: string | null;
           companyName?: string;
+          companyId?: string | null;
         }
       | null
       | undefined;
@@ -215,49 +221,80 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
     })();
 
     const accountId = jo?.recruiterAccountId?.trim();
-    if (!tenantId || !accountId) {
+    const companyId = jo?.companyId?.trim();
+    if (!tenantId || (!accountId && !companyId)) {
       setResolvedAccountLabel(fallback);
       return;
     }
 
     setResolvedAccountLabel(fallback);
 
+    // Resolve a recruiter_accounts doc by id (with parent name) into the
+    // canonical "{name} — {parentName}" label used on the JO Detail page.
+    // Note: the recruiter-accounts collection lives at `tenants/{tid}/accounts`
+    // (see `src/data/firestorePaths.ts` — `p.recruiterAccount`/`p.recruiterAccounts`).
+    // An earlier version of this lookup pointed at `recruiter_accounts`, which
+    // doesn't exist, so step 1 silently failed and the field fell back to the
+    // denormalized parent name on the JO doc (e.g. just "CORT" instead of
+    // "Pennsylvania Convention Center — CORT").
+    const composeLabel = async (
+      accData: { name?: string; parentAccountId?: string | null },
+    ): Promise<string> => {
+      const name = String(accData.name ?? '').trim();
+      const parentId =
+        typeof accData.parentAccountId === 'string' ? accData.parentAccountId.trim() : '';
+      let parentName = '';
+      if (parentId) {
+        const parentSnap = await getDoc(doc(db, p.recruiterAccount(tenantId, parentId)));
+        if (parentSnap.exists()) {
+          parentName = String(
+            (parentSnap.data() as { name?: string }).name ?? '',
+          ).trim();
+        }
+      }
+      return name ? (parentName ? `${name} — ${parentName}` : name) : '';
+    };
+
     (async () => {
       try {
-        const accSnap = await getDoc(
-          doc(db, 'tenants', tenantId, 'recruiter_accounts', accountId),
-        );
-        if (cancelled || !accSnap.exists()) return;
-        const accData = accSnap.data() as {
-          name?: string;
-          parentAccountId?: string | null;
-        };
-        const name = String(accData.name ?? '').trim();
-        const parentId =
-          typeof accData.parentAccountId === 'string'
-            ? accData.parentAccountId.trim()
-            : '';
-
-        let parentName = '';
-        if (parentId) {
-          const parentSnap = await getDoc(
-            doc(db, 'tenants', tenantId, 'recruiter_accounts', parentId),
-          );
+        // 1) Direct lookup by `recruiterAccountId` when present.
+        if (accountId) {
+          const accSnap = await getDoc(doc(db, p.recruiterAccount(tenantId, accountId)));
           if (cancelled) return;
-          if (parentSnap.exists()) {
-            parentName = String(
-              (parentSnap.data() as { name?: string }).name ?? '',
-            ).trim();
+          if (accSnap.exists()) {
+            const label = await composeLabel(
+              accSnap.data() as { name?: string; parentAccountId?: string | null },
+            );
+            if (cancelled) return;
+            if (label) {
+              setResolvedAccountLabel(label);
+              return;
+            }
           }
         }
-
-        if (cancelled) return;
-        const label = name
-          ? parentName
-            ? `${name} — ${parentName}`
-            : name
-          : fallback;
-        setResolvedAccountLabel(label);
+        // 2) Fallback: find the recruiter_account associated with this JO's
+        //    company. Mirrors `RecruiterJobOrderDetail.tsx`'s `linkedAccount`
+        //    resolver so we surface the child account (e.g. "CORT Savannah …")
+        //    instead of just the denormalized parent company name ("CORT").
+        if (companyId) {
+          const accountsRef = collection(db, p.recruiterAccounts(tenantId));
+          const snap = await getDocs(
+            query(
+              accountsRef,
+              where('associations.companyIds', 'array-contains', companyId),
+              fsLimit(1),
+            ),
+          );
+          if (cancelled) return;
+          const first = snap.docs[0];
+          if (first) {
+            const label = await composeLabel(
+              first.data() as { name?: string; parentAccountId?: string | null },
+            );
+            if (cancelled) return;
+            if (label) setResolvedAccountLabel(label);
+          }
+        }
       } catch (err) {
         console.warn('[EditShiftForm] account label lookup failed:', err);
       }
@@ -771,21 +808,20 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
       )}
 
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
-        {/* Account (read-only). Composed by `resolvedAccountLabel`
+        {/* Sub Account (read-only). Composed by `resolvedAccountLabel`
             above so the value matches the JO Detail page's Account
-            dropdown one-to-one. Fallback chain (also handled there):
-            recruiter_accounts lookup → JO denorms → companyName. */}
-        {(() => {
-          return (
-            <TextField
-              fullWidth
-              label="Account"
-              value={resolvedAccountLabel}
-              InputProps={{ readOnly: true }}
-              variant="outlined"
-            />
-          );
-        })()}
+            dropdown one-to-one (child account name + parent national
+            account, e.g. "Pennsylvania Convention Center — CORT").
+            Fallback chain (also handled there): recruiter accounts
+            lookup → JO denorms → companyName. */}
+        <TextField
+          fullWidth
+          label="Sub Account"
+          value={resolvedAccountLabel}
+          InputProps={{ readOnly: true }}
+          variant="outlined"
+        />
+
 
         {/* Shift Title (left) + Status (right) */}
         <Grid container spacing={2}>
@@ -1421,15 +1457,6 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
           rows={4}
           value={formData.shiftDescription}
           onChange={(e) => setFormData({ ...formData, shiftDescription: e.target.value })}
-        />
-
-        <TextField
-          fullWidth
-          label="Shift Info to Email Staff"
-          multiline
-          rows={4}
-          value={formData.emailIntro}
-          onChange={(e) => setFormData({ ...formData, emailIntro: e.target.value })}
         />
       </Box>
 

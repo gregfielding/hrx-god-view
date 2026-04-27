@@ -213,6 +213,100 @@ export interface UserProfile {
    * forklift, food-handler, OSHA-30, etc., with class + endorsements + expiration.
    */
   licenses?: import('../shared/licenseRecord').LicenseRecordV1[];
+
+  /**
+   * Self-attestation answers collected on the application wizard. Workers can
+   * also edit these post-application via the Flutter app (R.9). See
+   * `docs/READINESS_R0_HANDOFF.md` (R.0a) for the schema rationale and
+   * `src/utils/workerReadinessWriteModel.ts` (`ATTESTATION_KEY_MAP`) for the
+   * legacy → canonical key mapping that writes into this object.
+   */
+  workerAttestations?: WorkerAttestations;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Worker self-attestations (R.0a — Readiness Rebuild)
+//
+// Flat values + a per-field `_meta` provenance sidecar. The flat shape lets
+// matchers read `profile.workerAttestations.eVerifyWillingness` directly
+// without traversing a `{ value }` wrapper. The sidecar tracks where each
+// answer came from and when (application submit / backfill / worker edit /
+// CSA override) so CSA UI can show "self-attested on Apr 22" and matchers
+// can apply staleness rules later.
+//
+// Source of truth for the legacy → canonical key mapping that populates this
+// object: `src/utils/workerReadinessWriteModel.ts` (`ATTESTATION_KEY_MAP`).
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Tri-state willingness response used across attestation fields. */
+export type AttestationWillingness = 'yes' | 'no' | 'maybe' | '';
+
+/** Where an attestation answer originated. */
+export type WorkerAttestationSource =
+  | 'application'           // Original wizard submission (or server-side sync trigger)
+  | 'application_backfill'  // R.0c backfill from existing application docs
+  | 'worker_edit'           // Flutter / web profile edit (R.9)
+  | 'csa_override';         // CSA edited on the worker's behalf
+
+/**
+ * Per-field provenance entry. Keyed by the same field name as the flat value
+ * (e.g. `_meta.eVerifyWillingness` describes `eVerifyWillingness`).
+ */
+export interface WorkerAttestationFieldMeta {
+  /** When the answer was recorded. Firestore Timestamp on read; `serverTimestamp()` on write. */
+  attestedAt?: any;
+  /** Where the answer came from. */
+  source?: WorkerAttestationSource;
+}
+
+/**
+ * Self-attestation answers collected on the application wizard
+ * (`RequirementsAcknowledgementStep` + `EVerifyComfortStep` + `Wizard.tsx`).
+ *
+ * Field naming mirrors `ATTESTATION_KEY_MAP` in
+ * `src/utils/workerReadinessWriteModel.ts`. New fields land here FIRST,
+ * then in the canonical map, then on the wizard UI.
+ */
+export interface WorkerAttestations {
+  /** E-Verify comfort. Sourced from `EVerifyComfortStep`. */
+  eVerifyWillingness?: AttestationWillingness;
+
+  /** Drug screening comfort. */
+  drugScreeningWillingness?: AttestationWillingness;
+  /** Free-text explanation when drug = no/maybe. */
+  drugScreeningNotes?: string;
+
+  /** Background check comfort. */
+  backgroundCheckWillingness?: AttestationWillingness;
+  /** Free-text explanation when background = no. */
+  backgroundCheckNotes?: string;
+
+  /** Per-screening-name map from the JO's `additionalScreenings`. */
+  additionalScreenings?: Record<string, AttestationWillingness>;
+
+  /** Comfortable working in the JO's required languages. */
+  languageRequirementWillingness?: AttestationWillingness;
+
+  /** Comfortable with the JO's physical demands (lifting, standing, etc.). */
+  physicalRequirementWillingness?: AttestationWillingness;
+
+  /** Comfortable wearing the JO's uniform. */
+  uniformRequirementWillingness?: AttestationWillingness;
+
+  /** Comfortable with custom uniform notes (free-text on the JO). */
+  customUniformRequirementWillingness?: AttestationWillingness;
+
+  /** Comfortable wearing the JO's required PPE. */
+  requiredPpeWillingness?: AttestationWillingness;
+
+  /**
+   * Per-field provenance sidecar. Keys are the field names above
+   * (e.g. `_meta.eVerifyWillingness`); for `additionalScreenings` the
+   * meta key is the same screening name (e.g. `_meta["TWIC Card"]`).
+   */
+  _meta?: {
+    [fieldKey: string]: WorkerAttestationFieldMeta;
+  };
 }
 
 // Form interface for editing user profiles

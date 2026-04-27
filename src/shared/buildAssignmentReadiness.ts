@@ -1,7 +1,23 @@
 /**
  * HRX V1 assignment-centered readiness (flexible warnings; no blocking enforcement in UI).
  * Lives under `src/shared/` so CRA can import it. Cloud Functions esbuild bundles from the same paths.
+ *
+ * **R.4 bridge (2026-04-26):** the result type is extended with an optional
+ * `jobReadinessChip` field. When the caller supplies the new
+ * `assignmentReadinessItems` / `employeeReadinessItems` / `readinessSeeded`
+ * inputs, the function additionally computes the per-(worker × shift) Job
+ * Readiness chip via `computeJobReadinessChip`. When those inputs are
+ * omitted, the function behaves exactly as before — preserves the
+ * persisted `readinessSnapshotV1` wire-shape for `PlacementsTab.tsx` and
+ * the Flutter app per Greg's R.4 greenlight ("bridge approach honored —
+ * extends `buildAssignmentReadiness` rather than building a parallel
+ * aggregator").
  */
+
+import type { AssignmentReadinessItem } from './assignmentReadinessItemV1';
+import type { EmployeeReadinessItem } from './employeeReadinessItemV1';
+import { computeJobReadinessChip } from './jobReadinessChip/computeJobReadinessChip';
+import type { JobReadinessChipData } from './jobReadinessChip/types';
 
 export type ReadinessRequirementStatus = 'complete' | 'missing' | 'in_progress';
 
@@ -63,6 +79,29 @@ export interface BuildAssignmentReadinessArgs {
   assignment: AssignmentReadinessAssignmentInput | null | undefined;
   screening: AssignmentReadinessScreeningInput | null | undefined;
   certifications?: AssignmentReadinessCertItem[] | null;
+  /**
+   * **R.4** — Per-shift readiness items (`tenants/{tid}/assignmentReadinessItems`)
+   * filtered to this assignment. When provided alongside `employeeReadinessItems`
+   * + `readinessSeeded`, the result includes a populated `jobReadinessChip`.
+   * Pre-R.4 callers omit these and continue to receive the legacy result
+   * unchanged.
+   */
+  assignmentReadinessItems?: AssignmentReadinessItem[] | null;
+  /**
+   * **R.4** — Per-(worker × hiring-entity) items
+   * (`tenants/{tid}/employeeReadinessItems`) filtered to the worker AND the
+   * assignment's hiring entity. The chip helper internally filters this to
+   * the JOB-level subset (background_check / drug_screen / e_verify); the
+   * remaining types still belong to the Employee Readiness chip per Greg's
+   * R.4 spec.
+   */
+  employeeReadinessItems?: EmployeeReadinessItem[] | null;
+  /**
+   * **R.4** — `assignment.readinessSeededAt` truthy. Splits the empty-input
+   * case between `'computing'` (seeder hasn't run) and orphan-red
+   * ("Readiness not yet computed"). See R.4 helper Q4 for the rationale.
+   */
+  readinessSeeded?: boolean | null;
 }
 
 export interface BuildAssignmentReadinessResult {
@@ -73,6 +112,13 @@ export interface BuildAssignmentReadinessResult {
     warnings: number;
     completed: number;
   };
+  /**
+   * **R.4** — Aggregate chip data per Greg's R.4 spec. Optional / additive;
+   * pre-R.4 callers won't receive it (preserved back-compat). Computed
+   * IFF `assignmentReadinessItems` AND `employeeReadinessItems` are both
+   * provided (`null` is a valid empty array; `undefined` is "don't compute").
+   */
+  jobReadinessChip?: JobReadinessChipData;
 }
 
 export function buildAssignmentReadiness({
@@ -81,12 +127,30 @@ export function buildAssignmentReadiness({
   assignment,
   screening,
   certifications,
+  assignmentReadinessItems,
+  employeeReadinessItems,
+  readinessSeeded,
 }: BuildAssignmentReadinessArgs): BuildAssignmentReadinessResult {
+  // R.4 — chip is computed IFF both item arrays are explicitly passed
+  // (including `[]`). Pre-R.4 callers (or `undefined`) continue to get the
+  // legacy result without `jobReadinessChip`.
+  const computeChip =
+    assignmentReadinessItems !== undefined && employeeReadinessItems !== undefined;
+
   if (!assignment?.id) {
     return {
       readiness: 'PENDING_INITIALIZATION',
       requirements: [],
       summary: { blockers: 0, warnings: 0, completed: 0 },
+      ...(computeChip
+        ? {
+            jobReadinessChip: computeJobReadinessChip({
+              assignmentReadinessItems: assignmentReadinessItems ?? [],
+              employeeReadinessItems: employeeReadinessItems ?? [],
+              readinessSeeded: Boolean(readinessSeeded),
+            }),
+          }
+        : {}),
     };
   }
 
@@ -203,6 +267,15 @@ export function buildAssignmentReadiness({
       warnings: requirements.filter((r) => r.severity === 'warning' && r.status !== 'complete').length,
       completed: requirements.filter((r) => r.status === 'complete').length,
     },
+    ...(computeChip
+      ? {
+          jobReadinessChip: computeJobReadinessChip({
+            assignmentReadinessItems: assignmentReadinessItems ?? [],
+            employeeReadinessItems: employeeReadinessItems ?? [],
+            readinessSeeded: Boolean(readinessSeeded),
+          }),
+        }
+      : {}),
   };
 }
 

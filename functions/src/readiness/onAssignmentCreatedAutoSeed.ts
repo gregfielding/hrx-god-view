@@ -190,18 +190,29 @@ export const onAssignmentCreatedAutoSeedReadiness = onDocumentCreated(
  * cert items are now N×`cert_match` shells (one per required cert).
  */
 function buildRequirementsForJobOrder(jo: Record<string, unknown>): SeedAssignmentReadinessRequirementSpec[] {
+  // R.1 — Stamp `resolutionMethod` per-type at seed time. Background / drug /
+  // E-Verify resolve via external systems (AccuSource webhook + USCIS API)
+  // even though those bridges currently write to `employeeReadinessItems`
+  // rather than back into these assignment-side rows; the pathway label is
+  // still 'external' so the chip aggregator can surface "waiting on vendor"
+  // copy in the popover. The acknowledgement / briefing / orientation /
+  // confirmation rows are left at `null` here — R.2 may flip the
+  // ppe_acknowledgement row to `'self_attest'` when the willingness items
+  // ship; the others keep `null` until R.3 generalises the CSA action surface.
+  // Severity is omitted on these specs and resolves to the type-default
+  // (`DEFAULT_REQUIREMENT_SEVERITY`) inside the seeder.
   const requirements: SeedAssignmentReadinessRequirementSpec[] = [
     { requirementType: 'shift_confirmation' },
   ];
 
   if (readBool(jo.backgroundCheckRequired) || readBool(jo.showBackgroundChecks)) {
-    requirements.push({ requirementType: 'background_check' });
+    requirements.push({ requirementType: 'background_check', resolutionMethod: 'external' });
   }
   if (readBool(jo.drugScreeningRequired) || readBool(jo.showDrugScreening)) {
-    requirements.push({ requirementType: 'drug_screen' });
+    requirements.push({ requirementType: 'drug_screen', resolutionMethod: 'external' });
   }
   if (readBool(jo.eVerifyRequired)) {
-    requirements.push({ requirementType: 'e_verify' });
+    requirements.push({ requirementType: 'e_verify', resolutionMethod: 'external' });
   }
   if (readBool(jo.safetyBriefingRequired)) {
     requirements.push({ requirementType: 'safety_briefing' });

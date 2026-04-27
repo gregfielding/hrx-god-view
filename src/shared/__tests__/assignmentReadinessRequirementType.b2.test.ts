@@ -16,14 +16,14 @@ import {
 import type { AssignmentReadinessRequirementType } from '../assignmentReadinessItemV1';
 import type { ActionItemOwnership } from '../actionItemOwnership';
 
-const PHASE_B_MATCH_TYPES: AssignmentReadinessRequirementType[] = [
+const PHASE_B_MATCH_TYPES = [
   'cert_match',
   'license_match',
   'skill_match',
   'education_match',
   'language_match',
   'screening_package_match',
-];
+] as const satisfies readonly AssignmentReadinessRequirementType[];
 
 const NOW = '2026-04-25T19:00:00.000Z';
 const OWNERSHIP: ActionItemOwnership = {
@@ -56,9 +56,19 @@ describe('Phase B.2 — *_match types in the union', () => {
     expect(def).toBeDefined();
   });
 
-  it('every match type is blocking by default', () => {
+  it('every match type carries an explicit blocking default in the table', () => {
     // Phase B premise: a worker missing a required cert/license/skill/edu/lang
-    // /screening package can be placed silently today. Defaults must block.
+    // /screening package was being placed silently before B.2 — the table
+    // historically defaulted everything to blocking:true so the seed runner
+    // emits a non-null `blocking` for every type.
+    //
+    // **R.1 (D5.R1)** notes: the *runtime* `blocking` on a seeded item now
+    // derives from severity (`blocking = severity === 'hard'`) when the spec
+    // doesn't explicitly override. That means soft-severity types
+    // (skill_match, education_match, language_match) seed with
+    // `blocking: false` even though their table entry below is still `true`.
+    // The table value documents "what to do when severity isn't set" and
+    // `seedAssignmentReadinessItems-r1.test.ts` covers the derivation path.
     for (const t of PHASE_B_MATCH_TYPES) {
       expect(ASSIGNMENT_REQUIREMENT_DEFAULTS[t].blocking).toBe(true);
     }
@@ -96,10 +106,22 @@ describe('Phase B.2 — seed runner accepts the new types', () => {
       }),
     );
     expect(items.map((i) => i.requirementType)).toEqual(PHASE_B_MATCH_TYPES);
+    // R.1 (D5.R1) — `blocking` derives from `DEFAULT_REQUIREMENT_SEVERITY`
+    // when the spec doesn't override it. cert_match / license_match /
+    // screening_package_match are 'hard' → blocking:true; skill_match /
+    // education_match / language_match are 'soft' → blocking:false. This is
+    // the post-R.1 behaviour locked by D5.R1.
+    const expectedBlocking: Record<string, boolean> = {
+      cert_match: true,
+      license_match: true,
+      skill_match: false,
+      education_match: false,
+      language_match: false,
+      screening_package_match: true,
+    };
     for (const item of items) {
-      // No `spec.status` override → seed default is 'incomplete' (matcher fills in at trigger time).
       expect(item.status).toBe('incomplete');
-      expect(item.blocking).toBe(true);
+      expect(item.blocking).toBe(expectedBlocking[item.requirementType]);
     }
   });
 

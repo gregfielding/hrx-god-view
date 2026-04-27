@@ -33,6 +33,7 @@ const blankWorker: WorkerForMatching = {
   legacyLanguages: null,
   skills: null,
   licenses: null,
+  workerAttestations: null,
 };
 
 function buildSpecs(
@@ -412,6 +413,10 @@ describe('buildPhaseBMatchSpecs — composite JO', () => {
     expect(byType).to.deep.equal({
       education_match: 1,
       language_match: 1,
+      // R.2 — `language_willingness` co-seeds with `language_match` whenever
+      // `languagesRequiredV2` is populated (gate-only; no `worker.workerAttestations`
+      // here so the spec stamps `'incomplete'` + `'self_attest'`).
+      language_willingness: 1,
       skill_match: 2,
       cert_match: 2,
       license_match: 1,

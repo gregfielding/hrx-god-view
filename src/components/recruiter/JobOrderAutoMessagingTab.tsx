@@ -8,6 +8,7 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Stack,
   Table,
   TableBody,
   TableCell,
@@ -26,8 +27,9 @@ import {
   limit,
   updateDoc,
 } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { format } from 'date-fns';
-import { db } from '../../firebase';
+import { db, functions } from '../../firebase';
 import { p } from '../../data/firestorePaths';
 import type { JobOrder } from '../../types/recruiter/jobOrder';
 
@@ -71,6 +73,9 @@ const JobOrderAutoMessagingTab: React.FC<JobOrderAutoMessagingTabProps> = ({
   const [saveOk, setSaveOk] = useState(false);
   const [logRows, setLogRows] = useState<AutoMessagingSendLogRow[]>([]);
   const [logLoading, setLogLoading] = useState(true);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendLastSentAt, setResendLastSentAt] = useState<Date | null>(null);
+  const [resendError, setResendError] = useState<string | null>(null);
 
   const serverGroupIdsKey = useMemo(() => {
     const raw = (jobOrder as any).autoMessagingUserGroupIds as unknown;
@@ -163,6 +168,30 @@ const JobOrderAutoMessagingTab: React.FC<JobOrderAutoMessagingTabProps> = ({
     return () => unsub();
   }, [tenantId, jobOrderId]);
 
+  const handleResend = useCallback(async () => {
+    if (!tenantId || !jobOrderId) return;
+    setResendLoading(true);
+    setResendError(null);
+    try {
+      const fn = httpsCallable(functions, 'sendJobOrderShiftPostedResendCallable');
+      const result = await fn({ tenantId, jobOrderId });
+      const data = (result as { data?: { sentAt?: string } })?.data || {};
+      setResendLastSentAt(data?.sentAt ? new Date(data.sentAt) : new Date());
+    } catch (e: unknown) {
+      const raw =
+        (e as { message?: string })?.message ||
+        (typeof e === 'string' ? e : '') ||
+        'Resend failed';
+      const cleaned = String(raw)
+        .replace(/^Firebase:\s*/i, '')
+        .replace(/\s*\(functions\/[^)]+\)\s*$/i, '')
+        .trim();
+      setResendError(cleaned || 'Resend failed');
+    } finally {
+      setResendLoading(false);
+    }
+  }, [tenantId, jobOrderId]);
+
   const handleSave = useCallback(async () => {
     if (!tenantId || !jobOrderId) return;
     setSaving(true);
@@ -240,9 +269,65 @@ const JobOrderAutoMessagingTab: React.FC<JobOrderAutoMessagingTabProps> = ({
 
       <Card variant="outlined">
         <CardContent sx={{ p: 2 }}>
-          <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>
-            Notification log
-          </Typography>
+          <Stack
+            direction="row"
+            justifyContent="space-between"
+            alignItems="flex-start"
+            sx={{ mb: 1 }}
+            flexWrap="wrap"
+            gap={0.75}
+          >
+            <Typography variant="subtitle1" fontWeight={700}>
+              Notification log
+            </Typography>
+            <Stack alignItems="flex-end" spacing={0.15} sx={{ maxWidth: 260 }}>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={() => void handleResend()}
+                disabled={resendLoading}
+                startIcon={
+                  resendLoading ? <CircularProgress color="inherit" size={12} /> : undefined
+                }
+                sx={{
+                  borderColor: 'divider',
+                  color: 'text.secondary',
+                  px: 0.5,
+                  py: 0.125,
+                  lineHeight: 1.2,
+                  fontWeight: 600,
+                  fontSize: '0.68rem',
+                  minHeight: 26,
+                  textTransform: 'none',
+                }}
+              >
+                Resend Notification
+              </Button>
+              {resendError ? (
+                <Typography
+                  sx={{
+                    fontSize: '0.6rem',
+                    lineHeight: 1.3,
+                    color: 'error.main',
+                    textAlign: 'right',
+                  }}
+                >
+                  {resendError}
+                </Typography>
+              ) : resendLastSentAt ? (
+                <Typography
+                  sx={{
+                    fontSize: '0.6rem',
+                    lineHeight: 1.3,
+                    color: 'text.secondary',
+                    textAlign: 'right',
+                  }}
+                >
+                  Sent {resendLastSentAt.toLocaleString()}
+                </Typography>
+              ) : null}
+            </Stack>
+          </Stack>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             Timestamps reflect when the system sent (or attempted) notifications after a shift was created.
           </Typography>

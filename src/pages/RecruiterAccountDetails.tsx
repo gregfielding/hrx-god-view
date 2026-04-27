@@ -2346,6 +2346,22 @@ const RecruiterAccountDetails: React.FC = () => {
         companyLocationId: data?.companyLocationId ?? undefined,
         /** Required for Order Defaults tab (staff instructions + attachments); must mirror Firestore document. */
         orderDefaults: data?.orderDefaults ?? undefined,
+        /**
+         * Phase 3 of `docs/RECRUITING_ROLE_MODEL.md` — `roles.schedulerIds`
+         * is the per-account list of Schedulers stamped onto new orders.
+         * Without this projection the `AccountRecruitingRolesCard` would
+         * silently re-render with `[]` after every navigation away/back
+         * (the `updateDoc` call at save time correctly persists the
+         * dotted path to Firestore — Web SDK semantics — but the explicit
+         * shape rebuilt here was dropping the field on read).
+         */
+        roles: data?.roles && typeof data.roles === 'object'
+          ? {
+              schedulerIds: Array.isArray(data.roles.schedulerIds)
+                ? (data.roles.schedulerIds as string[])
+                : [],
+            }
+          : undefined,
       });
 
       const d = data?.defaults;
@@ -4042,15 +4058,42 @@ const RecruiterAccountDetails: React.FC = () => {
                 </Typography>
                 {account.accountType === 'national' && (
                   <Tooltip title="When enabled, each new location added to this account's connected company will automatically create a child account linked to that location. Future locations only.">
-                    <Typography
-                      component="div"
-                      sx={{ ...recordHeaderBodyTextSx, cursor: 'help', display: 'inline-block' }}
+                    <Box
+                      sx={{
+                        ...recordHeaderBodyTextSx,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 0.5,
+                      }}
                     >
-                      Auto-Create Child Accounts:{' '}
-                      <Box component="span" sx={{ color: 'text.primary' }}>
+                      <Box component="span">Auto-Create Child Accounts:</Box>
+                      {/**
+                       * Inline toggle — mirrors the switch in the "Edit
+                       * account details" dialog (writes the same
+                       * `autoCreateChildAccountsForLocations` field via
+                       * `updateAccountField`). Surfaced here so account
+                       * managers don't have to open the edit dialog just
+                       * to flip the location-mirroring automation on/off.
+                       */}
+                      <Switch
+                        size="small"
+                        checked={account.autoCreateChildAccountsForLocations === true}
+                        disabled={saving}
+                        onChange={(e) =>
+                          updateAccountField(
+                            'autoCreateChildAccountsForLocations',
+                            e.target.checked,
+                          )
+                        }
+                        inputProps={{
+                          'aria-label': 'Toggle auto-create child accounts for new company locations',
+                        }}
+                        sx={{ ml: 0.25 }}
+                      />
+                      <Box component="span" sx={{ color: 'text.primary', fontWeight: 500 }}>
                         {account.autoCreateChildAccountsForLocations === true ? 'On' : 'Off'}
                       </Box>
-                    </Typography>
+                    </Box>
                   </Tooltip>
                 )}
               </Box>

@@ -13,6 +13,11 @@ export type AssignmentReadinessRequirementType =
   | 'ppe_acknowledgement'
   | 'safety_briefing'
   | 'shift_confirmation'
+  // R.2 — willingness self-attestations (see canonical type for full docs).
+  | 'physical_willingness'
+  | 'uniform_willingness'
+  | 'ppe_willingness'
+  | 'language_willingness'
   | 'custom';
 
 export type AssignmentReadinessItemStatus =

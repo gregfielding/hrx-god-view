@@ -17,6 +17,7 @@ import { db, functions } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { resolveC1SelectEntityId } from '../../../utils/c1EntityWorkAuthorizationUi';
 import { canManageEverifyFromClaims } from './backgroundsComplianceModel';
+import { EverifyCaseDrawer } from '../../../components/recruiter/everify';
 
 interface EverifyComplianceCardProps {
   tenantId: string;
@@ -79,6 +80,8 @@ export const EverifyComplianceCard: React.FC<EverifyComplianceCardProps> = ({
 
   const [resolvedAssignmentId, setResolvedAssignmentId] = useState<string | undefined>(undefined);
   const [resolvedSelectUserEmploymentId, setResolvedSelectUserEmploymentId] = useState<string | undefined>(undefined);
+  /** **R.5** — opens `EverifyCaseDrawer` for the latest C1 Select case. */
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     if (!effectiveTenantId || !userId) {
@@ -236,8 +239,23 @@ export const EverifyComplianceCard: React.FC<EverifyComplianceCardProps> = ({
     <Card variant="outlined" sx={{ maxWidth: 360 }}>
       <CardContent sx={{ p: 2 }}>
         {actionRequired && (
-          <Alert severity="warning" sx={{ mb: 1 }}>
-            Select E-Verify follow-up required. Resolve in Admin Ops or the profile Backgrounds tab.
+          <Alert
+            severity="warning"
+            sx={{ mb: 1 }}
+            action={
+              canManageEverify && everifyCaseId ? (
+                <Button
+                  size="small"
+                  color="warning"
+                  variant="contained"
+                  onClick={() => setDrawerOpen(true)}
+                >
+                  Manage TNC
+                </Button>
+              ) : undefined
+            }
+          >
+            Select E-Verify follow-up required.
           </Alert>
         )}
         <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
@@ -271,30 +289,46 @@ export const EverifyComplianceCard: React.FC<EverifyComplianceCardProps> = ({
           </Tooltip>
         </Stack>
         {canManageEverify && (
-          <Tooltip title={tooltipText}>
-            <span>
-              <Button
-                size="small"
-                variant="outlined"
-                disabled={
-                  !canCreate ||
-                  createLoading ||
-                  checkLoading ||
-                  everifyStatus === 'employment_authorized' ||
-                  everifyStatus === 'manual_outside_hrx'
-                }
-                onClick={handleClickCreate}
-              >
-                {createLoading || checkLoading ? (
-                  <CircularProgress size={16} />
-                ) : (
-                  'Create E-Verify (Select)'
-                )}
+          <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 0.75 }}>
+            <Tooltip title={tooltipText}>
+              <span>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={
+                    !canCreate ||
+                    createLoading ||
+                    checkLoading ||
+                    everifyStatus === 'employment_authorized' ||
+                    everifyStatus === 'manual_outside_hrx'
+                  }
+                  onClick={handleClickCreate}
+                >
+                  {createLoading || checkLoading ? (
+                    <CircularProgress size={16} />
+                  ) : (
+                    'Create E-Verify (Select)'
+                  )}
+                </Button>
+              </span>
+            </Tooltip>
+            {everifyCaseId && (
+              <Button size="small" variant="text" onClick={() => setDrawerOpen(true)}>
+                Open case
               </Button>
-            </span>
-          </Tooltip>
+            )}
+          </Stack>
         )}
       </CardContent>
+      {effectiveTenantId && (
+        <EverifyCaseDrawer
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          tenantId={effectiveTenantId}
+          caseId={everifyCaseId}
+          canManage={canManageEverify}
+        />
+      )}
     </Card>
   );
 };

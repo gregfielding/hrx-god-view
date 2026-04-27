@@ -3,8 +3,16 @@ import {
   scheduleIntentOptionsToSchedulePreferences,
 } from './workerPreferencesCanonical';
 import { warnLegacyCertUsageDetected } from '../shared/certifications/certificationsLogging';
+import type { WorkerAttestationSource } from '../types/UserProfile';
 
 type AnyMap = Record<string, unknown>;
+
+/**
+ * Re-export of the WorkerAttestationSource union from `UserProfile`. Kept here
+ * so call sites that build patches don't need a second import. Default source
+ * is `'application'` — see `buildCanonicalWorkerProfileWritePatch` options.
+ */
+export type { WorkerAttestationSource } from '../types/UserProfile';
 
 const ATTESTATION_KEY_MAP: Record<string, string> = {
   comfortablePassDrug: 'workerAttestations.drugScreeningWillingness',
@@ -19,6 +27,27 @@ const ATTESTATION_KEY_MAP: Record<string, string> = {
   comfortableWithRequiredPpe: 'workerAttestations.requiredPpeWillingness',
 };
 
+/**
+ * Free-text explanation fields don't get provenance stamps — they're notes
+ * attached to a willingness answer, not separate attestations. The willingness
+ * answer they accompany already carries the `_meta` entry.
+ */
+const ATTESTATION_NOTE_KEYS = new Set<string>([
+  'workerAttestations.drugScreeningNotes',
+  'workerAttestations.backgroundCheckNotes',
+]);
+
+/**
+ * Strip the `workerAttestations.` prefix from a canonical key to produce the
+ * `_meta` entry key. Used by both the static `ATTESTATION_KEY_MAP` loop and
+ * the dynamic `comfortableWith*` fallback.
+ */
+function metaKeyForCanonicalKey(canonicalKey: string): string | null {
+  if (!canonicalKey.startsWith('workerAttestations.')) return null;
+  if (ATTESTATION_NOTE_KEYS.has(canonicalKey)) return null;
+  return canonicalKey.slice('workerAttestations.'.length);
+}
+
 function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
@@ -29,8 +58,25 @@ function setIfDefined(target: AnyMap, key: string, value: unknown) {
   }
 }
 
-export function buildCanonicalWorkerProfileWritePatch(partial: AnyMap): AnyMap {
+/**
+ * Options for `buildCanonicalWorkerProfileWritePatch`.
+ *
+ * `source` controls the `workerAttestations._meta.<field>.source` value
+ * stamped alongside each attestation answer this patch writes. Defaults to
+ * `'application'` (the original wizard submission path). The R.0c backfill
+ * callable passes `'application_backfill'`; the future R.9 worker-edit path
+ * passes `'worker_edit'`; CSA overrides pass `'csa_override'`.
+ */
+export interface BuildCanonicalWorkerProfileWritePatchOptions {
+  source?: WorkerAttestationSource;
+}
+
+export function buildCanonicalWorkerProfileWritePatch(
+  partial: AnyMap,
+  options: BuildCanonicalWorkerProfileWritePatchOptions = {},
+): AnyMap {
   const patch: AnyMap = { ...partial };
+  const attestationSource: WorkerAttestationSource = options.source ?? 'application';
 
   if (partial.skills !== undefined) {
     setIfDefined(patch, 'workerProfile.skills', partial.skills);
@@ -136,11 +182,23 @@ export function buildCanonicalWorkerProfileWritePatch(partial: AnyMap): AnyMap {
   for (const [legacyKey, canonicalKey] of Object.entries(ATTESTATION_KEY_MAP)) {
     if (partial[legacyKey] !== undefined) {
       setIfDefined(patch, canonicalKey, partial[legacyKey]);
+      const metaKey = metaKeyForCanonicalKey(canonicalKey);
+      if (metaKey) {
+        patch[`workerAttestations._meta.${metaKey}.attestedAt`] = serverTimestamp();
+        patch[`workerAttestations._meta.${metaKey}.source`] = attestationSource;
+      }
     }
   }
 
   if (partial.additionalScreenings && typeof partial.additionalScreenings === 'object') {
     setIfDefined(patch, 'workerAttestations.additionalScreenings', partial.additionalScreenings);
+    // Stamp per-screening provenance under `_meta.<screeningName>` so each
+    // entry in the screenings map carries its own attestedAt/source. The
+    // screening name is the meta key (matches how the value is read).
+    for (const screeningName of Object.keys(partial.additionalScreenings as AnyMap)) {
+      patch[`workerAttestations._meta.${screeningName}.attestedAt`] = serverTimestamp();
+      patch[`workerAttestations._meta.${screeningName}.source`] = attestationSource;
+    }
   }
 
   if (partial.requirementsAcks && typeof partial.requirementsAcks === 'object') {
@@ -154,6 +212,8 @@ export function buildCanonicalWorkerProfileWritePatch(partial: AnyMap): AnyMap {
     if (!suffix) continue;
     const normalized = suffix.charAt(0).toLowerCase() + suffix.slice(1);
     setIfDefined(patch, `workerAttestations.additionalScreenings.${normalized}`, value);
+    patch[`workerAttestations._meta.${normalized}.attestedAt`] = serverTimestamp();
+    patch[`workerAttestations._meta.${normalized}.source`] = attestationSource;
   }
 
   return patch;

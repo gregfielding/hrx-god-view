@@ -21,6 +21,8 @@ import {
   type AssignmentReadinessItemActor,
   type AssignmentReadinessItemStatus,
   type AssignmentReadinessRequirementType,
+  type AssignmentReadinessResolutionMethod,
+  type AssignmentReadinessSeverity,
 } from './assignmentReadinessItemV1';
 
 export const SEED_ASSIGNMENT_READINESS_VERSION = 1;
@@ -42,6 +44,28 @@ export type SeedAssignmentReadinessRequirementSpec = {
    * `shared/assignmentReadinessItemV1.ts` for the field's full doc.
    */
   expiresAtMs?: number;
+  /**
+   * **R.1** — Hard / soft. Resolved by callers per the three-insertion-point
+   * rule (D4.R1):
+   *   1. per-instance on the JO requirement object (e.g. `RequiredLicenseV1.severity`)
+   *   2. parallel override map keyed by skill slug (`skillsRequiredSeverityOverrides`)
+   *   3. per-type override on the JO (`requirementSeverityOverrides`)
+   *   4. fall through to `DEFAULT_REQUIREMENT_SEVERITY` table below.
+   *
+   * The seeder doesn't perform that resolution itself — callers do, then pass
+   * the final value through. When omitted, the seeder falls through to the
+   * type default (or throws for `'custom'`, which has no default).
+   */
+  severity?: AssignmentReadinessSeverity;
+  /**
+   * **R.1** — Pathway by which this item gets resolved. Stamped by callers
+   * who know the source: matcher-fed items pass `'auto'`, willingness items
+   * (R.2) pass `'self_attest'`, external-fed items pass `'external'`. CSA
+   * actions (R.3) override to `'csa_confirmed'` / `'csa_waived'` post-seed.
+   * Omit to default to `null` (unresolved pathway / pending seed-time
+   * resolution).
+   */
+  resolutionMethod?: AssignmentReadinessResolutionMethod;
 };
 
 export type SeedAssignmentReadinessItemsInput = {
@@ -85,8 +109,66 @@ const DEFAULT_REQUIREMENT_DEFAULTS: Record<AssignmentReadinessRequirementType, R
   safety_briefing: { actor: 'worker', blocking: true },
   // Confirmation = the cadence "YES / HERE" flow; blocks activation.
   shift_confirmation: { actor: 'worker', blocking: true },
+  // R.2 — Willingness self-attestations. Worker-owned, soft by default
+  // (`blocking: false` derives from `severity: 'soft'`). Each item only
+  // seeds when the JO declares the corresponding requirement field
+  // (D9.R2 — see `buildPhaseBMatchSpecs`). The table value documents the
+  // pre-derivation default; runtime `blocking` is recomputed from severity
+  // in `buildItem` (D5.R1).
+  physical_willingness: { actor: 'worker', blocking: false },
+  uniform_willingness: { actor: 'worker', blocking: false },
+  ppe_willingness: { actor: 'worker', blocking: false },
+  language_willingness: { actor: 'worker', blocking: false },
   // Escape hatch.
   custom: { actor: 'worker', blocking: false },
+};
+
+/**
+ * **R.1 (D3.R1)** — Hard/soft default per requirement type. The chip
+ * aggregator (R.4) treats hard items as red contributors when not passing,
+ * soft items as yellow. Per-instance and per-JO overrides take precedence
+ * (resolved upstream by the matcher caller; passed in via
+ * `SeedAssignmentReadinessRequirementSpec.severity`).
+ *
+ * `'custom'` is intentionally absent — custom requirements have no
+ * type-level default. Callers MUST pass `severity` explicitly on the spec.
+ *
+ * @see docs/READINESS_R1_R2_HANDOFF.md §R.1 for the rationale per row.
+ */
+export const DEFAULT_REQUIREMENT_SEVERITY: Record<
+  Exclude<AssignmentReadinessRequirementType, 'custom'>,
+  AssignmentReadinessSeverity
+> = {
+  // Hard — failure blocks the worker from doing the job.
+  background_check: 'hard',
+  drug_screen: 'hard',
+  e_verify: 'hard',
+  required_certification: 'hard',
+  orientation: 'hard',
+  cert_match: 'hard',
+  license_match: 'hard',
+  screening_package_match: 'hard',
+  safety_briefing: 'hard',
+  // `ppe_acknowledgement` is the per-shift "did you bring / wear your PPE?"
+  // confirmation — distinct from R.2's `ppe_willingness` (the worker's standing
+  // answer at application time, which is soft). The acknowledgement gates the
+  // shift, so it stays hard. See docs/READINESS_R1_R2_HANDOFF.md §D3.R1.
+  ppe_acknowledgement: 'hard',
+  // Soft — failure is informational; CSA can waive. Skill / edu / language
+  // matches are soft by default but each is per-JO-overridable to hard
+  // (some skills are nice-to-have, some are genuinely required).
+  skill_match: 'soft',
+  education_match: 'soft',
+  language_match: 'soft',
+  shift_confirmation: 'soft',
+  // R.2 — Willingness self-attestations are always soft. They surface "no"
+  // / "maybe" answers as yellow on the chip; a CSA can flip a specific JO's
+  // requirement to hard via `requirementSeverityOverrides` if a particular
+  // role makes the willingness genuinely blocking.
+  physical_willingness: 'soft',
+  uniform_willingness: 'soft',
+  ppe_willingness: 'soft',
+  language_willingness: 'soft',
 };
 
 /**
@@ -113,6 +195,32 @@ function buildItem(
   }
 
   const defaults = DEFAULT_REQUIREMENT_DEFAULTS[spec.requirementType];
+
+  // R.1 — Resolve severity. Custom requirements have no type-default and MUST
+  // pass `spec.severity` explicitly (mirrors how custom requires
+  // `requirementLabel` and `customKey`). All other types fall through to the
+  // DEFAULT_REQUIREMENT_SEVERITY table; callers (e.g. matcher helpers) resolve
+  // the per-instance / override-map / type-default chain upstream and hand the
+  // final value through the spec.
+  let severity: AssignmentReadinessSeverity;
+  if (spec.requirementType === 'custom') {
+    if (spec.severity !== 'hard' && spec.severity !== 'soft') {
+      throw new Error(
+        `seedAssignmentReadinessItems[${index}]: custom requirement requires severity ('hard' | 'soft')`,
+      );
+    }
+    severity = spec.severity;
+  } else {
+    severity = spec.severity ?? DEFAULT_REQUIREMENT_SEVERITY[spec.requirementType];
+  }
+
+  // R.1 (D5.R1) — `blocking` derives from severity unless a caller explicitly
+  // overrides. The two fields stay separate on the item so future logic can
+  // diverge (e.g. a hard item that's already passed → blocking:false). The
+  // audit script (`scripts/auditAssignmentReadinessStatuses.ts`) reports the
+  // population-level divergence in legacy data.
+  const blocking = spec.blocking ?? (severity === 'hard');
+
   const id = buildAssignmentReadinessItemId({
     assignmentId: input.assignmentId,
     requirementType: spec.requirementType,
@@ -128,7 +236,9 @@ function buildItem(
     requirementType: spec.requirementType,
     status: spec.status ?? 'incomplete',
     actor: spec.actor ?? defaults.actor,
-    blocking: spec.blocking ?? defaults.blocking,
+    blocking,
+    severity,
+    resolutionMethod: spec.resolutionMethod ?? null,
     ownership: input.ownership,
     createdAt: input.nowIso,
     updatedAt: input.nowIso,

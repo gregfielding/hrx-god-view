@@ -113,6 +113,11 @@ import {
   type PlacementApplicationNoShowRisk,
 } from '../../utils/placementNoShowRiskDisplay';
 import type { ReadinessSnapshotV1Firestore } from '../../shared/readinessSnapshotV1';
+import type {
+  JobReadinessChipContributor,
+  JobReadinessChipData,
+} from '../../shared/jobReadinessChip/types';
+import { JobReadinessChip } from './readiness';
 import { getRecruiterMasterDisplayForAdminUi } from '../../utils/scoring/recruiterMasterScoreDisplay';
 import {
   placementJobOrderScreeningFlags,
@@ -425,6 +430,8 @@ function PlacementWorkerTileMainColumn({
   jobOrder,
   profileActionIcons,
   requiredCertStatuses,
+  jobReadinessChipData,
+  onJobReadinessItemClick,
 }: {
   worker: Worker;
   hiringEntityName: string | null | undefined;
@@ -437,6 +444,24 @@ function PlacementWorkerTileMainColumn({
   /** Resume / bio / work history / license icons — same row as screening icons, before BG/drug/history. */
   profileActionIcons?: React.ReactNode;
   requiredCertStatuses?: PlacementRequiredCertStatus[];
+  /**
+   * **R.4** — Pre-computed Job Readiness chip data for this assignment.
+   * Read off `readinessSnapshotV1.jobReadinessChip` by the parent so we
+   * don't refetch per tile. `null`/`undefined` → chip renders the
+   * `'computing'` initial state.
+   */
+  jobReadinessChipData?: JobReadinessChipData | null;
+  /**
+   * Drill-in handler for popover rows; navigates to Worker Readiness tab.
+   * `assignmentId` (when known) is threaded through so the readiness tab
+   * can pre-select the matching assignment without resolving from the
+   * contributor's `itemId`. R.7 honours `?assignmentId=` from the URL.
+   */
+  onJobReadinessItemClick?: (
+    workerUid: string,
+    assignmentId: string | null | undefined,
+    contributor: JobReadinessChipContributor,
+  ) => void;
 }) {
   const interviewLabel = formatInterviewLastScore10(worker.interviewLastScore10);
   const jf = worker.placementJobFitScore;
@@ -560,6 +585,21 @@ function PlacementWorkerTileMainColumn({
         </Tooltip>
       ) : null}
       {row3}
+      {/* R.4 — Job Readiness chip. Aggregates assignment + employee readiness items (cross-collection)
+          via the persisted snapshot.jobReadinessChip; pure presentation here. */}
+      {worker.assignmentId && (
+        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+          <JobReadinessChip
+            data={jobReadinessChipData ?? null}
+            size="sm"
+            onItemClick={
+              onJobReadinessItemClick
+                ? (c) => onJobReadinessItemClick(worker.id, worker.assignmentId, c)
+                : undefined
+            }
+          />
+        </Box>
+      )}
       <PlacementTileReadinessIconRow jobOrder={jobOrder} worker={worker} leadingSlot={profileActionIcons} />
       <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.5 }}>
         <PlacementQualificationChipsRow
@@ -1137,6 +1177,62 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       jobOrder,
       engineCertBlockerLabelsByAssignmentId,
     ],
+  );
+
+  /**
+   * **R.4** — read pre-computed `jobReadinessChip` off the persisted snapshot.
+   * `undefined` → no snapshot yet (chip renders the `'computing'` state).
+   * `null` snapshot value or missing chip field → also `'computing'` (older
+   * snapshots predating R.4 simply lack the field; sync writer will populate).
+   */
+  const placementJobReadinessChipDataForAssignmentId = useCallback(
+    (assignmentId: string | undefined): JobReadinessChipData | null => {
+      if (!assignmentId) return null;
+      const snap = readinessSnapByAssignmentId.get(assignmentId);
+      return snap?.jobReadinessChip ?? null;
+    },
+    [readinessSnapByAssignmentId],
+  );
+
+  /**
+   * **R.4 + R.7** — drill-in handler for chip popover rows.
+   *
+   * Opens the worker profile in a new tab. Deep-link query carries enough
+   * identity for the Worker Readiness tab (R.7) to:
+   *   1. pre-select the right assignment via `assignmentId` (parent context —
+   *      not on the contributor itself, threaded through here),
+   *   2. highlight the matching requirement row via `itemId` / `type`.
+   *
+   * `source` is informational (drives label disambiguation in the popover
+   * but the readiness tab uses `type` + `itemId` to match rows).
+   *
+   * Until R.7 lands the query was harmless / ignored. After R.7 the same
+   * URL shape is honoured.
+   */
+  const handlePlacementJobReadinessItemClick = useCallback(
+    (workerUid: string, assignmentId: string | null | undefined, contributor: JobReadinessChipContributor) => {
+      if (!workerUid) return;
+      const params = new URLSearchParams({
+        tab: 'readiness',
+        source: contributor.source,
+        type: contributor.requirementType,
+        itemId: contributor.itemId,
+      });
+      if (assignmentId && assignmentId.trim()) params.set('assignmentId', assignmentId);
+      // **R.5 + R.6** — propagate the contributor's `caseId` so the
+      // Readiness tab can auto-open the per-vendor drawer against the
+      // precise case rather than falling back to "first item for this
+      // worker × entity". The chip helper populates `caseId` for:
+      //   - `e_verify`             (R.5) → `everify_cases/{caseId}`
+      //   - `background_check`,
+      //     `drug_screen`          (R.6) → `backgroundChecks/{checkId}`
+      // For other types `caseId` is `undefined` and the param is
+      // omitted. The Readiness tab routes by `type=` to the correct
+      // drawer.
+      if (contributor.caseId && contributor.caseId.trim()) params.set('caseId', contributor.caseId);
+      window.open(`/users/${workerUid}?${params.toString()}`, '_blank', 'noopener,noreferrer');
+    },
+    [],
   );
 
   // Load user groups for workforce dropdown
@@ -2938,11 +3034,22 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                       <Button
                         size="small"
                         variant="outlined"
-                        startIcon={<EmailIcon />}
+                        startIcon={<EmailIcon sx={{ fontSize: '0.85rem' }} />}
                         disabled={!selectedShiftId}
                         onClick={handlePreviewEmail}
                         title="Preview the confirmation email workers receive (staff details, parking, check-in, attachments)"
-                        sx={{ minWidth: 0, py: 0.5, px: 1.25, fontSize: '0.8125rem' }}
+                        sx={{
+                          minWidth: 0,
+                          py: 0.125,
+                          px: 0.75,
+                          minHeight: 24,
+                          lineHeight: 1.2,
+                          fontSize: '0.7rem',
+                          fontWeight: 600,
+                          textTransform: 'none',
+                          borderRadius: '20px',
+                          '& .MuiButton-startIcon': { mr: 0.5 },
+                        }}
                       >
                         Preview
                       </Button>
@@ -3105,6 +3212,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                               entityEmploymentByUserId={entityEmploymentByUserId}
                               placementEntityEmploymentLoading={placementEntityEmploymentLoading}
                               blockerLabels={placementBlockerLabelsForAssignmentId(worker.assignmentId)}
+                              jobReadinessChipData={placementJobReadinessChipDataForAssignmentId(worker.assignmentId)}
+                              onJobReadinessItemClick={handlePlacementJobReadinessItemClick}
                               requiredCertStatuses={placementRequiredCertMatchList(
                                 jobOrder,
                                 worker.certifications,
@@ -3491,6 +3600,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                 entityEmploymentByUserId={entityEmploymentByUserId}
                                 placementEntityEmploymentLoading={placementEntityEmploymentLoading}
                                 blockerLabels={placementBlockerLabelsForAssignmentId(worker.assignmentId)}
+                                jobReadinessChipData={placementJobReadinessChipDataForAssignmentId(worker.assignmentId)}
+                                onJobReadinessItemClick={handlePlacementJobReadinessItemClick}
                                 requiredCertStatuses={requiredCertStatuses}
                                 profileActionIcons={
                                   <>
@@ -3685,12 +3796,15 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                   onClick={() => handleAssignToShift(worker, selectedShift)}
                                   disabled={!selectedShift}
                                   sx={{
-                                    minWidth: 56,
-                                    height: 24,
-                                    py: 0.25,
+                                    minWidth: 0,
+                                    height: 22,
+                                    py: 0,
                                     px: 0.75,
-                                    fontSize: '0.6875rem',
+                                    fontSize: '0.625rem',
+                                    fontWeight: 600,
                                     lineHeight: 1,
+                                    textTransform: 'none',
+                                    borderRadius: '20px',
                                   }}
                                 >
                                   Assign

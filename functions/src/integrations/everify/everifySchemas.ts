@@ -35,15 +35,36 @@ export const EverifyEventType = z.enum([
   'TASK_RESOLVED',
   'CLOSED',
   'ERROR',
+  /**
+   * **R.5** — Worker decision recorded. `data.contests: boolean` distinguishes
+   * "I will contest" (true) from "I decline to contest" (false). Emitted by
+   * `everifyRecordWorkerDecision` (admin-on-behalf-of-worker for now;
+   * worker self-call lands in R.9). Distinct from `CONTESTED` which only
+   * captured the affirmative path historically.
+   */
+  'WORKER_DECISION_RECORDED',
+  /**
+   * **R.5** — TNC Further Action Notice (FAN) packet generated for the
+   * worker. Emitted by `everifyRecordNoticeGenerated`; the minimal R.5
+   * implementation produces an HTML print view (no Cloud Storage upload),
+   * but the audit event still fires so future PDF renderers can backfill
+   * the `data.uri` reference.
+   */
+  'NOTICE_PACKET_GENERATED',
 ]);
 export type EverifyEventType = z.infer<typeof EverifyEventType>;
 
 /** TNC resolution actions (provider-agnostic; wire ICA endpoints later) */
 export interface EverifyCaseActions {
   employeeNotifiedAt?: unknown;
+  /** Worker contest decision. `true` = will contest; `false` = declines to contest. */
   employeeContests?: boolean;
+  /** **R.5** — When the worker decision was recorded (separate from `employeeNotifiedAt`). */
+  workerDecisionAt?: unknown;
   referralInitiatedAt?: unknown;
   caseClosedAt?: unknown;
+  /** **R.5** — When the FAN notice packet was generated (HTML print view). */
+  noticePacketGeneratedAt?: unknown;
   notes?: string;
 }
 

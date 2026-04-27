@@ -1,6 +1,16 @@
 /**
  * Loads Firestore inputs for HRX V1 assignment readiness (aligned with Profile Readiness tab),
  * then returns `BuildAssignmentReadinessArgs` for `buildAssignmentReadiness` (shared engine).
+ *
+ * **R.4 (2026-04-26):** loader was extended to also read the two readiness
+ * item collections — `tenants/{tid}/assignmentReadinessItems` filtered to
+ * the assignment, and `tenants/{tid}/employeeReadinessItems` filtered to
+ * the worker × hiring entity — so the bridge in `buildAssignmentReadiness`
+ * can compute the Job Readiness chip as part of the same snapshot write.
+ * The cross-collection read is the load-bearing piece per Greg's R.4
+ * greenlight: AccuSource and E-Verify land on the employee side, so a
+ * chip that only read assignment items would miss background-check
+ * status entirely.
  */
 
 import type * as admin from 'firebase-admin';
@@ -9,6 +19,8 @@ import type {
   AssignmentReadinessAssignmentInput,
   BuildAssignmentReadinessArgs,
 } from '../../../src/shared/buildAssignmentReadiness';
+import type { AssignmentReadinessItem } from '../../../src/shared/assignmentReadinessItemV1';
+import type { EmployeeReadinessItem } from '../../../src/shared/employeeReadinessItemV1';
 import type { EmploymentEntityKey } from '../../../src/shared/readinessEntityResolve';
 import {
   deriveC1EntityKeyFromEntityName,
@@ -307,11 +319,50 @@ export async function loadHrxReadinessBuildArgsAdmin(
   const bgRecords = bgSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }));
   const screening = screeningForAssignment(assignmentId, bgRecords);
 
+  // R.4 — cross-collection load for the Job Readiness chip. Both queries are
+  // tenant-scoped indexed lookups (no fan-out). When `hiringEntityId` cannot
+  // be resolved the employee-side query is skipped; the chip degrades to
+  // assignment-only inputs and the Background Check / E-Verify rows will
+  // show as missing in the popover (correct given we couldn't tie them).
+  const [assignmentReadinessItemsSnap, employeeReadinessItemsSnap] = await Promise.all([
+    db
+      .collection(`tenants/${tenantId}/assignmentReadinessItems`)
+      .where('assignmentId', '==', assignmentId)
+      .get(),
+    hiringEntityId
+      ? db
+          .collection(`tenants/${tenantId}/employeeReadinessItems`)
+          .where('workerUid', '==', workerUserId)
+          .where('hiringEntityId', '==', hiringEntityId)
+          .get()
+      : Promise.resolve(null),
+  ]);
+  const assignmentReadinessItems = assignmentReadinessItemsSnap.docs.map(
+    (d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }) as AssignmentReadinessItem,
+  );
+  const employeeReadinessItems = employeeReadinessItemsSnap
+    ? employeeReadinessItemsSnap.docs.map(
+        (d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }) as EmployeeReadinessItem,
+      )
+    : [];
+
+  // `readinessSeededAt` is stamped by the seeder runner (see
+  // `seedAssignmentReadinessItemsRunner.ts`). Pre-existing assignments
+  // without the field but with items already seeded are treated as seeded
+  // (`assignmentReadinessItems.length > 0`) so legacy chips don't degrade
+  // to `'computing'` after the R.4 deploy.
+  const readinessSeededAt = a.readinessSeededAt;
+  const readinessSeeded =
+    Boolean(readinessSeededAt) || assignmentReadinessItems.length > 0;
+
   return {
     user: userInput,
     employment: employmentInput,
     assignment: assignmentInput,
     screening,
     certifications,
+    assignmentReadinessItems,
+    employeeReadinessItems,
+    readinessSeeded,
   };
 }

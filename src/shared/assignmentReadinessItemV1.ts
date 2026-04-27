@@ -65,6 +65,37 @@ export type AssignmentReadinessRequirementType =
   | 'safety_briefing'
   /** Worker confirmation that they'll show up (YES / NO / HERE replies in cadence). */
   | 'shift_confirmation'
+  /**
+   * **R.2** — Worker self-attestation: comfortable with the JO's physical
+   * requirements (lifting, standing, etc.). Reads
+   * `workerAttestations.physicalRequirementWillingness`. Soft severity by
+   * default. Distinct from any `*_match` type — there is no objective
+   * worker-record source to compare against, only the worker's own answer.
+   */
+  | 'physical_willingness'
+  /**
+   * **R.2** — Worker self-attestation: comfortable with the JO's uniform
+   * requirements. Reads
+   * `workerAttestations.uniformRequirementWillingness` and
+   * `workerAttestations.customUniformRequirementWillingness` — matcher takes
+   * the worse-of when both apply. Soft severity by default.
+   */
+  | 'uniform_willingness'
+  /**
+   * **R.2** — Worker self-attestation: comfortable wearing the JO's required
+   * PPE. Reads `workerAttestations.requiredPpeWillingness`. Distinct from
+   * `ppe_acknowledgement` — that is the per-shift "did you bring it" gate
+   * (hard); this is the standing willingness answer (soft).
+   */
+  | 'ppe_willingness'
+  /**
+   * **R.2** — Worker self-attestation: comfortable working in the JO's
+   * required language(s). Reads
+   * `workerAttestations.languageRequirementWillingness`. Distinct from
+   * `language_match` — that is a proficiency check against typed records;
+   * this is the worker's standing comfort answer (soft).
+   */
+  | 'language_willingness'
   /** Escape hatch for tenant-custom shift-scoped requirements. */
   | 'custom';
 
@@ -86,6 +117,49 @@ export type AssignmentReadinessItemStatus =
   | 'complete';
 
 export type AssignmentReadinessItemActor = 'worker' | 'recruiter' | 'vendor' | 'system';
+
+/**
+ * **R.1** — How the item's current status was resolved. Drives the placement
+ * tile chip's hard/soft bucketing alongside `severity` (R.4).
+ *
+ * Distinct axis from `status` — a `complete_pass` item could have arrived via
+ * any of `'auto'` (matcher found a worker record), `'external'` (AccuSource
+ * webhook), `'self_attest'` (worker said "yes" on the application), or
+ * `'csa_confirmed'` (recruiter manually marked passed).
+ *
+ *   - `'auto'`           — Phase B matcher consumed the worker's profile / records
+ *   - `'external'`       — third-party result (AccuSource verdict, USCIS E-Verify status)
+ *   - `'self_attest'`    — worker answered the application (R.2 willingness items) or future R.9 profile edit
+ *   - `'csa_confirmed'`  — recruiter manually marked passed/failed (R.3 future endpoints)
+ *   - `'csa_waived'`     — recruiter bypassed a soft requirement with a mandatory note (R.3)
+ *   - `null`             — unresolved (status is `'incomplete'` / `'in_progress'`)
+ *
+ * Field is `null` (not absent) when intentionally unresolved — gives the chip
+ * aggregator a clean `null`-check.
+ */
+export type AssignmentReadinessResolutionMethod =
+  | 'auto'
+  | 'external'
+  | 'self_attest'
+  | 'csa_confirmed'
+  | 'csa_waived'
+  | null;
+
+/**
+ * **R.1** — Static property of the requirement (denormalized onto each item at
+ * seed time). Drives the R.4 placement chip color:
+ *
+ *   - `'hard'` — failure / pending blocks the worker from doing the job (cert,
+ *     license, screening, e-verify). Contributes red to the chip when not
+ *     `complete_pass` / `csa_waived`.
+ *   - `'soft'` — failure / pending is informational; the worker can still do
+ *     the job and a CSA can waive. Contributes yellow when not green.
+ *
+ * Default per-type table lives in `seedAssignmentReadinessItems.ts`
+ * (`DEFAULT_REQUIREMENT_SEVERITY`). Per-instance and per-JO overrides flow
+ * through the spec.
+ */
+export type AssignmentReadinessSeverity = 'hard' | 'soft';
 
 /**
  * Persisted at `tenants/{tid}/assignmentReadinessItems/{itemId}`.
@@ -113,8 +187,32 @@ export type AssignmentReadinessItem = {
    * gate (ownership doc §9 #4) reads this: if any blocking item is incomplete
    * when the worker tries to confirm, block the confirmation and surface the
    * blocker to `ownership.primaryRecruiterId`.
+   *
+   * **R.1 (D5.R1)** — for new items the seeder derives this as
+   * `blocking = severity === 'hard'`, but the field stays separate so future
+   * logic can diverge (e.g. a `severity: 'hard'` item with
+   * `status: 'complete_pass'` might still be `blocking: false` for some other
+   * gate). Existing (pre-R.1) items keep whatever value they were seeded with;
+   * the R.1 backfill sets `severity` from the type-default table without
+   * touching `blocking`, so historical inconsistencies surface in the audit
+   * script (`scripts/auditAssignmentReadinessStatuses.ts`) rather than getting
+   * silently rewritten.
    */
   blocking: boolean;
+  /**
+   * **R.1** — Hard / soft. Denormalized from the requirement at seed time so
+   * the R.4 chip aggregator never has to round-trip to the JO doc. Required on
+   * all new items; backfilled to existing items by
+   * `backfillAssignmentReadinessItemsCallable`.
+   */
+  severity: AssignmentReadinessSeverity;
+  /**
+   * **R.1** — How the current `status` was resolved. See
+   * `AssignmentReadinessResolutionMethod` for semantics. `null` for unresolved
+   * items. Optional in the type for back-compat with pre-R.1 items; backfill
+   * promotes it to `null` (explicit) for items that have no derivable method.
+   */
+  resolutionMethod?: AssignmentReadinessResolutionMethod;
   /** Optional deep-link surfaced on the action-queue card. */
   ctaTarget?: {
     kind: 'profileTab' | 'route' | 'external';

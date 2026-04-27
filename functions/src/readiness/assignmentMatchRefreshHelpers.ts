@@ -272,6 +272,15 @@ async function applySpecDiff(args: ApplyArgs): Promise<void> {
       if (newStatus === 'complete_pass' && !existing.completedAt) {
         patch.completedAt = nowIso;
       }
+      // R.1 — Phase C match-refresh is the matcher's re-run pathway. When it
+      // flips an item's status (worker added a license / cert / skill record),
+      // restamp `resolutionMethod` to `'auto'`. This intentionally overwrites
+      // any prior `'csa_confirmed'` / `'csa_waived'` because the worker's
+      // data now satisfies the requirement on its own — the CSA's earlier
+      // bypass is moot for the new status. Items where status didn't change
+      // skip this stamp (the early-return above), so a CSA's override
+      // survives until the underlying data actually shifts.
+      patch.resolutionMethod = 'auto';
     }
     if (expiryChanged) {
       if (typeof newExpiresAtMs === 'number' && newExpiresAtMs > 0) {

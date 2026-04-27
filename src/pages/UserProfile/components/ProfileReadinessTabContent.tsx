@@ -3,10 +3,12 @@
  * `entity_employments` / pipeline (no assignment required).
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
+  Alert,
   Box,
+  Button,
   Chip,
   CircularProgress,
   Divider,
@@ -16,7 +18,6 @@ import {
   Paper,
   Stack,
   Typography,
-  Alert,
 } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
@@ -30,6 +31,7 @@ import {
   getDoc,
   getDocs,
   limit,
+  onSnapshot,
   orderBy,
   query,
   where,
@@ -37,6 +39,20 @@ import {
   type DocumentData,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
+
+import {
+  JobReadinessChip,
+  ReadinessCsaActionsSection,
+} from '../../../components/recruiter/readiness';
+import { EverifyCaseDrawer } from '../../../components/recruiter/everify';
+import { BackgroundCheckCaseDrawer } from '../../../components/recruiter/backgroundCheck';
+import type {
+  JobReadinessChipContributor,
+  JobReadinessChipData,
+} from '../../../shared/jobReadinessChip/types';
+import type { ReadinessSnapshotV1Firestore } from '../../../shared/readinessSnapshotV1';
+import type { EmployeeReadinessItem } from '../../../types/employeeReadinessItemV1';
+import { useAuth } from '../../../contexts/AuthContext';
 
 import { db, functions } from '../../../firebase';
 import { p } from '../../../data/firestorePaths';
@@ -104,12 +120,38 @@ export interface ProfileReadinessTabContentProps {
   tenantId: string | null;
 }
 
+/**
+ * **R.7** — element-id pattern for the requirement row anchor used by the
+ * R.4 chip drill-in (`?tab=readiness&type=&itemId=...`). Keep stable; the
+ * URL flow scrolls to this id and applies the flash highlight.
+ */
+function readinessRequirementRowElementId(key: string): string {
+  return `readiness-requirement-row-${key}`;
+}
+
 function ReadinessRequirementRow(props: {
   req: ReadinessRequirement;
   onNavigateEmploymentI9: () => void;
+  /**
+   * **R.7** — when true, renders a flash-highlight on the row and exposes
+   * the anchor id so the drill-in `useEffect` can `scrollIntoView`. Reset
+   * after ~3s by the parent (matches the existing background-compliance
+   * highlight pattern in `UserProfile/index.tsx`).
+   */
+  highlighted?: boolean;
 }) {
-  const { req, onNavigateEmploymentI9 } = props;
+  const { req, onNavigateEmploymentI9, highlighted = false } = props;
   const linkEmployment = readinessRequirementKeyLinksToEmploymentI9(req.key);
+  const anchorId = readinessRequirementRowElementId(req.key);
+  const highlightSx = highlighted
+    ? {
+        bgcolor: 'warning.lighter',
+        outline: '2px solid',
+        outlineColor: 'warning.main',
+        borderRadius: 1,
+        transition: 'background-color 0.5s ease, outline-color 0.5s ease',
+      }
+    : { transition: 'background-color 0.5s ease, outline-color 0.5s ease' };
   const rowContent = (
     <Stack direction="row" alignItems="flex-start" gap={1.25} sx={{ width: '100%' }}>
       <Box sx={{ pt: 0.2 }}>{statusIcon(req)}</Box>
@@ -124,6 +166,7 @@ function ReadinessRequirementRow(props: {
   if (linkEmployment) {
     return (
       <ListItemButton
+        id={anchorId}
         onClick={onNavigateEmploymentI9}
         aria-label="Open Employment tab for I-9 and work authorization"
         sx={{
@@ -131,6 +174,7 @@ function ReadinessRequirementRow(props: {
           py: 0.75,
           px: 1,
           alignItems: 'flex-start',
+          ...highlightSx,
         }}
       >
         {rowContent}
@@ -138,7 +182,7 @@ function ReadinessRequirementRow(props: {
     );
   }
   return (
-    <Stack sx={{ py: 0.25, px: 0.5 }}>
+    <Stack id={anchorId} sx={{ py: 0.5, px: 0.75, ...highlightSx }}>
       {rowContent}
     </Stack>
   );
@@ -357,6 +401,48 @@ function requirementDisplayLine(req: ReadinessRequirement): string {
   return `${requirementShortLabel(req)} (${requirementStatusPhrase(req)})`;
 }
 
+/**
+ * **R.7** — map a `JobReadinessChipContributor.requirementType` (and the
+ * source side of the contributor) to the `ReadinessRequirement.key`s that
+ * surface on this tab. Used to decide which row(s) to highlight on a
+ * drill-in.
+ *
+ * The current `buildAssignmentReadiness` synthesizes its requirements with
+ * keys like `'background_check'`, `'work_authorization'`, `'cert_<docId>'`
+ * — none of which line up 1:1 with the readiness-item Firestore IDs the
+ * chip carries. So matching is by-type rather than by-itemId. Future PR
+ * (when we read raw items into this tab) can do exact `itemId` matching.
+ */
+function highlightedKeysForRequirementType(
+  requirementType: string | null | undefined,
+): (key: string) => boolean {
+  if (!requirementType) return () => false;
+  switch (requirementType) {
+    case 'background_check':
+    case 'screening_package_match':
+      return (k) => k === 'background_check';
+    case 'drug_screen':
+      return (k) => k === 'drug_screen';
+    case 'e_verify':
+      // E-Verify rows surface on this tab as `work_authorization` / `i9`.
+      // Highlight both — drill-in shouldn't second-guess which one the
+      // user needs to look at.
+      return (k) => k === 'work_authorization' || k === 'i9' || k.startsWith('i9_');
+    case 'cert_match':
+    case 'required_certification':
+      // Multiple cert rows; highlight all so the user spots the failing one.
+      return (k) => k.startsWith('cert_');
+    case 'license_match':
+      return (k) => k.startsWith('license_');
+    default:
+      // Willingness items + skill / education / orientation / safety
+      // briefing / shift_confirmation / ppe_acknowledgement / custom — none
+      // currently surface as their own row on this tab. The chip popover
+      // remains useful but no row is highlighted.
+      return () => false;
+  }
+}
+
 type PrioritySectionId = 'must' | 'important' | 'admin';
 
 function requirementPrioritySection(req: ReadinessRequirement): PrioritySectionId {
@@ -508,6 +594,42 @@ function complianceItemDisplayLabel(item: WorkerComplianceItem): string {
 const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({ uid, tenantId }) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { isHRX, claimsRoles, tenantRolesFromProfile, securityLevel } = useAuth();
+  /**
+   * **R.5** — gate the recruiter-only drawer affordances. We deliberately
+   * mirror the Admin Ops gate (`isHRX || tenant Admin`) rather than the
+   * worker-self gate used by `EverifyComplianceCard`'s create-case button —
+   * the readiness tab is a recruiter surface even when the worker views
+   * their own profile.
+   */
+  const canManageEverify = useMemo(() => {
+    if (isHRX) return true;
+    if (!tenantId) return false;
+    return claimsRoles?.[tenantId]?.role === 'Admin';
+  }, [isHRX, tenantId, claimsRoles]);
+  /**
+   * **R.6** — gate AccuSource adjudication actions. Mirrors the backend
+   * `ensureAccusourceAdmin` gate: admin / super_admin / manager role OR
+   * security level ≥5 in the active tenant. Falls back to the top-level
+   * user-doc `securityLevel` when the tenant slot omits one (matches
+   * `resolveAccusourceRoleAndSecurityLevel` server-side).
+   */
+  const canManageBgCheck = useMemo(() => {
+    if (isHRX) return true;
+    if (!tenantId) return false;
+    const claimsRole = String(claimsRoles?.[tenantId]?.role ?? '').toLowerCase();
+    if (['admin', 'super_admin', 'manager'].includes(claimsRole)) return true;
+    const profile = tenantRolesFromProfile?.[tenantId];
+    if (profile) {
+      const role = String(profile.role ?? '').toLowerCase();
+      if (['admin', 'super_admin', 'manager'].includes(role)) return true;
+      const sl = Number.parseInt(String(profile.securityLevel ?? '0'), 10) || 0;
+      if (sl >= 5) return true;
+    }
+    const sl = Number.parseInt(String(securityLevel ?? '0'), 10) || 0;
+    return sl >= 5;
+  }, [isHRX, tenantId, claimsRoles, tenantRolesFromProfile, securityLevel]);
   const goToEmploymentI9 = useCallback(() => {
     const params = new URLSearchParams(location.search);
     params.set('tab', 'employment');
@@ -522,6 +644,47 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
   const [backgroundChecks, setBackgroundChecks] = useState<BackgroundCheckRecord[]>([]);
   const [complianceItemsRaw, setComplianceItemsRaw] = useState<Array<WorkerComplianceItem & { id: string }>>([]);
   const [entityBundle, setEntityBundle] = useState<ReadinessEntityBundleWeb | null>(null);
+
+  /**
+   * **R.7** — per-assignment Job Readiness chip data, sourced from
+   * `assignments/{id}.readinessSnapshotV1.jobReadinessChip` (R.4 persisted
+   * shape). `null` value = snapshot exists but chip not yet computed (older
+   * snapshot from before R.4 deploy, or write hasn't landed yet); missing
+   * key = no snapshot at all → chip renders `'computing'`.
+   */
+  const [chipDataByAssignmentId, setChipDataByAssignmentId] = useState<
+    Map<string, JobReadinessChipData | null>
+  >(() => new Map());
+
+  /**
+   * **R.7** — drill-in highlight state, set from URL params on mount /
+   * navigation. Holds the `requirementType` only — the actual matched
+   * `req.key`s are computed via `highlightedKeysForRequirementType` in the
+   * render path so we don't recompute on every keystroke.
+   */
+  const [highlightRequirementType, setHighlightRequirementType] = useState<string | null>(null);
+  /** ditto — set from URL `itemId` for a future exact-match upgrade. Currently
+   * only used for diagnostics + as the cleanup trigger on URL params. */
+  const [highlightItemId, setHighlightItemId] = useState<string | null>(null);
+  const handledDeepLinkRef = useRef(false);
+
+  /**
+   * **R.5 + R.6** — vendor-backed employee readiness items for this worker.
+   *
+   * Originally R.5 only loaded `e_verify` rows for the TNC banner.
+   * R.6 broadens to also surface `background_check` / `drug_screen`
+   * for the AccuSource adjudication banner + chip drill-in. We keep
+   * a single live listener and split into per-channel memos below
+   * (`everifyItems`, `bgEmployeeItems`) so we don't pay for two
+   * snapshot subscriptions on the same worker × tenant index.
+   */
+  const [vendorEmployeeItems, setVendorEmployeeItems] = useState<
+    Array<EmployeeReadinessItem & { id: string }>
+  >([]);
+  /** **R.5** — case id currently rendered in `EverifyCaseDrawer` (or null when closed). */
+  const [drawerCaseId, setDrawerCaseId] = useState<string | null>(null);
+  /** **R.6** — `backgroundChecks/{checkId}` currently rendered in `BackgroundCheckCaseDrawer` (or null when closed). */
+  const [drawerCheckId, setDrawerCheckId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!uid || !tenantId) {
@@ -601,6 +764,217 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * **R.7** — live-subscribe to `readinessSnapshotV1.jobReadinessChip` for
+   * every visible assignment. The R.4 snapshot writer (`syncHrxReadinessSnapshotV1`,
+   * invoked further down on `selectedId` change) writes the chip onto the
+   * same doc; the listener picks up the writeback so the lg chip in the
+   * header transitions from `'computing'` to its real state without a
+   * manual refresh.
+   *
+   * One listener per assignment — fine at the cardinality this tab sees
+   * (single worker × tenant; usually <= 10 assignments). If we ever need
+   * to scale this up the right move is to batch-`getDoc` instead of
+   * subscribing.
+   */
+  useEffect(() => {
+    if (!tenantId || assignments.length === 0) {
+      setChipDataByAssignmentId(new Map());
+      return;
+    }
+    const unsubs: Array<() => void> = [];
+    for (const a of assignments) {
+      const ref = doc(db, p.assignments(tenantId), a.id);
+      const unsub = onSnapshot(
+        ref,
+        (snap) => {
+          const v = snap.exists() ? (snap.data() as Record<string, unknown>) : null;
+          const snapshotV1 = (v?.readinessSnapshotV1 ?? null) as ReadinessSnapshotV1Firestore | null;
+          const chip = snapshotV1?.jobReadinessChip ?? null;
+          setChipDataByAssignmentId((prev) => {
+            const next = new Map(prev);
+            next.set(a.id, chip);
+            return next;
+          });
+        },
+        (err) => {
+          console.warn('ProfileReadinessTabContent: jobReadinessChip listener failed', a.id, err);
+        },
+      );
+      unsubs.push(unsub);
+    }
+    return () => {
+      for (const u of unsubs) u();
+    };
+  }, [tenantId, assignments]);
+
+  /**
+   * **R.5 + R.6** — live-subscribe to `employeeReadinessItems` for this
+   * worker. Filters by `workerUid` server-side (cheap index hit) and
+   * narrows to vendor-backed types client-side (`e_verify`,
+   * `background_check`, `drug_screen`) — the universe is tiny per worker
+   * (single-digit rows) so the client filter is safe. Drives:
+   *   - R.5: the TNC banner + `EverifyCaseDrawer` deep-link fallback.
+   *   - R.6: the AccuSource adjudication banner + `BackgroundCheckCaseDrawer`
+   *          deep-link fallback.
+   */
+  useEffect(() => {
+    if (!tenantId || !uid) {
+      setVendorEmployeeItems([]);
+      return undefined;
+    }
+    const ref = collection(db, 'tenants', tenantId, 'employeeReadinessItems');
+    const q = query(ref, where('workerUid', '==', uid));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        setVendorEmployeeItems(
+          snap.docs
+            .map((d) => ({ id: d.id, ...(d.data() as EmployeeReadinessItem) }))
+            .filter(
+              (row) =>
+                row.requirementType === 'e_verify' ||
+                row.requirementType === 'background_check' ||
+                row.requirementType === 'drug_screen',
+            ),
+        );
+      },
+      (err) => {
+        console.warn('ProfileReadinessTabContent: vendor employee items listener failed', err);
+      },
+    );
+    return unsub;
+  }, [tenantId, uid]);
+
+  /**
+   * **R.5** — `e_verify` slice of the broader vendor employee items.
+   * Memoised so consumers (`tncItem`, `resolveEverifyCaseId`, etc.)
+   * keep stable references across unrelated re-renders.
+   */
+  const everifyItems = useMemo(
+    () => vendorEmployeeItems.filter((it) => it.requirementType === 'e_verify'),
+    [vendorEmployeeItems],
+  );
+
+  /**
+   * **R.6** — `background_check` + `drug_screen` slice. Drives the BG
+   * adjudication banner + chip drill-in. We treat both types as one
+   * channel because AccuSource bundles them on the same order
+   * (`onBackgroundCheckWriteUpdateReadiness` writes the same
+   * `externalRef` checkId to both).
+   */
+  const bgEmployeeItems = useMemo(
+    () =>
+      vendorEmployeeItems.filter(
+        (it) =>
+          it.requirementType === 'background_check' || it.requirementType === 'drug_screen',
+      ),
+    [vendorEmployeeItems],
+  );
+
+  /**
+   * **R.7** — consume R.4's drill-in URL params:
+   *   `?tab=readiness&assignmentId=<aid>&itemId=<iid>&type=<rtype>&source=<assignment|employee>`
+   *
+   * The outer `UserProfile/index.tsx` already consumes `tab=readiness` to
+   * select this tab and strips the `tab` key. We consume the rest:
+   *   - auto-select `assignmentId` if it matches a loaded assignment;
+   *   - stash `type` for the highlight pass (`highlightRequirementType`);
+   *   - stash `itemId` for diagnostics / future exact match;
+   *   - clear all four params from the URL once handled so a refresh
+   *     doesn't re-flash the highlight.
+   *
+   * We gate on `loading` to make sure assignments are loaded before we try
+   * to match — otherwise the auto-select would no-op.
+   */
+  useEffect(() => {
+    if (handledDeepLinkRef.current) return;
+    if (loading) return;
+    const aid = searchParams.get('assignmentId');
+    const iid = searchParams.get('itemId');
+    const rtype = searchParams.get('type');
+    /**
+     * **R.5 + R.6** — explicit `caseId` (preferred) carried by the chip
+     * drill-in. The same query parameter is used for both vendor channels
+     * (E-Verify and AccuSource) — `requirementType` decides which drawer
+     * the id is routed into. Falls back to `externalRef` lookup on the
+     * matching item (covers older snapshots written before chip plumbing
+     * landed for that vendor).
+     */
+    const caseIdParam = searchParams.get('caseId');
+    if (!aid && !iid && !rtype && !caseIdParam) return;
+    if (rtype === 'e_verify') {
+      const fallback =
+        everifyItems.find((it) => typeof it.externalRef === 'string' && it.externalRef.length > 0)
+          ?.externalRef ?? null;
+      const resolved = caseIdParam ?? fallback;
+      if (resolved) {
+        setDrawerCaseId(resolved);
+      } else if (!caseIdParam && everifyItems.length === 0) {
+        // Items listener hasn't fired yet — defer finalising so the next
+        // re-run (with `everifyItems` populated) can resolve the caseId.
+        return;
+      }
+    }
+    if (rtype === 'background_check' || rtype === 'drug_screen') {
+      const fallback =
+        bgEmployeeItems.find(
+          (it) => typeof it.externalRef === 'string' && it.externalRef.length > 0,
+        )?.externalRef ?? null;
+      const resolved = caseIdParam ?? fallback;
+      if (resolved) {
+        setDrawerCheckId(resolved);
+      } else if (!caseIdParam && bgEmployeeItems.length === 0) {
+        // Same defer pattern as the e_verify branch — let the listener
+        // fire before deciding we have nothing to open.
+        return;
+      }
+    }
+    if (aid && assignments.some((a) => a.id === aid)) {
+      setSelectedId(aid);
+    }
+    if (iid) setHighlightItemId(iid);
+    if (rtype) setHighlightRequirementType(rtype);
+    handledDeepLinkRef.current = true;
+    const next = new URLSearchParams(searchParams);
+    next.delete('assignmentId');
+    next.delete('itemId');
+    next.delete('type');
+    next.delete('source');
+    next.delete('caseId');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, loading, assignments, setSearchParams, everifyItems, bgEmployeeItems]);
+
+  /**
+   * **R.7** — flash the highlighted requirement row(s), then clear the
+   * highlight after ~3.5s. Matches the existing `employmentI9SectionFlash`
+   * / `backgroundComplianceHighlightId` pattern in `UserProfile/index.tsx`.
+   * Also scrolls the first matching row into view once the requirements
+   * have been computed.
+   */
+  useEffect(() => {
+    if (!highlightRequirementType) return;
+    // Scroll into view on next frame so the row has mounted.
+    const matches = highlightedKeysForRequirementType(highlightRequirementType);
+    requestAnimationFrame(() => {
+      window.setTimeout(() => {
+        // Prefer the must / important / admin sort order — first match wins.
+        const candidate = Array.from(
+          document.querySelectorAll<HTMLElement>('[id^="readiness-requirement-row-"]'),
+        ).find((el) => {
+          const k = el.id.replace('readiness-requirement-row-', '');
+          return matches(k);
+        });
+        candidate?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 220);
+    });
+    const t = window.setTimeout(() => {
+      setHighlightRequirementType(null);
+      setHighlightItemId(null);
+    }, 3500);
+    return () => window.clearTimeout(t);
+  }, [highlightRequirementType]);
 
   /** Persist canonical `readinessSnapshotV1` on the assignment (server recomputes; idempotent). */
   useEffect(() => {
@@ -718,13 +1092,140 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
     [readinessResult.requirements],
   );
 
+  /**
+   * **R.7** — predicate that decides which requirement rows render in the
+   * highlighted state on this render pass. Memoised for stability; depends
+   * on `highlightRequirementType` only.
+   */
+  const isRequirementHighlighted = useCallback(
+    (key: string): boolean => {
+      if (!highlightRequirementType) return false;
+      return highlightedKeysForRequirementType(highlightRequirementType)(key);
+    },
+    [highlightRequirementType],
+  );
+
   const renderRequirementRows = (reqs: ReadinessRequirement[]) => (
     <Stack spacing={0.35}>
       {reqs.map((req) => (
-        <ReadinessRequirementRow key={req.key} req={req} onNavigateEmploymentI9={goToEmploymentI9} />
+        <ReadinessRequirementRow
+          key={req.key}
+          req={req}
+          onNavigateEmploymentI9={goToEmploymentI9}
+          highlighted={isRequirementHighlighted(req.key)}
+        />
       ))}
     </Stack>
   );
+
+  /**
+   * **R.5** — first `e_verify` employee item that the worker / recruiter
+   * still owes action on. We treat `'needs_review'` as "TNC awaiting
+   * recruiter action" because R.0c+R.1 normalised TNC into `needs_review`
+   * (severity `hard`, resolutionMethod `recruiter_action`). The banner
+   * uses this row's `externalRef` as the case id; if the trigger never
+   * back-filled `externalRef` (legacy items pre-R.0c), the banner button
+   * falls back to the first non-empty value across `everifyItems`.
+   */
+  const tncItem = useMemo(() => {
+    return everifyItems.find((it) => it.status === 'needs_review') ?? null;
+  }, [everifyItems]);
+
+  const resolveEverifyCaseId = useCallback(
+    (preferred?: string | null): string | null => {
+      if (preferred && preferred.length > 0) return preferred;
+      const candidates = everifyItems
+        .map((it) => (typeof it.externalRef === 'string' ? it.externalRef : ''))
+        .filter((s) => s.length > 0);
+      return candidates[0] ?? null;
+    },
+    [everifyItems],
+  );
+
+  /**
+   * **R.6** — first `background_check` / `drug_screen` employee item that
+   * still owes adjudication action. AccuSource line-level reviews flow
+   * through `'needs_review'` (severity `hard`, resolutionMethod
+   * `recruiter_action` per the readiness writer in
+   * `onBackgroundCheckWriteUpdateReadiness`). The banner we render off
+   * this is the primary entry-point into `BackgroundCheckCaseDrawer` from
+   * the readiness tab; the chip popover row also opens it via
+   * `handleHeaderChipItemClick`.
+   */
+  const bgNeedsReviewItem = useMemo(() => {
+    return bgEmployeeItems.find((it) => it.status === 'needs_review') ?? null;
+  }, [bgEmployeeItems]);
+
+  /**
+   * **R.6** — resolve a `backgroundChecks/{checkId}` doc id from a
+   * preferred value (typically `contributor.caseId` from the chip
+   * popover) with fallback to the first non-empty `externalRef` across
+   * the loaded BG/drug items. Mirrors `resolveEverifyCaseId`.
+   */
+  const resolveBgCheckId = useCallback(
+    (preferred?: string | null): string | null => {
+      if (preferred && preferred.length > 0) return preferred;
+      const candidates = bgEmployeeItems
+        .map((it) => (typeof it.externalRef === 'string' ? it.externalRef : ''))
+        .filter((s) => s.length > 0);
+      return candidates[0] ?? null;
+    },
+    [bgEmployeeItems],
+  );
+
+  /**
+   * **R.7** — `JobReadinessChip` drill-in handler scoped to this tab. The
+   * chip is rendered inline in the header; clicking a popover row fires
+   * with the contributor — we map it to a row highlight + scroll using
+   * the same machinery as the URL deep-link path.
+   *
+   * **R.5** — `e_verify` contributors open `EverifyCaseDrawer` directly,
+   * since E-Verify lives only on the chip / banner / drawer surface (no
+   * row in the requirements list). Uses contributor's `caseId` (R.5 chip
+   * plumbing) with a fall-back to the first `everifyItems.externalRef`.
+   *
+   * **R.6** — `background_check` / `drug_screen` contributors open
+   * `BackgroundCheckCaseDrawer` instead of (or in addition to) row-
+   * highlighting. The contributor `caseId` is the
+   * `backgroundChecks/{checkId}` doc id (writer in
+   * `onBackgroundCheckWriteUpdateReadiness`). We *also* fall through to
+   * the highlight path so the requirement row still flashes — useful
+   * context when the recruiter dismisses the drawer.
+   */
+  const handleHeaderChipItemClick = useCallback(
+    (contributor: JobReadinessChipContributor) => {
+      if (contributor.requirementType === 'e_verify') {
+        const caseId = resolveEverifyCaseId(contributor.caseId);
+        if (caseId) {
+          setDrawerCaseId(caseId);
+          return;
+        }
+      }
+      if (
+        contributor.requirementType === 'background_check' ||
+        contributor.requirementType === 'drug_screen'
+      ) {
+        const checkId = resolveBgCheckId(contributor.caseId);
+        if (checkId) {
+          setDrawerCheckId(checkId);
+        }
+      }
+      setHighlightRequirementType(contributor.requirementType);
+      setHighlightItemId(contributor.itemId);
+    },
+    [resolveEverifyCaseId, resolveBgCheckId],
+  );
+
+  /**
+   * **R.7** — chip data for the currently-selected assignment. `null` while
+   * the snapshot listener hasn't fired yet → renders `'computing'`. Suppressed
+   * entirely on entity-scope (no per-shift chip applies).
+   */
+  const headerChipData = useMemo<JobReadinessChipData | null>(() => {
+    if (!selectedId || selectedId === ENTITY_ONBOARDING_ASSIGNMENT_ID) return null;
+    return chipDataByAssignmentId.get(selectedId) ?? null;
+  }, [selectedId, chipDataByAssignmentId]);
+  const showHeaderChip = !isEntityScopeReadiness && selectedId !== ENTITY_ONBOARDING_ASSIGNMENT_ID;
 
   return (
     <Box sx={{ pb: 2 }}>
@@ -741,6 +1242,72 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
+        </Alert>
+      )}
+
+      {/**
+        * **R.5** — TNC alert banner. Renders only when an `e_verify` item
+        * is in `'needs_review'` AND the viewer can act on E-Verify (HRX
+        * superadmin / tenant Admin). Worker self-views see no banner —
+        * the worker-side action card lives in the Flutter app (R.9). The
+        * banner is the primary entry-point into the drawer for tenant
+        * Admins coming straight to the readiness tab; the chip popover
+        * row also opens it via `handleHeaderChipItemClick`.
+        */}
+      {tncItem && canManageEverify && tenantId && (
+        <Alert
+          severity="error"
+          icon={<WarningAmberIcon fontSize="inherit" />}
+          sx={{ mb: 2 }}
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => {
+                const cid = resolveEverifyCaseId(tncItem.externalRef ?? null);
+                if (cid) setDrawerCaseId(cid);
+              }}
+            >
+              Manage TNC
+            </Button>
+          }
+        >
+          E-Verify TNC requires action — the worker has a Tentative
+          Non-Confirmation that must be resolved before the placement is
+          job-ready.
+        </Alert>
+      )}
+
+      {/**
+        * **R.6** — AccuSource adjudication banner. Renders only when a
+        * `background_check` or `drug_screen` employee item is in
+        * `'needs_review'` AND the viewer can act on AccuSource (mirrors
+        * the backend `ensureAccusourceAdmin` gate via `canManageBgCheck`).
+        * The button opens `BackgroundCheckCaseDrawer` for the resolved
+        * checkId — the chip popover row also opens it via
+        * `handleHeaderChipItemClick`.
+        */}
+      {bgNeedsReviewItem && canManageBgCheck && tenantId && (
+        <Alert
+          severity="warning"
+          icon={<WarningAmberIcon fontSize="inherit" />}
+          sx={{ mb: 2 }}
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => {
+                const cid = resolveBgCheckId(bgNeedsReviewItem.externalRef ?? null);
+                if (cid) setDrawerCheckId(cid);
+              }}
+            >
+              Adjudicate
+            </Button>
+          }
+        >
+          Background screening needs review — at least one service line
+          requires recruiter adjudication before the placement is
+          job-ready.
         </Alert>
       )}
 
@@ -873,12 +1440,27 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
                           : 'Readiness reflects this specific assignment.'}
                       </Typography>
                     </Box>
-                    <Chip
-                      label={readinessBadgeLabel(readinessResult.readiness)}
-                      color={readinessBadgeColor(readinessResult.readiness)}
-                      size="medium"
-                      sx={{ fontWeight: 700 }}
-                    />
+                    {showHeaderChip ? (
+                      // **R.7** — Job Readiness chip (lg variant of the same
+                      // component that ships on placement tiles in R.4).
+                      // Replaces the legacy 4-state badge here when the row
+                      // is a real per-shift assignment; entity-scope rows
+                      // keep the legacy badge below since the chip is
+                      // per-shift only.
+                      <JobReadinessChip
+                        data={headerChipData}
+                        size="lg"
+                        onItemClick={handleHeaderChipItemClick}
+                        popoverTitle={assignmentInput.name}
+                      />
+                    ) : (
+                      <Chip
+                        label={readinessBadgeLabel(readinessResult.readiness)}
+                        color={readinessBadgeColor(readinessResult.readiness)}
+                        size="medium"
+                        sx={{ fontWeight: 700 }}
+                      />
+                    )}
                   </Stack>
 
                   <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1, mb: 1.5 }}>
@@ -929,11 +1511,74 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
                       {renderRequirementRows(requirementsAdmin)}
                     </Box>
                   )}
+
+                  {/**
+                    * **R.3** — generalized CSA action surface for the
+                    * non-vendor readiness items on this assignment
+                    * (willingness types, *_match types, custom). E-Verify
+                    * + AccuSource items are filtered out by the section
+                    * (they have their own drawers above) and refused
+                    * server-side as a defense-in-depth gate. The section
+                    * self-suppresses when `canManage` is false or there
+                    * are no eligible rows, so non-admins / single-vendor
+                    * shifts never see the empty placeholder.
+                    *
+                    * Skipped on the entity-onboarding sentinel — those
+                    * rows aren't backed by `assignmentReadinessItems`.
+                    */}
+                  {tenantId && !isEntityScopeReadiness && selectedAssignment && (
+                    <ReadinessCsaActionsSection
+                      tenantId={tenantId}
+                      assignmentId={selectedAssignment.id}
+                      canManage={canManageBgCheck}
+                    />
+                  )}
                 </>
               )}
             </Paper>
           </Grid>
         </Grid>
+      )}
+
+      {/**
+        * **R.5** — single shared `EverifyCaseDrawer` instance for the
+        * Readiness tab. Opened from (a) the TNC banner above, (b) the
+        * `e_verify` row in the chip popover, and (c) the URL deep-link
+        * (`?tab=readiness&type=e_verify[&caseId=…]`). Mounted at the
+        * panel root so it overlays the whole tab regardless of which
+        * assignment is selected. We pass `tenantId` only when defined to
+        * match the prop shape and avoid spurious re-renders.
+        */}
+      {drawerCaseId && tenantId && (
+        <EverifyCaseDrawer
+          tenantId={tenantId}
+          caseId={drawerCaseId}
+          canManage={canManageEverify}
+          open={Boolean(drawerCaseId)}
+          onClose={() => setDrawerCaseId(null)}
+        />
+      )}
+
+      {/**
+        * **R.6** — single shared `BackgroundCheckCaseDrawer` instance.
+        * Mirrors the `EverifyCaseDrawer` mounting pattern. Opened from
+        * (a) the AccuSource adjudication banner above, (b) the
+        * `background_check` / `drug_screen` chip popover row, and (c)
+        * the URL deep-link
+        * (`?tab=readiness&type=background_check[&caseId=…]` /
+        * `…&type=drug_screen…`). `canManage` mirrors the backend
+        * `ensureAccusourceAdmin` gate via `canManageBgCheck`; the
+        * drawer additionally enforces a tenant fail-safe internally
+        * (refuses write actions on cross-tenant deep-links).
+        */}
+      {drawerCheckId && tenantId && (
+        <BackgroundCheckCaseDrawer
+          tenantId={tenantId}
+          checkId={drawerCheckId}
+          canManage={canManageBgCheck}
+          open={Boolean(drawerCheckId)}
+          onClose={() => setDrawerCheckId(null)}
+        />
       )}
     </Box>
   );

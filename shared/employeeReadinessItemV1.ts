@@ -132,6 +132,34 @@ export type EmployeeReadinessItem = {
   completedAt?: string;
   /** When the status last changed to `blocked` — starts the recruiter review clock. */
   blockedAt?: string;
+  /**
+   * **R.5** — Optional worker-side pending action. Set by recruiter actions
+   * (e.g. E-Verify TNC "mark employee notified") when the worker needs to
+   * make a decision in the worker-app (Flutter / R.9). The Flutter app reads
+   * this to render the action card; clearing the field happens when:
+   *   - `everifyRecordWorkerDecision` fires (worker decided either way), or
+   *   - `everifyMarkReferralInitiated` fires (belt-and-suspenders idempotent
+   *     clear in case the decision wasn't recorded as a discrete event).
+   *
+   * Today's only `kind` is `everify_tnc_pending_decision` — admin marked
+   * employee notified; waiting for worker to choose contest / decline. Once
+   * the worker decides, the marker clears (post-decision state for both
+   * branches is "system-side wait", not a worker pending-action). Future
+   * vendor flows (e.g. AccuSource MVR re-attest) can extend the union.
+   *
+   * Additive: optional everywhere; absence means no pending worker action.
+   */
+  workerAction?: {
+    kind: 'everify_tnc_pending_decision';
+    /** Vendor case id this action is tied to (e.g. `everify_cases/{caseId}`). */
+    caseId: string;
+    /** When the recruiter recorded the notification — drives worker-side timers. */
+    notifiedAt?: string;
+    /** Worker contest / decline deadline (USCIS `dhs_referral_contact_by_date`). */
+    tncResponseDueAt?: string;
+    /** Referral deadline (USCIS `dhs_referral_due_date`). */
+    referralDueAt?: string;
+  };
 };
 
 /** Narrow helper: keys that drive the item id. Keeping it typed + centralized prevents drift. */

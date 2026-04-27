@@ -167,6 +167,18 @@ export interface BackgroundCheckRecord {
   providerFinalReportAt?: Timestamp | null;
   providerFinalDecision?: string | null;
   providerFinalDecisionAt?: Timestamp | null;
+  /**
+   * **R.6** — `true` on synthetic records created via
+   * `markAccusourceBackgroundCheckCompleteOutside` (the "Mark cleared via
+   * prior check" flow). These docs are pre-completed (no provider API
+   * call) so the readiness reconciler can short-circuit to
+   * `complete_pass`. The original AccuSource order's history is left
+   * intact — see `READINESS_R6_HANDOFF.md` D3.R6.
+   */
+  markedCompleteOutsideHrx?: boolean;
+  markedCompleteOutsideHrxAt?: Timestamp | string | null;
+  markedCompleteOutsideHrxBy?: string | null;
+  markedCompleteOutsideHrxNotes?: string | null;
 }
 
 export interface BackgroundCheckEventRow {

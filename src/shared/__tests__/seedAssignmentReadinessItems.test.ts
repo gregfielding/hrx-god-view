@@ -111,6 +111,9 @@ describe('seedAssignmentReadinessItems — id building', () => {
             requirementType: 'custom',
             requirementLabel: 'Client-specific badge pickup',
             customKey: 'badge_pickup_v1',
+            // R.1 — custom items have no type-default severity; callers MUST
+            // supply one explicitly. See seedAssignmentReadinessItems-r1.test.ts.
+            severity: 'hard',
           },
         ],
       }),

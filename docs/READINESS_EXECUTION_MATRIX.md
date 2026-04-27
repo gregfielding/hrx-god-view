@@ -469,6 +469,17 @@ When you add a readiness item, vendor integration, or requirement matcher:
 
 Skipping any of these steps recreates the orphan-item problem this doc exists to fix. Don't.
 
+### Firestore write-pattern guardrails (post Apr 2026 R.0b/R.0c incident)
+
+Server-side Cloud Functions and CLI scripts that write partial patches to user/profile docs:
+
+- **Default to `userRef.update(patch)`** when `patch` keys are dotted-string field paths (e.g. `'workerAttestations.eVerifyWillingness'`). The Admin SDK interprets dotted strings under `update()` as nested field paths.
+- **Do NOT use `userRef.set(patch, { merge: true })` with dotted-string keys.** The Admin SDK writes those as LITERAL top-level fields with embedded dots — the Web Client SDK's opposite-semantics for the same syntax was the root cause of the R.0b/R.0c data corruption (~10,700 garbage fields across 1,175 users, since cleaned).
+- If you specifically need create-or-merge semantics, use `set(data, { merge: true })` with **fully nested patch objects** (no dotted-string keys at any level).
+- The integration test at `functions/src/__tests__/firestore/adminSdkSetMergeDottedKeys.test.ts` pins this semantic in CI; do not weaken it.
+
+See the **Apr 26 2026 post-mortem** in [`READINESS_R0_HANDOFF.md`](./READINESS_R0_HANDOFF.md) for the full incident write-up.
+
 ---
 
 ## 9. References
@@ -479,3 +490,7 @@ Skipping any of these steps recreates the orphan-item problem this doc exists to
 - [`WORKER_READINESS_DATA_CONTRACT.md`](./WORKER_READINESS_DATA_CONTRACT.md) — Worker Profile Readiness data shape
 - [`WORKFORCE_DOMAIN_MODEL.md`](./WORKFORCE_DOMAIN_MODEL.md) — engagementType + AccountWorkforce
 - [`RECRUITING_ROLE_MODEL.md`](./RECRUITING_ROLE_MODEL.md) — CSA / Scheduler / HRX Operator definitions
+- [`READINESS_R0_HANDOFF.md`](./READINESS_R0_HANDOFF.md) — R.0 foundation handoff + Apr 26 2026 SDK-semantic post-mortem (R.0b/R.0c incident)
+- [`READINESS_R5_HANDOFF.md`](./READINESS_R5_HANDOFF.md) — E-Verify TNC contestation flow + drawer pattern + chip `caseId` propagation
+- [`READINESS_R6_HANDOFF.md`](./READINESS_R6_HANDOFF.md) — AccuSource adjudication drawer reusing the R.5 drawer pattern + chip `caseId` propagation extended to `background_check` / `drug_screen`
+- [`READINESS_R3_HANDOFF.md`](./READINESS_R3_HANDOFF.md) — generalized CSA action callables (`confirmReadinessItem` / `waiveReadinessItem` / `markReadinessItemFailed`) for non-vendor readiness items, `csaActions.history[]` audit trail parallel to AccuSource's, `resolutionMethod` writer for `csa_confirmed` / `csa_waived`

@@ -161,6 +161,12 @@ interface ScopingData {
     backgroundCheckPackages?: string[];
     backgroundCheckDetails?: string;
     drugScreen?: boolean;
+    /**
+     * @deprecated R.0d (Apr 2026) — soft-deprecated by the Readiness Rebuild.
+     * Subsumed by AccuSource `screeningPackageId` + `additionalScreenings`.
+     * No new writes; existing data on legacy deal docs is preserved. See
+     * docs/READINESS_R0_HANDOFF.md.
+     */
     drugScreeningPanels?: string[];
     drugScreenDetails?: string;
     additionalScreenings?: string[];
@@ -339,7 +345,8 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
   const [hasInitialized, setHasInitialized] = useState(false);
   const [uploadingContract, setUploadingContract] = useState(false);
   const [backgroundCheckPackages, setBackgroundCheckPackages] = useState<Array<{title: string, description: string}>>([]);
-  const [drugScreeningPanels, setDrugScreeningPanels] = useState<Array<{title: string, description: string}>>([]);
+  // R.0d (Apr 2026): drugScreeningPanels state removed — soft-deprecated;
+  // no UI binding remained. See docs/READINESS_R0_HANDOFF.md.
   const [uniformRequirements, setUniformRequirements] = useState<Array<{title: string, description: string}>>([]);
   const [ppeOptions, setPpeOptions] = useState<Array<{title: string, description: string}>>([]);
   const [licensesCerts, setLicensesCerts] = useState<Array<{title: string, description: string}>>([]);
@@ -351,7 +358,6 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
   // Build a single company defaults object for options sourcing
   const companyDefaultsForOptions = {
     backgroundPackages: backgroundCheckPackages,
-    screeningPanels: drugScreeningPanels,
     uniformRequirements,
     ppe: ppeOptions,
     licensesCerts: licensesCerts,
@@ -409,7 +415,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         if (docSnap.exists()) {
           const data = docSnap.data();
           const packages = data.backgroundPackages || [];
-          const panels = data.screeningPanels || [];
+          // R.0d (Apr 2026): drugScreeningPanels load removed — no consumer.
           const uniforms = data.uniformRequirements || [];
           const ppe = data.ppe || [];
           const licensesCerts = data.licensesCerts || [];
@@ -419,7 +425,6 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           const langs = data.languages || [];
           const skillOptions = data.skills || [];
           console.log('📦 Fetched background check packages:', packages);
-          console.log('💊 Fetched drug screening panels:', panels);
           console.log('👔 Fetched uniform requirements:', uniforms);
           console.log('🦺 Fetched PPE options:', ppe);
           console.log('📜🏆 Fetched licenses & certifications:', licensesCerts);
@@ -429,7 +434,6 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           console.log('🗣️ Fetched languages:', langs);
           console.log('🛠️ Fetched skills:', skillOptions);
           setBackgroundCheckPackages(packages);
-          setDrugScreeningPanels(panels);
           setUniformRequirements(uniforms);
           setPpeOptions(ppe);
           setLicensesCerts(licensesCerts);

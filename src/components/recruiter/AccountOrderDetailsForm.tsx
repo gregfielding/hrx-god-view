@@ -27,7 +27,7 @@ import {
   type RecruiterOrderDetailsData,
 } from '../../utils/recruiterAccountOrderDefaultsMerge';
 import { experienceOptions, educationOptions } from '../../data/experienceOptions';
-import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../../data/screeningsOptions';
+import { backgroundCheckOptions, additionalScreeningOptions } from '../../data/screeningsOptions';
 import { getOptionsForField } from '../../utils/fieldOptions';
 import { getRequirementPackIds, JOB_REQUIREMENT_PACKS } from '../../data/jobRequirementPacks';
 import { AccusourcePackageSelector } from './AccusourcePackageSelector';
@@ -172,9 +172,6 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
   const bgOptions = (getOptionsForField('backgroundCheckPackages', emptyOpts) as { value: string; label: string }[])?.length
     ? getOptionsForField('backgroundCheckPackages', emptyOpts)
     : backgroundCheckOptions.map((o) => ({ value: o.value, label: o.label }));
-  const drugOptions = (getOptionsForField('drugScreeningPanels', emptyOpts) as { value: string; label: string }[])?.length
-    ? getOptionsForField('drugScreeningPanels', emptyOpts)
-    : drugScreeningOptions.map((o) => ({ value: o.value, label: o.label }));
   const addlOptions = (getOptionsForField('additionalScreenings', emptyOpts) as { value: string; label: string }[])?.length
     ? getOptionsForField('additionalScreenings', emptyOpts)
     : additionalScreeningOptions.map((o) => ({ value: o.value, label: o.label }));
@@ -218,19 +215,10 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
               renderTags={(value, getTagProps) => value.map((option, index) => <Chip variant="outlined" label={option} {...getTagProps({ index })} key={option} />)}
             />
           </Grid>
-          <Grid item xs={12}>
-            <Autocomplete
-              multiple
-              fullWidth
-              size="small"
-              options={drugOptions.map((o) => o.label)}
-              value={form.drugScreeningPanels ?? []}
-              onChange={(_, v) => update({ drugScreeningPanels: v })}
-              onBlur={scheduleSave}
-              renderInput={(params) => <TextField {...params} label="Drug Screening Panels" onBlur={scheduleSave} />}
-              renderTags={(value, getTagProps) => value.map((option, index) => <Chip variant="outlined" label={option} {...getTagProps({ index })} key={option} />)}
-            />
-          </Grid>
+          {/* R.0d (Apr 2026): "Drug Screening Panels" Autocomplete removed —
+              soft-deprecated by the Readiness Rebuild; subsumed by the
+              AccuSource package selector above + "Additional Screenings"
+              below. See docs/READINESS_R0_HANDOFF.md. */}
           <Grid item xs={12}>
             <Autocomplete
               multiple

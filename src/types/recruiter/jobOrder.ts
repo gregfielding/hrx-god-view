@@ -111,9 +111,46 @@ export interface JobOrder {
   languagesRequiredV2?: import('../../shared/languageProficiency').RequiredLanguageV1[];
   /** Required licenses with class + required endorsements. Supersedes `requiredLicenses: string[]`. */
   requiredLicensesV2?: import('../../shared/licenseRecord').RequiredLicenseV1[];
+  /**
+   * **R.1 (D4.R1, Q-R1-1)** — Per-skill severity overrides for the
+   * `skillsRequired` parallel string array. Keyed by the same slug used to
+   * build the `skill_match` readiness item (`slugify(skill)`). When absent,
+   * skill items fall through to `requirementSeverityOverrides.skill_match`
+   * then to the `'soft'` type default.
+   *
+   * Why parallel-map (not migrating `skillsRequired` to objects): keeps every
+   * existing read site of `skillsRequired: string[]` working untouched and
+   * confines the override surface to the matcher seed path.
+   */
+  skillsRequiredSeverityOverrides?: Record<string, 'hard' | 'soft'>;
+  /**
+   * **R.1 (D4.R1)** — Per-requirement-type severity overrides for the
+   * singletons that have no per-instance severity slot (e.g. `e_verify`,
+   * `background_check`, `drug_screen`, `screening_package_match`,
+   * `safety_briefing`, `orientation`, `ppe_acknowledgement`,
+   * `shift_confirmation`, `education_match`). The seeder's resolution chain
+   * is per-instance → this map → type default.
+   *
+   * Cert / license / language requirements expose `severity` on their own
+   * per-instance schemas (`Phase1CertificationRequirement`, `RequiredLicenseV1`,
+   * `RequiredLanguageV1`); this map still applies as a fallback when none of
+   * the instances on a JO declare it.
+   */
+  requirementSeverityOverrides?: Partial<
+    Record<
+      import('../../shared/assignmentReadinessItemV1').AssignmentReadinessRequirementType,
+      'hard' | 'soft'
+    >
+  >;
   physicalRequirements?: string;
   ppeRequirements?: string;
   ppeProvidedBy: 'company' | 'worker' | 'both';
+  /**
+   * @deprecated R.0d (Apr 2026) — soft-deprecated by the Readiness Rebuild.
+   * No new writes; existing data is preserved. Read sites continue to render
+   * for legacy JOs but receive an IDE strikethrough as a refactor signal.
+   * See `docs/READINESS_R0_HANDOFF.md`.
+   */
   additionalTrainingRequired?: string;
   
   // Context & Notes
@@ -132,6 +169,11 @@ export interface JobOrder {
   internalNotes?: string;
   
   // Onboarding
+  /**
+   * @deprecated R.0d (Apr 2026) — soft-deprecated by the Readiness Rebuild.
+   * Subsumed by Everee employee-readiness layer. No new writes; existing data
+   * is preserved. See `docs/READINESS_R0_HANDOFF.md`.
+   */
   onboardingRequirements?: string[];
 
   /** Job Score: requirement pack id for eligibility + fit (e.g. warehouse_w2, general_labor_1099, nursing_w2) */
@@ -174,6 +216,11 @@ export interface JobOrder {
   replacingExistingAgency?: boolean;
   rolloverExistingStaff?: boolean;
   backgroundCheckPackages?: string[];
+  /**
+   * @deprecated R.0d (Apr 2026) — soft-deprecated by the Readiness Rebuild.
+   * Subsumed by AccuSource `screeningPackageId` + `additionalScreenings`. No
+   * new writes; existing data is preserved. See `docs/READINESS_R0_HANDOFF.md`.
+   */
   drugScreeningPanels?: string[];
   additionalScreenings?: string[];
   eVerifyRequired?: boolean;
@@ -334,9 +381,22 @@ export interface JobOrderFormData {
   educationRequired?: string;
   languagesRequired?: string[];
   skillsRequired?: string[];
+  /** R.1 (D4.R1, Q-R1-1) — see main `JobOrder` type for semantics. */
+  skillsRequiredSeverityOverrides?: Record<string, 'hard' | 'soft'>;
+  /** R.1 (D4.R1) — see main `JobOrder` type for semantics. */
+  requirementSeverityOverrides?: Partial<
+    Record<
+      import('../../shared/assignmentReadinessItemV1').AssignmentReadinessRequirementType,
+      'hard' | 'soft'
+    >
+  >;
   physicalRequirements?: string;
   ppeRequirements?: string;
   ppeProvidedBy: 'company' | 'worker' | 'both';
+  /**
+   * @deprecated R.0d (Apr 2026) — soft-deprecated by the Readiness Rebuild.
+   * No new writes; existing data is preserved. See `docs/READINESS_R0_HANDOFF.md`.
+   */
   additionalTrainingRequired?: string;
 
   // Context & Notes
@@ -355,6 +415,11 @@ export interface JobOrderFormData {
   internalNotes?: string;
   
   // Onboarding
+  /**
+   * @deprecated R.0d (Apr 2026) — soft-deprecated by the Readiness Rebuild.
+   * Subsumed by Everee employee-readiness layer. No new writes; existing data
+   * is preserved. See `docs/READINESS_R0_HANDOFF.md`.
+   */
   onboardingRequirements?: string[];
 }
 

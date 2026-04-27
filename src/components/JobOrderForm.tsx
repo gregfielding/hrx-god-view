@@ -357,7 +357,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   
   // Company Defaults State
   const [backgroundCheckPackages, setBackgroundCheckPackages] = useState<Array<{title: string, description: string}>>([]);
-  const [drugScreeningPanels, setDrugScreeningPanels] = useState<Array<{title: string, description: string}>>([]);
+  // R.0d (Apr 2026): drugScreeningPanels state removed — soft-deprecated;
+  // no UI binding remained. See docs/READINESS_R0_HANDOFF.md.
   const [uniformRequirements, setUniformRequirements] = useState<Array<{title: string, description: string}>>([]);
   const [ppeOptions, setPpeOptions] = useState<Array<{title: string, description: string}>>([]);
   const [licensesCerts, setLicensesCerts] = useState<Array<{title: string, description: string}>>([]);
@@ -368,7 +369,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   const [skills, setSkills] = useState<Array<{title: string, description: string}>>([]);
   const companyDefaultsForOptions = {
     backgroundPackages: backgroundCheckPackages,
-    screeningPanels: drugScreeningPanels,
     uniformRequirements,
     ppe: ppeOptions,
     licensesCerts: licensesCerts,
@@ -439,7 +439,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     replacingExistingAgency: false,
     rolloverExistingStaff: false,
     backgroundCheckPackages: [],
-    drugScreeningPanels: [],
+    // R.0d (Apr 2026): drugScreeningPanels removed from form state init.
     additionalScreenings: [],
     eVerifyRequired: false,
     dressCode: [],
@@ -798,6 +798,10 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         if (cancelled || !merged || mergeSeq !== orderDefaultsMergeSeqRef.current) return;
         const od = merged.orderDetails;
         const bgLen = od.backgroundCheckPackages?.length ?? 0;
+        // R.0d (Apr 2026): `od.drugScreeningPanels` is reading a soft-deprecated
+        // field. Kept for now so legacy account-defaults docs continue to derive
+        // `drugScreenRequired` correctly during the 90-day audit window.
+        // Remove during R.0d hard-remove follow-up.
         const drugLen = od.drugScreeningPanels?.length ?? 0;
         const hasScreeningPackage = Boolean(
           merged.screeningPackageId != null && String(merged.screeningPackageId).trim() !== '',
@@ -807,9 +811,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           screeningPackageId: merged.screeningPackageId,
           screeningPackageName: merged.screeningPackageName,
           eVerifyRequired: merged.eVerifyRequired,
-          /* Legacy free-text BG/drug dropdowns removed — use AccuSource package + Additional Screenings. */
+          /* R.0d (Apr 2026): Legacy free-text BG/drug dropdowns retired —
+             use AccuSource package + Additional Screenings. drugScreeningPanels
+             write removed; backgroundCheckPackages still cleared explicitly
+             during this transition. */
           backgroundCheckPackages: [] as string[],
-          drugScreeningPanels: [] as string[],
           additionalScreenings: od.additionalScreenings ?? [],
           licensesCerts: od.licensesCerts ?? [],
           experienceRequired: od.experienceRequired ?? '',
@@ -1042,7 +1048,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       if (docSnap.exists()) {
         const data = docSnap.data();
         setBackgroundCheckPackages(data.backgroundPackages || []);
-        setDrugScreeningPanels(data.screeningPanels || []);
+        // R.0d (Apr 2026): setDrugScreeningPanels removed (state was already
+        // dropped above). The screeningPanels collection on company-defaults
+        // is no longer surfaced anywhere.
         setUniformRequirements(data.uniformRequirements || []);
         setPpeOptions(data.ppe || []);
         setLicensesCerts(data.licensesCerts || []);
@@ -1394,9 +1402,10 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           // Scoping Stage Fields - from stageData.scoping
           replacingExistingAgency: stageData.scoping?.replacingExistingAgency || false,
           rolloverExistingStaff: stageData.scoping?.rolloverExistingStaff || false,
-          /* Retired: use AccuSource package + Additional Screenings; save path clears stored arrays. */
+          /* R.0d (Apr 2026): drugScreeningPanels write removed; legacy data
+             on the JO doc is preserved untouched. backgroundCheckPackages
+             still cleared explicitly during the AccuSource transition. */
           backgroundCheckPackages: [] as string[],
-          drugScreeningPanels: [] as string[],
           additionalScreenings: Array.isArray((data as any).additionalScreenings)
             ? (data as any).additionalScreenings
             : (stageData.scoping?.compliance?.additionalScreenings || []),
@@ -1662,7 +1671,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             backgroundCheck: (dataToUse as any).backgroundCheckRequired || undefined,
             backgroundCheckPackages: [],
             drugScreen: (dataToUse as any).drugScreenRequired || undefined,
-            drugScreeningPanels: [],
+            // R.0d (Apr 2026): drugScreeningPanels write removed from compliance save.
             additionalScreenings: (dataToUse as any).additionalScreenings || [],
             eVerify: (dataToUse as any).eVerifyRequired || undefined,
             licensesCerts: (dataToUse as any).licensesCerts || [],
@@ -2016,7 +2025,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               backgroundCheck: formData.backgroundCheckRequired,
               backgroundCheckPackages: [],
               drugScreen: formData.drugScreenRequired,
-              drugScreeningPanels: [],
+              // R.0d (Apr 2026): drugScreeningPanels write removed from compliance save.
               additionalScreenings: formData.additionalScreenings,
               eVerify: formEntity ? formEntity.everifyRequired : formData.eVerifyRequired,
               licensesCerts: formData.licensesCerts,
@@ -2211,9 +2220,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         screeningPackageId: String(formData.screeningPackageId ?? '').trim() || null,
         screeningPackageName: String(formData.screeningPackageName ?? '').trim() || null,
         
-        // Background / drug screening via AccuSource package + Additional Screenings (legacy arrays cleared)
+        // Background / drug screening via AccuSource package + Additional Screenings.
+        // R.0d (Apr 2026): drugScreeningPanels top-level write removed.
         backgroundCheckPackages: [],
-        drugScreeningPanels: [],
         additionalScreenings: formData.additionalScreenings || [],
         
         // Customer Rules
