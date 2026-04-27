@@ -180,7 +180,8 @@ function fromEmployeeItem(item) {
     contribution = cls.contribution;
     detail = cls.detail;
   }
-  const caseId = item.requirementType === "e_verify" && typeof item.externalRef === "string" && item.externalRef.length > 0 ? item.externalRef : void 0;
+  const requirementTypeCarriesCaseId = item.requirementType === "e_verify" || item.requirementType === "background_check" || item.requirementType === "drug_screen";
+  const caseId = requirementTypeCarriesCaseId && typeof item.externalRef === "string" && item.externalRef.length > 0 ? item.externalRef : void 0;
   return {
     source: "employee",
     itemId: item.id,
