@@ -25,6 +25,8 @@ import {
 import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, addWeeks, subWeeks, isToday } from 'date-fns';
 import { Assignment, AssignmentStatus } from '../../types/phase2';
 import { getAssignmentService } from '../../services/phase2/assignmentService';
+import { getWeeklyScheduleTimeRangeForDate } from '../../utils/weeklySchedule';
+import { formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
 
 interface AssignmentsCalendarProps {
   tenantId: string;
@@ -230,11 +232,16 @@ const AssignmentsCalendar: React.FC<AssignmentsCalendarProps> = ({
                                 <Typography variant="body2">
                                   Status: {assignment.status}
                                 </Typography>
+                                {assignment.weeklySchedule && assignment.endDate && assignment.endDate !== assignment.startDate && (
+                                  <Typography variant="body2">
+                                    Today: {getWeeklyScheduleTimeRangeForDate(assignment.weeklySchedule, day) || 'Off'}
+                                  </Typography>
+                                )}
                                 <Typography variant="body2">
                                   Worksite: {assignment.worksite}
                                 </Typography>
                                 <Typography variant="body2">
-                                  Pay: ${assignment.payRate}/hr
+                                  Pay: {formatHourlyPayRateForDisplay(assignment.payRate) ?? '—'}
                                 </Typography>
                               </Box>
                             }

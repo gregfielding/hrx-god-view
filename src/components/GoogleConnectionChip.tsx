@@ -345,18 +345,9 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
     : (!googleStatus.gmail.connected && googleStatus.calendar.connected ? 'Calendar only' : undefined);
 
   // Debug logging - only in development
-  // Reduce debug spam: log only on significant changes
+  // Google connection status tracking (debug logging removed)
   useEffect(() => {
-    if (process.env.NODE_ENV === 'development') {
-      console.log('GoogleConnectionChip Debug:', {
-        isConnected,
-        connectedEmail,
-        connectionCount,
-        googleStatus,
-        user: user?.uid,
-        isOAuthInProgress
-      });
-    }
+    // Connection status changes handled silently
   }, [isConnected, connectedEmail, connectionCount, googleStatus.gmail.connected, googleStatus.calendar.connected, user?.uid, isOAuthInProgress]);
 
   // Handle chip click

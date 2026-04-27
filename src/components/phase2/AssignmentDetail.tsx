@@ -51,6 +51,7 @@ import {
 } from '../../types/phase2';
 import { getAssignmentService } from '../../services/phase2/assignmentService';
 import { safeToDate } from '../../utils/dateUtils';
+import { formatWeeklyScheduleSummary } from '../../utils/weeklySchedule';
 
 interface AssignmentDetailProps {
   assignment: Assignment;
@@ -129,7 +130,6 @@ const AssignmentDetail: React.FC<AssignmentDetailProps> = ({
       
       await assignmentService.updateAssignment(
         tenantId,
-        assignment.jobOrderId,
         assignment.id,
         {
           candidateId: editedAssignment.candidateId,
@@ -163,7 +163,6 @@ const AssignmentDetail: React.FC<AssignmentDetailProps> = ({
       
       await assignmentService.updateAssignmentStatus(
         tenantId,
-        assignment.jobOrderId,
         assignment.id,
         newStatus,
         'current-user' // TODO: Get actual user ID
@@ -415,6 +414,22 @@ const AssignmentDetail: React.FC<AssignmentDetailProps> = ({
                       </Typography>
                     )}
                   </Box>
+
+                  {editedAssignment.weeklySchedule &&
+                    editedAssignment.endDate &&
+                    editedAssignment.endDate !== editedAssignment.startDate && (
+                      <Box>
+                        <Typography variant="body2" color="text.secondary" gutterBottom>
+                          Weekly Schedule
+                        </Typography>
+                        <Typography variant="body1">
+                          {formatWeeklyScheduleSummary(editedAssignment.weeklySchedule) || '—'}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          This assignment covers a date range; times may vary by day.
+                        </Typography>
+                      </Box>
+                    )}
 
                   <Box>
                     <Typography variant="body2" color="text.secondary" gutterBottom>

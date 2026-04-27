@@ -45,8 +45,9 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { JobOrderService } from '../../services/recruiter/jobOrderService';
 import { JobOrder, JobOrderStatus } from '../../types/recruiter/jobOrder';
-import JobOrderForm from './JobOrderForm';
+import JobOrderForm from '../JobOrderForm';
 import PostToJobsBoardDialog from './PostToJobsBoardDialog';
+import { formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
 
 interface JobOrdersManagementProps {
   onViewJobOrder?: (jobOrderId: string) => void;
@@ -137,7 +138,7 @@ const JobOrdersManagement: React.FC<JobOrdersManagementProps> = ({ onViewJobOrde
     if (onViewJobOrder) {
       onViewJobOrder(jobOrderId);
     } else {
-      navigate(`/recruiter/job-orders/${jobOrderId}`);
+      navigate(`/jobs/job-orders/${jobOrderId}`);
     }
   };
 
@@ -434,7 +435,7 @@ const JobOrdersManagement: React.FC<JobOrdersManagementProps> = ({ onViewJobOrde
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                         <MoneyIcon fontSize="small" color="action" />
                         <Typography variant="body2">
-                          ${jobOrder.payRate}/hr
+                          {formatHourlyPayRateForDisplay(jobOrder.payRate) ?? '—'}
                         </Typography>
                       </Box>
                     </TableCell>

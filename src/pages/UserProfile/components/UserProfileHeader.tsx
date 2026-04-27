@@ -1,13 +1,20 @@
-import React, { useRef, useState } from 'react';
-import { Box, Avatar, IconButton, Button, Typography, Stack, Link, Chip, Breadcrumbs } from '@mui/material';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
+import { toChipLabel } from '../../../utils/chipLabel';
+import { Box, Avatar, IconButton, Button, Typography, Stack, Link, Chip, Breadcrumbs, Tooltip, CircularProgress, Snackbar, Alert, GlobalStyles, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions } from '@mui/material';
+import { keyframes } from '@emotion/react';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import { useTheme } from '@mui/material/styles';
 import { Link as RouterLink } from 'react-router-dom';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import ClearIcon from '@mui/icons-material/Clear';
 import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
 import PhoneOutlinedIcon from '@mui/icons-material/PhoneOutlined';
+import MessageIcon from '@mui/icons-material/Message';
+import DescriptionIcon from '@mui/icons-material/Description';
+import NoteIcon from '@mui/icons-material/Note';
 import BusinessIcon from '@mui/icons-material/Business';
 import LocationOnOutlinedIcon from '@mui/icons-material/LocationOnOutlined';
 import LinkedInIcon from '@mui/icons-material/LinkedIn';
@@ -15,8 +22,40 @@ import PersonIcon from '@mui/icons-material/Person';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import PublicIcon from '@mui/icons-material/Public';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
+import InsightsIcon from '@mui/icons-material/Insights';
 
 import { storage, db } from '../../../firebase'; // adjust path
+import { getScoreColor, getScoreLabel } from '../../../utils/applicantScoring';
+import { formatPhoneNumber } from '../../../utils/formatPhone';
+import FavoriteButton from '../../../components/FavoriteButton';
+import { useFavorites } from '../../../hooks/useFavorites';
+import { useAuth } from '../../../contexts/AuthContext';
+import CertificationsModal from './CertificationsModal';
+import MessageDrawer, { MessageRecipient } from '../../../components/MessageDrawer';
+import { FirebaseError } from 'firebase/app';
+import { functions } from '../../../firebase';
+import { httpsCallable } from 'firebase/functions';
+import MissingItemsAlert from './MissingItemsAlert';
+import ProfileQualityMeter from './ProfileQualityMeter';
+import CompactProfileQualityBar from './CompactProfileQualityBar';
+import RecordHeaderActionIcon from './RecordHeaderActionIcon';
+import { recordHeaderActionIconButtonSx, recordHeaderTooltipComponentsProps } from './recordHeaderStyles';
+import type { ScoreSummary, ScoringDistribution } from '../../../utils/scoreSummary';
+import { resolveRecruiterPrimaryDisplay } from '../../../utils/scoring/recruiterPrimaryDisplay';
+import { getRecruiterMasterDisplayForAdminUi } from '../../../utils/scoring/recruiterMasterScoreDisplay';
+import { recruiterTableLetterGrade } from '../../../utils/recruiterUsersReadinessDisplay';
+import type { WorkerInterviewAiBlock } from '../../../types/workerAiPrescreenInterview';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import { detectMissingItems } from '../utils/detectMissingItems';
+import AddUserNoteDialog from './AddUserNoteDialog';
+import StartOnboardingDialog from './StartOnboardingDialog';
+import { isOnboardingInProgress, getActiveOnboardingType, cancelOnboarding } from '../utils/onboardingHelpers';
+import ImageCropDialog from '../../../components/common/ImageCropDialog';
+import UserEntityOnboardingStatusCell from '../../../components/tables/UserEntityOnboardingStatusCell';
+import { useUserProfileEntityEmploymentChips } from '../../../hooks/useUserProfileEntityEmploymentChips';
+import AvatarVerificationStatus from '../../../components/avatar/AvatarVerificationStatus';
+import AvatarVerificationAdminActions from '../../../components/avatar/AvatarVerificationAdminActions';
+import { useAvatarVerification } from '../../../hooks/useAvatarVerification';
 
 interface UserProfileHeaderProps {
   uid: string;
@@ -30,6 +69,9 @@ interface UserProfileHeaderProps {
   jobTitle?: string;
   phone?: string;
   email?: string;
+  createdAt?: any;
+  city?: string;
+  state?: string;
   workStatus?: string;
   securityLevel?: string; // '0'..'7'
   employmentType?: string;
@@ -43,6 +85,88 @@ interface UserProfileHeaderProps {
   managerId?: string;
   showBreadcrumbs?: boolean;
   breadcrumbPath?: Array<{ label: string; href?: string }>;
+  isAdminView?: boolean; // True if viewer is admin (security >= 5)
+  /** True only when staff (security 0–4) views their own record. Guard all staff-self-view-only UI with this so admin view is unchanged. */
+  isStaffViewingOwnRecord?: boolean;
+  profileScore?: number; // Profile completeness score (0-100)
+  scoreSummary?: ScoreSummary;
+  /** Latest worker AI prescreen `ai` from parent — keeps header aligned with interview operational score */
+  latestPrescreenInterviewAi?: WorkerInterviewAiBlock | null;
+  /** Canonical recruiter score on user doc — supporting detail + category fallback */
+  recruiterScoreSnapshot?: unknown;
+  /** Master Recruiter Score — preferred headline for admin/recruiter views */
+  recruiterMasterScore?: unknown;
+  /** Risk profile map — needed for master score client fallback */
+  riskProfile?: unknown;
+  /** Live category scores on user doc — improves master client fallback */
+  categoryScoresCurrent?: unknown;
+  scoringDistribution?: ScoringDistribution | null;
+  // New props for document access and additional data
+  resume?: {
+    fileName: string;
+    downloadUrl?: string;
+    storagePath?: string;
+  } | null;
+  certifications?: Array<{
+    name: string;
+    fileUrl?: string;
+    fileName?: string;
+    issuer?: string;
+    dateObtained?: string;
+    expirationDate?: string;
+    uploadedAt?: Date;
+  }>;
+  workEligibility?: boolean;
+  backgroundCheckStatus?: string;
+  vaccinationStatus?: string;
+  yearsExperience?: string;
+  primarySkills?: string[];
+  languages?: string[]; // Array of language strings
+  behavioralTraits?: string[]; // Array of behavioral/personality traits
+  educationLevel?: string;
+  education?: Array<{ degree?: string; [key: string]: any }>;
+  workExperience?: Array<{ jobTitle?: string; title?: string; [key: string]: any }>;
+  activeApplicationsCount?: number;
+  resumeCompleteness?: number;
+  onTabChange?: (tabLabel: string) => void; // Callback to change tabs
+  eVerifyOrders?: Array<{ id: string; dateSubmitted: string; status: string; result?: string; completionDate?: string; submittedBy?: string }>;
+  backgroundCheckOrders?: Array<{ id: string; type: string; typeLabel: string; dateOrdered: string; status: string; result?: string; completionDate?: string; submittedBy?: string }>;
+  drugScreeningOrders?: Array<{ id: string; type: string; typeLabel: string; dateOrdered: string; status: string; result?: string; completionDate?: string; submittedBy?: string }>;
+  additionalScreeningOrders?: Array<{ id: string; type: string; typeLabel: string; dateOrdered: string; status: string; result?: string; completionDate?: string; submittedBy?: string }>;
+  emergencyContact?: {
+    name?: string;
+    phone?: string;
+    relationship?: string;
+  } | null;
+  dateOfBirth?: Date | string | any;
+  onAddNote?: () => void;
+  onEditProfile?: () => void;
+  onSendApplicationLink?: () => void;
+  onPrintProfile?: () => void;
+  onCreateAssignment?: () => void;
+  onCallNow?: () => void;
+  onMessageApplicant?: () => void;
+  onViewTimeline?: () => void;
+  hasPhone?: boolean;
+  employeeOnboardStatus?: string;
+  contractorOnboardStatus?: string;
+  tenantId?: string;
+  onOnboardingStarted?: () => void;
+  headerUserGroups?: Array<{ id: string; title: string }>;
+  /** When true, show Indeed Flex logo beside name (user doc `addedToIndeedFlex`). */
+  showIndeedFlexBadge?: boolean;
+  /**
+   * Per-service AccuSource adjudication verdict summary.
+   * Shape: "Social Security Locator: Passed, CrimNet: Passed, 4-Panel Urine: Waiting".
+   * Rendered below the screening pills when non-empty.
+   */
+  screeningVerdictSummary?: {
+    summaryText: string;
+    overallVerdict: 'PASSED' | 'FAILED' | 'NEEDS_REVIEW' | 'PENDING' | 'NONE';
+    anyFailed: boolean;
+    anyNeedsReview: boolean;
+    allPassed: boolean;
+  } | null;
 }
 
 const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
@@ -57,6 +181,9 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   jobTitle,
   phone,
   email,
+  createdAt,
+  city,
+  state,
   workStatus,
   securityLevel,
   employmentType,
@@ -70,9 +197,308 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   managerId,
   showBreadcrumbs = false,
   breadcrumbPath = [],
+  isAdminView = false,
+  isStaffViewingOwnRecord = false,
+  profileScore,
+  scoreSummary,
+  latestPrescreenInterviewAi,
+  recruiterScoreSnapshot,
+  recruiterMasterScore,
+  riskProfile,
+  categoryScoresCurrent,
+  scoringDistribution,
+  resume,
+  certifications = [],
+  workEligibility,
+  backgroundCheckStatus,
+  vaccinationStatus,
+  yearsExperience,
+  primarySkills = [],
+  languages = [],
+  behavioralTraits = [],
+  educationLevel,
+  education = [],
+  workExperience = [],
+  activeApplicationsCount,
+  resumeCompleteness,
+  onTabChange,
+  eVerifyOrders = [],
+  backgroundCheckOrders = [],
+  drugScreeningOrders = [],
+  additionalScreeningOrders = [],
+  emergencyContact,
+  dateOfBirth,
+  onAddNote,
+  onEditProfile,
+  onSendApplicationLink,
+  onPrintProfile,
+  onCreateAssignment,
+  onCallNow,
+  onMessageApplicant,
+  onViewTimeline,
+  hasPhone,
+  employeeOnboardStatus,
+  contractorOnboardStatus,
+  tenantId,
+  onOnboardingStarted,
+  headerUserGroups = [],
+  showIndeedFlexBadge = false,
+  screeningVerdictSummary = null,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [hover, setHover] = useState(false);
+  const [cropOpen, setCropOpen] = useState(false);
+  const [pendingImageSrc, setPendingImageSrc] = useState<string | null>(null);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const [showCertificationsModal, setShowCertificationsModal] = useState(false);
+  const [copySuccess, setCopySuccess] = useState<string | null>(null);
+  const [avatarSaveError, setAvatarSaveError] = useState<string | null>(null);
+  const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
+  const [showStartOnboardingDialog, setShowStartOnboardingDialog] = useState(false);
+  const [showCancelOnboardingDialog, setShowCancelOnboardingDialog] = useState(false);
+  const [cancellingOnboarding, setCancellingOnboarding] = useState(false);
+  const { securityLevel: viewerSecurityLevel, tenantId: authTenantId, activeTenant, user } = useAuth();
+  const effectiveTenantId = tenantId || authTenantId || activeTenant?.id || '';
+  const viewerLevel = parseInt(viewerSecurityLevel || '0');
+  const canViewAdminContent = viewerLevel >= 5;
+  const canViewUserGroupsInHeader = viewerLevel >= 4;
+  const isOwnProfile = !!user?.uid && user.uid === uid;
+  // Contact icons row should only show for admin viewers (5-7) and never on a user's own profile.
+  const canShowContactIconsRow = !isOwnProfile && viewerLevel >= 5 && viewerLevel <= 7;
+  const showEntityEmploymentStatusRow =
+    isAdminView && !isOwnProfile && viewerLevel >= 5 && viewerLevel <= 7 && Boolean(effectiveTenantId);
+  const { items: entityEmploymentChipItems, loading: entityEmploymentChipsLoading } = useUserProfileEntityEmploymentChips(
+    effectiveTenantId || undefined,
+    uid,
+    showEntityEmploymentStatusRow
+  );
+  const { isFavorite, toggleFavorite } = useFavorites('users');
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+
+  // Live headshot verification record. Feeds the compact status pill rendered next to the
+  // avatar in both the mobile and desktop header layouts. See
+  // `functions/src/avatar/avatarVerificationTrigger.ts` for the write path.
+  const {
+    verification: avatarVerification,
+    isPending: avatarVerificationPending,
+    loading: avatarVerificationLoading,
+  } = useAvatarVerification(uid);
+  const avatarVerificationAudience: 'worker' | 'recruiter' = isOwnProfile ? 'worker' : 'recruiter';
+  const handleAvatarVerificationRetake = () => {
+    if (!canEditAvatar) return;
+    fileInputRef.current?.click();
+  };
+
+  const headerCreatedShort = useMemo(() => {
+    if (!createdAt) return null;
+    try {
+      let date: Date | null = null;
+      if (createdAt?.toDate && typeof createdAt.toDate === 'function') {
+        date = createdAt.toDate();
+      } else if (createdAt instanceof Date) {
+        date = createdAt;
+      } else if (typeof createdAt === 'string' || typeof createdAt === 'number') {
+        date = new Date(createdAt);
+      } else if (createdAt?._seconds && typeof createdAt._seconds === 'number') {
+        date = new Date(createdAt._seconds * 1000);
+      }
+      if (date && !Number.isNaN(date.getTime())) {
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }, [createdAt]);
+
+  const adminMaster = useMemo(
+    () =>
+      getRecruiterMasterDisplayForAdminUi({
+        recruiterMasterScoreRaw: recruiterMasterScore,
+        recruiterScoreSnapshotRaw: recruiterScoreSnapshot,
+        userData: {
+          scoreSummary,
+          riskProfile,
+          ...(categoryScoresCurrent != null ? { categoryScoresCurrent } : {}),
+        },
+        latestPrescreenInterviewAi: latestPrescreenInterviewAi ?? undefined,
+      }),
+    [
+      recruiterMasterScore,
+      recruiterScoreSnapshot,
+      scoreSummary,
+      riskProfile,
+      categoryScoresCurrent,
+      latestPrescreenInterviewAi,
+    ],
+  );
+
+  const recruiterPrimary = useMemo(() => {
+    if (isAdminView) {
+      if (adminMaster.score100 != null) {
+        return {
+          primaryScore100: adminMaster.score100,
+          primaryGrade: adminMaster.grade ?? recruiterTableLetterGrade(Math.round(adminMaster.score100)),
+          secondaryProfileComposite100: null,
+          hasConflict: false,
+          conflictHint: null as string | null,
+        };
+      }
+      return {
+        primaryScore100: null,
+        primaryGrade: '—',
+        secondaryProfileComposite100: null,
+        hasConflict: false,
+        conflictHint: null as string | null,
+      };
+    }
+    return resolveRecruiterPrimaryDisplay({
+      scoreSummary,
+      latestPrescreenInterviewAi: latestPrescreenInterviewAi ?? null,
+    });
+  }, [isAdminView, adminMaster, scoreSummary, latestPrescreenInterviewAi]);
+
+  const [gmailConnected, setGmailConnected] = useState<boolean>(false);
+  const [hasTwilioNumber, setHasTwilioNumber] = useState<boolean>(false);
+  const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
+  const [messageDrawerChannel, setMessageDrawerChannel] = useState<'email' | 'sms'>('email');
+  
+  // Check if onboarding is in progress
+  const onboardingInProgress = isOnboardingInProgress(employeeOnboardStatus as any, contractorOnboardStatus as any);
+  const activeOnboardingType = getActiveOnboardingType(employeeOnboardStatus as any, contractorOnboardStatus as any);
+  
+  // Handle cancel onboarding
+  const handleCancelOnboarding = async () => {
+    if (!activeOnboardingType || !effectiveTenantId) return;
+    
+    setCancellingOnboarding(true);
+    try {
+      await cancelOnboarding(uid, effectiveTenantId, activeOnboardingType, user?.uid);
+      setShowCancelOnboardingDialog(false);
+      
+      // Refresh onboarding status
+      if (onOnboardingStarted) {
+        await onOnboardingStarted();
+      }
+    } catch (error: any) {
+      console.error('Error cancelling onboarding:', error);
+      // You could show an error snackbar here if needed
+    } finally {
+      setCancellingOnboarding(false);
+    }
+  };
+  
+  // Keyframe animation for onboarding button - golden shimmer only
+  const goldenShimmer = keyframes`
+    0%, 100% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+  `;
+  
+  // Animated onboarding button styles - solid golden background with shimmer
+  const animatedButtonSx = {
+    background: 'linear-gradient(135deg, #FFD700 0%, #FFA500 50%, #FFD700 100%)',
+    backgroundSize: '200% 200%',
+    animation: `${goldenShimmer} 3s ease-in-out infinite`,
+    color: '#000',
+    fontWeight: 600,
+  };
+
+  useEffect(() => {
+    let mounted = true;
+
+    const checkSmsAccess = async () => {
+      if (!effectiveTenantId || !user?.uid) {
+        if (mounted) setHasTwilioNumber(false);
+        return;
+      }
+
+      const level = Number.parseInt(String(viewerSecurityLevel || '0'), 10) || 0;
+      if (level >= 5 && level <= 7) {
+        if (mounted) setHasTwilioNumber(true);
+        return;
+      }
+
+      try {
+        const recruiterNumberDoc = await getDoc(
+          doc(db, 'tenants', effectiveTenantId, 'recruiterNumbers', user.uid)
+        );
+        const hasNumber =
+          recruiterNumberDoc.exists() &&
+          !!(recruiterNumberDoc.data()?.twilioNumber || recruiterNumberDoc.data()?.useMainNumber);
+        if (mounted) setHasTwilioNumber(!!hasNumber);
+      } catch {
+        if (mounted) setHasTwilioNumber(false);
+      }
+    };
+
+    checkSmsAccess();
+    return () => {
+      mounted = false;
+    };
+  }, [effectiveTenantId, user?.uid, viewerSecurityLevel]);
+
+  // Gmail connection for in-app compose (same logic as UserProfile index record header).
+  // Without this, gmailConnected stayed false and the email icon always opened mailto:.
+  useEffect(() => {
+    let mounted = true;
+    const checkGmail = async () => {
+      const level = Number.parseInt(String(viewerSecurityLevel || '0'), 10) || 0;
+      if (level < 5 || level > 7 || !user?.uid) {
+        if (mounted) setGmailConnected(false);
+        return;
+      }
+      try {
+        const getGmailStatus = httpsCallable(functions, 'getGmailStatusOptimized');
+        const result = await getGmailStatus({ userId: user.uid, force: true });
+        const data = result.data as {
+          connected?: boolean;
+          rateLimited?: boolean;
+          sampled?: boolean;
+        };
+        const connected =
+          !!data?.connected || !!data?.rateLimited || !!data?.sampled;
+        if (mounted) setGmailConnected(connected);
+      } catch {
+        try {
+          const viewerSnap = await getDoc(doc(db, 'users', user.uid));
+          const viewerData: any = viewerSnap.exists() ? viewerSnap.data() : null;
+          if (mounted) {
+            setGmailConnected(!!viewerData?.gmailTokens?.access_token);
+          }
+        } catch {
+          if (mounted) setGmailConnected(false);
+        }
+      }
+    };
+    checkGmail();
+    return () => {
+      mounted = false;
+    };
+  }, [user?.uid, viewerSecurityLevel]);
+
+  // Detect missing items
+  const missingItems = React.useMemo(() => detectMissingItems(
+    {
+      workEligibility,
+      resume: resume ? {
+        ...resume,
+        timestamp: (resume as any).timestamp || null,
+      } : null,
+      certifications,
+      emergencyContact,
+      backgroundCheckStatus,
+      vaccinationStatus,
+      phone,
+      email,
+      dateOfBirth,
+    },
+    onTabChange
+  ), [workEligibility, resume, certifications, emergencyContact, backgroundCheckStatus, vaccinationStatus, phone, email, dateOfBirth, onTabChange]);
 
   const handleAvatarClick = () => {
     if (!canEditAvatar) return;
@@ -85,35 +511,14 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       try {
-        console.log('🔄 Starting avatar upload...');
-        console.log('User ID:', uid);
-        console.log('File name:', file.name);
-        console.log('File size:', file.size);
-        
-        // Check authentication
-        const auth = getAuth();
-        const currentUser = auth.currentUser;
-        console.log('Current authenticated user:', currentUser?.uid);
-        console.log('Is user authenticated?', !!currentUser);
-        
-        if (!currentUser) {
-          throw new Error('User not authenticated');
-        }
-        
-        const storageRef = ref(storage, `avatars/${uid}.jpg`);
-        console.log('Storage path:', `avatars/${uid}.jpg`);
-        
-        await uploadBytes(storageRef, file);
-        console.log('✅ File uploaded successfully');
-        
-        const downloadURL = await getDownloadURL(storageRef);
-        console.log('✅ Download URL obtained:', downloadURL);
-        
-        await updateDoc(doc(db, 'users', uid), { avatar: downloadURL });
-        console.log('✅ Firestore document updated');
-        
-        onAvatarUpdated(downloadURL);
-        console.log('✅ Avatar update complete');
+        const src = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ''));
+          reader.onerror = () => reject(new Error('Failed to read file'));
+          reader.readAsDataURL(file);
+        });
+        setPendingImageSrc(src);
+        setCropOpen(true);
       } catch (err) {
         console.error('❌ Error uploading avatar:', err);
         console.error('Error details:', {
@@ -125,14 +530,55 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
     }
   };
 
-  const handleDeleteAvatar = async () => {
+  const handleConfirmCroppedAvatar = async (blob: Blob) => {
+    setAvatarBusy(true);
+    setAvatarSaveError(null);
     try {
+      // Check authentication
+      const auth = getAuth();
+      const currentUser = auth.currentUser;
+      if (!currentUser) throw new Error('User not authenticated');
+
       const storageRef = ref(storage, `avatars/${uid}.jpg`);
-      await deleteObject(storageRef);
+      await uploadBytes(storageRef, blob, { contentType: blob.type || 'image/jpeg' });
+      const downloadURL = await getDownloadURL(storageRef);
+      await updateDoc(doc(db, 'users', uid), { avatar: downloadURL });
+      onAvatarUpdated(downloadURL);
+      setCropOpen(false);
+      setPendingImageSrc(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    } catch (err) {
+      console.error('❌ Error saving cropped avatar:', err);
+      const denied = err instanceof FirebaseError && err.code === 'permission-denied';
+      setAvatarSaveError(
+        denied
+          ? "Couldn't save the photo (permission denied)."
+          : "Couldn't save the photo. Try again."
+      );
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
+
+  const handleDeleteAvatar = async () => {
+    setAvatarSaveError(null);
+    try {
+      // Prefer deleting by URL (works for both gs:// and https://)
+      if (avatarUrl) {
+        try {
+          await deleteObject(ref(storage, avatarUrl));
+        } catch {
+          await deleteObject(ref(storage, `avatars/${uid}.jpg`));
+        }
+      } else {
+        await deleteObject(ref(storage, `avatars/${uid}.jpg`));
+      }
       await updateDoc(doc(db, 'users', uid), { avatar: '' });
       onAvatarUpdated('');
     } catch (err) {
       console.error('Error deleting avatar:', err);
+      const denied = err instanceof FirebaseError && err.code === 'permission-denied';
+      setAvatarSaveError(denied ? "Couldn't remove the photo (permission denied)." : "Couldn't remove the photo. Try again.");
     }
   };
 
@@ -225,235 +671,1693 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
     }
   };
 
+  const formatDate = (timestamp: any) => {
+    if (!timestamp) return 'N/A';
+    let date: Date;
+    if (timestamp instanceof Date) {
+      date = timestamp;
+    } else if (typeof timestamp === 'number') {
+      date = new Date(timestamp);
+    } else if (timestamp?.toDate) {
+      date = timestamp.toDate();
+    } else if (timestamp?._seconds) {
+      date = new Date(timestamp._seconds * 1000);
+    } else {
+      return 'N/A';
+    }
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  };
+
+  // Handler for resume click - open resume in new tab
+  const handleResumeClick = async () => {
+    if (!resume) return;
+
+    try {
+      // Try to use downloadUrl if available
+      if (resume.downloadUrl) {
+        window.open(resume.downloadUrl, '_blank');
+        return;
+      }
+
+      // Otherwise construct public URL from storagePath
+      if (resume.storagePath) {
+        const encodedPath = encodeURIComponent(resume.storagePath);
+        const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodedPath}?alt=media`;
+        window.open(publicUrl, '_blank');
+        return;
+      }
+
+      // Fallback: navigate to Resumé tab
+      if (onTabChange) {
+        onTabChange('Resumé');
+      }
+    } catch (error) {
+      console.error('Error opening resume:', error);
+      // Fallback: navigate to Resumé tab
+      if (onTabChange) {
+        onTabChange('Resumé');
+      }
+    }
+  };
+
+  // Handler for certifications click
+  const handleCertificationsClick = () => {
+    if (certifications && certifications.length > 0) {
+      setShowCertificationsModal(true);
+    } else if (onTabChange) {
+      onTabChange('Certifications');
+    }
+  };
+
+  // Handler for work eligibility click
+  const handleWorkEligibilityClick = () => {
+    // Work Eligibility tab removed - do nothing
+  };
+
+  // Handler for background check click
+  const handleBackgroundCheckClick = () => {
+    if (onTabChange) {
+      onTabChange('Backgrounds');
+    }
+  };
+
+  // Handler for vaccination click
+  const handleVaccinationClick = () => {
+    if (onTabChange) {
+      onTabChange('Backgrounds');
+    }
+  };
+
   return (
-    <Box mb={3}>
-      {showBreadcrumbs && breadcrumbPath.length > 0 && (
-        <Breadcrumbs 
-          separator={<NavigateNextIcon fontSize="small" />} 
-          aria-label="breadcrumb"
-          sx={{ mb: 2 }}
-        >
-          {breadcrumbPath.map((item, index) => (
-            item.href ? (
-              <Link
-                key={index}
-                component={RouterLink}
-                to={item.href}
-                color={index === breadcrumbPath.length - 1 ? "text.primary" : "inherit"}
-                underline={index === breadcrumbPath.length - 1 ? "none" : "hover"}
-                sx={{
-                  fontWeight: index === breadcrumbPath.length - 1 ? 600 : 400,
-                  textDecoration: 'none',
-                  '&:hover': {
-                    textDecoration: index === breadcrumbPath.length - 1 ? 'none' : 'underline'
-                  }
-                }}
-              >
-                {item.label}
-              </Link>
-            ) : (
-              <Typography
-                key={index}
-                color={index === breadcrumbPath.length - 1 ? "text.primary" : "inherit"}
-                sx={{
-                  fontWeight: index === breadcrumbPath.length - 1 ? 600 : 400,
-                }}
-              >
-                {item.label}
-              </Typography>
-            )
-          ))}
-        </Breadcrumbs>
-      )}
-      <Box display="flex" alignItems="center" justifyContent="space-between">
-        <Box display="flex" alignItems="flex-start" gap={3}>
-        <Box
-          position="relative"
-          onMouseEnter={() => setHover(true)}
-          onMouseLeave={() => setHover(false)}
-        >
-          <Avatar 
-            src={avatarUrl || undefined} 
-            sx={{ width: 128, height: 128, fontSize: '2rem' }}
-            onError={(e) => {
-              // Handle broken image URLs (like LinkedIn profile photos that no longer exist)
-              console.log('Avatar image failed to load, falling back to initials:', avatarUrl);
-              const target = e.target as HTMLImageElement;
-              target.style.display = 'none';
-            }}
+    <Box 
+      mb={2} 
+      sx={{ 
+        p: 3,
+        borderRadius: 2,
+        bgcolor: 'background.paper',
+        border: '1px solid',
+        borderColor: 'divider',
+        boxShadow: 'none'
+      }}
+    >
+      {/* Top Row: Breadcrumbs + Role Chip */}
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+        {showBreadcrumbs && breadcrumbPath.length > 0 && (
+          <Breadcrumbs 
+            separator={<NavigateNextIcon fontSize="small" />} 
+            aria-label="breadcrumb"
+            sx={{ flex: 1 }}
           >
-            {!avatarUrl && initials}
-          </Avatar>
-          <input
-            type="file"
-            accept="image/*"
-            ref={fileInputRef}
-            style={{ display: 'none' }}
-            onChange={handleFileChange}
-          />
-
-          {hover && !avatarUrl && canEditAvatar && (
-            <IconButton
-              size="small"
-              onClick={handleAvatarClick}
-              sx={{
-                position: 'absolute',
-                bottom: 0,
-                right: 0,
-                backgroundColor: 'white',
-                borderRadius: '50%',
-              }}
+            {breadcrumbPath.map((item, index) => (
+              item.href ? (
+                <Link
+                  key={index}
+                  component={RouterLink}
+                  to={item.href}
+                  color={index === breadcrumbPath.length - 1 ? "text.primary" : "inherit"}
+                  underline={index === breadcrumbPath.length - 1 ? "none" : "hover"}
+                  sx={{
+                    fontWeight: index === breadcrumbPath.length - 1 ? 600 : 400,
+                    textDecoration: 'none',
+                    '&:hover': {
+                      textDecoration: index === breadcrumbPath.length - 1 ? 'none' : 'underline'
+                    }
+                  }}
+                >
+                  {item.label}
+                </Link>
+              ) : (
+                <Typography
+                  key={index}
+                  color={index === breadcrumbPath.length - 1 ? "text.primary" : "inherit"}
+                  sx={{
+                    fontWeight: index === breadcrumbPath.length - 1 ? 600 : 400,
+                  }}
+                >
+                  {item.label}
+                </Typography>
+              )
+            ))}
+          </Breadcrumbs>
+        )}
+      </Box>
+      
+      {/* Mobile Layout */}
+      <Box sx={{ display: { xs: 'block', md: 'none' } }}>
+        {/* Mobile: Avatar + Action Buttons Row */}
+        <Box sx={{ 
+          display: 'flex', 
+          alignItems: 'flex-start', 
+          justifyContent: 'space-between',
+          mb: 2
+        }}>
+          {/* Avatar */}
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
+            <Box
+              position="relative"
+              onMouseEnter={() => setHover(true)}
+              onMouseLeave={() => setHover(false)}
             >
-              <CameraAltIcon fontSize="small" />
-            </IconButton>
-          )}
+              <Avatar
+                src={avatarUrl || undefined}
+                sx={{
+                  width: 120,
+                  height: 120,
+                  fontSize: '2.5rem',
+                  fontWeight: 'bold'
+                }}
+                onError={(e) => {
+                  console.log('Avatar image failed to load, falling back to initials:', avatarUrl);
+                  const target = e.target as HTMLImageElement;
+                  target.style.display = 'none';
+                }}
+              >
+                {!avatarUrl && initials}
+              </Avatar>
+              <input
+                type="file"
+                accept="image/*"
+                ref={fileInputRef}
+                style={{ display: 'none' }}
+                onChange={handleFileChange}
+              />
 
-          {hover && avatarUrl && canEditAvatar && (
-            <IconButton
-              size="small"
-              onClick={handleDeleteAvatar}
-              sx={{
-                position: 'absolute',
-                bottom: 0,
-                right: 0,
-                backgroundColor: 'white',
-                borderRadius: '50%',
-              }}
-            >
-              <ClearIcon fontSize="small" />
-            </IconButton>
+              {canEditAvatar && (
+                <Box sx={{
+                  position: 'absolute',
+                  bottom: -8,
+                  right: -8,
+                  display: 'flex',
+                  gap: 0.5
+                }}>
+                  {hover && (
+                    <IconButton
+                      size="small"
+                      onClick={handleAvatarClick}
+                      disabled={avatarBusy}
+                      sx={{
+                        bgcolor: 'grey.300',
+                        color: 'grey.700',
+                        width: 24,
+                        height: 24,
+                        '&:hover': {
+                          bgcolor: 'grey.400'
+                        }
+                      }}
+                    >
+                      <CameraAltIcon sx={{ fontSize: 14 }} />
+                    </IconButton>
+                  )}
+
+                  {hover && avatarUrl && (
+                    <IconButton
+                      size="small"
+                      onClick={handleDeleteAvatar}
+                      disabled={avatarBusy}
+                      sx={{
+                        bgcolor: 'grey.300',
+                        color: 'grey.700',
+                        width: 24,
+                        height: 24,
+                        '&:hover': {
+                          bgcolor: 'grey.400'
+                        }
+                      }}
+                    >
+                      <ClearIcon sx={{ fontSize: 14 }} />
+                    </IconButton>
+                  )}
+                </Box>
+              )}
+            </Box>
+
+            {/* Headshot verification pill (mobile) */}
+            {avatarUrl && (
+              <Box sx={{ maxWidth: 180, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                <AvatarVerificationStatus
+                  verification={avatarVerification}
+                  isPending={avatarVerificationPending}
+                  loading={avatarVerificationLoading}
+                  onRetake={canEditAvatar ? handleAvatarVerificationRetake : undefined}
+                  audience={avatarVerificationAudience}
+                  compact
+                />
+                {!isOwnProfile && viewerLevel >= 4 && (
+                  <AvatarVerificationAdminActions
+                    targetUserId={uid}
+                    verification={avatarVerification}
+                  />
+                )}
+              </Box>
+            )}
+          </Box>
+
+          {/* Role Chip and Cancel Onboarding (mobile, when in progress) */}
+          {canViewAdminContent && (
+            <Stack direction="column" spacing={0.5} alignItems="flex-end">
+              {securityLevel && getSecurityLabel(securityLevel) && (
+                <Chip
+                  label={getSecurityLabel(securityLevel)}
+                  size="small"
+                  sx={{
+                    ...getSoftChipSx(getSecurityColor(securityLevel)),
+                    fontWeight: 600,
+                    height: 24,
+                    fontSize: '0.75rem',
+                    px: 1,
+                  }}
+                />
+              )}
+              {isAdminView && onboardingInProgress ? (
+                <Button
+                  variant="contained"
+                  size="small"
+                  onClick={() => setShowCancelOnboardingDialog(true)}
+                  sx={{
+                    fontSize: '0.75rem',
+                    py: 0.5,
+                    px: 1.5,
+                    backgroundImage: 'linear-gradient(90deg, #FF8A00 0%, #FFB300 100%)', // Yellow-orange gradient
+                    color: '#ffffff', // White text
+                    fontWeight: 600,
+                    '&:hover': {
+                      backgroundImage: 'linear-gradient(90deg, #FB8C00 0%, #FFA000 100%)',
+                    },
+                  }}
+                >
+                  Cancel Onboarding
+                </Button>
+              ) : null}
+            </Stack>
           )}
         </Box>
 
-        <Box>
-          <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
-            {`${firstName} ${lastName}`}
-            {preferredName && preferredName !== firstName && ` (${preferredName})`}
-          </Typography>
+        {/* Mobile: Name and Details */}
+        <Box sx={{ mb: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 0.5 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+              <Typography variant="h5" sx={{ fontWeight: 700, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {`${firstName} ${lastName}`}
+                {preferredName && preferredName !== firstName && ` (${preferredName})`}
+              </Typography>
+
+              {canViewAdminContent && isAdminView && securityLevel && !['5', '6', '7'].includes(String(securityLevel)) && (
+                <FavoriteButton
+                  itemId={uid}
+                  favoriteType="users"
+                  isFavorite={isFavorite}
+                  toggleFavorite={toggleFavorite}
+                  size="small"
+                  tooltipText={{
+                    favorited: 'Remove from favorites',
+                    notFavorited: 'Add to favorites',
+                  }}
+                />
+              )}
+
+              {isAdminView && (() => {
+                const primary = recruiterPrimary.primaryScore100;
+                const composite = recruiterPrimary.secondaryProfileComposite100;
+                if (primary === null) {
+                  return (
+                    <Tooltip title="No stored score yet — same precedence as All Users table (operational prescreen when present).">
+                      <Chip
+                        icon={<InsightsIcon sx={{ fontSize: 18 }} />}
+                        label="Score —"
+                        size="small"
+                        variant="outlined"
+                        sx={{ fontWeight: 600, flexShrink: 0, opacity: 0.85 }}
+                      />
+                    </Tooltip>
+                  );
+                }
+                const display = Math.round(primary);
+                const tipLines = [
+                  `Operational (primary): ${display} · ${recruiterPrimary.primaryGrade}`,
+                  composite != null ? `Legacy profile/composite: ${Math.round(composite)}` : null,
+                  recruiterPrimary.hasConflict && recruiterPrimary.conflictHint ? recruiterPrimary.conflictHint : null,
+                ]
+                  .filter(Boolean)
+                  .join('\n');
+                return (
+                  <Stack direction="column" alignItems="flex-end" spacing={0.25} sx={{ flexShrink: 0 }}>
+                    <Tooltip title={tipLines}>
+                      <Chip
+                        icon={<InsightsIcon sx={{ fontSize: 18 }} />}
+                        label={`Operational ${display} · ${recruiterPrimary.primaryGrade}`}
+                        size="small"
+                        variant="outlined"
+                        sx={{ fontWeight: 700, flexShrink: 0 }}
+                      />
+                    </Tooltip>
+                    {composite != null && composite !== primary ? (
+                      <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2, textAlign: 'right' }}>
+                        Profile {Math.round(composite)}
+                      </Typography>
+                    ) : null}
+                    {recruiterPrimary.hasConflict ? (
+                      <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2, textAlign: 'right', maxWidth: 200 }}>
+                        Using operational interview score
+                      </Typography>
+                    ) : null}
+                  </Stack>
+                );
+              })()}
+            </Box>
+          </Box>
+
+          {/* Mobile: Contact Icons Row — directly under name */}
+          {canShowContactIconsRow && (phone || email || resume || showIndeedFlexBadge) && (
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" sx={{ mb: 0.75 }}>
+              {phone && (
+                <>
+                  <Tooltip title={`Call ${formatPhoneNumber(phone)}`}>
+                    <IconButton
+                      size="small"
+                      component="a"
+                      href={`tel:${phone.replace(/\D/g, '')}`}
+                      sx={{ 
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        },
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <PhoneOutlinedIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                  {onMessageApplicant && (
+                    <Tooltip title="Send Message">
+                      <IconButton
+                        size="small"
+                        onClick={onMessageApplicant}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <MessageIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                </>
+              )}
+              {email && (
+                <Tooltip
+                  title={
+                    gmailConnected
+                      ? `Email ${email} (send from your Gmail)`
+                      : `Email ${email} (open mail app)`
+                  }
+                >
+                  <IconButton
+                    size="small"
+                    onClick={() => {
+                      if (gmailConnected) {
+                        setMessageDrawerChannel('email');
+                        setMessageDrawerOpen(true);
+                      } else {
+                        window.open(`mailto:${email}`, '_blank');
+                      }
+                    }}
+                    sx={{ 
+                      p: 1,
+                      color: 'primary.main',
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                      '&:hover': {
+                        color: 'primary.dark',
+                        bgcolor: 'primary.light',
+                        transform: 'translateY(-1px)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                      },
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <EmailOutlinedIcon sx={{ fontSize: 20 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
+              {resume && resume.fileName && (
+                <Tooltip title={`View Resume: ${resume.fileName}`}>
+                  <IconButton
+                    size="small"
+                    onClick={handleResumeClick}
+                    sx={{ 
+                      p: 1,
+                      color: 'primary.main',
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                      '&:hover': {
+                        color: 'primary.dark',
+                        bgcolor: 'primary.light',
+                        transform: 'translateY(-1px)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                      },
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <DescriptionIcon sx={{ fontSize: 20 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
+              {canShowContactIconsRow && (
+                <Tooltip title="Notes">
+                  <IconButton
+                    size="small"
+                    onClick={() => setShowAddNoteDialog(true)}
+                    sx={{ 
+                      p: 1,
+                      color: 'primary.main',
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                      '&:hover': {
+                        color: 'primary.dark',
+                        bgcolor: 'primary.light',
+                        transform: 'translateY(-1px)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                      },
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <NoteIcon sx={{ fontSize: 20 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
+              {showIndeedFlexBadge && (
+                <Tooltip title="Added to Indeed Flex">
+                  <Box
+                    component="img"
+                    src="/img/flex.png"
+                    alt="Indeed Flex"
+                    sx={{
+                      height: 36,
+                      width: 'auto',
+                      maxWidth: 96,
+                      objectFit: 'contain',
+                      display: 'block',
+                      flexShrink: 0,
+                      alignSelf: 'center',
+                    }}
+                  />
+                </Tooltip>
+              )}
+            </Stack>
+          )}
+
           {Boolean(jobTitle) && (
-            <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 'bold', mt: 0.25 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600, mb: 1 }}>
               {jobTitle}
             </Typography>
           )}
-          {(regionName || departmentName || divisionName || locationName || managerName) && (
-            <Stack direction="row" spacing={1} sx={{ mt: 0.5, flexWrap: 'wrap' }}>
-              {regionName && (
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <PublicIcon fontSize="small" color="primary" />
-                  <Typography variant="body2" color="text.secondary">{regionName}</Typography>
+
+          {/* Mobile: Location */}
+          {city && state && (
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
+              <LocationOnOutlinedIcon fontSize="small" color="primary" />
+              <Typography variant="body2" color="text.secondary">
+                {city}, {state}
+              </Typography>
+            </Stack>
+          )}
+
+          {/* Mobile: User groups */}
+          {canViewUserGroupsInHeader && headerUserGroups.length > 0 && (
+            <Box sx={{ mb: 0.5 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+                Member of:{' '}
+                {headerUserGroups.map((g, idx) => (
+                  <React.Fragment key={g.id}>
+                    {idx > 0 ? ', ' : ''}
+                    <Link component={RouterLink} to={`/usergroups/${g.id}`} underline="hover">
+                      {g.title}
+                    </Link>
+                  </React.Fragment>
+                ))}
+              </Typography>
+            </Box>
+          )}
+
+          {showEntityEmploymentStatusRow && (entityEmploymentChipsLoading || entityEmploymentChipItems.length > 0) && (
+            <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.75, mb: 0.5 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                Employment:
+              </Typography>
+              <UserEntityOnboardingStatusCell
+                items={entityEmploymentChipItems}
+                loading={entityEmploymentChipsLoading}
+                emptyDisplay="hidden"
+                density="compact"
+              />
+            </Box>
+          )}
+
+          {/* Mobile: Joined Date */}
+          {createdAt && (
+            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', mb: 1 }}>
+              Joined: {formatDate(createdAt)}
+            </Typography>
+          )}
+          
+          {/* Onboarding Pills - Mobile - Above Skills */}
+          {canViewAdminContent && (() => {
+            // Helper function to get pill color for screening orders
+            const getScreeningPillColor = (status: string, result?: string) => {
+              if (status === 'In-Progress') {
+                return '#ff9800'; // Yellow/warning
+              } else if (status === 'Complete') {
+                if (result === 'Passed') {
+                  return '#4caf50'; // Green
+                } else if (result === 'Failed') {
+                  return '#f44336'; // Red/error
+                }
+              }
+              return '#4caf50'; // Default green
+            };
+
+            // Filter and prepare E-Verify orders (newest first, show only newest)
+            const activeEVerifyOrders = eVerifyOrders.filter(order => order.status !== 'Cancelled');
+            const sortedEVerifyOrders = [...activeEVerifyOrders].sort((a, b) => {
+              const dateA = a.dateSubmitted ? new Date(a.dateSubmitted).getTime() : 0;
+              const dateB = b.dateSubmitted ? new Date(b.dateSubmitted).getTime() : 0;
+              return dateB - dateA;
+            });
+            const newestEVerifyOrder = sortedEVerifyOrders.length > 0 ? sortedEVerifyOrders[0] : null;
+
+            // Filter screening orders (exclude cancelled, show all active orders)
+            const activeBackgroundOrders = backgroundCheckOrders.filter(order => order.status !== 'Cancelled');
+            const activeDrugOrders = drugScreeningOrders.filter(order => order.status !== 'Cancelled');
+            const activeAdditionalOrders = additionalScreeningOrders.filter(order => order.status !== 'Cancelled');
+
+            // Combine all pills
+            const allPills: Array<{ label: string; color: string; key: string }> = [];
+
+            // Add E-Verify pill (only newest)
+            if (newestEVerifyOrder) {
+              let eVerifyColor = '#4caf50';
+              if (newestEVerifyOrder.status === 'In-Progress') {
+                eVerifyColor = '#ff9800';
+              } else if (newestEVerifyOrder.status === 'Complete') {
+                eVerifyColor = newestEVerifyOrder.result && newestEVerifyOrder.result !== 'Employment Authorized' 
+                  ? '#f44336' 
+                  : '#4caf50';
+              }
+              allPills.push({
+                label: 'Select · E-Verify',
+                color: eVerifyColor,
+                key: `everify-${newestEVerifyOrder.id}`,
+              });
+            }
+
+            // Add Background Check pills (one per order)
+            activeBackgroundOrders.forEach(order => {
+              allPills.push({
+                label: order.typeLabel || order.type || 'Background Check',
+                color: getScreeningPillColor(order.status, order.result),
+                key: `bg-${order.id}`
+              });
+            });
+
+            // Add Drug Screening pills (one per order)
+            activeDrugOrders.forEach(order => {
+              allPills.push({
+                label: order.typeLabel || order.type || 'Drug Screening',
+                color: getScreeningPillColor(order.status, order.result),
+                key: `drug-${order.id}`
+              });
+            });
+
+            // Add Additional Screening pills (one per order)
+            activeAdditionalOrders.forEach(order => {
+              allPills.push({
+                label: order.typeLabel || order.type || 'Additional Screening',
+                color: getScreeningPillColor(order.status, order.result),
+                key: `addl-${order.id}`
+              });
+            });
+
+            if (allPills.length === 0) return null;
+
+            return (
+              <Box sx={{ mt: 1, mb: 1 }}>
+                <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap alignItems="center">
+                  {allPills.map((pill) => (
+                    <Chip
+                      key={pill.key}
+                      label={pill.label}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: pill.color,
+                        color: 'white',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  ))}
                 </Stack>
-              )}
-              {departmentName && (
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <BusinessIcon fontSize="small" color="primary" />
-                  <Typography variant="body2" color="text.secondary">{departmentName}</Typography>
-                </Stack>
-              )}
-              {divisionName && (
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <AccountTreeIcon fontSize="small" color="primary" />
-                  <Typography variant="body2" color="text.secondary">{divisionName}</Typography>
-                </Stack>
-              )}
-              {locationName && (
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <LocationOnOutlinedIcon fontSize="small" color="primary" />
-                  <Typography variant="body2" color="text.secondary">{locationName}</Typography>
-                </Stack>
-              )}
-              {managerName && managerId && (
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <PersonIcon fontSize="small" color="primary" />
-                  <Link 
-                    component={RouterLink}
-                    to={`/users/${managerId}`} 
-                    underline="hover" 
-                    color="inherit"
-                    sx={{ textDecoration: 'none' }}
+              </Box>
+            );
+          })()}
+
+          {/* Screening verdict summary — Mobile */}
+          {canViewAdminContent &&
+            screeningVerdictSummary &&
+            screeningVerdictSummary.summaryText &&
+            screeningVerdictSummary.overallVerdict !== 'NONE' && (
+              <Box sx={{ mt: 0.5, mb: 1, display: 'flex', alignItems: 'flex-start', gap: 0.75, flexWrap: 'wrap' }}>
+                <Chip
+                  label={
+                    screeningVerdictSummary.overallVerdict === 'PASSED'
+                      ? 'Screening: Passed'
+                      : screeningVerdictSummary.overallVerdict === 'FAILED'
+                        ? 'Screening: Failed'
+                        : screeningVerdictSummary.overallVerdict === 'NEEDS_REVIEW'
+                          ? 'Screening: Needs review'
+                          : 'Screening: Waiting'
+                  }
+                  size="small"
+                  sx={{
+                    height: 22,
+                    fontSize: '0.7rem',
+                    fontWeight: 600,
+                    bgcolor:
+                      screeningVerdictSummary.overallVerdict === 'PASSED'
+                        ? '#4caf50'
+                        : screeningVerdictSummary.overallVerdict === 'FAILED'
+                          ? '#f44336'
+                          : screeningVerdictSummary.overallVerdict === 'NEEDS_REVIEW'
+                            ? '#ff9800'
+                            : '#9e9e9e',
+                    color: 'white',
+                    '& .MuiChip-label': { px: 1 },
+                  }}
+                />
+                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: '22px' }}>
+                  {screeningVerdictSummary.summaryText}
+                </Typography>
+              </Box>
+            )}
+
+          {/* Skills Chips - Mobile - Above Profile Quality Bar */}
+          {primarySkills && primarySkills.length > 0 && (
+            <Box sx={{ mt: 1, mb: 1 }}>
+              <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap alignItems="center">
+                {primarySkills.slice(0, 5).map((skill, index) => (
+                  <Chip
+                    key={index}
+                    label={toChipLabel(skill)}
+                    size="small"
+                    sx={{
+                      height: 22,
+                      fontSize: '0.7rem',
+                      fontWeight: 500,
+                      bgcolor: '#2196F3',
+                      color: 'white',
+                      '& .MuiChip-label': {
+                        px: 1,
+                      },
+                    }}
+                  />
+                ))}
+                {primarySkills.length > 5 && (
+                  <Tooltip 
+                    title={`${primarySkills.length - 5} more skills`}
+                    componentsProps={{
+                      tooltip: {
+                        sx: { color: 'white' }
+                      }
+                    }}
                   >
-                    <Typography variant="body2" color="text.secondary">{managerName}</Typography>
-                  </Link>
-                </Stack>
-              )}
-            </Stack>
-          )}
-          <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
-            {email && (
-              <Stack direction="row" spacing={1} alignItems="center">
-                <EmailOutlinedIcon fontSize="small" color="primary" />
-                <Link href={`mailto:${email}`} underline="hover" color="inherit">
-                  <Typography variant="body2">{email}</Typography>
-                </Link>
+                    <Chip
+                      label={`+${primarySkills.length - 5}`}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: 'grey.200',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  </Tooltip>
+                )}
               </Stack>
-            )}
-            {phone && (
-              <Stack direction="row" spacing={1} alignItems="center">
-                <PhoneOutlinedIcon fontSize="small" color="primary" />
-                <Link href={`tel:${phone}`} underline="hover" color="inherit">
-                  <Typography variant="body2">{phone}</Typography>
-                </Link>
+            </Box>
+          )}
+          
+          {/* Education, Work Experience, and Certs Chips - Mobile - Below Skills */}
+          {(education.length > 0 || workExperience.length > 0 || (certifications && certifications.length > 0)) && (
+            <Box sx={{ mt: 1, mb: 1 }}>
+              <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap alignItems="center">
+                {/* Education Chips - Purple */}
+                {education.slice(0, 3).map((edu, index) => {
+                  const degree = toChipLabel(edu?.degree ?? edu?.name ?? edu);
+                  if (!degree) return null;
+                  return (
+                    <Chip
+                      key={`edu-${index}`}
+                      label={degree}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: '#9C27B0',
+                        color: 'white',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  );
+                })}
+                {/* Work Experience Chips - Navy Blue */}
+                {workExperience.slice(0, 3).map((exp, index) => {
+                  const jobTitle = toChipLabel(exp?.jobTitle ?? exp?.title ?? exp?.name ?? exp);
+                  if (!jobTitle) return null;
+                  return (
+                    <Chip
+                      key={`exp-${index}`}
+                      label={jobTitle}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: '#1976D2',
+                        color: 'white',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  );
+                })}
+                {/* Certifications Chips - Black */}
+                {certifications && certifications.slice(0, 3).map((cert, index) => {
+                  const certName = toChipLabel(cert);
+                  if (!certName) return null;
+                  return (
+                    <Chip
+                      key={`cert-${index}`}
+                      label={certName}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: '#212121',
+                        color: 'white',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  );
+                })}
               </Stack>
-            )}
-          </Stack>
-          {linkedinUrl && (
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5 }}>
-              <LinkedInIcon fontSize="small" color="primary" />
-              <Link
-                href={normalizeLinkedInUrl(linkedinUrl)}
-                target="_blank"
-                rel="noopener noreferrer"
-                underline="hover"
-                color="inherit"
-              >
-                <Typography variant="body2">{linkedinUrl.replace(/^https?:\/\//i, '')}</Typography>
-              </Link>
-            </Stack>
+            </Box>
           )}
-          {(workStatus || securityLevel || employmentType) && (
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.75, flexWrap: 'wrap' }}>
-              {workStatus && (
-                <>
-                  <Typography variant="body2" color="text.secondary">Status:</Typography>
-                  <Chip
-                    size="small"
-                    label={workStatus}
-                    color={getWorkStatusColor(workStatus)}
-                  />
-                </>
-              )}
-              {getSecurityLabel(securityLevel) && (
-                <>
-                  <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>Security Level:</Typography>
-                  <Chip
-                    size="small"
-                    label={getSecurityLabel(securityLevel)!}
-                    sx={{ ...getSoftChipSx(getSecurityColor(securityLevel)), fontWeight: 600 }}
-                  />
-                </>
-              )}
-              {employmentType && (
-                <>
-                  <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>Employment Type:</Typography>
-                  <Chip
-                    size="small"
-                    label={getEmploymentTypeLabel(employmentType)}
-                    color={getEmploymentTypeColor(employmentType)}
-                  />
-                </>
-              )}
-            </Stack>
+          
+          {/* Profile Quality Meter - Mobile */}
+          {isAdminView && profileScore !== undefined && (
+            <Box sx={{ mt: 1 }}>
+              <ProfileQualityMeter
+                score={profileScore}
+                missingItemsCount={missingItems.filter(item => item.type === 'error' || item.type === 'warning').length}
+                missingItemsSummary={missingItems.slice(0, 3).map(item => item.message.toLowerCase()).join(', ')}
+              />
+            </Box>
           )}
+
+          {/* Score stack removed (now shown as a single summary score on the name line) */}
+
         </Box>
       </Box>
 
-        {/* <Stack direction="row" spacing={2} alignItems="center">
-          {showBackButton && (
-            <Button variant="outlined" onClick={onBack}>
-              &larr; Back to Workforce
-            </Button>
+      {/* Desktop Layout - 3-Column Compact Structure */}
+      <Box sx={{ 
+        display: { xs: 'none', md: 'flex' }, 
+        alignItems: 'flex-start', 
+        gap: 3, 
+        width: '100%',
+        py: 1.5,
+        maxHeight: 280,
+      }}>
+        {/* Column A: Photo & Status */}
+        <Box sx={{ flexShrink: 0 }}>
+          <Box
+            position="relative"
+            onMouseEnter={() => setHover(true)}
+            onMouseLeave={() => setHover(false)}
+            sx={{ mb: 1 }}
+          >
+            <Avatar 
+              src={avatarUrl || undefined} 
+              sx={{ 
+                width: 120, 
+                height: 120, 
+                fontSize: '2.5rem',
+                fontWeight: 'bold',
+                border: '2px solid',
+                borderColor: 'divider',
+                boxShadow: 'none'
+              }}
+              onError={(e) => {
+                console.log('Avatar image failed to load, falling back to initials:', avatarUrl);
+                const target = e.target as HTMLImageElement;
+                target.style.display = 'none';
+              }}
+            >
+              {!avatarUrl && initials}
+            </Avatar>
+            <input
+              type="file"
+              accept="image/*"
+              ref={fileInputRef}
+              style={{ display: 'none' }}
+              onChange={handleFileChange}
+            />
+
+            {canEditAvatar && (
+              <Box sx={{ 
+                position: 'absolute', 
+                bottom: -6, 
+                right: -6,
+                display: 'flex',
+                gap: 0.5
+              }}>
+                {hover && (
+                  <IconButton
+                    size="small"
+                    onClick={handleAvatarClick}
+                    disabled={avatarBusy}
+                    sx={{
+                      bgcolor: 'grey.300',
+                      color: 'grey.700',
+                      width: 24,
+                      height: 24,
+                      '&:hover': {
+                        bgcolor: 'grey.400'
+                      }
+                    }}
+                  >
+                    <CameraAltIcon sx={{ fontSize: 14 }} />
+                  </IconButton>
+                )}
+                
+                {hover && avatarUrl && (
+                  <IconButton
+                    size="small"
+                    onClick={handleDeleteAvatar}
+                    disabled={avatarBusy}
+                    sx={{
+                      bgcolor: 'grey.300',
+                      color: 'grey.700',
+                      width: 24,
+                      height: 24,
+                      '&:hover': {
+                        bgcolor: 'grey.400'
+                      }
+                    }}
+                  >
+                    <ClearIcon sx={{ fontSize: 14 }} />
+                  </IconButton>
+                )}
+              </Box>
+            )}
+          </Box>
+
+          {/* Headshot verification pill — shows a spinner while auto-check is running, a
+              "Verified headshot" chip on approval, or a retake prompt on rejection. */}
+          {avatarUrl && (
+            <Box sx={{ mt: 0.5, maxWidth: 200, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+              <AvatarVerificationStatus
+                verification={avatarVerification}
+                isPending={avatarVerificationPending}
+                loading={avatarVerificationLoading}
+                onRetake={canEditAvatar ? handleAvatarVerificationRetake : undefined}
+                audience={avatarVerificationAudience}
+                compact
+              />
+              {!isOwnProfile && viewerLevel >= 4 && (
+                <AvatarVerificationAdminActions
+                  targetUserId={uid}
+                  verification={avatarVerification}
+                />
+              )}
+            </Box>
           )}
-        </Stack> */}
+
+          {/* Status Pills - Removed duplicate Work Eligible and Active chips - they're shown in ComplianceStatusChips and Employment Row */}
+        </Box>
+
+        {/* Column B: Name & Primary Info (flex 1) */}
+        <Box flex={1} sx={{ minWidth: 0 }}>
+          {/* Name → star → score */}
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 0.25 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+              <Typography
+                variant="h5"
+                sx={{
+                  fontWeight: 700,
+                  fontSize: '1.5rem',
+                  lineHeight: 1.2,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {`${firstName} ${lastName}`}
+                {preferredName && preferredName !== firstName && ` (${preferredName})`}
+              </Typography>
+
+              {canViewAdminContent && isAdminView && securityLevel && !['5', '6', '7'].includes(String(securityLevel)) && (
+                <FavoriteButton
+                  itemId={uid}
+                  favoriteType="users"
+                  isFavorite={isFavorite}
+                  toggleFavorite={toggleFavorite}
+                  size="small"
+                  tooltipText={{
+                    favorited: 'Remove from favorites',
+                    notFavorited: 'Add to favorites',
+                  }}
+                />
+              )}
+
+              {isAdminView && (() => {
+                const primary = recruiterPrimary.primaryScore100;
+                const composite = recruiterPrimary.secondaryProfileComposite100;
+                if (primary === null) {
+                  return (
+                    <Tooltip
+                      title="No stored score yet — same precedence as All Users table (operational prescreen when present)."
+                      componentsProps={recordHeaderTooltipComponentsProps}
+                    >
+                      <Chip
+                        icon={<InsightsIcon sx={{ fontSize: 18 }} />}
+                        label="Score —"
+                        size="small"
+                        variant="outlined"
+                        sx={{
+                          fontWeight: 600,
+                          flexShrink: 0,
+                          opacity: 0.85,
+                        }}
+                      />
+                    </Tooltip>
+                  );
+                }
+                const display = Math.round(primary);
+                const tipLines = [
+                  `Operational (primary): ${display} · ${recruiterPrimary.primaryGrade}`,
+                  composite != null ? `Legacy profile/composite: ${Math.round(composite)}` : null,
+                  recruiterPrimary.hasConflict && recruiterPrimary.conflictHint ? recruiterPrimary.conflictHint : null,
+                ]
+                  .filter(Boolean)
+                  .join('\n');
+                return (
+                  <Stack direction="column" alignItems="flex-end" spacing={0.25} sx={{ flexShrink: 0 }}>
+                    <Tooltip title={tipLines} componentsProps={recordHeaderTooltipComponentsProps}>
+                      <Chip
+                        icon={<InsightsIcon sx={{ fontSize: 18 }} />}
+                        label={`Operational ${display} · ${recruiterPrimary.primaryGrade}`}
+                        size="small"
+                        variant="outlined"
+                        sx={{
+                          fontWeight: 700,
+                          flexShrink: 0,
+                        }}
+                      />
+                    </Tooltip>
+                    {composite != null && composite !== primary ? (
+                      <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2, textAlign: 'right' }}>
+                        Profile {Math.round(composite)}
+                      </Typography>
+                    ) : null}
+                    {recruiterPrimary.hasConflict ? (
+                      <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2, textAlign: 'right', maxWidth: 220 }}>
+                        Using operational interview score
+                      </Typography>
+                    ) : null}
+                  </Stack>
+                );
+              })()}
+            </Box>
+          </Box>
+
+          {/* Contact action icons */}
+          {canShowContactIconsRow && (phone || email || resume || showIndeedFlexBadge) && (
+            <Stack direction="row" spacing={0.25} alignItems="center" flexWrap="wrap" sx={{ gap: 0.25, mb: 0.75 }}>
+              {phone && (
+                <>
+                  <RecordHeaderActionIcon
+                    tooltip={`Call ${formatPhoneNumber(phone)}`}
+                    component="a"
+                    href={`tel:${phone.replace(/\D/g, '')}`}
+                  >
+                    <PhoneOutlinedIcon />
+                  </RecordHeaderActionIcon>
+                  {onMessageApplicant ? (
+                    <RecordHeaderActionIcon tooltip="Send Message" onClick={onMessageApplicant}>
+                      <MessageIcon />
+                    </RecordHeaderActionIcon>
+                  ) : (
+                    <RecordHeaderActionIcon
+                      tooltip="Send SMS"
+                      onClick={() => {
+                        if (hasTwilioNumber) {
+                          setMessageDrawerChannel('sms');
+                          setMessageDrawerOpen(true);
+                        } else {
+                          window.open(`sms:${phone.replace(/\D/g, '')}`, '_blank');
+                        }
+                      }}
+                    >
+                      <MessageIcon />
+                    </RecordHeaderActionIcon>
+                  )}
+                </>
+              )}
+              {email && (
+                <RecordHeaderActionIcon
+                  tooltip={
+                    gmailConnected
+                      ? `Email ${email} (send from your Gmail)`
+                      : `Email ${email} (open mail app)`
+                  }
+                  onClick={() => {
+                    if (gmailConnected) {
+                      setMessageDrawerChannel('email');
+                      setMessageDrawerOpen(true);
+                    } else {
+                      window.open(`mailto:${email}`, '_blank');
+                    }
+                  }}
+                >
+                  <EmailOutlinedIcon />
+                </RecordHeaderActionIcon>
+              )}
+              {resume && resume.fileName && (
+                <RecordHeaderActionIcon tooltip={`View Resume: ${resume.fileName}`} onClick={handleResumeClick}>
+                  <DescriptionIcon />
+                </RecordHeaderActionIcon>
+              )}
+              {canShowContactIconsRow && (
+                <Tooltip title="Notes" componentsProps={recordHeaderTooltipComponentsProps}>
+                  <IconButton size="small" onClick={() => setShowAddNoteDialog(true)} sx={recordHeaderActionIconButtonSx}>
+                    <NoteIcon />
+                  </IconButton>
+                </Tooltip>
+              )}
+              {showIndeedFlexBadge && (
+                <Tooltip title="Added to Indeed Flex" componentsProps={recordHeaderTooltipComponentsProps}>
+                  <Box
+                    component="img"
+                    src="/img/flex.png"
+                    alt="Indeed Flex"
+                    sx={{
+                      height: 28,
+                      width: 'auto',
+                      maxWidth: 88,
+                      objectFit: 'contain',
+                      display: 'block',
+                      flexShrink: 0,
+                      alignSelf: 'center',
+                      ml: 0.25,
+                    }}
+                  />
+                </Tooltip>
+              )}
+            </Stack>
+          )}
+
+          {/* Line A: location · created · work auth */}
+          {(() => {
+            const loc = city && state ? `${city}, ${state}` : '';
+            const hasLoc = Boolean(loc);
+            const hasCreated = Boolean(headerCreatedShort);
+            const showWorkAuth = isAdminView && workEligibility !== undefined;
+            if (!hasLoc && !hasCreated && !showWorkAuth) return null;
+            const sep = (
+              <Typography component="span" sx={{ color: 'text.disabled', fontSize: '13px', userSelect: 'none' }}>
+                ·
+              </Typography>
+            );
+            const meta = { fontSize: '13px', fontWeight: 400, color: 'text.secondary' } as const;
+            return (
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  columnGap: 0.75,
+                  rowGap: 0.25,
+                  mb: 0.25,
+                }}
+              >
+                {hasLoc && (
+                  <Typography component="span" variant="body2" sx={meta}>
+                    {loc}
+                  </Typography>
+                )}
+                {hasCreated && (
+                  <>
+                    {hasLoc && sep}
+                    <Typography component="span" variant="body2" sx={meta}>
+                      Created {headerCreatedShort}
+                    </Typography>
+                  </>
+                )}
+                {showWorkAuth && (
+                  <>
+                    {(hasLoc || hasCreated) && sep}
+                    <Typography component="span" variant="body2" sx={meta}>
+                      Authorized to Work: {workEligibility ? 'Yes' : 'No'}
+                    </Typography>
+                  </>
+                )}
+              </Box>
+            );
+          })()}
+
+          {/* Line B: groups */}
+          {canViewUserGroupsInHeader && headerUserGroups.length > 0 && (
+            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '13px', mb: 0.25, fontWeight: 500 }}>
+              Member of:{' '}
+              {headerUserGroups.map((g, idx) => (
+                <React.Fragment key={g.id}>
+                  {idx > 0 ? ', ' : ''}
+                  <Link
+                    component={RouterLink}
+                    to={`/usergroups/${g.id}`}
+                    underline="hover"
+                    sx={{ fontWeight: 500, color: 'text.primary', '&:hover': { color: 'primary.main' } }}
+                  >
+                    {g.title}
+                  </Link>
+                </React.Fragment>
+              ))}
+            </Typography>
+          )}
+
+          {/* Line C: employment */}
+          {showEntityEmploymentStatusRow && (entityEmploymentChipsLoading || entityEmploymentChipItems.length > 0) && (
+            <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.5, mb: 0.25 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '13px', fontWeight: 500 }}>
+                Employment:
+              </Typography>
+              <UserEntityOnboardingStatusCell
+                items={entityEmploymentChipItems}
+                loading={entityEmploymentChipsLoading}
+                emptyDisplay="hidden"
+                density="compact"
+              />
+            </Box>
+          )}
+          
+          {/* Onboarding Pills - Above Skills */}
+          {canViewAdminContent && (() => {
+            // Helper function to get pill color for screening orders
+            const getScreeningPillColor = (status: string, result?: string) => {
+              if (status === 'In-Progress') {
+                return '#ff9800'; // Yellow/warning
+              } else if (status === 'Complete') {
+                if (result === 'Passed') {
+                  return '#4caf50'; // Green
+                } else if (result === 'Failed') {
+                  return '#f44336'; // Red/error
+                }
+              }
+              return '#4caf50'; // Default green
+            };
+
+            // Filter and prepare E-Verify orders (newest first, show only newest)
+            const activeEVerifyOrders = eVerifyOrders.filter(order => order.status !== 'Cancelled');
+            const sortedEVerifyOrders = [...activeEVerifyOrders].sort((a, b) => {
+              const dateA = a.dateSubmitted ? new Date(a.dateSubmitted).getTime() : 0;
+              const dateB = b.dateSubmitted ? new Date(b.dateSubmitted).getTime() : 0;
+              return dateB - dateA;
+            });
+            const newestEVerifyOrder = sortedEVerifyOrders.length > 0 ? sortedEVerifyOrders[0] : null;
+
+            // Filter screening orders (exclude cancelled, show all active orders)
+            const activeBackgroundOrders = backgroundCheckOrders.filter(order => order.status !== 'Cancelled');
+            const activeDrugOrders = drugScreeningOrders.filter(order => order.status !== 'Cancelled');
+            const activeAdditionalOrders = additionalScreeningOrders.filter(order => order.status !== 'Cancelled');
+
+            // Combine all pills
+            const allPills: Array<{ label: string; color: string; key: string }> = [];
+
+            // Add E-Verify pill (only newest)
+            if (newestEVerifyOrder) {
+              let eVerifyColor = '#4caf50';
+              if (newestEVerifyOrder.status === 'In-Progress') {
+                eVerifyColor = '#ff9800';
+              } else if (newestEVerifyOrder.status === 'Complete') {
+                eVerifyColor = newestEVerifyOrder.result && newestEVerifyOrder.result !== 'Employment Authorized' 
+                  ? '#f44336' 
+                  : '#4caf50';
+              }
+              allPills.push({
+                label: 'Select · E-Verify',
+                color: eVerifyColor,
+                key: `everify-${newestEVerifyOrder.id}`,
+              });
+            }
+
+            // Add Background Check pills (one per order)
+            activeBackgroundOrders.forEach(order => {
+              allPills.push({
+                label: order.typeLabel || order.type || 'Background Check',
+                color: getScreeningPillColor(order.status, order.result),
+                key: `bg-${order.id}`
+              });
+            });
+
+            // Add Drug Screening pills (one per order)
+            activeDrugOrders.forEach(order => {
+              allPills.push({
+                label: order.typeLabel || order.type || 'Drug Screening',
+                color: getScreeningPillColor(order.status, order.result),
+                key: `drug-${order.id}`
+              });
+            });
+
+            // Add Additional Screening pills (one per order)
+            activeAdditionalOrders.forEach(order => {
+              allPills.push({
+                label: order.typeLabel || order.type || 'Additional Screening',
+                color: getScreeningPillColor(order.status, order.result),
+                key: `addl-${order.id}`
+              });
+            });
+
+            if (allPills.length === 0) return null;
+
+            return (
+              <Box sx={{ mt: 1, mb: 1 }}>
+                <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap alignItems="center">
+                  {allPills.map((pill) => (
+                    <Chip
+                      key={pill.key}
+                      label={pill.label}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: pill.color,
+                        color: 'white',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  ))}
+                </Stack>
+              </Box>
+            );
+          })()}
+
+          {/* Screening verdict summary — Desktop */}
+          {canViewAdminContent &&
+            screeningVerdictSummary &&
+            screeningVerdictSummary.summaryText &&
+            screeningVerdictSummary.overallVerdict !== 'NONE' && (
+              <Box sx={{ mt: 0.5, mb: 1, display: 'flex', alignItems: 'flex-start', gap: 0.75, flexWrap: 'wrap' }}>
+                <Chip
+                  label={
+                    screeningVerdictSummary.overallVerdict === 'PASSED'
+                      ? 'Screening: Passed'
+                      : screeningVerdictSummary.overallVerdict === 'FAILED'
+                        ? 'Screening: Failed'
+                        : screeningVerdictSummary.overallVerdict === 'NEEDS_REVIEW'
+                          ? 'Screening: Needs review'
+                          : 'Screening: Waiting'
+                  }
+                  size="small"
+                  sx={{
+                    height: 22,
+                    fontSize: '0.7rem',
+                    fontWeight: 600,
+                    bgcolor:
+                      screeningVerdictSummary.overallVerdict === 'PASSED'
+                        ? '#4caf50'
+                        : screeningVerdictSummary.overallVerdict === 'FAILED'
+                          ? '#f44336'
+                          : screeningVerdictSummary.overallVerdict === 'NEEDS_REVIEW'
+                            ? '#ff9800'
+                            : '#9e9e9e',
+                    color: 'white',
+                    '& .MuiChip-label': { px: 1 },
+                  }}
+                />
+                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: '22px' }}>
+                  {screeningVerdictSummary.summaryText}
+                </Typography>
+              </Box>
+            )}
+
+          {/* Skills Chips - Above Profile Quality Bar */}
+          {primarySkills && primarySkills.length > 0 && (
+            <Box sx={{ mt: 1, mb: 1 }}>
+              <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap alignItems="center">
+                {primarySkills.slice(0, 5).map((skill, index) => (
+                  <Chip
+                    key={index}
+                    label={toChipLabel(skill)}
+                    size="small"
+                    sx={{
+                      height: 22,
+                      fontSize: '0.7rem',
+                      fontWeight: 500,
+                      bgcolor: '#2196F3',
+                      color: 'white',
+                      '& .MuiChip-label': {
+                        px: 1,
+                      },
+                    }}
+                  />
+                ))}
+                {primarySkills.length > 5 && (
+                  <Tooltip 
+                    title={`${primarySkills.length - 5} more skills`}
+                    componentsProps={{
+                      tooltip: {
+                        sx: { color: 'white' }
+                      }
+                    }}
+                  >
+                    <Chip
+                      label={`+${primarySkills.length - 5}`}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: 'grey.200',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  </Tooltip>
+                )}
+              </Stack>
+            </Box>
+          )}
+          
+          {/* Education, Work Experience, and Certs Chips - Below Skills */}
+          {(education.length > 0 || workExperience.length > 0 || (certifications && certifications.length > 0)) && (
+            <Box sx={{ mt: 1, mb: 1 }}>
+              <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap alignItems="center">
+                {/* Education Chips - Purple */}
+                {education.slice(0, 3).map((edu, index) => {
+                  const degree = toChipLabel(edu?.degree ?? edu?.name ?? edu);
+                  if (!degree) return null;
+                  return (
+                    <Chip
+                      key={`edu-${index}`}
+                      label={degree}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: '#9C27B0',
+                        color: 'white',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  );
+                })}
+                {/* Work Experience Chips - Navy Blue */}
+                {workExperience.slice(0, 3).map((exp, index) => {
+                  const jobTitle = toChipLabel(exp?.jobTitle ?? exp?.title ?? exp?.name ?? exp);
+                  if (!jobTitle) return null;
+                  return (
+                    <Chip
+                      key={`exp-${index}`}
+                      label={jobTitle}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: '#1976D2',
+                        color: 'white',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  );
+                })}
+                {/* Certifications Chips - Black */}
+                {certifications && certifications.slice(0, 3).map((cert, index) => {
+                  const certName = toChipLabel(cert);
+                  if (!certName) return null;
+                  return (
+                    <Chip
+                      key={`cert-${index}`}
+                      label={certName}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: '#212121',
+                        color: 'white',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  );
+                })}
+              </Stack>
+            </Box>
+          )}
+          
+          {/* Profile Quality Bar - Slim 6px */}
+          {isAdminView && profileScore !== undefined && (
+            <Box sx={{ mt: 1 }}>
+              <CompactProfileQualityBar score={profileScore} />
+            </Box>
+          )}
+
+          {/* Score stack removed (now shown as a single summary score on the name line) */}
+        </Box>
+        
+        {/* Column C: Right-aligned buttons - Same row as avatar */}
+        <Box sx={{ flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-end', alignSelf: 'flex-start', pt: 0 }}>
+          {securityLevel && getSecurityLabel(securityLevel) && (
+            <Chip
+              label={getSecurityLabel(securityLevel)}
+              size="small"
+              sx={{
+                ...getSoftChipSx(getSecurityColor(securityLevel)),
+                fontWeight: 600,
+                height: 26,
+                fontSize: '0.75rem',
+                px: 1,
+              }}
+            />
+          )}
+          {isAdminView && onboardingInProgress ? (
+            <Button
+              variant="contained"
+              size="small"
+              onClick={() => setShowCancelOnboardingDialog(true)}
+              sx={{
+                px: 1.5,
+                py: 0.5,
+                fontSize: '0.8125rem',
+                backgroundImage: 'linear-gradient(90deg, #FF8A00 0%, #FFB300 100%)', // Yellow-orange gradient
+                color: '#ffffff', // White text
+                fontWeight: 600,
+                '&:hover': {
+                  backgroundImage: 'linear-gradient(90deg, #FB8C00 0%, #FFA000 100%)',
+                },
+              }}
+            >
+              Cancel Onboarding
+            </Button>
+          ) : null}
+        </Box>
+        
       </Box>
+
+      {/* Certifications Modal */}
+      <CertificationsModal
+        open={showCertificationsModal}
+        onClose={() => setShowCertificationsModal(false)}
+        certifications={certifications}
+      />
+
+      <ImageCropDialog
+        open={cropOpen}
+        title="Edit profile photo"
+        imageSrc={pendingImageSrc}
+        cropShape="round"
+        aspect={1}
+        confirmLabel={avatarBusy ? 'Saving…' : 'Save'}
+        loading={avatarBusy}
+        onCancel={() => {
+          if (avatarBusy) return;
+          setCropOpen(false);
+          setPendingImageSrc(null);
+          if (fileInputRef.current) fileInputRef.current.value = '';
+        }}
+        onConfirm={handleConfirmCroppedAvatar}
+      />
+      
+      {/* Copy Success Snackbar */}
+      <Snackbar
+        open={!!copySuccess}
+        autoHideDuration={3000}
+        onClose={() => setCopySuccess(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setCopySuccess(null)} severity="success" sx={{ width: '100%' }}>
+          {copySuccess}
+        </Alert>
+      </Snackbar>
+
+      <Snackbar
+        open={!!avatarSaveError}
+        autoHideDuration={8000}
+        onClose={() => setAvatarSaveError(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setAvatarSaveError(null)}
+          severity="error"
+          variant="filled"
+          sx={{ width: '100%' }}
+        >
+          {avatarSaveError}
+        </Alert>
+      </Snackbar>
+
+      {/* Cancel Onboarding Confirmation Dialog */}
+      <Dialog
+        open={showCancelOnboardingDialog}
+        onClose={() => !cancellingOnboarding && setShowCancelOnboardingDialog(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Cancel Onboarding</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Are you sure you want to cancel the {activeOnboardingType} onboarding process? This action cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => setShowCancelOnboardingDialog(false)}
+            disabled={cancellingOnboarding}
+          >
+            Keep Onboarding
+          </Button>
+          <Button
+            onClick={handleCancelOnboarding}
+            variant="contained"
+            color="error"
+            disabled={cancellingOnboarding}
+            startIcon={cancellingOnboarding ? <CircularProgress size={16} /> : null}
+          >
+            {cancellingOnboarding ? 'Cancelling...' : 'Cancel Onboarding'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Add Note Dialog */}
+      <AddUserNoteDialog
+        open={showAddNoteDialog}
+        onClose={() => setShowAddNoteDialog(false)}
+        userId={uid}
+        userName={`${firstName} ${lastName}`}
+        onNoteAdded={() => {}}
+      />
+
+      {/* Start Onboarding Dialog */}
+      <StartOnboardingDialog
+        open={showStartOnboardingDialog}
+        onClose={() => setShowStartOnboardingDialog(false)}
+        userId={uid}
+        tenantId={tenantId || authTenantId || activeTenant?.id || ''}
+        onOnboardingStarted={() => {
+          if (onOnboardingStarted) {
+            onOnboardingStarted();
+          }
+          // Navigate to onboarding tab
+          if (onTabChange) {
+            onTabChange('Onboarding');
+          }
+        }}
+      />
+
+      {/* Message Drawer */}
+      <MessageDrawer
+        open={messageDrawerOpen}
+        onClose={() => setMessageDrawerOpen(false)}
+        recipients={(() => {
+          const recipients: MessageRecipient[] = [];
+          if (messageDrawerChannel === 'email' && email) {
+            recipients.push({
+              userId: uid,
+              name: `${firstName} ${lastName}`.trim() || email.split('@')[0],
+              email: email,
+            });
+          } else if (messageDrawerChannel === 'sms' && phone) {
+            recipients.push({
+              userId: uid,
+              name: `${firstName} ${lastName}`.trim() || phone,
+              phone: phone,
+            });
+          }
+          return recipients;
+        })()}
+        tenantId={effectiveTenantId}
+        defaultChannels={[messageDrawerChannel]}
+        onSend={() => {
+          setMessageDrawerOpen(false);
+        }}
+      />
     </Box>
   );
 };

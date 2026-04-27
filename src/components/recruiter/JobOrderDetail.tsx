@@ -53,8 +53,9 @@ import {
 import { JobOrderService } from '../../services/recruiter/jobOrderService';
 import { JobOrder, JobOrderFormData, JobApplication, Candidate, Employee } from '../../types/recruiter/jobOrder';
 import { useAuth } from '../../contexts/AuthContext';
-import JobOrderForm from './JobOrderForm';
+import JobOrderForm from '../JobOrderForm';
 import PostToJobsBoardDialog from './PostToJobsBoardDialog';
+import { formatHourlyPayPerHourLong } from '../../utils/hourlyPayDisplay';
 
 interface JobOrderDetailProps {
   jobOrderId: string;
@@ -416,7 +417,7 @@ const JobOrderDetail: React.FC<JobOrderDetailProps> = ({
                           Pay Rate
                         </Typography>
                         <Typography variant="body1" fontWeight="medium">
-                          ${jobOrder.payRate}/hour
+                          {formatHourlyPayPerHourLong(jobOrder.payRate) ?? '—'}
                         </Typography>
                       </Box>
                       <Box>
@@ -424,7 +425,7 @@ const JobOrderDetail: React.FC<JobOrderDetailProps> = ({
                           Bill Rate
                         </Typography>
                         <Typography variant="body1" fontWeight="medium">
-                          ${jobOrder.billRate}/hour
+                          {formatHourlyPayPerHourLong(jobOrder.billRate) ?? '—'}
                         </Typography>
                       </Box>
                     </Box>
@@ -744,7 +745,7 @@ const JobOrderDetail: React.FC<JobOrderDetailProps> = ({
                               />
                             </TableCell>
                             <TableCell>
-                              ${employee.payRate}/hour
+                              {formatHourlyPayPerHourLong(employee.payRate) ?? '—'}
                             </TableCell>
                           </TableRow>
                         ))}

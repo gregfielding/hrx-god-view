@@ -20,12 +20,13 @@ import {
   Tooltip,
   CircularProgress,
   Alert,
+  Card,
   CardContent,
+  CardHeader,
   Button,
 } from '@mui/material';
 import {
   Search as SearchIcon,
-  FilterList as FilterIcon,
   Refresh as RefreshIcon,
   Info as InfoIcon,
   Login as LoginIcon,
@@ -40,12 +41,25 @@ import {
 import { collection, query, where, orderBy, limit, getDocs, startAfter, QueryDocumentSnapshot } from 'firebase/firestore';
 
 import { db } from '../../../firebase';
+import { getActivityLogMessageBodyDisplay } from '../../../utils/activityLogDisplay';
 
 interface ActivityLog {
   id: string;
   userId: string;
   action: string;
-  actionType: 'login' | 'logout' | 'profile_update' | 'job_application' | 'assignment_update' | 'document_upload' | 'security_change' | 'notification' | 'other';
+  actionType:
+    | 'login'
+    | 'logout'
+    | 'profile_update'
+    | 'job_application'
+    | 'assignment_update'
+    | 'document_upload'
+    | 'security_change'
+    | 'notification'
+    | 'sms_sent'
+    | 'email_sent'
+    | 'note_added'
+    | 'other';
   description: string;
   timestamp: Date;
   metadata?: {
@@ -56,6 +70,10 @@ interface ActivityLog {
     changes?: any;
     targetId?: string;
     targetType?: string;
+    messageBody?: string;
+    messagePreview?: string;
+    contentSent?: string;
+    [key: string]: unknown;
   };
   severity: 'low' | 'medium' | 'high';
   source: 'web' | 'mobile' | 'api' | 'system';
@@ -64,9 +82,11 @@ interface ActivityLog {
 interface ActivityLogTabProps {
   uid: string;
   user: any;
+  /** When this value changes, the tab will refetch activities (e.g. after logging a new activity). */
+  refreshTrigger?: number;
 }
 
-const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user }) => {
+const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user, refreshTrigger }) => {
   const [activities, setActivities] = useState<ActivityLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -83,6 +103,12 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user }) => {
   useEffect(() => {
     loadActivities();
   }, [uid]);
+
+  useEffect(() => {
+    if (uid && refreshTrigger != null && refreshTrigger > 0) {
+      loadActivities(true);
+    }
+  }, [refreshTrigger]);
 
   const loadActivities = async (isRefresh = false) => {
     if (!uid) return;
@@ -125,11 +151,28 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user }) => {
         } as ActivityLog);
       });
 
-      if (isRefresh) {
+      // React 18 StrictMode can run effects twice in dev, which can cause the first page
+      // to be appended twice (duplicate IDs -> duplicate React keys). Treat the first page
+      // as a replace, and also de-dupe whenever we append.
+      const isInitialPage = !isRefresh && !lastDoc;
+
+      if (isRefresh || isInitialPage) {
         setActivities(activitiesData);
         setPage(1);
       } else {
-        setActivities(prev => [...prev, ...activitiesData]);
+        setActivities((prev) => {
+          const seen = new Set<string>();
+          const merged: ActivityLog[] = [];
+
+          // Preserve order: existing first, then new; skip duplicates by id.
+          for (const a of [...prev, ...activitiesData]) {
+            if (seen.has(a.id)) continue;
+            seen.add(a.id);
+            merged.push(a);
+          }
+
+          return merged;
+        });
       }
 
       setLastDoc(querySnapshot.docs[querySnapshot.docs.length - 1] || null);
@@ -170,6 +213,12 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user }) => {
         return <SecurityIcon fontSize="small" color="error" />;
       case 'notification':
         return <NotificationsIcon fontSize="small" color="info" />;
+      case 'sms_sent':
+        return <NotificationsIcon fontSize="small" color="info" />;
+      case 'email_sent':
+        return <DescriptionIcon fontSize="small" color="info" />;
+      case 'note_added':
+        return <EditIcon fontSize="small" color="primary" />;
       default:
         return <InfoIcon fontSize="small" color="action" />;
     }
@@ -214,27 +263,33 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user }) => {
     }).format(timestamp);
   };
 
-  const filteredActivities = activities.filter(activity =>
-    activity.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    activity.action.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredActivities = activities.filter((activity) => {
+    const q = searchTerm.toLowerCase();
+    const displayDesc = getActivityLogMessageBodyDisplay({
+      actionType: activity.actionType,
+      description: activity.description,
+      metadata: activity.metadata,
+    });
+    return (
+      displayDesc.toLowerCase().includes(q) ||
+      activity.description.toLowerCase().includes(q) ||
+      activity.action.toLowerCase().includes(q)
+    );
+  });
 
   return (
-    <Box sx={{ p: 0 }}>
-      <Typography variant="h6" gutterBottom>
-        Activity Log
-      </Typography>
-      <Typography variant="body1" color="text.secondary" mb={3}>
-        Track user activities, login sessions, profile updates, and system interactions.
-      </Typography>
-
-      {/* Filters and Search */}
-      <Box sx={{ pt: 3, pb: 3, mb: 3, borderRadius: 2 }}>
-        <Box display="flex" alignItems="center" mb={2}>
-          <FilterIcon color="primary" sx={{ mr: 1 }} />
-          <Typography variant="h6">Filters & Search</Typography>
-        </Box>
-        <Grid container spacing={2} alignItems="center">
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {/* Filters and Search Card */}
+      <Card>
+        <CardHeader 
+          title="Filters & Search" 
+          titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+        />
+        <CardContent sx={{ p: 0 }}>
+          <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 3 }}>
+            Track user activities, login sessions, profile updates, and system interactions.
+          </Typography>
+          <Grid container spacing={2} alignItems="center">
             <Grid item xs={12} md={4}>
               <TextField
                 fullWidth
@@ -306,14 +361,16 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user }) => {
               </Tooltip>
             </Grid>
           </Grid>
-        </Box>
+        </CardContent>
+      </Card>
 
-      {/* Activity Table */}
-      <Box sx={{ pt: 3, pb: 3, mb: 3, borderRadius: 2 }}>
-        <Box display="flex" alignItems="center" mb={2}>
-          <Typography variant="h6">Activity History ({filteredActivities.length} entries)</Typography>
-        </Box>
-        <CardContent>
+      {/* Activity History Card */}
+      <Card>
+        <CardHeader 
+          title={`Activity History (${filteredActivities.length} entries)`}
+          titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+        />
+        <CardContent sx={{ p: 0 }}>
           {error && (
             <Alert severity="error" sx={{ mb: 2 }}>
               {error}
@@ -330,21 +387,47 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user }) => {
             </Typography>
           ) : (
             <>
-              <TableContainer component={Paper} variant="outlined">
+              <TableContainer 
+                component={Paper} 
+                variant="outlined"
+                sx={{
+                  borderRadius: 1,
+                  border: '1px solid',
+                  borderColor: 'divider'
+                }}
+              >
                 <Table>
                   <TableHead>
-                    <TableRow>
-                      <TableCell>Action</TableCell>
-                      <TableCell>Description</TableCell>
-                      <TableCell>Severity</TableCell>
-                      <TableCell>Source</TableCell>
-                      <TableCell>Timestamp</TableCell>
-                      <TableCell>Details</TableCell>
+                    <TableRow sx={{ bgcolor: 'grey.50' }}>
+                      {['Action', 'Description', 'Severity', 'Source', 'Timestamp', 'Details'].map((header) => (
+                        <TableCell 
+                          key={header}
+                          sx={{
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            color: 'text.secondary',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                            borderBottom: '1px solid',
+                            borderColor: 'divider',
+                            py: 1.5
+                          }}
+                        >
+                          {header}
+                        </TableCell>
+                      ))}
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {filteredActivities.map((activity) => (
-                      <TableRow key={activity.id} hover>
+                      <TableRow 
+                        key={activity.id}
+                        sx={{
+                          '&:hover': {
+                            bgcolor: 'grey.50'
+                          }
+                        }}
+                      >
                         <TableCell>
                           <Box display="flex" alignItems="center" gap={1}>
                             {getActionIcon(activity.actionType)}
@@ -354,8 +437,12 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user }) => {
                           </Box>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2">
-                            {activity.description}
+                          <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                            {getActivityLogMessageBodyDisplay({
+                              actionType: activity.actionType,
+                              description: activity.description,
+                              metadata: activity.metadata,
+                            })}
                           </Typography>
                         </TableCell>
                         <TableCell>
@@ -409,7 +496,7 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user }) => {
             </>
           )}
         </CardContent>
-      </Box>
+      </Card>
     </Box>
   );
 };

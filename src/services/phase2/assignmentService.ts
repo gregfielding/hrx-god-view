@@ -38,6 +38,19 @@ export class AssignmentService {
 
   /**
    * Create a new assignment
+   * 
+   * @param tenantId - Tenant ID
+   * @param jobOrderId - Job Order ID
+   * @param formData - Assignment form data (must include all required denormalized fields)
+   * @param createdBy - User ID of creator
+   * @returns Assignment ID
+   * 
+   * Required denormalized fields in formData:
+   * - firstName, lastName (worker)
+   * - companyId, companyName (company)
+   * - locationId, locationNickname or worksiteName (location)
+   * - latitude, longitude (location coords)
+   * - jobOrderType ('career' | 'gig')
    */
   async createAssignment(
     tenantId: string,
@@ -46,21 +59,42 @@ export class AssignmentService {
     createdBy: string
   ): Promise<string> {
     try {
-      const assignmentData: Omit<Assignment, 'id'> = {
+      // Validate required denormalized fields
+      const requiredFields = [
+        'candidateId', 'userId', 'firstName', 'lastName',
+        'companyId', 'companyName', 
+        'locationId', 'latitude', 'longitude',
+        'jobOrderType', 'status', 'startDate', 'payRate', 'timesheetMode'
+      ];
+      
+      const missingFields = requiredFields.filter(field => !(field in formData) || (formData as any)[field] === undefined);
+      if (missingFields.length > 0) {
+        throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
+      }
+      
+      // Ensure locationNickname or worksiteName is present
+      if (!(formData as any).locationNickname && !(formData as any).worksiteName) {
+        throw new Error('Either locationNickname or worksiteName is required');
+      }
+
+      const assignmentData: any = {
         ...formData,
         tenantId,
         jobOrderId,
         createdAt: serverTimestamp(),
         createdBy,
         updatedAt: serverTimestamp(),
-        updatedBy: createdBy
+        updatedBy: createdBy,
+        assignedAt: serverTimestamp(), // Track when assignment was made
       };
 
+      // Use tenant-level assignments collection (not nested under job_orders)
       const docRef = await addDoc(
-        collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'assignments'),
+        collection(db, 'tenants', tenantId, 'assignments'),
         assignmentData
       );
 
+      console.log(`✅ Assignment created: ${docRef.id} for worker ${assignmentData.userId} on job order ${jobOrderId}`);
       return docRef.id;
     } catch (error) {
       console.error('Error creating assignment:', error);
@@ -73,13 +107,12 @@ export class AssignmentService {
    */
   async updateAssignment(
     tenantId: string,
-    jobOrderId: string,
     assignmentId: string,
     updates: Partial<AssignmentFormData>,
     updatedBy: string
   ): Promise<void> {
     try {
-      const assignmentRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'assignments', assignmentId);
+      const assignmentRef = doc(db, 'tenants', tenantId, 'assignments', assignmentId);
       
       await updateDoc(assignmentRef, {
         ...updates,
@@ -97,13 +130,12 @@ export class AssignmentService {
    */
   async updateAssignmentStatus(
     tenantId: string,
-    jobOrderId: string,
     assignmentId: string,
     newStatus: AssignmentStatus,
     updatedBy: string
   ): Promise<void> {
     try {
-      const assignmentRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'assignments', assignmentId);
+      const assignmentRef = doc(db, 'tenants', tenantId, 'assignments', assignmentId);
       
       await updateDoc(assignmentRef, {
         status: newStatus,
@@ -121,11 +153,10 @@ export class AssignmentService {
    */
   async getAssignment(
     tenantId: string,
-    jobOrderId: string,
     assignmentId: string
   ): Promise<Assignment | null> {
     try {
-      const assignmentRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'assignments', assignmentId);
+      const assignmentRef = doc(db, 'tenants', tenantId, 'assignments', assignmentId);
       const assignmentDoc = await getDoc(assignmentRef);
       
       if (assignmentDoc.exists()) {
@@ -149,8 +180,10 @@ export class AssignmentService {
     sortOptions: AssignmentSortOptions = { field: 'startDate', direction: 'desc' }
   ): Promise<Assignment[]> {
     try {
+      // Use tenant-level assignments collection and filter by jobOrderId
       let q = query(
-        collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'assignments')
+        collection(db, 'tenants', tenantId, 'assignments'),
+        where('jobOrderId', '==', jobOrderId)
       );
 
       // Apply filters
@@ -196,7 +229,7 @@ export class AssignmentService {
   }
 
   /**
-   * Get assignments for a specific candidate
+   * Get assignments for a specific candidate/user
    */
   async getAssignmentsByCandidate(
     tenantId: string,
@@ -204,10 +237,10 @@ export class AssignmentService {
     status?: AssignmentStatus
   ): Promise<Assignment[]> {
     try {
+      // Use tenant-level assignments collection and filter by userId
       let q = query(
-        collectionGroup(db, 'assignments'),
-        where('tenantId', '==', tenantId),
-        where('candidateId', '==', candidateId),
+        collection(db, 'tenants', tenantId, 'assignments'),
+        where('userId', '==', candidateId),
         orderBy('startDate', 'desc')
       );
 
@@ -236,9 +269,9 @@ export class AssignmentService {
     limitCount?: number
   ): Promise<Assignment[]> {
     try {
+      // Use tenant-level assignments collection
       let q = query(
-        collectionGroup(db, 'assignments'),
-        where('tenantId', '==', tenantId)
+        collection(db, 'tenants', tenantId, 'assignments')
       );
 
       // Apply filters
@@ -246,7 +279,10 @@ export class AssignmentService {
         q = query(q, where('status', '==', filters.status));
       }
       if (filters.candidateId) {
-        q = query(q, where('candidateId', '==', filters.candidateId));
+        q = query(q, where('userId', '==', filters.candidateId));
+      }
+      if (filters.jobOrderId) {
+        q = query(q, where('jobOrderId', '==', filters.jobOrderId));
       }
       if (filters.worksite) {
         q = query(q, where('worksite', '==', filters.worksite));
@@ -293,11 +329,10 @@ export class AssignmentService {
    */
   async deleteAssignment(
     tenantId: string,
-    jobOrderId: string,
     assignmentId: string
   ): Promise<void> {
     try {
-      const assignmentRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'assignments', assignmentId);
+      const assignmentRef = doc(db, 'tenants', tenantId, 'assignments', assignmentId);
       await deleteDoc(assignmentRef);
     } catch (error) {
       console.error('Error deleting assignment:', error);
@@ -322,6 +357,7 @@ export class AssignmentService {
         byStatus: {
           proposed: 0,
           confirmed: 0,
+          declined: 0,
           active: 0,
           completed: 0,
           ended: 0,

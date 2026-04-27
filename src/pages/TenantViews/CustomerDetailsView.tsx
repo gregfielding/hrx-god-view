@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import {
   Box,
   Typography,
@@ -38,7 +39,6 @@ import {
   LocationOn as LocationIcon,
   Phone as PhoneIcon,
   Email as EmailIcon,
-  ArrowBack as ArrowBackIcon,
   CameraAlt as CameraAltIcon,
   Clear as ClearIcon,
   LinkedIn as LinkedInIcon,
@@ -61,6 +61,8 @@ import { Autocomplete } from '@react-google-maps/api';
 import { db, storage } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { geocodeAddress } from '../../utils/geocodeAddress';
+import { ensureCityInSmartGroups } from '../../services/smartGroupMetroSync';
+import { formatPhoneNumber } from '../../utils/formatPhone';
 import IndustrySelector from '../../components/IndustrySelector';
 
 interface Contact {
@@ -299,6 +301,7 @@ const CustomerDetailsView: React.FC<CustomerDetailsViewProps> = ({
         await addDoc(collection(db, 'tenants', tenantId, 'customers', customer.id, 'locations'), worksiteData);
         setSuccessMessage('Worksite location added successfully!');
       }
+      ensureCityInSmartGroups(tenantId, worksiteForm.city || '', worksiteForm.state || '').catch(() => {});
 
       setWorksiteDialogOpen(false);
       setWorksiteForm({ nickname: '', street: '', city: '', state: '', zip: '', notes: '' });
@@ -626,13 +629,7 @@ const CustomerDetailsView: React.FC<CustomerDetailsViewProps> = ({
             </Box>
           </Box>
         </Box>
-        <Button
-          variant="outlined"
-          onClick={onBack}
-          startIcon={<ArrowBackIcon />}
-        >
-          Back to Customers
-        </Button>
+        <UniversalBackButton onClick={onBack} tooltip="Back to Customers" />
       </Box>
 
       {/* Contacts Section */}
@@ -696,7 +693,7 @@ const CustomerDetailsView: React.FC<CustomerDetailsViewProps> = ({
                     <TableCell>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                         <PhoneIcon fontSize="small" color="action" />
-                        <Typography variant="body2">{contact.phone || '-'}</Typography>
+                        <Typography variant="body2">{contact.phone ? formatPhoneNumber(contact.phone) : '-'}</Typography>
                       </Box>
                     </TableCell>
                     <TableCell>

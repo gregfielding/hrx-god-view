@@ -133,7 +133,7 @@ export class Phase1Cleanup {
         'recruiter_applications', // Keep applications (new structure)
         'recruiter_candidates', // Keep candidates (new structure)
         'recruiter_assignments', // Keep assignments (new structure)
-        'recruiter_jobsBoardPosts', // Keep jobBoardPosts (new structure)
+        'recruiter_jobsBoardPosts', // Superseded by tenants/{tid}/job_postings (see firestorePaths.jobPostings)
         'crm_locations' // Keep locations under crm_companies
       ];
 

@@ -1,11 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
   Box,
-  Typography,
   Button,
   Paper,
-  ToggleButtonGroup,
-  ToggleButton,
   Snackbar,
   Alert,
 } from '@mui/material';
@@ -352,92 +349,138 @@ const AddWorkers: React.FC = () => {
   };
 
   return (
-    <Box sx={{ p: 0 }}>
-      {/* Import Mode Toggle */}
-      <Box sx={{ mb: 3 }}>
-        <Typography variant="h6" gutterBottom>
-          Add Workers
-        </Typography>
-        <ToggleButtonGroup
-          value={importMode}
-          exclusive
-          onChange={(_, newMode) => newMode && setImportMode(newMode)}
-          aria-label="import mode"
-          sx={{ mb: 2 }}
-        >
-          <ToggleButton value="form" aria-label="individual form">
+    <Box sx={{ 
+      flex: 1, 
+      display: 'flex', 
+      flexDirection: 'column',
+      overflow: 'hidden',
+      px: { xs: 2, md: 3 },
+      pt: 2,
+      pb: 2,
+    }}>
+      {/* Mode Selection Pills - Inbox Standard Style */}
+      {!showForm && !showCSVUpload && (
+        <Box sx={{ display: 'flex', gap: 1, mb: 3 }}>
+          <Button
+            onClick={() => setImportMode('form')}
+            variant="text"
+            sx={{
+              textTransform: 'none',
+              borderRadius: '999px',
+              fontSize: '14px',
+              px: 1.5,
+              py: 0.75,
+              minWidth: 'auto',
+              fontWeight: importMode === 'form' ? 500 : 400,
+              color: importMode === 'form' ? 'white' : 'rgba(0, 0, 0, 0.7)',
+              bgcolor: importMode === 'form' ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+              '&:hover': {
+                bgcolor: importMode === 'form' ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+              },
+            }}
+          >
             Individual Form
-          </ToggleButton>
-          <ToggleButton value="csv" aria-label="csv upload">
+          </Button>
+          <Button
+            onClick={() => setImportMode('csv')}
+            variant="text"
+            sx={{
+              textTransform: 'none',
+              borderRadius: '999px',
+              fontSize: '14px',
+              px: 1.5,
+              py: 0.75,
+              minWidth: 'auto',
+              fontWeight: importMode === 'csv' ? 500 : 400,
+              color: importMode === 'csv' ? 'white' : 'rgba(0, 0, 0, 0.7)',
+              bgcolor: importMode === 'csv' ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+              '&:hover': {
+                bgcolor: importMode === 'csv' ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+              },
+            }}
+          >
             CSV Upload
-          </ToggleButton>
-        </ToggleButtonGroup>
-      </Box>
+          </Button>
+        </Box>
+      )}
 
       {/* Individual Form Mode */}
       {importMode === 'form' && (
-        <Box>
-          <Button
-            variant="contained"
-            color="primary"
-            onClick={() => setShowForm(true)}
-            sx={{ mb: 2 }}
-          >
-            Add New Worker
-          </Button>
-          {showForm && (
-            <Paper sx={{ p: 3, mb: 3 }}>
-              <AddWorkerForm
-                form={form}
-                onChange={handleChange}
-                onPhoneChange={handlePhoneChange}
-                onSubmit={handleSubmit}
-                loading={loading}
-                departments={departments}
-                locations={locations}
-                divisions={divisions}
-                managers={managers}
-                userGroups={userGroups}
-                selectedUserGroups={selectedUserGroups}
-                setSelectedUserGroups={setSelectedUserGroups}
-                showForm={showForm}
-                setShowForm={setShowForm}
-                isFormValid={isFormValid}
-                jobTitles={jobTitles}
-                error={error}
-                success={success}
-                setError={setError}
-                setSuccess={setSuccess}
-                contextType="agency"
-                isStaffingCompany={isStaffingCompany}
-                flexModuleEnabled={flexModuleEnabled}
-              />
-            </Paper>
+        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
+          {!showForm ? (
+            <Button
+              variant="contained"
+              color="primary"
+              onClick={() => setShowForm(true)}
+              sx={{ 
+                alignSelf: 'flex-start',
+                textTransform: 'none',
+                borderRadius: 1,
+              }}
+            >
+              Add New Worker
+            </Button>
+          ) : (
+            <Box sx={{ flex: 1, overflow: 'auto' }}>
+              <Paper sx={{ p: 3 }}>
+                <AddWorkerForm
+                  form={form}
+                  onChange={handleChange}
+                  onPhoneChange={handlePhoneChange}
+                  onSubmit={handleSubmit}
+                  loading={loading}
+                  departments={departments}
+                  locations={locations}
+                  divisions={divisions}
+                  managers={managers}
+                  userGroups={userGroups}
+                  selectedUserGroups={selectedUserGroups}
+                  setSelectedUserGroups={setSelectedUserGroups}
+                  showForm={showForm}
+                  setShowForm={setShowForm}
+                  isFormValid={isFormValid}
+                  jobTitles={jobTitles}
+                  error={error}
+                  success={success}
+                  setError={setError}
+                  setSuccess={setSuccess}
+                  contextType="agency"
+                  isStaffingCompany={isStaffingCompany}
+                  flexModuleEnabled={flexModuleEnabled}
+                />
+              </Paper>
+            </Box>
           )}
         </Box>
       )}
 
       {/* CSV Upload Mode */}
       {importMode === 'csv' && (
-        <Box>
+        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
           {!showCSVUpload ? (
             <Button
               variant="contained"
               color="primary"
               onClick={() => setShowCSVUpload(true)}
-              sx={{ mb: 2 }}
+              sx={{ 
+                alignSelf: 'flex-start',
+                textTransform: 'none',
+                borderRadius: 1,
+              }}
             >
               Upload CSV File
             </Button>
           ) : (
-            <CSVUpload
-              onWorkersReady={handleCSVImport}
-              onCancel={() => setShowCSVUpload(false)}
-              departments={departments}
-              locations={locations}
-              divisions={divisions}
-              managers={managers}
-            />
+            <Box sx={{ flex: 1, overflow: 'auto' }}>
+              <CSVUpload
+                onWorkersReady={handleCSVImport}
+                onCancel={() => setShowCSVUpload(false)}
+                departments={departments}
+                locations={locations}
+                divisions={divisions}
+                managers={managers}
+              />
+            </Box>
           )}
         </Box>
       )}

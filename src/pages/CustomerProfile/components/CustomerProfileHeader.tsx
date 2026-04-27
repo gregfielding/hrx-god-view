@@ -4,8 +4,8 @@ import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage
 import { doc, updateDoc } from 'firebase/firestore';
 import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import ClearIcon from '@mui/icons-material/Clear';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../../components/common/UniversalBackButton';
 
 import { storage, db } from '../../../firebase';
 
@@ -158,11 +158,7 @@ const CustomerProfileHeader: React.FC<CustomerProfileHeaderProps> = ({
           <h2>{name}</h2>
         </Box>
       </Box>
-      <Tooltip title="Back to Customers">
-        <IconButton onClick={() => navigate('/tenants')}>
-          <ArrowBackIcon sx={{ color: 'inherit' }} />
-        </IconButton>
-      </Tooltip>
+      <UniversalBackButton to="/tenants" tooltip="Back to Customers" />
     </Box>
   );
 };

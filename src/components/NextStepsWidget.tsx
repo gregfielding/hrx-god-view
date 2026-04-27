@@ -22,6 +22,7 @@ interface NextStepsWidgetProps {
   currentStage: string;
   onNavigateToStages: () => void;
   onSkipQuestion: (stage: string, field: string) => void;
+  deal?: any; // optional: used so expected close date step is answered when deal.closeDate is set
 }
 
 interface Question {
@@ -38,6 +39,7 @@ const NextStepsWidget: React.FC<NextStepsWidgetProps> = ({
   currentStage,
   onNavigateToStages,
   onSkipQuestion,
+  deal,
 }) => {
     // Helper function to check if a field is answered or skipped
   const getFieldStatus = (stageData: any, stage: string, field: string) => {
@@ -112,6 +114,7 @@ const NextStepsWidget: React.FC<NextStepsWidgetProps> = ({
         field: 'expectedCloseDate',
         question: 'What is the expected close date?',
         ...getFieldStatus(stageData, 'qualification', 'expectedCloseDate'),
+        ...(deal?.closeDate ? { isAnswered: true } : {}),
       }
     );
 
@@ -145,7 +148,7 @@ const NextStepsWidget: React.FC<NextStepsWidgetProps> = ({
     );
 
     return questions;
-  }, [stageData]);
+  }, [stageData, deal?.closeDate]);
 
   // Get next 3 unanswered questions, prioritizing current stage
   const nextQuestions = useMemo(() => {

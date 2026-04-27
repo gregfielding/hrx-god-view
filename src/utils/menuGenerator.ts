@@ -31,9 +31,29 @@ export async function generateMenuItems(
   // New claims-based parameters
   isHRXUser?: boolean,
   currentClaimsRole?: ClaimsRole,
-  claimsRoles?: { [tenantId: string]: { role: ClaimsRole; securityLevel: string } }
+  claimsRoles?: { [tenantId: string]: { role: ClaimsRole; securityLevel: string } },
+  // User profile flags
+  userJobsBoardEnabled?: boolean,
+  currentSecurityLevel?: string,
+  tenantSlug?: string
 ): Promise<MenuItem[]> {
   const menuItems: MenuItem[] = [];
+  
+  // If no tenant slug provided but we have tenantId, fetch it from Firestore
+  let effectiveTenantSlug = tenantSlug;
+  if (!effectiveTenantSlug && tenantId) {
+    try {
+      const { doc, getDoc } = await import('firebase/firestore');
+      const { db } = await import('../firebase');
+      const tenantRef = doc(db, 'tenants', tenantId);
+      const tenantSnap = await getDoc(tenantRef);
+      if (tenantSnap.exists()) {
+        effectiveTenantSlug = tenantSnap.data()?.slug || null;
+      }
+    } catch (err) {
+      console.warn('Could not fetch tenant slug:', err);
+    }
+  }
 
   // Debug helper (toggled via ?debugMenu=1 or localStorage 'debugMenu' === '1')
   const isMenuDebugEnabled = (): boolean => {
@@ -94,6 +114,11 @@ export async function generateMenuItems(
   // Check if this is HRX based on specific tenant ID (not user claims)
   // HRX user status (isHRXUser) gives access to switch tenants, but doesn't force HRX menu
   const isHRX = activeTenantId === 'TgDJ4sIaC7x2n5cPs3rW';
+  
+  // Get effective security level - prioritize tenant-specific over global
+  // First check tenant-specific security level from activeTenantData
+  // Then check currentSecurityLevel (which may be claims-based or global)
+  const effectiveSecurityLevel = activeTenantData?.securityLevel || currentSecurityLevel;
   // REMOVED: Excessive logging causing re-renders
   // REMOVED: Excessive logging causing re-renders
 
@@ -103,28 +128,70 @@ export async function generateMenuItems(
 
   if (!isHRX) {
     // Add basic menu items that don't require specific roles (for users without claims)
-    menuItems.push(
-      {
-        text: 'Dashboard',
-        to: '/dashboard',
-        icon: 'dashboard',
-        // No role requirements - available to all users
-      },
-      // {
-      //   text: 'My Profile',
-      //   to: '/profile',
-      //   icon: 'person',
-      // },
-    );
+    // ChatGPT moved to top bar navigation - removed from sidebar
+
+    // Inbox + Calendar - only for security levels 5-7 (internal team).
+    // Calendar sits directly beneath Inbox per UX cleanup; it used to live in
+    // the top-bar icon row but was moved into the sidebar to declutter the
+    // header (admins-only surface anyway).
+    if (effectiveSecurityLevel && ['5', '6', '7'].includes(String(effectiveSecurityLevel))) {
+      menuItems.push({
+        text: 'Inbox',
+        to: '/inbox',
+        icon: 'inbox',
+      });
+      menuItems.push({
+        text: 'Calendar',
+        to: '/calendar',
+        icon: 'calendar',
+      });
+    }
+
+    // Messages → /text-messages — hidden from sidebar (restore block to re-enable).
+    // if (effectiveSecurityLevel && ['5', '6', '7'].includes(String(effectiveSecurityLevel))) {
+    //   menuItems.push({
+    //     text: 'Messages',
+    //     to: '/text-messages',
+    //     icon: 'sms',
+    //   });
+    // }
+
+    // Slack Channels removed - now combined with Mentions in top bar
+
+    // Tasks and Calendar moved to top bar navigation - removed from sidebar
+    // {
+    //   text: 'My Profile',
+    //   to: '/profile',
+    //   icon: 'person',
+    // },
 
     // Add tenant-specific menu items with claims-based role requirements
+    // Workforce Management moved to Settings - removed from sidebar
     menuItems.push(
-      {
-        text: 'Workforce',
-        to: '/workforce',
-        icon: 'people',
-        requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
-      },
+      // Accounts / Users / Onboarding (sec level 5+).
+      // Contacts + Companies moved below Sales CRM per UX request — they're
+      // CRM-adjacent, so they now sit right after the CRM link rather than
+      // next to Accounts/Users.
+      ...((effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) ? [
+        {
+          text: 'Accounts',
+          to: '/accounts',
+          icon: 'business',
+          requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
+        },
+        {
+          text: 'Users',
+          to: '/users',
+          icon: 'people',
+          requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
+        },
+        {
+          text: 'Onboarding',
+          to: '/staff-onboarding',
+          icon: 'how_to_reg',
+          requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
+        },
+      ] : []),
       // Only show Customers if HRX Customers module is enabled
       ...(customersModuleEnabled ? [{
         text: 'Customers',
@@ -139,20 +206,88 @@ export async function generateMenuItems(
       //   icon: 'assignment',
       //   requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
       // }] : []),
-      // Only show Jobs Board if HRX Jobs Board module is enabled
-      ...(jobsBoardModuleEnabled ? [{
-        text: 'Jobs Board',
-        to: '/jobs-dashboard',
-        icon: 'work',
-        requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
-      }] : []),
-      // Recruiter (role-gated; no module gate)
+      // Show Jobs Board: always for security levels 0-4 (public view)
+      // For security levels 5-7, Jobs Board is now in the Recruiter module
+      ...((() => {
+        // Always show for security levels 0-4 (Applicants, Flex, Workers)
+        if (effectiveSecurityLevel && ['0', '1', '2', '3', '4'].includes(effectiveSecurityLevel)) {
+          return [{
+            text: 'Jobs Board',
+            to: effectiveTenantSlug ? `/${effectiveTenantSlug}/jobs-board` : '/c1/jobs-board',
+            icon: 'work',
+            requiredRoles: ['Applicant', 'Worker', 'Staff', 'Manager', 'Admin'] as ClaimsRole[],
+          }];
+        }
+        
+        // Removed Jobs Board for security levels 5-7 - now in Recruiter module
+        return [];
+      })()),
+      // Show My Applications and My Assignments for staff (security levels 1-4)
+      ...((effectiveSecurityLevel && ['1', '2', '3', '4'].includes(effectiveSecurityLevel)) ? [
+        {
+          text: 'My Applications',
+          to: effectiveTenantSlug ? `/${effectiveTenantSlug}/applications` : '/c1/workers/applications',
+          icon: 'fact_check',
+          requiredRoles: ['Applicant', 'Worker', 'Staff'] as ClaimsRole[],
+        },
+        {
+          text: 'My Assignments',
+          to: effectiveTenantSlug ? `/${effectiveTenantSlug}/assignments` : '/c1/workers/assignments',
+          icon: 'assignment_turned_in',
+          requiredRoles: ['Applicant', 'Worker', 'Staff'] as ClaimsRole[],
+        }
+      ] : []),
+      // Jobs (role-gated; no module gate)
       ...([{
-        text: 'Recruiter',
-        to: '/recruiter',
+        text: 'Jobs',
+        to: '/jobs',
         icon: 'people',
         requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[], // Recruiter area access
       }]),
+      // Shifts — cross-job-order shift dashboard for internal staff. Sits
+      // directly under Jobs since it's an alternative slice of the same
+      // job-order subgraph (shift docs live under each JO). Sec 5+ only.
+      ...((effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) ? [{
+        text: 'Shifts',
+        to: '/shifts',
+        icon: 'swap_horiz',
+        requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
+      }] : []),
+      // Workforce — Phase D CSA workspace (Employee Readiness + Job Readiness
+      // queues). Sits directly under Shifts because both are operational
+      // dashboards for internal staff over the same worker × job-order graph.
+      // Sec 5+ only — this is the CSA daily driver, not a worker-facing page.
+      // The user-facing label stays "Workforce" (spec naming-lock); the URL
+      // is `/readiness` because `/workforce/*` was already in use for the
+      // tenant company directory (`WorkforceDashboard`) when Phase D started.
+      // See `src/pages/Workforce.tsx` header for the full rationale.
+      ...((effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) ? [{
+        text: 'Workforce',
+        to: '/readiness',
+        icon: 'speed',
+        requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
+      }] : []),
+      // Finances & Budgeting: internal team (security levels 5, 6, 7)
+      ...([{
+        text: 'Finances and Budgeting',
+        to: '/finances-budgeting',
+        icon: 'bar_chart',
+        accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
+      }]),
+      // Global Invoicing (sidebar): security level 7 only – all accounts, reporting, create invoices
+      ...([{
+        text: 'Invoicing',
+        to: '/invoicing',
+        icon: 'attach_money',
+        accessRoles: ['tenant_7'],
+      }]),
+      // Workers Comp (hidden from main sidebar — still under Settings → Operations → Workers Comp)
+      // ...([{
+      //   text: 'Workers Comp',
+      //   to: '/settings?tab=workers-comp',
+      //   icon: 'health_and_safety',
+      //   accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
+      // }]),
       // Sales CRM (role-gated; no module gate)
       ...([{
         text: 'Sales CRM',
@@ -160,6 +295,23 @@ export async function generateMenuItems(
         icon: 'business',
         requiredRoles: ['Admin', 'Manager', 'Recruiter', 'Worker'] as ClaimsRole[], // Admin, Manager, Recruiter, and Worker access
       }]),
+      // Contacts + Companies — CRM-adjacent. Sit between Sales CRM and Settings
+      // in the sidebar so they read as "CRM tooling" rather than duplicating
+      // Accounts/Users up top. Still gated to sec levels 5+.
+      ...((effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) ? [
+        {
+          text: 'Contacts',
+          to: '/contacts',
+          icon: 'contacts',
+          requiredRoles: ['Recruiter', 'Manager', 'Admin', 'Worker'] as ClaimsRole[],
+        },
+        {
+          text: 'Companies',
+          to: '/companies',
+          icon: 'companies',
+          requiredRoles: ['Recruiter', 'Manager', 'Admin', 'Worker'] as ClaimsRole[],
+        },
+      ] : []),
       {
         text: 'My Assignments',
         to: '/assignments',
@@ -168,9 +320,9 @@ export async function generateMenuItems(
       },
 
       {
-        text: 'Company Setup',
+        text: 'Settings',
         to: '/settings',
-        icon: 'architecture',
+        icon: 'settings',
         requiredRoles: ['Admin'] as ClaimsRole[], // Admin only
       },
       // Only show Company Defaults if Staffing, Flex, or Recruiting modules are enabled AND user is Manager/Admin
@@ -180,18 +332,20 @@ export async function generateMenuItems(
       //   icon: 'business_center',
       //   requiredRoles: ['Manager', 'Admin'] as ClaimsRole[], // Manager and Admin only
       // }] : []),
-      {
-        text: 'Modules',
-        to: '/modules',
-        icon: 'extension',
-        requiredRoles: ['Admin'] as ClaimsRole[], // Admin only
-      },
-      {
-        text: 'Reports',
-        to: '/reports',
-        icon: 'assessment',
-        requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin only
-      },
+      // (Temporarily hidden)
+      // {
+      //   text: 'Modules',
+      //   to: '/modules',
+      //   icon: 'extension',
+      //   requiredRoles: ['Admin'] as ClaimsRole[], // Admin only
+      // },
+      // (Temporarily hidden)
+      // {
+      //   text: 'Reports',
+      //   to: '/reports',
+      //   icon: 'assessment',
+      //   requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin only
+      // },
       // {
       //   text: 'Team Access',
       //   to: '/users',
@@ -204,17 +358,19 @@ export async function generateMenuItems(
       //   icon: 'auto_fix_high',
       //   accessRoles: ['tenant_7'], // Admin only
       // },
-      {
-        text: 'Mobile App',
-        to: '/mobile-app',
-        icon: 'phone_iphone',
-        requiredRoles: ['Admin', 'Recruiter', 'Manager', 'Worker', 'Customer'] as ClaimsRole[], // All user types
-      },
+      // (Temporarily hidden)
+      // {
+      //   text: 'Mobile App',
+      //   to: '/mobile-app',
+      //   icon: 'phone_iphone',
+      //   requiredRoles: ['Admin', 'Recruiter', 'Manager', 'Worker', 'Customer'] as ClaimsRole[], // All user types
+      // },
+      // Shown in sidebar for eligible roles; Layout hides for internal shell (security 5–7).
       {
         text: 'Privacy & Notifications',
         to: '/privacy-settings',
         icon: 'notifications',
-        requiredRoles: ['Admin', 'Recruiter', 'Manager', 'Worker', 'Customer'] as ClaimsRole[], // All user types
+        requiredRoles: ['Admin', 'Recruiter', 'Manager', 'Customer'] as ClaimsRole[],
       },
       // {
       //   text: 'Help',
@@ -233,20 +389,25 @@ export async function generateMenuItems(
 
   if (isHRX) {
     // Add basic menu items for HRX users (no role requirements)
-    menuItems.push(
-      {
-        text: 'Dashboard',
-        to: '/dashboard',
-        icon: 'dashboard',
-        // No role requirements - available to all HRX users
-      },
-      {
-        text: 'My Profile',
-        to: '/profile',
-        icon: 'person',
-        // No role requirements - available to all HRX users
+    // ChatGPT moved to top bar navigation - removed from sidebar
+    menuItems.push({
+      text: 'My Account',
+      to: '/profile',
+      icon: 'person',
+      // No role requirements - available to all HRX users
       },
     );
+
+    // Calendar - admins (5/6/7) only. HRX tenant has no Inbox in this menu,
+    // so Calendar lives here near the top of the admin section. Mirrors the
+    // non-HRX branch where Calendar sits directly beneath Inbox.
+    if (effectiveSecurityLevel && ['5', '6', '7'].includes(String(effectiveSecurityLevel))) {
+      menuItems.push({
+        text: 'Calendar',
+        to: '/calendar',
+        icon: 'calendar',
+      });
+    }
 
     // Add HRX-specific admin menu items
     menuItems.push(
@@ -507,7 +668,7 @@ export async function generateMenuItems(
   }
 
   // Filter menu items based on ONLY the active tenant's role and security level
-  return menuItems.filter(item => {
+  const filteredItems = menuItems.filter(item => {
     // Always allow items without explicit requirements
     if (!item.accessRoles && !item.requiredRoles) return true;
 
@@ -525,11 +686,13 @@ export async function generateMenuItems(
       else if (tenantLevel >= 5) effectiveRole = 'Worker';
       else effectiveRole = 'Tenant';
     }
-    // If an explicit role exists, prefer it when it is stronger than derived
-    const priorityOrder: ClaimsRole[] = ['Tenant','Worker','Recruiter','Manager','Admin','HRX'];
-    const pickStronger = (a: ClaimsRole, b: ClaimsRole) =>
-      priorityOrder.indexOf(a) > priorityOrder.indexOf(b) ? a : b;
-    const tenantRole = tenantRoleRaw ? pickStronger(tenantRoleRaw as ClaimsRole, effectiveRole) : effectiveRole;
+    // For admin users (security level 7), always use the derived role from security level
+    // For other users, use Firestore role if available, otherwise use derived role
+    const tenantRole = (tenantLevel >= 7) 
+      ? effectiveRole  // Admin users: use security level derived role
+      : (tenantRoleRaw ? (tenantRoleRaw as ClaimsRole) : effectiveRole); // Others: use Firestore role if available
+    
+    // Debug logging removed for cleaner console
 
     // Legacy accessRoles check using computed tenant access key
     if (item.accessRoles && item.accessRoles.length > 0) {
@@ -539,15 +702,16 @@ export async function generateMenuItems(
     // Required roles check using tenant role only
     if (item.requiredRoles && item.requiredRoles.length > 0) {
       const ok = item.requiredRoles.includes(tenantRole as ClaimsRole);
-      if (!ok && isMenuDebugEnabled()) {
-        // eslint-disable-next-line no-console
-        console.log('[menuGenerator] hiding item due to role mismatch:', item.text, 'required:', item.requiredRoles, 'have:', tenantRole);
-      }
+      
+      // Debug logging removed for cleaner console
+      
       return ok;
     }
 
     return true;
   });
+  
+  return filteredItems;
 }
 
 export function hasMenuAccess(

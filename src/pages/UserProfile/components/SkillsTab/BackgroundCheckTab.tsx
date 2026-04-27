@@ -119,6 +119,9 @@ const BackgroundCheckTab = ({ uid }: { uid: string }) => {
             minRows={2}
             value={form.notes}
             onChange={(e) => handleChange('notes', e.target.value)}
+            onBlur={() => {
+              // Save is handled by the Save button, but onBlur can be used for auto-save if needed
+            }}
           />
         </Grid>
         <Grid item xs={12}>

@@ -51,6 +51,14 @@ service firebase.storage {
       allow read: if true;
     }
 
+    // User group avatar upload access
+    match /userGroupAvatars/{tenantId}/{fileName} {
+      // Allow authenticated users to upload/delete user group avatars for their tenant
+      allow write, delete: if request.auth != null;
+      // Public read access for group avatars
+      allow read: if true;
+    }
+
     // Deal contract upload access
     match /deals/{tenantId}/{dealId}/contracts/{fileName} {
       // Allow authenticated users to upload/delete contracts for their tenant's deals
@@ -59,11 +67,102 @@ service firebase.storage {
       allow read: if request.auth != null;
     }
 
+    // Profile picture upload access
+    match /profile-pictures/{fileName} {
+      // Allow unauthenticated users to upload during application wizard
+      // Validate file size (max 5MB) and type (images only)
+      allow write: if request.resource.size < 5 * 1024 * 1024 && // Max 5MB
+                     request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null; // Only authenticated users can delete
+      // Public read access for profile pictures
+      allow read: if true;
+    }
+
     // Allow authenticated users to upload to customer AI training docs
     match /customers/{customerId}/aiTraining/{folder}/{allPaths=**} {
       allow read, write: if request.auth != null;
       // For production, restrict to HRX or customer admins
       // allow write: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "HRX";
+    }
+
+    // Resume upload access
+    match /resumes/{userId}/{fileName} {
+      // Allow authenticated users to upload/delete their own resumes
+      allow write, delete: if request.auth != null && request.auth.uid == userId;
+      // Public read access for resumes (since they're made public)
+      allow read: if true;
+    }
+
+    // User certification uploads
+    match /users/{userId}/certifications/{certSlug}/{fileName} {
+      // Only the authenticated user can write/delete their own certifications
+      allow write, delete: if request.auth != null && request.auth.uid == userId;
+      // Allow read for viewing uploaded certs
+      allow read: if request.auth != null;
+    }
+
+    // I-9 supporting documents (tenant + user canonical; see docs/I9_SUPPORTING_DOCUMENTS_ARCHITECTURE.md)
+    // Production: worker direct read/write only on own prefix + tenant binding; staff use callable signed URLs.
+    match /i9_docs/{tenantId}/{userId}/{documentId}/{allPaths=**} {
+      // C1: some user docs / custom claims use BCiP2bQ9CgV0CTfV6MhD (digit 0); canonical tenant id uses letter O.
+      function c1TenantCanonical(tid) {
+        return tid == 'BCiP2bQ9CgV0CTfV6MhD' ? 'BCiP2bQ9CgVOCTfV6MhD' : tid;
+      }
+      function i9WorkerTenantOk() {
+        return request.auth != null && (
+          (
+            request.auth.token.roles != null && (
+              tenantId in request.auth.token.roles ||
+              (tenantId == 'BCiP2bQ9CgVOCTfV6MhD' && 'BCiP2bQ9CgV0CTfV6MhD' in request.auth.token.roles) ||
+              (tenantId == 'BCiP2bQ9CgV0CTfV6MhD' && 'BCiP2bQ9CgVOCTfV6MhD' in request.auth.token.roles)
+            )
+          ) ||
+          (
+            firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+            (
+              c1TenantCanonical(firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.activeTenantId) == c1TenantCanonical(tenantId) ||
+              c1TenantCanonical(firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.tenantId) == c1TenantCanonical(tenantId)
+            )
+          )
+        );
+      }
+      function i9UploadOk() {
+        return request.resource.size < 15 * 1024 * 1024 &&
+          (request.resource.contentType.matches('image/.*') ||
+            request.resource.contentType == 'application/pdf');
+      }
+      allow read: if request.auth != null && request.auth.uid == userId && i9WorkerTenantOk();
+      allow write: if request.auth != null && request.auth.uid == userId && i9WorkerTenantOk() && i9UploadOk();
+      allow delete: if request.auth != null && request.auth.uid == userId && i9WorkerTenantOk();
+    }
+
+    // Job Order staff instructions and attachments
+    match /job_orders/{jobOrderId}/staff_instructions/{category}/{fileName} {
+      // Allow authenticated users to upload/delete staff instruction files
+      allow write, delete: if request.auth != null;
+      // Allow read access for authenticated users (recruiters and staff)
+      allow read: if request.auth != null;
+    }
+
+    // Phase 1C: Onboarding documents (tenants/{tid}/onboarding_docs/{docKey}/{version}/{fileName})
+    match /tenants/{tenantId}/onboarding_docs/{docKey}/{version}/{fileName} {
+      // Read: tenant members (simplified to authenticated for now; tenant check via app logic)
+      allow read: if request.auth != null;
+      // Write: admins only (tenant admin check would require Firestore get; use app-level enforcement)
+      allow write, delete: if request.auth != null;
+    }
+
+    // Recruiter account file uploads (e.g. contracts)
+    match /tenants/{tenantId}/accounts/{accountId}/uploads/{allPaths=**} {
+      allow read, write, delete: if request.auth != null;
+    }
+
+    // Account Order Defaults tab + location override attachments (see AccountOrderDefaultsCard)
+    match /tenants/{tenantId}/accounts/{accountId}/order_defaults/{allPaths=**} {
+      allow read, write, delete: if request.auth != null;
+    }
+    match /tenants/{tenantId}/accounts/{accountId}/location_defaults/{allPaths=**} {
+      allow read, write, delete: if request.auth != null;
     }
 
     // Block everything else by default

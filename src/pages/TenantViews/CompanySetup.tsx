@@ -1,0 +1,94 @@
+import React, { useState } from 'react';
+import { Box, Typography, Paper, Tabs, Tab } from '@mui/material';
+
+import { useAuth } from '../../contexts/AuthContext';
+import LocationsTab from '../AgencyProfile/components/LocationsTab';
+import DivisionsTab from '../AgencyProfile/components/DivisionsTab';
+import RegionsTab from '../AgencyProfile/components/RegionsTab';
+import DivisionTypesTab from '../AgencyProfile/components/DivisionTypesTab';
+import DepartmentsTab from '../AgencyProfile/components/DepartmentsTab';
+
+import OrgChartTab from './OrgChartTab';
+import BrandingTab from './BrandingTab';
+import CompanyDefaultsTab from './CompanyDefaultsTab';
+
+const CompanySetup: React.FC = () => {
+  const { tenantId } = useAuth();
+  const [tabValue, setTabValue] = useState(0);
+  if (!tenantId) return null;
+
+  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
+    setTabValue(newValue);
+  };
+
+  return (
+    <Box sx={{ px: { xs: 2, md: 3 }, py: 2, width: '100%' }}>
+      {/* Tabs Navigation */}
+      <Paper elevation={1} sx={{ mb: 3, borderRadius: 0 }}>
+        <Tabs
+          value={tabValue}
+          onChange={handleTabChange}
+          indicatorColor="primary"
+          textColor="primary"
+          variant="scrollable"
+          scrollButtons="auto"
+          aria-label="company setup tabs"
+        >
+          <Tab label="Branding" />
+          <Tab label="Regions" />
+          <Tab label="Division Types" />
+          <Tab label="Divisions" />
+          <Tab label="Departments" />
+          <Tab label="Locations" />
+          {/* <Tab label="Org Chart" /> */}
+          {/* <Tab label="Defaults" /> */}
+          {/* <Tab label="Company Defaults" /> */}
+        </Tabs>
+      </Paper>
+      {/* Tab Panels */}
+      {tabValue === 0 && (
+        <Box sx={{ p: 0 }}>
+          <BrandingTab tenantId={tenantId} />
+        </Box>
+      )}
+      {tabValue === 1 && (
+        <Box sx={{ p: 0 }}>
+          <RegionsTab tenantId={tenantId} />
+        </Box>
+      )}
+      {tabValue === 2 && (
+        <Box sx={{ p: 0 }}>
+          <DivisionTypesTab tenantId={tenantId} />
+        </Box>
+      )}
+      {tabValue === 3 && (
+        <Box sx={{ p: 0 }}>
+          <DivisionsTab tenantId={tenantId} />
+        </Box>
+      )}
+      {tabValue === 4 && (
+        <Box sx={{ p: 0 }}>
+          <DepartmentsTab tenantId={tenantId} />
+        </Box>
+      )}
+      {tabValue === 5 && (
+        <Box sx={{ p: 0 }}>
+          <LocationsTab tenantId={tenantId} />
+        </Box>
+      )}
+      {tabValue === 7 && (
+        <Box sx={{ p: 0 }}>
+          <OrgChartTab tenantId={tenantId} />
+        </Box>
+      )}
+      {tabValue === 8 && (
+        <Box sx={{ p: 0 }}>
+          <CompanyDefaultsTab tenantId={tenantId} />
+        </Box>
+      )}
+    </Box>
+  );
+};
+
+export default CompanySetup;
+

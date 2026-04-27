@@ -28,12 +28,13 @@ import {
 import {
   Schedule as ScheduleIcon,
   CheckCircle as CheckCircleIcon,
-  AutoAwesome as AutoAwesomeIcon,
   Save as SaveIcon,
-  Refresh as RefreshIcon
+  Business as BusinessIcon,
+  LocalOffer as LocalOfferIcon,
+  Person as PersonIcon,
+  WorkOutline as WorkOutlineIcon
 } from '@mui/icons-material';
 import { doc, getDoc } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { TaskService } from '../utils/taskService';
 import { TaskStatus, TaskType, TaskCategory, TaskClassification } from '../types/Tasks';
@@ -88,10 +89,9 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
     notes: '',
     quotaCategory: 'business_generating',
     estimatedDuration: 0,
-    aiSuggested: false,
-    aiPrompt: '',
-    aiRecommendations: '',
-    associations: {
+        aiSuggested: false,
+        aiPrompt: '',
+        associations: {
       companies: [],
       contacts: [],
       deals: [],
@@ -123,13 +123,14 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
   const [showCompletionDialog, setShowCompletionDialog] = useState(false);
   const [completionNotes, setCompletionNotes] = useState('');
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showDismissDialog, setShowDismissDialog] = useState(false);
   const [associatedCompanies, setAssociatedCompanies] = useState<any[]>([]);
   const [associatedDeals, setAssociatedDeals] = useState<any[]>([]);
   const [associatedContacts, setAssociatedContacts] = useState<any[]>([]);
   const [associatedSalespeople, setAssociatedSalespeople] = useState<any[]>([]);
+  const [associatedUsers, setAssociatedUsers] = useState<any[]>([]);
   const [dealContacts, setDealContacts] = useState<any[]>([]);
   const [dealSalespeople, setDealSalespeople] = useState<any[]>([]);
-  const [generatingRecommendations, setGeneratingRecommendations] = useState(false);
 
   const taskService = TaskService.getInstance();
 
@@ -187,6 +188,48 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
         });
         const contacts = (await Promise.all(contactPromises)).filter(Boolean);
         setAssociatedContacts(prev => [...prev, ...contacts.filter(c => !prev.find(p => p.id === c.id))]);
+      }
+
+      if (task.associations?.companies?.length > 0) {
+        const companyPromises = task.associations.companies.map(async (companyId: string) => {
+          try {
+            const companyDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', companyId));
+            return companyDoc.exists() ? { id: companyDoc.id, ...companyDoc.data() } : null;
+          } catch (err) {
+            console.error('Error loading company:', companyId, err);
+            return null;
+          }
+        });
+        const companies = (await Promise.all(companyPromises)).filter(Boolean);
+        setAssociatedCompanies(prev => [...prev, ...companies.filter(c => !prev.find(p => p.id === c.id))]);
+      }
+
+      if (task.associations?.deals?.length > 0) {
+        const dealPromises = task.associations.deals.map(async (dealId: string) => {
+          try {
+            const dealDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_deals', dealId));
+            return dealDoc.exists() ? { id: dealDoc.id, ...dealDoc.data() } : null;
+          } catch (err) {
+            console.error('Error loading deal:', dealId, err);
+            return null;
+          }
+        });
+        const deals = (await Promise.all(dealPromises)).filter(Boolean);
+        setAssociatedDeals(prev => [...prev, ...deals.filter(d => !prev.find(p => p.id === d.id))]);
+      }
+
+      if (task.associations?.users?.length > 0) {
+        const userPromises = task.associations.users.map(async (uid: string) => {
+          try {
+            const userDoc = await getDoc(doc(db, 'users', uid));
+            return userDoc.exists() ? { id: userDoc.id, ...userDoc.data() } : null;
+          } catch (err) {
+            console.error('Error loading user:', uid, err);
+            return null;
+          }
+        });
+        const users = (await Promise.all(userPromises)).filter(Boolean);
+        setAssociatedUsers(prev => [...prev, ...users.filter(u => !prev.find(p => p.id === u.id))]);
       }
 
       if (task.associations?.salespeople?.length > 0) {
@@ -277,7 +320,6 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
         estimatedDuration: task.estimatedDuration || 30,
         aiSuggested: task.aiSuggested || false,
         aiPrompt: task.aiPrompt || '',
-        aiRecommendations: task.aiRecommendations || '',
         associations: task.associations || {
           companies: [],
           contacts: [],
@@ -307,10 +349,6 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
       console.log('Task associations:', task.associations);
       console.log('Task assignedTo:', task.assignedTo);
       
-      // Auto-generate AI recommendations if they don't exist
-      if (!task.aiRecommendations && task.associations?.deals?.length > 0) {
-        setTimeout(() => handleGenerateAIRecommendations(), 1000); // Small delay to ensure form is loaded
-      }
     }
   }, [task, open, salespersonId, tenantId]);
 
@@ -327,53 +365,6 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
     });
   };
 
-  const handleGenerateAIRecommendations = async () => {
-    if (!task?.id) return;
-    
-    setGeneratingRecommendations(true);
-    try {
-      // Call Deal Coach AI to generate recommendations using Firebase Callable
-      const functions = getFunctions(undefined, 'us-central1');
-      const chatFn = httpsCallable(functions, 'dealCoachChatCallable');
-      
-      const result = await chatFn({
-        dealId: task.associations?.deals?.[0] || '',
-        stageKey: task.stage || 'discovery',
-        message: `Generate ${formData.type === 'email' ? 'email content' : 
-                  formData.type === 'phone_call' ? 'phone call script' : 
-                  formData.type === 'activity' ? 'activity suggestions' : 
-                  'recommendations'} for this task: ${formData.title}. ${formData.description || ''}`,
-        tenantId: tenantId,
-        userId: salespersonId
-      });
-
-      if (result.data) {
-        const response = result.data as any;
-        if (response.text) {
-          // Update local form state
-          setFormData(prev => ({
-            ...prev,
-            aiRecommendations: response.text
-          }));
-          
-          // Save to database
-          try {
-            await taskService.updateTask(task.id, {
-              aiRecommendations: response.text
-            }, tenantId);
-          } catch (error) {
-            console.error('Error saving AI recommendations to database:', error);
-            setError('Failed to save AI recommendations');
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Error generating AI recommendations:', error);
-      setError('Failed to generate AI recommendations');
-    } finally {
-      setGeneratingRecommendations(false);
-    }
-  };
 
   const handleAssociationChange = (type: string, value: any) => {
     console.log('🔍 handleAssociationChange called:', { type, value });
@@ -476,7 +467,6 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
         quotaCategory: 'business_generating' as const,
         aiSuggested: formData.aiSuggested,
         aiPrompt: formData.aiPrompt,
-        aiRecommendations: formData.aiRecommendations,
         associations: formData.associations,
         communicationDetails: formData.type === 'email' ? formData.communicationDetails : undefined,
         // Add user's timezone for proper sync
@@ -556,6 +546,41 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
     }
   };
 
+  const isSystemManaged =
+    !!(
+      (formData.description && String(formData.description).includes('System-managed checklist task')) ||
+      (task && (task as any).description && String((task as any).description).includes('System-managed checklist task')) ||
+      (task as any)?.jobOrderId ||
+      (task as any)?.sourceType === 'recruiting' ||
+      (task as any)?.systemManaged === true ||
+      (task as any)?.systemSource === 'job_order_checklist'
+    );
+
+  const handleDismiss = () => setShowDismissDialog(true);
+
+  const handleConfirmDismiss = async () => {
+    if (!task?.id) return;
+
+    setSaving(true);
+    setError(null);
+
+    try {
+      await taskService.updateTask(task.id, { status: 'dismissed' }, tenantId);
+
+      if (onTaskUpdated) {
+        onTaskUpdated(task.id);
+      }
+
+      setShowDismissDialog(false);
+      onClose();
+    } catch (err) {
+      console.error('Error dismissing task:', err);
+      setError('Failed to dismiss task');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const durationOptions = [
     { value: 15, label: '15 minutes' },
     { value: 30, label: '30 minutes' },
@@ -582,6 +607,44 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
       </Dialog>
     );
   }
+
+  const openHref = (href: string) => {
+    try {
+      window.open(href, '_blank', 'noopener,noreferrer');
+    } catch {
+      window.open(href, '_blank');
+    }
+  };
+
+  const getPersonName = (u: any): string => {
+    return (
+      u?.fullName ||
+      u?.displayName ||
+      [u?.firstName, u?.lastName].filter(Boolean).join(' ') ||
+      u?.name ||
+      u?.email ||
+      u?.id ||
+      ''
+    );
+  };
+
+  const contactIds = toSelectValue((formData as any).associations?.contacts);
+  const companyIds = toSelectValue((formData as any).associations?.companies);
+  const dealIds = toSelectValue((formData as any).associations?.deals);
+  const userIds = toSelectValue((formData as any).associations?.users);
+
+  // Job order linkage (used by recruiting/checklist tasks)
+  const jobOrderId: string | undefined =
+    (task as any)?.jobOrderId ||
+    ((task as any)?.sourceType === 'recruiting' ? (task as any)?.sourceId : undefined);
+  const jobOrderName: string | undefined = (task as any)?.sourceName || (task as any)?.jobOrderName;
+
+  const hasAnyLinks =
+    contactIds.length > 0 ||
+    companyIds.length > 0 ||
+    dealIds.length > 0 ||
+    userIds.length > 0 ||
+    (typeof jobOrderId === 'string' && jobOrderId.trim().length > 0);
 
   return (
     <>
@@ -628,6 +691,94 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
                   </Alert>
                 )}
               </Grid>
+
+              {/* Linked Entities */}
+              {hasAnyLinks && (
+                <Grid item xs={12}>
+                  <Box sx={{ mb: 1 }}>
+                    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                      Linked to
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                      {companyIds.map((id) => {
+                        const c = associatedCompanies.find((x) => x.id === id);
+                        const label = c?.name || c?.companyName || c?.displayName || id;
+                        return (
+                          <Tooltip key={`company_${id}`} title="Open company" arrow>
+                            <Chip
+                              icon={<BusinessIcon />}
+                              label={label}
+                              size="small"
+                              clickable
+                              onClick={() => openHref(`/companies/${id}`)}
+                            />
+                          </Tooltip>
+                        );
+                      })}
+
+                      {dealIds.map((id) => {
+                        const d = associatedDeals.find((x) => x.id === id);
+                        const label = d?.name || d?.dealName || d?.title || id;
+                        return (
+                          <Tooltip key={`deal_${id}`} title="Open deal" arrow>
+                            <Chip
+                              icon={<LocalOfferIcon />}
+                              label={label}
+                              size="small"
+                              clickable
+                              onClick={() => openHref(`/crm/deals/${id}`)}
+                            />
+                          </Tooltip>
+                        );
+                      })}
+
+                      {contactIds.map((id) => {
+                        const c = associatedContacts.find((x) => x.id === id);
+                        const label = c?.fullName || c?.name || c?.email || id;
+                        return (
+                          <Tooltip key={`contact_${id}`} title="Open contact" arrow>
+                            <Chip
+                              icon={<PersonIcon />}
+                              label={label}
+                              size="small"
+                              clickable
+                              onClick={() => openHref(`/contacts/${id}`)}
+                            />
+                          </Tooltip>
+                        );
+                      })}
+
+                      {userIds.map((id) => {
+                        const u = associatedUsers.find((x) => x.id === id);
+                        const label = getPersonName(u) || id;
+                        return (
+                          <Tooltip key={`user_${id}`} title="Open user" arrow>
+                            <Chip
+                              icon={<PersonIcon />}
+                              label={label}
+                              size="small"
+                              clickable
+                              onClick={() => openHref(`/users/${id}`)}
+                            />
+                          </Tooltip>
+                        );
+                      })}
+
+                      {typeof jobOrderId === 'string' && jobOrderId.trim().length > 0 && (
+                        <Tooltip title="Open job order" arrow>
+                          <Chip
+                            icon={<WorkOutlineIcon />}
+                            label={jobOrderName ? `Job Order: ${jobOrderName}` : 'Job Order'}
+                            size="small"
+                            clickable
+                            onClick={() => openHref(`/jobs/job-orders/${jobOrderId}`)}
+                          />
+                        </Tooltip>
+                      )}
+                    </Box>
+                  </Box>
+                </Grid>
+              )}
 
               {/* Basic Task Info */}
               <Grid item xs={12}>
@@ -779,7 +930,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
                           clickable
                         onClick={(e) => {
                           e.stopPropagation();
-                          window.open(`/crm/contacts/${option.id}`, '_blank');
+                          window.open(`/contacts/${option.id}`, '_blank');
                         }}
                           sx={{ 
                             cursor: 'pointer',
@@ -934,64 +1085,6 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
                 </>
               )}
 
-              {/* Deal Coach Recommendations */}
-              <Grid item xs={12}>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                  <Typography variant="h6" color="primary" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <AutoAwesomeIcon />
-                    Deal Coach Recommendations
-                  </Typography>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    startIcon={<RefreshIcon />}
-                    onClick={handleGenerateAIRecommendations}
-                    disabled={generatingRecommendations}
-                  >
-                    {generatingRecommendations ? 'Generating...' : 'Refresh'}
-                  </Button>
-                </Box>
-              </Grid>
-              
-              <Grid item xs={12}>
-                <Box
-                  sx={{
-                    border: '1px solid',
-                    borderColor: 'divider',
-                    borderRadius: 1,
-                    p: 2,
-                    minHeight: '200px',
-                    backgroundColor: 'background.paper',
-                    position: 'relative'
-                  }}
-                >
-                  {formData.aiRecommendations ? (
-                    <Typography
-                      variant="body2"
-                      sx={{
-                        whiteSpace: 'pre-wrap',
-                        lineHeight: 1.6,
-                        color: 'text.primary'
-                      }}
-                    >
-                      {formData.aiRecommendations}
-                    </Typography>
-                  ) : (
-                    <Typography
-                      variant="body2"
-                      color="text.secondary"
-                      sx={{ fontStyle: 'italic' }}
-                    >
-                      {formData.type === 'email' ? 'AI-generated email content will appear here...' :
-                       formData.type === 'phone_call' ? 'AI-generated phone call script will appear here...' :
-                       formData.type === 'activity' ? 'AI-generated activity suggestions will appear here...' :
-                       'AI-generated recommendations will appear here...'}
-                    </Typography>
-                  )}
-                </Box>
-              </Grid>
-
-
             </Grid>
         </DialogContent>
 
@@ -1017,6 +1110,16 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
           >
             Delete
           </Button>
+          {task && isSystemManaged && task.status !== 'completed' && task.status !== 'dismissed' && (
+            <Button
+              onClick={handleDismiss}
+              variant="outlined"
+              disabled={saving}
+              title="Remove from your list without completing. Use for system-generated checklist tasks you want to skip."
+            >
+              Dismiss
+            </Button>
+          )}
           <Button 
             onClick={handleSubmit} 
             variant="contained"
@@ -1080,6 +1183,28 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
             disabled={saving}
           >
             {saving ? 'Deleting...' : 'Delete Task'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Dismiss Confirmation Dialog (system-managed tasks) */}
+      <Dialog open={showDismissDialog} onClose={() => setShowDismissDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Dismiss Task</DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            Remove this task from your list without completing it? You can use this for system-generated checklist tasks you want to skip. The task will no longer appear in My Tasks.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowDismissDialog(false)} disabled={saving}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleConfirmDismiss} 
+            variant="contained"
+            disabled={saving}
+          >
+            {saving ? 'Dismissing...' : 'Dismiss'}
           </Button>
         </DialogActions>
       </Dialog>

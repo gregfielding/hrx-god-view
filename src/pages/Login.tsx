@@ -1,15 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { Box, Button, TextField, Typography, Paper, Alert, CircularProgress } from '@mui/material';
 
 import { auth } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { setLanguage } from '../i18n';
+import { useGuestLanguage } from '../hooks/useGuestLanguage';
 
 
 const Login = () => {
-  console.log('Login component rendering');
-  const { user, role, loading } = useAuth();
+  const { user, loading, securityLevel, activeTenant } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -18,22 +19,72 @@ const Login = () => {
   const [localLoading, setLocalLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [guestLanguage, setGuestLanguage] = useGuestLanguage();
+  const didRedirectRef = useRef(false);
+  const didConsumeLocationStateRef = useRef(false);
+
+  const copy = guestLanguage === 'es'
+    ? {
+        title: 'Iniciar sesión',
+        email: 'Correo electrónico',
+        password: 'Contraseña',
+        submit: 'Iniciar sesión',
+        language: 'Idioma',
+      }
+    : {
+        title: 'Platform Login',
+        email: 'Email',
+        password: 'Password',
+        submit: 'Login',
+        language: 'Language',
+      };
 
   // Redirect once fully authenticated and role is loaded
   useEffect(() => {
-    if (!loading && user) {
-      navigate('/');
+    if (didRedirectRef.current) return;
+    if (!loading && user && securityLevel != null && String(securityLevel).trim() !== '') {
+      try {
+        const secLevel = parseInt(String(securityLevel), 10);
+        didRedirectRef.current = true;
+        const state = location.state as { from?: { pathname?: string; search?: string; hash?: string } } | null;
+        const from = state?.from;
+        const deepLink =
+          from && typeof from.pathname === 'string' && from.pathname.startsWith('/c1/')
+            ? `${from.pathname}${from.search || ''}${from.hash || ''}`
+            : '';
+        if (secLevel >= 0 && secLevel <= 4) {
+          if (deepLink) {
+            navigate(deepLink, { replace: true });
+          } else {
+            const tenantSlug = activeTenant?.slug || 'c1';
+            navigate(`/${tenantSlug}/users/${user.uid}`, { replace: true });
+          }
+        } else {
+          navigate('/', { replace: true });
+        }
+      } catch (error) {
+        console.error('Error during login redirect:', error);
+        didRedirectRef.current = true;
+        navigate('/', { replace: true });
+      }
     }
-  }, [user, loading, navigate]);
+  }, [user, loading, securityLevel, activeTenant, navigate, location]);
 
   // Check for success message from password setup
   useEffect(() => {
-    if (location.state?.message) {
-      setSuccessMessage(location.state.message);
-      // Clear the state to prevent showing the message again on refresh
-      navigate(location.pathname, { replace: true });
+    if (didConsumeLocationStateRef.current) return;
+    const state = location.state as any;
+    const msg = state?.message ? String(state.message) : '';
+    const stateEmail = state?.email ? String(state.email) : '';
+    if (msg) {
+      didConsumeLocationStateRef.current = true;
+      setSuccessMessage(msg);
+      if (stateEmail && !email) setEmail(stateEmail);
+      // Clear location.state; navigating to the same route without overriding `state`
+      // can cause a render loop on some React Router versions.
+      navigate(location.pathname, { replace: true, state: null });
     }
-  }, [location.state, navigate, location.pathname]);
+  }, [location.key, location.pathname, navigate, email]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,17 +93,41 @@ const Login = () => {
     try {
       await signInWithEmailAndPassword(auth, email, password);
       // don't navigate here — wait for role to resolve in useEffect
+      setLocalLoading(false);
     } catch (err: any) {
       setError(err.message);
       setLocalLoading(false);
     }
   };
 
+  useEffect(() => {
+    setLanguage(guestLanguage);
+  }, [guestLanguage]);
+
   return (
     <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
       <Paper elevation={3} sx={{ p: 4, width: 400 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'flex-end', mb: 1 }}>
+          <Typography variant="caption" color="text.secondary">
+            {copy.language}
+          </Typography>
+          <Button
+            size="small"
+            variant={guestLanguage === 'en' ? 'contained' : 'outlined'}
+            onClick={() => setGuestLanguage('en')}
+          >
+            EN
+          </Button>
+          <Button
+            size="small"
+            variant={guestLanguage === 'es' ? 'contained' : 'outlined'}
+            onClick={() => setGuestLanguage('es')}
+          >
+            ES
+          </Button>
+        </Box>
         <Typography variant="h5" gutterBottom>
-          Platform Login
+          {copy.title}
         </Typography>
 
         {successMessage && (
@@ -69,17 +144,20 @@ const Login = () => {
 
         <form onSubmit={handleLogin}>
           <TextField
-            label="Email"
+            label={copy.email}
             type="email"
             name="email"
+            autoComplete="email"
             fullWidth
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             margin="normal"
           />
           <TextField
-            label="Password"
+            label={copy.password}
             type="password"
+            name="password"
+            autoComplete="current-password"
             fullWidth
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -94,7 +172,7 @@ const Login = () => {
             sx={{ mt: 2 }}
             disabled={localLoading || loading}
           >
-            {localLoading || loading ? <CircularProgress size={24} /> : 'Login'}
+            {localLoading || loading ? <CircularProgress size={24} /> : copy.submit}
           </Button>
         </form>
       </Paper>

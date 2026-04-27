@@ -1,6 +1,6 @@
 import * as admin from 'firebase-admin';
 import { onCall } from 'firebase-functions/v2/https';
-import { logAIAction } from './feedbackEngine';
+import { logger } from './utils/logger';
 
 const db = admin.firestore();
 
@@ -60,7 +60,7 @@ export const createRetrievalFilter = onCall(async (request) => {
 
     const docRef = await db.collection('retrieval_filters').add(filterData);
 
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'filter_created',
       targetType: 'filter',
       targetId: docRef.id,
@@ -127,7 +127,7 @@ export const updateRetrievalFilter = onCall(async (request) => {
 
     await db.collection('retrieval_filters').doc(filterId).update(updateData);
 
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'filter_updated',
       targetType: 'filter',
       targetId: filterId,
@@ -162,7 +162,7 @@ export const deleteRetrievalFilter = onCall(async (request) => {
   try {
     await db.collection('retrieval_filters').doc(filterId).delete();
 
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'filter_deleted',
       targetType: 'filter',
       targetId: filterId,
@@ -268,7 +268,7 @@ export const applyFiltersToChunks = onCall(async (request) => {
         }
       });
 
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'filters_applied',
       targetType: 'context_chunks',
       targetId: 'batch',
@@ -389,7 +389,7 @@ export const testFilterEffectiveness = onCall(async (request) => {
         : 0
     };
 
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'filter_effectiveness_test',
       targetType: 'filter_test',
       targetId: 'effectiveness',
@@ -427,13 +427,8 @@ export const getFilterAnalytics = onCall(async (request) => {
       startDate.setDate(startDate.getDate() - 30);
     }
 
-    // Get filter usage logs
-    const logsSnapshot = await db.collection('ai_logs')
-      .where('eventType', 'in', ['filters_applied', 'filter_effectiveness_test'])
-      .where('timestamp', '>=', admin.firestore.Timestamp.fromDate(startDate))
-      .get();
-
-    const logs = logsSnapshot.docs.map(doc => doc.data());
+    // AI logging has been disabled; analytics are computed from in-memory placeholders.
+    const logs: any[] = [];
 
     const analytics = {
       totalFilterApplications: logs.filter(log => log.eventType === 'filters_applied').length,

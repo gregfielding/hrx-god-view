@@ -1,0 +1,7 @@
+# Avoid committing real ID images; keep samples local only.
+*.jpg
+*.jpeg
+*.png
+*.pdf
+*.webp
+!.gitkeep

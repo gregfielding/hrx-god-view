@@ -4,6 +4,9 @@
     "indexes": "firestore.indexes.json"
   },
   "hosting": {
+    "predeploy": [
+      "node scripts/hostingPredeploy.js"
+    ],
     "public": "build",
     "ignore": [
       "firebase.json",
@@ -12,8 +15,62 @@
     ],
     "rewrites": [
       {
+        "source": "/slack/events",
+        "function": "slackEvents"
+      },
+      {
+        "source": "/slack/events/**",
+        "function": "slackEvents"
+      },
+      {
+        "source": "/api/integrations/accusource/webhooks",
+        "function": "apiIntegrationsAccusourceWebhooks"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
+      }
+    ],
+    "headers": [
+      {
+        "source": "/index.html",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate, max-age=0"
+          }
+        ]
+      },
+      {
+        "source": "/apple-app-site-association",
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      {
+        "source": "/.well-known/apple-app-site-association",
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      {
+        "source": "/.well-known/assetlinks.json",
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=300"
+          }
+        ]
       }
     ]
   },
@@ -32,12 +89,21 @@
         "*.local"
       ],
       "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run copy-env",
         "npm --prefix \"$RESOURCE_DIR\" run build"
       ],
       "environmentVariables": {
         "GNEWS_API_KEY": "82eb7721b0852a8dd71f5d0492c72596",
-        "SERP_API_KEY": "e449a4fafca55476b5bf9d07e90884c756f9512980bf5a0c1d72ea8d74627e20"
+        "SERP_API_KEY": "e449a4fafca55476b5bf9d07e90884c756f9512980bf5a0c1d72ea8d74627e20",
+        "SMS_PROVIDER": "twilio"
       }
     }
-  ]
+  ],
+  "emulators": {
+    "firestore": { "port": 8085 },
+    "functions": { "port": 5005 },
+    "ui": { "port": 4005 },
+    "hub": { "port": 4405 },
+    "logging": { "port": 4505 }
+  }
 }

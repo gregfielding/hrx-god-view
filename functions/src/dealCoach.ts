@@ -2,7 +2,8 @@ import { onRequest, onCall } from 'firebase-functions/v2/https';
 import fetch from 'node-fetch';
 import * as admin from 'firebase-admin';
 import { AnalyzeResponse, ChatResponse } from './schemas/dealCoach';
-import { logAIAction } from './utils/aiLogging';
+import { logger } from './utils/logger';
+import { getAiCacheDoc } from './utils/inMemoryCache';
 
 const OPENAI_KEY = process.env.OPENAI_API_KEY || (process.env.FUNCTIONS_EMULATOR ? 'test' : '');
 
@@ -18,7 +19,7 @@ export const dealCoachAnalyze = onRequest({ cors: true, region: 'us-central1' },
 
     // Cache key
     const cacheId = `coach_analyze_${dealId}_${stageKey}`;
-    const cacheRef = db.collection('ai_cache').doc(cacheId);
+    const cacheRef = getAiCacheDoc(cacheId);
     const cached = await cacheRef.get();
     const now = Date.now();
     if (cached.exists) {
@@ -26,7 +27,7 @@ export const dealCoachAnalyze = onRequest({ cors: true, region: 'us-central1' },
       if (data.updatedAt && (now - data.updatedAt.toMillis()) < CACHE_TTL_MS) {
         try {
           const parsed = AnalyzeResponse.parse(data.payload);
-          try { await logAIAction({ eventType: 'dealCoach.analyze.cache_hit', targetType: 'deal', targetId: dealId, reason: 'cache_hit', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 3, tenantId, aiResponse: JSON.stringify(parsed), cacheHit: true }); } catch {}
+          try { await logger.aiEvent({ eventType: 'dealCoach.analyze.cache_hit', targetType: 'deal', targetId: dealId, reason: 'cache_hit', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 3, tenantId, aiResponse: JSON.stringify(parsed), cacheHit: true }); } catch {}
           res.json({ ...parsed, threadId: dealId, cacheHit: true });
           return;
         } catch {}
@@ -135,10 +136,10 @@ export const dealCoachAnalyze = onRequest({ cors: true, region: 'us-central1' },
     const parsed = AnalyzeResponse.parse(result);
 
     // Persist cache
-    await cacheRef.set({ payload: parsed, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    await cacheRef.set({ payload: parsed });
 
     // Log telemetry (best-effort)
-    try { await logAIAction({ eventType: 'dealCoach.analyze', targetType: 'deal', targetId: dealId, reason: 'analyze', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, aiResponse: JSON.stringify(parsed) }); } catch {}
+    try { await logger.aiEvent({ eventType: 'dealCoach.analyze', targetType: 'deal', targetId: dealId, reason: 'analyze', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, aiResponse: JSON.stringify(parsed) }); } catch {}
 
     res.json({ ...parsed, threadId: dealId, cacheHit: false });
     return;
@@ -199,8 +200,8 @@ export const dealCoachChat = onRequest({ cors: true, region: 'us-central1' }, as
     // Also add an event snapshot (for history/analytics)
     await db.collection(`tenants/${tenantId}/ai_threads/${dealId}/events`).add({ type: 'chat', messages: appended, ts: admin.firestore.FieldValue.serverTimestamp() });
 
-    try { await logAIAction({ eventType: 'dealCoach.chat', targetType: 'deal', targetId: dealId, reason: 'chat', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, userId: userId || '', aiResponse: JSON.stringify(payload) }); } catch {}
-    try { await logAIAction({ eventType: 'ai_log.enqueue', targetType: 'deal', targetId: dealId, reason: 'Deal Coach chat message logged', contextType: 'dealCoach', aiTags: ['dealCoach','chat'], urgencyScore: 5, tenantId, userId: userId || '' }); } catch {}
+    try { await logger.aiEvent({ eventType: 'dealCoach.chat', targetType: 'deal', targetId: dealId, reason: 'chat', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, userId: userId || '', aiResponse: JSON.stringify(payload) }); } catch {}
+    try { await logger.aiEvent({ eventType: 'ai_log.enqueue', targetType: 'deal', targetId: dealId, reason: 'Deal Coach chat message logged', contextType: 'dealCoach', aiTags: ['dealCoach','chat'], urgencyScore: 5, tenantId, userId: userId || '' }); } catch {}
     res.json(payload);
     return;
   } catch (e: any) {
@@ -220,7 +221,7 @@ export const dealCoachStartNewCallable = onCall({ cors: true }, async (request) 
     await db.collection(`tenants/${tenantId}/ai_threads/${dealId}/events`).add({ type: 'archive', messages, ts: admin.firestore.FieldValue.serverTimestamp() });
   }
   await threadRef.set({ messages: [], updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-  try { await logAIAction({ eventType: 'dealCoach.thread.reset', targetType: 'deal', targetId: dealId, reason: 'reset', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 4, tenantId, aiResponse: JSON.stringify({ archived: messages.length }) }); } catch {}
+  try { await logger.aiEvent({ eventType: 'dealCoach.thread.reset', targetType: 'deal', targetId: dealId, reason: 'reset', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 4, tenantId, aiResponse: JSON.stringify({ archived: messages.length }) }); } catch {}
   return { ok: true };
 });
 
@@ -233,7 +234,7 @@ export const dealCoachLoadConversationCallable = onCall({ cors: true }, async (r
   if (!evSnap.exists) throw new Error('Conversation not found');
   const messages = (evSnap.data() as any).messages || [];
   await db.doc(`tenants/${tenantId}/ai_threads/${dealId}`).set({ messages, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-  try { await logAIAction({ eventType: 'dealCoach.thread.load', targetType: 'deal', targetId: dealId, reason: 'load', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 4, tenantId, aiResponse: JSON.stringify({ eventId }) }); } catch {}
+  try { await logger.aiEvent({ eventType: 'dealCoach.thread.load', targetType: 'deal', targetId: dealId, reason: 'load', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 4, tenantId, aiResponse: JSON.stringify({ eventId }) }); } catch {}
   return { ok: true };
 });
 
@@ -255,7 +256,7 @@ export const dealCoachAction = onRequest({ cors: true, region: 'us-central1' }, 
       };
       const ref = await db.collection('tenants').doc(tenantId).collection('crm_tasks').add(task);
       result.taskId = ref.id;
-      try { await logAIAction({ eventType: 'dealCoach.action.createTask', targetType: 'deal', targetId: (dealId || ''), reason: 'action', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, userId: userId || '', aiResponse: JSON.stringify({ taskId: ref.id }) }); } catch {}
+      try { await logger.aiEvent({ eventType: 'dealCoach.action.createTask', targetType: 'deal', targetId: (dealId || ''), reason: 'action', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, userId: userId || '', aiResponse: JSON.stringify({ taskId: ref.id }) }); } catch {}
     } else if (action?.type === 'draftEmail') {
       const draft = {
         dealId: dealId || null,
@@ -266,7 +267,7 @@ export const dealCoachAction = onRequest({ cors: true, region: 'us-central1' }, 
       };
       const ref = await db.collection('tenants').doc(tenantId).collection('email_drafts').add(draft);
       result.draftId = ref.id;
-      try { await logAIAction({ eventType: 'dealCoach.action.draftEmail', targetType: 'deal', targetId: (dealId || ''), reason: 'action', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, userId: userId || '', aiResponse: JSON.stringify({ draftId: ref.id }) }); } catch {}
+      try { await logger.aiEvent({ eventType: 'dealCoach.action.draftEmail', targetType: 'deal', targetId: (dealId || ''), reason: 'action', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, userId: userId || '', aiResponse: JSON.stringify({ draftId: ref.id }) }); } catch {}
     } else if (action?.type === 'draftCall') {
       const script = {
         dealId: dealId || null,
@@ -276,7 +277,7 @@ export const dealCoachAction = onRequest({ cors: true, region: 'us-central1' }, 
       };
       const ref = await db.collection('tenants').doc(tenantId).collection('call_scripts').add(script);
       result.scriptId = ref.id;
-      try { await logAIAction({ eventType: 'dealCoach.action.draftCall', targetType: 'deal', targetId: (dealId || ''), reason: 'action', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, userId: userId || '', aiResponse: JSON.stringify({ scriptId: ref.id }) }); } catch {}
+      try { await logger.aiEvent({ eventType: 'dealCoach.action.draftCall', targetType: 'deal', targetId: (dealId || ''), reason: 'action', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, userId: userId || '', aiResponse: JSON.stringify({ scriptId: ref.id }) }); } catch {}
     } else if (action?.type === 'askQuestion') {
       const note = {
         dealId: dealId || null,
@@ -287,7 +288,7 @@ export const dealCoachAction = onRequest({ cors: true, region: 'us-central1' }, 
       };
       const ref = await db.collection('tenants').doc(tenantId).collection('activity_logs').add(note);
       result.noteId = ref.id;
-      try { await logAIAction({ eventType: 'dealCoach.action.askQuestion', targetType: 'deal', targetId: (dealId || ''), reason: 'action', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, userId: userId || '', aiResponse: JSON.stringify({ noteId: ref.id }) }); } catch {}
+      try { await logger.aiEvent({ eventType: 'dealCoach.action.askQuestion', targetType: 'deal', targetId: (dealId || ''), reason: 'action', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, userId: userId || '', aiResponse: JSON.stringify({ noteId: ref.id }) }); } catch {}
     }
     res.json(result);
     return;
@@ -319,7 +320,7 @@ export const dealCoachAnalyzeCallable = onCall({
     // Hash the parameters to create a shorter, more efficient cache key
     const paramString = `${dealId}_${stageKey}_${entityType || 'deal'}_${entityName || 'default'}_${contactCompany || 'default'}_${contactTitle || 'default'}`;
     const cacheKey = `coach_analyze_${Buffer.from(paramString).toString('base64').replace(/[^a-zA-Z0-9]/g, '').substring(0, 32)}`;
-    const cacheRef = db.collection('ai_cache').doc(cacheKey);
+    const cacheRef = getAiCacheDoc(cacheKey);
     
     // Check cache first with MUCH longer TTL for analysis results
     const CACHE_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours (increased from 4 hours for better cost reduction)
@@ -332,7 +333,7 @@ export const dealCoachAnalyzeCallable = onCall({
         try {
           const parsed = AnalyzeResponse.parse(data.payload);
           console.log('✅ Deal Coach analysis served from cache for:', cacheKey);
-          try { await logAIAction({ eventType: 'dealCoach.analyze.cache_hit', targetType: entityType || 'deal', targetId: dealId, reason: 'cache_hit', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 3, tenantId, aiResponse: JSON.stringify(parsed), cacheHit: true, metadata: { callerMeta } }); } catch {}
+          try { await logger.aiEvent({ eventType: 'dealCoach.analyze.cache_hit', targetType: entityType || 'deal', targetId: dealId, reason: 'cache_hit', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 3, tenantId, aiResponse: JSON.stringify(parsed), cacheHit: true, metadata: { callerMeta } }); } catch {}
           return { ...parsed, threadId: dealId, cacheHit: true };
         } catch (parseError) {
           console.log('Cache data invalid, will regenerate:', parseError);
@@ -343,7 +344,7 @@ export const dealCoachAnalyzeCallable = onCall({
     // OPTIMIZATION: Check if we have recent analysis for this entity (within last 4 hours)
     // This prevents rapid successive calls for the same entity
     const recentCacheKey = `coach_analyze_recent_${tenantId}_${dealId}_${stageKey}`;
-    const recentCacheRef = db.collection('ai_cache').doc(recentCacheKey);
+    const recentCacheRef = getAiCacheDoc(recentCacheKey);
     const recentCached = await recentCacheRef.get();
     
     if (recentCached.exists) {
@@ -359,7 +360,7 @@ export const dealCoachAnalyzeCallable = onCall({
 
     // STRICTER RATE LIMITING: Check if this deal has been analyzed too recently
     const rateLimitKey = `coach_analyze_ratelimit_${tenantId}_${dealId}`;
-    const rateLimitRef = db.collection('ai_cache').doc(rateLimitKey);
+    const rateLimitRef = getAiCacheDoc(rateLimitKey);
     const rateLimitCached = await rateLimitRef.get();
     
     if (rateLimitCached.exists) {
@@ -375,7 +376,7 @@ export const dealCoachAnalyzeCallable = onCall({
 
     // SERVER-SIDE DEDUPE: Strict 10-minute dedupe window per tenant+deal+stage
     const duplicateKey = `coach_analyze_dedupe_${tenantId}_${dealId}_${stageKey}`;
-    const duplicateRef = db.collection('ai_cache').doc(duplicateKey);
+    const duplicateRef = getAiCacheDoc(duplicateKey);
     const duplicateCached = await duplicateRef.get();
     
     if (duplicateCached.exists) {
@@ -384,7 +385,7 @@ export const dealCoachAnalyzeCallable = onCall({
         console.log('🔄 DEDUPED duplicate request within 10 min, returning cached result');
         try {
           const parsed = AnalyzeResponse.parse(duplicateData.payload);
-          try { await logAIAction({ eventType: 'dealCoach.analyze.deduped', targetType: entityType || 'deal', targetId: dealId, reason: 'deduped_10m', contextType: 'dealCoach', aiTags: ['dealCoach','dedupe'], urgencyScore: 2, tenantId, aiResponse: JSON.stringify(parsed), metadata: { deduped: true, callerMeta } }); } catch {}
+          try { await logger.aiEvent({ eventType: 'dealCoach.analyze.deduped', targetType: entityType || 'deal', targetId: dealId, reason: 'deduped_10m', contextType: 'dealCoach', aiTags: ['dealCoach','dedupe'], urgencyScore: 2, tenantId, aiResponse: JSON.stringify(parsed), metadata: { deduped: true, callerMeta } }); } catch {}
           return { ...parsed, threadId: dealId, cacheHit: true, deduped: true };
         } catch {}
       }
@@ -469,19 +470,19 @@ export const dealCoachAnalyzeCallable = onCall({
 
     // ENHANCED CACHING: Store in all cache locations with longer TTL
     // Main cache (8 hours)
-    await cacheRef.set({ payload: parsed, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    await cacheRef.set({ payload: parsed }, { merge: true });
     
     // Recent cache (4 hours) to prevent rapid successive calls
-    await recentCacheRef.set({ payload: parsed, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    await recentCacheRef.set({ payload: parsed }, { merge: true });
 
     // Rate limit cache (1 hour) to enforce minimum time between calls
-    await rateLimitRef.set({ payload: parsed, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    await rateLimitRef.set({ payload: parsed }, { merge: true });
 
     // Duplicate cache (5 minutes) to prevent rapid duplicate requests
-    await duplicateRef.set({ payload: parsed, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    await duplicateRef.set({ payload: parsed }, { merge: true });
 
     // Log telemetry (best-effort)
-    try { await logAIAction({ eventType: 'dealCoach.analyze', targetType: entityType || 'deal', targetId: dealId, reason: 'analyze', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, aiResponse: JSON.stringify(parsed), metadata: { callerMeta } }); } catch {}
+    try { await logger.aiEvent({ eventType: 'dealCoach.analyze', targetType: entityType || 'deal', targetId: dealId, reason: 'analyze', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, aiResponse: JSON.stringify(parsed), metadata: { callerMeta } }); } catch {}
 
     console.log('✅ Deal Coach analysis completed and cached for:', cacheKey);
     return { ...parsed, threadId: dealId, cacheHit: false };
@@ -1072,7 +1073,7 @@ RESPONSE FORMAT:
     
     // Log AI action
     try { 
-      await logAIAction({ 
+      await logger.aiEvent({ 
         eventType: 'dealCoach.chat', 
         targetType: 'deal', 
         targetId: dealId, 
@@ -1087,7 +1088,7 @@ RESPONSE FORMAT:
     } catch {}
     
     try { 
-      await logAIAction({ 
+      await logger.aiEvent({ 
         eventType: 'ai_log.enqueue', 
         targetType: 'deal', 
         targetId: dealId, 
@@ -1125,7 +1126,7 @@ export const dealCoachActionCallable = onCall({ cors: true }, async (request) =>
       };
       const ref = await db.collection('tenants').doc(tenantId).collection('crm_tasks').add(task);
       result.taskId = ref.id;
-      try { await logAIAction({ eventType: 'dealCoach.action.createTask', targetType: 'deal', targetId: (dealId || ''), reason: 'action', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, userId: userId || '', aiResponse: JSON.stringify({ taskId: ref.id }) }); } catch {}
+      try { await logger.aiEvent({ eventType: 'dealCoach.action.createTask', targetType: 'deal', targetId: (dealId || ''), reason: 'action', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, userId: userId || '', aiResponse: JSON.stringify({ taskId: ref.id }) }); } catch {}
     } else if (action?.type === 'draftEmail') {
       const draft = {
         dealId: dealId || null,
@@ -1136,7 +1137,7 @@ export const dealCoachActionCallable = onCall({ cors: true }, async (request) =>
       };
       const ref = await db.collection('tenants').doc(tenantId).collection('email_drafts').add(draft);
       result.draftId = ref.id;
-      try { await logAIAction({ eventType: 'dealCoach.action.draftEmail', targetType: 'deal', targetId: (dealId || ''), reason: 'action', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, userId: userId || '', aiResponse: JSON.stringify({ dealId: ref.id }) }); } catch {}
+      try { await logger.aiEvent({ eventType: 'dealCoach.action.draftEmail', targetType: 'deal', targetId: (dealId || ''), reason: 'action', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, userId: userId || '', aiResponse: JSON.stringify({ dealId: ref.id }) }); } catch {}
     } else if (action?.type === 'draftCall') {
       const script = {
         dealId: dealId || null,
@@ -1146,7 +1147,7 @@ export const dealCoachActionCallable = onCall({ cors: true }, async (request) =>
       };
       const ref = await db.collection('tenants').doc(tenantId).collection('call_scripts').add(script);
       result.scriptId = ref.id;
-      try { await logAIAction({ eventType: 'dealCoach.action.draftCall', targetType: 'deal', targetId: (dealId || ''), reason: 'action', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, userId: userId || '', aiResponse: JSON.stringify({ scriptId: ref.id }) }); } catch {}
+      try { await logger.aiEvent({ eventType: 'dealCoach.action.draftCall', targetType: 'deal', targetId: (dealId || ''), reason: 'action', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, userId: userId || '', aiResponse: JSON.stringify({ scriptId: ref.id }) }); } catch {}
     } else if (action?.type === 'askQuestion') {
       const note = {
         dealId: dealId || null,
@@ -1157,7 +1158,7 @@ export const dealCoachActionCallable = onCall({ cors: true }, async (request) =>
       };
       const ref = await db.collection('tenants').doc(tenantId).collection('activity_logs').add(note);
       result.noteId = ref.id;
-      try { await logAIAction({ eventType: 'dealCoach.action.askQuestion', targetType: 'deal', targetId: (dealId || ''), reason: 'action', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, userId: userId || '', aiResponse: JSON.stringify({ noteId: ref.id }) }); } catch {}
+      try { await logger.aiEvent({ eventType: 'dealCoach.action.askQuestion', targetType: 'deal', targetId: (dealId || ''), reason: 'action', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, userId: userId || '', aiResponse: JSON.stringify({ noteId: ref.id }) }); } catch {}
     }
     return result;
   } catch (e: any) {
@@ -1401,7 +1402,7 @@ export const dealCoachProactiveCallable = onCall({ cors: true }, async (request)
       
       // Log AI action
       try { 
-        await logAIAction({ 
+        await logger.aiEvent({ 
           eventType: 'dealCoach.proactive', 
           targetType: 'deal', 
           targetId: dealId, 

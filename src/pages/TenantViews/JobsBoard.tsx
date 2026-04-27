@@ -1,12 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useLocation, useOutletContext, useSearchParams } from 'react-router-dom';
 import {
   Box,
   Typography,
   Paper,
   Grid,
-  Card,
-  CardContent,
   Chip,
   Button,
   TextField,
@@ -24,8 +22,6 @@ import {
   Stack,
   Autocomplete,
   Switch,
-  FormControlLabel,
-  FormHelperText,
   Table,
   TableBody,
   TableCell,
@@ -33,27 +29,87 @@ import {
   TableHead,
   TableRow,
   TableSortLabel,
-  IconButton,
 } from '@mui/material';
-import { Search, LocationOn, Business, Schedule, Work, AttachMoney, People, Add, Close as CloseIcon } from '@mui/icons-material';
+import {
+  Search,
+  LocationOn,
+  Business,
+  Schedule,
+  Work,
+  AttachMoney,
+  People,
+  Add,
+  Close as CloseIcon,
+  AutoAwesome as AutoAwesomeIcon,
+  ContentCopy as ContentCopyIcon,
+} from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
-import { JobsBoardService, JobsBoardPost } from '../../services/recruiter/jobsBoardService';
+import { formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
+import {
+  JobsBoardService,
+  JobsBoardPost,
+  coerceStringArrayField,
+} from '../../services/recruiter/jobsBoardService';
 import { useAuth } from '../../contexts/AuthContext';
 import { collection, getDocs, query, orderBy as firestoreOrderBy } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { useFavorites, useFavoritesFilter } from '../../hooks/useFavorites';
+import { geocodeAddressDetailed, getGeocodingErrorMessage } from '../../utils/geocodeAddress';
+import { useFavorites } from '../../hooks/useFavorites';
 import FavoriteButton from '../../components/FavoriteButton';
 import FavoritesFilter from '../../components/FavoritesFilter';
+import { BreadcrumbNav } from '../../components/BreadcrumbNav';
+import StandardTablePagination from '../../components/StandardTablePagination';
+import type { RecruiterOutletContext } from '../RecruiterDashboard';
 import jobTitlesList from '../../data/onetJobTitles.json';
 import onetSkills from '../../data/onetSkills.json';
 import credentialsSeed from '../../data/credentialsSeed.json';
 import { experienceOptions, educationOptions } from '../../data/experienceOptions';
-import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../../data/screeningsOptions';
+import { additionalScreeningOptions } from '../../data/screeningsOptions';
 import { getOptionsForField } from '../../utils/fieldOptions';
+import { autoAddGroupsPickerValue, dedupeUserGroupsForUi } from '../../utils/dedupeUserGroupsForUi';
+import { generateJobDescriptionWithAi } from '../../utils/jobDescriptionAiGenerate';
+import { formatWorksiteCityStateZip } from '../../utils/formatWorksiteAddress';
+import { hasJobBoardSyndicationUrl } from '../../utils/jobBoardSyndicationUrls';
+import JobBoardSyndicationIconRow from '../../components/JobBoardSyndicationIconRow';
+
+/** Firestore Timestamp, {seconds}, Date, or ISO string → ms for sorting/display */
+function toMillisFromUnknown(value: unknown): number {
+  if (value == null || value === '') return 0;
+  const v = value as { toDate?: () => Date; seconds?: number; nanoseconds?: number };
+  if (typeof v.toDate === 'function') {
+    const d = v.toDate();
+    return d instanceof Date && !isNaN(d.getTime()) ? d.getTime() : 0;
+  }
+  if (typeof v === 'object' && v !== null && typeof v.seconds === 'number') {
+    return v.seconds * 1000 + (typeof v.nanoseconds === 'number' ? v.nanoseconds / 1e6 : 0);
+  }
+  if (value instanceof Date) return isNaN(value.getTime()) ? 0 : value.getTime();
+  if (typeof value === 'number' && !isNaN(value)) return value;
+  const d = new Date(value as string);
+  return isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+function formatCreatedAtCell(...candidates: unknown[]): string {
+  let ms = 0;
+  for (const c of candidates) {
+    ms = toMillisFromUnknown(c);
+    if (ms) break;
+  }
+  if (!ms) return '—';
+  return new Date(ms).toLocaleString(undefined, {
+    dateStyle: 'short',
+    timeStyle: 'short',
+  });
+}
 
 const JobsBoard: React.FC = () => {
   const { tenantId, user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  
+  // Check if we're accessing from the recruiter module
+  const isFromRecruiter = location.pathname.includes('/jobs/jobs-board');
+  
   const [posts, setPosts] = useState<JobsBoardPost[]>([]);
   const [filteredJobs, setFilteredJobs] = useState<JobsBoardPost[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,6 +120,18 @@ const JobsBoard: React.FC = () => {
   const [openNewPostModal, setOpenNewPostModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const normalizeGroupIds = (value?: string | string[] | null): string[] => {
+    if (Array.isArray(value)) {
+      return value
+        .map((id) => (typeof id === 'string' ? id.trim() : ''))
+        .filter((id): id is string => Boolean(id));
+    }
+    if (typeof value === 'string' && value.trim()) {
+      return [value.trim()];
+    }
+    return [];
+  };
   
   // Sorting state
   const [sortField, setSortField] = useState<string>('createdAt');
@@ -84,12 +152,28 @@ const JobsBoard: React.FC = () => {
   const [editingStatus, setEditingStatus] = useState<string | null>(null);
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
   
-  // Favorites state using universal system
+  // Favorites state using universal system (local fallback when not in recruiter module)
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
-  const { favorites } = useFavorites('jobPosts');
+  const { favorites, isFavorite, toggleFavorite } = useFavorites('jobPosts');
   const [useCompanyLocation, setUseCompanyLocation] = useState(true);
   const [cityAutocomplete, setCityAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
-  const [cityInputRef, setCityInputRef] = useState<HTMLInputElement | null>(null);
+  const cityInputRef = useRef<HTMLInputElement | null>(null);
+
+  const outletCtx = useOutletContext<RecruiterOutletContext | null>();
+  const headerSearch = outletCtx?.search ?? '';
+  const headerShowFavoritesOnly = outletCtx?.showFavoritesOnly ?? false;
+  const effectiveSearch = isFromRecruiter ? headerSearch : searchTerm;
+  const effectiveShowFavoritesOnly = isFromRecruiter ? headerShowFavoritesOnly : showFavoritesOnly;
+
+  const [debouncedSearch, setDebouncedSearch] = useState(effectiveSearch);
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebouncedSearch(effectiveSearch), 300);
+    return () => clearTimeout(id);
+  }, [effectiveSearch]);
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(20);
 
   // Job orders for connection
   const [jobOrders, setJobOrders] = useState<Array<{ id: string; jobOrderName: string; status: string }>>([]);
@@ -109,6 +193,7 @@ const JobsBoard: React.FC = () => {
     jobType: 'gig' | 'career' | '';
     jobTitle: string;
     jobDescription: string;
+    jobDescriptionPrompt: string;
     companyId: string;
     companyName: string;
     worksiteId: string;
@@ -124,6 +209,10 @@ const JobsBoard: React.FC = () => {
     payRate: string;
     workersNeeded: number;
     eVerifyRequired: boolean;
+    screeningPackageId: string;
+    screeningPackageName: string;
+    showScreeningPackageOnPost: boolean;
+    screeningPackageServiceNames: string[];
     backgroundCheckPackages: string[];
     showBackgroundChecks: boolean;
     drugScreeningPanels: string[];
@@ -144,6 +233,8 @@ const JobsBoard: React.FC = () => {
     showPhysicalRequirements: boolean;
     uniformRequirements: string[];
     showUniformRequirements: boolean;
+    customUniformRequirements: string;
+    showCustomUniformRequirements: boolean;
     requiredPpe: string[];
     showRequiredPpe: boolean;
     shift: string[];
@@ -153,9 +244,12 @@ const JobsBoard: React.FC = () => {
     showStartTime: boolean;
     showEndTime: boolean;
     restrictedGroups: string[];
+    craigslistUrl: string;
+    indeedUrl: string;
   } | null>(null);
 
   const jobsBoardService = JobsBoardService.getInstance();
+  const [generatingDescription, setGeneratingDescription] = useState(false);
 
   // Sorting functionality
   const handleSort = (field: string) => {
@@ -197,19 +291,25 @@ const JobsBoard: React.FC = () => {
     return [...filteredJobs].sort((a, b) => {
       let aValue: any = a[sortField as keyof JobsBoardPost];
       let bValue: any = b[sortField as keyof JobsBoardPost];
-      
+
+      if (sortField === 'createdAt') {
+        const am = toMillisFromUnknown(a.createdAt ?? a.postedAt) || toMillisFromUnknown(a.updatedAt);
+        const bm = toMillisFromUnknown(b.createdAt ?? b.postedAt) || toMillisFromUnknown(b.updatedAt);
+        return sortDirection === 'asc' ? am - bm : bm - am;
+      }
+
       if (aValue === undefined) aValue = '';
       if (bValue === undefined) bValue = '';
-      
-      if (sortField === 'createdAt' || sortField === 'startDate' || sortField === 'endDate') {
-        aValue = new Date(aValue);
-        bValue = new Date(bValue);
-        return sortDirection === 'asc' ? aValue - bValue : bValue - aValue;
+
+      if (sortField === 'startDate' || sortField === 'endDate') {
+        const am = toMillisFromUnknown(aValue);
+        const bm = toMillisFromUnknown(bValue);
+        return sortDirection === 'asc' ? am - bm : bm - am;
       }
-      
+
       aValue = (aValue || '').toString().toLowerCase();
       bValue = (bValue || '').toString().toLowerCase();
-      
+
       if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
       if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
       return 0;
@@ -217,7 +317,11 @@ const JobsBoard: React.FC = () => {
   };
 
   const handleRowClick = (post: JobsBoardPost) => {
-    navigate(`/jobs-dashboard/edit/${post.id}`);
+    if (isFromRecruiter) {
+      navigate(`/jobs/jobs-board/edit/${post.id}`);
+    } else {
+      navigate(`/jobs-dashboard/edit/${post.id}`);
+    }
   };
 
   const handleStatusUpdate = async (postId: string, newStatus: 'draft' | 'active' | 'paused' | 'cancelled' | 'expired') => {
@@ -250,6 +354,7 @@ const JobsBoard: React.FC = () => {
     'Full Time',
     'Part Time',
     'Temporary',
+    'On Call',
     'First Shift',
     'Second Shift', 
     'Third Shift',
@@ -270,6 +375,9 @@ const JobsBoard: React.FC = () => {
     jobType: '' as 'gig' | 'career' | '',
     jobTitle: '',
     jobDescription: '',
+    jobDescriptionPrompt: '',
+    craigslistUrl: '',
+    indeedUrl: '',
     companyId: '',
     companyName: '',
     worksiteId: '',
@@ -287,9 +395,13 @@ const JobsBoard: React.FC = () => {
     showPayRate: true,
     workersNeeded: 1,
     eVerifyRequired: false,
-    backgroundCheckPackages: [],
+    screeningPackageId: '',
+    screeningPackageName: '',
+    showScreeningPackageOnPost: false,
+    screeningPackageServiceNames: [] as string[],
+    backgroundCheckPackages: [] as string[],
     showBackgroundChecks: false,
-    drugScreeningPanels: [],
+    drugScreeningPanels: [] as string[],
     showDrugScreening: false,
     additionalScreenings: [],
     showAdditionalScreenings: false,
@@ -311,6 +423,8 @@ const JobsBoard: React.FC = () => {
     showPhysicalRequirements: false,
     uniformRequirements: [] as string[],
     showUniformRequirements: false,
+    customUniformRequirements: '',
+    showCustomUniformRequirements: false,
     requiredPpe: [] as string[],
     showRequiredPpe: false,
     shift: [] as string[],
@@ -319,9 +433,29 @@ const JobsBoard: React.FC = () => {
     endTime: '',
     showStartTime: false,
     showEndTime: false,
-    autoAddToUserGroup: '',
+    autoAddToUserGroups: [] as string[],
     coordinates: undefined as { lat: number; lng: number } | undefined,
   });
+
+  const userGroupsForUi = useMemo(() => dedupeUserGroupsForUi(userGroups), [userGroups]);
+
+  const autoAddGroupsAutocompleteValue = useMemo(
+    () => autoAddGroupsPickerValue(newPost.autoAddToUserGroups, userGroups, userGroupsForUi),
+    [newPost.autoAddToUserGroups, userGroups, userGroupsForUi]
+  );
+
+  const canonicalAutoAddGroupIds = useMemo(
+    () => autoAddGroupsAutocompleteValue.map((g) => g.id),
+    [autoAddGroupsAutocompleteValue]
+  );
+
+  useEffect(() => {
+    if (userGroups.length === 0) return;
+    const a = [...newPost.autoAddToUserGroups].sort().join('\0');
+    const b = [...canonicalAutoAddGroupIds].sort().join('\0');
+    if (a === b) return;
+    setNewPost((prev) => ({ ...prev, autoAddToUserGroups: [...canonicalAutoAddGroupIds] }));
+  }, [userGroups.length, canonicalAutoAddGroupIds, newPost.autoAddToUserGroups]);
 
   // Load jobs board posts from Firestore
   useEffect(() => {
@@ -333,14 +467,14 @@ const JobsBoard: React.FC = () => {
 
   const loadPosts = async () => {
     if (!tenantId) return;
-    
+
     try {
       setLoading(true);
       // Use getAllPosts to show all job posts regardless of status/visibility for internal management
       const postsData = await jobsBoardService.getAllPosts(tenantId);
       setPosts(postsData);
       setFilteredJobs(postsData);
-      
+
       // Load company names for posts that have companyId but empty companyName
       await loadCompanyNamesForPosts(postsData);
     } catch (err: any) {
@@ -452,7 +586,7 @@ const JobsBoard: React.FC = () => {
       
       const userGroupsData = querySnapshot.docs.map(doc => ({
         id: doc.id,
-        name: doc.data().name || 'Unnamed Group'
+        name: doc.data().title || doc.data().name || 'Unnamed Group'
       }));
       
       setUserGroups(userGroupsData);
@@ -500,15 +634,29 @@ const JobsBoard: React.FC = () => {
   useEffect(() => {
     let filtered = posts;
 
-    // Search filter
-    if (searchTerm) {
-      filtered = filtered.filter(post =>
-        post.postTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        post.jobTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        post.jobDescription.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        post.worksiteName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        post.companyName.toLowerCase().includes(searchTerm.toLowerCase())
-      );
+    const q = debouncedSearch.trim().toLowerCase();
+    if (q) {
+      filtered = filtered.filter((post) => {
+        const companyLabel =
+          (post.companyName && post.companyName.trim() !== ''
+            ? post.companyName
+            : post.companyId && companyNamesCache[post.companyId]
+              ? companyNamesCache[post.companyId]
+              : '') || '';
+        const haystack = [
+          post.postTitle,
+          post.jobTitle,
+          post.jobDescription,
+          post.worksiteName,
+          post.companyName,
+          companyLabel,
+          post.jobPostId,
+        ]
+          .map((p) => (p == null ? '' : String(p)))
+          .join(' ')
+          .toLowerCase();
+        return haystack.includes(q);
+      });
     }
 
     // Location filter
@@ -522,12 +670,23 @@ const JobsBoard: React.FC = () => {
     }
 
     // Favorites filter
-    if (showFavoritesOnly) {
+    if (effectiveShowFavoritesOnly) {
       filtered = filtered.filter(post => favorites.includes(post.id));
     }
 
     setFilteredJobs(filtered);
-  }, [posts, searchTerm, locationFilter, companyFilter, companyNamesCache, showFavoritesOnly, favorites]);
+  }, [posts, locationFilter, companyFilter, companyNamesCache, favorites, debouncedSearch, effectiveShowFavoritesOnly]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [debouncedSearch, locationFilter, companyFilter, effectiveShowFavoritesOnly, sortField, sortDirection]);
+
+  useEffect(() => {
+    if (!isFromRecruiter) return;
+    if (searchParams.get('new') !== '1') return;
+    handleOpenNewPostModal();
+    // keep param until close, so refresh doesn't lose state
+  }, [isFromRecruiter, searchParams]);
 
   const getUniqueLocations = () => {
     return Array.from(new Set(posts.map(post => post.worksiteName))).sort();
@@ -691,6 +850,9 @@ const JobsBoard: React.FC = () => {
         jobType: newPost.jobType,
         jobTitle: newPost.jobTitle,
         jobDescription: newPost.jobDescription,
+        jobDescriptionPrompt: newPost.jobDescriptionPrompt,
+        craigslistUrl: newPost.craigslistUrl,
+        indeedUrl: newPost.indeedUrl,
         companyId: newPost.companyId,
         companyName: newPost.companyName,
         worksiteId: newPost.worksiteId,
@@ -706,10 +868,14 @@ const JobsBoard: React.FC = () => {
         payRate: newPost.payRate,
         workersNeeded: newPost.workersNeeded,
         eVerifyRequired: newPost.eVerifyRequired,
-        backgroundCheckPackages: newPost.backgroundCheckPackages,
-        showBackgroundChecks: newPost.showBackgroundChecks,
-        drugScreeningPanels: newPost.drugScreeningPanels,
-        showDrugScreening: newPost.showDrugScreening,
+        screeningPackageId: newPost.screeningPackageId?.trim() || '',
+        screeningPackageName: newPost.screeningPackageName?.trim() || '',
+        showScreeningPackageOnPost: newPost.showScreeningPackageOnPost,
+        screeningPackageServiceNames: newPost.screeningPackageServiceNames,
+        backgroundCheckPackages: [],
+        showBackgroundChecks: false,
+        drugScreeningPanels: [],
+        showDrugScreening: false,
         additionalScreenings: newPost.additionalScreenings,
         showAdditionalScreenings: newPost.showAdditionalScreenings,
         skills: newPost.skills,
@@ -726,6 +892,8 @@ const JobsBoard: React.FC = () => {
         showPhysicalRequirements: newPost.showPhysicalRequirements,
         uniformRequirements: newPost.uniformRequirements,
         showUniformRequirements: newPost.showUniformRequirements,
+        customUniformRequirements: newPost.customUniformRequirements,
+        showCustomUniformRequirements: newPost.showCustomUniformRequirements,
         requiredPpe: newPost.requiredPpe,
         showRequiredPpe: newPost.showRequiredPpe,
         shift: newPost.shift,
@@ -753,8 +921,12 @@ const JobsBoard: React.FC = () => {
             ...prev,
             jobOrderId,
             postTitle: prev.postTitle || jobOrderData.jobOrderName || '',
+            jobType: jobOrderData.jobType || 'career', // Copy job type from job order
             jobTitle: prev.jobTitle || jobOrderData.jobTitle || '',
-            jobDescription: prev.jobDescription || jobOrderData.jobOrderDescription || jobOrderData.jobDescription || '',
+            jobDescription: prev.jobDescription,
+            jobDescriptionPrompt: prev.jobDescriptionPrompt || '',
+            craigslistUrl: '',
+            indeedUrl: '',
             companyId: jobOrderData.companyId || '',
             companyName: jobOrderData.companyName || '',
             worksiteId: jobOrderData.worksiteId || '',
@@ -768,9 +940,113 @@ const JobsBoard: React.FC = () => {
             payRate: jobOrderData.payRate?.toString() || '',
             workersNeeded: jobOrderData.workersNeeded || 1,
             eVerifyRequired: jobOrderData.eVerifyRequired || false,
-            backgroundCheckPackages: jobOrderData.backgroundCheckPackages || [],
-            drugScreeningPanels: jobOrderData.drugScreeningPanels || [],
-            additionalScreenings: jobOrderData.additionalScreenings || []
+            screeningPackageId: String(jobOrderData.screeningPackageId ?? '').trim(),
+            screeningPackageName: String(jobOrderData.screeningPackageName ?? '').trim(),
+            showScreeningPackageOnPost: false,
+            screeningPackageServiceNames: [] as string[],
+            backgroundCheckPackages: [] as string[],
+            drugScreeningPanels: [] as string[],
+            additionalScreenings: jobOrderData.additionalScreenings || [],
+            // Copy requirements from job order; keep draft post values when the order has none
+            licensesCerts: (() => {
+              const fromJo = coerceStringArrayField(
+                jobOrderData.licensesCerts?.length
+                  ? jobOrderData.licensesCerts
+                  : [...(jobOrderData.requiredLicenses || []), ...(jobOrderData.requiredCertifications || [])]
+              );
+              return fromJo.length > 0 ? fromJo : prev.licensesCerts;
+            })(),
+            showLicensesCerts:
+              coerceStringArrayField(
+                jobOrderData.licensesCerts?.length
+                  ? jobOrderData.licensesCerts
+                  : [...(jobOrderData.requiredLicenses || []), ...(jobOrderData.requiredCertifications || [])]
+              ).length > 0
+                ? true
+                : prev.showLicensesCerts,
+            skills: (() => {
+              const fromJo = coerceStringArrayField(jobOrderData.skillsRequired);
+              return fromJo.length > 0 ? fromJo : prev.skills;
+            })(),
+            showSkills:
+              coerceStringArrayField(jobOrderData.skillsRequired).length > 0 ? true : prev.showSkills,
+            languages: (() => {
+              const fromJo = coerceStringArrayField(jobOrderData.languagesRequired);
+              return fromJo.length > 0 ? fromJo : prev.languages;
+            })(),
+            showLanguages:
+              coerceStringArrayField(jobOrderData.languagesRequired).length > 0 ? true : prev.showLanguages,
+            experienceLevels: jobOrderData.experienceRequired
+              ? (() => {
+                  const expMap: Record<string, string> = {
+                    none: 'No Experience Required',
+                    entry: 'Entry-Level (0–1 year)',
+                    '1-2': '1–2 Years',
+                    '3-5': '3–5 Years (Mid-Level)',
+                    '5-7': '5–7 Years (Advanced)',
+                    '8-10': '8–10 Years (Senior-Level)',
+                    '10+': '10+ Years (Expert / Executive)',
+                  };
+                  return [expMap[jobOrderData.experienceRequired] || jobOrderData.experienceRequired];
+                })()
+              : prev.experienceLevels,
+            showExperience: jobOrderData.experienceRequired
+              ? true
+              : prev.showExperience,
+            educationLevels: jobOrderData.educationRequired
+              ? (() => {
+                  // 'high_school' is the canonical EducationLevel value
+                  // (Phase B.1). 'highschool' (no underscore) is kept as a
+                  // transition alias so existing job orders that haven't been
+                  // re-saved still render the human label. Safe to drop after
+                  // a backfill.
+                  const eduMap: Record<string, string> = {
+                    none: 'No Formal Education Required',
+                    high_school: 'High School Diploma or Equivalent',
+                    highschool: 'High School Diploma or Equivalent',
+                    associate: 'Associate Degree',
+                    bachelor: "Bachelor's Degree",
+                    master: "Master's Degree",
+                    doctorate: 'Doctorate / PhD',
+                  };
+                  return [eduMap[jobOrderData.educationRequired] || jobOrderData.educationRequired];
+                })()
+              : prev.educationLevels,
+            showEducation: jobOrderData.educationRequired ? true : prev.showEducation,
+            physicalRequirements: (() => {
+              const fromJo = coerceStringArrayField(jobOrderData.physicalRequirements);
+              return fromJo.length > 0 ? fromJo : prev.physicalRequirements;
+            })(),
+            showPhysicalRequirements:
+              coerceStringArrayField(jobOrderData.physicalRequirements).length > 0
+                ? true
+                : prev.showPhysicalRequirements,
+            uniformRequirements: (() => {
+              const fromJo = coerceStringArrayField(jobOrderData.uniformRequirements);
+              return fromJo.length > 0 ? fromJo : prev.uniformRequirements;
+            })(),
+            showUniformRequirements:
+              coerceStringArrayField(jobOrderData.uniformRequirements).length > 0
+                ? true
+                : prev.showUniformRequirements,
+            customUniformRequirements:
+              jobOrderData.customUniformRequirements != null &&
+              String(jobOrderData.customUniformRequirements).trim() !== ''
+                ? String(jobOrderData.customUniformRequirements)
+                : prev.customUniformRequirements,
+            showCustomUniformRequirements:
+              jobOrderData.customUniformRequirements != null &&
+              String(jobOrderData.customUniformRequirements).trim() !== ''
+                ? true
+                : prev.showCustomUniformRequirements,
+            requiredPpe: (() => {
+              const fromJo = coerceStringArrayField(jobOrderData.ppeRequirements);
+              return fromJo.length > 0 ? fromJo : prev.requiredPpe;
+            })(),
+            showRequiredPpe:
+              coerceStringArrayField(jobOrderData.ppeRequirements).length > 0
+                ? true
+                : prev.showRequiredPpe,
           }));
           
           // Set company and location if available
@@ -827,44 +1103,84 @@ const JobsBoard: React.FC = () => {
   };
 
   const onCityPlaceChanged = () => {
-    if (cityAutocomplete) {
-      const place = cityAutocomplete.getPlace();
-      if (place.geometry && place.geometry.location) {
-        // Extract city and state from address components
-        let city = '';
-        let state = '';
-        let zipCode = '';
-        
-        place.address_components?.forEach((component) => {
-          if (component.types.includes('locality')) {
-            city = component.long_name;
-          }
-          if (component.types.includes('administrative_area_level_1')) {
-            state = component.short_name;
-          }
-          if (component.types.includes('postal_code')) {
-            zipCode = component.long_name;
-          }
-        });
+    if (!cityAutocomplete) return;
+    const place = cityAutocomplete.getPlace();
+    if (!place.geometry?.location) return;
 
-        // Extract coordinates from Google Places API
-        const coordinates = {
-          lat: place.geometry.location.lat(),
-          lng: place.geometry.location.lng()
-        };
+    let city = '';
+    let state = '';
+    let zipCode = '';
 
-        setNewPost({
-          ...newPost,
-          worksiteName: place.formatted_address || `${city}, ${state}`,
-          street: '',
-          city,
-          state,
-          zipCode,
-          // Store coordinates for distance calculations
-          coordinates
-        });
+    place.address_components?.forEach((component) => {
+      if (component.types.includes('locality')) {
+        city = component.long_name;
       }
+      if (component.types.includes('administrative_area_level_1')) {
+        state = component.short_name;
+      }
+      if (component.types.includes('postal_code')) {
+        zipCode = component.long_name;
+      }
+    });
+
+    const ac = place.address_components || [];
+    const pick = (t: string) => ac.find((c) => c.types.includes(t))?.long_name || '';
+    if (!city) {
+      city =
+        pick('sublocality') ||
+        pick('sublocality_level_1') ||
+        pick('administrative_area_level_3') ||
+        pick('postal_town') ||
+        '';
     }
+    if (!city && place.name) {
+      city = place.name.replace(/,.*$/, '').trim();
+    }
+
+    const coordinates = {
+      lat: place.geometry.location.lat(),
+      lng: place.geometry.location.lng(),
+    };
+
+    setNewPost((prev) => ({
+      ...prev,
+      worksiteName: place.formatted_address || `${city}, ${state}`.trim(),
+      street: '',
+      city,
+      state,
+      zipCode,
+      coordinates,
+    }));
+  };
+
+  /** If the user typed an address but did not pick a suggestion, geocode on blur so city/state/coords persist. */
+  const onNewPostCityBlur = () => {
+    const raw = (cityInputRef.current?.value || '').trim();
+    if (!raw) return;
+    void (async () => {
+      try {
+        const d = await geocodeAddressDetailed(raw);
+        setNewPost((prev) => {
+          if (prev.city?.trim() && prev.state?.trim() && prev.coordinates) {
+            return prev;
+          }
+          const st = (d.stateCode || '').toUpperCase();
+          const cityName = (d.city || '').trim();
+          if (!cityName || !st) return prev;
+          return {
+            ...prev,
+            worksiteName: d.formattedAddress || raw,
+            street: d.street || '',
+            city: cityName,
+            state: st,
+            zipCode: (d.zip || '').trim(),
+            coordinates: { lat: d.lat, lng: d.lng },
+          };
+        });
+      } catch (e) {
+        console.warn('[JobsBoard] City blur geocode:', getGeocodingErrorMessage(e, { hasAutocomplete: true }));
+      }
+    })();
   };
 
   const handleCloseNewPostModal = () => {
@@ -874,6 +1190,9 @@ const JobsBoard: React.FC = () => {
       jobType: 'gig',
       jobTitle: '',
       jobDescription: '',
+      jobDescriptionPrompt: '',
+      craigslistUrl: '',
+      indeedUrl: '',
       companyId: '',
       companyName: '',
       worksiteId: '',
@@ -890,12 +1209,16 @@ const JobsBoard: React.FC = () => {
       payRate: '',
       showPayRate: true,
       workersNeeded: 1,
-      eVerifyRequired: false,
-      backgroundCheckPackages: [],
-      showBackgroundChecks: false,
-      drugScreeningPanels: [],
-      showDrugScreening: false,
-      additionalScreenings: [],
+    eVerifyRequired: false,
+    screeningPackageId: '',
+    screeningPackageName: '',
+    showScreeningPackageOnPost: false,
+    screeningPackageServiceNames: [] as string[],
+    backgroundCheckPackages: [] as string[],
+    showBackgroundChecks: false,
+    drugScreeningPanels: [] as string[],
+    showDrugScreening: false,
+    additionalScreenings: [],
       showAdditionalScreenings: false,
       visibility: 'public',
       restrictedGroups: [],
@@ -915,6 +1238,8 @@ const JobsBoard: React.FC = () => {
       showPhysicalRequirements: false,
       uniformRequirements: [],
       showUniformRequirements: false,
+      customUniformRequirements: '',
+      showCustomUniformRequirements: false,
       requiredPpe: [],
       showRequiredPpe: false,
       shift: [],
@@ -923,7 +1248,7 @@ const JobsBoard: React.FC = () => {
       endTime: '',
       showStartTime: false,
       showEndTime: false,
-      autoAddToUserGroup: '',
+    autoAddToUserGroups: [],
       coordinates: undefined,
     });
     setSelectedCompanyId('');
@@ -933,9 +1258,34 @@ const JobsBoard: React.FC = () => {
     setUseCompanyLocation(true);
     setSubmitError(null);
     setOriginalFormValues(null);
+    if (isFromRecruiter && searchParams.get('new') === '1') {
+      setSearchParams({});
+    }
   };
 
   // Check if form is valid for submission
+  const handleGenerateJobDescription = async () => {
+    if (!tenantId) return;
+    setGeneratingDescription(true);
+    setSubmitError(null);
+    try {
+      const text = await generateJobDescriptionWithAi({
+        tenantId,
+        formData: newPost as Record<string, any>,
+        jobOrderData: undefined,
+      });
+      if (text) {
+        setNewPost((prev) => ({ ...prev, jobDescription: text }));
+      } else {
+        setSubmitError('Failed to generate job description');
+      }
+    } catch (e: any) {
+      setSubmitError(e?.message || 'Failed to generate job description');
+    } finally {
+      setGeneratingDescription(false);
+    }
+  };
+
   const isFormValid = () => {
     // Required fields
     if (!newPost.postTitle.trim()) return false;
@@ -996,6 +1346,11 @@ const JobsBoard: React.FC = () => {
           jobType: newPost.jobType,
           jobTitle: newPost.jobTitle.trim(),
           jobDescription: newPost.jobDescription.trim(),
+          ...(newPost.jobDescriptionPrompt.trim()
+            ? { jobDescriptionPrompt: newPost.jobDescriptionPrompt.trim() }
+            : {}),
+          ...(newPost.craigslistUrl.trim() ? { craigslistUrl: newPost.craigslistUrl.trim() } : {}),
+          ...(newPost.indeedUrl.trim() ? { indeedUrl: newPost.indeedUrl.trim() } : {}),
           companyId: newPost.companyId || undefined,
           companyName: newPost.companyName.trim(),
           worksiteId: newPost.worksiteId || undefined,
@@ -1016,12 +1371,34 @@ const JobsBoard: React.FC = () => {
           showPayRate: newPost.showPayRate,
           workersNeeded: newPost.workersNeeded,
           eVerifyRequired: newPost.eVerifyRequired,
-          backgroundCheckPackages: newPost.backgroundCheckPackages,
-          showBackgroundChecks: newPost.showBackgroundChecks,
-          drugScreeningPanels: newPost.drugScreeningPanels,
-          showDrugScreening: newPost.showDrugScreening,
+          screeningPackageId: newPost.screeningPackageId?.trim() || null,
+          screeningPackageName: newPost.screeningPackageName?.trim() || null,
+          showScreeningPackageOnPost: newPost.showScreeningPackageOnPost,
+          screeningPackageServiceNames: newPost.screeningPackageServiceNames,
+          backgroundCheckPackages: [],
+          showBackgroundChecks: false,
+          drugScreeningPanels: [],
+          showDrugScreening: false,
           additionalScreenings: newPost.additionalScreenings,
           showAdditionalScreenings: newPost.showAdditionalScreenings,
+          skills: newPost.skills,
+          showSkills: newPost.showSkills,
+          licensesCerts: newPost.licensesCerts,
+          showLicensesCerts: newPost.showLicensesCerts,
+          experienceLevels: newPost.experienceLevels,
+          showExperience: newPost.showExperience,
+          educationLevels: newPost.educationLevels,
+          showEducation: newPost.showEducation,
+          languages: newPost.languages,
+          showLanguages: newPost.showLanguages,
+          physicalRequirements: newPost.physicalRequirements,
+          showPhysicalRequirements: newPost.showPhysicalRequirements,
+          uniformRequirements: newPost.uniformRequirements,
+          showUniformRequirements: newPost.showUniformRequirements,
+          customUniformRequirements: newPost.customUniformRequirements,
+          showCustomUniformRequirements: newPost.showCustomUniformRequirements,
+          requiredPpe: newPost.requiredPpe,
+          showRequiredPpe: newPost.showRequiredPpe,
           shift: newPost.shift,
           showShift: newPost.showShift,
           startTime: newPost.startTime,
@@ -1030,9 +1407,10 @@ const JobsBoard: React.FC = () => {
           showEndTime: newPost.showEndTime,
           visibility: newPost.visibility,
           restrictedGroups: newPost.restrictedGroups,
+          status: newPost.status,
           jobOrderId: newPost.jobOrderId || undefined,
-          skills: newPost.skills,
-          autoAddToUserGroup: newPost.autoAddToUserGroup || undefined,
+          autoAddToUserGroups: newPost.autoAddToUserGroups,
+          autoAddToUserGroup: newPost.autoAddToUserGroups.length === 1 ? newPost.autoAddToUserGroups[0] : undefined,
         },
         user?.uid || 'system'
       );
@@ -1063,47 +1441,91 @@ const JobsBoard: React.FC = () => {
     );
   }
 
-  return (
-    <Box sx={{ p: 0, width: '100%' }}>
+  const sortedJobs = getSortedJobs();
+  const paginatedJobs = sortedJobs.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
 
-      {/* Filters */}
-      <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
+  return (
+    <Box
+      sx={{
+        p: 0,
+        width: '100%',
+        ...(isFromRecruiter
+          ? {
+              flex: 1,
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              px: { xs: 2, md: 3 },
+              pt: 2,
+            }
+          : {
+              // User view: 32px padding on left, right, and bottom for better spacing
+              px: 4,
+              pt: 3,
+              pb: 4,
+            }),
+      }}
+    >
+      {!isFromRecruiter && (
+        <BreadcrumbNav
+          items={[
+            { label: 'Recruiter', href: '/recruiter' },
+            { label: 'Jobs Board' },
+          ]}
+        />
+      )}
+
+      {/* Filters (search + favorites + new post are in header for Recruiter) */}
+      <Paper
+        elevation={0}
+        sx={{
+          mb: 2,
+          p: 1.5,
+          backgroundColor: '#F9FAFB',
+          borderRadius: '8px',
+          border: '1px solid #E5E7EB',
+          borderBottom: '1px solid #D1D5DB',
+        }}
+      >
         <Grid container spacing={2} alignItems="center">
-          <Grid item xs={12} md={3}>
-            <TextField
-              fullWidth
-              placeholder="Search jobs..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <Search />
-                  </InputAdornment>
-                ),
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <FavoritesFilter
-                      favoriteType="jobPosts"
-                      showFavoritesOnly={showFavoritesOnly}
-                      onToggle={setShowFavoritesOnly}
-                      showText={false}
-                      size="small"
-                      sx={{
-                        minWidth: '32px',
-                        width: '32px',
-                        height: '32px',
-                        borderRadius: '50%',
-                        '&:hover': {
-                          backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover'
-                        }
-                      }}
-                    />
-                  </InputAdornment>
-                ),
-              }}
-            />
-          </Grid>
+          {!isFromRecruiter && (
+            <Grid item xs={12} md={3}>
+              <TextField
+                fullWidth
+                placeholder="Search jobs..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <Search />
+                    </InputAdornment>
+                  ),
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <FavoritesFilter
+                        favoriteType="jobPosts"
+                        showFavoritesOnly={showFavoritesOnly}
+                        onToggle={setShowFavoritesOnly}
+                        showText={false}
+                        size="small"
+                        sx={{
+                          minWidth: '32px',
+                          width: '32px',
+                          height: '32px',
+                          borderRadius: '50%',
+                          '&:hover': {
+                            backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover',
+                          },
+                        }}
+                      />
+                    </InputAdornment>
+                  ),
+                }}
+              />
+            </Grid>
+          )}
           <Grid item xs={12} md={3}>
             <FormControl fullWidth>
               <InputLabel>Location</InputLabel>
@@ -1112,9 +1534,13 @@ const JobsBoard: React.FC = () => {
                 label="Location"
                 onChange={(e) => setLocationFilter(e.target.value)}
               >
-                <MenuItem value="all">All Locations</MenuItem>
-                {getUniqueLocations().map(location => (
-                  <MenuItem key={location} value={location}>{location}</MenuItem>
+                <MenuItem key="filter-location-all" value="all">
+                  All Locations
+                </MenuItem>
+                {getUniqueLocations().map((location, idx) => (
+                  <MenuItem key={`filter-location-${location || 'empty'}-${idx}`} value={location}>
+                    {location}
+                  </MenuItem>
                 ))}
               </Select>
             </FormControl>
@@ -1127,23 +1553,29 @@ const JobsBoard: React.FC = () => {
                 label="Company"
                 onChange={(e) => setCompanyFilter(e.target.value)}
               >
-                <MenuItem value="all">All Companies</MenuItem>
-                {getUniqueCompanies().map(company => (
-                  <MenuItem key={company} value={company}>{company}</MenuItem>
+                <MenuItem key="filter-company-all" value="all">
+                  All Companies
+                </MenuItem>
+                {getUniqueCompanies().map((company, idx) => (
+                  <MenuItem key={`filter-company-${company || 'empty'}-${idx}`} value={company}>
+                    {company}
+                  </MenuItem>
                 ))}
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} md={3}>
-            <Button
-              variant="contained"
-              startIcon={<Add />}
-              onClick={handleOpenNewPostModal}
-              fullWidth
-            >
-              New Post
-            </Button>
-          </Grid>
+          {!isFromRecruiter && (
+            <Grid item xs={12} md={3}>
+              <Button
+                variant="contained"
+                startIcon={<Add />}
+                onClick={handleOpenNewPostModal}
+                fullWidth
+              >
+                New Post
+              </Button>
+            </Grid>
+          )}
         </Grid>
       </Paper>
 
@@ -1153,13 +1585,39 @@ const JobsBoard: React.FC = () => {
           No jobs found matching your criteria. Try adjusting your filters or search terms.
         </Alert>
       ) : (
-        <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
-          <Table>
-            <TableHead sx={{ backgroundColor: 'grey.50' }}>
-              <TableRow>
-                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.75rem', width: '60px', textAlign: 'center' }}>
-                  Favorites
-                </TableCell>
+        <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: isFromRecruiter ? 1 : undefined }}>
+          <TableContainer
+            component={Paper}
+            elevation={0}
+            sx={{
+              borderRadius: 2,
+              border: '1px solid #EAEEF4',
+              position: 'relative',
+              flex: isFromRecruiter ? 1 : undefined,
+              display: isFromRecruiter ? 'flex' : undefined,
+              flexDirection: isFromRecruiter ? 'column' : undefined,
+              minHeight: isFromRecruiter ? 0 : undefined,
+              overflowY: 'auto',
+              overflowX: 'auto',
+              width: '100%',
+              '&::-webkit-scrollbar': { width: '8px', height: '8px' },
+              '&::-webkit-scrollbar-track': {
+                background: 'rgba(0, 0, 0, 0.02)',
+                borderRadius: '4px',
+              },
+              '&::-webkit-scrollbar-thumb': {
+                background: 'rgba(0, 0, 0, 0.15)',
+                borderRadius: '4px',
+                '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+              },
+              scrollbarWidth: 'thin',
+              scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+            }}
+          >
+            <Table stickyHeader size="small" sx={{ width: '100%' }}>
+              <TableHead sx={{ position: 'sticky', top: 0, zIndex: 10, backgroundColor: '#FFFFFF' }}>
+                <TableRow sx={{ backgroundColor: '#FFFFFF' }}>
+                  <TableCell sx={{ width: 60, bgcolor: '#FFFFFF', textAlign: 'center' }} />
                 <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.75rem' }}>
                   <TableSortLabel
                     active={sortField === 'postTitle'}
@@ -1235,7 +1693,10 @@ const JobsBoard: React.FC = () => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {getSortedJobs().map((post) => (
+              {paginatedJobs.map((post) => {
+                const worksiteLocationLine = formatWorksiteCityStateZip(post.worksiteAddress);
+                const payDisplay = formatHourlyPayRateForDisplay(post.payRate);
+                return (
                 <TableRow 
                   key={post.id}
                   hover
@@ -1251,6 +1712,8 @@ const JobsBoard: React.FC = () => {
                     <FavoriteButton
                       itemId={post.id}
                       favoriteType="jobPosts"
+                      isFavorite={isFavorite}
+                      toggleFavorite={toggleFavorite}
                       size="small"
                       tooltipText={{
                         favorited: 'Remove from favorites',
@@ -1262,10 +1725,31 @@ const JobsBoard: React.FC = () => {
                     <Typography variant="body2" sx={{ fontWeight: 600, color: 'text.primary' }}>
                       {post.postTitle}
                     </Typography>
-                    {post.jobTitle && (
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        {post.jobTitle}
-                      </Typography>
+                    {(post.jobTitle ||
+                      hasJobBoardSyndicationUrl(post.indeedUrl, post.craigslistUrl)) && (
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          flexWrap: 'wrap',
+                          gap: 0.75,
+                          mt: 0.25,
+                        }}
+                      >
+                        {post.jobTitle ? (
+                          <Typography variant="caption" color="text.secondary" component="span">
+                            {post.jobTitle}
+                          </Typography>
+                        ) : null}
+                        {hasJobBoardSyndicationUrl(post.indeedUrl, post.craigslistUrl) ? (
+                          <JobBoardSyndicationIconRow
+                            indeedUrl={post.indeedUrl}
+                            craigslistUrl={post.craigslistUrl}
+                            inline
+                            sx={{ mt: 0 }}
+                          />
+                        ) : null}
+                      </Box>
                     )}
                   </TableCell>
                   <TableCell>
@@ -1285,11 +1769,11 @@ const JobsBoard: React.FC = () => {
                     <Typography variant="body2" color="text.primary">
                       {post.worksiteName}
                     </Typography>
-                    {post.worksiteAddress?.city && post.worksiteAddress?.state && (
+                    {worksiteLocationLine ? (
                       <Typography variant="caption" color="text.secondary" display="block">
-                        {post.worksiteAddress.city}, {post.worksiteAddress.state}
+                        {worksiteLocationLine}
                       </Typography>
-                    )}
+                    ) : null}
                   </TableCell>
                   <TableCell>
                     {post.startDate ? (
@@ -1303,9 +1787,9 @@ const JobsBoard: React.FC = () => {
                     )}
                   </TableCell>
                   <TableCell>
-                    {post.payRate && post.showPayRate ? (
+                    {post.showPayRate && payDisplay ? (
                       <Typography variant="body2" color="text.primary" sx={{ fontWeight: 500 }}>
-                        ${post.payRate}/hr
+                        {payDisplay}
                       </Typography>
                     ) : (
                       <Typography variant="body2" color="text.secondary">
@@ -1333,11 +1817,21 @@ const JobsBoard: React.FC = () => {
                             sx: { zIndex: 9999 } // Ensure dropdown appears above other elements
                           }}
                         >
-                          <MenuItem value="draft">Draft</MenuItem>
-                          <MenuItem value="active">Active</MenuItem>
-                          <MenuItem value="paused">Paused</MenuItem>
-                          <MenuItem value="cancelled">Cancelled</MenuItem>
-                          <MenuItem value="expired">Expired</MenuItem>
+                          <MenuItem key={`${post.id}-status-draft`} value="draft">
+                            Draft
+                          </MenuItem>
+                          <MenuItem key={`${post.id}-status-active`} value="active">
+                            Active
+                          </MenuItem>
+                          <MenuItem key={`${post.id}-status-paused`} value="paused">
+                            Paused
+                          </MenuItem>
+                          <MenuItem key={`${post.id}-status-cancelled`} value="cancelled">
+                            Cancelled
+                          </MenuItem>
+                          <MenuItem key={`${post.id}-status-expired`} value="expired">
+                            Expired
+                          </MenuItem>
                         </Select>
                       </FormControl>
                     ) : (
@@ -1368,14 +1862,26 @@ const JobsBoard: React.FC = () => {
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2" color="text.secondary">
-                      {post.createdAt ? formatDateForDisplay(post.createdAt) : '-'}
+                      {formatCreatedAtCell(post.createdAt, post.postedAt, post.updatedAt)}
                     </Typography>
                   </TableCell>
                 </TableRow>
-              ))}
+              );
+              })}
             </TableBody>
           </Table>
         </TableContainer>
+          <StandardTablePagination
+            count={sortedJobs.length}
+            page={page}
+            onPageChange={(_e, newPage) => setPage(newPage)}
+            rowsPerPage={rowsPerPage}
+            onRowsPerPageChange={(e) => {
+              setRowsPerPage(parseInt(e.target.value, 10));
+              setPage(0);
+            }}
+          />
+        </Box>
       )}
 
       {/* New Post Modal */}
@@ -1413,8 +1919,12 @@ const JobsBoard: React.FC = () => {
                     label="Job Type"
                     onChange={(e) => setNewPost({ ...newPost, jobType: e.target.value as 'gig' | 'career' })}
                   >
-                    <MenuItem value="gig">Gig</MenuItem>
-                    <MenuItem value="career">Career</MenuItem>
+                    <MenuItem key="newpost-jobtype-gig" value="gig">
+                      Gig
+                    </MenuItem>
+                    <MenuItem key="newpost-jobtype-career" value="career">
+                      Career
+                    </MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
@@ -1454,12 +1964,24 @@ const JobsBoard: React.FC = () => {
                       label="Status"
                       onChange={(e) => setNewPost({ ...newPost, status: e.target.value as any })}
                     >
-                      <MenuItem value="draft">Draft</MenuItem>
-                      <MenuItem value="active">Active</MenuItem>
-                      <MenuItem value="paused">Paused</MenuItem>
-                      <MenuItem value="cancelled">Cancelled</MenuItem>
-                      <MenuItem value="expired">Expired</MenuItem>
-                      <MenuItem value="complete">Complete</MenuItem>
+                      <MenuItem key="newpost-status-draft" value="draft">
+                        Draft
+                      </MenuItem>
+                      <MenuItem key="newpost-status-active" value="active">
+                        Active
+                      </MenuItem>
+                      <MenuItem key="newpost-status-paused" value="paused">
+                        Paused
+                      </MenuItem>
+                      <MenuItem key="newpost-status-cancelled" value="cancelled">
+                        Cancelled
+                      </MenuItem>
+                      <MenuItem key="newpost-status-expired" value="expired">
+                        Expired
+                      </MenuItem>
+                      <MenuItem key="newpost-status-complete" value="complete">
+                        Complete
+                      </MenuItem>
                     </Select>
                   </FormControl>
                 </Grid>
@@ -1504,13 +2026,17 @@ const JobsBoard: React.FC = () => {
                       onChange={(e) => handleJobOrderChange(e.target.value)}
                       disabled={loadingJobOrders}
                     >
-                      <MenuItem value="">
+                      <MenuItem key="newpost-joborder-none" value="">
                         <em>No Job Order Connection</em>
                       </MenuItem>
                       {loadingJobOrders ? (
-                        <MenuItem value="" disabled>Loading job orders...</MenuItem>
+                        <MenuItem key="newpost-joborder-loading" value="" disabled>
+                          Loading job orders...
+                        </MenuItem>
                       ) : jobOrders.length === 0 ? (
-                        <MenuItem value="" disabled>No available job orders to connect</MenuItem>
+                        <MenuItem key="newpost-joborder-empty" value="" disabled>
+                          No available job orders to connect
+                        </MenuItem>
                       ) : (
                         jobOrders.map((jobOrder) => (
                           <MenuItem key={jobOrder.id} value={jobOrder.id}>
@@ -1537,6 +2063,9 @@ const JobsBoard: React.FC = () => {
                           jobType: originalFormValues.jobType,
                           jobTitle: originalFormValues.jobTitle,
                           jobDescription: originalFormValues.jobDescription,
+                          jobDescriptionPrompt: originalFormValues.jobDescriptionPrompt,
+                          craigslistUrl: originalFormValues.craigslistUrl,
+                          indeedUrl: originalFormValues.indeedUrl,
                           companyId: originalFormValues.companyId,
                           companyName: originalFormValues.companyName,
                           worksiteId: originalFormValues.worksiteId,
@@ -1552,10 +2081,14 @@ const JobsBoard: React.FC = () => {
                           payRate: originalFormValues.payRate,
                           workersNeeded: originalFormValues.workersNeeded,
                           eVerifyRequired: originalFormValues.eVerifyRequired,
-                          backgroundCheckPackages: originalFormValues.backgroundCheckPackages,
-                          showBackgroundChecks: originalFormValues.showBackgroundChecks,
-                          drugScreeningPanels: originalFormValues.drugScreeningPanels,
-                          showDrugScreening: originalFormValues.showDrugScreening,
+                          screeningPackageId: originalFormValues.screeningPackageId,
+                          screeningPackageName: originalFormValues.screeningPackageName,
+                          showScreeningPackageOnPost: originalFormValues.showScreeningPackageOnPost,
+                          screeningPackageServiceNames: originalFormValues.screeningPackageServiceNames,
+                          backgroundCheckPackages: [],
+                          showBackgroundChecks: false,
+                          drugScreeningPanels: [],
+                          showDrugScreening: false,
                           additionalScreenings: originalFormValues.additionalScreenings,
                           showAdditionalScreenings: originalFormValues.showAdditionalScreenings,
                           skills: originalFormValues.skills,
@@ -1572,6 +2105,8 @@ const JobsBoard: React.FC = () => {
                           showPhysicalRequirements: originalFormValues.showPhysicalRequirements,
                           uniformRequirements: originalFormValues.uniformRequirements,
                           showUniformRequirements: originalFormValues.showUniformRequirements,
+                          customUniformRequirements: originalFormValues.customUniformRequirements,
+                          showCustomUniformRequirements: originalFormValues.showCustomUniformRequirements,
                           requiredPpe: originalFormValues.requiredPpe,
                           showRequiredPpe: originalFormValues.showRequiredPpe,
                           shift: originalFormValues.shift,
@@ -1604,14 +2139,13 @@ const JobsBoard: React.FC = () => {
             </Box>
 
             <TextField
-              label="Job Description"
-              value={newPost.jobDescription}
-              onChange={(e) => setNewPost({ ...newPost, jobDescription: e.target.value })}
+              label="Job Description Prompt"
+              value={newPost.jobDescriptionPrompt}
+              onChange={(e) => setNewPost({ ...newPost, jobDescriptionPrompt: e.target.value })}
               fullWidth
-              required
               multiline
-              rows={4}
-              helperText="Provide a detailed description of the role, responsibilities, and requirements"
+              minRows={3}
+              helperText="Extra instructions for AI: used when there is no job order, or combined with the job order description when one is connected."
             />
 
             <Box sx={{ mt: 2 }}>
@@ -1726,8 +2260,8 @@ const JobsBoard: React.FC = () => {
               </Box>
             )}
 
-            {/* Time Section - Only show for Gig job type */}
-            {newPost.jobType === 'gig' && (
+            {/* Time Section - Only show for Career job type; GIG uses per-shift times */}
+            {newPost.jobType === 'career' && (
               <Box sx={{ mt: 2 }}>
                 <Grid container spacing={2} alignItems="center">
                   <Grid item xs={12} sm={3}>
@@ -1852,27 +2386,54 @@ const JobsBoard: React.FC = () => {
                     />
                   </Grid>
                   <Grid item xs={12} sm={6}>
-                    <FormControl fullWidth required disabled={!selectedCompanyId}>
-                      <InputLabel>Worksite</InputLabel>
-                      <Select
-                        value={selectedLocationId}
-                        label="Worksite"
-                        onChange={(e) => handleLocationChange(e.target.value)}
-                        disabled={loadingLocations || !selectedCompanyId}
-                      >
-                        {loadingLocations ? (
-                          <MenuItem value="">Loading locations...</MenuItem>
-                        ) : locations.length === 0 ? (
-                          <MenuItem value="">No locations available</MenuItem>
-                        ) : (
-                          locations.map((location) => (
-                            <MenuItem key={location.id} value={location.id}>
-                              {location.nickname || location.name}
-                            </MenuItem>
-                          ))
-                        )}
-                      </Select>
-                    </FormControl>
+                    <Autocomplete
+                      fullWidth
+                      options={locations}
+                      getOptionLabel={(option) => option.nickname || option.name}
+                      isOptionEqualToValue={(option, value) => option.id === value.id}
+                      value={locations.find((l) => l.id === selectedLocationId) || null}
+                      onChange={(event, newValue) => {
+                        if (newValue) {
+                          handleLocationChange(newValue.id);
+                        } else {
+                          setSelectedLocationId('');
+                          setNewPost((prev) => ({
+                            ...prev,
+                            worksiteId: '',
+                            worksiteName: '',
+                            street: '',
+                            city: '',
+                            state: '',
+                            zipCode: '',
+                            coordinates: undefined,
+                          }));
+                        }
+                      }}
+                      loading={loadingLocations}
+                      disabled={loadingLocations || !selectedCompanyId}
+                      noOptionsText={
+                        loadingLocations ? 'Loading locations…' : 'No locations match your search'
+                      }
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          label="Worksite"
+                          required
+                          helperText="Search or select a worksite"
+                          InputProps={{
+                            ...params.InputProps,
+                            endAdornment: (
+                              <>
+                                {loadingLocations ? (
+                                  <CircularProgress color="inherit" size={20} />
+                                ) : null}
+                                {params.InputProps.endAdornment}
+                              </>
+                            ),
+                          }}
+                        />
+                      )}
+                    />
                   </Grid>
                 </Grid>
                 </Box>
@@ -1903,8 +2464,9 @@ const JobsBoard: React.FC = () => {
                   label="City, State"
                   placeholder="Search for a city..."
                   required
-                  helperText="Search and select a city - coordinates will be saved automatically"
-                  inputRef={(ref) => setCityInputRef(ref)}
+                  helperText="Pick a suggestion for best results, or type e.g. Orlando, FL and tab out — we geocode on blur."
+                  inputRef={cityInputRef}
+                  onBlur={onNewPostCityBlur}
                 />
               </GoogleAutocomplete>
             )}
@@ -1919,19 +2481,25 @@ const JobsBoard: React.FC = () => {
                       label="Visibility"
                       onChange={(e) => {
                         const visibility = e.target.value as any;
-                        setNewPost({ 
-                          ...newPost, 
+                        setNewPost({
+                          ...newPost,
                           visibility,
                           // Clear restricted groups if not restricted
                           restrictedGroups: visibility === 'restricted' ? newPost.restrictedGroups : [],
-                          // Clear auto-add to group if restricted
-                          autoAddToUserGroup: visibility === 'restricted' ? '' : newPost.autoAddToUserGroup
+                          // Clear auto-add groups if restricted
+                          autoAddToUserGroups: visibility === 'restricted' ? [] : newPost.autoAddToUserGroups,
                         });
                       }}
                     >
-                      <MenuItem value="public">Public - Visible to everyone</MenuItem>
-                      <MenuItem value="restricted">Restricted - Visible to specific user groups</MenuItem>
-                      <MenuItem value="private">Private - Internal only</MenuItem>
+                      <MenuItem key="newpost-vis-public" value="public">
+                        Public - Visible to everyone
+                      </MenuItem>
+                      <MenuItem key="newpost-vis-restricted" value="restricted">
+                        Restricted - Visible to specific user groups
+                      </MenuItem>
+                      <MenuItem key="newpost-vis-private" value="private">
+                        Private - Internal only
+                      </MenuItem>
                     </Select>
                   </FormControl>
                 </Grid>
@@ -1946,11 +2514,15 @@ const JobsBoard: React.FC = () => {
                       multiple
                     >
                       {loadingUserGroups ? (
-                        <MenuItem value="" disabled>Loading user groups...</MenuItem>
-                      ) : userGroups.length === 0 ? (
-                        <MenuItem value="" disabled>No user groups available</MenuItem>
+                        <MenuItem key="newpost-groups-loading" value="" disabled>
+                          Loading user groups...
+                        </MenuItem>
+                      ) : userGroupsForUi.length === 0 ? (
+                        <MenuItem key="newpost-groups-empty" value="" disabled>
+                          No user groups available
+                        </MenuItem>
                       ) : (
-                        userGroups.map((group) => (
+                        userGroupsForUi.map((group) => (
                           <MenuItem key={group.id} value={group.id}>
                             {group.name}
                           </MenuItem>
@@ -1974,92 +2546,6 @@ const JobsBoard: React.FC = () => {
                     <Switch
                       checked={newPost.eVerifyRequired}
                       onChange={(e) => setNewPost({ ...newPost, eVerifyRequired: e.target.checked })}
-                    />
-                  </Box>
-                </Grid>
-              </Grid>
-            </Box>
-
-            {/* Background Checks Section */}
-            <Box sx={{ mt: 2 }}>
-              <Grid container spacing={2} alignItems="center">
-                <Grid item xs={12} sm={6}>
-                  <Autocomplete
-                    multiple
-                    fullWidth
-                    options={backgroundCheckOptions.map(option => option.label)}
-                    value={newPost.backgroundCheckPackages}
-                    onChange={(event, newValue) => {
-                      setNewPost({ ...newPost, backgroundCheckPackages: newValue });
-                    }}
-                    renderInput={(params) => (
-                      <TextField
-                        {...params}
-                        label="Background Check Packages"
-                        helperText="Select required background check packages"
-                      />
-                    )}
-                    renderTags={(value, getTagProps) =>
-                      value.map((option, index) => (
-                        <Chip
-                          variant="outlined"
-                          label={option}
-                          {...getTagProps({ index })}
-                          key={option}
-                        />
-                      ))
-                    }
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
-                    <Typography variant="body1">Show Background Requirements</Typography>
-                    <Switch
-                      checked={newPost.showBackgroundChecks}
-                      onChange={(e) => setNewPost({ ...newPost, showBackgroundChecks: e.target.checked })}
-                    />
-                  </Box>
-                </Grid>
-              </Grid>
-            </Box>
-
-            {/* Drug Screening Section */}
-            <Box sx={{ mt: 2 }}>
-              <Grid container spacing={2} alignItems="center">
-                <Grid item xs={12} sm={6}>
-                  <Autocomplete
-                    multiple
-                    fullWidth
-                    options={drugScreeningOptions.map(option => option.label)}
-                    value={newPost.drugScreeningPanels}
-                    onChange={(event, newValue) => {
-                      setNewPost({ ...newPost, drugScreeningPanels: newValue });
-                    }}
-                    renderInput={(params) => (
-                      <TextField
-                        {...params}
-                        label="Drug Screening Panels"
-                        helperText="Select required drug screening panels"
-                      />
-                    )}
-                    renderTags={(value, getTagProps) =>
-                      value.map((option, index) => (
-                        <Chip
-                          variant="outlined"
-                          label={option}
-                          {...getTagProps({ index })}
-                          key={option}
-                        />
-                      ))
-                    }
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
-                    <Typography variant="body1">Show Drug Screening Requirements</Typography>
-                    <Switch
-                      checked={newPost.showDrugScreening}
-                      onChange={(e) => setNewPost({ ...newPost, showDrugScreening: e.target.checked })}
                     />
                   </Box>
                 </Grid>
@@ -2424,6 +2910,7 @@ const JobsBoard: React.FC = () => {
                     options={[
                       'Business Casual',
                       'Business Professional',
+                      'Black Bistro',
                       'Casual',
                       'Scrubs',
                       'Uniform Provided',
@@ -2431,6 +2918,7 @@ const JobsBoard: React.FC = () => {
                       'White Shirt',
                       'Polo Shirt',
                       'Button-Down Shirt',
+                      'Black Button-Down Shirt',
                       'Dress Shirt',
                       'Khaki Pants',
                       'Dress Pants',
@@ -2520,6 +3008,33 @@ const JobsBoard: React.FC = () => {
                     <Switch
                       checked={newPost.showUniformRequirements}
                       onChange={(e) => setNewPost({ ...newPost, showUniformRequirements: e.target.checked })}
+                    />
+                  </Box>
+                </Grid>
+              </Grid>
+            </Box>
+
+            {/* Custom Uniform Requirements Section */}
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="Custom Uniform Requirements"
+                    multiline
+                    rows={3}
+                    value={newPost.customUniformRequirements}
+                    onChange={(e) => setNewPost({ ...newPost, customUniformRequirements: e.target.value })}
+                    placeholder="Enter custom uniform requirements text..."
+                    helperText="Enter any additional or custom uniform requirements"
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body1">Show Custom Uniform Requirements on Post</Typography>
+                    <Switch
+                      checked={newPost.showCustomUniformRequirements}
+                      onChange={(e) => setNewPost({ ...newPost, showCustomUniformRequirements: e.target.checked })}
                     />
                   </Box>
                 </Grid>
@@ -2638,37 +3153,97 @@ const JobsBoard: React.FC = () => {
               </Grid>
             </Box>
 
-            <FormControl fullWidth>
-              <InputLabel>Auto-Add to User Group</InputLabel>
-              <Select
-                value={newPost.autoAddToUserGroup}
-                label="Auto-Add to User Group"
-                onChange={(e) => setNewPost({ ...newPost, autoAddToUserGroup: e.target.value })}
-                disabled={newPost.visibility === 'restricted' || loadingUserGroups}
-                displayEmpty
+            <Autocomplete
+              multiple
+              options={userGroupsForUi}
+              getOptionLabel={(option) => option.name || 'Unnamed Group'}
+              isOptionEqualToValue={(opt, val) => opt.id === val.id}
+              value={autoAddGroupsAutocompleteValue}
+              onChange={(_, newValue) =>
+                setNewPost({ ...newPost, autoAddToUserGroups: newValue.map((group) => group.id) })
+              }
+              disabled={newPost.visibility === 'restricted' || loadingUserGroups}
+              renderTags={(value, getTagProps) =>
+                value.map((option, index) => (
+                  <Chip
+                    {...getTagProps({ index })}
+                    key={option.id}
+                    label={option.name || 'Unnamed Group'}
+                    size="small"
+                  />
+                ))
+              }
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Auto-Add to User Groups"
+                  placeholder="Search user groups..."
+                  helperText={
+                    newPost.visibility === 'restricted'
+                      ? 'Auto-add to group is not available when visibility is restricted'
+                      : 'Automatically add applicants to these user groups'
+                  }
+                />
+              )}
+              loading={loadingUserGroups}
+              noOptionsText={loadingUserGroups ? 'Loading...' : 'No user groups available'}
+            />
+
+            {!(newPost.jobOrderId && String(newPost.jobOrderId).trim()) && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <TextField
+                  label="Craigslist URL"
+                  value={newPost.craigslistUrl}
+                  onChange={(e) => setNewPost({ ...newPost, craigslistUrl: e.target.value })}
+                  fullWidth
+                  placeholder="https://…"
+                  helperText="Optional. Shown in headers when this post is not linked to a job order."
+                />
+                <TextField
+                  label="Indeed URL"
+                  value={newPost.indeedUrl}
+                  onChange={(e) => setNewPost({ ...newPost, indeedUrl: e.target.value })}
+                  fullWidth
+                  placeholder="https://…"
+                  helperText="Optional. Shown in headers when this post is not linked to a job order."
+                />
+              </Box>
+            )}
+
+            <Box sx={{ mb: 1, mt: 1, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+              <Button
+                variant="outlined"
+                startIcon={generatingDescription ? <CircularProgress size={16} /> : <AutoAwesomeIcon />}
+                onClick={handleGenerateJobDescription}
+                disabled={generatingDescription || submitting}
+                size="small"
               >
-                <MenuItem value="">
-                  <em>No automatic group assignment</em>
-                </MenuItem>
-                {loadingUserGroups ? (
-                  <MenuItem value="" disabled>Loading user groups...</MenuItem>
-                ) : userGroups.length === 0 ? (
-                  <MenuItem value="" disabled>No user groups available</MenuItem>
-                ) : (
-                  userGroups.map((group) => (
-                    <MenuItem key={group.id} value={group.id}>
-                      {group.name}
-                    </MenuItem>
-                  ))
-                )}
-              </Select>
-              <FormHelperText>
-                {newPost.visibility === 'restricted' 
-                  ? 'Auto-add to group is not available when visibility is restricted'
-                  : 'Automatically add applicants to this user group'
-                }
-              </FormHelperText>
-            </FormControl>
+                {generatingDescription ? 'Generating...' : 'Generate Job Description'}
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<ContentCopyIcon />}
+                onClick={() => {
+                  const text = newPost.jobDescription?.trim();
+                  if (text) navigator.clipboard.writeText(text);
+                }}
+                disabled={!newPost.jobDescription?.trim()}
+                size="small"
+              >
+                Copy to clipboard
+              </Button>
+            </Box>
+
+            <TextField
+              label="Job Description"
+              value={newPost.jobDescription}
+              onChange={(e) => setNewPost({ ...newPost, jobDescription: e.target.value })}
+              fullWidth
+              required
+              multiline
+              minRows={6}
+              helperText="Public posting text. With a connected job order, client notes come from the order for AI; use Generate to draft."
+            />
           </Stack>
         </DialogContent>
         <DialogActions>

@@ -1,6 +1,7 @@
 import * as admin from 'firebase-admin';
 import { onCall } from 'firebase-functions/v2/https';
 import { onDocumentUpdated, onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { ensureFirstTime, relevantChanges, enqueueOnce } from './utils/taskQueue';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -737,51 +738,42 @@ export const rebuildAllCompanyActiveSalespeople = onCall(async (request) => {
   }
 });
 
-// Trigger updates when deals change - EMERGENCY: Aggressive filtering to prevent runaway costs
+// Trigger updates when deals change - Cost-hardened with idempotency and debouncing
 export const updateActiveSalespeopleOnDeal = onDocumentUpdated('tenants/{tenantId}/crm_deals/{dealId}', async (event) => {
-  // EMERGENCY: Apply sampling to prevent excessive calls
-  if (Math.random() > 0.1) { // Only process 10% of deal updates
-    return;
-  }
-  
   const before = event.data?.before?.data();
   const after = event.data?.after?.data();
   
-  // Skip if no relevant changes to associations
-  if (before && after) {
-    const beforeAssociations = JSON.stringify(before.associations || {});
-    const afterAssociations = JSON.stringify(after.associations || {});
-    const beforeCompanyId = before.companyId;
-    const afterCompanyId = after.companyId;
-    
-    if (beforeAssociations === afterAssociations && beforeCompanyId === afterCompanyId) {
-      return; // No relevant changes, skip processing
+  if (!before || !after) return;
+  
+  // Idempotency: process this change only once
+  const ok = await ensureFirstTime(event.id || `${event.params.tenantId}:${event.params.dealId}:${after.updatedAt || ''}`, 'updateActiveSalespeopleOnDeal');
+  if (!ok) return;
+  
+  // Whitelist meaningful changes for active salespeople
+  const whitelist = ['companyId', 'companyIds', 'contactIds', 'associations', 'status', 'stage', 'assignedTo'];
+  if (!relevantChanges(before, after, whitelist)) return;
+  
+  // Debounced enqueue to HTTP worker to avoid heavy computation in triggers
+  await enqueueOnce(
+    `salespeople_${event.params.tenantId}_${event.params.dealId}_${(after.updatedAt || Date.now()).toString()}`,
+    '/updateActiveSalespeople',
+    {
+      tenantId: event.params.tenantId,
+      dealId: event.params.dealId,
+      before: {
+        companyId: before.companyId,
+        companyIds: before.companyIds,
+        contactIds: before.contactIds,
+        associations: before.associations
+      },
+      after: {
+        companyId: after.companyId,
+        companyIds: after.companyIds,
+        contactIds: after.contactIds,
+        associations: after.associations
+      }
     }
-  }
-  
-  if (!after) return;
-  const tenantId = event.params.tenantId as string;
-  const companyIds: string[] = [];
-  if (after.companyId) companyIds.push(after.companyId);
-  if (Array.isArray(after.companyIds)) after.companyIds.forEach((id: string) => companyIds.push(id));
-  if (Array.isArray(after.associations?.companies)) after.associations.companies.forEach((c: any) => companyIds.push(typeof c === 'string' ? c : c?.id));
-  const uniq = Array.from(new Set(companyIds.filter(Boolean)));
-  await Promise.all(uniq.map(async (cid) => {
-    const map = await computeActiveSalespeople(tenantId, cid);
-    Object.keys(map).forEach((k) => { (map as any)[k] = removeUndefined((map as any)[k]); });
-    await db.doc(`tenants/${tenantId}/crm_companies/${cid}`).set({ activeSalespeople: map, activeSalespeopleUpdatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-  }));
-  
-  // Also update contacts' active salespeople
-  const contactIds: string[] = [];
-  if (Array.isArray(after.contactIds)) after.contactIds.forEach((id: string) => contactIds.push(id));
-  if (Array.isArray(after.associations?.contacts)) after.associations.contacts.forEach((c: any) => contactIds.push(typeof c === 'string' ? c : c?.id));
-  const uniqueContactIds = Array.from(new Set(contactIds.filter(Boolean)));
-  await Promise.all(uniqueContactIds.map(async (contactId) => {
-    const map = await computeContactActiveSalespeople(tenantId, contactId);
-    Object.keys(map).forEach((k) => { (map as any)[k] = removeUndefined((map as any)[k]); });
-    await db.doc(`tenants/${tenantId}/crm_contacts/${contactId}`).set({ activeSalespeople: map, activeSalespeopleUpdatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-  }));
+  );
 });
 
 // Trigger updates when tasks change - EMERGENCY: Aggressive filtering to prevent runaway costs

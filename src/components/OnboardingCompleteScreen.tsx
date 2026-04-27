@@ -233,9 +233,6 @@ const OnboardingCompleteScreen: React.FC = () => {
             <Grid item>
               <Chip label="Connect with your team" color="primary" />
             </Grid>
-            <Grid item>
-              <Chip label="Set your availability" color="primary" />
-            </Grid>
           </Grid>
         </Box>
 

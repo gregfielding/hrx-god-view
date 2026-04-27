@@ -144,7 +144,7 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = React.memo(functio
         console.log('🔄 Real-time subscription received tasks:', tasks);
         
         // Simple processing - just separate open and completed tasks
-        const openTasks = tasks.filter(task => task.status !== 'completed');
+        const openTasks = tasks.filter(task => task.status !== 'completed' && task.status !== 'dismissed');
         const completedTasks = tasks.filter(task => task.status === 'completed');
         
         console.log('📊 Open tasks:', openTasks.length);
@@ -407,13 +407,13 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = React.memo(functio
           today: {
             totalTasks: allTasks.length,
             completedTasks: allTasks.filter((t: any) => t.status === 'completed').length,
-            pendingTasks: allTasks.filter((t: any) => t.status !== 'completed').length,
+            pendingTasks: allTasks.filter((t: any) => t.status !== 'completed' && t.status !== 'dismissed').length,
             tasks: allTasks
           },
           thisWeek: {
             totalTasks: allTasks.length,
             completedTasks: allTasks.filter((t: any) => t.status === 'completed').length,
-            pendingTasks: allTasks.filter((t: any) => t.status !== 'completed').length,
+            pendingTasks: allTasks.filter((t: any) => t.status !== 'completed' && t.status !== 'dismissed').length,
             quotaProgress: {
               percentage: 0,
               completed: allTasks.filter((t: any) => t.status === 'completed').length,

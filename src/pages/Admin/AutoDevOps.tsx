@@ -43,7 +43,6 @@ import {
   BugReport as BugIcon,
   Speed as SpeedIcon,
   Settings as SettingsIcon,
-  ArrowBack as ArrowBackIcon,
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon,
   Warning as WarningIcon,
@@ -60,6 +59,7 @@ import {
   CloudUpload as CloudUploadIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { app } from '../../firebase';
@@ -751,15 +751,7 @@ const AutoDevOps: React.FC = () => {
           >
             Refresh
           </Button>
-          <Button
-            variant="outlined"
-            color="primary"
-            startIcon={<ArrowBackIcon />}
-            onClick={() => navigate('/admin/ai')}
-            sx={{ fontWeight: 600 }}
-          >
-            Back to Launchpad
-          </Button>
+          <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
         </Box>
       </Box>
 

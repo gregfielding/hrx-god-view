@@ -1,6 +1,7 @@
 import { onCall } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { SafeFunctionUtils, CostTracker } from './utils/safeFunctionTemplate';
+import { logger } from './utils/logger';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -260,15 +261,14 @@ async function syncTaskToCalendarSafely(
 }
 
 /**
- * Log AI action safely
+ * Log AI event safely
  */
-async function logAIActionSafely(taskId: string, title: string, type: string, classification: string, aiPrompt: string, tenantId: string, createdBy: string): Promise<void> {
+async function logAiEventSafely(taskId: string, title: string, type: string, classification: string, aiPrompt: string, tenantId: string, createdBy: string): Promise<void> {
   SafeFunctionUtils.checkSafetyLimits();
-  CostTracker.trackOperation('logAIActionSafely', 0.001);
+  CostTracker.trackOperation('aiEventSafely', 0.001);
 
   try {
-    const { logAIAction } = await import('./utils/aiLogging');
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'ai_task.created',
       targetType: 'task',
       targetId: taskId,
@@ -443,7 +443,7 @@ export const createTask = onCall(
 
       // Log AI action if this is an AI-suggested task
       if (validatedData.aiSuggested) {
-        await logAIActionSafely(
+        await logAiEventSafely(
           taskRef.id,
           validatedData.title,
           validatedData.type || 'unknown',

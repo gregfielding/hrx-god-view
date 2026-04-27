@@ -38,7 +38,6 @@ import {
   Refresh as RefreshIcon,
   Storage as StorageIcon,
   Speed as SpeedIcon,
-  ArrowBack as ArrowBackIcon,
   PlayArrow as PlayArrowIcon,
   Stop as StopIcon,
   CheckCircle as CheckCircleIcon,
@@ -52,6 +51,7 @@ import {
   DataUsage as DataUsageIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { app } from '../../firebase';
@@ -488,14 +488,7 @@ const VectorSettings: React.FC = (): JSX.Element => {
             Manage vector embeddings, search settings, and chunk lifecycle
           </Typography>
         </Box>
-        <Button
-          variant="outlined"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/admin/ai')}
-          sx={{ height: 40 }}
-        >
-          Back to Launchpad
-        </Button>
+        <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
       </Box>
 
       {/* Stats Cards */}

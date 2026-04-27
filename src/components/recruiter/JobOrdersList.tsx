@@ -47,6 +47,7 @@ import {
 import { JobOrderService } from '../../services/recruiter/jobOrderService';
 import { JobOrder } from '../../types/recruiter/jobOrder';
 import { useAuth } from '../../contexts/AuthContext';
+import { formatHourlyPayPerHourLong, formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
 
 interface JobOrdersListProps {
   onJobOrderSelect?: (jobOrder: JobOrder) => void;
@@ -322,7 +323,7 @@ const JobOrdersList: React.FC<JobOrdersListProps> = ({
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2" fontWeight="medium">
-                      ${jobOrder.payRate}/hr
+                      {formatHourlyPayRateForDisplay(jobOrder.payRate) ?? '—'}
                     </Typography>
                   </TableCell>
                   <TableCell>
@@ -429,7 +430,7 @@ const JobOrdersList: React.FC<JobOrdersListProps> = ({
                     Pay Rate
                   </Typography>
                   <Typography variant="body1">
-                    ${selectedJobOrder.payRate}/hour
+                    {formatHourlyPayPerHourLong(selectedJobOrder.payRate) ?? '—'}
                   </Typography>
                 </Grid>
                 <Grid item xs={12} md={6}>
@@ -437,7 +438,7 @@ const JobOrdersList: React.FC<JobOrdersListProps> = ({
                     Bill Rate
                   </Typography>
                   <Typography variant="body1">
-                    ${selectedJobOrder.billRate}/hour
+                    {formatHourlyPayPerHourLong(selectedJobOrder.billRate) ?? '—'}
                   </Typography>
                 </Grid>
                 {selectedJobOrder.jobOrderDescription && (

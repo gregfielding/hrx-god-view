@@ -2,11 +2,23 @@
 // Integrates with existing CRM entities, AI logging, and activity tracking
 
 // 🏗️ CORE TASK TYPES
-export type TaskStatus = 'scheduled' | 'upcoming' | 'due' | 'overdue' | 'completed' | 'cancelled';
+export type TaskStatus = 'scheduled' | 'upcoming' | 'due' | 'overdue' | 'completed' | 'cancelled' | 'dismissed';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type TaskType = 'email' | 'phone_call' | 'linkedin_message' | 'scheduled_meeting_virtual' | 'scheduled_meeting_in_person' | 'research' | 'custom' | 'follow_up' | 'prospecting' | 'presentation' | 'demo' | 'proposal' | 'contract' | 'onboarding' | 'training' | 'admin' | 'activity' | 'other';
 export type TaskCategory = 'general' | 'follow_up' | 'prospecting' | 'presentation' | 'demo' | 'proposal' | 'contract' | 'onboarding' | 'training' | 'admin' | 'other';
-export type QuotaCategory = 'business_generating' | 'business_maintaining' | 'business_developing' | 'non_business';
+// Note: quotaCategory is used across legacy CRM task UIs with additional values beyond the original quota taxonomy.
+// Keep this union broad to match persisted data and UI options.
+export type QuotaCategory =
+  | 'business_generating'
+  | 'business_maintaining'
+  | 'business_developing'
+  | 'non_business'
+  | 'relationship_building'
+  | 'administrative'
+  | 'research'
+  | 'proposal'
+  | 'follow_up'
+  | 'recruiting';
 
 // New task classification types
 export type TaskClassification = 'todo' | 'appointment';

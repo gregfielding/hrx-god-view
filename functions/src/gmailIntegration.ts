@@ -1,8 +1,37 @@
-import { onCall, onRequest } from 'firebase-functions/v2/https';
+import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { getFirestore } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 import { google } from 'googleapis';
+import { logger } from './utils/logger';
+import { logMessage } from './messaging/messageLogging';
+import { findOrCreateEmailThread, addMessageToThread, findContactsByEmails } from './messaging/emailThreading';
+import { getStorage } from 'firebase-admin/storage';
+import { getStorageBucketName } from './utils/storageBucket';
+import { startWatchForUser } from './messaging/gmailPush';
+
+/**
+ * Best-effort: register the Gmail push watch for this user. Called from the
+ * OAuth callbacks so that every successful connect (including reconnects after
+ * a token revoke / disconnect) lands in a healthy push state without the user
+ * having to flip a separate toggle.
+ *
+ * Non-fatal: if the watch registration fails, we log and move on — the user
+ * is still connected for syncGmailEmails / outbound send. A later renewal or
+ * manual reset can recover.
+ */
+async function bestEffortStartGmailWatch(userId: string, context: string): Promise<void> {
+  try {
+    const res = await startWatchForUser(userId);
+    logger.info(
+      `bestEffortStartGmailWatch(${context}): user=${userId} historyId=${res.historyId} skipped=${res.skipped || 'n/a'}`
+    );
+  } catch (err: any) {
+    logger.warn(
+      `bestEffortStartGmailWatch(${context}): watch failed for ${userId}: ${err?.message || err}`
+    );
+  }
+}
 
 
 const db = getFirestore();
@@ -25,6 +54,158 @@ const oauth2Client = new google.auth.OAuth2(
   clientSecret.value(),
   redirectUri.value()
 );
+
+function emailFromIdToken(idToken?: string | null): string {
+  if (!idToken) return '';
+  try {
+    const parts = idToken.split('.');
+    if (parts.length < 2) return '';
+    const payload = JSON.parse(
+      Buffer.from(parts[1], 'base64url').toString('utf8')
+    ) as { email?: string };
+    return payload?.email || '';
+  } catch {
+    return '';
+  }
+}
+
+async function resolveGoogleEmailFromTokens(tokens: any): Promise<string> {
+  const fromIdToken = emailFromIdToken(tokens?.id_token);
+  if (fromIdToken) {
+    return fromIdToken;
+  }
+  try {
+    oauth2Client.setCredentials(tokens);
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+    const profile = await gmail.users.getProfile({ userId: 'me' });
+    return profile.data.emailAddress || '';
+  } catch (error: any) {
+    // Do not fail OAuth callback on profile lookup rate limits.
+    logger.warn('Unable to resolve Gmail profile email during OAuth callback', {
+      status: error?.code || error?.status,
+      reason: error?.errors?.[0]?.reason,
+      message: error?.message,
+    });
+    return '';
+  }
+}
+
+function getErrorMessage(error: any): string {
+  return String(error?.message || error?.error?.message || error || '');
+}
+
+function isGmailTokenError(error: any): boolean {
+  const msg = getErrorMessage(error).toLowerCase();
+  return (
+    msg.includes('invalid_grant') ||
+    msg.includes('token has been expired') ||
+    msg.includes('token expired') ||
+    msg.includes('invalid credentials') ||
+    msg.includes('access has expired') ||
+    // Refresh token was issued by a DIFFERENT OAuth client than the one we're now
+    // using (e.g. client rotated). Google returns `unauthorized_client`. The
+    // refresh_token can never be used with this client; user must re-connect.
+    msg.includes('unauthorized_client') ||
+    msg.includes('invalid_client')
+  );
+}
+
+function isGmailRateLimitError(error: any): boolean {
+  const msg = getErrorMessage(error).toLowerCase();
+  const reason = String(error?.errors?.[0]?.reason || '').toLowerCase();
+  const status = Number(error?.code || error?.status || 0);
+  return (
+    status === 429 ||
+    msg.includes('rate limit') ||
+    msg.includes('quota') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('user-rate limit exceeded') ||
+    reason.includes('ratelimit') ||
+    reason.includes('quota')
+  );
+}
+
+/**
+ * Gmail message bodies are base64url encoded. Normalize to base64 before decoding.
+ */
+function decodeGmailBody(data?: string): string {
+  if (!data) return '';
+  const normalized = data.replace(/-/g, '+').replace(/_/g, '/');
+  try {
+    return Buffer.from(normalized, 'base64').toString();
+  } catch {
+    // Best effort: return empty to fall back to snippet
+    return '';
+  }
+}
+
+function safeFilename(input: string): string {
+  return (input || 'attachment')
+    .replace(/[^\w.\-() ]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
+}
+
+function collectAllParts(payload: any, out: any[] = []): any[] {
+  if (!payload) return out;
+  out.push(payload);
+  const parts: any[] = Array.isArray(payload.parts) ? payload.parts : [];
+  for (const part of parts) {
+    collectAllParts(part, out);
+  }
+  return out;
+}
+
+// getStorageBucketName moved to ./utils/storageBucket
+
+function headerValue(headers: Array<{ name?: string; value?: string }> | undefined, name: string): string | undefined {
+  if (!headers) return undefined;
+  const found = headers.find((h) => String(h.name || '').toLowerCase() === name.toLowerCase());
+  return found?.value;
+}
+
+/**
+ * Recursively find the first part matching one of the desired mime types.
+ */
+function findFirstMimePart(payload: any, mimeTypes: string[]): any | null {
+  if (!payload) return null;
+  if (payload.mimeType && mimeTypes.includes(payload.mimeType) && payload.body?.data) {
+    return payload;
+  }
+  const parts: any[] = Array.isArray(payload.parts) ? payload.parts : [];
+  for (const part of parts) {
+    const found = findFirstMimePart(part, mimeTypes);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * Extract HTML/plain bodies from a Gmail message payload.
+ * Prefer HTML when present, but always return a reasonable plainText fallback.
+ */
+function extractBodiesFromPayload(messageData: any): { bodyHtml: string; bodyPlain: string } {
+  const payload = messageData?.payload;
+  let bodyHtml = '';
+  let bodyPlain = '';
+
+  // Single-part bodies can live on payload.body.data
+  if (payload?.body?.data && payload?.mimeType) {
+    if (payload.mimeType === 'text/html') bodyHtml = decodeGmailBody(payload.body.data);
+    if (payload.mimeType === 'text/plain') bodyPlain = decodeGmailBody(payload.body.data);
+  }
+
+  // Multipart: recursively locate parts
+  const htmlPart = findFirstMimePart(payload, ['text/html']);
+  const plainPart = findFirstMimePart(payload, ['text/plain']);
+  if (!bodyHtml && htmlPart?.body?.data) bodyHtml = decodeGmailBody(htmlPart.body.data);
+  if (!bodyPlain && plainPart?.body?.data) bodyPlain = decodeGmailBody(plainPart.body.data);
+
+  // Fallback to Gmail snippet (still truncated, but better than empty)
+  if (!bodyPlain) bodyPlain = String(messageData?.snippet || '');
+  return { bodyHtml, bodyPlain };
+}
 
 /**
  * Get Gmail OAuth URL for user authentication
@@ -80,11 +261,8 @@ export const handleGmailCallback = onCall({
     // Exchange code for tokens
     const { tokens } = await oauth2Client.getToken(code);
     
-    // Get user info from Gmail API to get email address
-    oauth2Client.setCredentials(tokens);
-    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
-    const profile = await gmail.users.getProfile({ userId: 'me' });
-    const email = profile.data.emailAddress;
+    // Best-effort email resolution (must not fail callback)
+    const email = await resolveGoogleEmailFromTokens(tokens);
     
     // Check if Calendar scopes are included
     const hasCalendarScope = tokens.scope?.includes('https://www.googleapis.com/auth/calendar');
@@ -120,10 +298,14 @@ export const handleGmailCallback = onCall({
     // Store tokens securely
     await db.collection('users').doc(userId).update(updateData);
 
-    const message = hasCalendarScope 
+    // Register the Gmail push watch immediately so the user doesn't have to
+    // flip a separate toggle after reconnecting. Non-fatal on failure.
+    await bestEffortStartGmailWatch(userId, 'gmailCallback');
+
+    const message = hasCalendarScope
       ? 'Google services (Gmail and Calendar) connected successfully'
       : 'Gmail connected successfully';
-    
+
     return { success: true, message };
   } catch (error) {
     console.error('Error handling Gmail callback:', error);
@@ -147,14 +329,30 @@ export const gmailOAuthCallback = onRequest(async (req, res) => {
 
     const { userId } = JSON.parse(state);
 
+    // DIAGNOSTIC: log the exact values being sent to Google's /token endpoint so we can
+    // cross-check against the OAuth 2.0 client config in GCP Console (client ID + authorized
+    // redirect URIs). The secret is redacted; only its last 4 chars appear, which matches
+    // what GCP's "Client secrets" section displays.
+    const clientIdValue = String(clientId.value() || '');
+    const clientSecretValue = String(clientSecret.value() || '');
+    const redirectUriValue = String(redirectUri.value() || '');
+    logger.info('gmailOAuthCallback: about to exchange code with Google', {
+      clientIdPrefix: clientIdValue.slice(0, 20),
+      clientIdSuffix: clientIdValue.slice(-10),
+      clientSecretLast4: clientSecretValue.slice(-4),
+      clientSecretLength: clientSecretValue.length,
+      redirectUriSent: redirectUriValue,
+      redirectUriLength: redirectUriValue.length,
+      codePrefix: code.slice(0, 8),
+      codeLength: code.length,
+      userId,
+    });
+
     // Exchange code for tokens
     const { tokens } = await oauth2Client.getToken(code);
 
-    // Get user info to capture email
-    oauth2Client.setCredentials(tokens);
-    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
-    const profile = await gmail.users.getProfile({ userId: 'me' });
-    const email = profile.data.emailAddress || '';
+    // Best-effort email resolution (must not fail callback)
+    const email = await resolveGoogleEmailFromTokens(tokens);
 
     const hasCalendarScope = tokens.scope?.includes('https://www.googleapis.com/auth/calendar');
 
@@ -186,6 +384,10 @@ export const gmailOAuthCallback = onRequest(async (req, res) => {
 
     await db.collection('users').doc(userId).set(updateData, { merge: true });
 
+    // Register the Gmail push watch immediately so the user doesn't have to
+    // flip a separate toggle after reconnecting. Non-fatal on failure.
+    await bestEffortStartGmailWatch(userId, 'gmailOAuthCallback');
+
     // Simple success HTML
     const message = hasCalendarScope
       ? 'Google services (Gmail and Calendar) connected successfully'
@@ -213,68 +415,299 @@ export const gmailOAuthCallback = onRequest(async (req, res) => {
   }
 });
 
+/** Parse addresses from RFC5322-style headers (e.g. `Name <user@domain.com>`). */
+function extractEmailAddresses(text: string): string[] {
+  const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
+  const matches = text.match(emailRegex) || [];
+  return matches.map((email) => email.toLowerCase());
+}
+
 /**
  * Sync emails from Gmail for a user
  */
 export const syncGmailEmails = onCall({
-  cors: true
+  cors: true,
+  memory: '1GiB',          // Avoid OOM while processing message bodies
+  concurrency: 10,         // Reduce per-instance load to prevent memory spikes
+  timeoutSeconds: 540      // 9 minutes - allow time for processing large batches
 }, async (request) => {
   try {
-    const { userId, tenantId, maxResults = 50 } = request.data;
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'Must be signed in to sync Gmail.');
+    }
+    // Default to 1000 emails per sync
+    const { userId, tenantId, maxResults = 1000 } = request.data;
 
     if (!userId || !tenantId) {
-      throw new Error('Missing required fields: userId, tenantId');
+      throw new HttpsError('invalid-argument', 'Missing required fields: userId, tenantId');
+    }
+    if (request.auth.uid !== userId) {
+      throw new HttpsError('permission-denied', 'Cannot sync Gmail for another user.');
     }
 
     // Get user's Gmail tokens
     const userDoc = await db.collection('users').doc(userId).get();
     if (!userDoc.exists) {
-      throw new Error('User not found');
+      throw new HttpsError('not-found', 'User not found');
     }
 
     const userData = userDoc.data();
     const gmailTokens = userData?.gmailTokens;
 
     if (!gmailTokens?.access_token) {
-      throw new Error('Gmail not connected. Please authenticate first.');
+      throw new HttpsError('failed-precondition', 'Gmail not connected. Please authenticate first.');
     }
 
     // Set up Gmail API client
     oauth2Client.setCredentials(gmailTokens);
+
+    // Refresh the access token if it's expired or within 5 minutes of expiry.
+    // Without this, long-idle users hit "invalid_grant" / 401 on sync and
+    // think Gmail is "broken" — they end up re-connecting repeatedly.
+    try {
+      const expiryDate = gmailTokens.expiry_date;
+      if (expiryDate && Date.now() >= expiryDate - 5 * 60 * 1000) {
+        logger.info(`Refreshing Gmail access token for user ${userId} (expired or near-expiry)`);
+        const { credentials } = await oauth2Client.refreshAccessToken();
+        await db.collection('users').doc(userId).update({
+          'gmailTokens.access_token': credentials.access_token,
+          'gmailTokens.expiry_date': credentials.expiry_date,
+          'gmailTokens.token_type': credentials.token_type,
+        });
+        oauth2Client.setCredentials(credentials);
+        logger.info(`Gmail access token refreshed for user ${userId}`);
+      }
+    } catch (refreshErr: any) {
+      // If refresh fails (e.g. refresh_token revoked, or refresh_token was
+      // issued by a DIFFERENT OAuth client than the one we're now using after
+      // rotation — Google returns `unauthorized_client` in that case), mark as
+      // disconnected so the UI can prompt a re-auth instead of silently failing
+      // each sync.
+      const errMsg: string = (refreshErr?.message || '').toLowerCase();
+      const errCode: string = String(refreshErr?.response?.data?.error || '').toLowerCase();
+      logger.warn(`Gmail token refresh failed for user ${userId}`, {
+        err: refreshErr?.message,
+        code: refreshErr?.response?.data?.error,
+      });
+      const isStaleToken =
+        errMsg.includes('invalid_grant') ||
+        errCode === 'invalid_grant' ||
+        errMsg.includes('unauthorized_client') ||
+        errCode === 'unauthorized_client' ||
+        errMsg.includes('invalid_client') ||
+        errCode === 'invalid_client';
+      if (isStaleToken) {
+        await db.collection('users').doc(userId).update({ gmailConnected: false });
+        throw new HttpsError(
+          'failed-precondition',
+          'Gmail token is no longer valid. Please reconnect your Gmail account.',
+        );
+      }
+      // Other refresh errors: fall through and let the API call surface the real problem.
+    }
+
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+    /** Connected mailbox address (lowercase); used for outbound vs inbound and must match Gmail "me". */
+    let gmailConnectedEmail = '';
 
-    // Get recent messages
-    const messagesResponse = await gmail.users.messages.list({
-      userId: 'me',
-      maxResults,
-      q: 'is:email' // Only emails, not chats
-    });
+    // Test Gmail API access and verify which account we're querying
+    try {
+      const profile = await gmail.users.getProfile({ userId: 'me' });
+      const connectedEmail = profile.data.emailAddress;
+      gmailConnectedEmail = (connectedEmail || '').toLowerCase();
+      logger.info(`Gmail API access confirmed for ${connectedEmail}`);
+      logger.info(`User's email in database: ${userData?.email || 'not set'}`);
+      
+      // Check if there's a mismatch
+      if (userData?.email && userData.email.toLowerCase() !== connectedEmail?.toLowerCase()) {
+        logger.warn(`Email mismatch: Database has ${userData.email}, but Gmail API is connected to ${connectedEmail}`);
+      }
+      
+      // Try a simple query to see if we can access any messages at all
+      const testQuery = await gmail.users.messages.list({
+        userId: 'me',
+        maxResults: 1,
+        q: '', // Empty query to get any message
+      });
+      logger.info(`Test query (empty) returned ${testQuery.data.messages?.length || 0} messages (resultSizeEstimate: ${testQuery.data.resultSizeEstimate})`);
+      
+      // Try querying inbox specifically
+      const inboxQuery = await gmail.users.messages.list({
+        userId: 'me',
+        maxResults: 1,
+        q: 'in:inbox',
+      });
+      logger.info(`Inbox query returned ${inboxQuery.data.messages?.length || 0} messages (resultSizeEstimate: ${inboxQuery.data.resultSizeEstimate})`);
+      
+    } catch (profileError: any) {
+      logger.error(`Gmail API access failed: ${profileError.message}`);
+      const msg = getErrorMessage(profileError);
+      // If the profile call fails with a token-level error (including
+      // `unauthorized_client` after an OAuth-client rotation), mark disconnected
+      // so the UI prompts a reconnect instead of showing a cryptic error.
+      if (isGmailTokenError(profileError)) {
+        try {
+          await db.collection('users').doc(userId).update({ gmailConnected: false });
+        } catch {
+          /* best effort */
+        }
+        throw new HttpsError(
+          'failed-precondition',
+          'Gmail token is no longer valid. Please reconnect your Gmail account.',
+        );
+      }
+      throw new HttpsError('failed-precondition', `Gmail API access failed: ${msg}`);
+    }
+    
+    // Get recent messages - prioritize unread, then recent emails
+    // Use pagination to fetch all emails in batches
+    const allMessages: any[] = [];
+    let nextPageToken: string | undefined = undefined;
+    let totalFetched = 0;
+    const maxTotalResults = Math.min(maxResults, 1000); // Cap at 1000 emails per sync to avoid timeouts
 
-    const messages = messagesResponse.data.messages || [];
+    // First, try to get unread emails with pagination
+    // Note: Removed 'is:email' filter as it was too restrictive - test queries show messages exist without it
+    logger.info(`Querying Gmail for unread emails (maxResults: ${maxTotalResults})`);
+    do {
+      const query = 'is:unread';
+      logger.info(`Gmail API query: "${query}", pageToken: ${nextPageToken ? 'present' : 'none'}`);
+      
+      const messagesResponse = await gmail.users.messages.list({
+        userId: 'me',
+        maxResults: Math.min(500, maxTotalResults - totalFetched), // Gmail API max is 500 per request
+        q: query, // Unread messages first
+        pageToken: nextPageToken,
+      });
+
+      const batchMessages = messagesResponse.data.messages || [];
+      logger.info(`Gmail API returned ${batchMessages.length} messages (resultSizeEstimate: ${messagesResponse.data.resultSizeEstimate})`);
+      allMessages.push(...batchMessages);
+      totalFetched += batchMessages.length;
+      nextPageToken = messagesResponse.data.nextPageToken;
+
+      // Stop if we've reached the max or no more pages
+      if (totalFetched >= maxTotalResults || !nextPageToken) {
+        break;
+      }
+    } while (nextPageToken && totalFetched < maxTotalResults);
+
+    // If we haven't reached the max, get more emails from inbox (including old emails)
+    // This ensures we sync historical emails, not just unread ones
+    if (totalFetched < maxTotalResults) {
+      logger.info(`Fetching inbox messages to reach ${maxTotalResults} total (already have ${totalFetched} unread)...`);
+      nextPageToken = undefined;
+      do {
+        const query = 'in:inbox';
+        logger.info(`Gmail API query: "${query}", pageToken: ${nextPageToken ? 'present' : 'none'}`);
+        
+        const messagesResponse = await gmail.users.messages.list({
+          userId: 'me',
+          maxResults: Math.min(500, maxTotalResults - totalFetched),
+          q: query, // All inbox messages (including old ones)
+          pageToken: nextPageToken,
+        });
+
+        const batchMessages = messagesResponse.data.messages || [];
+        logger.info(`Gmail API returned ${batchMessages.length} messages (resultSizeEstimate: ${messagesResponse.data.resultSizeEstimate})`);
+        
+        // Add messages, avoiding duplicates (unread messages might also be in inbox)
+        const existingIds = new Set(allMessages.map(m => m.id));
+        const newMessages = batchMessages.filter(m => !existingIds.has(m.id));
+        allMessages.push(...newMessages);
+        totalFetched += newMessages.length;
+        nextPageToken = messagesResponse.data.nextPageToken;
+
+        // Stop if we've reached the max or no more pages
+        if (totalFetched >= maxTotalResults || !nextPageToken) {
+          break;
+        }
+      } while (nextPageToken && totalFetched < maxTotalResults);
+    }
+
+    // Sent mail lives in Sent, not Inbox — required for "emailed from normal Gmail" to reach CRM email_logs.
+    if (totalFetched < maxTotalResults) {
+      logger.info(
+        `Fetching sent messages to reach ${maxTotalResults} total (already have ${totalFetched} from unread+inbox)...`
+      );
+      nextPageToken = undefined;
+      do {
+        const query = 'in:sent';
+        logger.info(`Gmail API query: "${query}", pageToken: ${nextPageToken ? 'present' : 'none'}`);
+        const messagesResponse = await gmail.users.messages.list({
+          userId: 'me',
+          maxResults: Math.min(500, maxTotalResults - totalFetched),
+          q: query,
+          pageToken: nextPageToken,
+        });
+        const batchMessages = messagesResponse.data.messages || [];
+        const existingIds = new Set(allMessages.map((m) => m.id));
+        const newMessages = batchMessages.filter((m) => !existingIds.has(m.id));
+        allMessages.push(...newMessages);
+        totalFetched += newMessages.length;
+        nextPageToken = messagesResponse.data.nextPageToken;
+        if (totalFetched >= maxTotalResults || !nextPageToken) {
+          break;
+        }
+      } while (nextPageToken && totalFetched < maxTotalResults);
+    }
+
+    // Cap processing to avoid long runtimes
+    const processingLimit = Math.min(allMessages.length, maxTotalResults);
+    const messages = allMessages.slice(0, processingLimit);
+    logger.info(`Found ${messages.length} messages to process for user ${userId}`);
+    
     let syncedCount = 0;
+    let skippedCount = 0;
+    let errorCount = 0;
     const newEmails = [];
 
     // Process each message
     for (const message of messages) {
       try {
-        // Check if email already exists
-        const existingEmail = await db.collection('tenants').doc(tenantId)
+        // Check if email already exists in email_logs
+        const existingEmailLog = await db.collection('tenants').doc(tenantId)
           .collection('email_logs')
           .where('messageId', '==', message.id)
           .limit(1)
           .get();
 
-        if (!existingEmail.empty) {
-          continue; // Skip if already synced
+        // Check if message exists in emailThreads (check by gmailMessageId in messages subcollection)
+        // We'll check this by looking for threads with this gmailThreadId and then checking messages
+        const threadQuery = await db.collection('tenants').doc(tenantId)
+          .collection('emailThreads')
+          .where('gmailThreadId', '==', message.threadId)
+          .limit(1)
+          .get();
+
+        let messageExistsInThread = false;
+        if (!threadQuery.empty) {
+          const threadId = threadQuery.docs[0].id;
+          const messageQuery = await db.collection('tenants').doc(tenantId)
+            .collection('emailThreads').doc(threadId)
+            .collection('messages')
+            .where('gmailMessageId', '==', message.id)
+            .limit(1)
+            .get();
+          messageExistsInThread = !messageQuery.empty;
         }
 
-        // Get full message details
+        // Always fetch metadata for this message so we can reconcile read/unread state.
+        // (Gmail label changes are common; skipping here causes unread drift.)
         const messageResponse = await gmail.users.messages.get({
           userId: 'me',
-          id: message.id!
+          id: message.id!,
+          format: 'full',
         });
 
         const messageData = messageResponse.data;
+        
+        // Skip chat messages (Gmail chats have "CHAT" label)
+        if (messageData.labelIds?.includes('CHAT')) {
+          skippedCount++;
+          continue;
+        }
+        
         const headers = messageData.payload?.headers || [];
         
         // Extract email data
@@ -285,63 +718,90 @@ export const syncGmailEmails = onCall({
         const subject = headers.find(h => h.name === 'Subject')?.value || '';
         const date = headers.find(h => h.name === 'Date')?.value || '';
 
-        // Extract body
-        let bodySnippet = messageData.snippet || '';
-        let bodyHtml = '';
+        // Extract bodies (recursive multipart-safe)
+        const { bodyHtml, bodyPlain } = extractBodiesFromPayload(messageData);
+        const bodySnippet = bodyPlain || String(messageData.snippet || '');
 
-        if (messageData.payload?.body?.data) {
-          bodySnippet = Buffer.from(messageData.payload.body.data, 'base64').toString();
-        } else if (messageData.payload?.parts) {
-          for (const part of messageData.payload.parts) {
-            if (part.mimeType === 'text/html' && part.body?.data) {
-              bodyHtml = Buffer.from(part.body.data, 'base64').toString();
-            } else if (part.mimeType === 'text/plain' && part.body?.data) {
-              bodySnippet = Buffer.from(part.body.data, 'base64').toString();
-            }
+        const fromAddrs = extractEmailAddresses(from);
+        const fromPrimary = (fromAddrs[0] || '').toLowerCase();
+        const accountEmail =
+          gmailConnectedEmail ||
+          (typeof userData?.email === 'string' ? userData.email.toLowerCase() : '') ||
+          (typeof userData?.gmailTokens?.email === 'string' ? String(userData.gmailTokens.email).toLowerCase() : '');
+        const direction =
+          fromPrimary && accountEmail && fromPrimary === accountEmail ? 'outbound' : 'inbound';
+
+        // Determine read state from Gmail labels.
+        // Gmail uses the UNREAD label on messages; absence means read.
+        const gmailLabelIds = messageData.labelIds || [];
+        const isUnreadInGmail = gmailLabelIds.includes('UNREAD');
+        const effectiveRead = direction === 'outbound' ? true : !isUnreadInGmail;
+
+        const parsedAddresses = new Set<string>();
+        for (const raw of [from, to, cc, bcc].filter(Boolean)) {
+          for (const addr of extractEmailAddresses(raw)) {
+            parsedAddresses.add(addr);
           }
         }
 
-        // Determine direction
-        const userEmail = userData?.email || '';
-        const direction = from.includes(userEmail) ? 'outbound' : 'inbound';
+        // PERF: One batched query across all participant addresses (Firestore 'in', chunked to 10)
+        // replaces the previous N+1 per-address lookup.
+        const contactMap = await findContactsByEmails(
+          tenantId,
+          Array.from(parsedAddresses)
+        );
 
-        // Find associated contacts
-        const allEmails = [from, to, cc, bcc].flat().filter(Boolean);
-        const contactMap = new Map();
+        const contactIds = Array.from(contactMap.values())
+          .map((c: any) => c?.id)
+          .filter((id: any): id is string => typeof id === 'string' && !!id);
 
-        for (const email of allEmails) {
-          const contactQuery = await db.collection('tenants').doc(tenantId)
-            .collection('crm_contacts')
-            .where('email', '==', email)
-            .limit(1)
-            .get();
-
-          if (!contactQuery.empty) {
-            const contact = contactQuery.docs[0];
-            contactMap.set(email, {
-              id: contact.id,
-              ...contact.data()
+        // Find most relevant deal across ALL matched contacts with a single query
+        // (array-contains-any, max 10 values — we slice to be safe).
+        let dealId: string | null = null;
+        if (contactIds.length > 0) {
+          try {
+            const dealQuery = await db
+              .collection('tenants')
+              .doc(tenantId)
+              .collection('crm_deals')
+              .where('associations.contacts', 'array-contains-any', contactIds.slice(0, 10))
+              .orderBy('updatedAt', 'desc')
+              .limit(1)
+              .get();
+            if (!dealQuery.empty) {
+              dealId = dealQuery.docs[0].id;
+            }
+          } catch (dealErr) {
+            logger.warn('Deal lookup failed during sync (non-fatal)', {
+              messageId: message.id,
+              err: (dealErr as any)?.message,
             });
           }
         }
 
-        // Find most relevant deal for contacts
-        let dealId = null;
-        for (const contact of contactMap.values()) {
-          const dealQuery = await db.collection('tenants').doc(tenantId)
-            .collection('crm_deals')
-            .where('associations.contacts', 'array-contains', contact.id)
-            .orderBy('updatedAt', 'desc')
-            .limit(1)
-            .get();
-
-          if (!dealQuery.empty) {
-            dealId = dealQuery.docs[0].id;
-            break;
-          }
-        }
-
         // Create email log
+        // Robust timestamp: use Date header if valid, else Gmail internalDate
+        const parsedDate = date ? new Date(date) : undefined;
+        const internalDateMillis = messageData.internalDate ? Number(messageData.internalDate) : undefined;
+        const timestamp =
+          parsedDate && !isNaN(parsedDate.getTime())
+            ? parsedDate
+            : internalDateMillis
+              ? new Date(internalDateMillis)
+              : new Date();
+
+        // Denormalize ALL matched contact ids so downstream queries can use
+        // array-contains without a backfill (Phase 2). Legacy single-value
+        // contactId/companyId fields are preserved for backward compatibility.
+        const participantContactIds: string[] = contactIds;
+        const participantCompanyIds: string[] = Array.from(
+          new Set(
+            Array.from(contactMap.values())
+              .map((c: any) => c?.companyId)
+              .filter((id: any): id is string => typeof id === 'string' && !!id)
+          )
+        );
+
         const emailLog = {
           messageId: message.id!,
           threadId: messageData.threadId!,
@@ -350,12 +810,19 @@ export const syncGmailEmails = onCall({
           to: to.split(',').map(e => e.trim()).filter(Boolean),
           cc: cc.split(',').map(e => e.trim()).filter(Boolean),
           bcc: bcc.split(',').map(e => e.trim()).filter(Boolean),
-          timestamp: new Date(date),
-          bodySnippet: bodySnippet.substring(0, 250),
-          bodyHtml,
+          timestamp,
+          bodySnippet: String(bodySnippet).substring(0, 250),
+          bodyHtml: bodyHtml || undefined,
           direction,
-          contactId: contactMap.size > 0 ? Array.from(contactMap.values())[0].id : null,
-          companyId: contactMap.size > 0 ? Array.from(contactMap.values())[0].companyId : null,
+          // Legacy single-valued fields (first match wins — preserved so existing
+          // contactId-indexed queries keep working).
+          contactId: participantContactIds[0] ?? null,
+          companyId: participantCompanyIds[0] ?? null,
+          // New denormalized arrays — let Phase 2 move the frontend to
+          // array-contains without needing a backfill for messages synced
+          // after this change ships.
+          participantContactIds,
+          participantCompanyIds,
           dealId,
           userId,
           isDraft: messageData.labelIds?.includes('DRAFT') || false,
@@ -363,29 +830,199 @@ export const syncGmailEmails = onCall({
           updatedAt: new Date()
         };
 
-        // Save to Firestore
-        await db.collection('tenants').doc(tenantId)
-          .collection('email_logs')
-          .add(emailLog);
+        // Save to Firestore (legacy email_logs for CRM integration)
+        // Avoid duplicating legacy email_logs when we are only reconciling read/unread.
+        if (existingEmailLog.empty) {
+          await db.collection('tenants').doc(tenantId)
+            .collection('email_logs')
+            .add(emailLog);
+        }
 
-        newEmails.push(emailLog);
-        syncedCount++;
+        // Create or find email thread and add message
+        try {
+          const thread = await findOrCreateEmailThread(tenantId, {
+            subject,
+            from,
+            to: to.split(',').map(e => e.trim()).filter(Boolean),
+            cc: cc ? cc.split(',').map(e => e.trim()).filter(Boolean) : undefined,
+            gmailThreadId: messageData.threadId,
+            gmailLabelIds: messageData.labelIds,
+          }, {
+            userId: direction === 'inbound' ? userId : undefined,
+            participantContactIds,
+            participantCompanyIds,
+          });
 
-      } catch (messageError) {
-        console.error(`Error processing message ${message.id}:`, messageError);
+          if (thread.id) {
+            try {
+              // If the message already exists in the thread, reconcile its read state.
+              const existingMsgQuery = await db
+                .collection('tenants')
+                .doc(tenantId)
+                .collection('emailThreads')
+                .doc(thread.id)
+                .collection('messages')
+                .where('gmailMessageId', '==', message.id!)
+                .limit(1)
+                .get();
+
+              if (!existingMsgQuery.empty) {
+                const msgDoc = existingMsgQuery.docs[0];
+                const existing = msgDoc.data() as any;
+                const updates: any = {};
+                if (typeof existing.read === 'boolean' && existing.read !== effectiveRead) {
+                  updates.read = effectiveRead;
+                  logger.info(
+                    `Reconciled read state for gmailMessageId ${message.id} in thread ${thread.id}: ${existing.read} -> ${effectiveRead}`
+                  );
+                }
+                // Backfill missing bodies (fixes truncated/cut-off renders for multipart emails)
+                if ((!existing.bodyHtml || String(existing.bodyHtml).trim().length < 20) && bodyHtml) {
+                  updates.bodyHtml = bodyHtml;
+                }
+                if ((!existing.bodyPlain || String(existing.bodyPlain).trim().length < 20) && bodyPlain) {
+                  updates.bodyPlain = bodyPlain;
+                }
+                if ((!existing.bodySnippet || String(existing.bodySnippet).trim().length < 20) && bodySnippet) {
+                  updates.bodySnippet = String(bodySnippet).substring(0, 200);
+                }
+                if (Object.keys(updates).length > 0) {
+                  await msgDoc.ref.update(updates);
+                }
+
+                // Recompute thread unreadCount (best-effort) so counts converge even after label changes in Gmail.
+                // This is a lightweight bounded query (inbound unread only).
+                try {
+                  const unreadSnap = await db
+                    .collection('tenants')
+                    .doc(tenantId)
+                    .collection('emailThreads')
+                    .doc(thread.id)
+                    .collection('messages')
+                    .where('direction', '==', 'inbound')
+                    .where('read', '==', false)
+                    .get();
+                  await db
+                    .collection('tenants')
+                    .doc(tenantId)
+                    .collection('emailThreads')
+                    .doc(thread.id)
+                    .set(
+                      {
+                        unreadCount: unreadSnap.size,
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                      },
+                      { merge: true }
+                    );
+                } catch (recountErr: any) {
+                  logger.warn(`Failed to recompute unreadCount for thread ${thread.id}:`, recountErr);
+                }
+              } else {
+                const messageId = await addMessageToThread(thread.id, tenantId, {
+                  direction,
+                  from,
+                  fromUserId: direction === 'outbound' ? userId : undefined,
+                  to: to.split(',').map(e => e.trim()).filter(Boolean),
+                  cc: cc ? cc.split(',').map(e => e.trim()).filter(Boolean) : undefined,
+                  subject,
+                  bodyHtml: bodyHtml || undefined,
+                  bodyPlain,
+                  bodySnippet: String(bodyPlain || bodySnippet).substring(0, 200),
+                  status: 'delivered',
+                  providerMessageId: message.id!,
+                  gmailMessageId: message.id!,
+                  read: effectiveRead,
+                  createdAt: timestamp, // Use the original email timestamp
+                }, {
+                  participantContactIds,
+                  participantCompanyIds,
+                });
+                logger.info(`Added message ${messageId} to thread ${thread.id} for email ${message.id}`);
+              }
+            } catch (messageError: any) {
+              logger.error(`Failed to add message to thread ${thread.id}: ${messageError.message || messageError}`);
+              // Continue processing other messages even if this one fails
+            }
+          }
+        } catch (threadError) {
+          // Don't fail sync if threading fails
+          logger.error(`Failed to create email thread: ${threadError}`);
+        }
+
+        // Also log to unified messageLogs for inbox visibility
+        // For inbound emails, userId is the recipient (the logged-in user)
+        // For outbound emails, we'd need to determine the recipient from the 'to' field
+        if (direction === 'inbound') {
+          // Inbound email: logged-in user received it
+          try {
+            await logMessage({
+              userId: userId, // The user who received the email
+              tenantId,
+              messageTypeId: 'inbound_message',
+              channel: 'email',
+              direction: 'inbound',
+              fromIdentity: 'candidate', // Could be 'recruiter' or 'candidate' - defaulting to candidate
+              contentOriginal: bodyHtml || bodySnippet,
+              contentSent: bodySnippet.substring(0, 500), // Truncate for display
+              language: null, // Could extract from email headers if needed
+              status: 'delivered',
+              providerMessageId: message.id!,
+            });
+          } catch (logError) {
+            // Don't fail sync if logging fails
+            logger.error(`Failed to log inbound email to messageLogs: ${logError}`);
+          }
+        } else {
+          // Outbound email: need to find recipient from 'to' field
+          // For now, we'll skip logging outbound emails here since they should be logged
+          // when sent through the orchestrator. But we could add logic to find the recipient user.
+        }
+
+        if (existingEmailLog.empty) {
+          newEmails.push(emailLog);
+          syncedCount++;
+        } else {
+          skippedCount++;
+        }
+        
+        if (syncedCount % 10 === 0) {
+          logger.info(`Processed ${syncedCount} emails so far...`);
+        }
+
+      } catch (messageError: any) {
+        errorCount++;
+        logger.error(`Error processing message ${message.id}:`, messageError);
         // Continue with next message
       }
     }
 
+    logger.info(`Sync completed: ${syncedCount} synced, ${skippedCount} skipped, ${errorCount} errors`);
+
     return {
       success: true,
       syncedCount,
-      newEmails: newEmails.length
+      emailsSynced: syncedCount,
+      skippedCount,
+      errorCount,
+      totalProcessed: messages.length,
+      newEmails: newEmails.length,
     };
 
   } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    const message = getErrorMessage(error);
     console.error('Error syncing Gmail emails:', error);
-    throw new Error(`Failed to sync emails: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    if (isGmailRateLimitError(error)) {
+      logger.warn('syncGmailEmails rate-limited; returning retryable response', { message });
+      return {
+        success: false,
+        error: true,
+        retryable: true,
+        rateLimited: true,
+        message: `Gmail API is rate-limited. Please retry shortly. ${message}`.trim(),
+      };
+    }
+    throw new HttpsError('internal', `Failed to sync emails: ${message || 'Unknown error'}`);
   }
 });
 
@@ -415,6 +1052,559 @@ export const disconnectGmail = onCall({
     throw new Error(`Failed to disconnect Gmail: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 });
+
+/**
+ * Get Gmail unread count for INBOX (message count, not thread count).
+ * Cached on the user doc to avoid rate limits.
+ */
+export const getGmailUnreadInboxCount = onCall(
+  { cors: true, memory: '256MiB', concurrency: 20 },
+  async (request) => {
+    const { userId, maxAgeMs = 25000 } = request.data || {};
+    if (!userId) {
+      throw new Error('Missing required field: userId');
+    }
+
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
+    if (!userDoc.exists) {
+      throw new Error('User not found');
+    }
+
+    const userData: any = userDoc.data() || {};
+    const cached = userData.gmailUnreadInboxCount;
+    const cachedAt = userData.gmailUnreadInboxCountUpdatedAt;
+
+    const cachedAtMs =
+      cachedAt && typeof cachedAt.toMillis === 'function'
+        ? cachedAt.toMillis()
+        : cachedAt instanceof Date
+          ? cachedAt.getTime()
+          : typeof cachedAt === 'number'
+            ? cachedAt
+            : null;
+
+    if (typeof cached === 'number' && cachedAtMs && Date.now() - cachedAtMs <= Number(maxAgeMs)) {
+      return { success: true, unreadCount: cached, cached: true };
+    }
+
+    const gmailTokens = userData?.gmailTokens;
+    if (!gmailTokens?.access_token) {
+      return { success: true, unreadCount: 0, connected: false };
+    }
+
+    try {
+      oauth2Client.setCredentials(gmailTokens);
+      const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+      // INBOX label has messagesUnread which matches Gmail’s sidebar unread count semantics.
+      const labelRes = await gmail.users.labels.get({ userId: 'me', id: 'INBOX' });
+      const unreadCount = Number(labelRes.data.messagesUnread || 0);
+
+      await userRef.set(
+        {
+          gmailUnreadInboxCount: unreadCount,
+          gmailUnreadInboxCountUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      return { success: true, unreadCount, cached: false };
+    } catch (err: any) {
+      if (isGmailTokenError(err)) {
+        logger.info('getGmailUnreadInboxCount: Gmail token expired or invalid', { userId });
+        return { success: true, unreadCount: 0, connected: false };
+      }
+      if (isGmailRateLimitError(err)) {
+        logger.warn('getGmailUnreadInboxCount: Gmail rate-limited; using fallback', { userId });
+        return {
+          success: true,
+          unreadCount: typeof cached === 'number' ? cached : 0,
+          cached: typeof cached === 'number',
+          stale: typeof cached === 'number',
+          rateLimited: true,
+        };
+      }
+      throw err;
+    }
+  }
+);
+
+/**
+ * Get Gmail mailbox counts for common labels/categories (thread totals + unread).
+ * Used for Inbox category badge counts and Primary-only unread sidebar badge.
+ *
+ * Cached on the user doc to avoid rate limits.
+ */
+export const getGmailMailboxCounts = onCall(
+  { cors: true, memory: '512MiB', concurrency: 20 },
+  async (request) => {
+    const { userId, maxAgeMs = 25000 } = request.data || {};
+    if (!userId) {
+      throw new Error('Missing required field: userId');
+    }
+
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
+    if (!userDoc.exists) {
+      // New users may exist in Auth before their Firestore user doc is created.
+      // This endpoint is used for non-critical UI badges; return safe defaults instead of throwing.
+      const empty = {
+        inbox: { threadsTotal: 0, threadsUnread: 0, messagesUnread: 0 },
+        primary: { threadsTotal: 0, threadsUnread: 0 },
+        social: { threadsTotal: 0, threadsUnread: 0 },
+        promotions: { threadsTotal: 0, threadsUnread: 0 },
+        updates: { threadsTotal: 0, threadsUnread: 0 },
+        forums: { threadsTotal: 0, threadsUnread: 0 },
+        spam: { threadsTotal: 0, threadsUnread: 0 },
+        starred: { threadsTotal: 0, threadsUnread: 0 },
+        sent: { threadsTotal: 0, threadsUnread: 0 },
+      };
+      return { success: true, counts: empty, connected: false, userDocMissing: true };
+    }
+
+    const userData: any = userDoc.data() || {};
+    const cached = userData.gmailMailboxCounts;
+    const cachedAt = userData.gmailMailboxCountsUpdatedAt;
+
+    const cachedAtMs =
+      cachedAt && typeof cachedAt.toMillis === 'function'
+        ? cachedAt.toMillis()
+        : cachedAt instanceof Date
+          ? cachedAt.getTime()
+          : typeof cachedAt === 'number'
+            ? cachedAt
+            : null;
+
+    if (cached && cachedAtMs && Date.now() - cachedAtMs <= Number(maxAgeMs)) {
+      return { success: true, counts: cached, cached: true };
+    }
+
+    const gmailTokens = userData?.gmailTokens;
+    const emptyCounts = {
+      inbox: { threadsTotal: 0, threadsUnread: 0, messagesUnread: 0 },
+      primary: { threadsTotal: 0, threadsUnread: 0 },
+      social: { threadsTotal: 0, threadsUnread: 0 },
+      promotions: { threadsTotal: 0, threadsUnread: 0 },
+      updates: { threadsTotal: 0, threadsUnread: 0 },
+      forums: { threadsTotal: 0, threadsUnread: 0 },
+      spam: { threadsTotal: 0, threadsUnread: 0 },
+      starred: { threadsTotal: 0, threadsUnread: 0 },
+      sent: { threadsTotal: 0, threadsUnread: 0 },
+    };
+    if (!gmailTokens?.access_token) {
+      return { success: true, counts: emptyCounts, connected: false };
+    }
+
+    try {
+      oauth2Client.setCredentials(gmailTokens);
+      const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+      const fetchLabel = async (id: string) => {
+        const res = await gmail.users.labels.get({ userId: 'me', id });
+        return {
+          threadsTotal: Number(res.data.threadsTotal || 0),
+          threadsUnread: Number(res.data.threadsUnread || 0),
+          messagesUnread: Number(res.data.messagesUnread || 0),
+        };
+      };
+
+      // IMPORTANT:
+      // Gmail category labels (CATEGORY_PROMOTIONS, etc.) can remain on messages even after archiving,
+      // so `labels.get(...).threadsUnread` for those categories can drift from what Gmail/Mimestream show
+      // inside the Inbox. To match Gmail/Mimestream "Inbox tab" semantics, we compute category unread as:
+      //   UNREAD threads with labels: INBOX + CATEGORY_*
+      const fetchUnreadThreadsInInboxForCategory = async (categoryLabelId: string) => {
+        const res = await gmail.users.threads.list({
+          userId: 'me',
+          labelIds: ['INBOX', categoryLabelId],
+          q: 'is:unread',
+          maxResults: 1,
+        });
+        return Number((res.data as any)?.resultSizeEstimate || 0);
+      };
+
+      const fetchUnreadThreadsForLabel = async (labelId: string) => {
+        const res = await gmail.users.threads.list({
+          userId: 'me',
+          labelIds: [labelId],
+          q: 'is:unread',
+          maxResults: 1,
+          // For SPAM, Gmail treats it like a system mailbox, not Inbox.
+          includeSpamTrash: labelId === 'SPAM' ? true : undefined,
+        } as any);
+        return Number((res.data as any)?.resultSizeEstimate || 0);
+      };
+
+      // Gmail system label IDs:
+      // - INBOX
+      // - CATEGORY_PERSONAL / SOCIAL / PROMOTIONS / UPDATES / FORUMS
+      // - SPAM / STARRED / SENT
+      const [inbox, spamLabel, starredLabel, sentLabel] = await Promise.all([
+        fetchLabel('INBOX'),
+        fetchLabel('SPAM'),
+        fetchLabel('STARRED'),
+        fetchLabel('SENT'),
+      ]);
+
+      const [
+        primaryUnreadInInbox,
+        socialUnreadInInbox,
+        promotionsUnreadInInbox,
+        updatesUnreadInInbox,
+        forumsUnreadInInbox,
+        spamUnread,
+      ] = await Promise.all([
+        fetchUnreadThreadsInInboxForCategory('CATEGORY_PERSONAL'),
+        fetchUnreadThreadsInInboxForCategory('CATEGORY_SOCIAL'),
+        fetchUnreadThreadsInInboxForCategory('CATEGORY_PROMOTIONS'),
+        fetchUnreadThreadsInInboxForCategory('CATEGORY_UPDATES'),
+        fetchUnreadThreadsInInboxForCategory('CATEGORY_FORUMS'),
+        fetchUnreadThreadsForLabel('SPAM'),
+      ]);
+
+      const counts = {
+        inbox: {
+          threadsTotal: inbox.threadsTotal,
+          threadsUnread: inbox.threadsUnread,
+          messagesUnread: inbox.messagesUnread,
+        },
+        // Category counts = unread threads *within Inbox* (matches Gmail tab/Mimestream semantics)
+        primary: { threadsTotal: 0, threadsUnread: primaryUnreadInInbox },
+        social: { threadsTotal: 0, threadsUnread: socialUnreadInInbox },
+        promotions: { threadsTotal: 0, threadsUnread: promotionsUnreadInInbox },
+        updates: { threadsTotal: 0, threadsUnread: updatesUnreadInInbox },
+        forums: { threadsTotal: 0, threadsUnread: forumsUnreadInInbox },
+        // Spam is its own mailbox (not an Inbox tab)
+        spam: { threadsTotal: spamLabel.threadsTotal, threadsUnread: spamUnread },
+        // Not currently used for pills, but keep for completeness
+        starred: { threadsTotal: starredLabel.threadsTotal, threadsUnread: starredLabel.threadsUnread },
+        sent: { threadsTotal: sentLabel.threadsTotal, threadsUnread: sentLabel.threadsUnread },
+      };
+
+      await userRef.set(
+        {
+          gmailMailboxCounts: counts,
+          gmailMailboxCountsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      return { success: true, counts, cached: false };
+    } catch (err: any) {
+      if (isGmailTokenError(err)) {
+        logger.info('getGmailMailboxCounts: Gmail token expired or invalid, returning empty counts', { userId });
+        return { success: true, counts: emptyCounts, connected: false };
+      }
+      if (isGmailRateLimitError(err)) {
+        logger.warn('getGmailMailboxCounts: Gmail rate-limited; returning cached or empty counts', { userId });
+        return {
+          success: true,
+          counts: cached || emptyCounts,
+          connected: true,
+          cached: !!cached,
+          stale: !!cached,
+          rateLimited: true,
+        };
+      }
+      // Defensive catch-all: this callable powers a polling UI badge — throwing
+      // 500s causes the client to spam Cloud Functions every 30s. Prefer
+      // logging the root cause and returning stale-or-empty counts so the
+      // badge degrades gracefully. If we ever need to distinguish "real broken"
+      // from "temporary blip", promote specific errors to their own branches
+      // above and keep this as the final fallback.
+      logger.error('getGmailMailboxCounts: unhandled error — returning stale-or-empty counts', {
+        userId,
+        error: err?.message || String(err),
+        stack: err?.stack,
+      });
+      return {
+        success: true,
+        counts: cached || emptyCounts,
+        connected: true,
+        cached: !!cached,
+        stale: !!cached,
+        degraded: true,
+      };
+    }
+  }
+);
+
+/**
+ * Fetch Gmail attachments (including inline CID images) for a specific Gmail message.
+ * We persist them to Firebase Storage and return signed URLs for rendering/downloading.
+ *
+ * This is used by the email thread view to display inline images and attachments.
+ */
+export const getGmailMessageAttachments = onCall(
+  { cors: true, memory: '512MiB', concurrency: 10, timeoutSeconds: 300 },
+  async (request) => {
+    try {
+      const { userId, tenantId, gmailMessageId, threadId, maxAgeMs = 10 * 60 * 1000 } = request.data || {};
+      if (!userId || !tenantId || !gmailMessageId) {
+        logger.error('getGmailMessageAttachments: Missing required fields', { userId, tenantId, gmailMessageId });
+        throw new HttpsError('invalid-argument', 'Missing required fields: userId, tenantId, gmailMessageId');
+      }
+
+      logger.info('getGmailMessageAttachments: Starting', { userId, tenantId, gmailMessageId, threadId });
+
+      const userRef = db.collection('users').doc(userId);
+      const userDoc = await userRef.get();
+      if (!userDoc.exists) {
+        logger.error('getGmailMessageAttachments: User not found', { userId });
+        throw new HttpsError('not-found', 'User not found');
+      }
+
+      const userData: any = userDoc.data() || {};
+      const gmailTokens = userData?.gmailTokens;
+      if (!gmailTokens?.access_token) {
+        logger.warn('getGmailMessageAttachments: Gmail not connected', { userId });
+        return { success: false, connected: false, attachments: [] };
+      }
+
+      oauth2Client.setCredentials(gmailTokens);
+      const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    // Load message payload to discover attachments + inline images
+    const messageRes = await gmail.users.messages.get({
+      userId: 'me',
+      id: gmailMessageId,
+      format: 'full',
+    });
+    const messageData = messageRes.data as any;
+    const payload = messageData?.payload;
+
+    const parts = collectAllParts(payload, []);
+
+    type AttachmentOut = {
+      id: string;
+      name: string;
+      contentType: string;
+      size: number;
+      storagePath: string;
+      downloadUrl: string;
+      contentId?: string;
+      disposition?: 'inline' | 'attachment';
+    };
+
+    const bucket = getStorage().bucket(getStorageBucketName());
+    const bucketName = bucket.name;
+    const makeDownloadUrl = (path: string, token: string) =>
+      `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodeURIComponent(path)}?alt=media&token=${encodeURIComponent(token)}`;
+    const out: AttachmentOut[] = [];
+
+    for (const part of parts) {
+      const attachmentId = part?.body?.attachmentId;
+      if (!attachmentId) continue;
+
+      const mimeType = String(part?.mimeType || 'application/octet-stream');
+      const filenameRaw = String(part?.filename || '');
+      const filename = safeFilename(filenameRaw || `attachment-${attachmentId}`);
+      const size = Number(part?.body?.size || 0);
+
+      const headers = Array.isArray(part?.headers) ? part.headers : [];
+      const contentIdRaw = headerValue(headers, 'Content-ID') || headerValue(headers, 'Content-Id');
+      const contentId = contentIdRaw ? contentIdRaw.replace(/[<>]/g, '').trim() : undefined;
+      const dispRaw = (headerValue(headers, 'Content-Disposition') || '').toLowerCase();
+      const disposition: 'inline' | 'attachment' | undefined =
+        dispRaw.startsWith('inline') ? 'inline' : dispRaw.startsWith('attachment') ? 'attachment' : undefined;
+
+      const storagePath = `tenants/${tenantId}/gmailAttachments/${gmailMessageId}/${attachmentId}-${filename}`;
+      const file = bucket.file(storagePath);
+
+      // Cache: if file exists and is recent, reuse it (avoid re-downloading from Gmail)
+      try {
+        const [exists] = await file.exists();
+        if (exists) {
+          const [meta] = await file.getMetadata().catch(() => [null as any]);
+          const updated = meta?.updated ? new Date(meta.updated).getTime() : null;
+          const tokensRaw: string = String(meta?.metadata?.firebaseStorageDownloadTokens || '');
+          const tokenFromMeta = tokensRaw.split(',')[0]?.trim();
+          if (updated && Date.now() - updated <= Number(maxAgeMs)) {
+            // Prefer Firebase download token URLs (avoid SignedUrl IAM/signBlob issues)
+            let token = tokenFromMeta;
+            if (!token) {
+              try {
+                // Node 20 supports crypto.randomUUID()
+                // eslint-disable-next-line @typescript-eslint/no-var-requires
+                const crypto = require('crypto');
+                token = crypto.randomUUID();
+                await file.setMetadata({ metadata: { firebaseStorageDownloadTokens: token } }).catch(() => undefined);
+              } catch (e: any) {
+                logger.warn('getGmailMessageAttachments: Failed to set download token on cached attachment', {
+                  gmailMessageId,
+                  attachmentId,
+                  error: e?.message,
+                });
+              }
+            }
+            const downloadUrl = token ? makeDownloadUrl(storagePath, token) : '';
+            out.push({
+              id: attachmentId,
+              name: filenameRaw || filename,
+              contentType: mimeType,
+              size,
+              storagePath,
+              downloadUrl,
+              contentId,
+              disposition,
+            });
+            continue;
+          }
+        }
+      } catch {
+        // ignore cache errors; fall through to fetch
+      }
+
+      try {
+        const attRes = await gmail.users.messages.attachments.get({
+          userId: 'me',
+          messageId: gmailMessageId,
+          id: attachmentId,
+        });
+
+        const dataStr: string = String((attRes.data as any)?.data || '');
+        if (!dataStr) {
+          logger.warn('getGmailMessageAttachments: Empty attachment data', { attachmentId, gmailMessageId });
+          continue;
+        }
+
+        const normalized = dataStr.replace(/-/g, '+').replace(/_/g, '/');
+        let buffer: Buffer;
+        try {
+          buffer = Buffer.from(normalized, 'base64');
+        } catch (err: any) {
+          logger.error('getGmailMessageAttachments: Failed to decode base64', {
+            attachmentId,
+            gmailMessageId,
+            error: err?.message,
+          });
+          continue;
+        }
+
+        if (buffer.length === 0) {
+          logger.warn('getGmailMessageAttachments: Empty buffer after decode', { attachmentId, gmailMessageId });
+          continue;
+        }
+
+        await file.save(buffer, {
+          contentType: mimeType,
+          resumable: false,
+          metadata: {
+            cacheControl: 'private, max-age=3600',
+          },
+        });
+      } catch (partErr: any) {
+        logger.error('getGmailMessageAttachments: Failed to fetch/save attachment', {
+          attachmentId,
+          gmailMessageId,
+          error: partErr?.message,
+          code: partErr?.code,
+        });
+        // Continue with other attachments even if one fails
+        continue;
+      }
+
+      // Ensure a Firebase download token exists so we can build a stable URL (no signedUrl permissions required)
+      let token = '';
+      try {
+        const [meta] = await file.getMetadata().catch(() => [null as any]);
+        const tokensRaw: string = String(meta?.metadata?.firebaseStorageDownloadTokens || '');
+        token = tokensRaw.split(',')[0]?.trim() || '';
+      } catch {}
+      if (!token) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const crypto = require('crypto');
+          token = crypto.randomUUID();
+          await file.setMetadata({ metadata: { firebaseStorageDownloadTokens: token } });
+        } catch (e: any) {
+          logger.warn('getGmailMessageAttachments: Failed to set download token', {
+            gmailMessageId,
+            attachmentId,
+            error: e?.message,
+          });
+        }
+      }
+      const downloadUrl = token ? makeDownloadUrl(storagePath, token) : '';
+
+      out.push({
+        id: attachmentId,
+        name: filenameRaw || filename,
+        contentType: mimeType,
+        size,
+        storagePath,
+        downloadUrl,
+        contentId,
+        disposition,
+      });
+    }
+
+    // Best-effort: persist onto our thread message doc so the UI can render without repeated calls
+    if (threadId && out.length > 0) {
+      try {
+        const messagesSnap = await db
+          .collection('tenants')
+          .doc(tenantId)
+          .collection('emailThreads')
+          .doc(String(threadId))
+          .collection('messages')
+          .where('gmailMessageId', '==', gmailMessageId)
+          .limit(1)
+          .get();
+
+        if (!messagesSnap.empty) {
+          await messagesSnap.docs[0].ref.set(
+            {
+              attachments: out.map((a) => ({
+                id: a.id,
+                name: a.name,
+                contentType: a.contentType,
+                size: a.size,
+                storagePath: a.storagePath,
+                downloadUrl: a.downloadUrl,
+                contentId: a.contentId,
+                disposition: a.disposition,
+              })),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+        }
+      } catch (err: any) {
+        logger.warn('Failed to persist Gmail attachments onto message doc', {
+          tenantId,
+          threadId,
+          gmailMessageId,
+          error: err?.message,
+        });
+      }
+    }
+
+      logger.info('getGmailMessageAttachments: Success', {
+        userId,
+        gmailMessageId,
+        attachmentCount: out.length,
+      });
+      return { success: true, attachments: out };
+    } catch (err: any) {
+      logger.error('getGmailMessageAttachments: Error', {
+        error: err?.message,
+        stack: err?.stack,
+        userId: request.data?.userId,
+        gmailMessageId: request.data?.gmailMessageId,
+      });
+      // Preserve details client-side (avoid opaque functions/internal)
+      throw err instanceof HttpsError
+        ? err
+        : new HttpsError('internal', `Failed to load Gmail attachments: ${err?.message || 'Unknown error'}`, {
+            userId: request.data?.userId,
+            tenantId: request.data?.tenantId,
+            gmailMessageId: request.data?.gmailMessageId,
+          });
+    }
+  }
+);
 
 // Add caching for Gmail status to reduce database calls
 const gmailStatusCache = new Map<string, { data: any; timestamp: number }>();
@@ -1118,15 +2308,6 @@ export const backfillGmailEmails = onCall({
 });
 
 /**
- * Helper function to extract email addresses from a string
- */
-function extractEmailAddresses(text: string): string[] {
-  const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
-  const matches = text.match(emailRegex) || [];
-  return matches.map(email => email.toLowerCase());
-}
-
-/**
  * Internal function for monitoring Gmail (used by scheduled function)
  */
 async function monitorGmailForContactEmailsInternal(userId: string, tenantId: string, maxResults: number = 100, opts?: { deepScanHours?: number }) {
@@ -1666,6 +2847,23 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
             }
 
             // Create email logs for all associated entities to enable "filter up" functionality
+            // Build participant arrays (Phase 2) so array-contains queries surface this log
+            // under every matched contact/company, not just the first.
+            const legacyParticipantContactIds = Array.from(
+              new Set(
+                (contacts as any[])
+                  .map((c: any) => c?.id)
+                  .filter((id: any): id is string => typeof id === 'string' && !!id)
+              )
+            );
+            const legacyParticipantCompanyIds = Array.from(
+              new Set(
+                (contacts as any[])
+                  .map((c: any) => c?.companyId)
+                  .filter((id: any): id is string => typeof id === 'string' && !!id)
+              )
+            );
+
             const emailLogBase = {
               messageId: message.id,
               threadId: messageData.threadId,
@@ -1677,7 +2875,11 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
               timestamp: emailDate,
               bodySnippet: bodySnippet.substring(0, 250),
               direction: isOutbound ? 'outbound' : 'inbound',
+              // Legacy single-valued field (preserved for backward compatibility)
               contactId: contact.id,
+              // Phase 2: denormalized arrays for array-contains queries
+              participantContactIds: legacyParticipantContactIds,
+              participantCompanyIds: legacyParticipantCompanyIds,
               userId,
               isDraft: messageData.labelIds?.includes('DRAFT') || false,
               createdAt: new Date(),
@@ -1693,6 +2895,85 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
             await db.collection('tenants').doc(tenantId)
               .collection('email_logs')
               .add(contactEmailLog);
+
+            // Create or find email thread and add message
+            // Pass full set of contact/company IDs from this batch so every
+            // matched CRM contact is linked to the thread (Phase 2 multi-contact linking).
+            const batchParticipantContactIds = Array.from(
+              new Set(
+                (contacts as any[])
+                  .map((c: any) => c?.id)
+                  .filter((id: any): id is string => typeof id === 'string' && !!id)
+              )
+            );
+            const batchParticipantCompanyIds = Array.from(
+              new Set(
+                (contacts as any[])
+                  .map((c: any) => c?.companyId)
+                  .filter((id: any): id is string => typeof id === 'string' && !!id)
+              )
+            );
+            try {
+              const thread = await findOrCreateEmailThread(tenantId, {
+                subject,
+                from,
+                to: to.split(',').map(e => e.trim()).filter(Boolean),
+                cc: cc ? cc.split(',').map(e => e.trim()).filter(Boolean) : undefined,
+                gmailThreadId: messageData.threadId,
+                gmailLabelIds: messageData.labelIds,
+              }, {
+                userId: !isOutbound ? userId : undefined,
+                participantContactIds: batchParticipantContactIds,
+                participantCompanyIds: batchParticipantCompanyIds,
+              });
+
+              if (thread.id) {
+                await addMessageToThread(thread.id, tenantId, {
+                  direction: isOutbound ? 'outbound' : 'inbound',
+                  from,
+                  fromUserId: isOutbound ? userId : undefined,
+                  to: to.split(',').map(e => e.trim()).filter(Boolean),
+                  cc: cc ? cc.split(',').map(e => e.trim()).filter(Boolean) : undefined,
+                  subject,
+                  bodyPlain: bodySnippet,
+                  bodySnippet: bodySnippet.substring(0, 200),
+                  status: 'delivered',
+                  providerMessageId: message.id,
+                  gmailMessageId: message.id,
+                  read: isOutbound, // Outbound messages are auto-read
+                  createdAt: emailDate, // Use the original email timestamp
+                }, {
+                  participantContactIds: batchParticipantContactIds,
+                  participantCompanyIds: batchParticipantCompanyIds,
+                });
+              }
+            } catch (threadError) {
+              // Don't fail sync if threading fails
+              logger.error(`Failed to create email thread: ${threadError}`);
+            }
+
+            // Also log to unified messageLogs for inbox visibility (only for inbound emails to the logged-in user)
+            if (!isOutbound) {
+              // Inbound email: logged-in user received it
+              try {
+                await logMessage({
+                  userId: userId, // The user who received the email
+                  tenantId,
+                  messageTypeId: 'inbound_message',
+                  channel: 'email',
+                  direction: 'inbound',
+                  fromIdentity: 'candidate', // Could be 'recruiter' or 'candidate' - defaulting to candidate
+                  contentOriginal: bodySnippet, // Use bodySnippet since bodyHtml isn't extracted in this function
+                  contentSent: bodySnippet.substring(0, 500), // Truncate for display
+                  language: null, // Could extract from email headers if needed
+                  status: 'delivered',
+                  providerMessageId: message.id,
+                });
+              } catch (logError) {
+                // Don't fail sync if logging fails
+                logger.error(`Failed to log inbound email to messageLogs: ${logError}`);
+              }
+            }
 
             // Create email logs for associated companies
             for (const companyId of associatedEntities.companies) {
@@ -1739,8 +3020,7 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
 
             // Also log to AI system for analytics
             try {
-              const { logAIAction } = await import('./utils/aiLogging');
-              await logAIAction({
+              await logger.aiEvent({
                 eventType: 'email.sent_to_contact',
                 targetType: 'contact',
                 targetId: contact.id,
@@ -1848,13 +3128,35 @@ export const scheduledGmailMonitoring = onSchedule({
   maxInstances: 1,
   retryCount: 0,
   timeoutSeconds: 240,
-  memory: '256MiB'
+  memory: '512MiB'
 }, async (context) => {
   if (!ENABLE_GMAIL_MONITORING) {
     console.info('scheduledGmailMonitoring: disabled by ENABLE_GMAIL_MONITORING');
     return;
   }
+
+  // One run per scheduler invocation (daily date-based idempotency skipped all but the first run each day).
+  const scheduleKey = String((context as { scheduleTime?: string }).scheduleTime || new Date().toISOString()).replace(
+    /:/g,
+    '-'
+  );
+  const runId = `gmail_monitoring_${scheduleKey}`;
+  const db = admin.firestore();
+  const runRef = db.collection('function_runs').doc(runId);
+
+  try {
+    await runRef.create({ createdAt: admin.firestore.FieldValue.serverTimestamp() });
+  } catch {
+    console.info('scheduledGmailMonitoring: duplicate schedule invocation, skipping');
+    return;
+  }
+  
   const started = Date.now();
+  const timeBudget = 45000; // 45 seconds max
+  let tenantsProcessed = 0;
+  let pagesProcessed = 0;
+  let newItems = 0;
+  
   try {
     console.log('🔄 Starting scheduled Gmail monitoring...');
     

@@ -6,7 +6,7 @@
  */
 
 import { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } from 'firebase-functions/v2/firestore';
-import { logAIAction } from '../feedbackEngine';
+import { logger } from '../utils/logger';
 
 // ============================================================================
 // TEMPLATE: Replace 'newCollection' with your actual collection name
@@ -17,7 +17,7 @@ export const firestoreLogNewCollectionCreated = onDocumentCreated('newCollection
   const data = event.data?.data();
   const itemName = data?.name || 'Unknown'; // Replace 'name' with your name field
   
-  await logAIAction({
+  await logger.aiEvent({
     eventType: 'new_collection.created',
     targetType: 'new_collection',
     targetId: event.params.docId,
@@ -38,7 +38,7 @@ export const firestoreLogNewCollectionUpdated = onDocumentUpdated('newCollection
   const afterData = event.data?.after.data();
   const itemName = afterData?.name || beforeData?.name || 'Unknown'; // Replace 'name' with your name field
   
-  await logAIAction({
+  await logger.aiEvent({
     eventType: 'new_collection.updated',
     targetType: 'new_collection',
     targetId: event.params.docId,
@@ -58,7 +58,7 @@ export const firestoreLogNewCollectionDeleted = onDocumentDeleted('newCollection
   const data = event.data?.data();
   const itemName = data?.name || 'Unknown'; // Replace 'name' with your name field
   
-  await logAIAction({
+  await logger.aiEvent({
     eventType: 'new_collection.deleted',
     targetType: 'new_collection',
     targetId: event.params.docId,
@@ -82,7 +82,7 @@ export const firestoreLogSubcollectionCreated = onDocumentCreated('parentCollect
   const data = event.data?.data();
   const itemName = data?.name || 'Unknown'; // Replace 'name' with your name field
   
-  await logAIAction({
+  await logger.aiEvent({
     eventType: 'subcollection.created',
     targetType: 'subcollection',
     targetId: event.params.docId,
@@ -103,7 +103,7 @@ export const firestoreLogSubcollectionUpdated = onDocumentUpdated('parentCollect
   const afterData = event.data?.after.data();
   const itemName = afterData?.name || beforeData?.name || 'Unknown'; // Replace 'name' with your name field
   
-  await logAIAction({
+  await logger.aiEvent({
     eventType: 'subcollection.updated',
     targetType: 'subcollection',
     targetId: event.params.docId,
@@ -123,7 +123,7 @@ export const firestoreLogSubcollectionDeleted = onDocumentDeleted('parentCollect
   const data = event.data?.data();
   const itemName = data?.name || 'Unknown'; // Replace 'name' with your name field
   
-  await logAIAction({
+  await logger.aiEvent({
     eventType: 'subcollection.deleted',
     targetType: 'subcollection',
     targetId: event.params.docId,

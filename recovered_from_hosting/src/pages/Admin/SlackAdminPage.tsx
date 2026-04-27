@@ -1,0 +1,87 @@
+/**
+ * Slack Admin Page
+ * 
+ * Central admin interface for managing Slack integration.
+ * Only accessible to users with securityLevel 5-7.
+ */
+
+import React, { useState, useEffect } from 'react';
+import {
+  Box,
+  Typography,
+  Grid,
+  Paper,
+  CircularProgress,
+  Alert,
+} from '@mui/material';
+import { useAuth } from '../../contexts/AuthContext';
+import { canAccessSlackAdmin } from '../../utils/slackAccessControl';
+import SlackMappingsPanel from './components/SlackMappingsPanel';
+import SlackConnectionStatusCard from './components/SlackConnectionStatusCard';
+import SlackRecentMessagesPanel from './components/SlackRecentMessagesPanel';
+
+const SlackAdminPage: React.FC = () => {
+  const { tenantId, securityLevel, loading } = useAuth();
+  const [accessDenied, setAccessDenied] = useState(false);
+
+  useEffect(() => {
+    if (!loading && !canAccessSlackAdmin(securityLevel)) {
+      setAccessDenied(true);
+    }
+  }, [loading, securityLevel]);
+
+  if (loading) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  if (accessDenied || !canAccessSlackAdmin(securityLevel)) {
+    return (
+      <Box sx={{ p: 3 }}>
+        <Alert severity="error" sx={{ mb: 2 }}>
+          <Typography variant="h6">Access Denied</Typography>
+          <Typography variant="body2">
+            You must have security level 5-7 (Staff Manager, Manager, or Admin) to access Slack integration management.
+          </Typography>
+          <Typography variant="body2" sx={{ mt: 1 }}>
+            Your current security level: {securityLevel || 'Unknown'}
+          </Typography>
+        </Alert>
+      </Box>
+    );
+  }
+
+  if (!tenantId) {
+    return (
+      <Box sx={{ p: 3 }}>
+        <Alert severity="warning">
+          No tenant selected. Please select a tenant to manage Slack integration.
+        </Alert>
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ px: 1, py: 2 }}>
+      <Grid container spacing={3}>
+        {/* Left Column: Mappings */}
+        <Grid item xs={12} md={7}>
+          <SlackMappingsPanel tenantId={tenantId} />
+        </Grid>
+
+        {/* Right Column: Status & Recent Messages */}
+        <Grid item xs={12} md={5}>
+          <SlackConnectionStatusCard tenantId={tenantId} />
+          <Box mt={3}>
+            <SlackRecentMessagesPanel tenantId={tenantId} />
+          </Box>
+        </Grid>
+      </Grid>
+    </Box>
+  );
+};
+
+export default SlackAdminPage;

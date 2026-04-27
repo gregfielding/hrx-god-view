@@ -32,7 +32,6 @@ import {
 } from '@mui/material';
 import {
   PlayArrow as PlayArrowIcon,
-  ArrowBack as ArrowBackIcon,
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon,
   Warning as WarningIcon,
@@ -42,6 +41,7 @@ import {
   PlaylistPlay as PlaylistPlayIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { app } from '../../firebase';
@@ -364,14 +364,7 @@ const TestSchedulerButton: React.FC = (): JSX.Element => {
             Test full prompt flows, validate consistency, and simulate orchestration scenarios
           </Typography>
         </Box>
-        <Button
-          variant="outlined"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/admin/ai')}
-          sx={{ height: 40 }}
-        >
-          Back to Launchpad
-        </Button>
+        <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
       </Box>
 
       {/* Stats Cards */}

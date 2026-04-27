@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Box, Typography, Paper, Button, Divider } from '@mui/material';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import Snackbar from '@mui/material/Snackbar';
 import MuiAlert from '@mui/material/Alert';
@@ -10,6 +10,7 @@ import { doc, setDoc } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { LoggableSlider } from '../../components/LoggableField';
 import { db } from '../../firebase';
+import { logger } from '../../utils/logger';
 
 const ADMIN_SLIDERS = [
   {
@@ -128,16 +129,12 @@ const WeightsEngine: React.FC = () => {
       const functions = getFunctions();
       const setWeightsConfig = httpsCallable(functions, 'setWeightsConfig');
       await setWeightsConfig({ weights, userId: currentUser?.uid || null });
-      await setDoc(doc(db, 'ai_logs', `admin_WeightsEngine_${Date.now()}`), {
-        section: 'WeightsEngine',
-        changed: 'weights',
-        oldValue: weights,
-        newValue: weights,
-        timestamp: new Date().toISOString(),
-        eventType: 'ai_settings_update',
-        engineTouched: ['WeightsEngine'],
-        userId: currentUser?.uid || null,
-        sourceModule: 'WeightsEngine',
+      await logger.info('Weights engine updated', {
+        context: 'WeightsEngine',
+        extra: {
+          userId: currentUser?.uid || null,
+          eventType: 'ai_settings_update',
+        },
       });
       setSaveSuccess(true);
     } catch (err: any) {
@@ -152,15 +149,7 @@ const WeightsEngine: React.FC = () => {
         <Typography variant="h3">
           Weights Engine
         </Typography>
-        <Button
-          variant="outlined"
-          color="primary"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/admin/ai')}
-          sx={{ fontWeight: 600 }}
-        >
-          Back to Launchpad
-        </Button>
+        <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
       </Box>
       <Typography variant="subtitle1" color="text.secondary" mb={3}>
         Fine-tune how the AI balances admin rules, customer context, and employee feedback.

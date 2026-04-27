@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import {
   Box,
   Typography,
@@ -19,7 +20,6 @@ import {
   CardHeader,
 } from '@mui/material';
 import {
-  ArrowBack as ArrowBackIcon,
   Edit as EditIcon,
   List as ListIcon,
   Info as InfoIcon,
@@ -272,9 +272,7 @@ const TenantSalesperson: React.FC = () => {
               icon={<GroupIcon />}
             />
           )}
-          <IconButton onClick={() => navigate('/tenant/crm')}>
-            <ArrowBackIcon />
-          </IconButton>
+          <UniversalBackButton to="/tenant/crm" />
         </Box>
       </Box>
 

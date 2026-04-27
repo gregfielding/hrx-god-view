@@ -19,6 +19,10 @@ import { format } from 'date-fns';
 
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { getWorkAuthorizedStatus } from '../utils/workAuthorizedDisplay';
+import { getEVerifyComfortStatusFromUserData } from '../utils/eVerifyComfortDisplay';
+import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
+import EVerifyComfortChip from '../components/EVerifyComfortChip';
 
 
 type User = {
@@ -165,6 +169,8 @@ const UsersTable = () => {
                   <TableCell>Last Name</TableCell>
                   <TableCell>Phone</TableCell>
                   <TableCell>Role</TableCell>
+                  <TableCell>Auth</TableCell>
+                  <TableCell>Documented</TableCell>
                   <TableCell>Created At</TableCell>
                   <TableCell>Actions</TableCell>
                 </TableRow>
@@ -177,6 +183,12 @@ const UsersTable = () => {
                     <TableCell>{user.lastName}</TableCell>
                     <TableCell>{user.phone}</TableCell>
                     <TableCell>{user.role}</TableCell>
+                    <TableCell>
+                      <WorkAuthorizedChip status={getWorkAuthorizedStatus(user as any)} />
+                    </TableCell>
+                    <TableCell>
+                      <EVerifyComfortChip status={getEVerifyComfortStatusFromUserData(user as any)} />
+                    </TableCell>
                     <TableCell>
                       {user.createdAt?.toDate
                         ? format(user.createdAt.toDate(), 'yyyy-MM-dd HH:mm')

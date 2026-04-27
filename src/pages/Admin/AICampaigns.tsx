@@ -41,7 +41,6 @@ import SaveIcon from '@mui/icons-material/Save';
 import CancelIcon from '@mui/icons-material/Cancel';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import SendIcon from '@mui/icons-material/Send';
 import BarChartIcon from '@mui/icons-material/BarChart';
@@ -51,10 +50,12 @@ import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, where } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
+import { logger } from '../../utils/logger';
 
 interface Campaign {
   id?: string;
@@ -472,9 +473,7 @@ const AICampaigns: React.FC = () => {
         success = true;
       }
 
-      // Log the campaign save action
-      const logAIAction = httpsCallable(functions, 'logAIAction');
-      await logAIAction({
+      await logger.aiEvent({
         userId: 'admin', // TODO: Get from auth context
         actionType: 'campaign_save',
         sourceModule: 'CampaignsEngine',
@@ -513,9 +512,7 @@ const AICampaigns: React.FC = () => {
       await deleteDoc(doc(db, 'campaigns', campaignId));
       setCampaigns((prev) => prev.filter((c) => c.id !== campaignId));
 
-      // Log the campaign deletion action
-      const logAIAction = httpsCallable(functions, 'logAIAction');
-      await logAIAction({
+      await logger.aiEvent({
         userId: 'admin', // TODO: Get from auth context
         actionType: 'campaign_delete',
         sourceModule: 'CampaignsEngine',
@@ -573,9 +570,7 @@ const AICampaigns: React.FC = () => {
         updatedAt: new Date(),
       });
 
-      // Log the campaign creation action
-      const logAIAction = httpsCallable(functions, 'logAIAction');
-      await logAIAction({
+      await logger.aiEvent({
         userId: 'admin', // TODO: Get from auth context
         actionType: 'campaign_create',
         sourceModule: 'CampaignsEngine',
@@ -839,14 +834,7 @@ const AICampaigns: React.FC = () => {
           >
             {showCreateForm ? 'Hide Form' : 'New Campaign'}
           </Button>
-          <Button
-            variant="outlined"
-            startIcon={<ArrowBackIcon />}
-            onClick={() => navigate('/admin/ai')}
-            sx={{ height: 40 }}
-          >
-            Back to Launchpad
-          </Button>
+          <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
         </Box>
       </Box>
 

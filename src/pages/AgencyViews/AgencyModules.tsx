@@ -26,6 +26,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 import { useAuth } from '../../contexts/AuthContext';
 import { db } from '../../firebase';
+import { logger } from '../../utils/logger';
 
 // Copy of defaultModules from ModulesDashboard.tsx
 const defaultModules = [
@@ -375,17 +376,15 @@ const AgencyModules: React.FC = () => {
       const modulesRef = doc(db, 'tenants', tenantId, 'aiSettings', 'modules');
       await setDoc(modulesRef, { modules: updatedModules }, { merge: true });
       
-      // Log the change
-      await setDoc(doc(db, 'ai_logs', `${tenantId}_ModuleToggle_${Date.now()}`), {
-        tenantId: tenantId,
-        section: 'AgencyModules',
-        changed: 'module_toggle',
-        moduleId: id,
-        newEnabled: !modules.find(m => m.id === id)?.isEnabled,
-        timestamp: new Date().toISOString(),
-        eventType: 'module_toggle',
-        userId: currentUser?.uid || null,
-        sourceModule: 'AgencyModules',
+      await logger.info('Agency module toggled', {
+        context: 'AgencyModules',
+        extra: {
+          tenantId,
+          moduleId: id,
+          newEnabled: !modules.find((m) => m.id === id)?.isEnabled,
+          userId: currentUser?.uid || null,
+          eventType: 'module_toggle',
+        },
       });
     } catch (err) {
       console.error('Error saving module toggle:', err);
@@ -411,18 +410,14 @@ const AgencyModules: React.FC = () => {
       const modulesRef = doc(db, 'tenants', tenantId, 'aiSettings', 'modules');
       await setDoc(modulesRef, { modules: updatedModules }, { merge: true });
       
-      // Log the change
-      await setDoc(doc(db, 'ai_logs', `${tenantId}_ModuleSettings_${Date.now()}`), {
-        tenantId: tenantId,
-        section: 'AgencyModules',
-        changed: 'module_settings',
-        moduleId: selectedModule.id,
-        oldValue: modules.find(m => m.id === selectedModule.id),
-        newValue: selectedModule,
-        timestamp: new Date().toISOString(),
-        eventType: 'module_settings_update',
-        userId: currentUser?.uid || null,
-        sourceModule: 'AgencyModules',
+      await logger.info('Agency module settings updated', {
+        context: 'AgencyModules',
+        extra: {
+          tenantId,
+          moduleId: selectedModule.id,
+          userId: currentUser?.uid || null,
+          eventType: 'module_settings_update',
+        },
       });
       
       setSuccess(true);

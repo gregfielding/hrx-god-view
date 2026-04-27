@@ -1,31 +1,51 @@
-import { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, useParams, useNavigate } from 'react-router-dom';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
+import { BrowserRouter as Router, Routes, Route, useParams, useNavigate, useLocation, useSearchParams, Navigate, Outlet } from 'react-router-dom';
 import { LoadScript, Libraries } from '@react-google-maps/api';
+import { logger } from './utils/logger';
+import { getUsersIndexRedirectPath } from './utils/usersLayoutPersistence';
+
+const CertEngineShadowDebugPanel =
+  process.env.NODE_ENV === 'development'
+    ? lazy(() => import('./components/dev/CertEngineShadowDebugPanel'))
+    : null;
 
 import Layout from './components/Layout';
 import ConditionalJobsBoardLayout from './components/ConditionalJobsBoardLayout';
+import ConditionalWorkerLayout from './components/ConditionalWorkerLayout';
+import PageViewTracker from './components/PageViewTracker';
 import Dashboard from './pages/Dashboard';
+import CalendarPage from './pages/CalendarPage';
+import TasksPage from './pages/TasksPage';
+import TaskDetailPage from './pages/TaskDetailPage';
 import AIDashboard from './pages/TenantViews/AIDashboard';
+import ChatGPT from './pages/TenantViews/ChatGPT';
 import UserProfile from './pages/UserProfile';
+import UserReadinessPage from './pages/UserReadinessPage';
 import Login from './pages/Login';
 import UserOnboarding from './pages/UserOnboarding';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { canAccessAccountInvoicingTab, canAccessGlobalInvoicing } from './utils/invoicingAccessControl';
 import { AssociationsCacheProvider } from './contexts/AssociationsCacheContext';
 import { CRMCacheProvider } from './contexts/CRMCacheContext';
 import { SalespeopleProvider } from './contexts/SalespeopleContext';
+import { DirectMessengerProvider } from './contexts/DirectMessengerContext';
+import { ChatGPTProvider } from './contexts/ChatGPTContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import SlackProtectedRoute from './components/SlackProtectedRoute';
 import { Box, Typography } from '@mui/material';
 import TenantsTable from './pages/Admin/TenantsTable';
 import AgencyProfile from './pages/AgencyProfile';
 import TenantWorkforce from './pages/TenantViews/TenantWorkforce';
 import WorkforceDashboard from './pages/TenantViews/WorkforceDashboard';
 import CompanyDirectory from './pages/TenantViews/CompanyDirectory';
-import HiredStaff from './pages/TenantViews/HiredStaff';
-import FlexWorkers from './pages/TenantViews/FlexWorkers';
 import AddWorkers from './pages/TenantViews/AddWorkers';
 import PendingInvites from './pages/TenantViews/PendingInvites';
 import WorkforcePageWrapper from './pages/TenantViews/WorkforcePageWrapper';
 import TenantSettings from './pages/TenantViews/TenantSettings';
+import SettingsLanding from './pages/TenantViews/SettingsLanding';
+import CompanySetup from './pages/TenantViews/CompanySetup';
+import MessagingTab from './pages/TenantViews/MessagingTab';
+import SenderManagementPage from './pages/TenantViews/SenderManagementPage';
 import CompanyDefaults from './pages/TenantViews/CompanyDefaults';
 import TenantLocations from './pages/TenantViews/TenantLocations';
 import TenantUserGroups from './pages/TenantViews/TenantUserGroups';
@@ -36,7 +56,19 @@ import TenantFlex from './pages/TenantViews/TenantFlex';
 import JobsBoard from './pages/TenantViews/JobsBoard';
 import EditJobPost from './pages/TenantViews/EditJobPost';
 import PublicJobsBoard from './pages/PublicJobsBoard';
+import JobPostingDetail from './pages/JobPostingDetail';
+import ApplyWizardPage from './pages/ApplyWizardPage';
+import UserApplications from './pages/UserApplications';
+import MyAssignments from './pages/MyAssignments';
+import AssignmentDetails from './pages/AssignmentDetails';
+import Communications from './pages/Communications';
+import Terms from './pages/Terms';
+import Privacy from './pages/Privacy';
+import SMSPrivacy from './pages/SMSPrivacy';
+import SignerPage from './pages/SignerPage';
+import Apply from './pages/Apply';
 import TenantCRM from './pages/TenantViews/TenantCRM';
+import PublicCRMView from './pages/PublicCRMView';
 import CompanyDetails from './pages/TenantViews/CompanyDetails';
 import ContactDetails from './pages/TenantViews/ContactDetails';
 import DealDetails from './pages/TenantViews/DealDetails';
@@ -73,6 +105,19 @@ import HelloMessageManagement from './pages/Admin/HelloMessageManagement';
 import AutoContextEngineNew from './pages/Admin/AutoContextEngine';
 import AISelfImprovement from './pages/Admin/AISelfImprovement';
 import InviteTokenValidator from './components/InviteTokenValidator';
+import WorkerRoute from './auth/WorkerRoute';
+import C1WorkerLayout from './layouts/C1WorkerLayout';
+import C1WorkersIndex from './pages/c1/workers/index';
+import C1WorkerDashboard from './pages/c1/workers/dashboard';
+import C1WorkerAssignments from './pages/c1/workers/assignments';
+import C1WorkerProfile from './pages/c1/workers/profile';
+import C1WorkerProfileSection from './pages/c1/workers/profileSection';
+import C1WorkerMyEmployment from './pages/c1/workers/myEmployment';
+import C1WorkerMyEmploymentDetail from './pages/c1/workers/myEmploymentDetail';
+import C1WorkerScreening from './pages/c1/workers/screening';
+import C1WorkerSupport from './pages/c1/workers/support';
+import C1WorkerNotifications from './pages/c1/workers/notifications';
+import WorkerAiPrescreenPage from './pages/c1/workers/WorkerAiPrescreenPage';
 import OnboardingProfileForm from './components/OnboardingProfileForm';
 import OnboardingCompleteScreen from './components/OnboardingCompleteScreen';
 import Help from './pages/Help';
@@ -86,6 +131,7 @@ import AutoDevOpsMonitoring from './pages/Admin/AutoDevOpsMonitoring';
 import AutoDevOpsPipeline from './pages/Admin/AutoDevOpsPipeline';
 import MotivationLibrarySeeder from './pages/Admin/MotivationLibrarySeeder';
 import HelloMessageConfig from './pages/Admin/HelloMessageConfig';
+import SlackAdminPage from './pages/Admin/SlackAdminPage';
 import MobileAppErrors from './pages/Admin/MobileAppErrors';
 import ResumeManagement from './pages/ResumeManagement';
 import Reports from './pages/Reports';
@@ -95,29 +141,179 @@ import AssociationsAdmin from './pages/Admin/AssociationsAdmin';
 import SetupPassword from './pages/SetupPassword';
 import MobileApp from './pages/MobileApp';
 import PrivacySettings from './pages/PrivacySettings';
+import PrivacySettingsAdminShellGate from './components/PrivacySettingsAdminShellGate';
 import WorkerAssignments from './pages/WorkerAssignments';
 import FlexSettings from './pages/FlexSettings';
 import RecruiterSettings from './pages/RecruiterSettings';
 import RecruiterDashboard from './pages/RecruiterDashboard';
+import Shifts from './pages/Shifts';
+import ShiftsList from './pages/ShiftsList';
+import ShiftsCalendar from './pages/ShiftsCalendar';
+import Workforce from './pages/Workforce';
+import WorkforceEmployeeReadiness from './pages/WorkforceEmployeeReadiness';
+import WorkforceJobReadiness from './pages/WorkforceJobReadiness';
+import AccountsDashboard from './pages/AccountsDashboard';
+import RecruiterMain from './pages/RecruiterMain';
+// RecruiterMyQueue is no longer routed from App.tsx — `/jobs/my-queue`
+// redirects directly via <Navigate>. The file is kept as a deprecated
+// thin wrapper for any code that imports the component directly. See
+// src/pages/RecruiterMyQueue.tsx for the cleanup timeline.
 import RecruiterJobOrders from './pages/RecruiterJobOrders';
+import RecruiterAccounts from './pages/RecruiterAccounts';
 import RecruiterJobOrderDetail from './pages/RecruiterJobOrderDetail';
+import RecruiterApplicants from './pages/RecruiterApplicants';
+import SmartGroupsPage from './pages/SmartGroupsPage';
+import AllSmartGroupsPage from './pages/AllSmartGroupsPage';
+import MySmartGroupsListPage from './pages/MySmartGroupsListPage';
+import InviteUsersPage from './pages/InviteUsersPage';
+import SavedSmartGroupDetailPage from './pages/SavedSmartGroupDetailPage';
+import RecruiterUsers from './pages/RecruiterUsers';
+import UsersLayout from './pages/UsersLayout';
+import RecruiterAccountDetails from './pages/RecruiterAccountDetails';
+import AccountLocationDetail from './pages/AccountLocationDetail';
+import GlobalInvoicingPage from './pages/GlobalInvoicingPage';
+import FinancesBudgetingPage from './pages/FinancesBudgetingPage';
+import StaffOnboardingCenter from './pages/StaffOnboardingCenter';
+import RecruiterContacts from './pages/RecruiterContacts';
+import RecruiterContactDetails from './pages/RecruiterContactDetails';
 import NewJobOrder from './pages/NewJobOrder';
-import Applications from './pages/Applications';
+import RecruiterUserGroups from './pages/RecruiterUserGroups';
+import RecruiterUserGroupDetails from './pages/RecruiterUserGroupDetails';
+import UserInboxPage from './pages/UserInboxPage';
+import MessagesPage from './pages/MessagesPage';
+import TextMessagesPage from './pages/TextMessagesPage';
+import SlackPage from './pages/SlackPage';
+import ContactsPage from './pages/ContactsPage';
+import CompaniesPage from './pages/CompaniesPage';
 
 import InsightReports from './pages/InsightReports';
 
 // Read the Google Maps API key from environment variables
 const googleMapsApiKey = process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '';
-console.log('Google Maps API key available:', !!googleMapsApiKey);
 
-// Static libraries array to prevent performance warnings
-const googleMapsLibraries: Libraries = ['places'];
+// C1 worker pages: use same names as default exports to avoid TS "Cannot find name" when referenced in routes
+const WorkerDashboard = C1WorkerDashboard;
+const WorkerProfile = C1WorkerProfile;
+const WorkerSupport = C1WorkerSupport;
+
+// Static libraries array to prevent performance warnings (shared across app)
+const googleMapsLibraries: Libraries = ['places', 'maps'];
 
 function UserGroupDetailsWrapper() {
   const { groupId } = useParams();
   const { activeTenant } = useAuth();
   if (!activeTenant?.id || !groupId) return null;
   return <UserGroupDetails tenantId={activeTenant.id} groupId={groupId} />;
+}
+
+function UsersRedirect() {
+  const { uid } = useParams();
+  return <Navigate to={`/users/${uid}`} replace />;
+}
+
+/** For /c1/users/:uid: workers (securityLevel null or 0–4) go to My Account; higher levels see UserProfile. */
+function C1UserProfileOrRedirect() {
+  const { user, securityLevel } = useAuth();
+  const level = securityLevel != null ? Number.parseInt(String(securityLevel), 10) : 0;
+  const isWorker = Number.isNaN(level) || level <= 4;
+  if (user && isWorker) {
+    return <Navigate to="/c1/workers/profile" replace />;
+  }
+  return <UserProfile />;
+}
+
+function UsersHubIndexRedirect() {
+  return <Navigate to={getUsersIndexRedirectPath()} replace />;
+}
+
+function RecruiterAccountDetailsRedirect() {
+  const { accountId } = useParams();
+  return <Navigate to={accountId ? `/accounts/${accountId}` : '/accounts'} replace />;
+}
+
+function RecruiterAccountsRedirect() {
+  const location = useLocation();
+  return <Navigate to={`/accounts${location.search}${location.hash}`} replace />;
+}
+
+function RecruiterMyAccountsRedirect() {
+  const location = useLocation();
+  return <Navigate to={`/accounts/my${location.search}${location.hash}`} replace />;
+}
+
+function JobsRedirect() {
+  const params = useParams();
+  const location = useLocation();
+  const rest = (params as any)['*'] as string | undefined;
+  const suffix = rest ? `/${rest}` : '';
+  return <Navigate to={`/jobs${suffix}${location.search}${location.hash}`} replace />;
+}
+
+
+function CrmCompaniesRedirect() {
+  const params = useParams();
+  const location = useLocation();
+  const rest = (params as any)['*'] as string | undefined;
+  const suffix = rest ? `/${rest}` : '';
+  const target = `/companies${suffix}${location.search}${location.hash}`;
+  return <Navigate to={target} replace />;
+}
+
+/** Redirect /recruiter/companies/... to canonical /companies/... */
+function RecruiterCompaniesRedirect() {
+  const params = useParams();
+  const location = useLocation();
+  const rest = (params as any)['*'] as string | undefined;
+  const suffix = rest ? `/${rest}` : '';
+  const target = `/companies${suffix}${location.search}${location.hash}`;
+  return <Navigate to={target} replace />;
+}
+
+/** Redirect /recruiter/contacts/... to canonical /contacts/... */
+function RecruiterContactsRedirect() {
+  const params = useParams();
+  const location = useLocation();
+  const rest = (params as any)['*'] as string | undefined;
+  const suffix = rest ? `/${rest}` : '';
+  const target = `/contacts${suffix}${location.search}${location.hash}`;
+  return <Navigate to={target} replace />;
+}
+
+function UsersPageWrapper() {
+  const [search, setSearch] = useState('');
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  
+  return (
+    <Box
+      sx={{
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: 0,
+        overflow: 'hidden',
+      }}
+    >
+      <Box
+        sx={{
+          flex: 1,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: 0,
+          pb: 2,
+        }}
+      >
+        <Outlet context={{
+          activeTab: 'users' as const,
+          search,
+          setSearch,
+          showFavoritesOnly,
+          setShowFavoritesOnly,
+        }} />
+      </Box>
+    </Box>
+  );
 }
 
 function CRMAccessGuard({ children }: { children: React.ReactNode }) {
@@ -135,9 +331,7 @@ function CRMAccessGuard({ children }: { children: React.ReactNode }) {
 
 function RecruiterAccessGuard({ children }: { children: React.ReactNode }) {
   const { recruiterEnabled } = useAuth();
-  console.log('🔍 RecruiterAccessGuard: recruiterEnabled =', recruiterEnabled);
   if (!recruiterEnabled) {
-    console.log('🔍 RecruiterAccessGuard: Access denied, showing error message');
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="50vh" flexDirection="column" gap={2}>
         <Typography variant="h5" color="error">Access Denied</Typography>
@@ -145,7 +339,38 @@ function RecruiterAccessGuard({ children }: { children: React.ReactNode }) {
       </Box>
     );
   }
-  console.log('🔍 RecruiterAccessGuard: Access granted, rendering children');
+  return <>{children}</>;
+}
+
+/**
+ * Route-level guard for Account → Invoicing tab.
+ * Account Invoicing tab is available to security levels 5, 6, and 7.
+ * If the URL has ?tab=invoicing and the user is not 5/6/7, redirect to tab=overview.
+ */
+function InvoicingTabGuard({ children }: { children: React.ReactNode }) {
+  const [searchParams] = useSearchParams();
+  const location = useLocation();
+  const { currentClaimsSecurityLevel, securityLevel } = useAuth();
+  const tab = searchParams.get('tab');
+  const canAccess = canAccessAccountInvoicingTab(currentClaimsSecurityLevel ?? securityLevel);
+
+  if (tab === 'invoicing' && !canAccess) {
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set('tab', 'overview');
+    const to = `${location.pathname}?${nextParams.toString()}`;
+    return <Navigate to={to} replace />;
+  }
+
+  return <>{children}</>;
+}
+
+/** Guard for /invoicing: only security level 7 can access (global invoicing across all accounts). */
+function GlobalInvoicingGuard({ children }: { children: React.ReactNode }) {
+  const { currentClaimsSecurityLevel, securityLevel } = useAuth();
+  const canAccess = canAccessGlobalInvoicing(currentClaimsSecurityLevel ?? securityLevel);
+  if (!canAccess) {
+    return <Navigate to="/accounts" replace />;
+  }
   return <>{children}</>;
 }
 
@@ -193,14 +418,54 @@ function ProfileRedirect() {
   return <div>Redirecting to your profile...</div>;
 }
 
+function HomeRedirect() {
+  const { user, securityLevel, loading } = useAuth();
+
+  if (loading) return <div>Redirecting...</div>;
+  if (!user) return <Navigate to="/login" replace />;
+
+  const level = Number.parseInt(String(securityLevel ?? '0'), 10) || 0;
+  return <Navigate to={level >= 5 ? '/dashboard' : '/profile'} replace />;
+}
+
+function DashboardAdminRedirect() {
+  const { user, securityLevel, loading } = useAuth();
+
+  if (loading) return <div>Loading...</div>;
+  if (!user) return <Navigate to="/login" replace />;
+
+  const level = Number.parseInt(String(securityLevel ?? '0'), 10) || 0;
+  if (level < 5) return <Navigate to="/profile" replace />;
+
+  return <Dashboard />;
+}
+
+function CalendarAdminRedirect() {
+  const { user, securityLevel, loading } = useAuth();
+
+  if (loading) return <div>Loading...</div>;
+  if (!user) return <Navigate to="/login" replace />;
+
+  const level = Number.parseInt(String(securityLevel ?? '0'), 10) || 0;
+  if (level < 5) return <Navigate to="/profile" replace />;
+
+  return <CalendarPage />;
+}
+
 // Wrapper component for IntegrationsTab to provide tenantId
 const IntegrationsTabWrapper: React.FC = () => {
   const { tenantId } = useAuth();
   return tenantId ? <IntegrationsTab tenantId={tenantId} /> : null;
 };
 
+// Wrapper component for MessagingTab to provide tenantId
+const MessagingTabWrapper: React.FC = () => {
+  const { tenantId, activeTenant } = useAuth();
+  const effectiveTenantId = activeTenant?.id || tenantId;
+  return effectiveTenantId ? <MessagingTab tenantId={effectiveTenantId} /> : null;
+};
+
 function App() {
-  console.log('App rendered');
   useEffect(() => {
     try {
       // Enable new associations read by default
@@ -213,15 +478,70 @@ function App() {
   const routes = (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/crm/public" element={<PublicCRMView />} />
       <Route path="/setup-password" element={<SetupPassword />} />
       <Route path="/invite/:token" element={<InviteTokenValidator />} />
       <Route path="/onboarding/profile" element={<OnboardingProfileForm />} />
       <Route path="/onboarding/complete" element={<OnboardingCompleteScreen />} />
-      
-      {/* Public Jobs Board routes with conditional layout */}
+      <Route path="/c1/apply" element={<Apply />} />
+      <Route path="/c1/apply/group/:groupId" element={<Apply />} />
+      <Route path="/consent" element={<Communications />} />
+      <Route path="/terms" element={<Terms />} />
+      <Route path="/privacy" element={<Privacy />} />
+      <Route path="/sms-privacy" element={<SMSPrivacy />} />
+      {/* HRX Signatures — signer page (works in Web + Flutter webview) */}
+      <Route path="/sign/s/:sessionId" element={
+        <ProtectedRoute>
+          <SignerPage />
+        </ProtectedRoute>
+      } />
+
+      {/* Single layout for /c1 and /apply so nav + top bar stay mounted on back/forward */}
+      <Route element={<ConditionalWorkerLayout />}>
+        <Route path="/c1" element={<Outlet />}>
+          <Route index element={<Navigate to="/c1/workers/dashboard" replace />} />
+          <Route path="workers" element={<Outlet />}>
+            <Route index element={<C1WorkersIndex />} />
+            <Route path="dashboard" element={<WorkerDashboard />} />
+            <Route path="assignments" element={<C1WorkerAssignments />} />
+            <Route path="assignments/:assignmentId" element={<AssignmentDetails />} />
+            <Route path="applications" element={<UserApplications />} />
+            <Route path="applications/:applicationId" element={<UserApplications />} />
+            <Route path="profile" element={<WorkerProfile />} />
+            <Route path="profile/:section" element={<C1WorkerProfileSection />} />
+            <Route path="my-employment" element={<C1WorkerMyEmployment />} />
+            <Route path="my-employment/:employmentId" element={<C1WorkerMyEmploymentDetail />} />
+            <Route path="screening" element={<C1WorkerScreening />} />
+            <Route path="prescreen" element={<WorkerAiPrescreenPage />} />
+            <Route path="find-work" element={<Navigate to="/c1/jobs-board" replace />} />
+            <Route path="job-readiness" element={<Navigate to="/c1/workers/dashboard#home-readiness-summary" replace />} />
+            <Route path="documents" element={<Navigate to="/c1/workers/profile" replace />} />
+            <Route path="support" element={<WorkerSupport />} />
+            <Route path="settings" element={<Navigate to="/c1/workers/profile/app-language" replace />} />
+            <Route path="notifications" element={<C1WorkerNotifications />} />
+            <Route path="inbox" element={<Navigate to="/c1/workers/notifications" replace />} />
+            <Route path="inbox/:conversationId" element={<Navigate to="/c1/workers/notifications" replace />} />
+          </Route>
+          <Route path="jobs-board" element={<PublicJobsBoard />} />
+          <Route path="jobs-board/:postId" element={<JobPostingDetail />} />
+          <Route path="jobs/:postId" element={<JobPostingDetail />} />
+          <Route path="applications" element={<Navigate to="/c1/workers/applications" replace />} />
+          <Route path="assignments" element={<MyAssignments />} />
+          <Route path="assignments/:assignmentId" element={<AssignmentDetails />} />
+          <Route path="users/:uid/readiness" element={<UserReadinessPage />} />
+          <Route path="users/:uid" element={<C1UserProfileOrRedirect />} />
+        </Route>
+        <Route path="/apply/:tenantSlug/:jobId?" element={<ApplyWizardPage />} />
+      </Route>
+
+      {/* Redirects and tenant-slug routes (same layout when logged in) */}
+      <Route path="/jobs-board" element={<Navigate to="/c1/jobs-board" replace />} />
+      <Route path="/applications" element={<Navigate to="/c1/workers/applications" replace />} />
+      <Route path="/assignments" element={<Navigate to="/c1/workers/assignments" replace />} />
       <Route element={<ConditionalJobsBoardLayout />}>
-        <Route path="/c1/jobs-board" element={<PublicJobsBoard />} />
-        <Route path="/jobs-board" element={<PublicJobsBoard />} />
+        <Route path="/:tenantSlug/jobs-board/:postId" element={<JobPostingDetail />} />
+        <Route path="/:tenantSlug/jobs/:postId" element={<JobPostingDetail />} />
+        <Route path="/:tenantSlug/assignments/:assignmentId" element={<AssignmentDetails />} />
       </Route>
       
       <Route
@@ -232,16 +552,50 @@ function App() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Dashboard />} />
-        <Route path="dashboard" element={<AIDashboard />} />
+        <Route index element={<HomeRedirect />} />
+        <Route path="dashboard" element={<DashboardAdminRedirect />} />
+        <Route path="tasks" element={
+          <ProtectedRoute requiredSecurityLevel="5">
+            <TasksPage />
+          </ProtectedRoute>
+        } />
+        <Route path="task/:taskId" element={
+          <ProtectedRoute requiredSecurityLevel="5">
+            <TaskDetailPage />
+          </ProtectedRoute>
+        } />
+        <Route path="calendar" element={<CalendarAdminRedirect />} />
+        <Route path="chatgpt" element={<ChatGPT />} />
+        <Route path="inbox" element={
+          <ProtectedRoute>
+            <UserInboxPage />
+          </ProtectedRoute>
+        } />
+        <Route path="text-messages" element={
+          <ProtectedRoute>
+            <TextMessagesPage />
+          </ProtectedRoute>
+        } />
+        <Route path="slack" element={
+          <SlackProtectedRoute>
+            <SlackPage />
+          </SlackProtectedRoute>
+        } />
+        <Route path="messages" element={
+          <SlackProtectedRoute>
+            <MessagesPage />
+          </SlackProtectedRoute>
+        } />
         <Route path="profile" element={<ProfileRedirect />} />
 
         {/* Admin/Manager only routes */}
-        <Route path="users" element={
+        {/* TenantUsers route moved to /tenant/users to avoid conflict with /users */}
+        <Route path="tenant/users" element={
           <ProtectedRoute requiredSecurityLevel="4">
             <TenantUsers />
           </ProtectedRoute>
         } />
+        <Route path="users/:uid/readiness" element={<UserReadinessPage />} />
         <Route path="users/:uid" element={<UserProfile />} />
         <Route path="users/:uid/onboarding" element={
           <ProtectedRoute requiredSecurityLevel="4">
@@ -290,6 +644,154 @@ function App() {
             </CRMAccessGuard>
           </ProtectedRoute>
         } />
+
+        {/* Canonical navigation routes (avoid Contacts/Companies duplication across modules) */}
+        <Route path="contacts" element={<ProtectedRoute requiredSecurityLevel="3"><ContactsPage /></ProtectedRoute>} />
+        <Route
+          path="contacts/:contactId"
+          element={
+            <ProtectedRoute requiredSecurityLevel="3">
+              <CRMAccessGuard>
+                <CRMCacheProvider>
+                  <ContactDetails />
+                </CRMCacheProvider>
+              </CRMAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route path="companies" element={<ProtectedRoute requiredSecurityLevel="3"><CompaniesPage /></ProtectedRoute>} />
+        <Route
+          path="companies/:companyId"
+          element={
+            <ProtectedRoute requiredSecurityLevel="3">
+              <CRMAccessGuard>
+                <CRMCacheProvider>
+                  <CompanyDetails />
+                </CRMCacheProvider>
+              </CRMAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="companies/:companyId/locations/:locationId"
+          element={
+            <ProtectedRoute requiredSecurityLevel="3">
+              <CRMAccessGuard>
+                <LocationDetails />
+              </CRMAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="accounts"
+          element={
+            <ProtectedRoute requiredSecurityLevel="5">
+              <RecruiterAccessGuard>
+                <AccountsDashboard />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<RecruiterAccounts />} />
+          <Route path="my" element={<RecruiterAccounts onlyMyAccounts />} />
+        </Route>
+        <Route path="my-accounts" element={<Navigate to="/accounts/my" replace />} />
+        <Route
+          path="finances-budgeting"
+          element={
+            <ProtectedRoute requiredSecurityLevel="5">
+              <RecruiterAccessGuard>
+                <FinancesBudgetingPage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="screenings-queue"
+          element={
+            <ProtectedRoute requiredSecurityLevel="5">
+              <RecruiterAccessGuard>
+                <Navigate to="/staff-onboarding?tab=background" replace />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="staff-onboarding"
+          element={
+            <ProtectedRoute requiredSecurityLevel="5">
+              <RecruiterAccessGuard>
+                <StaffOnboardingCenter />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="invoicing"
+          element={
+            <ProtectedRoute requiredSecurityLevel="5">
+              <RecruiterAccessGuard>
+                <GlobalInvoicingGuard>
+                  <GlobalInvoicingPage />
+                </GlobalInvoicingGuard>
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="workers-comp"
+          element={<Navigate to="/settings?tab=workers-comp" replace />}
+        />
+        <Route
+          path="accounts/:accountId"
+          element={
+            <ProtectedRoute requiredSecurityLevel="5">
+              <RecruiterAccessGuard>
+                <InvoicingTabGuard>
+                  <RecruiterAccountDetails />
+                </InvoicingTabGuard>
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="accounts/:accountId/locations/:locationId"
+          element={
+            <ProtectedRoute requiredSecurityLevel="5">
+              <RecruiterAccessGuard>
+                <AccountLocationDetail />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        {/* Legacy account detail path -> canonical /accounts/:accountId */}
+        <Route
+          path="recruiter/accounts/:accountId"
+          element={<RecruiterAccountDetailsRedirect />}
+        />
+        <Route path="users" element={
+          <ProtectedRoute requiredSecurityLevel="5">
+            <RecruiterAccessGuard>
+              <UsersLayout />
+            </RecruiterAccessGuard>
+          </ProtectedRoute>
+        }>
+          <Route index element={<UsersHubIndexRedirect />} />
+          <Route path="all" element={<RecruiterUsers hideHeader scope="all" />} />
+          <Route path="my" element={<RecruiterUsers hideHeader scope="my" />} />
+          <Route path="invite-users" element={<InviteUsersPage hideHeader />} />
+          <Route path="user-groups" element={<TenantUserGroups hideHeader />} />
+          <Route path="my-user-groups" element={<TenantUserGroups hideHeader scope="mine" />} />
+          <Route path="smart-groups" element={<SmartGroupsPage hideHeader />} />
+          <Route path="all-smart-groups" element={<AllSmartGroupsPage hideHeader />} />
+          <Route path="my-smart-groups" element={<MySmartGroupsListPage hideHeader />} />
+          <Route path="my-smart-groups/:groupId" element={<SavedSmartGroupDetailPage hideHeader />} />
+          <Route path=":uid/readiness" element={<UserReadinessPage />} />
+          <Route path=":uid" element={<UserProfile />} />
+        </Route>
+
+        {/* Legacy CRM companies URLs → canonical /companies/... */}
+        <Route path="crm/companies/*" element={<CrmCompaniesRedirect />} />
         <Route path="crm/companies/:companyId" element={
           <ProtectedRoute requiredSecurityLevel="3">
             <CRMAccessGuard>
@@ -327,79 +829,31 @@ function App() {
         } />
         <Route path="workforce" element={
           <ProtectedRoute requiredSecurityLevel="4">
-            <WorkforceDashboard />
+            <Navigate to="/workforce/company-directory" replace />
           </ProtectedRoute>
         } />
         <Route path="workforce/company-directory" element={
           <ProtectedRoute requiredSecurityLevel="4">
-            <WorkforcePageWrapper breadcrumbPath={[
-              { label: 'Workforce Management', href: '/workforce' },
-              { label: 'Company Directory' }
-            ]}>
-              <CompanyDirectory />
-            </WorkforcePageWrapper>
-          </ProtectedRoute>
-        } />
-        <Route path="workforce/hired-staff" element={
-          <ProtectedRoute requiredSecurityLevel="4">
-            <WorkforcePageWrapper breadcrumbPath={[
-              { label: 'Workforce Management', href: '/workforce' },
-              { label: 'Hired Staff' }
-            ]}>
-              <HiredStaff />
-            </WorkforcePageWrapper>
-          </ProtectedRoute>
-        } />
-        <Route path="workforce/flex-workers" element={
-          <ProtectedRoute requiredSecurityLevel="4">
-            <WorkforcePageWrapper breadcrumbPath={[
-              { label: 'Workforce Management', href: '/workforce' },
-              { label: 'Flex Workers' }
-            ]}>
-              <FlexWorkers />
-            </WorkforcePageWrapper>
-          </ProtectedRoute>
-        } />
-        <Route path="workforce/user-groups" element={
-          <ProtectedRoute requiredSecurityLevel="4">
-            <WorkforcePageWrapper breadcrumbPath={[
-              { label: 'Workforce Management', href: '/workforce' },
-              { label: 'User Groups' }
-            ]}>
-              <TenantUserGroups />
-            </WorkforcePageWrapper>
+            <WorkforceDashboard />
           </ProtectedRoute>
         } />
         <Route path="workforce/add-workers" element={
           <ProtectedRoute requiredSecurityLevel="4">
-            <WorkforcePageWrapper breadcrumbPath={[
-              { label: 'Workforce Management', href: '/workforce' },
-              { label: 'Add Workers' }
-            ]}>
-              <AddWorkers />
-            </WorkforcePageWrapper>
+            <WorkforceDashboard />
           </ProtectedRoute>
         } />
         <Route path="workforce/pending-invites" element={
           <ProtectedRoute requiredSecurityLevel="4">
-            <WorkforcePageWrapper breadcrumbPath={[
-              { label: 'Workforce Management', href: '/workforce' },
-              { label: 'Pending Invites' }
-            ]}>
-              <PendingInvites />
-            </WorkforcePageWrapper>
+            <WorkforceDashboard />
           </ProtectedRoute>
         } />
         <Route path="workforce/integrations" element={
           <ProtectedRoute requiredSecurityLevel="4">
-            <WorkforcePageWrapper breadcrumbPath={[
-              { label: 'Workforce Management', href: '/workforce' },
-              { label: 'Integrations' }
-            ]}>
-              <IntegrationsTabWrapper />
-            </WorkforcePageWrapper>
+            <WorkforceDashboard />
           </ProtectedRoute>
         } />
+        <Route path="workforce/users/:uid/readiness" element={<UserReadinessPage />} />
+        <Route path="workforce/users/:uid" element={<UserProfile />} />
         <Route path="customers" element={
           <ProtectedRoute requiredSecurityLevel="4">
             <Customers />
@@ -407,7 +861,22 @@ function App() {
         } />
         <Route path="settings" element={
           <ProtectedRoute requiredSecurityLevel="4">
-            <TenantSettings />
+            <SettingsLanding />
+          </ProtectedRoute>
+        } />
+        <Route path="settings/company-setup" element={
+          <ProtectedRoute requiredSecurityLevel="4">
+            <CompanySetup />
+          </ProtectedRoute>
+        } />
+        <Route path="settings/messaging" element={
+          <ProtectedRoute requiredSecurityLevel="4">
+            <MessagingTabWrapper />
+          </ProtectedRoute>
+        } />
+        <Route path="settings/senders" element={
+          <ProtectedRoute requiredSecurityLevel="4">
+            <SenderManagementPage />
           </ProtectedRoute>
         } />
         <Route path="company-defaults" element={
@@ -420,11 +889,7 @@ function App() {
             <TenantLocations />
           </ProtectedRoute>
         } />
-        <Route path="usergroups" element={
-          <ProtectedRoute requiredSecurityLevel="4">
-            <TenantUserGroups />
-          </ProtectedRoute>
-        } />
+        <Route path="usergroups" element={<Navigate to="/users/user-groups" replace />} />
         <Route path="usergroups/:groupId" element={
           <ProtectedRoute requiredSecurityLevel="4">
             <UserGroupDetailsWrapper />
@@ -541,6 +1006,14 @@ function App() {
             <ProtectedRoute requiredSecurityLevel="5">
               <DataOperations />
             </ProtectedRoute>
+          }
+        />
+        <Route
+          path="admin/slack"
+          element={
+            <SlackProtectedRoute>
+              <SlackAdminPage />
+            </SlackProtectedRoute>
           }
         />
         <Route
@@ -774,34 +1247,113 @@ function App() {
               <RecruiterDashboard />
             </RecruiterAccessGuard>
           </ProtectedRoute>
-        } />
-
-        <Route path="recruiter/job-orders" element={
+        }>
+          <Route index element={<Navigate to="/jobs/job-orders" replace />} />
+          <Route path="accounts" element={<RecruiterAccountsRedirect />} />
+          <Route path="my-accounts" element={<RecruiterMyAccountsRedirect />} />
+          <Route path="job-orders/*" element={<JobsRedirect />} />
+          <Route path="my-orders" element={<Navigate to="/jobs/my-orders" replace />} />
+          <Route path="users" element={<Navigate to="/users" replace />} />
+          <Route path="users/:uid" element={<UsersRedirect />} />
+          <Route path="applicants" element={<RecruiterApplicants />} />
+          <Route path="smartgroups" element={<Navigate to="/users/smart-groups" replace />} />
+          {/* Redirect all recruiter/companies/... to canonical /companies/... */}
+          <Route path="companies/*" element={<RecruiterCompaniesRedirect />} />
+          {/* Redirect all recruiter/contacts/... to canonical /contacts/... */}
+          <Route path="contacts/*" element={<RecruiterContactsRedirect />} />
+          <Route path="user-groups" element={<RecruiterUserGroups />} />
+          <Route path="user-groups/:groupId" element={<RecruiterUserGroupDetails />} />
+          <Route path="jobs-board/*" element={<JobsRedirect />} />
+          <Route path="reports" element={<Navigate to="/jobs/reports" replace />} />
+        </Route>
+        <Route path="jobs" element={
           <ProtectedRoute requiredSecurityLevel="5">
             <RecruiterAccessGuard>
-              <RecruiterJobOrders />
+              <RecruiterDashboard />
             </RecruiterAccessGuard>
           </ProtectedRoute>
-        } />
-        <Route path="recruiter/job-orders/new" element={
-          <ProtectedRoute requiredSecurityLevel="5">
-            <RecruiterAccessGuard>
-              <NewJobOrder />
-            </RecruiterAccessGuard>
-          </ProtectedRoute>
-        } />
-        <Route path="recruiter/job-orders/:jobOrderId" element={
-          <ProtectedRoute requiredSecurityLevel="5">
-            <RecruiterAccessGuard>
-              <RecruiterJobOrderDetail />
-            </RecruiterAccessGuard>
-          </ProtectedRoute>
-        } />
-        <Route path="recruiter/applications" element={
+        }>
+          <Route index element={<Navigate to="/jobs/job-orders" replace />} />
+          <Route path="job-orders" element={<RecruiterJobOrders />} />
+          <Route path="my-orders" element={<RecruiterJobOrders />} />
+          {/* Phase 1 readiness: legacy recruiter action queue, replaced by
+              Phase D Workforce. Redirect at route level so the navigation
+              happens before any component mounts. The deprecated
+              `RecruiterMyQueue` component itself also Navigates as a safety
+              net for direct imports — both paths can be removed in the
+              cleanup PR after one release with no traffic on either. */}
+          <Route path="my-queue" element={<Navigate to="/readiness/employee-readiness" replace />} />
+          <Route path="onboarding" element={<Navigate to="/jobs/job-orders" replace />} />
+          <Route path="job-orders/new" element={<NewJobOrder />} />
+          <Route path="job-orders/:jobOrderId" element={<RecruiterJobOrderDetail />} />
+          <Route path="jobs-board" element={
+            <JobsBoardAccessGuard>
+              <JobsBoard />
+            </JobsBoardAccessGuard>
+          } />
+          <Route path="jobs-board/edit/:postId" element={
+            <JobsBoardAccessGuard>
+              <EditJobPost />
+            </JobsBoardAccessGuard>
+          } />
+          <Route path="reports" element={
+            <Box>
+              <Typography variant="h6">Reports</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Reports content coming soon...
+              </Typography>
+            </Box>
+          } />
+        </Route>
+        {/* TODO: Create RecruiterApplications component */}
+        {/* <Route path="recruiter/applications" element={
           <ProtectedRoute requiredSecurityLevel="4">
-            <Applications />
+            <RecruiterApplications />
           </ProtectedRoute>
-        } />
+        } /> */}
+
+        {/* Shifts — cross-job-order shift dashboard. Mirrors the /jobs Outlet
+            pattern: a parent layout with tabbed nav and an Outlet for the
+            active tab. Sec 5+ only (matches the sidebar gate). */}
+        <Route path="shifts" element={
+          <ProtectedRoute requiredSecurityLevel="5">
+            <Shifts />
+          </ProtectedRoute>
+        }>
+          <Route index element={<Navigate to="/shifts/list" replace />} />
+          <Route path="list" element={<ShiftsList />} />
+          <Route path="calendar" element={<ShiftsCalendar />} />
+          {/* Legacy `/shifts/active` URL — kept as a redirect to the new
+              `/shifts/list` view. The Active tab was the original v1 of
+              this dashboard before the List/Calendar split. Safe to drop
+              after one release with no traffic on /active. */}
+          <Route path="active" element={<Navigate to="/shifts/list" replace />} />
+        </Route>
+
+        {/* Workforce — Phase D CSA workspace.
+            Same Outlet pattern as /shifts: parent layout with two pill tabs
+            and an Outlet for the active tab. Sec 5+ only (matches the
+            sidebar gate in menuGenerator.ts).
+            URL prefix is /readiness (NOT /workforce) because /workforce/*
+            was already in use for the tenant company directory
+            (WorkforceDashboard). The user-facing nav label stays "Workforce"
+            per the spec naming-lock — see Workforce.tsx header for the
+            rationale. */}
+        <Route path="readiness" element={
+          <ProtectedRoute requiredSecurityLevel="5">
+            <Workforce />
+          </ProtectedRoute>
+        }>
+          <Route index element={<Navigate to="/readiness/employee-readiness" replace />} />
+          <Route path="employee-readiness" element={<WorkforceEmployeeReadiness />} />
+          <Route path="job-readiness" element={<WorkforceJobReadiness />} />
+          {/* D.4 sub-route stub. The Job Readiness detail surface is a
+              full-page sub-route per Greg's 2026-04-25 D.1 answer
+              (jo_readiness_detail = sub_route). D.4 swaps this stub for the
+              real <WorkforceJobReadinessDetail /> page. */}
+          <Route path="job-readiness/:jobOrderId" element={<WorkforceJobReadiness />} />
+        </Route>
+
 
         <Route path="recruiter-settings" element={
           <ProtectedRoute requiredSecurityLevel="4">
@@ -816,32 +1368,63 @@ function App() {
         
         {/* Worker-specific routes */}
         <Route path="mobile-app" element={<MobileApp />} />
-        <Route path="privacy-settings" element={<PrivacySettings />} />
+        <Route
+          path="privacy-settings"
+          element={
+            <ProtectedRoute>
+              <PrivacySettingsAdminShellGate>
+                <PrivacySettings />
+              </PrivacySettingsAdminShellGate>
+            </ProtectedRoute>
+          }
+        />
+        {/* Recruiter hub links (e.g. profile Assignments tab) use /assignments/:id — must be before static /assignments */}
+        <Route
+          path="assignments/:assignmentId"
+          element={
+            <ProtectedRoute>
+              <AssignmentDetails />
+            </ProtectedRoute>
+          }
+        />
         <Route path="assignments" element={<WorkerAssignments />} />
       </Route>
     </Routes>
   );
 
-  console.log('App component about to return JSX');
   return (
     <Box sx={{ backgroundColor: 'rgb(247, 248, 251)', minHeight: '100vh' }}>
       <Router>
+        <PageViewTracker />
         <AuthProvider>
-          <AssociationsCacheProvider>
-            <SalespeopleProvider>
-              {googleMapsApiKey ? (
-                <LoadScript googleMapsApiKey={googleMapsApiKey} libraries={googleMapsLibraries}>
+          <DirectMessengerProvider>
+            <ChatGPTProvider>
+              <AssociationsCacheProvider>
+                <SalespeopleProvider>
+                  {googleMapsApiKey ? (
+                    <LoadScript
+                      id="script-loader"
+                      googleMapsApiKey={googleMapsApiKey}
+                      libraries={googleMapsLibraries}
+                      loadingElement={<div style={{ position: 'absolute', left: -9999 }}>Loading maps...</div>}
+                    >
+                      <div style={{ display: 'none' }} aria-hidden="true" />
+                    </LoadScript>
+                  ) : null}
                   {routes}
-                </LoadScript>
-              ) : (
-                <div>
-                  {routes}
-                </div>
-              )}
-            </SalespeopleProvider>
-          </AssociationsCacheProvider>
+                </SalespeopleProvider>
+              </AssociationsCacheProvider>
+            </ChatGPTProvider>
+          </DirectMessengerProvider>
         </AuthProvider>
       </Router>
+      {/* Dev-only cert shadow stats (reads `cert_engine_shadow_events`; requires isHRX in firestore.rules). Re-enable when needed.
+      {process.env.NODE_ENV === 'development' && CertEngineShadowDebugPanel && (
+        <Suspense fallback={null}>
+          <CertEngineShadowDebugPanel />
+        </Suspense>
+      )}
+      */}
     </Box>
   );
 }

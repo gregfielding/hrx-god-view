@@ -116,7 +116,6 @@ const AssignmentsList: React.FC<AssignmentsListProps> = ({
     try {
       await assignmentService.updateAssignmentStatus(
         tenantId,
-        jobOrderId,
         assignment.id,
         newStatus,
         'current-user' // TODO: Get actual user ID

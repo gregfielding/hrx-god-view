@@ -1,19 +1,27 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Typography,
-  TextField,
   CircularProgress,
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, doc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
 
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import WorkersTable from '../../componentBlocks/WorkersTable';
+import type { TenantRoleDefaultsDoc } from '../../shared/tenantRoleDefaults';
 
-const CompanyDirectory: React.FC = () => {
+interface CompanyDirectoryProps {
+  search?: string;
+  onSearchChange?: (value: string) => void;
+}
+
+const CompanyDirectory: React.FC<CompanyDirectoryProps> = ({
+  search = '',
+  onSearchChange,
+}) => {
   const { tenantId, activeTenant } = useAuth();
   const navigate = useNavigate();
   
@@ -25,7 +33,18 @@ const CompanyDirectory: React.FC = () => {
   const [divisions, setDivisions] = useState<any[]>([]);
   const [regions, setRegions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState('');
+  // tenants/{tid}/settings/roleDefaults — drives the inline Roles chips
+  // on the Workforce table. The doc is optional; treat missing as `{}` so
+  // the chips render as "no one assigned" instead of crashing.
+  const [tenantRoleDefaults, setTenantRoleDefaults] = useState<TenantRoleDefaultsDoc>({});
+  // tenants/{tid}/settings/workforceDirectory — currently just an
+  // `allowedEmailDomains: string[]` whitelist used to hide external /
+  // partner / vendor users (e.g. legacy admins from acquired tools)
+  // from the company directory. When the array is empty or missing,
+  // the filter is a no-op so existing tenants don't suddenly empty
+  // out. Set via Firestore console for now; a settings UI is a
+  // follow-up.
+  const [allowedEmailDomains, setAllowedEmailDomains] = useState<string[]>([]);
 
   // Create breadcrumb path
   const breadcrumbPath = [
@@ -37,6 +56,60 @@ const CompanyDirectory: React.FC = () => {
     if (effectiveTenantId) {
       fetchData();
     }
+  }, [effectiveTenantId]);
+
+  // Live subscription to the four tenant-role-default arrays so the chips
+  // in the Workforce table update immediately when an admin flips a toggle
+  // (including from another tab). `onSnapshot` is one read + cheap deltas
+  // — fine to keep mounted for the life of this page.
+  useEffect(() => {
+    if (!effectiveTenantId) {
+      setTenantRoleDefaults({});
+      return;
+    }
+    const ref = doc(db, 'tenants', effectiveTenantId, 'settings', 'roleDefaults');
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        setTenantRoleDefaults(snap.exists() ? (snap.data() as TenantRoleDefaultsDoc) : {});
+      },
+      (err) => {
+        console.warn('roleDefaults subscription failed:', err);
+        setTenantRoleDefaults({});
+      },
+    );
+    return () => unsub();
+  }, [effectiveTenantId]);
+
+  // Live subscription to tenants/{tid}/settings/workforceDirectory.
+  // Currently we only consume `allowedEmailDomains: string[]`. Empty /
+  // missing means "show everyone" — the filter only kicks in when the
+  // tenant has explicitly configured a whitelist, so we don't break
+  // tenants that haven't opted in.
+  useEffect(() => {
+    if (!effectiveTenantId) {
+      setAllowedEmailDomains([]);
+      return;
+    }
+    const ref = doc(db, 'tenants', effectiveTenantId, 'settings', 'workforceDirectory');
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        const data = snap.exists() ? (snap.data() as Record<string, unknown>) : {};
+        const raw = data.allowedEmailDomains;
+        const list = Array.isArray(raw)
+          ? raw
+              .filter((v): v is string => typeof v === 'string' && v.trim() !== '')
+              .map((v) => v.trim().toLowerCase())
+          : [];
+        setAllowedEmailDomains(list);
+      },
+      (err) => {
+        console.warn('workforceDirectory subscription failed:', err);
+        setAllowedEmailDomains([]);
+      },
+    );
+    return () => unsub();
   }, [effectiveTenantId]);
 
   const fetchData = async () => {
@@ -66,46 +139,35 @@ const CompanyDirectory: React.FC = () => {
       const functions = getFunctions();
       const getUsersByTenantFn = httpsCallable(functions, 'getUsersByTenant');
       
-      const result = await getUsersByTenantFn({ 
+      const result = await getUsersByTenantFn({
         tenantId: effectiveTenantId,
         _cacheBust: Date.now() // Force fresh data
       });
       const data = result.data as { users: any[], count: number };
-      
-      // Debug: Log all users to see their data structure
-      console.log('All users from Cloud Function:', data.users?.map(u => ({
-        id: u.id,
-        firstName: u.firstName,
-        lastName: u.lastName,
-        securityLevel: u.securityLevel,
-        tenantId: u.tenantId,
-        tenantIds: u.tenantIds,
-        locationId: u.locationId,
-        regionId: u.regionId,
-        regionName: u.regionName
-      })));
-      
       setContacts(data.users || []);
     } catch (err: any) {
       console.error('Error fetching contacts:', err);
-      // Fallback to direct Firestore query - get all users and filter in memory
+      // Fallback to direct Firestore query. Prefer a server-side filter on
+      // the `tenantId` field so we don't pull every user in the system (the
+      // previous behavior loaded ~2k docs and spammed the console); if that
+      // throws we fall back to an in-memory filter as a last resort.
       try {
-        console.log('Using fallback query to fetch users...');
-        const allUsersSnapshot = await getDocs(collection(db, 'users'));
-        const allUsers = allUsersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        
-        // Filter for users in this tenant (both old and new structures)
-        const tenantUsers = allUsers.filter((user: any) => {
-          // Check direct tenantId field (old structure)
-          if (user.tenantId === effectiveTenantId) return true;
-          
-          // Check tenantIds map (new structure)
-          if (user.tenantIds && user.tenantIds[effectiveTenantId]) return true;
-          
-          return false;
-        });
-        
-        console.log(`Fallback query found ${tenantUsers.length} users for tenant ${effectiveTenantId}`);
+        let tenantUsers: any[] = [];
+        try {
+          const scopedSnapshot = await getDocs(
+            query(collection(db, 'users'), where('tenantId', '==', effectiveTenantId))
+          );
+          tenantUsers = scopedSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        } catch (scopedErr) {
+          console.warn('Scoped fallback query failed, using full-scan fallback', scopedErr);
+          const allUsersSnapshot = await getDocs(collection(db, 'users'));
+          const allUsers = allUsersSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+          tenantUsers = allUsers.filter((user: any) => {
+            if (user.tenantId === effectiveTenantId) return true;
+            if (user.tenantIds && user.tenantIds[effectiveTenantId]) return true;
+            return false;
+          });
+        }
         setContacts(tenantUsers);
       } catch (fallbackErr) {
         console.error('Fallback query also failed:', fallbackErr);
@@ -120,15 +182,6 @@ const CompanyDirectory: React.FC = () => {
       const q = query(collection(db, 'tenants', effectiveTenantId, 'locations'));
       const snapshot = await getDocs(q);
       const locationData = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      
-      // Debug: Log location data to see the structure
-      console.log('Fetched locations:', locationData.map((loc: any) => ({
-        id: loc.id,
-        nickname: loc.nickname,
-        name: loc.name,
-        primaryContacts: loc.primaryContacts
-      })));
-      
       setLocations(locationData);
     } catch (err: any) {
       console.warn('Could not fetch locations:', err);
@@ -166,14 +219,6 @@ const CompanyDirectory: React.FC = () => {
       const q = collection(db, 'tenants', effectiveTenantId, 'regions');
       const snapshot = await getDocs(q);
       const regionData = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      
-      // Debug: Log region data
-      console.log('Fetched regions:', regionData.map((region: any) => ({
-        id: region.id,
-        name: region.name,
-        shortcode: region.shortcode
-      })));
-      
       setRegions(regionData);
     } catch (err: any) {
       console.warn('Could not fetch regions:', err);
@@ -181,36 +226,53 @@ const CompanyDirectory: React.FC = () => {
     }
   };
 
-  // Filter for company directory workers (security levels 5, 6, 7)
-  const getCompanyDirectoryWorkers = () => {
+  // Filter for company directory workers. Two stages:
+  //   1) Security level 5, 6, or 7 (per-tenant or legacy field).
+  //   2) Optional email-domain whitelist from
+  //      `tenants/{tid}/settings/workforceDirectory.allowedEmailDomains`.
+  //      When empty/missing, the email filter is a no-op so existing
+  //      tenants don't suddenly empty out. Hides external/partner/vendor
+  //      users (e.g. legacy admins from acquired tools) without needing
+  //      to flag each one individually.
+  // Memoized so the per-contact scan only re-runs when the inputs
+  // actually change (previously this re-ran on every render because it
+  // was a plain function called inline in JSX).
+  const companyDirectoryWorkers = useMemo(() => {
+    const domains = allowedEmailDomains;
+    const filterByDomain = domains.length > 0;
     return contacts.filter((c: any) => {
       let workerLevel: any = null;
-      
+
       // Check tenantIds map first (new structure)
-      if (c.tenantIds && c.tenantIds[effectiveTenantId]) {
+      if (c.tenantIds && effectiveTenantId && c.tenantIds[effectiveTenantId]) {
         workerLevel = c.tenantIds[effectiveTenantId].securityLevel;
       }
       // Fall back to direct securityLevel field (old structure)
       else if (c.securityLevel) {
         workerLevel = c.securityLevel;
       }
-      
-      // Debug logging
-      console.log(`Worker ${c.firstName} ${c.lastName}:`, {
-        tenantIds: c.tenantIds,
-        effectiveTenantId,
-        workerLevel,
-        directSecurityLevel: c.securityLevel,
-        tenantIdsEntry: c.tenantIds?.[effectiveTenantId],
-        included: workerLevel === 5 || workerLevel === 6 || workerLevel === 7 || 
-                  workerLevel === '5' || workerLevel === '6' || workerLevel === '7'
-      });
-      
-      // Check if worker has security level 5, 6, or 7
-      return workerLevel === 5 || workerLevel === 6 || workerLevel === 7 || 
-             workerLevel === '5' || workerLevel === '6' || workerLevel === '7';
+
+      const securityOk =
+        workerLevel === 5 ||
+        workerLevel === 6 ||
+        workerLevel === 7 ||
+        workerLevel === '5' ||
+        workerLevel === '6' ||
+        workerLevel === '7';
+      if (!securityOk) return false;
+
+      if (!filterByDomain) return true;
+
+      // Strip `+alias` from the local part before extracting domain so
+      // common alias-style addresses (`first+work@c1staffing.com`) match.
+      const email = typeof c.email === 'string' ? c.email.trim().toLowerCase() : '';
+      if (!email) return false;
+      const at = email.lastIndexOf('@');
+      if (at === -1 || at === email.length - 1) return false;
+      const domain = email.slice(at + 1);
+      return domains.includes(domain);
     });
-  };
+  }, [contacts, effectiveTenantId, allowedEmailDomains]);
 
   if (loading) {
     return (
@@ -224,22 +286,9 @@ const CompanyDirectory: React.FC = () => {
   }
 
   return (
-    <Box sx={{ p: 0 }}>
-      {/* Header with search */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h6">Workers ({getCompanyDirectoryWorkers().length})</Typography>
-        <TextField
-          size="small"
-          variant="outlined"
-          placeholder="Search workers..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          sx={{ width: 300 }}
-        />
-      </Box>
-      
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <WorkersTable
-        contacts={getCompanyDirectoryWorkers()}
+        contacts={companyDirectoryWorkers}
         locations={locations}
         departments={departments}
         divisions={divisions}
@@ -247,12 +296,13 @@ const CompanyDirectory: React.FC = () => {
         selectedWorkers={[]}
         handleWorkerSelection={() => {}}
         handleSelectAll={() => {}}
-        navigateToUser={(userId) => navigate(`/users/${userId}`)}
+        navigateToUser={(userId) => navigate(`/workforce/users/${userId}`)}
         contextType="agency"
         loading={false}
         search={search}
-        onSearchChange={setSearch}
+        onSearchChange={onSearchChange || (() => {})}
         effectiveTenantId={effectiveTenantId}
+        tenantRoleDefaults={tenantRoleDefaults}
       />
     </Box>
   );

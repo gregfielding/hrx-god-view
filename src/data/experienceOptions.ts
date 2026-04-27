@@ -18,16 +18,24 @@ export type CareerLevel =
   | 'Director'
   | 'Executive';
 
-// Education Level enum
-export type EducationLevel =
-  | 'none'
-  | 'highschool'
-  | 'ged'
-  | 'trade'
-  | 'associate'
-  | 'bachelor'
-  | 'master'
-  | 'doctorate';
+// Education Level — re-exported from the canonical shared schema.
+//
+// Phase B.1 (5520e605) introduced the typed EducationLevel enum in
+// shared/educationLevel.ts. This file is now the dropdown surface; the type
+// + helpers live in `shared/`. Re-exports keep backwards compatibility for
+// any consumer that imports the type from this path.
+//
+// Note: existing Firestore data may still carry the legacy 'highschool'
+// (no underscore) form. parseLegacyEducationLevel normalizes that on read,
+// so matchers / readers tolerate both. A backfill is OPTIONAL and not part
+// of this commit — see READINESS_EXECUTION_MATRIX.md §7.
+export type { EducationLevel } from '../shared/educationLevel';
+export {
+  EDUCATION_LEVEL_ORDINAL,
+  educationLevelOrdinal,
+  isEducationLevel,
+  parseLegacyEducationLevel,
+} from '../shared/educationLevel';
 
 // Experience Required Options
 export const experienceOptions = [
@@ -83,7 +91,7 @@ export const educationOptions = [
     description: 'No formal education or training required.',
   },
   {
-    value: 'highschool',
+    value: 'high_school',
     label: 'High School Diploma',
     description: 'Standard requirement for most entry-level and industrial jobs.',
   },

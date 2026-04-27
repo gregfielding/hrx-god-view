@@ -31,7 +31,6 @@ import {
   CardContent,
   CardHeader,
   Snackbar,
-  Breadcrumbs,
   Link as MUILink,
   Skeleton,
   TableContainer,
@@ -40,6 +39,8 @@ import {
   TableRow,
   TableCell,
   TableBody,
+  Tooltip,
+  Badge,
 } from '@mui/material';
 import {
   Email as EmailIcon,
@@ -49,14 +50,16 @@ import {
   Facebook as FacebookIcon,
   Instagram as InstagramIcon,
   Notes as NotesIcon,
+  Note as NoteIcon,
   Save as SaveIcon,
   Delete as DeleteIcon,
   Info as InfoIcon,
   Language as LanguageIcon,
   AutoAwesome as AutoAwesomeIcon,
-  Task as TaskIcon,
+  AddTask as AddTaskIcon,
   CloudUpload as UploadIcon,
   Business as BusinessIcon,
+  AttachMoney as DealIcon,
   SmartToy as AIIcon,
   Timeline as TimelineIcon,
   Dashboard as DashboardIcon,
@@ -64,8 +67,12 @@ import {
   CheckCircle as CheckCircleIcon,
   RocketLaunch as RocketLaunchIcon,
   LocationOn as LocationIcon,
+  Edit as EditIcon,
+  Work as WorkIcon,
+  Person as PersonIcon,
+  ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc, query, where, orderBy, limit } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc, query, where, orderBy, limit, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
@@ -74,17 +81,37 @@ import { useAuth } from '../../contexts/AuthContext';
 import CRMNotesTab from '../../components/CRMNotesTab';
 import SimpleAssociationsCard from '../../components/SimpleAssociationsCard';
 import ActivityLogTab from '../../components/ActivityLogTab';
+import SafeAvatar from '../../components/SafeAvatar';
+import { getLastContactActivity, type UnifiedActivityItem } from '../../utils/activityService';
 import TasksDashboard from '../../components/TasksDashboard';
 import AppointmentsDashboard from '../../components/AppointmentsDashboard';
 import { LoggableSlider, LoggableTextField, LoggableSwitch } from '../../components/LoggableField';
 import ContactOpportunitiesTab from '../../components/ContactOpportunitiesTab';
 import AIAssistantChat from '../../components/AIAssistantChat';
 import ContactActivityTab from '../../components/ContactActivityTab';
-import SalesCoach from '../../components/SalesCoach';
+import { useChatGPT } from '../../contexts/ChatGPTContext';
 import CreateTaskDialog from '../../components/CreateTaskDialog';
 import { TaskService } from '../../utils/taskService';
 import LogActivityDialog from '../../components/LogActivityDialog';
 import AddNoteDialog from '../../components/AddNoteDialog';
+import { logger } from '../../utils/logger';
+import ContactHeader from '../../components/ContactHeader';
+import ManageContactCompanyDialog from '../../components/ManageContactCompanyDialog';
+import ManageContactLocationsDialog from '../../components/ManageContactLocationsDialog';
+import { useFavorites } from '../../hooks/useFavorites';
+import { BreadcrumbNav } from '../../components/BreadcrumbNav';
+import MessageDrawer, { MessageRecipient } from '../../components/MessageDrawer';
+import PageHeader from '../../components/PageHeader';
+import FavoriteButton from '../../components/FavoriteButton';
+import { Stack } from '@mui/material';
+import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
+import { ContactHeaderMarketing, type CrmContactIndustrySegment } from '../../components/crm/contacts/ContactHeaderMarketing';
+import { PipelineStageContainer } from '../../components/crm/contacts/PipelineStageContainer';
+import { PIPELINE_STAGES, PIPELINE_STAGE_LABELS, type PipelineStage } from '../../types/CRM';
+import { formatPhoneNumber } from '../../utils/formatPhone';
+import { toChipLabel } from '../../utils/chipLabel';
+import { toSafeHref } from '../../utils/urlUtils';
 
 interface ContactData {
   id: string;
@@ -121,6 +148,12 @@ interface ContactData {
   lastContactedMode?: string;
   leadSource?: string;
   leadStatus?: string;
+  /** Pipeline stage: Contact, Prospect, or Lead */
+  pipelineStage?: PipelineStage | null;
+  prospectFollowPlan?: string;
+  leadTiming?: string;
+  leadVolume?: string;
+  leadNotes?: string;
   salesOwnerId?: string;
   salesOwnerName?: string;
   salesOwnerRef?: string;
@@ -190,6 +223,18 @@ interface ContactData {
     company?: any;
     fetchedAt?: any;
   };
+
+  // --- Marketing fields (Mailchimp-ready) ---
+  industrySegment?: CrmContactIndustrySegment;
+  marketingTags?: string[];
+  marketingNotes?: string;
+  marketingEnabled?: boolean;
+  mailchimp?: {
+    subscriberId?: string;
+    lastSyncedAt?: any;
+    lastStatus?: 'subscribed' | 'unsubscribed' | 'cleaned' | 'pending' | 'archived';
+    lastError?: string;
+  };
 }
 
 interface TabPanelProps {
@@ -209,7 +254,7 @@ function TabPanel(props: TabPanelProps) {
       aria-labelledby={`contact-tab-${index}`}
       {...other}
     >
-      {value === index && <Box sx={{ p: 0 }}>{children}</Box>}
+      {value === index && <Box sx={{ pt: 0, px: { xs: 2, md: 3 }, pb: 2 }}>{children}</Box>}
     </div>
   );
 }
@@ -218,7 +263,11 @@ const ContactDetails: React.FC = () => {
   const { contactId } = useParams<{ contactId: string }>();
   const navigate = useNavigate();
   const { tenantId, user } = useAuth();
+  const { openChatGPT } = useChatGPT();
   const taskService = TaskService.getInstance();
+  
+  // Favorites
+  const { isFavorite, toggleFavorite } = useFavorites('contacts');
   
   const [contact, setContact] = useState<ContactData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -226,6 +275,7 @@ const ContactDetails: React.FC = () => {
   const [tabValue, setTabValue] = useState(0);
   const [company, setCompany] = useState<any>(null);
   const [activities, setActivities] = useState<any[]>([]);
+  const [lastActivity, setLastActivity] = useState<UnifiedActivityItem | null>(null);
   const [aiEnhancing, setAiEnhancing] = useState(false);
   const [aiSuccess, setAiSuccess] = useState<string | null>(null);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
@@ -256,7 +306,6 @@ const ContactDetails: React.FC = () => {
   // Company and location are managed via associations; no local pickers
   const [companyLocations, setCompanyLocations] = useState<any[]>([]);
   const [selectedLocations, setSelectedLocations] = useState<any[]>([]);
-  const [locationDropdownValue, setLocationDropdownValue] = useState<any>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [fixingAssociations, setFixingAssociations] = useState(false);
@@ -274,6 +323,8 @@ const ContactDetails: React.FC = () => {
   const [allCompanies, setAllCompanies] = useState<any[]>([]);
   const [loadingCompanies, setLoadingCompanies] = useState(false);
   const [suggestedCompanies, setSuggestedCompanies] = useState<any[]>([]);
+  const [showManageCompanyDialog, setShowManageCompanyDialog] = useState(false);
+  const [showManageWorkLocationsDialog, setShowManageWorkLocationsDialog] = useState(false);
   const [showLogActivityDialog, setShowLogActivityDialog] = useState(false);
   const [logActivityLoading, setLogActivityLoading] = useState(false);
   
@@ -282,6 +333,47 @@ const ContactDetails: React.FC = () => {
   
   // Avatar upload state
   const [avatarLoading, setAvatarLoading] = useState(false);
+
+  // Gmail connection and message drawer state
+  const [gmailConnected, setGmailConnected] = useState<boolean>(false);
+  const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
+  const [messageDrawerChannel, setMessageDrawerChannel] = useState<'email' | 'sms'>('email');
+
+  // Check Gmail connection status
+  useEffect(() => {
+    const checkGmailConnection = async () => {
+      if (!user?.uid || !tenantId) {
+        setGmailConnected(false);
+        return;
+      }
+      try {
+        const getGmailStatus = httpsCallable(functions, 'getGmailStatusOptimized');
+        const result = await getGmailStatus({ userId: user.uid, force: true });
+        const data = result.data as any;
+        const connected = !!data?.connected || !!data?.rateLimited || !!data?.sampled;
+        setGmailConnected(connected);
+      } catch {
+        try {
+          const userDocRef = doc(db, 'users', user.uid);
+          const userDocSnap = await getDoc(userDocRef);
+          if (userDocSnap.exists()) {
+            const userData = userDocSnap.data();
+            const tenantIntegration = userData.tenantIds?.[tenantId]?.integrations?.google;
+            const topLevelIntegration = userData.integrations?.google;
+            const isConnected = (tenantIntegration?.accessToken || topLevelIntegration?.accessToken) && 
+                                (tenantIntegration?.email || topLevelIntegration?.email);
+            setGmailConnected(!!isConnected);
+          } else {
+            setGmailConnected(false);
+          }
+        } catch (error) {
+          console.error('Error checking Gmail connection:', error);
+          setGmailConnected(false);
+        }
+      }
+    };
+    checkGmailConnection();
+  }, [user?.uid, tenantId]);
 
   // Tone settings state
   const [toneSettings, setToneSettings] = useState({
@@ -298,10 +390,16 @@ const ContactDetails: React.FC = () => {
   const [localError, setLocalError] = useState<string | null>(null);
   const [aiComponentsLoaded, setAiComponentsLoaded] = useState(false);
   
-  // Recent Activity state
-  const [recentActivities, setRecentActivities] = useState<any[]>([]);
-  const [loadingActivities, setLoadingActivities] = useState(false);
+  // Recent Activity state (shown at top of right column)
   const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
+  const [notesCount, setNotesCount] = useState<number>(0);
+  
+  // Edit mode state for Contact Details card
+  const [isEditingContactDetails, setIsEditingContactDetails] = useState(false);
+  
+  // Job Orders state
+  const [jobOrders, setJobOrders] = useState<any[]>([]);
+  const [loadingJobOrders, setLoadingJobOrders] = useState(false);
 
   // Lazy load AI components
   useEffect(() => {
@@ -316,6 +414,17 @@ const ContactDetails: React.FC = () => {
     setSnackbarMessage(message);
     setSnackbarSeverity(severity);
     setSnackbarOpen(true);
+  };
+
+  // Copy to clipboard function
+  const copyToClipboard = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(`${label} copied to clipboard`, 'success');
+    } catch (err) {
+      console.error('Failed to copy to clipboard:', err);
+      showToast(`Failed to copy ${label}`, 'error');
+    }
   };
 
   // Calculate contact metrics
@@ -530,17 +639,80 @@ const ContactDetails: React.FC = () => {
       
       const result = await associationService.getEntityAssociations('contact', contactId);
       
-      // Fallback: Query deals that reference this contact
+      // Normalize stored id to string (handles string, number, or Firestore ref with .id)
+      const toId = (v: any): string => {
+        if (v == null) return '';
+        if (typeof v === 'string') return v;
+        if (typeof v === 'number') return String(v);
+        if (typeof v === 'object' && v?.id != null) return String(v.id);
+        return String(v);
+      };
+      const cid = String(contactId);
+      const dealHasContact = (deal: any) => {
+        if (Array.isArray(deal.contactIds) && deal.contactIds.some((id: any) => toId(id) === cid)) return true;
+        if (deal.associations?.contacts?.some((c: any) => toId(typeof c === 'string' ? c : c?.id) === cid)) return true;
+        return false;
+      };
+
+      // Fallback: Query deals that reference this contact. Run each query in its own try/catch
+      // so one failure (e.g. missing Firestore index for contactIds) doesn't skip the batch scan.
       let fallbackDeals: any[] = [];
+
+      // Query 1: contactIds array-contains (may fail if index missing)
       try {
-        const dealsQuery = query(
+        const q1 = query(
           collection(db, 'tenants', tenantId, 'crm_deals'),
           where('contactIds', 'array-contains', contactId)
         );
-        const dealsSnapshot = await getDocs(dealsQuery);
-        fallbackDeals = dealsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      } catch (fallbackErr) {
-        console.warn('Fallback deals query failed:', fallbackErr);
+        const snap1 = await getDocs(q1);
+        fallbackDeals = snap1.docs.map(d => ({ id: d.id, ...d.data() }));
+      } catch (e1) {
+        console.warn('Contact opportunities: contactIds query failed (index?), using batch fallback', e1);
+      }
+
+      // Query 2: Deals by contact's company
+      let contactCompanyId: string | undefined;
+      try {
+        const contactDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId));
+        if (contactDoc.exists()) {
+          const contactData = contactDoc.data();
+          const rawCompany = contactData?.companyId ?? contactData?.associations?.companies?.[0];
+          contactCompanyId = typeof rawCompany === 'string' ? rawCompany : (rawCompany?.id ?? undefined);
+          if (contactCompanyId) {
+            const q2 = query(
+              collection(db, 'tenants', tenantId, 'crm_deals'),
+              where('companyId', '==', contactCompanyId)
+            );
+            const snap2 = await getDocs(q2);
+            const companyDeals = snap2.docs.map(d => ({ id: d.id, ...d.data() }));
+            const matching = companyDeals.filter(dealHasContact);
+            fallbackDeals = [...fallbackDeals, ...matching.filter(d => !fallbackDeals.some(f => f.id === d.id))];
+          }
+        }
+      } catch (e2) {
+        console.warn('Contact opportunities: company deals query failed', e2);
+      }
+
+      // Query 3: Batch scan – always run so we find deals even without contactIds index or companyId on deal
+      try {
+        const batchQuery = query(
+          collection(db, 'tenants', tenantId, 'crm_deals'),
+          limit(500)
+        );
+        const batchSnap = await getDocs(batchQuery);
+        const batchDeals = batchSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const byContact = batchDeals.filter((deal: any) => {
+          if (!dealHasContact(deal)) return false;
+          if (fallbackDeals.some((d: any) => d.id === deal.id)) return false;
+          return true;
+        });
+        fallbackDeals = [...fallbackDeals, ...byContact];
+        if (batchDeals.length > 0 && process.env.NODE_ENV === 'development') {
+          const withContact = batchDeals.filter(dealHasContact);
+          console.log('Contact opportunities: batch scanned', batchDeals.length, 'deals,', withContact.length, 'have this contact, total fallback', fallbackDeals.length);
+        }
+      } catch (e3) {
+        console.warn('Contact opportunities: batch deals query failed', e3);
       }
       
       // Merge fallback deals with existing deals
@@ -660,27 +832,24 @@ const ContactDetails: React.FC = () => {
         associations: updatedAssociations
       } : null);
       
-      // Log the activity (client-side filtered/sampled)
-      try {
-        const { logAIActionClient } = await import('../../utils/loggingClient');
-        await logAIActionClient({
-          eventType: 'contact.company_associated',
-          action: 'contact_company_associated',
-          entityId: contactId,
-          entityType: 'contact',
-          reason: `Associated with company: ${selectedCompany?.companyName || selectedCompany?.name || companyId}`,
-          tenantId,
-          userId: user.uid,
-          metadata: { 
-            companyId, 
-            companyName: selectedCompany?.companyName || selectedCompany?.name || '',
-            previousCompanyId: contact?.companyId || null
-          },
-          urgencyScore: 7
-        });
-      } catch (logError) {
-        console.warn('Failed to log activity:', logError);
-      }
+      // Log the activity locally for diagnostics
+      await logger.aiEvent({
+        eventType: 'contact.company_associated',
+        actionType: 'contact_company_associated',
+        targetType: 'contact',
+        targetId: contactId,
+        tenantId,
+        userId: user.uid,
+        contextType: 'contact_management',
+        aiRelevant: true,
+        urgencyScore: 7,
+        reason: `Associated with company: ${selectedCompany?.companyName || selectedCompany?.name || companyId}`,
+        metadata: {
+          companyId,
+          companyName: selectedCompany?.companyName || selectedCompany?.name || '',
+          previousCompanyId: contact?.companyId || null
+        }
+      });
       
       showToast(`Contact associated with ${selectedCompany?.companyName || selectedCompany?.name || 'company'}`, 'success');
       
@@ -692,43 +861,34 @@ const ContactDetails: React.FC = () => {
     }
   };
 
-  // Load recent activities for the contact
-  const loadRecentActivities = async () => {
-    if (!contactId || !tenantId) return;
-    
-    setLoadingActivities(true);
-    try {
-      const { loadContactActivities } = await import('../../utils/activityService');
-      const activities = await loadContactActivities(tenantId, contactId, {
-        limit: 8,
-        includeTasks: true,
-        includeEmails: true,
-        includeNotes: true,
-        includeAIActivities: false,
-        onlyCompletedTasks: true
-      });
-      
-      // Convert to the format expected by the component
-      const formattedActivities = activities.map(activity => ({
-        id: activity.id,
-        type: activity.type,
-        title: activity.title,
-        description: activity.description,
-        timestamp: activity.timestamp,
-        salespersonId: activity.salespersonId,
-        icon: activity.type === 'task' ? 'task' : activity.type === 'email' ? 'email' : 'note',
-        ...(activity.type === 'email' && { direction: activity.metadata?.direction || 'sent' }),
-        ...(activity.type === 'task' && { status: activity.metadata?.status || 'completed' })
-      }));
-      
-      setRecentActivities(formattedActivities);
-    } catch (err) {
-      console.error('Error loading recent activities:', err);
-      setRecentActivities([]);
-    } finally {
-      setLoadingActivities(false);
+  const handleCompanySaveFromModal = async (companyId: string | null) => {
+    if (companyId) {
+      await handleCompanyAssociation(companyId);
+    } else {
+      if (!contactId || !tenantId || !user?.uid) return;
+      try {
+        const currentAssociations = contact?.associations || {};
+        const updatedAssociations = { ...currentAssociations, companies: [] };
+        await updateDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId), {
+          companyId: null,
+          companyName: '',
+          associations: updatedAssociations,
+          updatedAt: new Date(),
+        });
+        setContact((prev) => (prev ? { ...prev, companyId: undefined, companyName: '', associations: updatedAssociations } : null));
+        setCompany(null);
+        setCompanyLocations([]);
+        setSelectedLocations([]);
+        showToast('Company association removed', 'success');
+        await loadAssociations();
+      } catch (error) {
+        console.error('Error clearing company association:', error);
+        showToast('Failed to remove company association', 'error');
+      }
     }
   };
+
+  // (Removed) Duplicate Recent Activity widget under Contact Details (now shown in right column)
 
   // Handle location association update (now supports multiple locations)
   const handleLocationAssociationUpdate = async (selectedLocations: any[]) => {
@@ -783,30 +943,26 @@ const ContactDetails: React.FC = () => {
       // Update selected locations state
       setSelectedLocations(selectedLocations);
       
-      // Log the activity (client-side filtered/sampled)
-      try {
-        const { logAIActionClient } = await import('../../utils/loggingClient');
-        const locationNames = selectedLocations.map(loc => loc.name || loc.nickname || 'Unknown Location').join(', ');
-        await logAIActionClient({
-          eventType: 'contact.location_updated',
-          action: 'contact_location_updated',
-          entityId: contactId,
-          entityType: 'contact',
-          reason: `Updated work locations to: ${locationNames}`,
-          tenantId,
-          userId: user.uid,
-          metadata: { 
-            locationIds, 
-            locationNames,
-            locationCount: selectedLocations.length
-          },
-          urgencyScore: 7
-        });
-      } catch (logError) {
-        console.warn('Failed to log activity:', logError);
-      }
-
+      // Log the activity locally for diagnostics
       const locationNames = selectedLocations.map(loc => loc.name || loc.nickname || 'Unknown Location').join(', ');
+      await logger.aiEvent({
+        eventType: 'contact.location_updated',
+        actionType: 'contact_location_updated',
+        targetType: 'contact',
+        targetId: contactId,
+        tenantId,
+        userId: user.uid,
+        contextType: 'contact_management',
+        aiRelevant: true,
+        urgencyScore: 7,
+        reason: `Updated work locations to: ${locationNames}`,
+        metadata: {
+          locationIds,
+          locationNames,
+          locationCount: selectedLocations.length
+        }
+      });
+
       showToast(`Work locations updated to: ${locationNames}`, 'success');
     } catch (err) {
       console.error('Error updating location association:', err);
@@ -850,10 +1006,24 @@ const ContactDetails: React.FC = () => {
 
       // Load activities (you can implement this based on your activity tracking system)
       setActivities([]);
-
-      // Removed legacy company picker load (associations are the source of truth)
       
-      // Load associations
+      // Load last activity for Recent Activity card
+      const loadLastActivity = async () => {
+        try {
+          const lastActivityData = await getLastContactActivity(tenantId, contactId);
+          setLastActivity(lastActivityData);
+        } catch (err) {
+          console.error('Error loading last activity:', err);
+          setLastActivity(null);
+        }
+      };
+      
+      await loadLastActivity();
+
+      // Email log real-time updates are handled by the separate useEffect below (contactId/tenantId).
+      // Do not return here or loadAssociations() would never run.
+
+      // Load associations (deals/opportunities, etc.) so the Opportunities widget shows correctly
       await loadAssociations();
 
     } catch (err) {
@@ -864,12 +1034,236 @@ const ContactDetails: React.FC = () => {
     }
   };
 
+  // Load job orders associated with this contact
+  const loadJobOrdersForContact = async () => {
+    if (!contactId || !tenantId) {
+      setJobOrders([]);
+      return;
+    }
+    
+    try {
+      setLoadingJobOrders(true);
+      const jobOrdersRef = collection(db, 'tenants', tenantId, 'job_orders');
+
+      const getAssocId = (entry: any): string | null => {
+        if (!entry) return null;
+        if (typeof entry === 'string') return entry;
+        if (typeof entry === 'object' && typeof entry.id === 'string') return entry.id;
+        return null;
+      };
+
+      const contactRoleFields = [
+        'hrContactId',
+        'decisionMaker',
+        'operationsContactId',
+        'procurementContactId',
+        'billingContactId',
+        'safetyContactId',
+        'invoiceContactId',
+      ];
+
+      const baseQueries = [
+        ...contactRoleFields.map((field) => query(jobOrdersRef, where(field, '==', contactId))),
+        query(jobOrdersRef, where('contactIds', 'array-contains', contactId)),
+        query(jobOrdersRef, where('associations.contacts', 'array-contains', contactId)),
+        query(jobOrdersRef, where('deal.contactIds', 'array-contains', contactId)),
+      ];
+
+      const runSafe = async (q: any) =>
+        getDocs(q).catch((err) => {
+          console.warn('Job orders contact query failed:', err);
+          return { docs: [] as any[] };
+        });
+
+      const baseSnapshots = await Promise.all(baseQueries.map(runSafe));
+      const allJobOrders = new Map<string, any>();
+
+      baseSnapshots.forEach((snapshot: any) => {
+        snapshot.docs.forEach((snap: any) => {
+          allJobOrders.set(snap.id, { id: snap.id, ...snap.data() });
+        });
+      });
+
+      // Also include job orders linked to any deal associated with this contact.
+      const associatedDealIds = new Set<string>();
+      const associatedCompanyIds = new Set<string>();
+      try {
+        const contactDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId));
+        if (contactDoc.exists()) {
+          const contactData = contactDoc.data() as any;
+          const legacyCompanyId = contactData?.companyId;
+          if (legacyCompanyId && typeof legacyCompanyId === 'string') {
+            associatedCompanyIds.add(legacyCompanyId);
+          }
+          const assocCompanies = contactData?.associations?.companies;
+          if (Array.isArray(assocCompanies)) {
+            assocCompanies.forEach((c: any) => {
+              const id = getAssocId(c);
+              if (id) associatedCompanyIds.add(id);
+            });
+          }
+          const rawDeals = contactData?.associations?.deals;
+          if (Array.isArray(rawDeals)) {
+            rawDeals.forEach((d: any) => {
+              const id = getAssocId(d);
+              if (id) associatedDealIds.add(id);
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load contact deal associations for job orders:', err);
+      }
+
+      // Fallback deals query for older mappings.
+      try {
+        const dealsSnap = await getDocs(
+          query(collection(db, 'tenants', tenantId, 'crm_deals'), where('contactIds', 'array-contains', contactId))
+        );
+        dealsSnap.docs.forEach((d) => associatedDealIds.add(d.id));
+      } catch (err) {
+        console.warn('Fallback deal query failed while loading contact job orders:', err);
+      }
+
+      // Also discover deals through company association + associations.contacts object array.
+      const companyIds = Array.from(associatedCompanyIds);
+      if (companyIds.length > 0) {
+        for (let i = 0; i < companyIds.length; i += 10) {
+          const chunk = companyIds.slice(i, i + 10);
+          try {
+            const companyDealsSnap = await getDocs(
+              query(collection(db, 'tenants', tenantId, 'crm_deals'), where('companyId', 'in', chunk))
+            );
+            companyDealsSnap.docs.forEach((d) => {
+              const data = d.data() as any;
+              const direct = Array.isArray(data?.contactIds) && data.contactIds.includes(contactId);
+              const assoc =
+                Array.isArray(data?.associations?.contacts) &&
+                data.associations.contacts.some((c: any) => getAssocId(c) === contactId);
+              if (direct || assoc) associatedDealIds.add(d.id);
+            });
+          } catch (err) {
+            console.warn('Company-scoped deal lookup failed for contact job orders:', err);
+          }
+        }
+      }
+
+      const dealIds = Array.from(associatedDealIds);
+      if (dealIds.length > 0) {
+        for (let i = 0; i < dealIds.length; i += 10) {
+          const chunk = dealIds.slice(i, i + 10);
+          const byDealId = await runSafe(query(jobOrdersRef, where('dealId', 'in', chunk)));
+          byDealId.docs.forEach((snap: any) => {
+            allJobOrders.set(snap.id, { id: snap.id, ...snap.data() });
+          });
+        }
+      }
+
+      // Fallback: company-scoped job orders (some records only embed contact under deal.associations.contacts).
+      if (companyIds.length > 0) {
+        for (let i = 0; i < companyIds.length; i += 10) {
+          const chunk = companyIds.slice(i, i + 10);
+          const byCompany = await runSafe(query(jobOrdersRef, where('companyId', 'in', chunk)));
+          byCompany.docs.forEach((snap: any) => {
+            allJobOrders.set(snap.id, { id: snap.id, ...snap.data() });
+          });
+        }
+      }
+
+      // Final client-side guard to support mixed historical schemas.
+      const filtered = Array.from(allJobOrders.values()).filter((jobOrder: any) => {
+        const directRoleMatch = contactRoleFields.some((field) => jobOrder?.[field] === contactId);
+        if (directRoleMatch) return true;
+        if (Array.isArray(jobOrder?.contactIds) && jobOrder.contactIds.includes(contactId)) return true;
+        if (Array.isArray(jobOrder?.associations?.contacts)) {
+          if (jobOrder.associations.contacts.some((c: any) => getAssocId(c) === contactId)) return true;
+        }
+        if (Array.isArray(jobOrder?.deal?.contactIds) && jobOrder.deal.contactIds.includes(contactId)) return true;
+        if (Array.isArray(jobOrder?.deal?.associations?.contacts)) {
+          if (jobOrder.deal.associations.contacts.some((c: any) => getAssocId(c) === contactId)) return true;
+        }
+        if (jobOrder?.dealId && associatedDealIds.has(jobOrder.dealId)) return true;
+        return false;
+      });
+
+      setJobOrders(filtered);
+    } catch (err) {
+      console.error('Error loading job orders for contact:', err);
+      setJobOrders([]);
+    } finally {
+      setLoadingJobOrders(false);
+    }
+  };
+
   useEffect(() => {
     loadContact();
     loadSalespeople();
-    loadRecentActivities();
     loadAllCompanies();
+    loadJobOrdersForContact();
+    
+    // Load notes count (use contact_notes collection; Firestore rules allow read)
+    if (contactId && tenantId) {
+      const notesRef = collection(db, 'tenants', tenantId, 'contact_notes');
+      const notesQuery = query(notesRef, where('entityId', '==', contactId));
+      const unsubscribeNotes = onSnapshot(notesQuery, (snapshot) => {
+        setNotesCount(snapshot.size);
+      }, (err) => {
+        console.error('Error loading notes count:', err);
+      });
+      
+      return () => {
+        unsubscribeNotes();
+      };
+    }
   }, [contactId, tenantId]);
+
+  // Set up real-time listeners for Recent Activity and Active Salespeople
+  useEffect(() => {
+    if (!tenantId || !contactId) return;
+
+    // Load last activity function
+    const loadLastActivity = async () => {
+      try {
+        const lastActivityData = await getLastContactActivity(tenantId, contactId);
+        setLastActivity(lastActivityData);
+      } catch (err) {
+        console.error('Error loading last activity:', err);
+        setLastActivity(null);
+      }
+    };
+
+    // Set up real-time listener for email_logs to refresh Recent Activity
+    const emailsRef = collection(db, 'tenants', tenantId, 'email_logs');
+    const emailsQuery = query(
+      emailsRef,
+      where('contactId', '==', contactId),
+      orderBy('timestamp', 'desc'),
+      limit(1)
+    );
+    
+    const unsubscribeEmails = onSnapshot(emailsQuery, async () => {
+      // Refresh last activity when new emails are logged
+      await loadLastActivity();
+    }, (err) => {
+      console.warn('Error listening to email_logs:', err);
+    });
+
+    // Set up real-time listener for contact document to refresh Active Salespeople
+    const contactRef = doc(db, 'tenants', tenantId, 'crm_contacts', contactId);
+    const unsubscribeContact = onSnapshot(contactRef, (docSnapshot) => {
+      if (docSnapshot.exists()) {
+        const contactData = { id: docSnapshot.id, ...docSnapshot.data() } as ContactData;
+        setContact(prev => prev ? { ...prev, ...contactData } : contactData);
+      }
+    }, (err) => {
+      console.warn('Error listening to contact document:', err);
+    });
+
+    // Cleanup
+    return () => {
+      unsubscribeEmails();
+      unsubscribeContact();
+    };
+  }, [tenantId, contactId]);
 
   // Initialize selected locations when contact or companyLocations change
   useEffect(() => {
@@ -947,35 +1341,42 @@ const ContactDetails: React.FC = () => {
       // Clean undefined values from the processed value (especially important for Apollo enrichment data)
       processedValue = removeUndefinedValues(processedValue);
 
-      await updateDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId), { 
+      // Firestore doesn't allow undefined; for booleans (e.g. isActive) always write true/false
+      if (field === 'isActive') {
+        processedValue = processedValue === true || processedValue === 'true';
+      }
+
+      const updatePayload: Record<string, any> = {
         [field]: processedValue,
-        updatedAt: new Date()
-      });
-      
-      // Log the activity (client-side filtered/sampled)
+        updatedAt: serverTimestamp()
+      };
+
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId), updatePayload);
+
+      // Log the activity (don't let logging failure mark the contact update as failed)
       try {
-        const { logAIActionClient } = await import('../../utils/loggingClient');
-        await logAIActionClient({
+        await logger.aiEvent({
           eventType: 'contact.field_updated',
-          action: 'contact_updated',
-          entityId: contactId,
-          entityType: 'contact',
-          reason: `Updated ${field}: ${processedValue}`,
+          actionType: 'contact_updated',
+          targetType: 'contact',
+          targetId: contactId,
           tenantId,
           userId: user.uid,
-          metadata: { field, value: processedValue },
-          urgencyScore: 6
+          contextType: 'contact_management',
+          aiRelevant: true,
+          urgencyScore: 6,
+          reason: `Updated ${field}: ${processedValue}`,
+          metadata: { field, value: processedValue }
         });
-      } catch (logError) {
-        console.warn('Failed to log activity:', logError);
-        // Don't fail the main operation if logging fails
+      } catch (logErr) {
+        console.warn('Contact update logging failed:', logErr);
       }
-      
+
       // Update local state
       setContact(prev => prev ? { ...prev, [field]: processedValue } : null);
+      setError(''); // clear any previous error
       setAiSuccess('Contact updated successfully!');
-      
-      // Clear success message after 3 seconds
+
       setTimeout(() => setAiSuccess(null), 3000);
     } catch (err) {
       console.error('Error updating contact:', err);
@@ -983,36 +1384,71 @@ const ContactDetails: React.FC = () => {
     }
   };
 
-  // Utility function to remove undefined values from objects (Firestore doesn't allow undefined)
-  const removeUndefinedValues = (obj: any): any => {
-    if (obj === null || obj === undefined) {
-      return null;
+  const handlePipelineUpdate = async (updates: Record<string, unknown>) => {
+    if (!contactId || !tenantId || !contact || !user?.uid) return;
+    try {
+      const cleanUpdates = removeUndefinedValues(updates) as Record<string, unknown>;
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId), {
+        ...cleanUpdates,
+        updatedAt: new Date(),
+      });
+      setContact((prev) => (prev ? { ...prev, ...cleanUpdates } : null));
+      setAiSuccess('Pipeline updated');
+      setTimeout(() => setAiSuccess(null), 3000);
+    } catch (err) {
+      console.error('Error updating pipeline:', err);
+      setError('Failed to update pipeline.');
     }
-    
+  };
+
+  const handleCreateOpportunity = () => {
+    if (!tenantId || !contact) return;
+    const params = new URLSearchParams({
+      contactId: contact.id ?? '',
+      contactName: (contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim()) ?? '',
+      companyName: contact.companyName ?? '',
+      companyId: contact.companyId ?? '',
+      locationId: contact.locationId ?? '',
+      worksiteName: (contact as any).worksiteName ?? '',
+    });
+    navigate(`/crm?tab=1&new=1&${params.toString()}`);
+  };
+
+  // Utility function to remove undefined values from objects (Firestore doesn't allow undefined).
+  // Primitives and Dates are returned as-is; avoids circular reference stack overflow.
+  const removeUndefinedValues = (obj: any, _seen?: WeakSet<object>): any => {
+    if (obj === null || obj === undefined) return null;
+    // Primitives and Date: return as-is (no recursion)
+    const t = typeof obj;
+    if (t !== 'object') return obj;
+    if (obj instanceof Date) return obj;
+
+    const seen = _seen ?? new WeakSet<object>();
+    if (seen.has(obj)) return null; // break circular reference
+    seen.add(obj);
+
     if (Array.isArray(obj)) {
-      return obj.map(item => removeUndefinedValues(item)).filter(item => item !== null);
+      const out = obj.map((item) => removeUndefinedValues(item, seen)).filter((item) => item !== null);
+      return out;
     }
-    
-    if (typeof obj === 'object') {
-      const cleaned: any = {};
-      for (const [key, value] of Object.entries(obj)) {
-        const cleanedValue = removeUndefinedValues(value);
-        if (cleanedValue !== null) {
-          cleaned[key] = cleanedValue;
-        }
+
+    const cleaned: any = {};
+    for (const [key, value] of Object.entries(obj)) {
+      const cleanedValue = removeUndefinedValues(value, seen);
+      if (cleanedValue !== null) {
+        cleaned[key] = cleanedValue;
       }
-      return cleaned;
     }
-    
-    return obj;
+    return cleaned;
   };
 
   const ensureUrlProtocol = (url: string): string => {
-    if (!url) return url;
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      return 'https://' + url;
-    }
-    return url;
+    if (!url || typeof url !== 'string') return url;
+    const trimmed = url.trim();
+    if (!trimmed) return url;
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+    if (/^[\d\s().\-+xX]+$/.test(trimmed) || (trimmed.length <= 20 && !trimmed.includes('.') && /\d{3}/.test(trimmed))) return '';
+    return 'https://' + trimmed;
   };
 
   const handleDelete = async () => {
@@ -1025,7 +1461,7 @@ const ContactDetails: React.FC = () => {
       await deleteDoc(contactRef);
       
       // Navigate back to contacts list
-      navigate('/crm?tab=contacts');
+      navigate('/contacts');
     } catch (err: any) {
       console.error('Error deleting contact:', err);
       setError('Failed to delete contact. Please try again.');
@@ -1322,22 +1758,6 @@ const ContactDetails: React.FC = () => {
     return null;
   };
 
-  // Get activity icon based on type
-  const getActivityIcon = (iconType: string) => {
-    switch (iconType) {
-      case 'task':
-        return <TaskIcon sx={{ fontSize: 16 }} />;
-      case 'email':
-        return <EmailIcon sx={{ fontSize: 16 }} />;
-      case 'note':
-        return <NotesIcon sx={{ fontSize: 16 }} />;
-      case 'ai':
-        return <AIIcon sx={{ fontSize: 16 }} />;
-      default:
-        return <InfoIcon sx={{ fontSize: 16 }} />;
-    }
-  };
-
   // Format timestamp for display
   const formatActivityTime = (timestamp: Date) => {
     const now = new Date();
@@ -1347,9 +1767,9 @@ const ContactDetails: React.FC = () => {
     const diffDays = Math.floor(diffMs / 86400000);
 
     if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffMins < 60) return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
+    if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+    if (diffDays < 7) return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
     return timestamp.toLocaleDateString();
   };
 
@@ -1449,19 +1869,28 @@ const ContactDetails: React.FC = () => {
       // Import TaskService dynamically to avoid circular dependencies
       const { TaskService } = await import('../../utils/taskService');
       const taskService = TaskService.getInstance();
-      
-      // Create the task as completed
+      const contactIds = Array.isArray(taskData.associations?.contacts)
+        ? taskData.associations.contacts.map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean)
+        : [];
+      const ensureContactId = contact?.id && !contactIds.includes(contact.id)
+        ? [contact.id, ...contactIds]
+        : contactIds.length ? contactIds : (contact?.id ? [contact.id] : []);
+
+      // Create the task as completed; associate with this contact so it appears in Activity tab
       await taskService.createTask({
         ...taskData,
         tenantId,
         status: 'completed',
         completedAt: new Date(),
         createdAt: new Date(),
-        updatedAt: new Date()
+        updatedAt: new Date(),
+        associations: {
+          ...taskData.associations,
+          contacts: ensureContactId
+        }
       });
-      
+
       setShowLogActivityDialog(false);
-      // Optionally refresh any task-related data
       showToast('Activity logged successfully', 'success');
     } catch (error) {
       console.error('Error logging activity:', error);
@@ -1471,564 +1900,786 @@ const ContactDetails: React.FC = () => {
     }
   };
 
+  // Helper functions for contact display
+  const getContactDisplayName = () => {
+    if (contact?.fullName) return contact.fullName;
+    if (contact?.firstName || contact?.lastName) {
+      return `${contact.firstName || ''} ${contact.lastName || ''}`.trim();
+    }
+    return 'Unnamed Contact';
+  };
+
+  const getContactInitials = () => {
+    const name = getContactDisplayName();
+    if (!name) return '?';
+    const parts = name.trim().split(' ');
+    if (parts.length >= 2) {
+      return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+    }
+    return name[0].toUpperCase();
+  };
+
+  // Build associated salespeople list (prefer explicit associations, fallback to activeSalespeople)
+  const associatedSalespeople = (() => {
+    const ids = (contact?.associations?.salespeople || []) as any[];
+    if (ids.length > 0) {
+      const byId = new Map((salespeople || []).map((sp: any) => [sp.id, sp]));
+      return ids.map((id) => byId.get(id)).filter(Boolean);
+    }
+    return (contact?.activeSalespeople || []) as any[];
+  })();
+
+  const handleUpdateMarketing = async (update: {
+    industrySegment?: CrmContactIndustrySegment;
+    marketingTags?: string[];
+    marketingEnabled?: boolean;
+  }) => {
+    if (!tenantId || !contact) return;
+    try {
+      const contactRef = doc(db, 'tenants', tenantId, 'crm_contacts', contact.id);
+      await updateDoc(contactRef, update as any);
+      setContact((prev) => (prev ? ({ ...prev, ...update } as any) : prev));
+      logger.info('contact_marketing_updated', { contactId: contact.id, ...update });
+    } catch (e) {
+      console.error('Failed to update marketing fields', e);
+      setLocalError('Failed to update marketing fields');
+    }
+  };
+
+  if (loading) {
+    return (
+      <Box sx={{ p: 3, display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  if (error || !contact) {
+    return (
+      <Box sx={{ p: 3 }}>
+        <Alert severity="error">{error || 'Contact not found'}</Alert>
+      </Box>
+    );
+  }
+
   return (
-    <Box sx={{ p: 0 }}>
-      {/* Breadcrumbs */}
-      <Box sx={{ mb: 2 }}>
-        <Breadcrumbs aria-label="breadcrumb">
-          <MUILink underline="hover" color="inherit" href="/crm" onClick={(e) => { e.preventDefault(); navigate('/crm'); }}>
-            CRM
-          </MUILink>
-          {company && (
-            <MUILink underline="hover" color="inherit" href={`/crm/companies/${company.id}`} onClick={(e) => { e.preventDefault(); navigate(`/crm/companies/${company.id}`); }}>
-              {company.companyName || company.name}
-            </MUILink>
-          )}
-          <MUILink underline="hover" color="inherit" href="/contacts" onClick={(e) => { e.preventDefault(); navigate(company ? `/crm/companies/${company.id}?tab=2` : '/crm?tab=contacts'); }}>
-            Contacts
-          </MUILink>
-          <Typography color="text.primary">{contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}` || 'Contact'}</Typography>
-        </Breadcrumbs>
-      </Box>
-      {/* Header */}
-      <Box sx={{ mb: 3 }}>
-        <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 3 }}>
-            {/* Contact Avatar */}
-            <Box sx={{ position: 'relative' }}>
-              <Avatar
-                src={contact.avatar}
-                sx={{ 
-                  width: 128, 
-                  height: 128,
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      {/* PageHeader with Record redesign */}
+      <PageHeader
+        title={
+          <Box>
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
+              {/* Avatar - 108px × 108px */}
+              <SafeAvatar
+                src={contact.avatar || undefined}
+                sx={{
+                  width: 108,
+                  height: 108,
                   bgcolor: contact.avatar ? 'transparent' : 'primary.main',
-                  fontSize: '2.5rem',
-                  fontWeight: 'bold'
+                  fontSize: '40px',
+                  fontWeight: 600,
+                  flexShrink: 0,
                 }}
               >
-                {getInitials(contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`)}
-              </Avatar>
+                {getContactInitials()}
+              </SafeAvatar>
               
-              {/* Avatar Upload/Delete Buttons */}
+              {/* Three-line content area - matches avatar height */}
               <Box sx={{ 
-                position: 'absolute', 
-                bottom: -8, 
-                right: -8,
-                display: 'flex',
-                gap: 0.5
+                flex: 1, 
+                minWidth: 0, 
+                display: 'flex', 
+                flexDirection: 'column', 
+                justifyContent: 'space-between', 
+                minHeight: 108 
               }}>
-                <input
-                  accept="image/*"
-                  style={{ display: 'none' }}
-                  id="avatar-upload"
-                  type="file"
-                  onChange={handleAvatarUpload}
-                  disabled={avatarLoading}
-                />
-                <label htmlFor="avatar-upload">
-                  <IconButton
-                    component="span"
-                    size="small"
+                {/* Line 1: Name + Contact Type + Favorite Star */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 0, flexWrap: 'wrap' }}>
+                  <Typography
+                    variant="h6"
                     sx={{
-                      bgcolor: 'grey.300',
-                      color: 'grey.700',
-                      '&:hover': {
-                        bgcolor: 'grey.400'
-                      },
-                      width: 28,
-                      height: 28
-                    }}
-                    disabled={avatarLoading}
-                  >
-                    {avatarLoading ? (
-                      <CircularProgress size={16} color="inherit" />
-                    ) : (
-                      <UploadIcon sx={{ fontSize: 16 }} />
-                    )}
-                  </IconButton>
-                </label>
-                
-                {contact.avatar && (
-                  <IconButton
-                    size="small"
-                    onClick={handleAvatarDelete}
-                    disabled={avatarLoading}
-                    sx={{
-                      bgcolor: 'grey.300',
-                      color: 'grey.700',
-                      '&:hover': {
-                        bgcolor: 'grey.400'
-                      },
-                      width: 28,
-                      height: 28
+                      fontSize: { xs: '20px', md: '24px' },
+                      fontWeight: 700,
+                      lineHeight: 1.2,
                     }}
                   >
-                    {avatarLoading ? (
-                      <CircularProgress size={16} color="inherit" />
-                    ) : (
-                      <DeleteIcon sx={{ fontSize: 16 }} />
-                    )}
-                  </IconButton>
-                )}
-              </Box>
-            </Box>
-
-            {/* Contact Information */}
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-              <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
-                {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`}
-              </Typography>
-              
-              {/* Job Title */}
-              <Typography variant="body2" color="text.secondary"  sx={{ fontWeight: 'bold' }}>
-                {contact.jobTitle || contact.title || 'No title'}
-              </Typography>
-
-              {/* Professional Headline from Apollo */}
-              {contact?.headline && (
-                <Typography 
-                  variant="body2" 
-                  color="text.secondary" 
-                  sx={{ 
-                    fontStyle: 'italic',
-                    maxWidth: '600px',
-                    lineHeight: 1.4,
-                    mb: 0.5
-                  }}
-                >
-                  {contact.headline}
-                </Typography>
-              )}
-
-              {/* Company and Location Links (associations are source of truth) */}
-              {company && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0 }}>
-                  <BusinessIcon fontSize="small" color="primary" />
-                  <Typography 
-                    variant="body2" 
-                    color="primary"
-                    sx={{ cursor: 'pointer', textDecoration: 'underline', '&:hover': { color: 'primary.dark' } }}
-                    onClick={() => navigate(`/crm/companies/${company.id}`)}
-                  >
-                    {company.companyName || company.name}
+                    {getContactDisplayName()}
                   </Typography>
-                  {(() => {
-                    // Get all associated locations
-                    const assocLocations = contact.associations?.locations || [];
-                    const selectedLocations = [];
-                    
-                    // First, try to get locations from associations
-                    for (const locationId of assocLocations) {
-                      const location = companyLocations.find((l: any) => l.id === locationId);
-                      if (location) {
-                        selectedLocations.push(location);
-                      }
-                    }
-                    
-                    // If no locations found in associations, check legacy locationId
-                    if (selectedLocations.length === 0 && contact.locationId) {
-                      const legacyLocation = companyLocations.find((l: any) => l.id === contact.locationId);
-                      if (legacyLocation) {
-                        selectedLocations.push(legacyLocation);
-                      }
-                    }
-                    
-                    // Display locations
-                    if (selectedLocations.length > 0) {
-                      return (
-                        <>
-                          <Typography variant="body2" color="text.secondary">/</Typography>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
-                            {selectedLocations.map((location, index) => (
-                              <React.Fragment key={location.id}>
-                                {index > 0 && <Typography variant="body2" color="text.secondary">, </Typography>}
-                                <Typography 
-                                  variant="body2" 
-                                  color="primary"
-                                  sx={{ cursor: 'pointer', textDecoration: 'underline', '&:hover': { color: 'primary.dark' } }}
-                                  onClick={() => navigate(`/crm/companies/${company.id}/locations/${location.id}`)}
-                                >
-                                  {location.nickname || location.name || location.title || 'Unknown Location'}
-                                </Typography>
-                              </React.Fragment>
-                            ))}
-                          </Box>
-                        </>
-                      );
-                    }
-                    
-                    return null;
-                  })()}
-                </Box>
-              )}
-
-              {/* Location Information */}
-              {getFormattedLocation() && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0 }}>
-                  <LocationIcon fontSize="small" color="secondary" />
-                  <Typography 
-                    variant="body2" 
-                    color="text.secondary"
-                  >
-                    {getFormattedLocation()}
-                  </Typography>
-                </Box>
-              )}
-              
-              {/* Contact Icons */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0, mt: 0 }}>
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: contact.email ? 'primary.main' : 'text.disabled',
-                    bgcolor: contact.email ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: contact.email ? 'primary.dark' : 'text.disabled',
-                      bgcolor: contact.email ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (contact.email) {
-                      window.open(`mailto:${contact.email}`, '_blank');
-                    }
-                  }}
-                  title={contact.email ? 'Send Email' : 'No email'}
-                >
-                  <EmailIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-                
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: contact.phone || contact.workPhone ? 'primary.main' : 'text.disabled',
-                    bgcolor: contact.phone || contact.workPhone ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: contact.phone || contact.workPhone ? 'primary.dark' : 'text.disabled',
-                      bgcolor: contact.phone || contact.workPhone ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (contact.phone || contact.workPhone) {
-                      window.open(`tel:${contact.phone || contact.workPhone}`, '_blank');
-                    }
-                  }}
-                  title={contact.phone || contact.workPhone ? 'Call Phone' : 'No phone'}
-                >
-                  <PhoneIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-                
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: contact.linkedInUrl ? 'primary.main' : 'text.disabled',
-                    bgcolor: contact.linkedInUrl ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: contact.linkedInUrl ? 'primary.dark' : 'text.disabled',
-                      bgcolor: contact.linkedInUrl ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (contact.linkedInUrl) {
-                      let url = contact.linkedInUrl;
-                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                        url = 'https://' + url;
-                      }
-                      window.open(url, '_blank');
-                    }
-                  }}
-                  title={contact.linkedInUrl ? 'View LinkedIn' : 'No LinkedIn'}
-                >
-                  <LinkedInIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-                
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: contact.twitterUrl ? 'primary.main' : 'text.disabled',
-                    bgcolor: contact.twitterUrl ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: contact.twitterUrl ? 'primary.dark' : 'text.disabled',
-                      bgcolor: contact.twitterUrl ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (contact.twitterUrl) {
-                      let url = contact.twitterUrl;
-                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                        url = 'https://' + url;
-                      }
-                      window.open(url, '_blank');
-                    }
-                  }}
-                  title={contact.twitterUrl ? 'View Twitter' : 'No Twitter'}
-                >
-                  <TwitterIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-                
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: contact.facebookUrl ? 'primary.main' : 'text.disabled',
-                    bgcolor: contact.facebookUrl ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: contact.facebookUrl ? 'primary.dark' : 'text.disabled',
-                      bgcolor: contact.facebookUrl ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (contact.facebookUrl) {
-                      let url = contact.facebookUrl;
-                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                        url = 'https://' + url;
-                      }
-                      window.open(url, '_blank');
-                    }
-                  }}
-                  title={contact.facebookUrl ? 'View Facebook' : 'No Facebook'}
-                >
-                  <FacebookIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-                
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: contact.instagramUrl ? 'primary.main' : 'text.disabled',
-                    bgcolor: contact.instagramUrl ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: contact.instagramUrl ? 'primary.dark' : 'text.disabled',
-                      bgcolor: contact.instagramUrl ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (contact.instagramUrl) {
-                      let url = contact.instagramUrl;
-                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                        url = 'https://' + url;
-                      }
-                      window.open(url, '_blank');
-                    }
-                  }}
-                  title={contact.instagramUrl ? 'View Instagram' : 'No Instagram'}
-                >
-                  <InstagramIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-                
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: contact.website ? 'primary.main' : 'text.disabled',
-                    bgcolor: contact.website ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: contact.website ? 'primary.dark' : 'text.disabled',
-                      bgcolor: contact.website ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (contact.website) {
-                      let url = contact.website;
-                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                        url = 'https://' + url;
-                      }
-                      window.open(url, '_blank');
-                    }
-                  }}
-                  title={contact.website ? 'Visit Website' : 'No Website'}
-                >
-                  <LanguageIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-              </Box>
-
-              {/* Contact Type and Engagement Level */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Type:</Typography>
-                  <Chip 
-                    label={contact?.contactType || 'Unknown'} 
-                    color={contact?.contactType === 'Decision Maker' ? 'success' : 
-                           contact?.contactType === 'Unknown' ? 'warning' : 'primary'} 
-                    size="small" 
-                    sx={{ fontWeight: 500 }}
-                  />
-                </Box>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Engagement:</Typography>
-                  <Chip 
-                    label={metrics.completedTasks > 5 ? 'High' : metrics.completedTasks > 2 ? 'Medium' : 'Low'} 
-                    color={metrics.completedTasks > 5 ? 'success' : metrics.completedTasks > 2 ? 'warning' : 'error'} 
-                    size="small" 
-                    sx={{ fontWeight: 500 }}
-                  />
-                </Box>
-                {contact?.inferredSeniority && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Seniority:</Typography>
-                    <Chip 
-                      label={contact.inferredSeniority} 
-                      color={contact.inferredSeniority === 'C-Level' || contact.inferredSeniority === 'Executive' ? 'success' : 
-                             contact.inferredSeniority === 'Senior' ? 'primary' : 
-                             contact.inferredSeniority === 'Mid-Level' ? 'warning' : 'default'} 
-                      size="small" 
-                      sx={{ fontWeight: 500 }}
+                  {contact.contactType && (
+                    <Chip
+                      label={contact.contactType}
+                      size="small"
+                      color={contact.contactType === 'Decision Maker' ? 'success' : contact.contactType === 'Champion' ? 'primary' : 'default'}
+                      sx={{
+                        fontWeight: 500,
+                        fontSize: '0.8125rem',
+                        height: '28px',
+                        borderRadius: 1,
+                        // Match the green styling from Additional Details section
+                        borderColor: contact.contactType === 'Decision Maker'
+                          ? 'rgba(76, 175, 80, 0.3)'
+                          : contact.contactType === 'Unknown'
+                          ? 'rgba(255, 152, 0, 0.3)'
+                          : 'rgba(33, 150, 243, 0.3)',
+                        bgcolor: contact.contactType === 'Decision Maker'
+                          ? 'rgba(76, 175, 80, 0.08)'
+                          : contact.contactType === 'Unknown'
+                          ? 'rgba(255, 152, 0, 0.08)'
+                          : 'rgba(33, 150, 243, 0.08)',
+                        color: contact.contactType === 'Decision Maker'
+                          ? '#4CAF50'
+                          : contact.contactType === 'Unknown'
+                          ? '#FF9800'
+                          : '#2196F3',
+                        '&:hover': {
+                          borderColor: contact.contactType === 'Decision Maker'
+                            ? 'rgba(76, 175, 80, 0.5)'
+                            : contact.contactType === 'Unknown'
+                            ? 'rgba(255, 152, 0, 0.5)'
+                            : 'rgba(33, 150, 243, 0.5)',
+                          bgcolor: contact.contactType === 'Decision Maker'
+                            ? 'rgba(76, 175, 80, 0.12)'
+                            : contact.contactType === 'Unknown'
+                            ? 'rgba(255, 152, 0, 0.12)'
+                            : 'rgba(33, 150, 243, 0.12)',
+                        }
+                      }}
                     />
-                  </Box>
-                )}
+                  )}
+                  <FormControl size="small" sx={{ minWidth: 140 }}>
+                    <InputLabel>Pipeline</InputLabel>
+                    <Select
+                      value={(contact.pipelineStage ?? 'contact') as PipelineStage}
+                      label="Pipeline"
+                      onChange={(e) => handlePipelineUpdate({ pipelineStage: e.target.value as PipelineStage })}
+                      sx={{
+                        height: 32,
+                        borderRadius: 1,
+                        fontSize: '0.875rem',
+                      }}
+                    >
+                      {PIPELINE_STAGES.map((s) => (
+                        <MenuItem key={s} value={s}>
+                          {PIPELINE_STAGE_LABELS[s]}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <FavoriteButton
+                    itemId={contact.id}
+                    favoriteType="contacts"
+                    isFavorite={isFavorite}
+                    toggleFavorite={toggleFavorite}
+                    size="medium"
+                  />
+                </Box>
+                
+                {/* Line 2: Contact Action Icons */}
+                <Stack 
+                  direction="row" 
+                  spacing={0.5} 
+                  alignItems="center" 
+                  flexWrap="wrap" 
+                  sx={{ mb: 0.5 }}
+                >
+                  {contact.email && (
+                    <Tooltip title={gmailConnected ? `Email ${contact.email} (send via HRX)` : `Email ${contact.email} (open mail app)`}>
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          if (gmailConnected) {
+                            setMessageDrawerChannel('email');
+                            setMessageDrawerOpen(true);
+                          } else {
+                            window.open(`mailto:${contact.email}`, '_blank');
+                          }
+                        }}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <EmailOutlinedIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  {(contact.phone || contact.workPhone) && (
+                    <Tooltip title={`Call ${formatPhoneNumber(contact.phone || contact.workPhone || '')}`}>
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          if (contact.phone || contact.workPhone) {
+                            // Use cleaned phone number (digits only) for tel: link
+                            const phoneDigits = (contact.phone || contact.workPhone || '').replace(/\D/g, '');
+                            window.open(`tel:${phoneDigits}`, '_blank');
+                          }
+                        }}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <PhoneIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  {contact.linkedInUrl && (
+                    <Tooltip title="View LinkedIn Profile">
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          let url = contact.linkedInUrl!;
+                          if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                            url = 'https://' + url;
+                          }
+                          window.open(url, '_blank');
+                        }}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <LinkedInIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  {/* Website icon (right after LinkedIn per spec) */}
+                  {contact.website && (
+                    <Tooltip title={`Visit ${contact.website}`}>
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          let url = contact.website!;
+                          if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                            url = 'https://' + url;
+                          }
+                          window.open(url, '_blank');
+                        }}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <LanguageIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  {/* Add Note Icon Button */}
+                  <Tooltip title={notesCount > 0 ? `${notesCount} note${notesCount !== 1 ? 's' : ''}` : 'Add note'}>
+                    <Badge badgeContent={notesCount > 0 ? notesCount : undefined} color="primary">
+                      <IconButton
+                        size="small"
+                        onClick={() => setShowAddNoteDialog(true)}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <NoteIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Badge>
+                  </Tooltip>
+                  {/* AI Enhance Icon Button */}
+                  <Tooltip title={aiEnhancing ? 'Enhancing...' : 'AI Enhance'}>
+                    {/* Tooltip won't trigger on disabled buttons; wrap in span per MUI guidance */}
+                    <span style={{ display: 'inline-flex' }}>
+                      <IconButton
+                        size="small"
+                        onClick={handleAIEnhancement}
+                        disabled={aiEnhancing}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          '&:disabled': {
+                            opacity: 0.6
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        {aiEnhancing ? (
+                          <CircularProgress size={16} sx={{ color: 'primary.main' }} />
+                        ) : (
+                          <AutoAwesomeIcon sx={{ fontSize: 20 }} />
+                        )}
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  {/* Add Task Icon Button */}
+                  <Tooltip title="Add Task">
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowTaskDialog(true)}
+                      sx={{ 
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        },
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <AddTaskIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                  {/* Log Activity Icon Button */}
+                  <Tooltip title="Log Activity">
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowLogActivityDialog(true)}
+                      sx={{ 
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        },
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <CheckCircleIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                </Stack>
+                
+                {/* Address line (City, State) */}
+                {(() => {
+                  const direct = [contact.city, contact.state].filter(Boolean).join(', ');
+                  if (direct) {
+                    return (
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          fontSize: '14px',
+                          fontWeight: 400,
+                          color: 'rgba(0, 0, 0, 0.55)',
+                          mt: 0,
+                          mb: 0.5,
+                        }}
+                      >
+                        {direct}
+                      </Typography>
+                    );
+                  }
 
+                  const fallback = contact.formattedAddress || contact.address || '';
+                  const parts = fallback
+                    .split(',')
+                    .map((p) => p.trim())
+                    .filter(Boolean);
+                  const guess = parts.length >= 2 ? `${parts[0]}, ${parts[1]}` : '';
+                  if (!guess) return null;
+
+                  return (
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontSize: '14px',
+                        fontWeight: 400,
+                        color: 'rgba(0, 0, 0, 0.55)',
+                        mt: 0,
+                        mb: 0.5,
+                      }}
+                    >
+                      {guess}
+                    </Typography>
+                  );
+                })()}
+
+                {/* Line 3: Connections (replaces email/ID/date row) */}
+                <Stack
+                  direction="row"
+                  spacing={2}
+                  alignItems="center"
+                  flexWrap="wrap"
+                  sx={{ mt: 0 }}
+                >
+                  {/* Company */}
+                  {(company?.id || contact.companyId) && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                      <BusinessIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          fontSize: '14px',
+                          fontWeight: 600,
+                          color: 'rgb(74, 144, 226)',
+                          cursor: 'pointer',
+                          '&:hover': { textDecoration: 'underline' },
+                        }}
+                        onClick={() => {
+                          const id = company?.id || contact.companyId;
+                          if (id) navigate(`/companies/${id}`);
+                        }}
+                      >
+                        {company?.companyName || company?.name || contact.companyName || 'Company'}
+                      </Typography>
+                    </Box>
+                  )}
+
+                  {/* Locations */}
+                  {selectedLocations.length > 0 && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                      <LocationIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                      <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                        {selectedLocations.slice(0, 2).map((loc: any, idx: number) => {
+                          const locationName = loc.nickname || loc.name || loc.title || 'Location';
+                          const cityState = [loc.city, loc.state].filter(Boolean).join(', ');
+                          const displayText = cityState ? `${locationName} - ${cityState}` : locationName;
+                          
+                          return (
+                            <React.Fragment key={loc.id || idx}>
+                              <Typography
+                                component="span"
+                                sx={{
+                                  color: 'rgb(74, 144, 226)',
+                                  cursor: company?.id ? 'pointer' : 'default',
+                                  fontWeight: 600,
+                                  '&:hover': company?.id ? { textDecoration: 'underline' } : undefined,
+                                }}
+                                onClick={() => {
+                                  if (company?.id) navigate(`/companies/${company.id}/locations/${loc.id}`);
+                                }}
+                              >
+                                {displayText}
+                              </Typography>
+                              {idx < Math.min(2, selectedLocations.length) - 1 ? ', ' : ''}
+                            </React.Fragment>
+                          );
+                        })}
+                        {selectedLocations.length > 2 ? ` +${selectedLocations.length - 2}` : ''}
+                      </Typography>
+                    </Box>
+                  )}
+
+                  {/* Deals */}
+                  {(associationsData.entities.deals || []).length > 0 && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                      <DealIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                      <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                        {(associationsData.entities.deals || []).slice(0, 2).map((d: any, idx: number) => (
+                          <React.Fragment key={d.id || idx}>
+                            <Typography
+                              component="span"
+                              sx={{
+                                color: 'rgb(74, 144, 226)',
+                                cursor: 'pointer',
+                                fontWeight: 600,
+                                '&:hover': { textDecoration: 'underline' },
+                              }}
+                              onClick={() => navigate(`/crm/deals/${d.id}`)}
+                            >
+                              {d.name || d.title || 'Deal'}
+                            </Typography>
+                            {idx < Math.min(2, (associationsData.entities.deals || []).length) - 1 ? ', ' : ''}
+                          </React.Fragment>
+                        ))}
+                        {(associationsData.entities.deals || []).length > 2 ? ` +${(associationsData.entities.deals || []).length - 2}` : ''}
+                      </Typography>
+                    </Box>
+                  )}
+
+                  {/* Job Orders */}
+                  {jobOrders.length > 0 && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                      <WorkIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                      <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                        {jobOrders.slice(0, 2).map((jo: any, idx: number) => (
+                          <React.Fragment key={jo.id || idx}>
+                            <Typography
+                              component="span"
+                              sx={{
+                                color: 'rgb(74, 144, 226)',
+                                cursor: 'pointer',
+                                fontWeight: 600,
+                                '&:hover': { textDecoration: 'underline' },
+                              }}
+                              onClick={() => navigate(`/crm/job-orders/${jo.id}`)}
+                            >
+                              {jo.jobOrderName || jo.jobTitle || 'Job Order'}
+                            </Typography>
+                            {idx < Math.min(2, jobOrders.length) - 1 ? ', ' : ''}
+                          </React.Fragment>
+                        ))}
+                        {jobOrders.length > 2 ? ` +${jobOrders.length - 2}` : ''}
+                      </Typography>
+                    </Box>
+                  )}
+
+                  {/* Salespeople */}
+                  {associatedSalespeople.length > 0 && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                      <PersonIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                      <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                        {associatedSalespeople.slice(0, 2).map((sp: any, idx: number) => (
+                          <React.Fragment key={sp.id || idx}>
+                            <Typography component="span" sx={{ fontWeight: 600 }}>
+                              {sp.displayName || `${sp.firstName || ''} ${sp.lastName || ''}`.trim() || sp.email || 'Salesperson'}
+                            </Typography>
+                            {idx < Math.min(2, associatedSalespeople.length) - 1 ? ', ' : ''}
+                          </React.Fragment>
+                        ))}
+                        {associatedSalespeople.length > 2 ? ` +${associatedSalespeople.length - 2}` : ''}
+                      </Typography>
+                    </Box>
+                  )}
+                </Stack>
+
+                {/* Line 4: Marketing (tags + segment) */}
+                <ContactHeaderMarketing
+                  contact={{
+                    companyName: contact.companyName,
+                    jobTitle: contact.jobTitle || contact.title,
+                    marketingTags: contact.marketingTags || [],
+                    industrySegment: contact.industrySegment,
+                    marketingEnabled: contact.marketingEnabled,
+                  }}
+                  onUpdateMarketing={handleUpdateMarketing}
+                />
+
+                {/* Line 5: Professional Headline */}
+                {contact.headline && (
+                  <Typography 
+                    variant="body2" 
+                    color="text.secondary" 
+                    sx={{ 
+                      fontStyle: 'italic',
+                      mt: 1,
+                      fontSize: '0.875rem',
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {contact.headline}
+                  </Typography>
+                )}
               </Box>
             </Box>
           </Box>
-
-          {/* Action Buttons */}
-          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.5 }}>
-            <Box sx={{ display: 'flex', gap: 1 }}>
-              {/* {shouldShowFindContactInfoButton() && (
-                <Button
-                  variant="outlined"
-                  color="primary"
-                  startIcon={findingContactInfo ? <CircularProgress size={20} color="inherit" /> : <EmailIcon />}
-                  onClick={handleFindContactInfo}
-                  disabled={findingContactInfo}
-                >
-                  {findingContactInfo ? 'Finding...' : 'Find Contact Info'}
-                </Button>
-              )} */}
-              <Button 
-                variant="outlined" 
-                startIcon={<AddIcon />}
-                onClick={() => setShowAddNoteDialog(true)}
-                size="small"
-              >
-                Add Note
-              </Button>
+        }
+        filters={
+          <Box
+            sx={{
+              px: 2,
+              py: 1.25,
+              backgroundColor: '#F9FAFB',
+              borderRadius: 2,
+              border: '1px solid #EAEEF4',
+              overflowX: 'auto',
+              overflowY: 'hidden',
+              '&::-webkit-scrollbar': { height: '6px' },
+              '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)', borderRadius: '4px' },
+              '&::-webkit-scrollbar-thumb': {
+                background: 'rgba(0, 0, 0, 0.15)',
+                borderRadius: '4px',
+                '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+              },
+              scrollbarWidth: 'thin',
+              scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+            }}
+          >
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
               <Button
-                variant="contained"
-                startIcon={aiEnhancing ? <CircularProgress size={20} color="inherit" /> : <RocketLaunchIcon />}
-                onClick={handleAIEnhancement}
-                disabled={aiEnhancing}
-                sx={{ 
-                  bgcolor: 'primary.main',
-                  color: 'white',
-                  '&:hover': {
-                    bgcolor: 'primary.dark'
-                  },
-                  '&:disabled': {
-                    bgcolor: 'grey.400'
-                  }
+                variant={tabValue === 0 ? 'contained' : 'text'}
+                onClick={() => setTabValue(0)}
+                startIcon={<DashboardIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 0 ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } } : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
                 }}
               >
-                {aiEnhancing ? 'Enhancing...' : 'AI Enhance'}
+                Overview
               </Button>
               <Button
-                variant="contained"
-                startIcon={<CheckCircleIcon />}
-                onClick={() => setShowLogActivityDialog(true)}
-                sx={{ 
-                  bgcolor: 'primary.main',
-                  '&:hover': {
-                    bgcolor: 'primary.dark'
-                  }
+                variant={tabValue === 1 ? 'contained' : 'text'}
+                onClick={() => setTabValue(1)}
+                startIcon={<AddTaskIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 1 ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } } : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
                 }}
               >
-                Log Activity
+                Tasks
+              </Button>
+              <Button
+                variant={tabValue === 2 ? 'contained' : 'text'}
+                onClick={() => setTabValue(2)}
+                startIcon={<NotesIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 2 ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } } : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Notes
+              </Button>
+              <Button
+                variant={tabValue === 3 ? 'contained' : 'text'}
+                onClick={() => setTabValue(3)}
+                startIcon={<TimelineIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 3 ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } } : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Activity
               </Button>
             </Box>
-            {contact.lastEnrichedAt && (
-              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', textAlign: 'right' }}>
-                Last updated: {(() => {
-                  try {
-                    // Handle Firestore timestamp
-                    if (contact.lastEnrichedAt.toDate) {
-                      return contact.lastEnrichedAt.toDate().toLocaleString();
-                    }
-                    // Handle string or number
-                    const date = new Date(contact.lastEnrichedAt);
-                    if (isNaN(date.getTime())) {
-                      return 'Recently';
-                    }
-                    return date.toLocaleString();
-                  } catch (error) {
-                    return 'Recently';
-                  }
-                })()}
-              </Typography>
-            )}
           </Box>
-        </Box>
-      </Box>
+        }
+        showDivider={false}
+        rightActions={
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+            <UniversalBackButton
+              onClick={() => navigate(company ? `/companies/${company.id}?tab=2` : '/contacts')}
+            />
+            <Tooltip title="Open Sales Coach">
+              <IconButton
+                onClick={() => {
+                  if (contact && tenantId) {
+                    const contactName = contact.fullName || contact.firstName || contact.lastName || 'Contact';
+                    console.log('[ContactDetails] Opening Sales Coach for:', contactName, contact.id);
+                    openChatGPT({
+                      type: 'sales_coach',
+                      entityType: 'contact',
+                      entityId: contact.id,
+                      entityName: contactName,
+                      tenantId: tenantId,
+                      contactCompany: company?.companyName || company?.name,
+                      contactTitle: contact.jobTitle || contact.title,
+                      associations: contact.associations,
+                    });
+                  }
+                }}
+                sx={{
+                  backgroundColor: 'transparent !important',
+                  color: 'rgba(255,255,255,.8)',
+                  '&:hover': { 
+                    backgroundColor: 'transparent !important',
+                    color: '#FFFFFF',
+                  },
+                }}
+              >
+                <RocketLaunchIcon sx={{ fontSize: 20 }} />
+              </IconButton>
+            </Tooltip>
+          </Box>
+        }
+      />
 
       {/* Success/Error Alerts */}
       {aiSuccess && (
-        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setAiSuccess(null)}>
-          {aiSuccess}
-        </Alert>
+        <Box sx={{ px: { xs: 2, md: 3 }, pt: 2 }}>
+          <Alert severity="success" onClose={() => setAiSuccess(null)}>
+            {aiSuccess}
+          </Alert>
+        </Box>
       )}
-
-      {/* Tabs Navigation */}
-      <Paper elevation={1} sx={{ mb: 3, borderRadius: 1 }}>
-        <Tabs
-          value={tabValue}
-          onChange={handleTabChange}
-          indicatorColor="primary"
-          textColor="primary"
-          variant="scrollable"
-          scrollButtons="auto"
-          aria-label="Contact details tabs"
-        >
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <DashboardIcon fontSize="small" />
-                Dashboard
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <TaskIcon fontSize="small" />
-                Tasks
-              </Box>
-            } 
-          />
-
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <NotesIcon fontSize="small" />
-                Notes
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <TimelineIcon fontSize="small" />
-                Activity
-              </Box>
-            } 
-          />
-        </Tabs>
-      </Paper>
 
       {/* Tab Panels */}
       <TabPanel value={tabValue} index={0}>
         <Grid container spacing={3}>
           {/* Left Column - Contact Details & Core Info */}
-          <Grid item xs={12} md={4}>
+          <Grid item xs={12} md={8}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Pipeline Stage: Prospect/Lead notes and actions */}
+              <PipelineStageContainer
+                contact={{
+                  id: contact.id,
+                  contactName: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
+                  fullName: contact.fullName,
+                  companyName: contact.companyName,
+                  companyId: contact.companyId,
+                  locationId: contact.locationId,
+                  pipelineStage: contact.pipelineStage ?? 'contact',
+                  prospectFollowPlan: contact.prospectFollowPlan,
+                  leadTiming: contact.leadTiming,
+                  leadVolume: contact.leadVolume,
+                  leadNotes: contact.leadNotes,
+                }}
+                onUpdate={handlePipelineUpdate}
+                onCreateOpportunity={handleCreateOpportunity}
+              />
+
               {/* AI Summary */}
               {/* <Card>
                 <CardHeader 
@@ -2138,10 +2789,10 @@ const ContactDetails: React.FC = () => {
                             {contact.apolloEnrichment.person.employment_history.slice(0, 2).map((job: any, index: number) => (
                               <Box key={index} sx={{ p: 1, bgcolor: 'grey.50', borderRadius: 1 }}>
                                 <Typography variant="body2" fontWeight="medium">
-                                  {job.title} at {job.organization_name}
+                                  {toChipLabel(job.title)} at {toChipLabel(job.organization_name)}
                                 </Typography>
                                 <Typography variant="caption" color="text.secondary">
-                                  {job.start_date} - {job.current ? 'Present' : job.end_date || 'Unknown'}
+                                  {toChipLabel(job.start_date)} - {job.current ? 'Present' : toChipLabel(job.end_date) || 'Unknown'}
                                 </Typography>
                               </Box>
                             ))}
@@ -2189,26 +2840,61 @@ const ContactDetails: React.FC = () => {
                 </Card>
               )} */}
 
+              {/* Professional Summary (moved from center column) */}
+              {contact?.professionalSummary && String(contact.professionalSummary).trim() !== '' && (
+                <Card>
+                  <CardHeader 
+                    title="Professional Summary" 
+                    titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  />
+                  <CardContent sx={{ p: 2 }}>
+                    <Typography 
+                      variant="body2" 
+                      color="text.secondary" 
+                      sx={{ lineHeight: 1.5, whiteSpace: 'pre-wrap' }}
+                    >
+                      {String(contact.professionalSummary)}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Contact Details (Combined Widget) */}
               <Card>
                 <CardHeader 
                   title="Contact Details" 
                   titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                />
-                <CardContent sx={{ p: 2 }}>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <TextField
-                      label="Full Name"
-                      defaultValue={contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`}
-                      onBlur={(e) => {
-                        const next = (e.target.value || '').trim();
-                        if ((contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`) !== next) {
-                          handleContactUpdate('fullName', next);
+                  action={
+                    <IconButton
+                      size="small"
+                      onClick={() => setIsEditingContactDetails(!isEditingContactDetails)}
+                      sx={{ 
+                        color: isEditingContactDetails ? 'primary.main' : 'text.secondary',
+                        '&:hover': {
+                          bgcolor: 'action.hover'
                         }
                       }}
-                      fullWidth
-                      size="small"
-                    />
+                    >
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                  }
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {isEditingContactDetails ? (
+                    // Edit Mode - Show Input Fields
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <TextField
+                        label="Full Name"
+                        defaultValue={contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`}
+                        onBlur={(e) => {
+                          const next = (e.target.value || '').trim();
+                          if ((contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`) !== next) {
+                            handleContactUpdate('fullName', next);
+                          }
+                        }}
+                        fullWidth
+                        size="small"
+                      />
                     <TextField
                       label="Email"
                       defaultValue={contact.email || ''}
@@ -2228,107 +2914,15 @@ const ContactDetails: React.FC = () => {
                       InputProps={{ startAdornment: <EmailIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
                     />
                     
-                    {/* Company Association */}
-                    <Box>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                        Company Association
-                      </Typography>
-                      
-                      {/* Current Company Display */}
-                      {contact.companyName && (
-                        <Box sx={{ mb: 2, p: 1.5, bgcolor: 'primary.50', borderRadius: 1, border: '1px solid', borderColor: 'primary.200' }}>
-                          <Typography variant="body2" fontWeight="medium" color="primary.main">
-                            Currently Associated: {contact.companyName}
-                          </Typography>
-                          {contact.companyId && (
-                            <Typography variant="caption" color="text.secondary">
-                              Company ID: {contact.companyId}
-                            </Typography>
-                          )}
-                        </Box>
-                      )}
-                      
-                      {/* Company Autocomplete */}
-                      <Autocomplete
-                        options={allCompanies}
-                        getOptionLabel={(option) => option.companyName || option.name || ''}
-                        value={allCompanies.find(c => c.id === contact.companyId) || null}
-                        onChange={(event, newValue) => {
-                          if (newValue) {
-                            handleCompanyAssociation(newValue.id);
-                          }
-                        }}
-                        loading={loadingCompanies}
-                        renderInput={(params) => (
-                          <TextField
-                            {...params}
-                            label="Associate with Company"
-                            placeholder="Search companies..."
-                            size="small"
-                            InputProps={{
-                              ...params.InputProps,
-                              startAdornment: <BusinessIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />,
-                              endAdornment: (
-                                <>
-                                  {loadingCompanies ? <CircularProgress color="inherit" size={20} /> : null}
-                                  {params.InputProps.endAdornment}
-                                </>
-                              ),
-                            }}
-                          />
-                        )}
-                        renderOption={(props, option) => (
-                          <Box component="li" {...props}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <BusinessIcon fontSize="small" color="action" />
-                              <Typography variant="body2">
-                                {option.companyName || option.name}
-                              </Typography>
-                              {option.industry && (
-                                <Chip label={option.industry} size="small" variant="outlined" />
-                              )}
-                            </Box>
-                          </Box>
-                        )}
-                      />
-                      
-                      {/* Email Domain Suggestions */}
-                      {suggestedCompanies.length > 0 && contact.email && contact.email.includes('@') && (
-                        <Box sx={{ mt: 1 }}>
-                          <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
-                            Suggested companies based on email domain ({contact.email.split('@')[1]}):
-                          </Typography>
-                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                            {suggestedCompanies.map((company) => (
-                              <Button
-                                key={company.id}
-                                variant="outlined"
-                                size="small"
-                                onClick={() => handleCompanyAssociation(company.id)}
-                                sx={{ justifyContent: 'flex-start', textAlign: 'left' }}
-                                startIcon={<BusinessIcon fontSize="small" />}
-                              >
-                                <Box>
-                                  <Typography variant="body2" fontWeight="medium">
-                                    {company.companyName || company.name}
-                                  </Typography>
-                                  <Typography variant="caption" color="text.secondary">
-                                    {company.industry || 'No industry'}
-                                  </Typography>
-                                </Box>
-                              </Button>
-                            ))}
-                          </Box>
-                        </Box>
-                      )}
-                    </Box>
                     <TextField
                       label="Phone"
-                      defaultValue={contact.phone || contact.workPhone || ''}
+                      defaultValue={formatPhoneNumber(contact.phone || contact.workPhone || '')}
                       onBlur={(e) => {
                         const next = (e.target.value || '').trim();
-                        if ((contact.phone || contact.workPhone || '') !== next) {
-                          handleContactUpdate('phone', next);
+                        // Store cleaned version (digits only) but display formatted
+                        const cleaned = next.replace(/\D/g, '');
+                        if ((contact.phone || contact.workPhone || '').replace(/\D/g, '') !== cleaned) {
+                          handleContactUpdate('phone', cleaned);
                         }
                       }}
                       fullWidth
@@ -2337,11 +2931,13 @@ const ContactDetails: React.FC = () => {
                     />
                     <TextField
                       label="Mobile"
-                      defaultValue={contact.mobilePhone || ''}
+                      defaultValue={formatPhoneNumber(contact.mobilePhone || '')}
                       onBlur={(e) => {
                         const next = (e.target.value || '').trim();
-                        if ((contact.mobilePhone || '') !== next) {
-                          handleContactUpdate('mobilePhone', next);
+                        // Store cleaned version (digits only) but display formatted
+                        const cleaned = next.replace(/\D/g, '');
+                        if ((contact.mobilePhone || '').replace(/\D/g, '') !== cleaned) {
+                          handleContactUpdate('mobilePhone', cleaned);
                         }
                       }}
                       fullWidth
@@ -2374,6 +2970,87 @@ const ContactDetails: React.FC = () => {
                       size="small"
                       InputProps={{ startAdornment: <LinkedInIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
                     />
+                    <TextField
+                      label="Website"
+                      defaultValue={contact.website || ''}
+                      onBlur={(e) => {
+                        const next = (e.target.value || '').trim();
+                        if ((contact.website || '') !== next) {
+                          handleContactUpdate('website', next);
+                        }
+                      }}
+                      fullWidth
+                      size="small"
+                      InputProps={{ startAdornment: <LanguageIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                    />
+                    <TextField
+                      label="Twitter URL"
+                      defaultValue={contact.twitterUrl || ''}
+                      onBlur={(e) => {
+                        const next = (e.target.value || '').trim();
+                        if ((contact.twitterUrl || '') !== next) {
+                          handleContactUpdate('twitterUrl', next);
+                        }
+                      }}
+                      fullWidth
+                      size="small"
+                      InputProps={{ startAdornment: <TwitterIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                    />
+                    <TextField
+                      label="Facebook URL"
+                      defaultValue={contact.facebookUrl || ''}
+                      onBlur={(e) => {
+                        const next = (e.target.value || '').trim();
+                        if ((contact.facebookUrl || '') !== next) {
+                          handleContactUpdate('facebookUrl', next);
+                        }
+                      }}
+                      fullWidth
+                      size="small"
+                      InputProps={{ startAdornment: <FacebookIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                    />
+                    <TextField
+                      label="Instagram URL"
+                      defaultValue={contact.instagramUrl || ''}
+                      onBlur={(e) => {
+                        const next = (e.target.value || '').trim();
+                        if ((contact.instagramUrl || '') !== next) {
+                          handleContactUpdate('instagramUrl', next);
+                        }
+                      }}
+                      fullWidth
+                      size="small"
+                      InputProps={{ startAdornment: <InstagramIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                    />
+                    <TextField
+                      label="Professional Headline"
+                      defaultValue={contact.headline || ''}
+                      onBlur={(e) => {
+                        const next = (e.target.value || '').trim();
+                        if ((contact.headline || '') !== next) {
+                          handleContactUpdate('headline', next);
+                        }
+                      }}
+                      fullWidth
+                      size="small"
+                      multiline
+                      rows={2}
+                      placeholder="e.g., Bilingual HR Business Partner | Client Services | Passionate about customer service..."
+                    />
+                    <TextField
+                      label="Birthday"
+                      type="date"
+                      defaultValue={contact.birthday ? new Date(contact.birthday).toISOString().split('T')[0] : ''}
+                      onBlur={(e) => {
+                        const next = (e.target.value || '').trim();
+                        if ((contact.birthday ? new Date(contact.birthday).toISOString().split('T')[0] : '') !== next) {
+                          handleContactUpdate('birthday', next || null);
+                        }
+                      }}
+                      fullWidth
+                      size="small"
+                      InputLabelProps={{ shrink: true }}
+                    />
                     
                     <FormControl fullWidth size="small">
                       <InputLabel>Contact Type</InputLabel>
@@ -2405,141 +3082,144 @@ const ContactDetails: React.FC = () => {
                       size="small"
                     />
 
-                    <Box>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                        Work Locations
-                      </Typography>
-                      
-                      {/* Add Location Dropdown */}
-                      <Autocomplete
-                        options={companyLocations.filter(loc => !selectedLocations.some(selected => selected.id === loc.id))}
-                        getOptionLabel={(option) => option.nickname || option.name || option.title || 'Unknown Location'}
-                        value={locationDropdownValue}
-                        onChange={(event, newValue) => {
-                          if (newValue) {
-                            const newLocations = [...selectedLocations, newValue];
-                            setSelectedLocations(newLocations);
-                            handleLocationAssociationUpdate(newLocations);
-                            // Clear the dropdown
-                            setLocationDropdownValue(null);
-                          }
-                        }}
-                        disabled={companyLocations.length === 0}
-                        renderInput={(params) => (
-                          <TextField
-                            {...params}
-                            label={selectedLocations.length > 0 ? "Add another location" : "Add work location"}
-                            placeholder="Select a location to add..."
-                            size="small"
-                            InputProps={{
-                              ...params.InputProps,
-                              startAdornment: <LocationIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />,
-                            }}
-                          />
-                        )}
-                        renderOption={(props, option) => (
-                          <Box component="li" {...props}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <LocationIcon fontSize="small" color="action" />
-                              <Typography variant="body2">
-                                {option.nickname || option.name || option.title || 'Unknown Location'}
-                              </Typography>
-                              {option.code && (
-                                <Chip label={option.code} size="small" variant="outlined" />
+                    {/* Contact Address Information */}
+                    {selectedLocations.length > 0 ? (
+                      // Show address from worksite locations
+                      <Box>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                          Address (from Work Locations)
+                        </Typography>
+                        {selectedLocations.map((location, idx) => (
+                          <Box key={location.id} sx={{ mb: 2, p: 1.5, bgcolor: 'grey.50', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+                            <Typography variant="body2" fontWeight="medium" color="text.primary" gutterBottom>
+                              {location.nickname || location.name || location.title || 'Location'} {selectedLocations.length > 1 && `(${idx + 1})`}
+                            </Typography>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                              {location.address && (
+                                <Typography variant="body2" color="text.secondary">
+                                  {location.address}
+                                </Typography>
+                              )}
+                              {(location.city || location.state || location.country) && (
+                                <Typography variant="body2" color="text.secondary">
+                                  {[location.city, location.state, location.country].filter(Boolean).join(', ')}
+                                </Typography>
+                              )}
+                              {location.zipcode && (
+                                <Typography variant="body2" color="text.secondary">
+                                  {location.zipcode}
+                                </Typography>
                               )}
                             </Box>
+                            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block', fontStyle: 'italic' }}>
+                              Address is managed via the work location above. Edit the location to change this address.
+                            </Typography>
                           </Box>
-                        )}
-                      />
-                      
-                      {/* Current Locations Table */}
-                      {selectedLocations.length > 0 && (
-                        <TableContainer component={Paper} variant="outlined" sx={{ mt: 2, maxHeight: 200 }}>
-                          <Table size="small">
-                            <TableHead>
-                              <TableRow>
-                                <TableCell>Location</TableCell>
-                                <TableCell align="right">Actions</TableCell>
-                              </TableRow>
-                            </TableHead>
-                            <TableBody>
-                              {selectedLocations.map((location) => (
-                                <TableRow key={location.id}>
-                                  <TableCell>
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                      <LocationIcon fontSize="small" color="action" />
-                                      <Typography variant="body2">
-                                        {location.nickname || location.name || location.title || 'Unknown Location'}
-                                      </Typography>
-                                      {location.code && (
-                                        <Chip label={location.code} size="small" variant="outlined" />
-                                      )}
-                                    </Box>
-                                  </TableCell>
-                                  <TableCell align="right">
-                                    <IconButton
-                                      size="small"
-                                      onClick={() => {
-                                        const newLocations = selectedLocations.filter(loc => loc.id !== location.id);
-                                        setSelectedLocations(newLocations);
-                                        handleLocationAssociationUpdate(newLocations);
-                                      }}
-                                      color="error"
-                                    >
-                                      <DeleteIcon fontSize="small" />
-                                    </IconButton>
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </TableContainer>
-                      )}
-                      
-                      {selectedLocations.length === 0 && (
-                        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                          No work locations assigned. Use the dropdown above to add locations.
-                        </Typography>
-                      )}
-                    </Box>
-
-                    {/* Contact Address Information */}
-                    {(contact.address || contact.city || contact.state || contact.country || contact.formattedAddress) && (
-                      <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
-                        <Typography variant="subtitle2" fontWeight="medium" color="text.primary" gutterBottom>
+                        ))}
+                        <TextField
+                          label="Time Zone"
+                          defaultValue={contact.timeZone || ''}
+                          onBlur={(e) => {
+                            const next = (e.target.value || '').trim();
+                            if ((contact.timeZone || '') !== next) {
+                              handleContactUpdate('timeZone', next);
+                            }
+                          }}
+                          fullWidth
+                          size="small"
+                          placeholder="e.g., America/Los_Angeles"
+                          sx={{ mt: 1 }}
+                        />
+                      </Box>
+                    ) : (
+                      // Show editable address fields when no worksite locations
+                      <Box>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                           Contact Address
                         </Typography>
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                          {contact.formattedAddress && (
-                            <Typography variant="body2" color="text.secondary">
-                              {contact.formattedAddress}
-                            </Typography>
-                          )}
-                          {!contact.formattedAddress && (
-                            <>
-                              {contact.address && (
-                                <Typography variant="body2" color="text.secondary">
-                                  {contact.address}
-                                </Typography>
-                              )}
-                              {(contact.city || contact.state || contact.country) && (
-                                <Typography variant="body2" color="text.secondary">
-                                  {[contact.city, contact.state, contact.country].filter(Boolean).join(', ')}
-                                </Typography>
-                              )}
-                              {contact.zipcode && (
-                                <Typography variant="body2" color="text.secondary">
-                                  {contact.zipcode}
-                                </Typography>
-                              )}
-                            </>
-                          )}
-                          {contact.timeZone && (
-                            <Typography variant="caption" color="text.secondary">
-                              Time Zone: {contact.timeZone}
-                            </Typography>
-                          )}
+                        <TextField
+                          label="Street Address"
+                          defaultValue={contact.address || ''}
+                          onBlur={(e) => {
+                            const next = (e.target.value || '').trim();
+                            if ((contact.address || '') !== next) {
+                              handleContactUpdate('address', next);
+                            }
+                          }}
+                          fullWidth
+                          size="small"
+                          sx={{ mb: 1 }}
+                          InputProps={{ startAdornment: <LocationIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                        />
+                        <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
+                          <TextField
+                            label="City"
+                            defaultValue={contact.city || ''}
+                            onBlur={(e) => {
+                              const next = (e.target.value || '').trim();
+                              if ((contact.city || '') !== next) {
+                                handleContactUpdate('city', next);
+                              }
+                            }}
+                            fullWidth
+                            size="small"
+                          />
+                          <TextField
+                            label="State"
+                            defaultValue={contact.state || ''}
+                            onBlur={(e) => {
+                              const next = (e.target.value || '').trim();
+                              if ((contact.state || '') !== next) {
+                                handleContactUpdate('state', next);
+                              }
+                            }}
+                            fullWidth
+                            size="small"
+                          />
+                          <TextField
+                            label="Zip Code"
+                            defaultValue={contact.zipcode || ''}
+                            onBlur={(e) => {
+                              const next = (e.target.value || '').trim();
+                              if ((contact.zipcode || '') !== next) {
+                                handleContactUpdate('zipcode', next);
+                              }
+                            }}
+                            fullWidth
+                            size="small"
+                          />
                         </Box>
+                        <TextField
+                          label="Country"
+                          defaultValue={contact.country || ''}
+                          onBlur={(e) => {
+                            const next = (e.target.value || '').trim();
+                            if ((contact.country || '') !== next) {
+                              handleContactUpdate('country', next);
+                            }
+                          }}
+                          fullWidth
+                          size="small"
+                          sx={{ mb: 1 }}
+                        />
+                        <TextField
+                          label="Time Zone"
+                          defaultValue={contact.timeZone || ''}
+                          onBlur={(e) => {
+                            const next = (e.target.value || '').trim();
+                            if ((contact.timeZone || '') !== next) {
+                              handleContactUpdate('timeZone', next);
+                            }
+                          }}
+                          fullWidth
+                          size="small"
+                          placeholder="e.g., America/Los_Angeles"
+                        />
+                        {contact.formattedAddress && (
+                          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                            Formatted: {contact.formattedAddress}
+                          </Typography>
+                        )}
                       </Box>
                     )}
 
@@ -2566,335 +3246,640 @@ const ContactDetails: React.FC = () => {
                       />
                     </Box>
                   </Box>
-                </CardContent>
-              </Card>
-
-
-            </Box>
-          </Grid>
-
-          {/* Center Column - Contact Intelligence */}
-          <Grid item xs={12} md={5}>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Sales Coach Widget */}
-              <Card>
-                <CardHeader 
-                  title="Sales Coach" 
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                  action={
-                    <IconButton 
-                      size="small" 
-                      title="Start new conversation"
-                      onClick={() => {
-                        // This will trigger a new conversation in the SalesCoach component
-                        const event = new CustomEvent('startNewSalesCoachConversation', {
-                          detail: { entityId: contact.id }
-                        });
-                        window.dispatchEvent(event);
-                      }}
-                    >
-                      <AddIcon />
-                    </IconButton>
-                  }
-                  sx={{ pb: 1 }}
-                />
-                <CardContent sx={{ p: 0 }}>
-                 <Box sx={{ height: 850 }}>
-                   <SalesCoach 
-                     entityType="contact"
-                     entityId={contact.id}
-                     entityName={contact.fullName || contact.firstName || contact.lastName || 'Contact'}
-                     tenantId={tenantId}
-                     contactCompany={company?.companyName || company?.name}
-                     contactTitle={contact.jobTitle || contact.title}
-                     associations={contact.associations}
-                     hideHeader
-                   />
-                 </Box>
-                 </CardContent>
-               </Card>
-
-              {/* Contact Intelligence */}
-              {/* Contact Intelligence - Hidden for now */}
-              {/* <Card>
-                <CardHeader 
-                  title="Contact Intelligence" 
-                  action={
-                    <IconButton size="small">
-                      <AutoAwesomeIcon sx={{ fontSize: 16 }} />
-                    </IconButton>
-                  }
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                />
-                <CardContent sx={{ p: 2 }}>
-                  {aiComponentsLoaded ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <Box sx={{ mb: 2 }}>
-                        <Typography variant="body2" fontWeight="bold" sx={{ mb: 1 }}>
-                          AI Insights
+                  ) : (
+                    // View Mode - Show as Read-Only Text with Better Visual Hierarchy
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      {/* Contact Information Section */}
+                      <Box>
+                        <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Contact Information
                         </Typography>
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                          {insights.slice(0, 3).map((insight, index) => (
-                            <Box key={index} sx={{ 
-                              display: 'flex', 
-                              alignItems: 'center', 
-                              gap: 1, 
-                              p: 1, 
-                              borderRadius: 1, 
-                              bgcolor: insight.type === 'success' ? 'success.50' : 
-                                       insight.type === 'warning' ? 'warning.50' : 
-                                       insight.type === 'error' ? 'error.50' : 'info.50',
-                              border: '1px solid',
-                              borderColor: insight.type === 'success' ? 'success.200' : 
-                                          insight.type === 'warning' ? 'warning.200' : 
-                                          insight.type === 'error' ? 'error.200' : 'info.200'
-                            }}>
-                              <Box sx={{ 
-                                width: 8, 
-                                height: 8, 
-                                borderRadius: '50%', 
-                                bgcolor: insight.type === 'success' ? 'success.main' : 
-                                        insight.type === 'warning' ? 'warning.main' : 
-                                        insight.type === 'error' ? 'error.main' : 'info.main' 
-                              }} />
-                              <Typography variant="caption" fontSize="0.75rem">
-                                {insight.message}
+                        <Grid container spacing={2}>
+                          {(contact.fullName || contact.firstName || contact.lastName) && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <PersonIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Full Name
+                                  </Typography>
+                                  <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
+                                    {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-'}
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                          {contact.email && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <EmailIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Email
+                                  </Typography>
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
+                                    <Typography variant="body1" sx={{ flex: 1 }}>
+                                      <MUILink 
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          if (gmailConnected) {
+                                            setMessageDrawerChannel('email');
+                                            setMessageDrawerOpen(true);
+                                          } else {
+                                            window.open(`mailto:${contact.email}`, '_blank');
+                                          }
+                                        }}
+                                        color="primary" 
+                                        underline="hover"
+                                        sx={{ wordBreak: 'break-all', cursor: 'pointer' }}
+                                      >
+                                        {contact.email}
+                                      </MUILink>
+                                    </Typography>
+                                    <Tooltip title="Copy email to clipboard">
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => copyToClipboard(contact.email || '', 'Email')}
+                                        sx={{ 
+                                          p: 0.5,
+                                          color: 'text.secondary',
+                                          '&:hover': { color: 'primary.main' }
+                                        }}
+                                      >
+                                        <ContentCopyIcon sx={{ fontSize: 16 }} />
+                                      </IconButton>
+                                    </Tooltip>
+                                  </Box>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                          {(contact.phone || contact.workPhone) && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <PhoneIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Phone
+                                  </Typography>
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
+                                    <Typography variant="body1" sx={{ flex: 1 }}>
+                                      {formatPhoneNumber(contact.phone || contact.workPhone || '') || '-'}
+                                    </Typography>
+                                    <Tooltip title="Copy phone number to clipboard">
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => {
+                                          const phoneValue = contact.phone || contact.workPhone || '';
+                                          copyToClipboard(formatPhoneNumber(phoneValue), 'Phone number');
+                                        }}
+                                        sx={{ 
+                                          p: 0.5,
+                                          color: 'text.secondary',
+                                          '&:hover': { color: 'primary.main' }
+                                        }}
+                                      >
+                                        <ContentCopyIcon sx={{ fontSize: 16 }} />
+                                      </IconButton>
+                                    </Tooltip>
+                                  </Box>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                          {contact.mobilePhone && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <PhoneIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Mobile
+                                  </Typography>
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
+                                    <Typography variant="body1" sx={{ flex: 1 }}>
+                                      {formatPhoneNumber(contact.mobilePhone)}
+                                    </Typography>
+                                    <Tooltip title="Copy mobile number to clipboard">
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => copyToClipboard(formatPhoneNumber(contact.mobilePhone || ''), 'Mobile number')}
+                                        sx={{ 
+                                          p: 0.5,
+                                          color: 'text.secondary',
+                                          '&:hover': { color: 'primary.main' }
+                                        }}
+                                      >
+                                        <ContentCopyIcon sx={{ fontSize: 16 }} />
+                                      </IconButton>
+                                    </Tooltip>
+                                  </Box>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                          {(selectedLocations.length > 0 || contact.address || contact.city || contact.state || contact.country || contact.formattedAddress) && (
+                            <Grid item xs={12}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <LocationIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Address
+                                  </Typography>
+                                  <Box sx={{ mt: 0.25 }}>
+                                    {selectedLocations.length > 0 ? (
+                                      // Show worksite location address
+                                      selectedLocations.map((location, idx) => (
+                                        <Box key={location.id} sx={{ mb: idx < selectedLocations.length - 1 ? 1 : 0 }}>
+                                          <Typography variant="body2" fontWeight="medium" color="text.primary">
+                                            {location.nickname || location.name || location.title || 'Location'}
+                                          </Typography>
+                                          <Typography variant="body2" color="text.secondary">
+                                            {location.address || '-'}
+                                            {location.address && (location.city || location.state || location.zipcode || location.country) && ', '}
+                                            {[location.city, location.state, location.zipcode, location.country].filter(Boolean).join(', ')}
+                                          </Typography>
+                                          {contact.timeZone && idx === 0 && (
+                                            <Typography variant="caption" color="text.secondary">
+                                              {contact.timeZone}
+                                            </Typography>
+                                          )}
+                                        </Box>
+                                      ))
+                                    ) : (
+                                      // Fallback to contact address fields
+                                      <>
+                                        <Typography variant="body2" color="text.secondary">
+                                          {contact.formattedAddress || 
+                                           [contact.address, contact.city, contact.state, contact.country, contact.zipcode]
+                                             .filter(Boolean)
+                                             .join(', ') || '-'}
+                                        </Typography>
+                                        {contact.timeZone && (
+                                          <Typography variant="caption" color="text.secondary">
+                                            {contact.timeZone}
+                                          </Typography>
+                                        )}
+                                      </>
+                                    )}
+                                  </Box>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                        </Grid>
+                      </Box>
+
+                      {/* Professional Information Section */}
+                      <Box>
+                        <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Professional Information
+                        </Typography>
+                        <Grid container spacing={2}>
+                          {(contact.jobTitle || contact.title) && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <WorkIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Job Title
+                                  </Typography>
+                                  <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
+                                    {contact.jobTitle || contact.title || '-'}
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                          {contact.headline && (
+                            <Grid item xs={12}>
+                              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                Professional Headline
                               </Typography>
-                            </Box>
-                          ))}
+                              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25, fontStyle: 'italic' }}>
+                                {contact.headline}
+                              </Typography>
+                            </Grid>
+                          )}
+                          {contact.companyName && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <BusinessIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Company
+                                  </Typography>
+                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                    {contact.companyId ? (
+                                      <MUILink
+                                        href={`/companies/${contact.companyId}`}
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          navigate(`/companies/${contact.companyId}`);
+                                        }}
+                                        color="primary"
+                                        underline="hover"
+                                        sx={{ fontWeight: 500 }}
+                                      >
+                                        {contact.companyName}
+                                      </MUILink>
+                                    ) : (
+                                      <span style={{ fontWeight: 500 }}>{contact.companyName}</span>
+                                    )}
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                          {selectedLocations.length > 0 && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <LocationIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500, mb: 0.5, display: 'block' }}>
+                                    Work Locations
+                                  </Typography>
+                                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 0.25 }}>
+                                    {selectedLocations.map((location) => (
+                                      <Chip
+                                        key={location.id}
+                                        label={location.nickname || location.name || location.title || 'Location'}
+                                        size="small"
+                                        variant="outlined"
+                                        sx={{ height: 24, fontSize: '0.75rem' }}
+                                      />
+                                    ))}
+                                  </Box>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                        </Grid>
+                      </Box>
+
+                      {/* Additional Details Section */}
+                      {(contact.contactType || contact.leadSource || contact.linkedInUrl || contact.twitterUrl || contact.facebookUrl || contact.instagramUrl || contact.website || contact.birthday || contact.salesOwnerName) && (
+                        <Box>
+                          <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            Additional Details
+                          </Typography>
+                          <Grid container spacing={2}>
+                            {contact.contactType && (
+                              <Grid item xs={12} sm={6}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                  Contact Type
+                                </Typography>
+                                <Box sx={{ mt: 0.5 }}>
+                                  <Chip 
+                                    label={contact.contactType} 
+                                    size="small" 
+                                    color={contact.contactType === 'Decision Maker' ? 'success' : contact.contactType === 'Champion' ? 'primary' : 'default'}
+                                    sx={{ height: 24, fontSize: '0.75rem', fontWeight: 500 }}
+                                  />
+                                </Box>
+                              </Grid>
+                            )}
+                            {contact.leadSource && (
+                              <Grid item xs={12} sm={6}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                  Lead Source
+                                </Typography>
+                                <Typography variant="body2" sx={{ mt: 0.5 }}>
+                                  {contact.leadSource}
+                                </Typography>
+                              </Grid>
+                            )}
+                            {contact.salesOwnerName && (
+                              <Grid item xs={12} sm={6}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                  Sales Owner
+                                </Typography>
+                                <Typography variant="body2" sx={{ mt: 0.5 }}>
+                                  {contact.salesOwnerName}
+                                </Typography>
+                              </Grid>
+                            )}
+                            {contact.birthday && (
+                              <Grid item xs={12} sm={6}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                  Birthday
+                                </Typography>
+                                <Typography variant="body2" sx={{ mt: 0.5 }}>
+                                  {contact.birthday}
+                                </Typography>
+                              </Grid>
+                            )}
+                            {(toSafeHref(contact.linkedInUrl) || toSafeHref(contact.twitterUrl) || toSafeHref(contact.facebookUrl) || toSafeHref(contact.instagramUrl) || toSafeHref(contact.website)) && (
+                              <Grid item xs={12}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500, mb: 1, display: 'block' }}>
+                                  Social Profiles & Website
+                                </Typography>
+                                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5 }}>
+                                  {toSafeHref(contact.linkedInUrl) && (
+                                    <MUILink
+                                      href={toSafeHref(contact.linkedInUrl)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      color="primary"
+                                      underline="hover"
+                                      sx={{ display: 'flex', alignItems: 'center', gap: 0.5, fontSize: '0.875rem' }}
+                                    >
+                                      <LinkedInIcon sx={{ fontSize: 18 }} />
+                                      LinkedIn
+                                    </MUILink>
+                                  )}
+                                  {toSafeHref(contact.twitterUrl) && (
+                                    <MUILink
+                                      href={toSafeHref(contact.twitterUrl)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      color="primary"
+                                      underline="hover"
+                                      sx={{ display: 'flex', alignItems: 'center', gap: 0.5, fontSize: '0.875rem' }}
+                                    >
+                                      <TwitterIcon sx={{ fontSize: 18 }} />
+                                      Twitter
+                                    </MUILink>
+                                  )}
+                                  {toSafeHref(contact.facebookUrl) && (
+                                    <MUILink
+                                      href={toSafeHref(contact.facebookUrl)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      color="primary"
+                                      underline="hover"
+                                      sx={{ display: 'flex', alignItems: 'center', gap: 0.5, fontSize: '0.875rem' }}
+                                    >
+                                      <FacebookIcon sx={{ fontSize: 18 }} />
+                                      Facebook
+                                    </MUILink>
+                                  )}
+                                  {toSafeHref(contact.instagramUrl) && (
+                                    <MUILink
+                                      href={toSafeHref(contact.instagramUrl)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      color="primary"
+                                      underline="hover"
+                                      sx={{ display: 'flex', alignItems: 'center', gap: 0.5, fontSize: '0.875rem' }}
+                                    >
+                                      <InstagramIcon sx={{ fontSize: 18 }} />
+                                      Instagram
+                                    </MUILink>
+                                  )}
+                                  {toSafeHref(contact.website) && (
+                                    <MUILink
+                                      href={toSafeHref(contact.website)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      color="primary"
+                                      underline="hover"
+                                      sx={{ display: 'flex', alignItems: 'center', gap: 0.5, fontSize: '0.875rem' }}
+                                    >
+                                      <LanguageIcon sx={{ fontSize: 18 }} />
+                                      Website
+                                    </MUILink>
+                                  )}
+                                </Box>
+                              </Grid>
+                            )}
+                          </Grid>
+                        </Box>
+                      )}
+
+                      {/* Status Section */}
+                      <Box sx={{ pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <Box>
+                            <Typography variant="body2" fontWeight={500} component="div">
+                              Contact Status
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.25, display: 'block' }}>
+                              {contact.isActive !== false ? 'Active and available for engagement' : 'Archived or inactive'}
+                            </Typography>
+                          </Box>
+                          <Chip
+                            label={contact.isActive !== false ? 'Active' : 'Inactive'}
+                            size="small"
+                            color={contact.isActive !== false ? 'success' : 'default'}
+                            sx={{ fontWeight: 500, height: 24 }}
+                          />
                         </Box>
                       </Box>
                     </Box>
-                  ) : (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <Skeleton variant="rectangular" height={24} />
-                      <Skeleton variant="rectangular" height={24} />
-                      <Skeleton variant="rectangular" height={24} />
-                    </Box>
-                  )}
-                </CardContent>
-              </Card> */}
-
-              {/* Key Metrics - Hidden for now */}
-              {/* <Card>
-                <CardHeader 
-                  title="Key Metrics" 
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                />
-                <CardContent sx={{ p: 2 }}>
-                  <Grid container spacing={2}>
-                    <Grid item xs={6}>
-                      <Box sx={{ textAlign: 'center', p: 1 }}>
-                        <Typography variant="h4" color="primary" fontWeight="bold">
-                          {metrics.totalDealValue}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Total Deal Value
-                        </Typography>
-                      </Box>
-                    </Grid>
-                    <Grid item xs={6}>
-                      <Box sx={{ textAlign: 'center', p: 1 }}>
-                        <Typography variant="h4" color="primary" fontWeight="bold">
-                          {metrics.activeDeals}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Active Deals
-                        </Typography>
-                      </Box>
-                    </Grid>
-                    <Grid item xs={6}>
-                      <Box sx={{ textAlign: 'center', p: 1 }}>
-                        <Typography variant="h4" color="success.main" fontWeight="bold">
-                          {metrics.completedTasks}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Completed Tasks
-                        </Typography>
-                      </Box>
-                    </Grid>
-                    <Grid item xs={6}>
-                      <Box sx={{ textAlign: 'center', p: 1 }}>
-                        <Typography variant="h4" color="info.main" fontWeight="bold">
-                          {metrics.totalTasks}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Total Tasks
-                        </Typography>
-                      </Box>
-                    </Grid>
-                  </Grid>
-
-                  <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
-                    <Typography variant="body2" fontWeight="bold" sx={{ mb: 1 }}>
-                      Task Completion Rate
-                    </Typography>
-                    <Box sx={{ textAlign: 'center', p: 1 }}>
-                      <Typography variant="h6" color="primary" fontWeight="bold">
-                        {metrics.totalTasks > 0 ? Math.round((metrics.completedTasks / metrics.totalTasks) * 100) : 0}%
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {metrics.completedTasks} of {metrics.totalTasks} tasks completed
-                      </Typography>
-                    </Box>
-                  </Box>
-                </CardContent>
-              </Card> */}
-
-              {/* Contact Coach - Hidden for now */}
-              {/* <Card>
-                <CardHeader 
-                  title="Contact Coach" 
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                />
-                <CardContent sx={{ p: 2 }}>
-                  {aiComponentsLoaded ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
-                        Strengthen relationship
-                      </Button>
-                      <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
-                        Identify upsell opportunities
-                      </Button>
-                      <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
-                        Optimize communication strategy
-                      </Button>
-                    </Box>
-                  ) : (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      <Skeleton variant="rectangular" height={32} />
-                      <Skeleton variant="rectangular" height={32} />
-                      <Skeleton variant="rectangular" height={32} />
-                    </Box>
-                  )}
-                </CardContent>
-              </Card> */}
-
-              {/* AI Suggestions */}
-              <Card>
-                <CardHeader 
-                  title="Suggested by AI" 
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                />
-                <CardContent sx={{ p: 2 }}>
-                  {aiComponentsLoaded ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
-                        Research contact's company role
-                      </Button>
-                      <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
-                        Identify communication preferences
-                      </Button>
-                      <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
-                        Find engagement opportunities
-                      </Button>
-                    </Box>
-                  ) : (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      <Skeleton variant="rectangular" height={32} />
-                      <Skeleton variant="rectangular" height={32} />
-                      <Skeleton variant="rectangular" height={32} />
-                    </Box>
                   )}
                 </CardContent>
               </Card>
+
             </Box>
           </Grid>
 
-          {/* Right Column - Active Salespeople + Recent Activity + Associations */}
-          <Grid item xs={12} md={3}>
+          {/* Right Column - Connections: Company, Location, Opportunities, Job Orders, Active Salespeople */}
+          <Grid item xs={12} md={4}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Professional Summary (shows only if content exists) */}
-              {contact?.professionalSummary && String(contact.professionalSummary).trim() !== '' && (
-                <Card>
-                  <CardHeader 
-                    title="Professional Summary" 
-                    titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                  />
-                  <CardContent sx={{ p: 2 }}>
-                    <Typography 
-                      variant="body2" 
-                      color="text.secondary" 
-                      sx={{ lineHeight: 1.5, whiteSpace: 'pre-wrap' }}
-                    >
-                      {String(contact.professionalSummary)}
-                    </Typography>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Active Salespeople */}
+              {/* Recent Activity */}
               <Card>
                 <CardHeader 
-                  title="Active Salespeople" 
+                  title="Recent Activity" 
                   titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                  action={
-                    <Button size="small" disabled={rebuildingActive} onClick={async () => {
-                      try {
-                        setRebuildingActive(true);
-                        const fn = httpsCallable(functions, 'rebuildContactActiveSalespeople');
-                        
-                        // Pass the deal IDs that are already loaded in the frontend
-                        const dealIds = associationsData.entities.deals?.map((d: any) => d.id) || [];
-                        
-                        const resp: any = await fn({ tenantId, contactId, dealIds });
-                        const data = resp?.data || {};
-                        if (data.ok) {
-                          setLocalSuccess(`Active salespeople updated (${data.count ?? data.updated ?? 0})`);
-                        } else if (data.error) {
-                          setLocalError(`Rebuild failed: ${data.error}`);
-                        } else {
-                          setLocalSuccess('Rebuild requested');
-                        }
-                        // Light refresh
-                        try {
-                          await getDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId));
-                        } catch {}
-                      } catch (e) {
-                        console.error('Rebuild active salespeople – error', e);
-                        setLocalError('Failed to rebuild active salespeople');
-                      } finally {
-                        setRebuildingActive(false);
-                      }
-                    }}>{rebuildingActive ? 'Rebuilding…' : 'Rebuild'}</Button>
-                  }
                 />
                 <CardContent sx={{ p: 2 }}>
-
-                  
-                  {contact?.activeSalespeople && Object.keys(contact.activeSalespeople).length > 0 ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      {Object.values(contact.activeSalespeople as any)
-                        .sort((a: any, b: any) => (b.lastActiveAt || 0) - (a.lastActiveAt || 0))
-                        .slice(0, 5)
-                        .map((sp: any) => (
-                          <Box key={sp.id} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
-                            <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>
-                              {(sp.displayName || sp.firstName || 'S').charAt(0)}
-                            </Avatar>
-                            <Box sx={{ flex: 1 }}>
-                              <Typography variant="body2" fontWeight="medium">
-                                {sp.displayName || `${sp.firstName || ''} ${sp.lastName || ''}`.trim() || sp.email || 'Unknown'}
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                {sp.jobTitle || sp.department || ''}
-                              </Typography>
-                            </Box>
-                          </Box>
-                        ))}
-                    </Box>
-                  ) : (
-                    <Box sx={{ textAlign: 'center', py: 2 }}>
-                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                        No active salespeople found
+                  {lastActivity ? (
+                    <Box>
+                      <Typography variant="body2" fontWeight="medium" color="text.primary" sx={{ mb: 1 }}>
+                        Last Touch
+                      </Typography>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                        <Typography variant="body2" color="text.secondary">
+                          📅 {lastActivity.timestamp.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                        </Typography>
+                      </Box>
+                      <Typography variant="body2" color="text.primary" sx={{ mb: 0.5 }}>
+                        {lastActivity.type === 'email' && lastActivity.metadata?.direction === 'sent' 
+                          ? `Email sent by ${lastActivity.salespersonName || 'User'}`
+                          : lastActivity.type === 'email' && lastActivity.metadata?.direction === 'received'
+                          ? `Email received from ${lastActivity.metadata?.from || 'Contact'}`
+                          : lastActivity.type === 'task'
+                          ? `Task: ${lastActivity.title}`
+                          : lastActivity.type === 'note'
+                          ? `Note added by ${lastActivity.salespersonName || 'User'}`
+                          : lastActivity.title || 'Activity'}
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
-                        Click "Rebuild" to scan deals, tasks, and emails
+                        ⏱ {formatActivityTime(lastActivity.timestamp)}
                       </Typography>
                     </Box>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      No recent activity
+                    </Typography>
                   )}
                 </CardContent>
               </Card>
+
+              {/* Company */}
+              <Card>
+                <CardHeader
+                  title="Company"
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  action={
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      startIcon={<EditIcon fontSize="small" />}
+                      onClick={() => setShowManageCompanyDialog(true)}
+                      sx={{ minWidth: 'auto', px: 1, py: 0.5, fontSize: '0.75rem', textTransform: 'none' }}
+                    >
+                      Edit
+                    </Button>
+                  }
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {contact?.companyName ? (
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                        p: 1,
+                        borderRadius: 1,
+                        bgcolor: 'grey.50',
+                        cursor: contact?.companyId ? 'pointer' : undefined,
+                        '&:hover': contact?.companyId ? { bgcolor: 'grey.100' } : undefined,
+                      }}
+                      onClick={() => contact?.companyId && navigate(`/companies/${contact.companyId}`)}
+                      role={contact?.companyId ? 'button' : undefined}
+                      tabIndex={contact?.companyId ? 0 : undefined}
+                      onKeyDown={(e) => {
+                        if (contact?.companyId && (e.key === 'Enter' || e.key === ' ')) {
+                          e.preventDefault();
+                          navigate(`/companies/${contact.companyId}`);
+                        }
+                      }}
+                    >
+                      <Avatar
+                        sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}
+                      >
+                        {(contact.companyName || 'C').charAt(0).toUpperCase()}
+                      </Avatar>
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Typography variant="body2" fontWeight="medium" color="text.primary">
+                          {contact.companyName}
+                        </Typography>
+                        {contact.companyId && (
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            {contact.companyId}
+                          </Typography>
+                        )}
+                      </Box>
+                    </Box>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      No company associated
+                    </Typography>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Work Locations */}
+              <Card>
+                <CardHeader
+                  title="Work Locations"
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  action={
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      startIcon={<EditIcon fontSize="small" />}
+                      onClick={() => setShowManageWorkLocationsDialog(true)}
+                      sx={{ minWidth: 'auto', px: 1, py: 0.5, fontSize: '0.75rem', textTransform: 'none' }}
+                    >
+                      Edit
+                    </Button>
+                  }
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {selectedLocations.length > 0 ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {selectedLocations.map((location) => {
+                        const companyId = contact?.companyId;
+                        const isClickable = !!(companyId && location.id);
+                        return (
+                          <Box
+                            key={location.id}
+                            sx={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 1,
+                              p: 1,
+                              borderRadius: 1,
+                              bgcolor: 'grey.50',
+                              cursor: isClickable ? 'pointer' : undefined,
+                              '&:hover': isClickable ? { bgcolor: 'grey.100' } : undefined,
+                            }}
+                            onClick={() => isClickable && navigate(`/companies/${companyId}/locations/${location.id}`)}
+                            role={isClickable ? 'button' : undefined}
+                            tabIndex={isClickable ? 0 : undefined}
+                            onKeyDown={(e) => {
+                              if (isClickable && (e.key === 'Enter' || e.key === ' ')) {
+                                e.preventDefault();
+                                navigate(`/companies/${companyId}/locations/${location.id}`);
+                              }
+                            }}
+                          >
+                            <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}>
+                              <LocationIcon sx={{ fontSize: 16 }} />
+                            </Avatar>
+                            <Box sx={{ flex: 1, minWidth: 0 }}>
+                              <Typography variant="body2" fontWeight="medium" noWrap>
+                                {location.nickname || location.name || location.title || 'Unknown Location'}
+                              </Typography>
+                              {location.code && (
+                                <Typography variant="caption" color="text.secondary" display="block">
+                                  {location.code}
+                                </Typography>
+                              )}
+                            </Box>
+                          </Box>
+                        );
+                      })}
+                    </Box>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      No work locations assigned
+                    </Typography>
+                  )}
+                </CardContent>
+              </Card>
+
+              <ManageContactCompanyDialog
+                open={showManageCompanyDialog}
+                onClose={() => setShowManageCompanyDialog(false)}
+                currentCompany={
+                  contact?.companyId
+                    ? {
+                        id: contact.companyId,
+                        companyName: contact.companyName,
+                        name: contact.companyName,
+                      }
+                    : null
+                }
+                allCompanies={allCompanies}
+                loadingCompanies={loadingCompanies}
+                suggestedCompanies={suggestedCompanies}
+                contactEmail={contact?.email}
+                onSave={handleCompanySaveFromModal}
+              />
+              <ManageContactLocationsDialog
+                open={showManageWorkLocationsDialog}
+                onClose={() => setShowManageWorkLocationsDialog(false)}
+                companyLocations={companyLocations}
+                selectedLocations={selectedLocations}
+                onSave={(locations) => {
+                  setSelectedLocations(locations);
+                  handleLocationAssociationUpdate(locations);
+                }}
+              />
 
               {/* Opportunities */}
               <Card>
@@ -3006,6 +3991,177 @@ const ContactDetails: React.FC = () => {
                 </CardContent>
               </Card>
 
+              {/* Job Orders */}
+              <Card>
+                <CardHeader 
+                  title="Job Orders" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {loadingJobOrders ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      <Skeleton variant="rectangular" height={32} />
+                      <Skeleton variant="rectangular" height={32} />
+                      <Skeleton variant="rectangular" height={32} />
+                    </Box>
+                  ) : jobOrders.length > 0 ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {jobOrders
+                        .sort((a: any, b: any) => {
+                          // Sort by status priority (open > draft > on_hold > filled > cancelled)
+                          const statusPriority: Record<string, number> = {
+                            'open': 5,
+                            'draft': 4,
+                            'on_hold': 3,
+                            'filled': 2,
+                            'completed': 2,
+                            'cancelled': 1
+                          };
+                          const aPriority = statusPriority[a.status] || 0;
+                          const bPriority = statusPriority[b.status] || 0;
+                          if (aPriority !== bPriority) {
+                            return bPriority - aPriority;
+                          }
+                          // Then sort by created date (newest first)
+                          const aDate = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
+                          const bDate = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
+                          return bDate.getTime() - aDate.getTime();
+                        })
+                        .slice(0, 5)
+                        .map((jobOrder: any) => {
+                          // Determine contact's role in this job order
+                          let contactRole = '';
+                          if (jobOrder.hrContactId === contactId) contactRole = 'HR Contact';
+                          else if (jobOrder.decisionMaker === contactId) contactRole = 'Decision Maker';
+                          else if (jobOrder.operationsContactId === contactId) contactRole = 'Operations';
+                          else if (jobOrder.procurementContactId === contactId) contactRole = 'Procurement';
+                          else if (jobOrder.billingContactId === contactId) contactRole = 'Billing';
+                          else if (jobOrder.safetyContactId === contactId) contactRole = 'Safety';
+                          else if (jobOrder.invoiceContactId === contactId) contactRole = 'Invoice';
+                          
+                          // Format status
+                          const statusLabels: Record<string, string> = {
+                            'open': 'Open',
+                            'draft': 'Draft',
+                            'on_hold': 'On Hold',
+                            'filled': 'Filled',
+                            'completed': 'Completed',
+                            'cancelled': 'Cancelled'
+                          };
+                          const statusLabel = statusLabels[jobOrder.status] || jobOrder.status || 'Unknown';
+                          
+                          // Format job order number
+                          const jobOrderNumber = jobOrder.jobOrderNumber || jobOrder.jobOrderSeq?.toString().padStart(4, '0') || 'N/A';
+                          
+                          return (
+                            <Box 
+                              key={jobOrder.id} 
+                              sx={{ 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                gap: 1, 
+                                p: 1, 
+                                borderRadius: 1, 
+                                bgcolor: 'grey.50',
+                                cursor: 'pointer',
+                                '&:hover': {
+                                  bgcolor: 'grey.100'
+                                }
+                              }}
+                              onClick={() => navigate(`/jobs/job-orders/${jobOrder.id}`)}
+                            >
+                              <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
+                                <WorkIcon sx={{ fontSize: 16 }} />
+                              </Avatar>
+                              <Box sx={{ flex: 1 }}>
+                                <Typography variant="body2" fontWeight="medium">
+                                  {jobOrder.jobOrderName || jobOrder.jobTitle || 'Unknown Job Order'}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  #{jobOrderNumber} • {statusLabel}{contactRole ? ` • ${contactRole}` : ''}
+                                </Typography>
+                              </Box>
+                            </Box>
+                          );
+                        })}
+                    </Box>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">No associated job orders</Typography>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Active Salespeople */}
+              <Card>
+                <CardHeader 
+                  title="Active Salespeople" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  action={
+                    <Button size="small" disabled={rebuildingActive} onClick={async () => {
+                      try {
+                        setRebuildingActive(true);
+                        const fn = httpsCallable(functions, 'rebuildContactActiveSalespeople');
+                        
+                        // Pass the deal IDs that are already loaded in the frontend
+                        const dealIds = associationsData.entities.deals?.map((d: any) => d.id) || [];
+                        
+                        const resp: any = await fn({ tenantId, contactId, dealIds });
+                        const data = resp?.data || {};
+                        if (data.ok) {
+                          setLocalSuccess(`Active salespeople updated (${data.count ?? data.updated ?? 0})`);
+                        } else if (data.error) {
+                          setLocalError(`Rebuild failed: ${data.error}`);
+                        } else {
+                          setLocalSuccess('Rebuild requested');
+                        }
+                        // Light refresh
+                        try {
+                          await getDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId));
+                        } catch {}
+                      } catch (e) {
+                        console.error('Rebuild active salespeople – error', e);
+                        setLocalError('Failed to rebuild active salespeople');
+                      } finally {
+                        setRebuildingActive(false);
+                      }
+                    }}>{rebuildingActive ? 'Rebuilding…' : 'Rebuild'}</Button>
+                  }
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {contact?.activeSalespeople && Object.keys(contact.activeSalespeople).length > 0 ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {Object.values(contact.activeSalespeople as any)
+                        .sort((a: any, b: any) => (b.lastActiveAt || 0) - (a.lastActiveAt || 0))
+                        .slice(0, 5)
+                        .map((sp: any) => (
+                          <Box key={sp.id} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
+                            <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>
+                              {(sp.displayName || sp.firstName || 'S').charAt(0)}
+                            </Avatar>
+                            <Box sx={{ flex: 1 }}>
+                              <Typography variant="body2" fontWeight="medium">
+                                {sp.displayName || `${sp.firstName || ''} ${sp.lastName || ''}`.trim() || sp.email || 'Unknown'}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {sp.jobTitle || sp.department || ''}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        ))}
+                    </Box>
+                  ) : (
+                    <Box sx={{ textAlign: 'center', py: 2 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                        No active salespeople found
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Click "Rebuild" to scan deals, tasks, and emails
+                      </Typography>
+                    </Box>
+                  )}
+                </CardContent>
+              </Card>
+
               {/* Local snackbars for rebuild feedback */}
               <Snackbar open={!!localSuccess} autoHideDuration={3000} onClose={() => setLocalSuccess(null)}>
                 <Alert severity="success" onClose={() => setLocalSuccess(null)} sx={{ width: '100%' }}>
@@ -3017,86 +4173,6 @@ const ContactDetails: React.FC = () => {
                   {localError}
                 </Alert>
               </Snackbar>
-
-              {/* Recent Activity */}
-              <Card>
-                <CardHeader 
-                  title="Recent Activity" 
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                />
-                <CardContent sx={{ p: 2 }}>
-                  {loadingActivities ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      <Skeleton variant="rectangular" height={32} />
-                      <Skeleton variant="rectangular" height={32} />
-                      <Skeleton variant="rectangular" height={32} />
-                    </Box>
-                  ) : recentActivities.length > 0 ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      {recentActivities.map((activity) => (
-                        <Box 
-                          key={activity.id} 
-                          sx={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: 1, 
-                            p: 1, 
-                            borderRadius: 1,
-                            cursor: 'pointer',
-                            '&:hover': {
-                              bgcolor: 'grey.50'
-                            }
-                          }}
-                          onClick={() => {
-                            // Navigate to appropriate section based on activity type
-                            switch (activity.type) {
-                              case 'task':
-                                setTabValue(1); // Tasks tab
-                                break;
-                              case 'note':
-                                setTabValue(4); // Notes tab
-                                break;
-                              case 'email':
-                                setTabValue(5); // Activity tab
-                                break;
-                              default:
-                                break;
-                            }
-                          }}
-                        >
-                          <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
-                            {getActivityIcon(activity.icon)}
-                          </Avatar>
-                          <Box sx={{ flex: 1, minWidth: 0 }}>
-                            <Typography variant="body2" fontSize="0.75rem" fontWeight="medium" noWrap>
-                              {activity.title}
-                            </Typography>
-                            {activity.description && (
-                              <Typography variant="caption" color="text.secondary" noWrap>
-                                {activity.description.length > 50 
-                                  ? `${activity.description.substring(0, 50)}...` 
-                                  : activity.description}
-                              </Typography>
-                            )}
-                          </Box>
-                          <Typography variant="caption" color="text.secondary" fontSize="0.7rem">
-                            {formatActivityTime(activity.timestamp)}
-                          </Typography>
-                        </Box>
-                      ))}
-                    </Box>
-                  ) : (
-                    <Box sx={{ textAlign: 'center', py: 2 }}>
-                      <Typography variant="body2" color="text.secondary">
-                        No recent activity
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Activities will appear here as they occur
-                      </Typography>
-                    </Box>
-                  )}
-                </CardContent>
-              </Card>
             </Box>
           </Grid>
         </Grid>
@@ -3420,6 +4496,7 @@ const ContactDetails: React.FC = () => {
         loading={logActivityLoading}
         salespeople={salespeople}
         contacts={[contact]}
+        preselectContactsFromProps={true}
         currentUserId={user?.uid || ''}
         tenantId={tenantId}
       />
@@ -3439,6 +4516,35 @@ const ContactDetails: React.FC = () => {
           {snackbarMessage}
         </Alert>
       </Snackbar>
+
+      {/* Message Drawer */}
+      <MessageDrawer
+        open={messageDrawerOpen}
+        onClose={() => setMessageDrawerOpen(false)}
+        recipients={(() => {
+          const recipients: MessageRecipient[] = [];
+          if (messageDrawerChannel === 'email' && contact?.email) {
+            recipients.push({
+              userId: '',
+              name: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || contact.email.split('@')[0],
+              email: contact.email,
+            });
+          } else if (messageDrawerChannel === 'sms' && (contact?.phone || contact?.workPhone)) {
+            recipients.push({
+              userId: '',
+              name: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || (contact.phone || contact.workPhone),
+              phone: contact.phone || contact.workPhone,
+            });
+          }
+          return recipients;
+        })()}
+        crmContactIds={contact?.id ? [contact.id] : undefined}
+        tenantId={tenantId || ''}
+        defaultChannels={[messageDrawerChannel]}
+        onSend={() => {
+          setMessageDrawerOpen(false);
+        }}
+      />
     </Box>
   );
 };

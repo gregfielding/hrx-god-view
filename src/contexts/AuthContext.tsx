@@ -1,10 +1,13 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import { logger } from '../utils/logger';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { doc, getDoc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 
 import { auth, db } from '../firebase';
 import { Role, SecurityLevel, getAccessRole } from '../utils/AccessRoles';
+import { logLoginActivity, logLogoutActivity } from '../utils/activityLogger';
+import { normalizeC1TenantIdTypo } from '../utils/c1TenantIdNormalize';
 
 // New claims-based types
 export type ClaimsRole = 'Admin' | 'Recruiter' | 'Manager' | 'Worker' | 'Customer' | 'Tenant' | 'HRX';
@@ -49,6 +52,15 @@ type AuthContextType = {
   recruiterEnabled?: boolean;
   jobsBoardEnabled?: boolean;
   setCreatingUserProfile: (creating: boolean) => void;
+  /**
+   * Per-tenant role/security from Firestore `users/{uid}.tenantIds` (object map).
+   * Hydrated even when JWT `roles` lists tenants — needed so UI matches server fallbacks (e.g. securityLevel 5–7 in Firestore).
+   */
+  tenantRolesFromProfile: { [tenantId: string]: { role: Role; securityLevel: SecurityLevel } };
+  /** Top-level `users/{uid}.securityLevel` — server uses this when tenant meta omits level. */
+  legacyUserSecurityLevel?: SecurityLevel;
+  /** Top-level `users/{uid}.role` — server uses with tenant meta for onboarding permission fallbacks. */
+  legacyUserRole?: string;
 };
 
 const AuthContext = createContext<AuthContextType>({
@@ -84,6 +96,9 @@ const AuthContext = createContext<AuthContextType>({
   setCreatingUserProfile: () => {
     console.warn('setCreatingUserProfile called on uninitialized context');
   },
+  tenantRolesFromProfile: {},
+  legacyUserSecurityLevel: undefined,
+  legacyUserRole: undefined,
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -167,8 +182,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [activeTenant, setActiveTenant] = useState<any | null>(null);
   const lastActiveTenantIdRef = useRef<string | undefined>(undefined);
   const lastWrittenActiveTenantIdRef = useRef<string | undefined>(undefined);
-  // Add new state for tenantRoles
-  const [tenantRoles, setTenantRoles] = useState<{ [tenantId: string]: { role: Role, securityLevel: SecurityLevel } }>({});
+  const [tenantRolesFromProfile, setTenantRolesFromProfile] = useState<{
+    [tenantId: string]: { role: Role; securityLevel: SecurityLevel };
+  }>({});
+  const [legacyUserSecurityLevel, setLegacyUserSecurityLevel] = useState<SecurityLevel | undefined>(undefined);
+  const [legacyUserRole, setLegacyUserRole] = useState<string | undefined>(undefined);
   
   // New claims-based state
   const [isHRX, setIsHRX] = useState<boolean>(false);
@@ -181,6 +199,36 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [jobsBoardEnabled, setJobsBoardEnabled] = useState<boolean>(false);
   const lastActivitySentAtRef = useRef<number>(0);
   const isCreatingUserProfileRef = useRef<boolean>(false);
+  const lastUserDataRef = useRef<any>(null);
+  /** Unsubscribes Firestore user doc listener + heartbeat listeners from the previous auth session. */
+  const authSessionCleanupRef = useRef<(() => void) | null>(null);
+
+  const LOGIN_PING_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+  const shouldReportLoginPing = (uid: string) => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const key = `hrx:lastLoginPing:${uid}`;
+      const now = Date.now();
+      const lastPing = Number(localStorage.getItem(key) || '0');
+      const dueToAge = now - lastPing > LOGIN_PING_INTERVAL_MS;
+
+      return dueToAge;
+    } catch (error) {
+      console.warn('Login ping sampling failed:', error);
+      return false;
+    }
+  };
+
+  const recordLoginPing = (uid: string) => {
+    if (typeof window === 'undefined') return;
+    try {
+      const key = `hrx:lastLoginPing:${uid}`;
+      localStorage.setItem(key, Date.now().toString());
+    } catch {
+      // Ignore storage errors (private browsing, etc.)
+    }
+  };
 
   const setCreatingUserProfile = (creating: boolean) => {
     isCreatingUserProfileRef.current = creating;
@@ -251,16 +299,16 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   // Helper function to load claims from user token (force fresh token)
   const loadClaimsFromUser = async (user: User): Promise<CustomClaims> => {
     try {
-      const tokenResult = await user.getIdTokenResult(true); // Force fresh token
+      // Avoid forcing a token refresh on localhost development to prevent
+      // Firestore WebChannel terminate noise due to credential changes
+      const isLocalDev = typeof window !== 'undefined' && window.location.hostname === 'localhost' && process.env.NODE_ENV === 'development';
+      const forceRefresh = !isLocalDev;
+      const tokenResult = await user.getIdTokenResult(forceRefresh);
       const claims = tokenResult.claims as CustomClaims;
-      console.log('=== CLAIMS DEBUG ===');
-      console.log('Raw claims:', claims);
-      console.log('claims.hrx:', claims.hrx);
-      console.log('claims.roles:', claims.roles);
-      console.log('=== END CLAIMS DEBUG ===');
+      logger.debug('Claims loaded');
       return claims || {};
     } catch (error) {
-      console.error('Failed to load claims from user token:', error);
+      logger.error('Failed to load claims from user token:', error);
       return {};
     }
   };
@@ -293,7 +341,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           setSecurityLevel(convertClaimsSecurityToLegacy(claimsRole.securityLevel));
         }
       } catch (error) {
-        console.error('Failed to refresh user claims:', error);
+        logger.error('Failed to refresh user claims:', error);
       }
     }
   };
@@ -304,38 +352,38 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     
     // Check if AuthDialog is currently creating a user profile
     if (isCreatingUserProfileRef.current) {
-      console.log('AuthDialog is creating user profile, skipping default document creation');
+      logger.debug('AuthDialog is creating user profile, skipping default document creation');
       return null;
     }
     
     // Check if user document already exists to prevent overwriting
     const userSnap = await getDoc(userRef);
     if (userSnap.exists()) {
-      console.log('User document already exists, not creating default document');
+      logger.debug('User document already exists, not creating default document');
       return userSnap.data();
     }
 
     // For new users from public jobs board, don't create default document
     // The AuthDialog should handle user profile creation
     // We'll wait longer to ensure AuthDialog has time to create the profile
-    console.log('Waiting for AuthDialog to create user profile...');
+    logger.debug('Waiting for AuthDialog to create user profile...');
     await new Promise(resolve => setTimeout(resolve, 3000));
     
     // Check again after the delay
     if (isCreatingUserProfileRef.current) {
-      console.log('AuthDialog is still creating user profile after delay, skipping default document creation');
+      logger.debug('AuthDialog is still creating user profile after delay, skipping default document creation');
       return null;
     }
-    
+
     const userSnapAfterDelay = await getDoc(userRef);
     if (userSnapAfterDelay.exists()) {
-      console.log('User document created by AuthDialog during delay, not creating default document');
+      logger.debug('User document created by AuthDialog during delay, not creating default document');
       return userSnapAfterDelay.data();
     }
-    
+
     // Only create default document for users who weren't created via AuthDialog
     // If we're on the C1 public routes, initialize with the correct Tenant/Applicant profile
-    console.log('Creating fallback default user document');
+    logger.debug('Creating fallback default user document');
     const isC1Route = typeof window !== 'undefined' && window.location.pathname.startsWith('/c1/');
     const c1TenantId = 'BCiP2bQ9CgVOCTfV6MhD';
 
@@ -379,8 +427,36 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           userGroupIds: [],
           crm_sales: false,
           recruiter: false,
-          jobsBoard: false,
+          jobsBoard: false, // Module access flag for managers/admins only
           source: 'public_jobs_board',
+          // Default privacy and notification settings
+          locationSettings: {
+            locationSharingEnabled: true,
+            locationGranularity: 'precise',
+            locationUpdateFrequency: 'realtime',
+          },
+          notificationSettings: {
+            pushNotifications: true,
+            emailNotifications: true,
+            smsNotifications: true,
+            companionMessages: true,
+            shiftReminders: true,
+            safetyAlerts: true,
+            performanceUpdates: true,
+            quietHours: {
+              enabled: false,
+              startTime: '22:00',
+              endTime: '08:00',
+            },
+          },
+          privacySettings: {
+            profileVisibility: 'managers',
+            showContactInfo: true,
+            showLocation: true,
+            showPerformanceMetrics: true,
+            allowDataAnalytics: true,
+            allowAIInsights: true,
+          },
         }
       : {
           uid: user.uid,
@@ -397,40 +473,110 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           activeTenantId: null, // Will be set when user switches to a tenant
         };
 
+    // In localhost development, avoid client Firestore writes to prevent WebChannel noise
+    try {
+      const isLocalDev = typeof window !== 'undefined' && window.location.hostname === 'localhost' && process.env.NODE_ENV === 'development';
+      if (isLocalDev) {
+        try {
+          const key = `dev:userDoc:${user.uid}`;
+          localStorage.setItem(key, JSON.stringify({ ...defaultUserDoc, createdAt: Date.now(), lastLogin: Date.now() }));
+        } catch {}
+        return defaultUserDoc;
+      }
+    } catch {}
+
     await setDoc(userRef, defaultUserDoc);
     return defaultUserDoc;
   };
 
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (authSessionCleanupRef.current) {
+        try {
+          authSessionCleanupRef.current();
+        } catch {
+          // ignore
+        }
+        authSessionCleanupRef.current = null;
+      }
+
       setCurrentUser(user);
 
-      if (user) {
+      if (!user) {
+        hasReportedLoginRef.current = false;
+        setRole('Tenant');
+        setSecurityLevel('3');
+        setModules([]);
+        setAvatarUrl('');
+        setOrgType(null);
+        setTenantId(undefined);
+        setTenantIds([]);
+        setActiveTenant(null);
+        // Reset claims-based state
+        setIsHRX(false);
+        setClaimsRoles({});
+        setCurrentClaimsRole(undefined);
+        setCurrentClaimsSecurityLevel(undefined);
+        setTenantRolesFromProfile({});
+        setLegacyUserSecurityLevel(undefined);
+        setLegacyUserRole(undefined);
+        setCrmSalesEnabled(false);
+        setRecruiterEnabled(false);
+        setJobsBoardEnabled(false);
+        setLoading(false);
+        return;
+      }
+
+      void (async () => {
+        try {
+        const sessionUid = user.uid;
+
         // Report login once per session to update lastLoginAt and loginCount
         if (!hasReportedLoginRef.current) {
-          try {
-            const functions = getFunctions();
-            const updateUserLoginInfo = httpsCallable(functions as any, 'updateUserLoginInfo');
-            const onC1Route = typeof window !== 'undefined' && window.location.pathname.startsWith('/c1/');
-            await updateUserLoginInfo({
-              userId: user.uid,
-              loginData: {
-                deviceInfo: {
-                  userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
-                  platform: typeof navigator !== 'undefined' ? (navigator as any).platform : 'unknown',
-                  language: typeof navigator !== 'undefined' ? navigator.language : 'unknown',
-                },
-              },
-              // Context for first-time creation on public jobs board
-              initializeIfMissing: true,
-              source: onC1Route ? 'public_jobs_board' : undefined,
-              tenantId: onC1Route ? 'BCiP2bQ9CgVOCTfV6MhD' : undefined,
-            });
+          const shouldReportLogin = shouldReportLoginPing(user.uid);
+          if (!shouldReportLogin) {
             hasReportedLoginRef.current = true;
-          } catch (err) {
-            console.warn('Failed to update user login info:', err);
+          } else {
+            try {
+              const functions = getFunctions();
+              const updateUserLoginInfo = httpsCallable(functions as any, 'updateUserLoginInfo');
+              const onC1Route = typeof window !== 'undefined' && window.location.pathname.startsWith('/c1/');
+              await updateUserLoginInfo({
+                userId: user.uid,
+                loginData: {
+                  deviceInfo: {
+                    userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
+                    platform: typeof navigator !== 'undefined' ? (navigator as any).platform : 'unknown',
+                    language: typeof navigator !== 'undefined' ? navigator.language : 'unknown',
+                  },
+                },
+                // Context for first-time creation on public jobs board
+                initializeIfMissing: true,
+                source: onC1Route ? 'public_jobs_board' : undefined,
+                tenantId: onC1Route ? 'BCiP2bQ9CgVOCTfV6MhD' : undefined,
+              });
+              recordLoginPing(user.uid);
+              hasReportedLoginRef.current = true;
+              // Log login activity only when we actually reported a login (throttled), so page refreshes don't spam the activity log
+              try {
+                const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown';
+                const deviceType = /Mobile|Android|iPhone/i.test(userAgent) ? 'mobile' : 'desktop';
+                await logLoginActivity(user.uid, { userAgent, deviceType });
+              } catch (logError) {
+                console.warn('Failed to log login activity:', logError);
+              }
+            } catch (err) {
+              hasReportedLoginRef.current = true;
+              console.warn('Failed to update user login info:', err);
+            }
           }
         }
+
+        if (auth.currentUser?.uid !== sessionUid) {
+          return;
+        }
+
+        const cleanupFns: Array<() => void> = [];
 
         // Start lightweight activity heartbeat (throttled)
         try {
@@ -438,59 +584,55 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           const updateUserActivity = httpsCallable(functions as any, 'updateUserActivity');
 
           const sendHeartbeat = async (reason: string) => {
+            // Temporary guard: avoid CORS on production domain until server deploy
+            const origin = typeof window !== 'undefined' ? window.location.origin : '';
+            const allowlist = new Set(['http://localhost:3000', 'https://hrx1-d3beb.web.app', 'https://hrx1-d3beb.firebaseapp.com']);
+            if (!allowlist.has(origin)) {
+              return; // skip heartbeat to prevent CORS error spam
+            }
+
             const now = Date.now();
             // 5-minute throttle client-side to avoid runaway cost
             if (now - lastActivitySentAtRef.current < 5 * 60 * 1000) return;
             lastActivitySentAtRef.current = now;
             try {
               await updateUserActivity({
-                userId: user.uid,
+                userId: sessionUid,
                 activity: {
                   route: typeof window !== 'undefined' ? window.location.pathname : undefined,
                   visibility: typeof document !== 'undefined' ? document.visibilityState === 'visible' : true,
                   reason,
                 },
               });
-            } catch (err: any) {
-              // Only log CORS errors in development, not in production
-              if (process.env.NODE_ENV === 'development' && err?.message?.includes('CORS')) {
-                console.warn('Activity tracking CORS error (development only):', err.message);
-              }
-              // Always swallow errors to avoid log noise in production
+            } catch (err) {
+              console.warn('Failed to update user activity (suppressed):', err);
             }
           };
 
-          // Initial heartbeat once authenticated
-          sendHeartbeat('auth_state_change');
+          // Initial heartbeat
+          sendHeartbeat('auth_state_changed');
 
-          // Visibility-based heartbeat
-          const onVisible = () => sendHeartbeat('visibilitychange');
-          if (typeof document !== 'undefined') {
-            document.addEventListener('visibilitychange', onVisible);
-          }
+          // Visibility change heartbeat
+          const handleVisibilityChange = () => sendHeartbeat('visibility_change');
+          document.addEventListener('visibilitychange', handleVisibilityChange);
 
-          // Interval heartbeat while tab is visible
-          const intervalId = setInterval(() => {
-            if (typeof document === 'undefined' || document.visibilityState !== 'visible') return;
-            sendHeartbeat('interval');
-          }, 5 * 60 * 1000);
+          // Route change heartbeat (simple heuristic)
+          const handlePopState = () => sendHeartbeat('route_change');
+          window.addEventListener('popstate', handlePopState);
 
-          // Clean up on sign-out or unmount
-          const cleanupHeartbeat = () => {
-            if (typeof document !== 'undefined') {
-              document.removeEventListener('visibilitychange', onVisible);
-            }
-            clearInterval(intervalId);
-          };
-
-          // Attach cleanup to snapshot unsubscribe path below
-          // We will call cleanup in the outer return as well
-          (window as any)._hrxCleanupHeartbeat?.();
-          (window as any)._hrxCleanupHeartbeat = cleanupHeartbeat;
-        } catch {}
+          cleanupFns.push(() => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+            window.removeEventListener('popstate', handlePopState);
+          });
+        } catch (err) {
+          console.warn('Heartbeat setup failed:', err);
+        }
 
         // Load claims from user token (primary source of truth)
         const claims = await loadClaimsFromUser(user);
+        if (auth.currentUser?.uid !== sessionUid) {
+          return;
+        }
         const claimsRolesMap = claims.roles || {};
         const claimsTenantIds = Object.keys(claimsRolesMap);
         const isHRXUser = !!claims.hrx;
@@ -499,16 +641,22 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         setIsHRX(isHRXUser);
         setClaimsRoles(claimsRolesMap);
 
-        const userRef = doc(db, 'users', user.uid);
+        const userRef = doc(db, 'users', sessionUid);
 
-        const unsubscribeUser = onSnapshot(userRef, async (docSnap) => {
+        const unsubscribeUser = onSnapshot(
+          userRef,
+          async (docSnap) => {
           if (docSnap.exists()) {
             const userData = docSnap.data();
-            const avatar = userData.avatar || '';
+            const avatar = userData.avatar || userData.workerProfile?.photoUrl || '';
             const userOrgType = userData.orgType || 'HRX';
 
-            // --- NEW: Handle tenantRoles as a map ---
-            let tenantRolesMap: { [tenantId: string]: { role: Role, securityLevel: SecurityLevel } } = {};
+            // --- Per-tenant Firestore map (always hydrate when present; JWT may omit securityLevel) ---
+            let tenantRolesMap: { [tenantId: string]: { role: Role; securityLevel: SecurityLevel } } = {};
+            if (userData.tenantIds && typeof userData.tenantIds === 'object' && !Array.isArray(userData.tenantIds)) {
+              tenantRolesMap = userData.tenantIds;
+            }
+
             let userTenantIds: string[] = [];
             let primaryTenantId: string | undefined = undefined;
 
@@ -516,9 +664,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             if (claimsTenantIds.length > 0) {
               userTenantIds = claimsTenantIds;
               primaryTenantId = userData.activeTenantId || userTenantIds[0];
-            } else if (userData.tenantIds && typeof userData.tenantIds === 'object' && !Array.isArray(userData.tenantIds)) {
-              tenantRolesMap = userData.tenantIds;
-              userTenantIds = Object.keys(userData.tenantIds);
+            } else if (Object.keys(tenantRolesMap).length > 0) {
+              userTenantIds = Object.keys(tenantRolesMap);
               primaryTenantId = userData.activeTenantId || userData.tenantId || userTenantIds[0];
             } else if (Array.isArray(userData.tenantIds)) {
               // Legacy array format fallback
@@ -536,16 +683,37 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
             setAvatarUrl(avatar);
             setOrgType(userOrgType === 'HRX' ? 'HRX' : 'Tenant');
-            setTenantId(userData.activeTenantId || primaryTenantId || undefined);
+            setTenantId(
+              normalizeC1TenantIdTypo(userData.activeTenantId || primaryTenantId || undefined) ?? undefined,
+            );
             setTenantIds(userTenantIds);
-            setTenantRoles(tenantRolesMap);
-          // Per-user module flags
-          setCrmSalesEnabled(!!userData.crm_sales);
-          setRecruiterEnabled(!!userData.recruiter);
-          setJobsBoardEnabled(!!userData.jobsBoard);
+            setTenantRolesFromProfile(tenantRolesMap);
+            setLegacyUserSecurityLevel(
+              userData.securityLevel != null && userData.securityLevel !== ''
+                ? (String(userData.securityLevel) as SecurityLevel)
+                : undefined,
+            );
+            setLegacyUserRole(
+              userData.role != null && userData.role !== '' ? String(userData.role) : undefined,
+            );
 
             // Set role/securityLevel based on claims (primary) or Firestore (fallback)
             const activeTenantId = userData.activeTenantId || primaryTenantId;
+            
+            // Per-user module flags - read from tenant-specific location first, then fallback to top-level
+            const tenantData = activeTenantId && userData.tenantIds?.[activeTenantId] ? userData.tenantIds[activeTenantId] : {};
+            
+            // Module access check (debug logging removed)
+            
+            setCrmSalesEnabled(!!(tenantData.crm_sales ?? userData.crm_sales));
+            setRecruiterEnabled(!!(tenantData.recruiter ?? userData.recruiter));
+            // Jobs Board is included with Recruiter access (WorkersTable comment); explicit jobsBoard flag also grants access
+            const hasRecruiter = !!(tenantData.recruiter ?? userData.recruiter);
+            const hasJobsBoard = !!(tenantData.jobsBoard ?? userData.jobsBoard);
+            setJobsBoardEnabled(hasJobsBoard || hasRecruiter);
+            
+            // Store userData in a ref so we can access it in the useEffect below
+            lastUserDataRef.current = userData;
             
             if (activeTenantId && claimsRolesMap[activeTenantId]) {
               // Use claims-based role for active tenant
@@ -569,29 +737,36 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
             // Set activeTenant object for context
             const tenantIdToUse = userData.activeTenantId || primaryTenantId;
-            if (tenantIdToUse && userTenantIds.includes(tenantIdToUse)) {
+            // Normalize C1 tenant ID typo (0 vs O): some user docs have BCiP2bQ9CgV0CTfV6MhD, canonical is BCiP2bQ9CgVOCTfV6MhD
+            const C1_TENANT_ID_TYPO = 'BCiP2bQ9CgV0CTfV6MhD';
+            const C1_TENANT_ID_CANONICAL = 'BCiP2bQ9CgVOCTfV6MhD';
+            const resolvedTenantId = tenantIdToUse === C1_TENANT_ID_TYPO ? C1_TENANT_ID_CANONICAL : tenantIdToUse;
+            const isInTenantIds = tenantIdToUse && (userTenantIds.includes(tenantIdToUse) || userTenantIds.includes(resolvedTenantId));
+            if (tenantIdToUse && isInTenantIds) {
               try {
-                const tenantRef = doc(db, 'tenants', tenantIdToUse);
+                const tenantRef = doc(db, 'tenants', resolvedTenantId);
                 const tenantSnap = await getDoc(tenantRef);
                 if (tenantSnap.exists()) {
                   setActiveTenant({ id: tenantSnap.id, ...tenantSnap.data() });
                 } else {
-                  setActiveTenant({ id: tenantIdToUse });
+                  setActiveTenant({ id: resolvedTenantId });
                 }
               } catch (err) {
-                setActiveTenant({ id: tenantIdToUse });
+                setActiveTenant({ id: resolvedTenantId });
               }
             } else if (userTenantIds.length > 0) {
+              const firstId = userTenantIds[0];
+              const resolvedFirst = firstId === C1_TENANT_ID_TYPO ? C1_TENANT_ID_CANONICAL : firstId;
               try {
-                const tenantRef = doc(db, 'tenants', userTenantIds[0]);
+                const tenantRef = doc(db, 'tenants', resolvedFirst);
                 const tenantSnap = await getDoc(tenantRef);
                 if (tenantSnap.exists()) {
                   setActiveTenant({ id: tenantSnap.id, ...tenantSnap.data() });
                 } else {
-                  setActiveTenant({ id: userTenantIds[0] });
+                  setActiveTenant({ id: resolvedFirst });
                 }
               } catch (err) {
-                setActiveTenant({ id: userTenantIds[0] });
+                setActiveTenant({ id: resolvedFirst });
               }
             } else {
               setActiveTenant(null);
@@ -655,34 +830,77 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           }
 
           setLoading(false);
-        });
+        },
+        (err) => {
+          console.error('[Auth] users/{uid} snapshot error:', err);
+          setLoading(false);
+        },
+        );
 
-        return unsubscribeUser;
-      } else {
-        setRole('Tenant');
-        setSecurityLevel('3');
-        setModules([]);
-        setAvatarUrl('');
-        setOrgType(null);
-        setTenantId(undefined);
-        setTenantIds([]);
-        setActiveTenant(null);
-        // Reset claims-based state
-        setIsHRX(false);
-        setClaimsRoles({});
-        setCurrentClaimsRole(undefined);
-        setCurrentClaimsSecurityLevel(undefined);
-        setCrmSalesEnabled(false);
-        setRecruiterEnabled(false);
-        setJobsBoardEnabled(false);
-        setLoading(false);
-      }
+        authSessionCleanupRef.current = () => {
+          try {
+            unsubscribeUser();
+          } catch {
+            // ignore
+          }
+          cleanupFns.forEach((fn) => {
+            try {
+              fn();
+            } catch {
+              // ignore
+            }
+          });
+        };
+        } catch (bootstrapErr) {
+          console.error('[Auth] session bootstrap failed:', bootstrapErr);
+          setLoading(false);
+        }
+      })();
     });
 
-    return () => unsubscribeAuth();
+    return () => {
+      if (authSessionCleanupRef.current) {
+        try {
+          authSessionCleanupRef.current();
+        } catch {
+          // ignore
+        }
+        authSessionCleanupRef.current = null;
+      }
+      unsubscribeAuth();
+    };
   }, []);
 
+  // Update module flags when activeTenant changes (e.g., user switches tenants)
+  useEffect(() => {
+    if (!activeTenant?.id || !lastUserDataRef.current) return;
+    
+    const userData = lastUserDataRef.current;
+    const tenantData = userData.tenantIds?.[activeTenant.id] || {};
+    
+    // Updating module flags for activeTenant change (debug logging removed)
+    
+    setCrmSalesEnabled(!!(tenantData.crm_sales ?? userData.crm_sales));
+    setRecruiterEnabled(!!(tenantData.recruiter ?? userData.recruiter));
+    const hasRecruiter = !!(tenantData.recruiter ?? userData.recruiter);
+    const hasJobsBoard = !!(tenantData.jobsBoard ?? userData.jobsBoard);
+    setJobsBoardEnabled(hasJobsBoard || hasRecruiter);
+  }, [activeTenant?.id]);
+
   const logout = async () => {
+    // Log logout activity before signing out
+    if (currentUser) {
+      try {
+        const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown';
+        await logLogoutActivity(currentUser.uid, {
+          userAgent,
+        });
+      } catch (logError) {
+        console.warn('Failed to log logout activity:', logError);
+        // Don't block logout if activity logging fails
+      }
+    }
+    
     await signOut(auth);
     setCurrentUser(null);
     setRole('Tenant');
@@ -699,9 +917,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setClaimsRoles({});
     setCurrentClaimsRole(undefined);
     setCurrentClaimsSecurityLevel(undefined);
+    setTenantRolesFromProfile({});
+    setLegacyUserSecurityLevel(undefined);
+    setLegacyUserRole(undefined);
     setCrmSalesEnabled(false);
     setRecruiterEnabled(false);
     setJobsBoardEnabled(false);
+    // Redirect to jobs board
+    window.location.href = '/c1/jobs-board';
   };
 
   return (
@@ -732,6 +955,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         recruiterEnabled,
         jobsBoardEnabled,
         setCreatingUserProfile,
+        tenantRolesFromProfile,
+        legacyUserSecurityLevel,
+        legacyUserRole,
       }}
     >
       {children}

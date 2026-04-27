@@ -1,8 +1,19 @@
 import * as admin from 'firebase-admin';
 import { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } from 'firebase-functions/v2/firestore';
 import { onCall, onRequest } from 'firebase-functions/v2/https';
+import { autoSyncUnknownWorksiteMetroToMaster } from './metroMasterAutoSync';
+import {
+  maybeAutoCreateChildAccountForNewLocation,
+  maybeSyncAutoChildAccountNameOnLocationUpdate,
+} from './autoChildAccountFromCompanyLocation';
 
 const db = admin.firestore();
+
+/** v2 default memory is 256MiB; this path runs account queries + mirror + metro sync — needs more headroom. */
+const COMPANY_LOCATION_TRIGGER_OPTIONS = {
+  document: 'tenants/{tenantId}/crm_companies/{companyId}/locations/{locationId}',
+  memory: '512MiB' as const,
+};
 
 function mirrorDocPath(tenantId: string, companyId: string, locationId: string) {
   const id = `${companyId}_${locationId}`;
@@ -53,20 +64,68 @@ function computeStateFields(locData: any): { stateCode: string | null; stateName
   return { stateCode: norm.stateCode, stateName: norm.stateName, raw: raw || null };
 }
 
-export const onCompanyLocationCreated = onDocumentCreated('tenants/{tenantId}/crm_companies/{companyId}/locations/{locationId}', async (event) => {
+export const onCompanyLocationCreated = onDocumentCreated(COMPANY_LOCATION_TRIGGER_OPTIONS, async (event) => {
   const { tenantId, companyId, locationId } = event.params as any;
   const data = event.data?.data() as any;
   if (!data) return;
+
+  try {
+    await maybeAutoCreateChildAccountForNewLocation({
+      tenantId,
+      companyId,
+      locationId,
+      locationData: data as Record<string, unknown>,
+    });
+  } catch (e: any) {
+    console.error('maybeAutoCreateChildAccountForNewLocation failed', {
+      tenantId,
+      companyId,
+      locationId,
+      error: String(e?.message || e),
+    });
+  }
+
   // Load company as fallback for state
   const { stateCode, stateName, raw } = computeStateFields(data);
   if (!stateCode) return;
   const path = mirrorDocPath(tenantId, companyId, locationId);
   await db.doc(path).set({ companyId, state: raw, stateCode, stateName }, { merge: true });
+
+  // Auto-sync metro master + tenant smart groups from newly added worksites.
+  try {
+    await autoSyncUnknownWorksiteMetroToMaster(tenantId, data);
+  } catch (e: any) {
+    console.error('autoSyncUnknownWorksiteMetroToMaster failed', {
+      tenantId,
+      companyId,
+      locationId,
+      error: String(e?.message || e),
+    });
+  }
 });
 
-export const onCompanyLocationUpdated = onDocumentUpdated('tenants/{tenantId}/crm_companies/{companyId}/locations/{locationId}', async (event) => {
+export const onCompanyLocationUpdated = onDocumentUpdated(COMPANY_LOCATION_TRIGGER_OPTIONS, async (event) => {
   const { tenantId, companyId, locationId } = event.params as any;
+  const before = event.data?.before?.data() as any;
   const after = event.data?.after?.data() as any;
+
+  try {
+    await maybeSyncAutoChildAccountNameOnLocationUpdate({
+      tenantId,
+      companyId,
+      locationId,
+      before: before as Record<string, unknown> | undefined,
+      after: after as Record<string, unknown> | undefined,
+    });
+  } catch (e: any) {
+    console.error('maybeSyncAutoChildAccountNameOnLocationUpdate failed', {
+      tenantId,
+      companyId,
+      locationId,
+      error: String(e?.message || e),
+    });
+  }
+
   const { stateCode, stateName, raw } = computeStateFields(after);
   const path = mirrorDocPath(tenantId, companyId, locationId);
   if (!stateCode) {
@@ -76,7 +135,7 @@ export const onCompanyLocationUpdated = onDocumentUpdated('tenants/{tenantId}/cr
   await db.doc(path).set({ companyId, state: raw, stateCode, stateName }, { merge: true });
 });
 
-export const onCompanyLocationDeleted = onDocumentDeleted('tenants/{tenantId}/crm_companies/{companyId}/locations/{locationId}', async (event) => {
+export const onCompanyLocationDeleted = onDocumentDeleted(COMPANY_LOCATION_TRIGGER_OPTIONS, async (event) => {
   const { tenantId, companyId, locationId } = event.params as any;
   const path = mirrorDocPath(tenantId, companyId, locationId);
   await db.doc(path).delete().catch(() => {});

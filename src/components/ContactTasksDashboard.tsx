@@ -125,7 +125,7 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
       (tasks) => {
         console.log('🔍 ContactTasksDashboard received tasks:', tasks.length, tasks);
         // Process tasks into dashboard format for backward compatibility
-        const openTasks = tasks.filter(task => task.status !== 'completed');
+        const openTasks = tasks.filter(task => task.status !== 'completed' && task.status !== 'dismissed');
         const completedTasks = tasks.filter(task => task.status === 'completed');
         console.log('🔍 Open tasks:', openTasks.length, openTasks);
         console.log('🔍 Task statuses:', tasks.map(t => ({ id: t.id, status: t.status, title: t.title })));
@@ -151,13 +151,13 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
           today: { 
             totalTasks: displayTasks.length,
             completedTasks: displayTasks.filter(t => t.status === 'completed').length,
-            pendingTasks: displayTasks.filter(t => t.status !== 'completed').length,
+            pendingTasks: displayTasks.filter(t => t.status !== 'completed' && t.status !== 'dismissed').length,
             tasks: displayTasks
           },
           thisWeek: { 
             totalTasks: displayTasks.length,
             completedTasks: displayTasks.filter(t => t.status === 'completed').length,
-            pendingTasks: displayTasks.filter(t => t.status !== 'completed').length,
+            pendingTasks: displayTasks.filter(t => t.status !== 'completed' && t.status !== 'dismissed').length,
             quotaProgress: {
               percentage: displayTasks.length > 0 ? (displayTasks.filter(t => t.status === 'completed').length / displayTasks.length) * 100 : 0,
               completed: displayTasks.filter(t => t.status === 'completed').length,

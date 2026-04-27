@@ -30,6 +30,24 @@ pglite-debug.log
 functions/firebase-debug.log
 functions/pglite-debug.log
 
+# Firebase Hosting cache noise
+.firebase/hosting.*.cache
+
 functions/.env*
 
 functions/.env*
+
+# Service account keys (NEVER commit these!)
+service-account-key.json
+functions/service-account-key.json
+**/service-account-key.json
+
+# Claude/Cursor scratch output (logs, query dumps, etc. — never commit)
+.scratch/
+
+# Notebook artifacts
+*.ipynb
+
+# Local QA cursors (optional; remove from gitignore if you want to commit a team cursor template)
+.qa/
+.firebase/hosting.*.cache

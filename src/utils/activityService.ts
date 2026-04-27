@@ -97,7 +97,7 @@ export interface ActivityQuery {
 
 export interface UnifiedActivityItem {
   id: string;
-  type: 'email' | 'task' | 'note' | 'call' | 'meeting' | 'ai_activity';
+  type: 'email' | 'task' | 'note' | 'call' | 'meeting';
   title: string;
   description: string;
   timestamp: Date;
@@ -113,7 +113,7 @@ export interface UnifiedActivityItem {
     status?: string;
     [key: string]: any;
   };
-  source: 'tasks' | 'email_logs' | 'contact_notes' | 'ai_logs' | 'activities' | 'notes';
+  source: 'tasks' | 'email_logs' | 'contact_notes' | 'activities' | 'notes' | 'activity_logs';
 }
 
 /**
@@ -179,47 +179,78 @@ export async function loadContactActivities(
   }
 
   // 2. Load email logs for this contact
+  // Phase 2: Dual-query for migration. Primary = array-contains on participantContactIds
+  // (captures multi-contact emails), secondary = legacy contactId== (captures pre-backfill docs).
+  // Results are deduped by doc id.
   if (includeEmails) {
     try {
       const emailsRef = collection(db, 'tenants', tenantId, 'email_logs');
-      const emailsQuery = query(
+      const primaryQuery = query(
+        emailsRef,
+        where('participantContactIds', 'array-contains', contactId),
+        orderBy('timestamp', 'desc'),
+        limit(limitCount)
+      );
+      const legacyQuery = query(
         emailsRef,
         where('contactId', '==', contactId),
         orderBy('timestamp', 'desc'),
         limit(limitCount)
       );
-      const emailsSnapshot = await getDocs(emailsQuery);
-      
-      emailsSnapshot.docs.forEach(doc => {
-        const data = doc.data();
-        const direction = (data.direction || '').toLowerCase();
-        const toList: string[] = Array.isArray(data.to)
-          ? data.to
-          : (typeof data.to === 'string' && data.to ? [data.to] : []);
-        const toDisplay = toList.join(', ');
-        const fromDisplay: string = typeof data.from === 'string' ? data.from : '';
 
-        const description = direction === 'outbound'
-          ? `Email sent to ${toDisplay || 'recipient'}`
-          : `Email received from ${fromDisplay || 'sender'}`;
+      const [primarySnap, legacySnap] = await Promise.all([
+        getDocs(primaryQuery).catch((err) => {
+          console.warn('participantContactIds email_logs query failed, likely missing index:', err);
+          return null as any;
+        }),
+        getDocs(legacyQuery).catch((err) => {
+          console.warn('legacy contactId email_logs query failed:', err);
+          return null as any;
+        }),
+      ]);
 
-        activities.push({
-          id: `email_${doc.id}`,
-          type: 'email',
-          title: `Email: ${data.subject || '(no subject)'}`,
-          description,
-          timestamp: safeTimestampToDate(data.timestamp),
-          salespersonId: data.userId || data.salespersonId,
-          metadata: { 
-            from: data.from, 
-            to: data.to, 
-            direction: direction || 'sent',
-            subject: data.subject,
-            gmailMessageId: data.messageId
-          },
-          source: 'email_logs'
+      const seen = new Set<string>();
+      const pushDocs = (snap: any) => {
+        if (!snap) return;
+        snap.docs.forEach((doc: any) => {
+          if (seen.has(doc.id)) return;
+          seen.add(doc.id);
+          const data = doc.data();
+          const direction = (data.direction || '').toLowerCase();
+          const toList: string[] = Array.isArray(data.to)
+            ? data.to
+            : (typeof data.to === 'string' && data.to ? [data.to] : []);
+          const toDisplay = toList.join(', ');
+          const fromDisplay: string = typeof data.from === 'string' ? data.from : '';
+
+          const description = direction === 'outbound'
+            ? `Email sent to ${toDisplay || 'recipient'}`
+            : `Email received from ${fromDisplay || 'sender'}`;
+
+          activities.push({
+            id: `email_${doc.id}`,
+            type: 'email',
+            title: `Email: ${data.subject || '(no subject)'}`,
+            description,
+            timestamp: safeTimestampToDate(data.timestamp),
+            salespersonId: data.userId || data.salespersonId,
+            metadata: {
+              from: data.from,
+              to: data.to,
+              direction: direction || 'sent',
+              subject: data.subject,
+              gmailMessageId: data.messageId,
+              threadId: data.threadId,
+              bodySnippet: data.bodySnippet,
+              bodyHtml: data.bodyHtml
+            },
+            source: 'email_logs'
+          });
         });
-      });
+      };
+
+      pushDocs(primarySnap);
+      pushDocs(legacySnap);
     } catch (error) {
       console.warn('Failed to load emails for contact:', error);
     }
@@ -257,45 +288,8 @@ export async function loadContactActivities(
     }
   }
 
-  // 4. Load AI activities (optional, due to permissions)
-  if (includeAIActivities) {
-    try {
-      const aiRef = collection(db, 'tenants', tenantId, 'ai_logs');
-      const aiQuery = query(
-        aiRef,
-        where('entityId', '==', contactId),
-        where('entityType', '==', 'contact'),
-        orderBy('timestamp', 'desc'),
-        limit(limitCount)
-      );
-      const aiSnapshot = await getDocs(aiQuery);
-      
-      aiSnapshot.docs.forEach(doc => {
-        const data = doc.data();
-        activities.push({
-          id: `ai_${doc.id}`,
-          type: 'ai_activity',
-          title: data.reason || 'AI Activity',
-          description: data.aiResponse || '',
-          timestamp: safeTimestampToDate(data.timestamp || data.createdAt),
-          salespersonId: data.userId,
-          metadata: { 
-            eventType: data.eventType,
-            aiTags: data.aiTags,
-            urgencyScore: data.urgencyScore
-          },
-          source: 'ai_logs'
-        });
-      });
-    } catch (error) {
-      // Silently handle permission errors for ai_logs collection
-      if (error.code === 'permission-denied' || error.message?.includes('permission')) {
-        console.log('AI logs not accessible, skipping AI activities');
-      } else {
-        console.warn('Failed to load AI activities for contact:', error);
-      }
-    }
-  }
+  // AI activities were historically sourced from `ai_logs`, which has been removed.
+  // The includeAIActivities flag is kept for backward compatibility but no longer fetches data.
 
   // Sort all activities by timestamp (newest first)
   activities.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
@@ -692,41 +686,7 @@ export async function loadSalespersonActivities(
     }
   }
 
-  // 4. Load AI activities for this salesperson
-  if (includeAIActivities) {
-    try {
-      const aiLogsRef = collection(db, 'tenants', tenantId, 'ai_logs');
-      const aiLogsQuery = query(
-        aiLogsRef,
-        where('userId', '==', salespersonId),
-        ...(startDate ? [where('timestamp', '>=', startDate)] : []),
-        ...(endDate ? [where('timestamp', '<=', endDate)] : []),
-        orderBy('timestamp', 'desc'),
-        limit(limitCount)
-      );
-      const aiLogsSnapshot = await getDocs(aiLogsQuery);
-      
-      aiLogsSnapshot.docs.forEach(doc => {
-        const data = doc.data();
-        activities.push({
-          id: `ai_${doc.id}`,
-          type: 'ai_activity',
-          title: data.title || 'AI Activity',
-          description: data.description || '',
-          timestamp: safeTimestampToDate(data.timestamp),
-          salespersonId: data.userId,
-          metadata: {
-            entityType: data.entityType,
-            entityId: data.entityId,
-            activityType: data.activityType
-          },
-          source: 'ai_logs'
-        });
-      });
-    } catch (error) {
-      console.warn('Failed to load AI activities for salesperson:', error);
-    }
-  }
+  // AI activity logging has been removed, so includeAIActivities is ignored.
 
   // 5. Load call activities (from activity_logs - if collection exists)
   if (includeCalls) {

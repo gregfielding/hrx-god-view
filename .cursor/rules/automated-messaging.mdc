@@ -1,0 +1,42 @@
+---
+description: When adding automated messages (triggers), ensure SMS, Email, and Push are all wired via the orchestrator
+globs: functions/src/messaging/**/*.ts,functions/src/triggers/**/*.ts,functions/src/applicationSmsTriggers.ts,functions/src/index.ts
+alwaysApply: false
+---
+
+# Automated Messages: SMS, Email, Push
+
+New automated messages must go through the **orchestrator** so all three channels (SMS, Email, Push) work. Do not add SMS-only or push-only code paths for new triggers.
+
+## Checklist for a new trigger or message type
+
+1. **Register the message type** in `functions/src/messaging/messageTypesRegistry.ts`:
+   - Add to `DEFAULT_MESSAGE_TYPES` with `defaultChannels: ['sms', 'email', 'push']` (or omit push if truly not needed).
+   - Set `requiresTemplate: true` if content comes from tenant templates.
+
+2. **Route through sendMessage** (not direct Twilio/SendGrid/FCM):
+   - From your trigger, call `sendMessage()` from `routingOrchestrator` (or a legacy helper that calls it: `sendLegacyApplicationStatusMessage`, `sendLegacyAssignmentMessage`).
+   - Pass `messageTypeId` that matches the registry. Pass `metadata.ctaUrl` (e.g. `/c1/workers/applications`) so push notifications open the right screen.
+
+3. **Orchestrator routing**: In `functions/src/messaging/routingOrchestrator.ts`:
+   - If the message is application-related, ensure its `messageTypeId` is in the `isApplicationMessage` list (so SMS/email/push channel checks apply).
+   - Push payload already includes `deepLink` from `context.metadata?.ctaUrl ?? context.variables?.ctaUrl`.
+
+4. **Rate limiter** (optional): Add the new `messageTypeId` to `RATE_LIMIT_EXEMPT_MESSAGE_TYPES` in `functions/src/messaging/rateLimiter.ts` if it is transactional and should not be throttled.
+
+5. **Export new triggers** in `functions/src/index.ts` if you added a new trigger file under `functions/src/triggers/`.
+
+## Key files
+
+| Purpose | File |
+|--------|------|
+| Message type config (channels, template) | `functions/src/messaging/messageTypesRegistry.ts` |
+| Send entrypoint (all channels) | `functions/src/messaging/routingOrchestrator.ts` (`sendMessage`) |
+| Legacy wrappers (application/assignment) | `functions/src/messaging/legacyMessageHelpers.ts` |
+| Push token source | `users/{uid}/pushTokens` (orchestrator reads here) |
+| Full checklist | `docs/AUTOMATED-MESSAGING-CHECKLIST.md` |
+
+## Anti-patterns
+
+- Do **not** add a new Firestore trigger that only calls Twilio or only writes to `sendNotificationAndPush` without also going through the orchestrator for SMS/email.
+- Do **not** add a new message type with only `defaultChannels: ['sms']` if the product expects email and push for that action; use all three unless there is a stated exception.

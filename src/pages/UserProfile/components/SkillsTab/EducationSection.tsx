@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Accordion,
   AccordionSummary,
@@ -10,6 +10,7 @@ import {
   Grid,
   MenuItem,
 } from '@mui/material';
+import { toChipLabel } from '../../../../utils/chipLabel';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import DeleteIcon from '@mui/icons-material/Delete';
 
@@ -45,7 +46,21 @@ const EducationSection = ({
 }) => {
   const [education, setEducation] = useState(value || []);
 
+  // Sync with external value changes
+  useEffect(() => {
+    if (Array.isArray(value)) {
+      setEducation(value);
+    }
+  }, [value]);
+
   const handleFieldChange = (idx: number, field: string, val: string) => {
+    // Only update local state on change, don't trigger save
+    const updated = education.map((entry, i) => (i === idx ? { ...entry, [field]: val } : entry));
+    setEducation(updated);
+  };
+
+  const handleFieldBlur = (idx: number, field: string, val: string) => {
+    // Save to parent on blur (triggers save to Firestore)
     const updated = education.map((entry, i) => (i === idx ? { ...entry, [field]: val } : entry));
     setEducation(updated);
     onChange(updated);
@@ -65,15 +80,12 @@ const EducationSection = ({
 
   return (
     <div>
-      <Typography variant="h6" gutterBottom>
-        Education
-      </Typography>
       {education.map((entry, idx) => (
         <Accordion key={idx} sx={{ mb: 2 }}>
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
             <Typography>
-              {entry.degree || 'Degree'} @ {entry.school || 'School'}
-              {entry.startDate && ` (${entry.startDate} - ${entry.endDate || 'Present'})`}
+              {toChipLabel(entry.degree) || 'Degree'} @ {toChipLabel(entry.school) || 'School'}
+              {entry.startDate && ` (${toChipLabel(entry.startDate)} - ${toChipLabel(entry.endDate) || 'Present'})`}
             </Typography>
             <IconButton
               onClick={(e) => {
@@ -162,6 +174,7 @@ const EducationSection = ({
                   minRows={2}
                   value={entry.notes}
                   onChange={(e) => handleFieldChange(idx, 'notes', e.target.value)}
+                  onBlur={(e) => handleFieldBlur(idx, 'notes', e.target.value)}
                 />
               </Grid>
             </Grid>

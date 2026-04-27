@@ -29,6 +29,7 @@ import {
   Snackbar,
   Card,
   CardContent,
+  Autocomplete,
 } from '@mui/material';
 import {
   Delete,
@@ -42,6 +43,7 @@ import { useNavigate } from 'react-router-dom';
 import { collection, doc, getDocs, query, where, updateDoc, deleteDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 
 import { db } from '../firebase';
+import { LOCATION_FACILITY_TYPE_OPTIONS } from '../constants/locationFacilityTypeOptions';
 import { CRMLocation, CRMContact, CRMDeal } from '../types/CRM';
 
 import CRMNotesTab from './CRMNotesTab';
@@ -364,7 +366,7 @@ const LocationDetails: React.FC<LocationDetailsProps> = ({
   };
 
   const handleViewContact = (contact: CRMContact) => {
-    navigate(`/crm/contacts/${contact.id}`);
+    navigate(`/contacts/${contact.id}`);
   };
 
   const handleViewDeal = (deal: CRMDeal) => {
@@ -502,22 +504,16 @@ const LocationDetails: React.FC<LocationDetailsProps> = ({
 
                 {/* Type */}
                 <Grid item xs={12} md={6}>
-                  <FormControl fullWidth>
-                    <InputLabel>Type</InputLabel>
-                    <Select
-                      value={editForm.type}
-                      onChange={(e) => setEditForm(prev => ({ ...prev, type: e.target.value as any }))}
-                      label="Type"
-                    >
-                      <MenuItem value="Office">Office</MenuItem>
-                      <MenuItem value="Manufacturing">Manufacturing</MenuItem>
-                      <MenuItem value="Warehouse">Warehouse</MenuItem>
-                      <MenuItem value="Retail">Retail</MenuItem>
-                      <MenuItem value="Distribution">Distribution</MenuItem>
-                      <MenuItem value="Branch">Branch</MenuItem>
-                      <MenuItem value="Headquarters">Headquarters</MenuItem>
-                    </Select>
-                  </FormControl>
+                  <Autocomplete
+                    fullWidth
+                    freeSolo
+                    options={LOCATION_FACILITY_TYPE_OPTIONS}
+                    value={editForm.type || ''}
+                    onChange={(_, newValue) => setEditForm(prev => ({ ...prev, type: newValue || '' }))}
+                    renderInput={(params) => (
+                      <TextField {...params} label="Type" />
+                    )}
+                  />
                 </Grid>
 
                 {/* Division */}

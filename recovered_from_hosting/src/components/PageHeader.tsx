@@ -1,0 +1,132 @@
+/**
+ * PageHeader Component
+ * 
+ * Shared page header pattern for list-based pages (Inbox, Slack Channels, etc.)
+ * Provides consistent layout, typography, spacing, and toolbar structure.
+ */
+
+import React from 'react';
+import { Box, Typography, useTheme, useMediaQuery } from '@mui/material';
+import { Divider } from '@mui/material';
+
+interface PageHeaderProps {
+  title: string;
+  subtitle?: string;
+  filters?: React.ReactNode;     // Left side: filter chips, toggles, etc.
+  rightActions?: React.ReactNode; // Right side: search + primary CTA
+  showDivider?: boolean;          // Default: true
+}
+
+const PageHeader: React.FC<PageHeaderProps> = ({
+  title,
+  subtitle,
+  filters,
+  rightActions,
+  showDivider = true,
+}) => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const isSmallScreen = useMediaQuery(theme.breakpoints.down('sm'));
+
+  return (
+    <Box
+      sx={{
+        px: { xs: 2, md: 3 }, // 16px mobile, 24px desktop
+        pt: 2, // 16px top padding
+        pb: 0,
+      }}
+    >
+      {/* Title and Subtitle */}
+      <Box sx={{ mb: subtitle ? 1 : 2 }}> {/* 8px if subtitle, 16px if not */}
+        <Typography
+          variant="h6"
+          sx={{
+            fontSize: { xs: '20px', md: '24px' },
+            fontWeight: 600,
+            lineHeight: 1.2,
+            mb: subtitle ? 1 : 0, // 8px if subtitle exists
+          }}
+        >
+          {title}
+        </Typography>
+        {subtitle && (
+          <Typography
+            variant="body2"
+            sx={{
+              fontSize: '14px',
+              fontWeight: 400,
+              color: 'rgba(0, 0, 0, 0.55)',
+              mt: 1, // 8px spacing from title
+            }}
+          >
+            {subtitle}
+          </Typography>
+        )}
+      </Box>
+
+      {/* Toolbar Row */}
+      {(filters || rightActions) && (
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: isSmallScreen ? 'column' : 'row',
+            alignItems: isSmallScreen ? 'stretch' : 'center',
+            gap: isSmallScreen ? 1.5 : 2,
+            minHeight: '48px',
+            mb: 1.5, // 12px spacing to divider
+          }}
+        >
+          {/* Filters (Left) */}
+          {filters && (
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1, // 8px between filter chips
+                flex: isSmallScreen ? 'none' : 1,
+                minWidth: 0,
+                overflow: 'visible',
+              }}
+            >
+              {filters}
+            </Box>
+          )}
+
+          {/* Spacer (only on desktop) */}
+          {!isSmallScreen && filters && rightActions && (
+            <Box sx={{ flex: 1 }} />
+          )}
+
+          {/* Right Actions (Search + CTA) */}
+          {rightActions && (
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1.5, // 12px between search and CTA
+                flexShrink: 0,
+                width: isSmallScreen ? '100%' : 'auto',
+              }}
+            >
+              {rightActions}
+            </Box>
+          )}
+        </Box>
+      )}
+
+      {/* Divider */}
+      {showDivider && (
+        <Divider
+          sx={{
+            mt: 1.5, // 12px spacing from toolbar
+            height: '1px',
+            backgroundColor: 'rgba(0, 0, 0, 0.08)',
+          }}
+        />
+      )}
+    </Box>
+  );
+};
+
+export default PageHeader;
+

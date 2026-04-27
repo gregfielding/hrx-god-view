@@ -38,7 +38,6 @@ import {
   AutoFixHigh as AutoFixHighIcon,
   Psychology as PsychologyIcon,
   TrendingUp as TrendingUpIcon,
-  ArrowBack as ArrowBackIcon,
   Refresh as RefreshIcon,
   CheckCircle as CheckCircleIcon,
   Warning as WarningIcon,
@@ -53,6 +52,7 @@ import {
   Group as GroupIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import {
   collection,
@@ -596,14 +596,7 @@ const AISelfImprovement: React.FC = (): JSX.Element => {
             Monitor AI performance, track improvements, and generate optimization recommendations
           </Typography>
         </Box>
-        <Button
-          variant="outlined"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/admin/ai')}
-          sx={{ height: 40 }}
-        >
-          Back to Launchpad
-        </Button>
+        <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
       </Box>
 
       {/* Stats Cards */}

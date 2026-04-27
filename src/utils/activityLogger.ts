@@ -5,7 +5,7 @@ import { db } from '../firebase';
 export interface ActivityLogData {
   userId: string;
   action: string;
-  actionType: 'login' | 'logout' | 'profile_update' | 'job_application' | 'assignment_update' | 'document_upload' | 'security_change' | 'notification' | 'other';
+  actionType: 'login' | 'logout' | 'profile_update' | 'job_application' | 'assignment_update' | 'document_upload' | 'security_change' | 'notification' | 'note_added' | 'sms_sent' | 'other';
   description: string;
   severity: 'low' | 'medium' | 'high';
   source: 'web' | 'mobile' | 'api' | 'system';
@@ -59,7 +59,13 @@ export const logUserActivity = async (activityData: ActivityLogData): Promise<vo
       timestamp: serverTimestamp(),
       createdAt: serverTimestamp(),
     });
-  } catch (error) {
+  } catch (error: any) {
+    // If document already exists, that's okay - it means the activity was already logged
+    // This can happen due to race conditions or retries
+    if (error?.code === 'already-exists' || error?.message?.includes('already exists')) {
+      // Silently ignore - activity was already logged
+      return;
+    }
     console.error('Error logging user activity:', error);
     // Don't throw error to prevent breaking main functionality
   }
@@ -243,6 +249,67 @@ export const logNotificationActivity = async (
       ...metadata,
       notificationType,
       targetType: 'notification',
+    },
+  });
+};
+
+/**
+ * Log a note added activity (when internal worker adds note)
+ */
+export const logNoteActivity = async (
+  targetUserId: string,
+  noteId: string,
+  authorName: string,
+  authorId: string,
+  category: string,
+  priority: string,
+  metadata?: ActivityLogData['metadata']
+) => {
+  await logUserActivity({
+    userId: targetUserId,
+    action: 'Note Added',
+    actionType: 'note_added',
+    description: `Note added by ${authorName}${category !== 'general' ? ` (${category})` : ''}`,
+    severity: priority === 'urgent' ? 'high' : priority === 'high' ? 'medium' : 'low',
+    source: 'web',
+    metadata: {
+      ...metadata,
+      noteId,
+      authorId,
+      authorName,
+      category,
+      priority,
+      targetType: 'note',
+    },
+  });
+};
+
+/**
+ * Log an SMS sent activity (when internal worker sends SMS)
+ */
+export const logSMSActivity = async (
+  recipientUserId: string,
+  senderName: string,
+  senderId: string,
+  messagePreview: string,
+  metadata?: ActivityLogData['metadata']
+) => {
+  await logUserActivity({
+    userId: recipientUserId,
+    action: 'SMS Sent',
+    actionType: 'sms_sent',
+    description: `SMS sent by ${senderName}`,
+    severity: 'medium',
+    source: 'system',
+    metadata: {
+      ...metadata,
+      senderId,
+      senderName,
+      /** Full SMS copy for recruiter review on the worker profile. */
+      messageBody: messagePreview,
+      messagePreview:
+        messagePreview.length > 200 ? `${messagePreview.substring(0, 200)}…` : messagePreview,
+      targetType: 'sms',
     },
   });
 };

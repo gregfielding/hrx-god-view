@@ -33,9 +33,9 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import EditIcon from '@mui/icons-material/Edit';
 import SaveIcon from '@mui/icons-material/Save';
 import CancelIcon from '@mui/icons-material/Cancel';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 
 import { db } from '../../firebase';
 
@@ -463,14 +463,7 @@ const TraitsEngine: React.FC = () => {
             Configure the 10 core traits that the AI uses to assess and engage with workers.
           </Typography>
         </Box>
-        <Button
-          variant="outlined"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/admin/ai')}
-          sx={{ height: 40 }}
-        >
-          Back to Launchpad
-        </Button>
+        <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
       </Box>
       {loading ? (
         <Typography>Loading...</Typography>

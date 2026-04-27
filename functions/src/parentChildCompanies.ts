@@ -60,26 +60,33 @@ export const setCompanyRelationship = onCall({
 
   const batch = db.batch();
 
+  // NOTE: Admin SDK `set(..., { merge: true })` does NOT interpret dotted
+  // string keys as nested field paths — it writes them as LITERAL field
+  // names with embedded dots. Use nested objects (which `merge:true` correctly
+  // merges at leaf level) for upsert-safe writes, OR `update()` for known-
+  // existing docs. crm_companies docs always exist when relationships are
+  // set, but nested-object form is simpler and preserves upsert semantics.
+  // See: docs/READINESS_R0_HANDOFF.md (post-mortem, Apr 26 2026).
   if (relationType === 'parent') {
     // Source sets its parent; target adds source as child
     batch.set(sourceRef, { parentCompany: targetObj }, { merge: true });
     batch.set(targetRef, {
       childCompanies: admin.firestore.FieldValue.arrayUnion(sourceCompanyId),
-      [`childCompaniesMap.${sourceCompanyId}`]: sourceObj
+      childCompaniesMap: { [sourceCompanyId]: sourceObj },
     }, { merge: true });
   } else if (relationType === 'child') {
     // Source adds target as child; target sets parent
     batch.set(sourceRef, {
       childCompanies: admin.firestore.FieldValue.arrayUnion(targetCompanyId),
-      [`childCompaniesMap.${targetCompanyId}`]: targetObj
+      childCompaniesMap: { [targetCompanyId]: targetObj },
     }, { merge: true });
     batch.set(targetRef, { parentCompany: sourceObj }, { merge: true });
   } else if (relationType === 'sibling') {
-    batch.set(sourceRef, { [`siblingsMap.${targetCompanyId}`]: targetObj }, { merge: true });
-    batch.set(targetRef, { [`siblingsMap.${sourceCompanyId}`]: sourceObj }, { merge: true });
+    batch.set(sourceRef, { siblingsMap: { [targetCompanyId]: targetObj } }, { merge: true });
+    batch.set(targetRef, { siblingsMap: { [sourceCompanyId]: sourceObj } }, { merge: true });
   } else if (relationType === 'msp') {
     batch.set(sourceRef, { msp: targetObj }, { merge: true });
-    batch.set(targetRef, { [`mspClientsMap.${sourceCompanyId}`]: sourceObj }, { merge: true });
+    batch.set(targetRef, { mspClientsMap: { [sourceCompanyId]: sourceObj } }, { merge: true });
   }
 
   await batch.commit();
@@ -107,24 +114,26 @@ export const removeCompanyRelationship = onCall({
   const rmSource = admin.firestore.FieldValue.arrayRemove(sourceCompanyId);
   const rmTarget = admin.firestore.FieldValue.arrayRemove(targetCompanyId);
 
+  // See note above (and post-mortem doc) on Admin SDK set/merge dotted-key
+  // semantics. Using nested-object form for the same reason.
   if (relationType === 'parent') {
     batch.set(sourceRef, { parentCompany: del }, { merge: true });
     batch.set(targetRef, {
       childCompanies: rmSource,
-      [`childCompaniesMap.${sourceCompanyId}`]: del
+      childCompaniesMap: { [sourceCompanyId]: del },
     }, { merge: true });
   } else if (relationType === 'child') {
     batch.set(sourceRef, {
       childCompanies: rmTarget,
-      [`childCompaniesMap.${targetCompanyId}`]: del
+      childCompaniesMap: { [targetCompanyId]: del },
     }, { merge: true });
     batch.set(targetRef, { parentCompany: del }, { merge: true });
   } else if (relationType === 'sibling') {
-    batch.set(sourceRef, { [`siblingsMap.${targetCompanyId}`]: del }, { merge: true });
-    batch.set(targetRef, { [`siblingsMap.${sourceCompanyId}`]: del }, { merge: true });
+    batch.set(sourceRef, { siblingsMap: { [targetCompanyId]: del } }, { merge: true });
+    batch.set(targetRef, { siblingsMap: { [sourceCompanyId]: del } }, { merge: true });
   } else if (relationType === 'msp') {
     batch.set(sourceRef, { msp: del }, { merge: true });
-    batch.set(targetRef, { [`mspClientsMap.${sourceCompanyId}`]: del }, { merge: true });
+    batch.set(targetRef, { mspClientsMap: { [sourceCompanyId]: del } }, { merge: true });
   }
 
   await batch.commit();

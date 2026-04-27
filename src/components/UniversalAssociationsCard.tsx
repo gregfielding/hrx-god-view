@@ -797,13 +797,13 @@ const UniversalAssociationsCard: React.FC<UniversalAssociationsCardProps> = ({
   const handleEntityClick = (entity: any, type: string) => {
     switch (type) {
       case 'company':
-        navigate(`/crm/companies/${entity.id}`);
+        navigate(`/companies/${entity.id}`);
         break;
       case 'location':
-        navigate(`/crm/companies/${entity.companyId}/locations/${entity.id}`);
+        navigate(`/companies/${entity.companyId}/locations/${entity.id}`);
         break;
       case 'contact':
-        navigate(`/crm/contacts/${entity.id}`);
+        navigate(`/contacts/${entity.id}`);
         break;
       case 'deal':
         navigate(`/crm/deals/${entity.id}`);
@@ -945,7 +945,9 @@ const UniversalAssociationsCard: React.FC<UniversalAssociationsCardProps> = ({
 
                 {/* Add Association Dropdown */}
                 {(() => {
-                  const options = availableEntities[type as keyof typeof availableEntities] || [];
+                  const options = Array.isArray(availableEntities[type as keyof typeof availableEntities]) 
+                    ? availableEntities[type as keyof typeof availableEntities] 
+                    : [];
                   return (
                     <Autocomplete
                       options={options}

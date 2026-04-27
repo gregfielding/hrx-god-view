@@ -37,10 +37,11 @@ import {
   query,
   where,
 } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { useNavigate } from 'react-router-dom';
 
-import { db } from '../../../firebase';
+import { db, functions } from '../../../firebase';
 
 const JobOrderShiftsTab: React.FC<{ tenantId: string; jobOrderId: string }> = ({
   tenantId,
@@ -251,7 +252,6 @@ const JobOrderShiftsTab: React.FC<{ tenantId: string; jobOrderId: string }> = ({
     setLoading(true);
     setError('');
     try {
-      // Prevent duplicate assignment
       const alreadyAssigned = (assignmentsMap[shiftId] || []).some(
         (a: any) => a.userId === worker.id,
       );
@@ -259,50 +259,33 @@ const JobOrderShiftsTab: React.FC<{ tenantId: string; jobOrderId: string }> = ({
         setLoading(false);
         return;
       }
-      // Fetch shift details
-      const shiftRef = doc(db, 'shifts', shiftId);
-      const shiftSnap = await getDoc(shiftRef);
-      let shiftData: any = {};
-      let worksiteName = '';
-      if (shiftSnap.exists()) {
-        shiftData = shiftSnap.data();
-        // Fetch worksite nickname from the shift's tenantId and worksiteId/locationId
-        const worksiteId = shiftData.worksiteId || shiftData.locationId;
-        if (shiftData.tenantId && worksiteId) {
-          const worksiteSnap = await getDoc(
-            doc(db, 'tenants', shiftData.tenantId, 'locations', worksiteId),
-          );
-          worksiteName = worksiteSnap.exists()
-            ? worksiteSnap.data().nickname || worksiteSnap.data().title
-            : worksiteId;
-        }
-      }
-      await addDoc(collection(db, 'assignments'), {
-        userId: worker.id,
+
+      const assignFn = httpsCallable(functions, 'placementsCreateAssignments');
+      const response = await assignFn({
         tenantId,
         jobOrderId,
         shiftId,
-        firstName: worker.firstName,
-        lastName: worker.lastName,
-        email: worker.email,
-        phone: worker.phone,
-        role: worker.role,
-        securityLevel: worker.securityLevel,
-        departmentId: worker.departmentId,
-        locationIds: shiftData.locationIds || (shiftData.worksiteId ? [shiftData.worksiteId] : []),
-        status: 'Unconfirmed',
-        assignedAt: serverTimestamp(),
-        shiftTitle: shiftData.title || '',
-        startDate: shiftData.startDate || '',
-        endDate: shiftData.endDate || '',
-        jobTitle: shiftData.jobTitle || '',
-        worksiteName,
+        userIds: [worker.id],
+        sourceType: 'manual',
+        sourceId: null,
       });
-      setSuccess(true);
-      fetchShifts();
-      setSelectedWorker(null);
+
+      const data = response.data as any;
+      const created = Array.isArray(data?.created) ? data.created : [];
+      const skipped = Array.isArray(data?.skipped) ? data.skipped : [];
+
+      if (created.length === 0 && skipped.length > 0) {
+        setError(`No assignment created: ${skipped.map((s: any) => s.reason).join(', ')}`);
+      } else {
+        setSuccess(true);
+        fetchShifts();
+        setSelectedWorker(null);
+      }
     } catch (err: any) {
-      setError(err.message || 'Failed to add assignment');
+      console.error('Error adding assignment:', err);
+      setError(err?.message || 'Failed to add assignment');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -316,13 +299,13 @@ const JobOrderShiftsTab: React.FC<{ tenantId: string; jobOrderId: string }> = ({
     }
     try {
       const q = query(
-        collection(db, 'assignments'),
+        collection(db, 'tenants', tenantId, 'assignments'),
         where('shiftId', '==', shiftId),
         where('userId', '==', userId),
       );
       const snapshot = await getDocs(q);
       if (!snapshot.empty) {
-        await deleteDoc(doc(db, 'assignments', snapshot.docs[0].id));
+        await deleteDoc(doc(db, 'tenants', tenantId, 'assignments', snapshot.docs[0].id));
       }
       setSuccess(true);
       fetchShifts();

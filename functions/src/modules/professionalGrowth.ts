@@ -1,7 +1,7 @@
 import { getFirestore } from 'firebase-admin/firestore';
 import { onCall } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import { logAIAction } from '../feedbackEngine';
+import { logger } from '../utils/logger';
 
 const db = getFirestore();
 
@@ -174,7 +174,7 @@ export const createCareerGoal = onCall(async (request) => {
     });
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'career_goal_created',
       sourceModule: 'ProfessionalGrowth',
@@ -201,7 +201,7 @@ export const createCareerGoal = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'career_goal_created',
       sourceModule: 'ProfessionalGrowth',
@@ -259,7 +259,7 @@ export const updateCareerGoal = onCall(async (request) => {
     }
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'career_goal_updated',
       sourceModule: 'ProfessionalGrowth',
@@ -280,7 +280,7 @@ export const updateCareerGoal = onCall(async (request) => {
     return { success: true };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'career_goal_updated',
       sourceModule: 'ProfessionalGrowth',
@@ -351,7 +351,7 @@ export const createCareerJournalEntry = onCall(async (request) => {
     await db.collection('careerJournal').doc(entryId).set(entry);
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'career_journal_entry_created',
       sourceModule: 'ProfessionalGrowth',
@@ -378,7 +378,7 @@ export const createCareerJournalEntry = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'career_journal_entry_created',
       sourceModule: 'ProfessionalGrowth',
@@ -440,7 +440,7 @@ export const updateSkillsInventory = onCall(async (request) => {
     const roadmap = await generateSkillRoadmap(skillGaps);
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'skills_inventory_updated',
       sourceModule: 'ProfessionalGrowth',
@@ -465,7 +465,7 @@ export const updateSkillsInventory = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'skills_inventory_updated',
       sourceModule: 'ProfessionalGrowth',
@@ -543,7 +543,7 @@ export const getUserGrowthDashboard = onCall(async (request) => {
     };
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'growth_dashboard_viewed',
       sourceModule: 'ProfessionalGrowth',
@@ -571,7 +571,7 @@ export const getUserGrowthDashboard = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'growth_dashboard_viewed',
       sourceModule: 'ProfessionalGrowth',
@@ -714,7 +714,7 @@ export const getAdminGrowthDashboard = onCall(async (request) => {
     };
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId: adminUserId,
       actionType: 'admin_growth_dashboard_viewed',
       sourceModule: 'ProfessionalGrowth',
@@ -740,7 +740,7 @@ export const getAdminGrowthDashboard = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: adminUserId,
       actionType: 'admin_growth_dashboard_viewed',
       sourceModule: 'ProfessionalGrowth',
@@ -801,7 +801,7 @@ export const sendWeeklyGrowthPrompts = onSchedule({
     console.log(`Weekly growth prompts completed: ${sentCount} sent, ${errorCount} errors`);
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'weekly_growth_prompts_sent',
       sourceModule: 'ProfessionalGrowth',
@@ -822,7 +822,7 @@ export const sendWeeklyGrowthPrompts = onSchedule({
   } catch (error: any) {
     console.error('Weekly growth prompts failed:', error);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'weekly_growth_prompts_sent',
       sourceModule: 'ProfessionalGrowth',

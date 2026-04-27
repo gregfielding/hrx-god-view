@@ -5,23 +5,29 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 
 // CHANGE: Hardening per cost-control policy
 // - Global safe defaults for region/limits
+// - `memory` applies to all v2 functions unless they set `memory` themselves (many imports still OOM at 256MiB cold start).
+//   Raising the default reduces one-off patches; tune per-function down where profiling shows headroom (saves $).
 setGlobalOptions({
   region: 'us-central1',
   minInstances: 0,
   maxInstances: 2,
   timeoutSeconds: 240,
-  memory: '256MiB',
+  memory: '512MiB',
   concurrency: 40
 });
 import { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } from 'firebase-functions/v2/firestore';
 import { runAIScheduler, manualSchedulerRun } from './scheduler';
-import { logAIAction } from './feedbackEngine';
 import { getTraitsAndTags } from './utils/openaiHelper';
 import * as FirebaseFirestore from 'firebase-admin/firestore';
 import sgMail from '@sendgrid/mail';
-import { runFirestoreTriggerTests } from './testTriggersCLI';
+import { runFirestoreTriggerTests } from './testFirestoreTriggers';
 import type { TestResult } from './testFirestoreTriggers';
-import { parseResume, getResumeParsingStatus, getUserParsedResumes } from './resumeParser';
+import { logger } from './utils/logger';
+import { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN } from './messaging/twilioSecrets';
+import { sendWorkerMessageInternal } from './twilio';
+import { normalizeUserPhoneToE164 } from './utils/phoneE164Normalize';
+import { parseResumeHttp, getResumeParsingStatus, getUserResumeUploads, getResumeSignedUrl } from './resumeParser';
+import { getUserParsedResumes } from './getUserParsedResumes';
 import { logMobileAppError, monitorMobileAppErrors, getMobileErrorStats } from './mobileErrorMonitoring';
 import {
   getSSOConfig, updateSSOConfig, testSSOConnection,
@@ -35,7 +41,36 @@ import { fetchCompanyNews } from './fetchCompanyNews';
 import { discoverCompanyLocations } from './discoverCompanyLocations';
 import { discoverCompanyUrls } from './discoverCompanyUrls';
 import { getSalespeople } from './getSalespeople';
+import { getPublicCrmView } from './getPublicCrmView';
 import { scrapeIndeedJobs } from './scrapeIndeedJobs';
+import { addJobTitle } from './addJobTitle';
+export {
+  jobOrderChecklistTasksOnJobOrderWrite,
+  jobOrderChecklistTasksOnJobOrderCreated,
+  jobOrderChecklistTasksOnJobPostingCreated,
+  jobOrderChecklistTasksOnJobPostingUpdated,
+  jobOrderChecklistTasksOnJobPostingDeleted,
+  jobOrderChecklistTasksOnShiftCreated,
+  jobOrderChecklistTasksOnShiftUpdated,
+  jobOrderChecklistTasksOnShiftDeleted,
+  backfillMyJobOrderChecklistTasks,
+  backfillChecklistTasksForTenantAdmins,
+} from './jobOrderChecklistTasks';
+
+export {
+  jobOrderAutoMessagingOnShiftCreated,
+  sendJobOrderShiftPostedResendCallable,
+} from './jobOrderAutoMessaging';
+
+// Dashboard internal notifications (recruiter signals)
+export {
+  recruiterNotificationOnJobOrderAssigned,
+  recruiterNotificationOnTenantApplicationCreated,
+  recruiterNotificationOnTaskCreated,
+  recruiterNotificationOnTaskUpdated,
+  recruiterNotificationOnCrmTaskCreated,
+  recruiterNotificationOnCrmTaskUpdated,
+} from './recruiterDashboardNotifications';
 
 import { linkContactsToCompanies } from './linkContactsToCompanies';
 import { linkCRMEntities } from './linkCRMEntities';
@@ -61,18 +96,28 @@ import { triggerAISummaryUpdate } from './triggerAISummaryUpdate';
 import { dealCoachAnalyze, dealCoachChat, dealCoachAction, dealCoachAnalyzeCallable, dealCoachChatCallable, dealCoachActionCallable, dealCoachStartNewCallable, dealCoachLoadConversationCallable, dealCoachFeedbackCallable, analyzeDealOutcomeCallable, dealCoachProactiveCallable } from './dealCoach';
 import { associationsIntegrityReport, associationsIntegrityNightly } from './telemetry/metrics';
 import { rebuildDealAssociations, rebuildEntityReverseIndex } from './rebuilders';
-import { onCompanyLocationCreated, onCompanyLocationDeleted, rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp, companyLocationMirrorStats } from './locationMirror';
-import { onCompanyLocationUpdated } from './onCompanyLocationUpdatedDisabled';
+import {
+  onCompanyLocationCreated,
+  onCompanyLocationUpdated,
+  onCompanyLocationDeleted,
+  rebuildCompanyLocationMirror,
+  rebuildCompanyLocationMirrorHttp,
+  companyLocationMirrorStats,
+} from './locationMirror';
+import {
+  backfillMetroMasterFromLocations,
+  backfillMetroMasterFromLocationsHttp,
+  cleanupTenantStandaloneMetros,
+} from './metroMasterAutoSync';
 import { deleteDuplicateCompanies } from './deleteDuplicateCompanies';
 import { cleanupContactCompanyAssociations, cleanupContactCompanyAssociationsHttp } from './cleanupContactCompanyAssociations';
 import { cleanupUndefinedValues } from './cleanupUndefinedValues';
 import { bulkEmailDomainMatching } from './bulkEmailDomainMatching';
-import { firestoreContactSnapshotFanout, firestoreLocationSnapshotFanout, firestoreSalespersonSnapshotFanout } from './firestoreTriggers';
+// import { firestoreContactSnapshotFanout, firestoreLocationSnapshotFanout, firestoreSalespersonSnapshotFanout } from './firestoreTriggers'; // TODO: Exports missing
 import { firestoreCompanySnapshotFanout } from './firestoreCompanySnapshotFanoutDisabled';
 import { companySnapshotFanoutCallable, batchCompanySnapshotFanoutCallable } from './companySnapshotFanoutOptimized';
 
 // Safe AI log updated trigger with field filters
-export { firestoreLogAILogUpdated } from './safeFirestoreAILogUpdated';
 
 // Remote kill switch management functions
 export {
@@ -88,6 +133,8 @@ import { enrichContactOnDemand } from './contactEnrichment';
 import { queueGmailBulkImport, getGmailImportProgress, getGmailImportProgressHttp, queueGmailBulkImportHttp, processGmailImportWorker } from './gmailBulkImport';
 import { getEmailLogBody } from './emailLogs';
 import { backfillLoggedActivities } from './backfillLoggedActivities';
+import { backfillShiftIdsInApplications } from './backfillShiftIdsInApplications';
+import { archiveAllCrmDeals } from './archiveAllCrmDeals';
 export { getGoogleStatus, getGoogleStatusHttp } from './getGoogleStatus';
 import { runProspecting, saveProspectingSearch, addProspectsToCRM, createCallList } from './prospecting';
 
@@ -97,6 +144,10 @@ import { runProspecting, saveProspectingSearch, addProspectsToCRM, createCallLis
 // 📅 CALENDAR WEBHOOKS IMPORTS
 import { setupCalendarWatch, calendarWebhook, stopCalendarWatch, refreshCalendarWatch } from './calendarWebhooks';
 import { getCalendarWebhookStatus } from './calendarWebhookStatus';
+
+// 🔄 HTTP WORKERS AND ORCHESTRATOR IMPORTS
+import { logTaskUpdate, logUserUpdate, updateActiveSalespeople } from './httpWorkers';
+import { scheduledOrchestrator } from './scheduledOrchestrator';
 
 // Export Deal Coach endpoints for deployment
 export {
@@ -124,10 +175,10 @@ export {
 
 // Export association snapshot fan-out triggers
 export {
-  firestoreCompanySnapshotFanout, // DISABLED - Using optimized callable functions
-  firestoreContactSnapshotFanout,
-  firestoreLocationSnapshotFanout,
-  firestoreSalespersonSnapshotFanout
+  firestoreCompanySnapshotFanout // DISABLED - Using optimized callable functions
+  // firestoreContactSnapshotFanout, // TODO: Export missing from firestoreTriggers
+  // firestoreLocationSnapshotFanout, // TODO: Export missing from firestoreTriggers
+  // firestoreSalespersonSnapshotFanout // TODO: Export missing from firestoreTriggers
 };
 
 // Export optimized company snapshot fanout functions
@@ -145,12 +196,221 @@ export { logContactEnhanced };
 export { queueGmailBulkImport, getGmailImportProgress, getGmailImportProgressHttp, queueGmailBulkImportHttp, processGmailImportWorker };
 export { getEmailLogBody };
 export { backfillLoggedActivities };
+export { backfillShiftIdsInApplications };
+export { archiveAllCrmDeals };
+export { backfillJobPostingLocations } from './backfillJobPostingLocations';
+export { onShiftCreated, onShiftUpdated, onShiftDeleted } from './updateNextShiftDate';
+export { onGigJobOrderShiftWritten, syncGigJobOrderStatusFromShifts } from './jobOrders/gigJobOrderStatusSync';
+export { notifyShiftWorkersUpdated } from './jobOrders/notifyShiftWorkersUpdated';
+export { onJobOrderShiftCancelledCascadeAssignments } from './shiftAssignmentCascades';
+export { onApplicationWithdrawnOrDeletedCascadeAssignments } from './shiftAssignmentCascades';
+export { onAssignmentCompletedStampCompletedAt } from './assignmentAutoClose';
+export { onAssignmentConfirmedScreeningAutomation } from './compliance/screeningAutomationTrigger';
+export {
+  onAssignmentWriteRecomputeShiftFill,
+  onAssignmentUpdateRecomputeShiftFill,
+  onAssignmentDeleteRecomputeShiftFill,
+  onJobOrderShiftUpdatedRecomputeFill,
+} from './shiftFillAutomation';
+export { autoWithdrawApplicationsOnHire } from './autoWithdrawApplicationsOnHire';
 export { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch };
 export { enrichContactOnDemand };
 export { onCompanyLocationCreated, onCompanyLocationUpdated, onCompanyLocationDeleted };
+export { backfillNationalAccountChildAccountsFromLocations } from './backfillNationalAccountChildAccountsCallable';
 export { updateCompanyLocationMirrorCallable, batchUpdateCompanyLocationMirrorsCallable } from './companyLocationUpdateOptimized';
 export { updateCompanyPipelineTotalsCallable, batchUpdateCompanyPipelineTotalsCallable } from './pipelineTotalsOptimized';
 export { rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp };
+export { backfillMetroMasterFromLocations, backfillMetroMasterFromLocationsHttp };
+export { cleanupTenantStandaloneMetros };
+export { getUserReviews, createUserReview, deleteUserReview } from './userReviews';
+export { deleteUserCompletely } from './deleteUserCompletely';
+export { sendProfileUpdateReminder } from './sendProfileUpdateReminder';
+export { sendWorkerOrderInterviewSms } from './sendWorkerOrderInterviewSms';
+export { reviewAndRescoreUser } from './reviewAndRescoreUser';
+export {
+  onUserCreatedScheduleApplyWizardReminder,
+  processApplyWizardReminders,
+} from './applyWizardReminder';
+export {
+  onUserCreatedScheduleAutoInterviewInvite,
+  processScheduledInterviewInvites,
+} from './workerAiPrescreen/autoScheduledInterviewInvite';
+export { processWorkerAiPrescreenReminders } from './workerAiPrescreen/processWorkerAiPrescreenReminders';
+export { triggerRecentUserInterviewBackfill } from './workerAiPrescreen/triggerRecentUserInterviewBackfill';
+export { scheduleWorkerAiPrescreenFollowUpOnUserWrite } from './workerAiPrescreen/scheduleWorkerAiPrescreenFollowUpOnUserWrite';
+export { placementsCreateAssignments, placementsCancelAssignment, respondToAssignment, confirmAssignmentForWorker, resendAssignmentOffer, previewAssignmentDetailsEmail } from './placementsApi';
+export { updateExternalOnboardingStepVerification } from './onboardingGate';
+export {
+  everifyCreateCase,
+  everifyCheckEligibility,
+  everifyPingAuth,
+  everifyDryRunCreateAndSubmit,
+  everifyListCases,
+  everifyRetryCase,
+  everifyExceptionAction,
+  everifyMarkEmployeeNotified,
+  everifyMarkContested,
+  everifyRecordWorkerDecision,
+  everifyMarkReferralInitiated,
+  everifyRecordNoticeGenerated,
+  everifyCloseCaseManual,
+  everifySoapCreateCase,
+  onUserEmploymentUpdatedEverify,
+  onEverifyCaseUpdatedSyncOnboarding,
+  processEverifyCaseFromEmployment,
+  scheduledEverifyPoller,
+} from './integrations/everifyGate';
+export {
+  evereePing,
+  evereeEnsureWorker,
+  evereeCreateOnboardingSession,
+  evereeGetPayHistory,
+  evereeGetPayStatement,
+  evereeAdminPushShift,
+  evereeAdminPreparePayout,
+  evereeWebhook,
+  onEvereeWebhookEventCreated,
+} from './integrations/evereeGate';
+export {
+  apiIntegrationsAccusourceWebhooks,
+  createAccusourceBackgroundCheck,
+  testCreateAccusourceBackgroundCheck,
+  markAccusourceBackgroundCheckCompleteOutside,
+  getAccusourceBackgroundCheckPdf,
+  setAccusourceLineAdjudication,
+  syncAccusourcePackageCatalog,
+} from './integrations/accusource';
+export { syncC1WorkerHomeReadinessSnapshot } from './readiness/homeSnapshotTrigger';
+export { logC1WorkerReadinessDomainChanges } from './readiness/homeSnapshotTriggerStub';
+export { syncWorkerProfileReadinessV1 } from './readiness/profileReadinessTrigger';
+export { syncWorkerReadinessV1FromEntityEmployment } from './readiness/entityEmploymentWorkerReadinessTrigger';
+export { syncWorkerReadinessV1FromAssignment } from './readiness/assignmentWorkerReadinessTrigger';
+// Phase 1 readiness rethink — manual seed callable for EmployeeReadinessItem.
+// See recruiter-ownership-model.md §13 + readiness-onboarding-rethink.md.
+export { seedEmployeeReadinessItemsCallable } from './readiness/seedEmployeeReadinessItemsCallable';
+// Auto-seed on entity_employments create — removes the manual step for new hires.
+export { onEntityEmploymentCreatedAutoSeedReadiness } from './readiness/onEntityEmploymentCreatedAutoSeed';
+// Auto-seed Assignment Readiness items when a worker is placed on a shift.
+export { onAssignmentCreatedAutoSeedReadiness } from './readiness/onAssignmentCreatedAutoSeed';
+// Phase 1 readiness rethink — triggers that maintain
+// `users/{uid}.primaryRecruiterId` from readiness item ownership.
+export {
+  recomputePrimaryOnEmployeeReadinessItemWrite,
+  recomputePrimaryOnAssignmentReadinessItemWrite,
+} from './readiness/onActionItemOwnershipChange';
+export { syncAssignmentReadinessV1OnAssignmentWrite } from './readiness/assignmentReadinessOnAssignmentWrite';
+export { syncAssignmentReadinessV1OnOnboardingInstanceWrite } from './readiness/assignmentReadinessOnOnboardingInstanceWrite';
+export { syncAssignmentReadinessV1OnSignatureEnvelopeWrite } from './readiness/assignmentReadinessOnSignatureEnvelopeWrite';
+export { syncAssignmentReadinessV1OnBackgroundCheckWrite } from './readiness/assignmentReadinessOnBackgroundCheckWrite';
+
+// Phase A reconciliation triggers — bridge vendor / source data flows
+// into employee_readiness_items.{...}.status. Each is a thin wrapper
+// around a Phase E pure translator + the shared updateReadinessItemStatus
+// helper. See docs/READINESS_EXECUTION_MATRIX.md §6 / §7.
+export { onBackgroundCheckWriteUpdateReadiness } from './readiness/onBackgroundCheckWriteUpdateReadiness';
+export { onEverifyCaseWriteUpdateReadiness } from './readiness/onEverifyCaseWriteUpdateReadiness';
+export { onEvereeWorkerWriteUpdateReadiness } from './readiness/onEvereeWorkerWriteUpdateReadiness';
+export { onOnboardingStepVerifiedUpdateReadiness } from './readiness/onOnboardingStepVerifiedUpdateReadiness';
+export { onUserFieldChangeUpdateReadiness } from './readiness/onUserFieldChangeUpdateReadiness';
+
+// Phase C — refresh AssignmentReadiness match items when worker records change.
+// Bridges the gap matrix §6 hole #7 names: snapshot built once and never
+// refreshed. Daily reconciler (Phase C.2) handles the time-passes path.
+export { onUserLicensesChangeRefreshAssignments } from './readiness/onUserLicensesChangeRefreshAssignments';
+export { dailyReconcileExpiredReadiness } from './readiness/dailyReconcileExpiredReadiness';
+
+// R.3 — generalized CSA readiness-item action callables. Cover the gap
+// R.5 (E-Verify) and R.6 (AccuSource) leave: confirm / waive / mark failed
+// for willingness items, *_match items, custom items. AccuSource and
+// E-Verify types are explicitly rejected with a hint pointing at their
+// dedicated callables. See docs/READINESS_R3_HANDOFF.md.
+export {
+  confirmReadinessItem,
+  waiveReadinessItem,
+  markReadinessItemFailed,
+} from './readiness/csaActions';
+
+// Workforce domain (Phase 2 of docs/WORKFORCE_DOMAIN_MODEL.md).
+// - Trigger maintains AccountWorkforce docs from assignment writes.
+// - Callable flips status (active/inactive) with optional assignment cascade.
+// - Trigger rewrites engagementType cache when an account's hiring entity changes.
+export {
+  onAssignmentWriteMaintainAccountWorkforce,
+  setAccountWorkforceStatus,
+  onAccountHiringEntityChangeBackfillWorkforceEngagementType,
+  setAssignmentOutcome,
+  onAccountWorkforceStatusChangeSyncUserInactiveSet,
+} from './workforce';
+
+// Recruiting role model (Phase 4 of docs/RECRUITING_ROLE_MODEL.md).
+// - CSA denorm trigger: keeps users.{uid}.primaryRecruiterId in sync
+//   with user-group CSA assignments. The per-worker recompute lives in
+//   readiness/recomputePrimaryForWorker (CSA path tried first, legacy
+//   anchor fallback for tenants that haven't adopted CSAs yet).
+// - Scheduler stamping triggers: stamp jobOrder.schedulerUid from the
+//   account's roles.schedulerIds on JO write; re-stamp every JO for an
+//   account when its Scheduler roster changes.
+export { onUserGroupRolesOrMembersChangeRecomputeWorkersPrimary } from './recruiting/onUserGroupRolesOrMembersChange';
+export { onJobOrderWriteStampScheduler } from './recruiting/onJobOrderWriteStampScheduler';
+export { onAccountRolesChangeRestampSchedulers } from './recruiting/onAccountRolesChangeRestampSchedulers';
+// Tenant role defaults — atomic add/remove for the four arrays on
+// tenants/{tid}/settings/roleDefaults. Powers the inline chip toggles
+// on the Workforce settings table.
+export { setTenantRoleDefaultMembership } from './recruiting/setTenantRoleDefaultMembership';
+export {
+  syncHrxReadinessSnapshotV1OnPayrollWrite,
+  syncHrxReadinessSnapshotV1OnWorkerOnboardingWrite,
+  syncHrxReadinessSnapshotV1OnEntityEmploymentWrite,
+  syncHrxReadinessSnapshotV1OnUserEmploymentWrite,
+  syncHrxReadinessSnapshotV1OnComplianceWrite,
+} from './readiness/hrxReadinessSnapshotOnUpstreamWrite';
+export { syncHrxReadinessSnapshotV1OnUserWrite } from './readiness/hrxReadinessSnapshotOnUserWrite';
+export {
+  syncHrxReadinessSnapshotV1OnJobOrderWrite,
+  syncHrxReadinessSnapshotV1OnRecruiterJobOrderWrite,
+  syncHrxReadinessSnapshotV1OnAccountHiringWrite,
+} from './readiness/hrxReadinessSnapshotOnHiringLinkageWrite';
+// Bundled with esbuild (`npm run build:hrx-readiness-snapshot`) — imports `src/shared/` + web utils.
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+const hrxReadinessSnapshot = require('./readiness/syncHrxReadinessSnapshotV1.cjs');
+export const syncHrxReadinessSnapshotV1 = hrxReadinessSnapshot.syncHrxReadinessSnapshotV1;
+export { workerSupportAssistant } from './workerSupportAssistant';
+export {
+  triggerWorkerOnboardingPipeline,
+  updateWorkerOnboardingStepStatus,
+  updateWorkerOnboardingStepPackage,
+  updateWorkerOnboardingStepWorkflow,
+  updateWorkerOnboardingStepMilestone,
+  updateEntityEmploymentStatus,
+  setEntityEmploymentI9SupportingManualComplete,
+  setEntityEmploymentEverifyOutsideHrx,
+} from './onboarding/workerOnboardingPipeline';
+export { syncEntityEmploymentOnboardingFromWorkerOnboarding } from './onboarding/entityEmploymentOnboardingSync';
+export { startOnCallEmployment, startOnCallOnboarding } from './onboarding/startOnCallEmployment';
+export { resendPayrollOnboardingInvite } from './onboarding/resendPayrollOnboardingInvite';
+export { getI9SupportingDocumentSignedUrl } from './onboarding/i9SupportingDocumentSignedUrl';
+export {
+  createWorkerI9SupportingDocumentRequest,
+  reviewWorkerI9SupportingDocument,
+  ensureWorkerI9SlotsForMyEmploymentRecord,
+} from './onboarding/i9SupportingDocumentWorkflowCallables';
+export { onWorkerI9SupportingDocumentExtract } from './onboarding/i9SupportingDocumentExtractionTrigger';
+// Avatar (headshot) verification — Phase 1: trigger + callable re-verify.
+// Phase 5: recruiter manual approve / reject / request-reupload.
+export { onUserAvatarChangedVerify } from './avatar/avatarVerificationTrigger';
+export { reverifyAvatar } from './avatar/reverifyAvatar';
+export { setAvatarVerificationDecision } from './avatar/setAvatarVerificationDecision';
+export { submitWorkerAiPrescreenInterview } from './workerAiPrescreen/submitWorkerAiPrescreenInterview';
+export { getWorkerAiPrescreenInterviewPlan } from './workerAiPrescreen/getWorkerAiPrescreenInterviewPlan';
+export { backfillPrescreenCategoryScores } from './workerAiPrescreen/backfillPrescreenCategoryScoresCallable';
+export { userGroupHirePassedCandidates } from './recruiter/userGroupHirePassedCandidates';
+export { userGroupEvaluateMembersNextStep } from './recruiter/userGroupEvaluateMembersNextStep';
+export { userGroupInterviewInviteSend } from './recruiter/userGroupInterviewInviteSend';
+export { triggerUserGroupInterviewInvites } from './recruiter/triggerUserGroupInterviewInvites';
+export { userGroupProfileReminderSend } from './recruiter/userGroupProfileReminderSend';
+export { searchRecruiterTableUsers } from './recruiter/searchRecruiterTableUsers';
+export { onCallI9SupportingReminder } from './onboarding/onCallI9SupportingReminderCallable';
+export { processWorkerOnboardingReminders } from './onboarding/processWorkerOnboardingReminders';
 
 // Auth Functions
 export { setTenantRole } from './auth/setTenantRole';
@@ -164,6 +424,7 @@ export { cleanupUndefinedValues };
 
 // Bulk Operations
 export { bulkEmailDomainMatching };
+// Application Wizard upsert
 
 // 🚀 DENORMALIZED ASSOCIATIONS IMPORTS
 // Temporarily commented out due to TypeScript errors
@@ -217,6 +478,21 @@ export {
 // Export optimized task functions
 export { updateTaskOptimized, batchUpdateTasksOptimized } from './updateTaskOptimized';
 
+// Export Google Jobs Indexing API functions
+export {
+  notifyGoogleJobsIndexing,
+  requestJobIndexing,
+  batchSubmitJobsToGoogle
+} from './notifyGoogleJobsIndexing';
+
+// Translation Phase 1: job_postings EN→ES
+export { onJobPostingWrite } from './triggers/onJobPostingWrite';
+export { onJobOrderWrite } from './triggers/onJobOrderWrite';
+export { onShiftWrite } from './triggers/onShiftWrite';
+export { onCrmCompanyWrite } from './triggers/onCrmCompanyWrite';
+export { onCrmLocationWrite } from './triggers/onCrmLocationWrite';
+export { processTranslationJob } from './http/processTranslationJob';
+
 // Export deal association functions
 export {
   associateDealsWithSalespeople,
@@ -244,42 +520,6 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || '',
 });
 
-export const logAIActionCallable = onCall(async (request) => {
-  try {
-    const logData = request.data || {};
-
-    // Emergency kill-switch and aggressive sampling already live inside logAIAction
-    // Add lightweight server-side filtering to reduce noisy client calls
-    const blockedEventTypes = new Set([
-      'ai_log.created','ai_log.updated','ai_log.deleted',
-      'system.heartbeat','cache_hit','debug',
-      'user.updated','conversation.updated','message.updated','task.updated'
-    ]);
-    const minUrgency = 7;
-
-    const eventType = logData.eventType || logData.action || '';
-    const urgencyScore = typeof logData.urgencyScore === 'number' ? logData.urgencyScore : null;
-
-    if (eventType && blockedEventTypes.has(eventType)) {
-      return { success: true, skipped: true, reason: 'blocked_event_type' };
-    }
-    if (urgencyScore !== null && urgencyScore < minUrgency) {
-      return { success: true, skipped: true, reason: 'low_urgency' };
-    }
-
-    // Basic sampling for non-critical logs (1%)
-    const isCritical = urgencyScore !== null && urgencyScore >= 9;
-    if (!isCritical && Math.random() > 0.01) {
-      return { success: true, skipped: true, reason: 'sampled_out' };
-    }
-
-    await logAIAction(logData);
-    return { success: true, message: 'AI action logged successfully' };
-  } catch (error) {
-    console.error('Error in logAIAction Cloud Function:', error);
-    throw new HttpsError('internal', 'Failed to log AI action');
-  }
-});
 
 export const analyzeAITraining = onCall(async (request) => {
   const { customerId, userId } = request.data;
@@ -326,7 +566,7 @@ Communication Style: ${(customerData || {}).communicationStyle || ''}
   } finally {
     const latencyMs = Date.now() - start;
     // AI LOG: Training analysis event
-    await logAIAction({
+    await logger.aiEvent({
       userId: userId || null,
       actionType: 'training_analysis',
       sourceModule: 'TrainingEngine',
@@ -352,22 +592,232 @@ Communication Style: ${(customerData || {}).communicationStyle || ''}
 });
 
 // Generate job description using OpenAI
-export const generateJobDescription = onCall(async (request) => {
-  const { title } = request.data;
-  if (!title) throw new Error('Missing job title');
-
-  const prompt = `Write a professional job description for the position: ${title}. Include key responsibilities, qualifications, and skills.`;
-
+export const generateJobDescription = onCall({
+  timeoutSeconds: 60,
+  memory: '512MiB',
+  maxInstances: 5,
+  cors: true
+}, async (request) => {
   try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-5',
-      messages: [{ role: 'user', content: prompt }],
-      max_completion_tokens: 300,
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'User must be authenticated');
+    }
+
+    const jobOrderData = request.data?.jobOrderData || {};
+    const toggleStates = request.data?.toggleStates || {};
+
+    // Build the prompt for ChatGPT
+    let prompt = `Write a professional job description for a job board posting (like Indeed or Craigslist) based on the following information:\n\n`;
+    
+    // Add training instructions
+    prompt += `IMPORTANT INSTRUCTIONS:\n`;
+    prompt += `- NEVER mention the client name or worksite name in the description\n`;
+    prompt += `- You can mention the worksite zip code if available\n`;
+    prompt += `- Always say "C1" is hiring (not the company name or worksite name)\n`;
+    prompt += `- Only include information that is marked as "visible" or "show" in the toggles below\n`;
+    prompt += `- If a field has its toggle set to false/off, do NOT mention that information in the description\n`;
+    prompt += `- Be professional, engaging, and clear\n`;
+    prompt += `- Format the description for job boards like Indeed or Craigslist\n\n`;
+
+    // Job Title and Name
+    if (jobOrderData.jobTitle) {
+      prompt += `Job Title: ${jobOrderData.jobTitle}\n`;
+    }
+    if (jobOrderData.jobOrderName) {
+      prompt += `Position Name: ${jobOrderData.jobOrderName}\n`;
+    }
+
+    // Client Description
+    if (jobOrderData.jobDescriptionFromClient) {
+      prompt += `\nClient's Description:\n${jobOrderData.jobDescriptionFromClient}\n`;
+    }
+
+    // Location (zip code only, never company/worksite names)
+    const zipCode = jobOrderData.zipCode || jobOrderData.worksiteAddress?.zipCode;
+    if (zipCode) {
+      prompt += `\nLocation Zip Code: ${zipCode}\n`;
+    }
+    if (jobOrderData.city || jobOrderData.state) {
+      // Only include city/state if we have them, but never mention company/worksite names
+      prompt += `Location: ${[jobOrderData.city, jobOrderData.state].filter(Boolean).join(', ')}\n`;
+    }
+
+    // Pay Rate (only if toggle is on)
+    if (toggleStates.showPayRate && jobOrderData.payRate) {
+      prompt += `\nPay Rate: $${jobOrderData.payRate}/hour (SHOW THIS IN DESCRIPTION)\n`;
+    } else if (jobOrderData.payRate) {
+      prompt += `\nPay Rate: $${jobOrderData.payRate}/hour (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
+    }
+
+    // Skills (only if toggle is on)
+    if (toggleStates.showSkills && jobOrderData.skills && jobOrderData.skills.length > 0) {
+      prompt += `\nRequired Skills: ${jobOrderData.skills.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
+    } else if (jobOrderData.skills && jobOrderData.skills.length > 0) {
+      prompt += `\nRequired Skills: ${jobOrderData.skills.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
+    }
+
+    // Experience and Education (only if toggles are on)
+    if (toggleStates.showExperience && jobOrderData.experienceRequired) {
+      const expMap: Record<string, string> = {
+        'entry': 'Entry-Level (0-1 year)',
+        'intermediate': 'Intermediate (2-4 years)',
+        'experienced': 'Experienced (5+ years)'
+      };
+      prompt += `\nExperience Level: ${expMap[jobOrderData.experienceRequired] || jobOrderData.experienceRequired} (SHOW THIS IN DESCRIPTION)\n`;
+    } else if (jobOrderData.experienceRequired) {
+      const expMap: Record<string, string> = {
+        'entry': 'Entry-Level (0-1 year)',
+        'intermediate': 'Intermediate (2-4 years)',
+        'experienced': 'Experienced (5+ years)'
+      };
+      prompt += `\nExperience Level: ${expMap[jobOrderData.experienceRequired] || jobOrderData.experienceRequired} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
+    }
+    if (toggleStates.showEducation && jobOrderData.educationRequired) {
+      prompt += `Education Required: ${jobOrderData.educationRequired} (SHOW THIS IN DESCRIPTION)\n`;
+    } else if (jobOrderData.educationRequired) {
+      prompt += `Education Required: ${jobOrderData.educationRequired} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
+    }
+
+    // Languages (only if toggle is on)
+    if (toggleStates.showLanguages && jobOrderData.languages && jobOrderData.languages.length > 0) {
+      prompt += `Languages: ${jobOrderData.languages.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
+    } else if (jobOrderData.languages && jobOrderData.languages.length > 0) {
+      prompt += `Languages: ${jobOrderData.languages.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
+    }
+
+    // Shift Type (only if toggle is on)
+    if (toggleStates.showShift && jobOrderData.shiftType && jobOrderData.shiftType.length > 0) {
+      prompt += `Shift Type: ${jobOrderData.shiftType.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
+    } else if (jobOrderData.shiftType && jobOrderData.shiftType.length > 0) {
+      prompt += `Shift Type: ${jobOrderData.shiftType.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
+    }
+
+    // Dates (only if toggles are on)
+    if (toggleStates.showStart && jobOrderData.startDate) {
+      prompt += `Start Date: ${jobOrderData.startDate} (SHOW THIS IN DESCRIPTION)\n`;
+    } else if (jobOrderData.startDate) {
+      prompt += `Start Date: ${jobOrderData.startDate} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
+    }
+    if (toggleStates.showEnd && jobOrderData.endDate) {
+      prompt += `End Date: ${jobOrderData.endDate} (SHOW THIS IN DESCRIPTION)\n`;
+    } else if (jobOrderData.endDate) {
+      prompt += `End Date: ${jobOrderData.endDate} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
+    }
+
+    // Workers Needed (only if toggle is on)
+    if (toggleStates.showWorkersNeeded && jobOrderData.workersNeeded) {
+      prompt += `Workers Needed: ${jobOrderData.workersNeeded} (SHOW THIS IN DESCRIPTION)\n`;
+    } else if (jobOrderData.workersNeeded) {
+      prompt += `Workers Needed: ${jobOrderData.workersNeeded} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
+    }
+
+    // Uniform Requirements (only if toggle is on)
+    if (toggleStates.showUniformRequirements && jobOrderData.uniformRequirements && jobOrderData.uniformRequirements.length > 0) {
+      prompt += `\nUniform Requirements: ${jobOrderData.uniformRequirements.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
+    } else if (jobOrderData.uniformRequirements && jobOrderData.uniformRequirements.length > 0) {
+      prompt += `\nUniform Requirements: ${jobOrderData.uniformRequirements.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
+    }
+    if (toggleStates.showUniformRequirements && jobOrderData.customUniformRequirements) {
+      prompt += `Additional Uniform Requirements: ${jobOrderData.customUniformRequirements} (SHOW THIS IN DESCRIPTION)\n`;
+    } else if (jobOrderData.customUniformRequirements) {
+      prompt += `Additional Uniform Requirements: ${jobOrderData.customUniformRequirements} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
+    }
+
+    // Physical Requirements (only if toggle is on)
+    if (toggleStates.showPhysicalRequirements && jobOrderData.physicalRequirements && jobOrderData.physicalRequirements.length > 0) {
+      prompt += `Physical Requirements: ${jobOrderData.physicalRequirements.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
+    } else if (jobOrderData.physicalRequirements && jobOrderData.physicalRequirements.length > 0) {
+      prompt += `Physical Requirements: ${jobOrderData.physicalRequirements.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
+    }
+
+    // PPE Requirements (only if toggle is on)
+    if (toggleStates.showRequiredPpe && jobOrderData.ppeRequirements && jobOrderData.ppeRequirements.length > 0) {
+      prompt += `PPE Requirements: ${jobOrderData.ppeRequirements.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
+    } else if (jobOrderData.ppeRequirements && jobOrderData.ppeRequirements.length > 0) {
+      prompt += `PPE Requirements: ${jobOrderData.ppeRequirements.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
+    }
+
+    // Licenses and Certifications (only if toggle is on)
+    if (toggleStates.showLicensesCerts && jobOrderData.licensesCerts && jobOrderData.licensesCerts.length > 0) {
+      prompt += `Licenses/Certifications Required: ${jobOrderData.licensesCerts.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
+    } else if (jobOrderData.licensesCerts && jobOrderData.licensesCerts.length > 0) {
+      prompt += `Licenses/Certifications Required: ${jobOrderData.licensesCerts.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
+    }
+
+    // Background Checks (only if toggle is on)
+    if (toggleStates.showBackgroundChecks && jobOrderData.backgroundCheckPackages && jobOrderData.backgroundCheckPackages.length > 0) {
+      prompt += `Background Check: ${jobOrderData.backgroundCheckPackages.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
+    } else if (jobOrderData.backgroundCheckPackages && jobOrderData.backgroundCheckPackages.length > 0) {
+      prompt += `Background Check: ${jobOrderData.backgroundCheckPackages.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
+    }
+
+    // Drug Screening (only if toggle is on)
+    if (toggleStates.showDrugScreening && jobOrderData.drugScreeningPanels && jobOrderData.drugScreeningPanels.length > 0) {
+      prompt += `Drug Screening: ${jobOrderData.drugScreeningPanels.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
+    } else if (jobOrderData.drugScreeningPanels && jobOrderData.drugScreeningPanels.length > 0) {
+      prompt += `Drug Screening: ${jobOrderData.drugScreeningPanels.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
+    }
+
+    // Additional Screenings (only if toggle is on)
+    if (toggleStates.showAdditionalScreenings && jobOrderData.additionalScreenings && jobOrderData.additionalScreenings.length > 0) {
+      prompt += `Additional Screenings: ${jobOrderData.additionalScreenings.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
+    } else if (jobOrderData.additionalScreenings && jobOrderData.additionalScreenings.length > 0) {
+      prompt += `Additional Screenings: ${jobOrderData.additionalScreenings.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
+    }
+
+    // E-Verify
+    if (jobOrderData.eVerifyRequired) {
+      prompt += `E-Verify Required: Yes\n`;
+    }
+
+    prompt += `\nPlease write a compelling, professional job description that:\n`;
+    prompt += `- Is formatted for job boards like Indeed or Craigslist\n`;
+    prompt += `- Highlights key responsibilities and requirements\n`;
+    prompt += `- Is engaging and attracts qualified candidates\n`;
+    prompt += `- ONLY includes information marked as "SHOW THIS IN DESCRIPTION" above\n`;
+    prompt += `- NEVER mentions information marked as "DO NOT MENTION IN DESCRIPTION"\n`;
+    prompt += `- Do not include the number of workers needed or positions unless explicitly marked "SHOW THIS IN DESCRIPTION"\n`;
+    prompt += `- Always says "C1 is hiring" or "C1 Staffing is hiring" (never mention the actual company or worksite name)\n`;
+    prompt += `- You can mention the zip code if provided\n`;
+    prompt += `- Uses clear, professional language\n`;
+    prompt += `- Is approximately 200-400 words\n`;
+
+    // Call OpenAI
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a professional job description writer specializing in creating compelling job postings for job boards like Indeed and Craigslist. You always refer to the employer as "C1" or "C1 Staffing" and never mention client names or worksite names. You only include information that is explicitly marked as visible/shown in the job posting.'
+        },
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      temperature: 0.7,
+      max_tokens: 800
     });
-    const description = response.choices[0].message.content;
-    return { description };
-  } catch (err: any) {
-    throw new HttpsError('internal', 'Failed to generate description');
+
+    const generatedDescription = completion.choices[0]?.message?.content || '';
+
+    if (!generatedDescription) {
+      throw new HttpsError('internal', 'Failed to generate job description');
+    }
+
+    return {
+      success: true,
+      description: generatedDescription.trim(),
+      jobDescription: generatedDescription.trim() // Support both field names for backward compatibility
+    };
+  } catch (error: any) {
+    console.error('Error generating job description:', error);
+    
+    if (error instanceof HttpsError) {
+      throw error;
+    }
+    
+    throw new HttpsError('internal', error.message || 'Failed to generate job description');
   }
 });
 
@@ -407,7 +857,7 @@ export const reindexVectorCollection = onCall(async (request) => {
       });
     }, 3000);
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'vector_reindex',
       sourceModule: 'VectorSettings',
@@ -428,7 +878,7 @@ export const reindexVectorCollection = onCall(async (request) => {
 
     return { success: true, message: 'Reindexing started' };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'vector_reindex',
       sourceModule: 'VectorSettings',
@@ -505,7 +955,7 @@ export const runContextAssembly = onCall(async (request) => {
     // Simulate context assembly (in real implementation, this would assemble actual context)
     const assembledPrompt = `[System Context] ${sources.map((s: any) => s.dataPreview).join(' ')}\n\n[User Request] ${liveRequest}`;
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'context_assembly',
       sourceModule: 'AutoContextEngine',
@@ -532,7 +982,7 @@ export const runContextAssembly = onCall(async (request) => {
       engine: engine?.name
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'context_assembly',
       sourceModule: 'AutoContextEngine',
@@ -583,7 +1033,7 @@ export const createRetrievalFilter = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'retrieval_filter_create',
       sourceModule: 'RetrievalFilters',
@@ -604,7 +1054,7 @@ export const createRetrievalFilter = onCall(async (request) => {
 
     return { id: docRef.id };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'retrieval_filter_create',
       sourceModule: 'RetrievalFilters',
@@ -638,7 +1088,7 @@ export const updateRetrievalFilter = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'retrieval_filter_update',
       sourceModule: 'RetrievalFilters',
@@ -650,7 +1100,7 @@ export const updateRetrievalFilter = onCall(async (request) => {
 
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'retrieval_filter_update',
       sourceModule: 'RetrievalFilters',
@@ -671,7 +1121,7 @@ export const deleteRetrievalFilter = onCall(async (request) => {
   try {
     await db.collection('retrievalFilters').doc(filterId).delete();
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'retrieval_filter_delete',
       sourceModule: 'RetrievalFilters',
@@ -683,7 +1133,7 @@ export const deleteRetrievalFilter = onCall(async (request) => {
 
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'retrieval_filter_delete',
       sourceModule: 'RetrievalFilters',
@@ -725,7 +1175,7 @@ export const createPromptTemplate = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'prompt_template_create',
       sourceModule: 'PromptBuilder',
@@ -737,7 +1187,7 @@ export const createPromptTemplate = onCall(async (request) => {
 
     return { id: docRef.id };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'prompt_template_create',
       sourceModule: 'PromptBuilder',
@@ -761,7 +1211,7 @@ export const updatePromptTemplate = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'prompt_template_update',
       sourceModule: 'PromptBuilder',
@@ -773,7 +1223,7 @@ export const updatePromptTemplate = onCall(async (request) => {
 
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'prompt_template_update',
       sourceModule: 'PromptBuilder',
@@ -798,7 +1248,7 @@ export const testPromptTemplate = onCall(async (request) => {
       assembledPrompt = assembledPrompt.replace(new RegExp(`{{${key}}}`, 'g'), String(value));
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'prompt_template_test',
       sourceModule: 'PromptBuilder',
@@ -816,7 +1266,7 @@ export const testPromptTemplate = onCall(async (request) => {
       latency: Date.now() - start
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'prompt_template_test',
       sourceModule: 'PromptBuilder',
@@ -870,7 +1320,7 @@ export const updateAutoDevOpsSettings = onCall(async (request) => {
       updatedBy: userId
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'autodevops_settings_update',
       sourceModule: 'AutoDevOps',
@@ -882,7 +1332,7 @@ export const updateAutoDevOpsSettings = onCall(async (request) => {
 
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'autodevops_settings_update',
       sourceModule: 'AutoDevOps',
@@ -910,7 +1360,7 @@ export const applyAutoDevOpsPatch = onCall(async (request) => {
 
     // In a real implementation, this would apply the actual code patch
     // For now, we'll just log the action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'autodevops_patch_apply',
       sourceModule: 'AutoDevOps',
@@ -922,7 +1372,7 @@ export const applyAutoDevOpsPatch = onCall(async (request) => {
 
     return { success: true, message: 'Patch applied successfully' };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'autodevops_patch_apply',
       sourceModule: 'AutoDevOps',
@@ -947,7 +1397,7 @@ export const createAutoDevOpsLog = onCall(async (request) => {
       createdBy: userId
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'autodevops_log_create',
       sourceModule: 'AutoDevOps',
@@ -959,7 +1409,7 @@ export const createAutoDevOpsLog = onCall(async (request) => {
 
     return { id: docRef.id };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'autodevops_log_create',
       sourceModule: 'AutoDevOps',
@@ -975,147 +1425,44 @@ export const createAutoDevOpsLog = onCall(async (request) => {
 
 // Enhanced AutoDevOps Functions for Real-time AI Monitoring
 export const analyzeAILogsForPatterns = onCall(async (request) => {
-  const { timeRange, userId } = request.data;
-  const start = Date.now();
-  
-  try {
-    // Get AI logs from the specified time range
-    const logsRef = db.collection('ai_logs');
-    const timeFilter = timeRange || 24; // Default to 24 hours
-    const cutoffTime = new Date(Date.now() - timeFilter * 60 * 60 * 1000);
-    
-    const snapshot = await logsRef
-      .where('timestamp', '>=', admin.firestore.Timestamp.fromDate(cutoffTime))
-      .orderBy('timestamp', 'desc')
-      .limit(1000)
-      .get();
+  const { userId } = request.data || {};
+  logger.info('analyzeAILogsForPatterns called but AI logging is disabled.', {
+    context: 'autoDevOps.analyzeAILogsForPatterns',
+    extra: { userId }
+  });
 
-    const logs = snapshot.docs.map((doc: any) => ({
-      id: doc.id,
-      ...doc.data(),
-      timestamp: doc.data().timestamp?.toDate()
-    }));
-
-    // Analyze patterns
-    const patterns = await analyzeLogPatterns(logs);
-    
-    // Generate AutoDevOps logs for detected issues
-    const autoDevOpsLogs = await generateAutoDevOpsLogs(patterns, logs);
-
-    await logAIAction({
-      userId,
-      actionType: 'autodevops_pattern_analysis',
-      sourceModule: 'AutoDevOps',
-      success: true,
-      latencyMs: Date.now() - start,
-      versionTag: 'v1',
-      reason: `Analyzed ${logs.length} AI logs for patterns`
-    });
-
-    return { patterns, autoDevOpsLogs };
-  } catch (error: any) {
-    await logAIAction({
-      userId,
-      actionType: 'autodevops_pattern_analysis',
-      sourceModule: 'AutoDevOps',
-      success: false,
-      errorMessage: error.message,
-      latencyMs: Date.now() - start,
-      versionTag: 'v1',
-      reason: 'Failed to analyze AI logs for patterns'
-    });
-    throw error;
-  }
+  return {
+    patterns: [],
+    autoDevOpsLogs: [],
+    message: 'AI logging has been disabled; no log patterns are available.'
+  };
 });
 
 export const getAILogQualityMetrics = onCall(async (request) => {
-  const { customerId, module, timeRange } = request.data;
-  
-  try {
-    const logsRef = db.collection('ai_logs');
-    const timeFilter = timeRange || 24;
-    const cutoffTime = new Date(Date.now() - timeFilter * 60 * 60 * 1000);
-    
-    let query = logsRef.where('timestamp', '>=', admin.firestore.Timestamp.fromDate(cutoffTime));
-    
-    if (customerId) {
-      query = query.where('customerId', '==', customerId);
-    }
-    
-    if (module) {
-      query = query.where('sourceModule', '==', module);
-    }
-    
-    const snapshot = await query.orderBy('timestamp', 'desc').get();
-    const logs = snapshot.docs.map((doc: any) => ({
-      id: doc.id,
-      ...doc.data(),
-      timestamp: doc.data().timestamp?.toDate()
-    }));
+  const { customerId, module } = request.data || {};
+  logger.info('getAILogQualityMetrics called but AI logging is disabled.', {
+    context: 'autoDevOps.getAILogQualityMetrics',
+    extra: { customerId, module }
+  });
 
-    // Calculate quality metrics
-    const metrics = calculateQualityMetrics(logs);
-    
-    return { metrics, totalLogs: logs.length };
-  } catch (error: any) {
-    throw new Error(`Failed to get AI log quality metrics: ${error.message}`);
-  }
+  return {
+    metrics: {},
+    totalLogs: 0,
+    message: 'AI logging has been disabled; no quality metrics are available.'
+  };
 });
 
 export const suggestConfigImprovements = onCall(async (request) => {
-  const { customerId, module, issueType, userId } = request.data;
-  const start = Date.now();
-  
-  try {
-    // Get current configuration
-    const config = await getCurrentConfig(customerId, module);
-    
-    // Get recent logs for context
-    const logsRef = db.collection('ai_logs');
-    const cutoffTime = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    
-    let query = logsRef.where('timestamp', '>=', admin.firestore.Timestamp.fromDate(cutoffTime));
-    if (customerId) {
-      query = query.where('customerId', '==', customerId);
-    }
-    if (module) {
-      query = query.where('sourceModule', '==', module);
-    }
-    
-    const snapshot = await query.orderBy('timestamp', 'desc').limit(100).get();
-    const logs = snapshot.docs.map((doc: any) => ({
-      id: doc.id,
-      ...doc.data(),
-      timestamp: doc.data().timestamp?.toDate()
-    }));
+  const { customerId, module, issueType, userId } = request.data || {};
+  logger.info('suggestConfigImprovements called but AI logging is disabled.', {
+    context: 'autoDevOps.suggestConfigImprovements',
+    extra: { customerId, module, issueType, userId }
+  });
 
-    // Generate improvement suggestions
-    const suggestions = await generateConfigSuggestions(config, logs, issueType);
-    
-    await logAIAction({
-      userId,
-      actionType: 'autodevops_config_suggestions',
-      sourceModule: 'AutoDevOps',
-      success: true,
-      latencyMs: Date.now() - start,
-      versionTag: 'v1',
-      reason: `Generated config suggestions for ${module}`
-    });
-
-    return { suggestions };
-  } catch (error: any) {
-    await logAIAction({
-      userId,
-      actionType: 'autodevops_config_suggestions',
-      sourceModule: 'AutoDevOps',
-      success: false,
-      errorMessage: error.message,
-      latencyMs: Date.now() - start,
-      versionTag: 'v1',
-      reason: `Failed to generate config suggestions for ${module}`
-    });
-    throw error;
-  }
+  return {
+    suggestions: [],
+    message: 'AI logging has been disabled; there is no historical data to drive config suggestions.'
+  };
 });
 
 // Helper functions for AI log analysis
@@ -1448,18 +1795,18 @@ export {
 
 // Export Test Harness functions
 export { 
-  runAILogTests, 
-  createTestLog, 
-  reprocessTestLog, 
-  getTestResults, 
-  cleanupTestData 
+  runAILogTests
+  // createTestLog, // TODO: Export missing
+  // reprocessTestLog, // TODO: Export missing
+  // getTestResults, // TODO: Export missing
+  // cleanupTestData // TODO: Export missing
 } from './testHarness';
 
 // Export Analytics Engine functions
 export { 
-  getAIAnalytics, 
-  getRealTimeAIAnalytics, 
-  exportAnalyticsData 
+  getAIAnalytics
+  // getRealTimeAIAnalytics, // TODO: Export missing from analyticsEngine
+  // exportAnalyticsData // TODO: Export missing from analyticsEngine
 } from './analyticsEngine';
 
 // AI Chat Functions
@@ -1485,7 +1832,7 @@ export const getAIChatSettings = onCall(async (request) => {
       }
     }
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'admin',
       actionType: 'ai_chat_settings_get',
       sourceModule: 'AIChat',
@@ -1497,7 +1844,7 @@ export const getAIChatSettings = onCall(async (request) => {
 
     return { settings };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'admin',
       actionType: 'ai_chat_settings_get',
       sourceModule: 'AIChat',
@@ -1531,7 +1878,7 @@ export const updateAIChatSettings = onCall(async (request) => {
       }, { merge: true });
     }
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'admin',
       actionType: 'ai_chat_settings_update',
       sourceModule: 'AIChat',
@@ -1543,7 +1890,7 @@ export const updateAIChatSettings = onCall(async (request) => {
 
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'admin',
       actionType: 'ai_chat_settings_update',
       sourceModule: 'AIChat',
@@ -1575,7 +1922,7 @@ export const getAIChatConversations = onCall(async (request) => {
       updatedAt: doc.data().updatedAt?.toDate()
     }));
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'ai_chat_conversations_get',
       sourceModule: 'AIChat',
@@ -1587,7 +1934,7 @@ export const getAIChatConversations = onCall(async (request) => {
 
     return { conversations };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'ai_chat_conversations_get',
       sourceModule: 'AIChat',
@@ -1643,7 +1990,7 @@ export const createAIChatConversation = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_conversation_create',
       sourceModule: 'AIChat',
@@ -1655,7 +2002,7 @@ export const createAIChatConversation = onCall(async (request) => {
 
     return { conversationId: conversationRef.id, aiResponse };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_conversation_create',
       sourceModule: 'AIChat',
@@ -1723,7 +2070,7 @@ export const sendAIChatMessage = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_message_send',
       sourceModule: 'AIChat',
@@ -1735,7 +2082,7 @@ export const sendAIChatMessage = onCall(async (request) => {
 
     return { aiResponse, escalated: shouldEscalate };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_message_send',
       sourceModule: 'AIChat',
@@ -1772,7 +2119,7 @@ export const escalateConversation = onCall(async (request) => {
       })
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'ai_chat_conversation_escalate',
       sourceModule: 'AIChat',
@@ -1784,7 +2131,7 @@ export const escalateConversation = onCall(async (request) => {
 
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'ai_chat_conversation_escalate',
       sourceModule: 'AIChat',
@@ -2020,7 +2367,7 @@ export const getFAQSuggestions = onCall(async (request) => {
       suggestion.question.toLowerCase().includes(currentMessage?.toLowerCase() || '')
     ).slice(0, 3);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_faq_suggestions',
       sourceModule: 'AIChat',
@@ -2032,7 +2379,7 @@ export const getFAQSuggestions = onCall(async (request) => {
 
     return { suggestions: filteredSuggestions };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_faq_suggestions',
       sourceModule: 'AIChat',
@@ -2063,7 +2410,7 @@ export const scheduleRecurringCheckinV2 = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_checkin_schedule',
       sourceModule: 'AIChat',
@@ -2075,7 +2422,7 @@ export const scheduleRecurringCheckinV2 = onCall(async (request) => {
 
     return { checkinId: checkinRef.id };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_checkin_schedule',
       sourceModule: 'AIChat',
@@ -2107,7 +2454,7 @@ export const getPendingCheckins = onCall(async (request) => {
       ...doc.data()
     }));
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_checkin_pending',
       sourceModule: 'AIChat',
@@ -2119,7 +2466,7 @@ export const getPendingCheckins = onCall(async (request) => {
 
     return { checkins: pendingCheckins };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_checkin_pending',
       sourceModule: 'AIChat',
@@ -2219,7 +2566,7 @@ export const analyzeConversationSentiment = onCall(async (request) => {
       rules: automationRules,
       timestamp: admin.firestore.FieldValue.serverTimestamp()
     });
-    await logAIAction({
+    await logger.aiEvent({
       userId: conversation.workerId,
       actionType: 'ai_chat_sentiment_analysis',
       sourceModule: 'AIChat',
@@ -2230,7 +2577,7 @@ export const analyzeConversationSentiment = onCall(async (request) => {
     });
     return { sentiment, actionsTaken };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'unknown',
       actionType: 'ai_chat_sentiment_analysis',
       sourceModule: 'AIChat',
@@ -2300,7 +2647,7 @@ export const triggerScheduledCheckins = onSchedule({
     
     console.log(`Triggered ${triggeredCheckins.length} check-ins`);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_chat_checkin_trigger',
       sourceModule: 'AIChat',
@@ -2312,7 +2659,7 @@ export const triggerScheduledCheckins = onSchedule({
   } catch (error: any) {
     console.error('Error triggering check-ins:', error);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_chat_checkin_trigger',
       sourceModule: 'AIChat',
@@ -2439,7 +2786,7 @@ export const getRealTimeAIChatAnalytics = onCall(async (request) => {
       }
     };
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'admin',
       actionType: 'ai_chat_analytics_generate',
       sourceModule: 'AIChat',
@@ -2451,7 +2798,7 @@ export const getRealTimeAIChatAnalytics = onCall(async (request) => {
     
     return { analytics };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'admin',
       actionType: 'ai_chat_analytics_generate',
       sourceModule: 'AIChat',
@@ -2657,7 +3004,7 @@ export const manageCustomerFAQ = onCall(async (request) => {
         throw new Error('Invalid action');
     }
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'admin',
       actionType: 'customer_faq_manage',
       sourceModule: 'AIChat',
@@ -2702,7 +3049,7 @@ export const trackSatisfaction = onCall(async (request) => {
       await analyzeLowSatisfaction(conversationId, customerId, workerId, satisfactionScore, feedback);
     }
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'satisfaction_tracked',
       sourceModule: 'AIChat',
@@ -2714,7 +3061,7 @@ export const trackSatisfaction = onCall(async (request) => {
     
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'satisfaction_tracked',
       sourceModule: 'AIChat',
@@ -2829,7 +3176,7 @@ export const collectAIFeedback = onCall(async (request) => {
       await triggerLearningCycle(feedbackRecord, analysis);
     }
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'ai_feedback_collected',
       sourceModule: 'AIFeedbackLoop',
@@ -2849,7 +3196,7 @@ export const collectAIFeedback = onCall(async (request) => {
 
     return { success: true, feedbackId: feedbackRef.id };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'ai_feedback_collected',
       sourceModule: 'AIFeedbackLoop',
@@ -2983,7 +3330,7 @@ async function applyImmediateLearning(feedbackRecord: any, analysis: any) {
         }
 
         // 🧠 Log AI learning action
-        await logAIAction({
+        await logger.aiEvent({
           userId: 'system',
           actionType: 'ai_learning_applied',
           sourceModule: 'AIFeedbackLoop',
@@ -3046,7 +3393,7 @@ export const generateAIPerformanceInsights = onCall(async (request) => {
 
     const insightsRef = await db.collection('ai_performance_insights').add(insightsRecord);
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_performance_insights_generated',
       sourceModule: 'AIFeedbackLoop',
@@ -3066,7 +3413,7 @@ export const generateAIPerformanceInsights = onCall(async (request) => {
 
     return { success: true, insights };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_performance_insights_generated',
       sourceModule: 'AIFeedbackLoop',
@@ -3214,7 +3561,7 @@ export const getAIFeedbackData = onCall(async (request) => {
       timestamp: doc.data().timestamp.toDate()
     }));
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_feedback_data_retrieved',
       sourceModule: 'AIFeedbackLoop',
@@ -3234,7 +3581,7 @@ export const getAIFeedbackData = onCall(async (request) => {
 
     return { success: true, feedback };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_feedback_data_retrieved',
       sourceModule: 'AIFeedbackLoop',
@@ -3269,7 +3616,7 @@ export const getAILearningTasks = onCall(async (request) => {
       createdAt: doc.data().createdAt.toDate()
     }));
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_learning_tasks_retrieved',
       sourceModule: 'AIFeedbackLoop',
@@ -3289,7 +3636,7 @@ export const getAILearningTasks = onCall(async (request) => {
 
     return { success: true, tasks };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_learning_tasks_retrieved',
       sourceModule: 'AIFeedbackLoop',
@@ -3378,7 +3725,7 @@ export const getFeedbackAnalytics = onCall(async (request) => {
       );
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'feedback_analytics_retrieved',
       sourceModule: 'AIFeedbackLoop',
@@ -3398,7 +3745,7 @@ export const getFeedbackAnalytics = onCall(async (request) => {
 
     return { success: true, analytics };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'feedback_analytics_retrieved',
       sourceModule: 'AIFeedbackLoop',
@@ -3458,7 +3805,7 @@ export const applyAILearning = onCall(async (request) => {
     });
     
     // Log the learning application
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_learning_applied',
       sourceModule: 'AIFeedbackLoop',
@@ -3491,7 +3838,7 @@ export const applyAILearning = onCall(async (request) => {
       }
     }
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_learning_applied',
       sourceModule: 'AIFeedbackLoop',
@@ -3530,7 +3877,7 @@ export const scheduleContinuousLearning = onCall(async (request) => {
 
     await db.collection('ai_learning_schedules').doc(scheduleId).set(scheduleData);
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'continuous_learning_scheduled',
       sourceModule: 'AIFeedbackLoop',
@@ -3550,7 +3897,7 @@ export const scheduleContinuousLearning = onCall(async (request) => {
 
     return { success: true, scheduleId };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'continuous_learning_scheduled',
       sourceModule: 'AIFeedbackLoop',
@@ -3673,7 +4020,7 @@ export const createBroadcast = onCall(async (request) => {
       await sendBroadcastInternal(broadcastRef.id, recipients);
     }
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: senderId,
       actionType: 'broadcast_created',
       sourceModule: 'Broadcast',
@@ -3689,7 +4036,7 @@ export const createBroadcast = onCall(async (request) => {
       status: broadcast.status 
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: senderId,
       actionType: 'broadcast_created',
       sourceModule: 'Broadcast',
@@ -3757,19 +4104,102 @@ async function sendBroadcastInternal(broadcastId: string, recipients: any[]) {
     
     await batch.commit();
     
-    await logAIAction({
+    // Send SMS to recipients with a dialable number (OTP phone verification not required)
+    let smsSent = 0;
+    let smsFailed = 0;
+    
+    try {
+      // Fetch phone numbers for all recipients
+      const recipientsWithPhones = await Promise.all(
+        recipients.map(async (recipient) => {
+          try {
+            const userDoc = await db.doc(`users/${recipient.id}`).get();
+            const userData = userDoc.data();
+            const phoneE164 = normalizeUserPhoneToE164(userData);
+            if (phoneE164 && userData?.smsOptIn !== false) {
+              return { ...recipient, phoneE164 };
+            }
+            return null;
+          } catch (err) {
+            logger.warn(`Failed to fetch user ${recipient.id} for broadcast SMS:`, err);
+            return null;
+          }
+        })
+      );
+
+      // Filter out nulls and send SMS
+      const validPhones = recipientsWithPhones.filter(r => r !== null) as Array<any>;
+      
+      // Send SMS in batches to avoid rate limits (max 10 concurrent)
+      const BATCH_SIZE = 10;
+      for (let i = 0; i < validPhones.length; i += BATCH_SIZE) {
+        const batch = validPhones.slice(i, i + BATCH_SIZE);
+        
+        await Promise.all(
+          batch.map(async (recipient) => {
+            try {
+              const message = aiPrompts ? `${aiPrompts}\n\n${broadcast.message}` : broadcast.message;
+              
+              // PHASE 3: Route through orchestrator instead of direct Twilio call
+              const { sendLegacyBroadcastMessage } = await import('./messaging/legacyMessageHelpers');
+              const result = await sendLegacyBroadcastMessage({
+                tenantId: broadcast.tenantId,
+                userId: recipient.id,
+                phoneE164: recipient.phoneE164,
+                message,
+                broadcastId,
+              });
+              
+              if (result.success) {
+                smsSent++;
+                logger.info(`SMS sent to ${recipient.phoneE164} for broadcast ${broadcastId}`);
+              } else {
+                smsFailed++;
+                logger.warn(`Failed to send SMS to ${recipient.phoneE164} for broadcast ${broadcastId}: ${result.error}`);
+              }
+            } catch (err: any) {
+              smsFailed++;
+              logger.error(`Error sending SMS to ${recipient.phoneE164} for broadcast ${broadcastId}:`, err);
+            }
+          })
+        );
+        
+        // Small delay between batches to respect rate limits
+        if (i + BATCH_SIZE < validPhones.length) {
+          await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+        }
+      }
+      
+      logger.info(`Broadcast ${broadcastId}: SMS sent to ${smsSent} recipients, ${smsFailed} failed`);
+    } catch (smsError: any) {
+      // Log error but don't fail broadcast - notifications were already created
+      logger.error(`Error sending SMS for broadcast ${broadcastId}:`, smsError);
+    }
+    
+    // Update broadcast metadata with SMS stats
+    try {
+      await db.collection('broadcasts').doc(broadcastId).update({
+        'metadata.smsSent': smsSent,
+        'metadata.smsFailed': smsFailed,
+        'metadata.smsTotal': smsSent + smsFailed
+      });
+    } catch (updateError) {
+      logger.warn(`Failed to update SMS metadata for broadcast ${broadcastId}:`, updateError);
+    }
+    
+    await logger.aiEvent({
       userId: broadcast.senderId,
       actionType: 'broadcast_sent',
       sourceModule: 'Broadcast',
       success: true,
       latencyMs: Date.now() - start,
       versionTag: 'v1',
-      reason: `Sent broadcast to ${recipients.length} recipients`
+      reason: `Sent broadcast to ${recipients.length} recipients, SMS to ${smsSent}`
     });
     
-    return { success: true, numRecipients: recipients.length };
+    return { success: true, numRecipients: recipients.length, smsSent, smsFailed };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'broadcast_sent',
       sourceModule: 'Broadcast',
@@ -3862,7 +4292,7 @@ export const replyToBroadcast = onCall(async (request) => {
       }
     }
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'broadcast_reply',
       sourceModule: 'Broadcast',
@@ -3879,7 +4309,7 @@ export const replyToBroadcast = onCall(async (request) => {
       escalationReason: escalated ? escalationReason : null
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'broadcast_reply',
       sourceModule: 'Broadcast',
@@ -3977,7 +4407,7 @@ export const getBroadcastAnalytics = onCall(async (request) => {
       repliesByDay: getRepliesByDay(replies, timeRangeMs)
     };
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'admin',
       actionType: 'broadcast_analytics_generate',
       sourceModule: 'Broadcast',
@@ -3989,7 +4419,7 @@ export const getBroadcastAnalytics = onCall(async (request) => {
     
     return { analytics };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'admin',
       actionType: 'broadcast_analytics_generate',
       sourceModule: 'Broadcast',
@@ -4292,7 +4722,7 @@ export const evaluatePromptWithFilters = onCall(async (request) => {
       });
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'filter_evaluation',
       sourceModule: 'RetrievalFilters',
@@ -4317,7 +4747,7 @@ export const evaluatePromptWithFilters = onCall(async (request) => {
       chunks: filteredChunks.slice(0, 10) // Return first 10 for preview
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'filter_evaluation',
       sourceModule: 'RetrievalFilters',
@@ -4352,7 +4782,7 @@ export const assignFilterToModule = onCall(async (request) => {
       assignedBy: userId
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'filter_assigned',
       sourceModule: 'RetrievalFilters',
@@ -4372,7 +4802,7 @@ export const assignFilterToModule = onCall(async (request) => {
     
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'filter_assigned',
       sourceModule: 'RetrievalFilters',
@@ -4416,7 +4846,7 @@ export const rescoreVectorChunk = onCall(async (request) => {
       previousScore: oldScore
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'vector_rescored',
       sourceModule: 'VectorSettings',
@@ -4436,7 +4866,7 @@ export const rescoreVectorChunk = onCall(async (request) => {
     
     return { success: true, oldScore, newScore };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'vector_rescored',
       sourceModule: 'VectorSettings',
@@ -4483,7 +4913,7 @@ export const archiveVectorChunk = onCall(async (request) => {
     // Delete from active collection
     await chunkRef.delete();
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'vector_archived',
       sourceModule: 'VectorSettings',
@@ -4503,7 +4933,7 @@ export const archiveVectorChunk = onCall(async (request) => {
     
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'vector_archived',
       sourceModule: 'VectorSettings',
@@ -4546,7 +4976,7 @@ export const tagChunk = onCall(async (request) => {
       taggedBy: userId
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'vector_tagged',
       sourceModule: 'VectorSettings',
@@ -4566,7 +4996,7 @@ export const tagChunk = onCall(async (request) => {
     
     return { success: true, tags: newTags };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'vector_tagged',
       sourceModule: 'VectorSettings',
@@ -4638,7 +5068,7 @@ export const generateOrchestrationReport = onCall(async (request) => {
       return acc;
     }, {} as Record<string, number>);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'orchestration_report',
       sourceModule: 'AIAnalytics',
@@ -4668,7 +5098,7 @@ export const generateOrchestrationReport = onCall(async (request) => {
         .map(([module, count]) => ({ module, count }))
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'orchestration_report',
       sourceModule: 'AIAnalytics',
@@ -4728,7 +5158,7 @@ export const analyzePromptFailurePatterns = onCall(async (request) => {
       return acc;
     }, {} as Record<string, number>);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'failure_analysis',
       sourceModule: 'AIAnalytics',
@@ -4757,7 +5187,7 @@ export const analyzePromptFailurePatterns = onCall(async (request) => {
         .map(([errorType, count]) => ({ errorType, count }))
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'failure_analysis',
       sourceModule: 'AIAnalytics',
@@ -4841,7 +5271,7 @@ export const simulateOrchestrationScenario = onCall(async (request) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'scenario_simulated',
       sourceModule: 'TestBench',
@@ -4861,7 +5291,7 @@ export const simulateOrchestrationScenario = onCall(async (request) => {
     
     return orchestrationResult;
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'scenario_simulated',
       sourceModule: 'TestBench',
@@ -4914,7 +5344,7 @@ export const validatePromptConsistency = onCall(async (request) => {
     
     const overallConsistency = (consistencyScore + latencyConsistency) / 2;
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'consistency_validated',
       sourceModule: 'TestBench',
@@ -4942,7 +5372,7 @@ export const validatePromptConsistency = onCall(async (request) => {
       totalChecks: logs.length
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'consistency_validated',
       sourceModule: 'TestBench',
@@ -4964,8 +5394,24 @@ export const validatePromptConsistency = onCall(async (request) => {
   }
 });
 
-// Resume Parser Functions
-export { parseResume, getResumeParsingStatus, getUserParsedResumes };
+// Resume Parser Functions (getUserParsedResumes is in getUserParsedResumes.ts — small bundle, higher memory)
+export { parseResumeHttp, getResumeParsingStatus, getUserResumeUploads, getResumeSignedUrl };
+export { getUserParsedResumes };
+
+// Phase 1C: Documents + E-Sign Infrastructure
+export {
+  signaturesStartEnvelope,
+  signaturesWebhookReceiver,
+} from './signatures';
+export {
+  signatureCreateEnvelope,
+  signatureCreateSigningSession,
+  signatureGetSession,
+  signatureGetSigningUrl,
+  signatureAdminListEnvelopes,
+  signatureAdminVoidEnvelope,
+  webhooksSignaturesDropboxsign,
+} from './integrations/signatures';
 
 // Phase 4: HRXOne Worker Onboarding Flow Functions
 export const validateInviteToken = onCall(async (request) => {
@@ -5034,7 +5480,7 @@ export const validateInviteToken = onCall(async (request) => {
       }
     }
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'invite_token_validated',
       sourceModule: 'OnboardingFlow',
@@ -5063,7 +5509,7 @@ export const validateInviteToken = onCall(async (request) => {
       expiresAt: inviteData.expiresAt
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'invite_token_validated',
       sourceModule: 'OnboardingFlow',
@@ -5101,7 +5547,7 @@ export const markInviteTokenUsed = onCall(async (request) => {
       usedAt: admin.firestore.FieldValue.serverTimestamp()
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'invite_token_used',
       sourceModule: 'OnboardingFlow',
@@ -5121,7 +5567,7 @@ export const markInviteTokenUsed = onCall(async (request) => {
     
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'invite_token_used',
       sourceModule: 'OnboardingFlow',
@@ -5206,7 +5652,7 @@ export const assignOrgToUser = onCall(async (request) => {
       });
     }
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'org_assigned_to_user',
       sourceModule: 'OnboardingFlow',
@@ -5233,7 +5679,7 @@ export const assignOrgToUser = onCall(async (request) => {
       tenantId: type === 'Customer' && parentTenantId ? parentTenantId : orgId
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'org_assigned_to_user',
       sourceModule: 'OnboardingFlow',
@@ -5284,7 +5730,7 @@ export const createInviteToken = onCall(async (request) => {
       used: false
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: createdBy,
       actionType: 'invite_token_created',
       sourceModule: 'OnboardingFlow',
@@ -5309,7 +5755,7 @@ export const createInviteToken = onCall(async (request) => {
       expiresAt
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: createdBy,
       actionType: 'invite_token_created',
       sourceModule: 'OnboardingFlow',
@@ -6442,7 +6888,7 @@ Effective performance management helps workers succeed and organizations thrive.
       });
     }
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'help_drafts_generated',
       sourceModule: 'HelpManagement',
@@ -6467,7 +6913,7 @@ Effective performance management helps workers succeed and organizations thrive.
       message: `Successfully generated ${savedDrafts.length} help article drafts. You can now review, edit, and publish them.`
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'help_drafts_generated',
       sourceModule: 'HelpManagement',
@@ -6591,7 +7037,7 @@ export const updateHelpArticlesWithNewInfo = onCall(async (request) => {
         updated.push({ id: docSnap.id, title: data.title });
       }
     }
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'help_articles_updated',
       sourceModule: 'HelpManagement',
@@ -6615,7 +7061,7 @@ export const updateHelpArticlesWithNewInfo = onCall(async (request) => {
       message: `Updated ${updated.length} articles with new information.`
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'help_articles_updated',
       sourceModule: 'HelpManagement',
@@ -6643,7 +7089,7 @@ export const logMotivationEvent = onCall(async (request) => {
   const start = Date.now();
   let success = false;
   let errorMessage = '';
-  let logRef = null;
+  let logId: string | null = null;
 
   try {
     // Compose log entry
@@ -6678,15 +7124,19 @@ export const logMotivationEvent = onCall(async (request) => {
       latencyMs: Date.now() - start,
     };
 
-    logRef = await admin.firestore().collection('ai_logs').add(logEntry);
+    logger.info('DailyMotivation event captured (Firestore logging disabled).', {
+      context: 'dailyMotivation.logEvent',
+      extra: logEntry
+    });
     success = true;
-    return { success: true, logId: logRef.id };
+    logId = null;
+    return { success: true, logId };
   } catch (error: any) {
     errorMessage = error.message || 'Unknown error';
     throw error;
   } finally {
-    // Also log via logAIAction for analytics/consistency
-    await logAIAction({
+    // Record an AI event for analytics/consistency
+    await logger.aiEvent({
       userId: request.auth?.uid || data.workerId || 'unknown',
       actionType: data.actionType || 'motivation_event',
       sourceModule: 'DailyMotivation',
@@ -6710,7 +7160,7 @@ export const logMotivationEvent = onCall(async (request) => {
       success,
       aiRelevant: true,
       contextType: 'motivation',
-      reason: data.reason || errorMessage,
+      reason: data.reason || errorMessage || 'motivation_event',
       versionTag: 'v1',
       latencyMs: Date.now() - start,
     });
@@ -6747,7 +7197,7 @@ export const getUpcomingBirthdays = onCall(async (request) => {
       if (birthdayB < today) birthdayB.setFullYear(today.getFullYear() + 1);
       return birthdayA.getTime() - birthdayB.getTime();
     });
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'get_upcoming_birthdays',
       sourceModule: 'BirthdayManager',
@@ -6768,7 +7218,7 @@ export const getUpcomingBirthdays = onCall(async (request) => {
     });
     return { birthdays: upcomingBirthdays };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'get_upcoming_birthdays',
       sourceModule: 'BirthdayManager',
@@ -6826,7 +7276,7 @@ export const sendBirthdayMessage = onCall(async (request) => {
       read: false
     };
     await db.collection('notifications').add(notification);
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'send_birthday_message',
       sourceModule: 'BirthdayManager',
@@ -6847,7 +7297,7 @@ export const sendBirthdayMessage = onCall(async (request) => {
     });
     return { success: true, messageId: birthdayMessage.id };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'send_birthday_message',
       sourceModule: 'BirthdayManager',
@@ -6888,7 +7338,7 @@ export const getMotivations = onCall(async (request) => {
     }
     const snapshot = await motivationsQuery.get();
     const motivations = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), createdAt: doc.data().createdAt?.toDate() }));
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'get_motivations',
       sourceModule: 'MotivationLibrary',
@@ -6908,7 +7358,7 @@ export const getMotivations = onCall(async (request) => {
     });
     return { motivations };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'get_motivations',
       sourceModule: 'MotivationLibrary',
@@ -6947,7 +7397,7 @@ export const addMotivation = onCall(async (request) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     };
     const docRef = await db.collection('motivations').add(motivation);
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'add_motivation',
       sourceModule: 'MotivationLibrary',
@@ -6967,7 +7417,7 @@ export const addMotivation = onCall(async (request) => {
     });
     return { success: true, motivationId: docRef.id };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'add_motivation',
       sourceModule: 'MotivationLibrary',
@@ -7040,7 +7490,7 @@ export const seedMotivationMessagesFromAPI = onCall(async (request) => {
     }
 
     // Log the seeding operation
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'seed_motivations_from_api',
       sourceModule: 'MotivationLibrary',
@@ -7066,7 +7516,7 @@ export const seedMotivationMessagesFromAPI = onCall(async (request) => {
       skippedQuotes: skippedQuotes.slice(0, 10)
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'seed_motivations_from_api',
       sourceModule: 'MotivationLibrary',
@@ -7107,7 +7557,7 @@ export const checkBirthdays = onSchedule({
       const dob = user.dob.toDate ? user.dob.toDate() : new Date(user.dob);
       return dob.getMonth() + 1 === month && dob.getDate() === day;
     });
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'birthday_check',
       sourceModule: 'BirthdayManager',
@@ -7126,7 +7576,7 @@ export const checkBirthdays = onSchedule({
     });
     console.log(`Birthday check completed: ${usersWithBirthdaysToday.length} birthdays found`);
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'birthday_check',
       sourceModule: 'BirthdayManager',
@@ -7174,7 +7624,7 @@ export const updateCustomerAISettings = onCall(async (request) => {
     throw error;
   } finally {
     const latencyMs = Date.now() - start;
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'ai_settings_update',
       sourceModule: 'AISettings',
@@ -7228,7 +7678,7 @@ export const updateAgencyAISettings = onCall(async (request) => {
     throw new HttpsError('internal', errorMessage, { agencyId, settingsType, settings });
   } finally {
     const latencyMs = Date.now() - start;
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'ai_settings_update',
       sourceModule: 'AISettings',
@@ -7356,7 +7806,7 @@ export const updateHelpTopic = onCall(async (request) => {
       lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'help_topic_updated',
       sourceModule: 'HelpManagement',
@@ -7376,7 +7826,7 @@ export const updateHelpTopic = onCall(async (request) => {
 
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'help_topic_updated',
       sourceModule: 'HelpManagement',
@@ -7407,7 +7857,7 @@ export const deleteHelpTopic = onCall(async (request) => {
   try {
     await db.collection('help_topics').doc(topicId).delete();
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'help_topic_deleted',
       sourceModule: 'HelpManagement',
@@ -7427,7 +7877,7 @@ export const deleteHelpTopic = onCall(async (request) => {
 
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'help_topic_deleted',
       sourceModule: 'HelpManagement',
@@ -7685,7 +8135,7 @@ ${templateData.tenant_legal_footer || `This email was sent by ${templateData.ten
     });
     
     // Log the AI action for email failure
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'invite_email_failed',
       sourceModule: 'InviteUserV2',
@@ -7901,7 +8351,7 @@ export const revokeInviteV2 = onCall(async (request) => {
     await db.collection('users').doc(userRecord.uid).update(updateData);
 
     // Log the AI action for successful revocation
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'invite_revoked',
       sourceModule: 'RevokeInviteV2',
@@ -7922,7 +8372,7 @@ export const revokeInviteV2 = onCall(async (request) => {
     return { success: true };
   } catch (error: any) {
     // Log the AI action for failed revocation
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'invite_revoked',
       sourceModule: 'RevokeInviteV2',
@@ -7942,6 +8392,138 @@ export const revokeInviteV2 = onCall(async (request) => {
     });
     
     throw error;
+  }
+});
+
+/** Normalize US phone to E.164 for Twilio (e.g. 5551234567 -> +15551234567). Returns null if not valid. */
+function normalizePhoneE164(phone: string): string | null {
+  const digits = (phone || '').replace(/\D/g, '');
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  return null;
+}
+
+/**
+ * Send recruiter invite: custom email + optional SMS (same body).
+ * Used by Invite Users page; path/template are resolved on the client.
+ * Uses same SendGrid pattern as inviteUserV2 / spec: process.env.SENDGRID_API_KEY.
+ * Twilio secrets required so SMS is actually sent (otherwise config is not injected).
+ */
+export const sendRecruiterInvite = onCall(
+  { secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN] },
+  async (request) => {
+  try {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Please sign in to send invites.');
+  }
+
+  const { email, phone, subject, body, tenantId, firstName, lastName, path, pathLabel } = request.data as {
+    email?: string;
+    phone?: string;
+    subject?: string;
+    body?: string;
+    tenantId?: string;
+    firstName?: string;
+    lastName?: string;
+    path?: string;
+    pathLabel?: string;
+  };
+  const toEmail = typeof email === 'string' ? email.trim() : '';
+  const phoneStr = typeof phone === 'string' ? phone.trim() : '';
+  if (!toEmail && !phoneStr) {
+    throw new HttpsError('invalid-argument', 'Enter an email address and/or phone number.');
+  }
+
+  const subjectStr = typeof subject === 'string' ? subject : 'You\'re invited';
+  const bodyStr = typeof body === 'string' ? body : '';
+  const firstNameStr = typeof firstName === 'string' ? firstName.trim() : '';
+  const lastNameStr = typeof lastName === 'string' ? lastName.trim() : '';
+
+  let fromName = 'HRX Notifications';
+  if (tenantId) {
+    try {
+      const tenantDoc = await db.collection('tenants').doc(tenantId).get();
+      if (tenantDoc.exists) {
+        const data = tenantDoc.data();
+        const branding = await db.collection('tenants').doc(tenantId).collection('branding').doc('settings').get();
+        fromName = (branding.data()?.senderName as string) || (data?.name as string) || fromName;
+      }
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  let emailSent = false;
+  let smsSent = false;
+
+  if (toEmail) {
+    if (!SENDGRID_API_KEY || !SENDGRID_API_KEY.startsWith('SG.')) {
+      console.error('sendRecruiterInvite: SendGrid API key not configured');
+      throw new HttpsError('failed-precondition', 'Email sending is not configured. Please contact support.');
+    }
+    try {
+      await sgMail.send({
+        to: toEmail,
+        from: { email: 'no-reply@hrxone.com', name: fromName },
+        subject: subjectStr,
+        text: bodyStr,
+        // Disable link rewriting so recipients see https://hrxone.com/... instead of tracking URLs
+        tracking_settings: {
+          click_tracking: { enable: false },
+        },
+      } as Parameters<typeof sgMail.send>[0]);
+      emailSent = true;
+    } catch (emailErr: any) {
+      console.error('sendRecruiterInvite email failed:', emailErr);
+      throw new HttpsError('internal', emailErr?.message || 'Failed to send email. Please try again.');
+    }
+  }
+
+  let smsError: string | undefined;
+  if (phoneStr && bodyStr) {
+    const e164 = normalizePhoneE164(phoneStr);
+    if (e164) {
+      const smsResult = await sendWorkerMessageInternal(e164, bodyStr, {
+        source: 'recruiter',
+        sourceId: request.auth.uid,
+        tenantId: tenantId || undefined,
+      });
+      smsSent = smsResult.success;
+      if (!smsResult.success && smsResult.error) {
+        smsError = smsResult.error;
+        if (!smsResult.error.includes('opted out') && !smsResult.error.includes('STOP')) {
+          console.warn('sendRecruiterInvite SMS failed (email still sent):', smsResult.error);
+        }
+      }
+    } else {
+      smsError = 'Invalid phone number (need 10 digits)';
+      console.warn('sendRecruiterInvite: phone provided but invalid for SMS:', phoneStr);
+    }
+  }
+
+  // Log to tenant invite_log subcollection for "Past invites" table
+  if (tenantId && tenantId.trim()) {
+    try {
+      await db.collection('tenants').doc(tenantId.trim()).collection('invite_log').add({
+        firstName: firstNameStr,
+        lastName: lastNameStr,
+        email: toEmail || null,
+        phone: phoneStr || null,
+        path: typeof path === 'string' ? path : 'general',
+        pathLabel: typeof pathLabel === 'string' ? pathLabel : null,
+        inviteSentAt: admin.firestore.FieldValue.serverTimestamp(),
+        sentByUid: request.auth.uid,
+      });
+    } catch (logErr: any) {
+      console.warn('sendRecruiterInvite: failed to write invite_log', logErr.message);
+    }
+  }
+
+  return { success: true, emailSent, smsSent, smsError: smsError || undefined };
+  } catch (err: any) {
+    if (err instanceof HttpsError) throw err;
+    console.error('sendRecruiterInvite unexpected error:', err);
+    throw new HttpsError('internal', err?.message || 'Something went wrong. Please try again.');
   }
 });
 
@@ -7978,67 +8560,40 @@ export const activateCampaignTemplate = onCall(async (request) => {
   return { campaignId: newRef.id };
 });
 
-// User Firestore triggers are imported from firestoreTriggers.ts
+// User Firestore triggers - Most are now handled by minimal triggers in index.ts
+// Only testUserUpdate is exported from firestoreTriggers.ts
 export { 
-  firestoreLogUserCreated, 
-  firestoreLogUserUpdated, 
-  firestoreLogUserDeleted,
-  testUserUpdate,
-  firestoreLogTenantCreated,
-  firestoreLogTenantUpdated,
-  firestoreLogTenantDeleted,
-  firestoreLogAssignmentCreated,
-  firestoreLogAssignmentUpdated,
-  firestoreLogAssignmentDeleted,
-  firestoreLogConversationCreated,
-  firestoreLogConversationUpdated,
-  firestoreLogConversationDeleted,
-  firestoreLogJobOrderCreated,
-  firestoreLogJobOrderUpdated,
-  firestoreLogJobOrderDeleted,
-  firestoreLogCampaignCreated,
-  firestoreLogCampaignUpdated,
-  firestoreLogCampaignDeleted,
-  firestoreLogMotivationCreated,
-  firestoreLogMotivationUpdated,
-  firestoreLogMotivationDeleted,
-  firestoreLogMessageCreated,
-  firestoreLogMessageUpdated,
-  firestoreLogMessageDeleted,
-  firestoreLogShiftCreated,
-  firestoreLogShiftUpdated,
-  firestoreLogShiftDeleted,
-  firestoreLogUserGroupCreated,
-  firestoreLogUserGroupUpdated,
-  firestoreLogUserGroupDeleted,
-  firestoreLogLocationCreated,
-  firestoreLogLocationUpdated,
-  firestoreLogLocationDeleted,
-  firestoreLogNotificationCreated,
-  firestoreLogNotificationUpdated,
-  firestoreLogNotificationDeleted,
-  firestoreLogSettingCreated,
-  firestoreLogSettingUpdated,
-  firestoreLogSettingDeleted,
-  // firestoreLogAILogCreated, // DISABLED - Using emergency disabled version to prevent infinite loops
-  // firestoreLogAILogUpdated, // DISABLED - Using safe version with field filters
-  // firestoreLogAILogDeleted, // DISABLED - Emergency cost containment
-  firestoreLogTaskCreated,
-  firestoreLogTaskUpdated,
-  firestoreLogTenantContactCreated,
-  firestoreLogTenantContactUpdated,
-  firestoreLogTenantContactDeleted,
-  firestoreLogGlobalAISettingsCreated,
-  firestoreLogGlobalAISettingsUpdated,
-  firestoreLogGlobalAISettingsDeleted,
-  firestoreLogTenantAISettingsCreated,
-  firestoreLogTenantAISettingsUpdated,
-  firestoreLogTenantAISettingsDeleted,
-  firestoreAutoAssignFlexWorker,
-  firestoreHandleFlexWorkerUpdate,
-  firestoreLogDepartmentCreated,
-  firestoreLogDepartmentUpdated,
-  firestoreLogDepartmentDeleted
+  testUserUpdate
+  // All other logging triggers have been moved to minimal implementations in this file
+  // firestoreLogUserCreated, // TODO: Export missing
+  // firestoreLogUserUpdated, // TODO: Export missing
+  // firestoreLogUserDeleted, // TODO: Export missing
+  // firestoreLogTenantCreated, // TODO: Export missing
+  // firestoreLogTenantUpdated, // TODO: Export missing
+  // firestoreLogTenantDeleted, // TODO: Export missing
+  // firestoreLogAssignmentCreated, // TODO: Export missing - using minimal trigger in this file
+  // firestoreLogAssignmentUpdated, // TODO: Export missing - using minimal trigger in this file
+  // firestoreLogAssignmentDeleted, // TODO: Export missing - using minimal trigger in this file
+  // firestoreLogConversationCreated, // TODO: Export missing
+  // firestoreLogConversationUpdated, // TODO: Export missing
+  // firestoreLogConversationDeleted, // TODO: Export missing
+  // firestoreLogJobOrderCreated, // TODO: Export missing
+  // firestoreLogJobOrderUpdated, // TODO: Export missing
+  // firestoreLogJobOrderDeleted, // TODO: Export missing
+  // firestoreLogCampaignCreated, // TODO: Export missing
+  // firestoreLogCampaignUpdated, // TODO: Export missing
+  // firestoreLogCampaignDeleted, // TODO: Export missing
+  // firestoreLogMotivationCreated, // TODO: Export missing
+  // firestoreLogMotivationUpdated, // TODO: Export missing
+  // firestoreLogMotivationDeleted, // TODO: Export missing
+  // firestoreLogMessageCreated, // TODO: Export missing
+  // firestoreLogMessageUpdated, // TODO: Export missing
+  // firestoreLogMessageDeleted, // TODO: Export missing
+  // firestoreLogShiftCreated, // TODO: Export missing
+  // firestoreLogShiftUpdated, // TODO: Export missing
+  // firestoreLogShiftDeleted, // TODO: Export missing
+  // firestoreLogUserGroupCreated, // TODO: Export missing
+  // firestoreLogUserGroupUpdated, // TODO: Export missing
 } from './firestoreTriggers';
 
 // --- Agency Firestore Triggers ---
@@ -8239,21 +8794,373 @@ export const logCustomerAITrainingDeleted = onDocumentDeleted('customers/{custom
 
 // --- Assignment Firestore Triggers ---
 
-// Firestore trigger: Log assignment creation
-export const logAssignmentCreated = onDocumentCreated('assignments/{assignmentId}', async (event) => {
-  console.log('logAssignmentCreated minimal trigger fired for assignmentId:', event.params.assignmentId);
-  return { success: true };
+// Firestore trigger: Log assignment creation and send SMS notification
+export const logAssignmentCreated = onDocumentCreated(
+  {
+    document: 'tenants/{tenantId}/assignments/{assignmentId}',
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
+  },
+  async (event) => {
+  const assignmentId = event.params.assignmentId;
+  const tenantId = event.params.tenantId;
+  const assignment = event.data?.data();
+  
+  if (!assignment) {
+    logger.error('logAssignmentCreated: No assignment data found');
+    return { success: false };
+  }
+
+  try {
+    logger.info(`Assignment created: ${assignmentId} for worker ${assignment.userId || assignment.candidateId}`);
+    // Bulk create (All days): callable sends one notification per user; skip per-doc notification
+    if (assignment.suppressInitialNotification) {
+      return { success: true };
+    }
+    const { normalizeAssignmentStatus } = await import('./utils/assignmentStatusNormalize');
+    const createNorm = normalizeAssignmentStatus(assignment.status as string);
+    // Send worker notification if assignment was newly pending/proposed or confirmed (SMS + email with full assignment details)
+    if (assignment.userId && (createNorm === 'pending' || createNorm === 'confirmed')) {
+      try {
+        const { markLifecycleEventIfFirst } = await import('./messaging/lifecycleDedupe');
+        const assignedAtToken =
+          typeof (assignment.assignedAt as any)?.toMillis === 'function'
+            ? String((assignment.assignedAt as any).toMillis())
+            : typeof (assignment.createdAt as any)?.toMillis === 'function'
+              ? String((assignment.createdAt as any).toMillis())
+              : 'na';
+        const canProcessCreateEvent = await markLifecycleEventIfFirst({
+          tenantId,
+          dedupeKey: `assignment_created__${assignmentId}__${String(assignment.status || '').toLowerCase()}__${assignedAtToken}`,
+          eventType: 'assignment_created',
+          context: { assignmentId, userId: assignment.userId, status: assignment.status },
+        });
+        if (!canProcessCreateEvent) {
+          return { success: true, deduped: true };
+        }
+
+        const userDoc = await admin.firestore().doc(`users/${assignment.userId}`).get();
+        const userData = userDoc.data();
+        const phoneE164 = (userData?.phoneE164 || userData?.phone || '').trim();
+
+        let jobTitle = assignment.jobTitle || 'a position';
+        let checkInInstructions = '';
+        let jobOrderData: admin.firestore.DocumentData | undefined;
+        if (assignment.jobOrderId) {
+          try {
+            const jobOrderDoc = await admin.firestore()
+              .doc(`tenants/${tenantId}/job_orders/${assignment.jobOrderId}`)
+              .get();
+            jobOrderData = jobOrderDoc.data();
+            if (jobOrderData?.jobTitle) jobTitle = jobOrderData.jobTitle;
+            if (jobOrderData?.checkInInstructions) checkInInstructions = String(jobOrderData.checkInInstructions);
+          } catch (err) {
+            logger.warn(`Failed to fetch job order ${assignment.jobOrderId}:`, err);
+          }
+        }
+
+        if (jobOrderData?.muted === true) {
+          logger.info(`logAssignmentCreated: skipped worker notification (job order muted)`, {
+            assignmentId,
+            jobOrderId: assignment.jobOrderId,
+          });
+          return { success: true };
+        }
+
+        let dateTimeInfo = '';
+        if (assignment.startDate) {
+          const startDate = assignment.startDate.toDate ? assignment.startDate.toDate() : new Date(assignment.startDate);
+          dateTimeInfo = ` on ${startDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}`;
+          if (assignment.startTime && assignment.endTime) {
+            dateTimeInfo += ` from ${assignment.startTime} - ${assignment.endTime}`;
+          }
+        }
+
+        const firstName = assignment.firstName || userData?.firstName || 'there';
+        let worksiteName = assignment.locationNickname || assignment.worksiteName || '';
+        if (!worksiteName && jobOrderData) {
+          worksiteName = String(jobOrderData.worksiteName || jobOrderData.locationName || '');
+          if (!worksiteName) {
+            const locId = jobOrderData.worksiteId || jobOrderData.locationId;
+            if (locId) {
+              try {
+                const locSnap = await admin.firestore().doc(`tenants/${tenantId}/locations/${locId}`).get();
+                const loc = locSnap.exists ? locSnap.data() : null;
+                worksiteName = loc?.nickname || loc?.title || loc?.name || loc?.locationName || '';
+                if (!worksiteName && jobOrderData.companyId) {
+                  const crmLoc = await admin.firestore().doc(`tenants/${tenantId}/crm_companies/${jobOrderData.companyId}/locations/${locId}`).get();
+                  const crmData = crmLoc.exists ? crmLoc.data() : null;
+                  worksiteName = crmData?.nickname || crmData?.title || crmData?.name || crmData?.locationName || '';
+                }
+              } catch (_) {
+                /* ignore */
+              }
+            }
+          }
+          if (!worksiteName && jobOrderData?.worksiteAddress) {
+            const addr = jobOrderData.worksiteAddress;
+            worksiteName = [addr.city, addr.state].filter(Boolean).join(', ');
+          }
+        }
+        const locationText = worksiteName ? ` at ${worksiteName}` : '';
+        const postingPath = assignment.jobPostId
+          ? `/c1/jobs-board/${assignment.jobPostId}?assignmentId=${assignmentId}&shiftId=${assignment.shiftId || ''}&intent=assignment_response`
+          : '/c1/jobs-board';
+        const jobUrl = `https://hrxone.com${postingPath}`;
+        const instructionsText = checkInInstructions ? ` Check-in: ${checkInInstructions}` : '';
+        const message = `Hi ${firstName}, your application has been accepted for ${jobTitle}${dateTimeInfo}${locationText}. View details and respond: ${jobUrl}.${instructionsText}`;
+
+        // Build full assignment details email (subject: "Job Title - Assignment Details")
+        let emailSubject: string | undefined;
+        let emailBody: string | undefined;
+        try {
+          const { buildAssignmentDetailsEmail } = await import('./messaging/assignmentDetailsEmail');
+          const emailResult = await buildAssignmentDetailsEmail(tenantId, assignmentId);
+          if (emailResult) {
+            emailSubject = emailResult.subject;
+            emailBody = emailResult.html;
+          }
+        } catch (emailBuildErr: any) {
+          logger.warn(`Failed to build assignment details email for ${assignmentId}:`, emailBuildErr?.message);
+        }
+
+        const { sendLegacyAssignmentMessage } = await import('./messaging/legacyMessageHelpers');
+        const result = await sendLegacyAssignmentMessage({
+          tenantId,
+          userId: assignment.userId,
+          phoneE164: phoneE164 || '',
+          message,
+          messageTypeId: 'assignment_created',
+          source: 'assignment_created',
+          sourceId: assignmentId,
+          assignmentId,
+          emailSubject,
+          emailBody,
+        });
+
+        if (result.success) {
+          logger.info(`Assignment notification sent for ${assignmentId}`);
+        } else {
+          logger.warn(`Assignment notification failed for ${assignmentId}: ${result.error}`);
+        }
+      } catch (notifyError: any) {
+        logger.error(`Failed to send notification for assignment ${assignmentId}:`, notifyError);
+      }
+    }
+    
+    return { success: true };
+  } catch (error: any) {
+    logger.error(`Error in logAssignmentCreated for ${assignmentId}:`, error);
+    // Don't throw - trigger should not fail assignment creation
+    return { success: false, error: error.message };
+  }
 });
 
-// Firestore trigger: Log assignment update
-export const logAssignmentUpdated = onDocumentUpdated('assignments/{assignmentId}', async (event) => {
-  console.log('logAssignmentUpdated minimal trigger fired for assignmentId:', event.params.assignmentId);
-  return { success: true };
+// Firestore trigger: Log assignment update and send SMS for status changes
+export const logAssignmentUpdated = onDocumentUpdated(
+  {
+    document: 'tenants/{tenantId}/assignments/{assignmentId}',
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
+  },
+  async (event) => {
+  const assignmentId = event.params.assignmentId;
+  const tenantId = event.params.tenantId;
+  const before = event.data?.before.data();
+  const after = event.data?.after.data();
+  
+  if (!before || !after) {
+    logger.error('logAssignmentUpdated: Missing before/after data');
+    return { success: false };
+  }
+
+  try {
+    // Check for status changes
+    const statusChanged = before.status !== after.status;
+    
+    if (statusChanged && after.userId) {
+      try {
+        const { normalizeAssignmentStatus } = await import('./utils/assignmentStatusNormalize');
+        const beforeN = normalizeAssignmentStatus(before.status as string);
+        const afterN = normalizeAssignmentStatus(after.status as string);
+        const { markLifecycleEventIfFirst } = await import('./messaging/lifecycleDedupe');
+        const statusChangedAtToken =
+          typeof (after.updatedAt as any)?.toMillis === 'function'
+            ? String((after.updatedAt as any).toMillis())
+            : typeof (after.updatedAt as any)?._seconds === 'number'
+              ? String((after.updatedAt as any)._seconds)
+              : 'na';
+        const canProcessStatusEvent = await markLifecycleEventIfFirst({
+          tenantId,
+          dedupeKey: `assignment_status__${assignmentId}__${String(before.status || '').toLowerCase()}__${String(after.status || '').toLowerCase()}__${statusChangedAtToken}`,
+          eventType: 'assignment_status_changed',
+          context: { assignmentId, userId: after.userId, beforeStatus: before.status, afterStatus: after.status },
+        });
+        if (!canProcessStatusEvent) {
+          return { success: true, deduped: true };
+        }
+
+        let jobOrderMuted = false;
+        if (after.jobOrderId) {
+          try {
+            const joSnap = await admin.firestore().doc(`tenants/${tenantId}/job_orders/${after.jobOrderId}`).get();
+            jobOrderMuted = Boolean(joSnap.exists && joSnap.data()?.muted);
+          } catch (_) {
+            /* ignore */
+          }
+        }
+
+        if (afterN === 'confirmed' && beforeN !== 'confirmed') {
+          try {
+            const { runAssignmentConfirmedOnboardingSlice } = await import(
+              './messaging/assignmentConfirmedOnboardingSlice'
+            );
+            await runAssignmentConfirmedOnboardingSlice({
+              tenantId,
+              assignmentId,
+              assignment: after as Record<string, unknown>,
+              userId: String(after.userId || after.candidateId || '').trim(),
+            });
+          } catch (onbErr: any) {
+            logger.error(`logAssignmentUpdated: onboarding automation slice failed for ${assignmentId}`, onbErr);
+          }
+        }
+
+        // Fetch user data (needed for template resolution and fallback message)
+        const userDoc = await admin.firestore().doc(`users/${after.userId}`).get();
+        const userData = userDoc.data();
+        const phoneE164 = (userData?.phoneE164 || userData?.phone || '').trim();
+        const userEmail = String(userData?.email || '').trim();
+
+        // Full assignment-details HTML for confirmation (matches preview + worker Assignment Details page)
+        let emailSubject: string | undefined;
+        let emailBody: string | undefined;
+        if (afterN === 'confirmed') {
+          try {
+            const { buildAssignmentDetailsEmail } = await import('./messaging/assignmentDetailsEmail');
+            const emailResult = await buildAssignmentDetailsEmail(tenantId, assignmentId);
+            if (emailResult) {
+              emailSubject = emailResult.subject;
+              emailBody = emailResult.html;
+            }
+          } catch (e: any) {
+            logger.warn(
+              `logAssignmentUpdated: could not build assignment details email for ${assignmentId}`,
+              e?.message,
+            );
+          }
+        }
+
+        // SMS requires a phone; email can deliver full instructions when status is confirmed.
+        const canNotify =
+          !!phoneE164 || (afterN === 'confirmed' && !!userEmail && !!emailBody);
+
+        if (jobOrderMuted) {
+          logger.info(`logAssignmentUpdated: skipped worker notification (job order muted)`, {
+            assignmentId,
+            jobOrderId: after.jobOrderId,
+          });
+        } else if (!canNotify) {
+          if (afterN === 'confirmed') {
+            logger.warn(
+              `logAssignmentUpdated: confirmed assignment ${assignmentId} skipped — no phone on file and no email/HTML to send`,
+            );
+          }
+        } else {
+          let message = '';
+          const firstName = after.firstName || userData?.firstName || 'there';
+
+          // For cancellation: fetch job order first so fallback message and template variables use worksite (not user address)
+          let jobOrderData: admin.firestore.DocumentData | undefined;
+          if (afterN === 'cancelled' && after.jobOrderId) {
+            try {
+              const jobOrderSnap = await admin.firestore().doc(`tenants/${tenantId}/job_orders/${after.jobOrderId}`).get();
+              if (jobOrderSnap.exists) jobOrderData = jobOrderSnap.data();
+            } catch (e) {
+              logger.warn(`logAssignmentUpdated: could not fetch job order ${after.jobOrderId} for cancellation message`, e);
+            }
+          }
+
+          const rawAfterStatus = String(after.status || '').toLowerCase();
+          if (rawAfterStatus === 'declined') {
+            message = `Hi ${firstName}, we received your decline for this assignment. Thank you for letting us know.`;
+          } else {
+            switch (afterN) {
+              case 'confirmed':
+                message = `Hi ${firstName}, your assignment is confirmed. Review your first-day details and check-in instructions in your account.`;
+                break;
+              case 'in_progress':
+                message = `Hi ${firstName}, your assignment is now active. Thank you!`;
+                break;
+              case 'completed':
+                message = `Hi ${firstName}, your assignment has been marked as completed. Thank you for your work!`;
+                break;
+              case 'cancelled': {
+                const jobTitle = after.jobTitle || (jobOrderData as any)?.jobTitle;
+                const worksiteCity =
+                  after.worksiteAddress?.city ||
+                  (jobOrderData as any)?.worksiteAddress?.city ||
+                  (jobOrderData as any)?.worksiteAddress?.address?.city ||
+                  '';
+                const locationPhrase = worksiteCity ? ` in ${worksiteCity}` : '';
+                const rolePhrase = jobTitle ? ` to work as a ${jobTitle}` : ' for this position';
+                message = `Hi ${firstName}, your assignment${rolePhrase}${locationPhrase} has been cancelled. We are working on trying to get you a spot and will update you if we can get you reassigned.`;
+                break;
+              }
+              default:
+                break;
+            }
+          }
+
+          if (message) {
+            const { sendLegacyAssignmentMessage } = await import('./messaging/legacyMessageHelpers');
+            let messageTypeId = 'assignment_status_update';
+            if (afterN === 'confirmed') messageTypeId = 'assignment_confirmed';
+            else if (afterN === 'in_progress') messageTypeId = 'assignment_active';
+            else if (afterN === 'completed') messageTypeId = 'assignment_completed';
+            else if (rawAfterStatus === 'declined') messageTypeId = 'assignment_status_change';
+            else if (afterN === 'cancelled') messageTypeId = 'assignment_cancelled';
+
+            const result = await sendLegacyAssignmentMessage({
+              tenantId,
+              userId: after.userId,
+              phoneE164,
+              message,
+              messageTypeId,
+              source: 'assignment_status_update',
+              sourceId: assignmentId,
+              assignmentId,
+              ...(emailSubject && emailBody ? { emailSubject, emailBody } : {}),
+              ...(afterN === 'cancelled' && rawAfterStatus !== 'declined'
+                ? {
+                    assignmentData: after,
+                    jobOrderId: after.jobOrderId,
+                    jobOrderData,
+                  }
+                : {}),
+            });
+
+            if (result.success) {
+              logger.info(`Assignment status notification sent for ${assignmentId} (phone: ${phoneE164 ? 'yes' : 'no'})`);
+            } else {
+              logger.warn(`Assignment status notification failed for ${assignmentId}: ${result.error}`);
+            }
+          }
+        }
+      } catch (smsError: any) {
+        logger.error(`Failed to send SMS for assignment update ${assignmentId}:`, smsError);
+      }
+    }
+    
+    return { success: true };
+  } catch (error: any) {
+    logger.error(`Error in logAssignmentUpdated for ${assignmentId}:`, error);
+    return { success: false, error: error.message };
+  }
 });
 
 // Firestore trigger: Log assignment deletion
-export const logAssignmentDeleted = onDocumentDeleted('assignments/{assignmentId}', async (event) => {
-  console.log('logAssignmentDeleted minimal trigger fired for assignmentId:', event.params.assignmentId);
+export const logAssignmentDeleted = onDocumentDeleted('tenants/{tenantId}/assignments/{assignmentId}', async (event) => {
+  const assignmentId = event.params.assignmentId;
+  logger.info(`Assignment deleted: ${assignmentId}`);
   return { success: true };
 });
 
@@ -8279,7 +9186,7 @@ export const scheduledTriggerTests = onSchedule({
     const summary = await runFirestoreTriggerTests();
     
     // Log the results
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'scheduled_trigger_tests_completed',
       sourceModule: 'ScheduledTests',
@@ -8340,7 +9247,7 @@ export const scheduledTriggerTests = onSchedule({
     console.error('Error in scheduled trigger tests:', error);
     
     // Log the error
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'scheduled_trigger_tests_failed',
       sourceModule: 'ScheduledTests',
@@ -8431,7 +9338,7 @@ export const translateContent = onCall(async (request) => {
     
     const translatedContent = completion.choices[0].message.content?.trim() || content;
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'content_translation',
       sourceModule: 'TranslationService',
@@ -8457,7 +9364,7 @@ export const translateContent = onCall(async (request) => {
       targetLanguage
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'content_translation',
       sourceModule: 'TranslationService',
@@ -8480,7 +9387,15 @@ export const translateContent = onCall(async (request) => {
   }
 });
 // Enhanced User Login Tracking with Hello Message Settings
-export const updateUserLoginInfo = onCall(async (request) => {
+export const updateUserLoginInfo = onCall({
+  cors: [
+    'http://localhost:3000',
+    'https://hrx1-d3beb.web.app',
+    'https://hrx1-d3beb.firebaseapp.com',
+    'https://hrxone.com',
+    'https://www.hrxone.com'
+  ]
+}, async (request) => {
   const { userId, loginData, initializeIfMissing, tenantId, source } = request.data || {};
   const start = Date.now();
   
@@ -8558,7 +9473,7 @@ export const updateUserLoginInfo = onCall(async (request) => {
     
     await userRef.update(updateData);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'user_login_updated',
       sourceModule: 'LoginTracking',
@@ -8582,7 +9497,7 @@ export const updateUserLoginInfo = onCall(async (request) => {
       helloMessageSettings: updateData.helloMessageSettings
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'user_login_updated',
       sourceModule: 'LoginTracking',
@@ -8610,7 +9525,9 @@ export const updateUserActivity = onCall({
   cors: [
     'http://localhost:3000',
     'https://hrx1-d3beb.web.app',
-    'https://hrx1-d3beb.firebaseapp.com'
+    'https://hrx1-d3beb.firebaseapp.com',
+    'https://hrxone.com',
+    'https://www.hrxone.com'
   ]
 }, async (request) => {
   const { userId, activity } = request.data || {};
@@ -8634,7 +9551,7 @@ export const updateUserActivity = onCall({
 
     await userRef.update(updateData);
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'user_activity_heartbeat',
       sourceModule: 'ActivityTracking',
@@ -8654,7 +9571,7 @@ export const updateUserActivity = onCall({
 
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'user_activity_heartbeat',
       sourceModule: 'ActivityTracking',
@@ -8719,7 +9636,7 @@ export const getHelloMessageSettings = onCall(async (request) => {
       
       await db.collection('appAiSettings').doc('helloMessages').set(defaultSettings);
       
-      await logAIAction({
+      await logger.aiEvent({
         userId: request.auth?.uid || 'system',
         actionType: 'hello_settings_created',
         sourceModule: 'HelloMessageConfig',
@@ -8734,7 +9651,7 @@ export const getHelloMessageSettings = onCall(async (request) => {
     
     const settings = settingsDoc.data();
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'hello_settings_retrieved',
       sourceModule: 'HelloMessageConfig',
@@ -8746,7 +9663,7 @@ export const getHelloMessageSettings = onCall(async (request) => {
     
     return settings;
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'hello_settings_retrieved',
       sourceModule: 'HelloMessageConfig',
@@ -8778,7 +9695,7 @@ export const updateHelloMessageSettings = onCall(async (request) => {
     
     await db.collection('appAiSettings').doc('helloMessages').update(updateData);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'hello_settings_updated',
       sourceModule: 'HelloMessageConfig',
@@ -8798,7 +9715,7 @@ export const updateHelloMessageSettings = onCall(async (request) => {
     
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'hello_settings_updated',
       sourceModule: 'HelloMessageConfig',
@@ -8879,7 +9796,7 @@ export const getMobileChatData = onCall(async (request) => {
       lastHelloSent: null
     };
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'mobile_chat_data_retrieved',
       sourceModule: 'MobileAPI',
@@ -8913,7 +9830,7 @@ export const getMobileChatData = onCall(async (request) => {
     
     return result;
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'mobile_chat_data_retrieved',
       sourceModule: 'MobileAPI',
@@ -9030,7 +9947,7 @@ export const sendHelloMessage = onCall(async (request) => {
       'helloMessageSettings.lastHelloSent': admin.firestore.FieldValue.serverTimestamp()
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'hello_message_sent',
       sourceModule: 'HelloMessageService',
@@ -9054,7 +9971,7 @@ export const sendHelloMessage = onCall(async (request) => {
       message: helloMessage.content[userLanguage]
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'hello_message_sent',
       sourceModule: 'HelloMessageService',
@@ -9134,7 +10051,7 @@ export const manageTenantCustomers = onCall(async (request) => {
         throw new Error('Invalid action');
     }
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'tenant_customers_managed',
       sourceModule: 'TenantManagement',
@@ -9154,7 +10071,7 @@ export const manageTenantCustomers = onCall(async (request) => {
     
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'tenant_customers_managed',
       sourceModule: 'TenantManagement',
@@ -9208,6 +10125,121 @@ export const validateTenantSlug = onCall(async (request) => {
     return { isValid: true, available: true };
   } catch (error: any) {
     throw new HttpsError('invalid-argument', error.message || 'Failed to validate slug');
+  }
+});
+
+// Add users to user groups (for auto-add on job application)
+export const addUsersToGroups = onCall({
+  cors: [
+    'http://localhost:3000',
+    'https://hrx1-d3beb.web.app',
+    'https://hrx1-d3beb.firebaseapp.com',
+    'https://hrxone.com',
+    'https://www.hrxone.com'
+  ]
+}, async (request) => {
+  const { userId, groupIds, tenantId } = request.data;
+  const start = Date.now();
+  
+  try {
+    if (!userId || !groupIds || !Array.isArray(groupIds) || groupIds.length === 0 || !tenantId) {
+      throw new Error('userId, groupIds (array), and tenantId are required');
+    }
+    
+    console.log(`Adding user ${userId} to ${groupIds.length} group(s) in tenant ${tenantId}`);
+    
+    const db = admin.firestore();
+    
+    // Update each group's membership.
+    // NOTE: We support both legacy `members` (array or map) and current `memberIds` (array).
+    const groupUpdatePromises = groupIds.map(async (groupId: string) => {
+      const userGroupRef = db
+        .collection('tenants')
+        .doc(tenantId)
+        .collection('userGroups')
+        .doc(groupId);
+
+      const snap = await userGroupRef.get();
+      const data = snap.exists ? (snap.data() as any) : {};
+      const updates: any = {
+        memberIds: admin.firestore.FieldValue.arrayUnion(userId),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+
+      // Maintain legacy `members` field for codepaths that still read it (e.g. group messaging).
+      if (Array.isArray(data?.members) || data?.members == null) {
+        updates.members = admin.firestore.FieldValue.arrayUnion(userId);
+      } else if (typeof data?.members === 'object') {
+        // members as a map/object; groupMessaging extracts keys
+        updates[`members.${userId}`] = true;
+      } else {
+        updates.members = admin.firestore.FieldValue.arrayUnion(userId);
+      }
+
+      // Use set({merge:true}) so we don't fail if the group doc is missing.
+      await userGroupRef.set(updates, { merge: true });
+
+      console.log(`✅ Added user ${userId} to group ${groupId}`);
+    });
+
+    // Update user's userGroupIds (and tenant-scoped copy). Use set merge to avoid race if user doc isn't created yet.
+    const userRef = db.collection('users').doc(userId);
+    await userRef.set(
+      {
+        userGroupIds: admin.firestore.FieldValue.arrayUnion(...groupIds),
+        [`tenantIds.${tenantId}.userGroupIds`]: admin.firestore.FieldValue.arrayUnion(...groupIds),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    await Promise.all(groupUpdatePromises);
+    
+    console.log(`✅ Successfully added user ${userId} to ${groupIds.length} group(s)`);
+    
+    return {
+      success: true,
+      message: `User added to ${groupIds.length} group(s)`,
+      groupIds
+    };
+  } catch (error: any) {
+    console.error('❌ Error adding user to groups:', error);
+    throw new HttpsError('internal', error.message || 'Failed to add user to groups');
+  }
+});
+
+// Validate a public "apply to group" link (no auth required)
+export const validateUserGroupSignup = onCall({
+  cors: [
+    'http://localhost:3000',
+    'https://hrx1-d3beb.web.app',
+    'https://hrx1-d3beb.firebaseapp.com',
+    'https://hrxone.com',
+    'https://www.hrxone.com'
+  ]
+}, async (request) => {
+  const { tenantId, groupId } = request.data || {};
+  try {
+    if (!tenantId || !groupId) {
+      throw new Error('tenantId and groupId are required');
+    }
+
+    const db = admin.firestore();
+    const ref = db.collection('tenants').doc(String(tenantId)).collection('userGroups').doc(String(groupId));
+    const snap = await ref.get();
+    if (!snap.exists) {
+      throw new HttpsError('not-found', 'Group not found');
+    }
+    const data = snap.data() as any;
+    return {
+      success: true,
+      groupId: String(groupId),
+      tenantId: String(tenantId),
+      title: String(data?.title || '').trim() || null,
+    };
+  } catch (error: any) {
+    if (error instanceof HttpsError) throw error;
+    throw new HttpsError('invalid-argument', error?.message || 'Failed to validate group');
   }
 });
 
@@ -9396,7 +10428,7 @@ export const executeScheduledCampaigns = onCall(async (request) => {
       traitChanges: {}
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'campaign_executed',
       sourceModule: 'CampaignsEngine',
@@ -9423,7 +10455,7 @@ export const executeScheduledCampaigns = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'campaign_executed',
       sourceModule: 'CampaignsEngine',
@@ -9565,18 +10597,32 @@ export const executePendingCampaigns = onSchedule({
     console.info('executePendingCampaigns: disabled by ENABLE_EXECUTE_CAMPAIGNS');
     return;
   }
+  
+  // Idempotency: process this run only once
+  const runId = `campaigns_${new Date().toISOString().split('T')[0]}`;
+  const runRef = db.collection('function_runs').doc(runId);
+  
+  try {
+    await runRef.create({ createdAt: admin.firestore.FieldValue.serverTimestamp() });
+  } catch {
+    console.info('executePendingCampaigns: already processed today, skipping');
+    return;
+  }
+  
   const start = Date.now();
+  const maxCampaigns = 50; // Process max 50 campaigns per run
+  let executedCount = 0;
+  let processedCampaigns = 0;
   
   try {
     const now = new Date();
     
-    // Find pending scheduled campaigns
+    // Find pending scheduled campaigns with pagination
     const pendingCampaignsSnapshot = await db.collection('scheduledCampaigns')
       .where('status', '==', 'pending')
       .where('scheduledFor', '<=', admin.firestore.Timestamp.fromDate(now))
+      .limit(maxCampaigns)
       .get();
-
-    let executedCount = 0;
     let errorCount = 0;
 
     for (const doc of pendingCampaignsSnapshot.docs) {
@@ -9618,7 +10664,7 @@ export const executePendingCampaigns = onSchedule({
 
     console.log(`Campaign execution completed: ${executedCount} executed, ${errorCount} errors`);
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'scheduled_campaigns_executed',
       sourceModule: 'CampaignsEngine',
@@ -9639,7 +10685,7 @@ export const executePendingCampaigns = onSchedule({
   } catch (error: any) {
     console.error('Scheduled campaign execution failed:', error);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'scheduled_campaigns_executed',
       sourceModule: 'CampaignsEngine',
@@ -9708,7 +10754,7 @@ export const getCampaignAnalytics = onCall(async (request) => {
       traitImpact: await calculateTraitImpact(campaign, interactions)
     };
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'campaign_analytics_retrieved',
       sourceModule: 'CampaignsEngine',
@@ -9729,7 +10775,7 @@ export const getCampaignAnalytics = onCall(async (request) => {
     return analytics;
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'campaign_analytics_retrieved',
       sourceModule: 'CampaignsEngine',
@@ -10194,7 +11240,7 @@ export const getTenantAIEngagementSettings = onCall(async (request) => {
       };
     }
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'security_level_ai_engagement_settings_retrieved',
       sourceModule: 'SecurityLevelAIEngagement',
@@ -10214,7 +11260,7 @@ export const getTenantAIEngagementSettings = onCall(async (request) => {
     return { success: true, data: settings };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'security_level_ai_engagement_settings_retrieved',
       sourceModule: 'SecurityLevelAIEngagement',
@@ -10261,7 +11307,7 @@ export const updateTenantAIEngagementSettings = onCall(async (request) => {
       updatedBy: request.auth?.uid || 'system'
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'security_level_ai_engagement_settings_updated',
       sourceModule: 'SecurityLevelAIEngagement',
@@ -10281,7 +11327,7 @@ export const updateTenantAIEngagementSettings = onCall(async (request) => {
     return { success: true };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'security_level_ai_engagement_settings_updated',
       sourceModule: 'SecurityLevelAIEngagement',
@@ -10370,7 +11416,7 @@ export const filterWorkersBySecurityLevel = onCall(async (request) => {
       }
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'workers_filtered_by_security_level',
       sourceModule: 'SecurityLevelAIEngagement',
@@ -10398,7 +11444,7 @@ export const filterWorkersBySecurityLevel = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'workers_filtered_by_security_level',
       sourceModule: 'SecurityLevelAIEngagement',
@@ -10452,7 +11498,7 @@ export const getWorkerAIEngagementConfig = onCall(async (request) => {
 
     const levelSettings = settings?.[securityLevel] || {};
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'worker_ai_engagement_config_retrieved',
       sourceModule: 'SecurityLevelAIEngagement',
@@ -10485,7 +11531,7 @@ export const getWorkerAIEngagementConfig = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'worker_ai_engagement_config_retrieved',
       sourceModule: 'SecurityLevelAIEngagement',
@@ -10527,6 +11573,9 @@ export {
   gmailOAuthCallback,
   syncGmailEmails,
   disconnectGmail,
+  getGmailUnreadInboxCount,
+  getGmailMailboxCounts,
+  getGmailMessageAttachments,
   testGmailEmailCapture,
   testGmailTokenValidity,
   scheduledGmailMonitoring,
@@ -10575,6 +11624,16 @@ export {
   testCalendarTokenValidity
 } from './calendarIntegration';
 
+// Calendar API Functions (new)
+export {
+  listCalendars,
+  listEvents,
+  createEvent,
+  updateEvent,
+  deleteEvent,
+  rsvpToEvent
+} from './calendar/calendarApi';
+
 // Gmail-Tasks Integration Functions
 export {
   syncGmailAndCreateTasks,
@@ -10593,6 +11652,7 @@ export { discoverCompanyUrls };
 
 // User Management Functions
 export { getSalespeople };
+export { getPublicCrmView } from './getPublicCrmView';
 export { getSalespeopleForTenant } from './simpleGetSalespeopleForTenant';
 export { fixPendingUser } from './fixPendingUser';
 
@@ -10658,6 +11718,7 @@ export { onCompanyCreatedApollo, onContactCreatedApollo, getFirmographics, getRe
 // RE-ENABLED WITH FIXES - USING SAFE VERSION
 export { syncApolloHeadquartersLocation } from './syncApolloHeadquartersLocationDisabled';
 export { syncApolloHeadquartersLocationCallable } from './syncApolloHeadquartersLocationCallable';
+export { feedCreatePost } from './feed/feedCreatePost';
 export { createHeadquartersLocation } from './createHeadquartersLocation';
 export { fetchLinkedInAvatar } from './linkedInAvatarService';
 
@@ -10665,12 +11726,18 @@ export { fetchLinkedInAvatar } from './linkedInAvatarService';
 export { rebuildCompanyActiveSalespeople, rebuildAllCompanyActiveSalespeople, normalizeCompanySizes, rebuildContactActiveSalespeople } from './activeSalespeople';
 export { updateActiveSalespeopleOnDealCallable } from './updateActiveSalespeopleOnDealOptimized';
 // Do NOT export updateActiveSalespeopleOnEmailLog/updateActiveSalespeopleOnActivityLog triggers
-export { toggleCircuitBreaker, getCircuitBreakerStatus } from './emergencyTriggerDisable';
+// export { toggleCircuitBreaker, getCircuitBreakerStatus } from './emergencyTriggerDisable'; // TODO: Export missing
 // Safe version of AI log trigger to prevent infinite loops
-export { firestoreLogAILogCreated } from './firestoreLogAILogCreatedDisabled';
 // Safe AI log processor (minimal, conservative) - EMERGENCY: COMPLETELY DISABLED
 // export { processAILog } from './safeAiEngineProcessor';
 export { registerChildCompany, setCompanyRelationship, removeCompanyRelationship } from './parentChildCompanies';
+
+// Applicant AI Scoring System
+export {
+  enqueueApplicantScore,
+  processApplicantScoreQueue,
+  recalculateApplicantScore
+} from './calculateApplicantFitScore';
 
 // Auto Activity Logger
 export { 
@@ -10757,3 +11824,312 @@ export { runProspecting, saveProspectingSearch, addProspectsToCRM, createCallLis
   getPlacements,
   updatePlacementStatus
 } from './recruiter'; */
+
+// Twilio SMS Functions
+export { sendOtp, checkOtp, sendWorkerMessage } from './twilio';
+
+// Application SMS Triggers
+export { onApplicationCreated, onApplicationStatusChanged } from './applicationSmsTriggers';
+
+// FCM push on application created / assignment updated (test automated push delivery)
+export { onApplicationCreatedPush } from './triggers/onApplicationCreatedPush';
+export { onAssignmentUpdatedPush } from './triggers/onAssignmentUpdatedPush';
+
+// R.0b: server-side safety-net sync of application → workerAttestations on profile
+// (see docs/READINESS_R0_HANDOFF.md)
+export { onApplicationSubmittedSyncProfile } from './triggers/onApplicationSubmittedSyncProfile';
+
+// R.0c: admin-callable backfill of workerAttestations from existing applications
+// (see docs/READINESS_R0_HANDOFF.md)
+export { backfillWorkerAttestationsCallable } from './backfillWorkerAttestationsCallable';
+
+// R.1: admin-callable backfill of assignmentReadinessItems severity +
+// resolutionMethod fields. Dry-run by default; ships deployable but should
+// not be invoked with `dryRun: false` in production until the dry-run report
+// is signed off.
+// (see docs/READINESS_R1_R2_HANDOFF.md)
+export { backfillAssignmentReadinessItemsCallable } from './backfillAssignmentReadinessItemsCallable';
+export {
+  syncAssignmentScheduledNotifications,
+  dispatchScheduledAssignmentNotifications,
+} from './workerShiftReminders';
+export {
+  onAssignmentConfirmedScheduleReminders,
+  dispatchScheduledWorkerReminders,
+  cleanupLegacyWorkerShiftReminders,
+} from './workerShiftRemindersV2';
+
+// Mentions Functions
+export { mentionSearch } from './mentions/mentionSearch';
+
+// Group Messaging
+export { sendGroupMessage } from './groupMessaging';
+
+// SMS Template Management
+export {
+  getSmsTemplates,
+  createSmsTemplate,
+  updateSmsTemplate,
+  deleteSmsTemplate,
+  previewSmsTemplate,
+  resolveTemplate,
+  extractVariables
+} from './smsTemplates';
+
+// Export variable resolver utilities
+export { getAvailableVariables } from './utils/templateVariableResolver';
+
+// Unified Messaging Framework - Message Types Registry
+export {
+  getMessageTypes,
+  getMessageType,
+  updateMessageTypeConfig,
+  initializeMessageTypesForTenant,
+  getMessageTypesByCategoryFn
+} from './messaging/messageTypesFunctions';
+
+// Unified Messaging Framework - Routing & Delivery
+export { sendUnifiedMessage } from './messaging/routingFunctions';
+
+// Unified Messaging Framework - STOP/HELP Handling
+export { handleInboundSms } from './messaging/inboundSmsWebhook';
+export { processInboundSms, handleStopKeyword, handleHelpKeyword, handleStartKeyword } from './messaging/stopHelpHandler';
+
+// Unified Messaging Framework - SMS Outbound Queue
+export { enqueueSmsOutbound, processSmsOutbound, createOutboundRequest } from './messaging/smsOutboundQueue';
+export { testCreateOutboundRequest, testCheckRequestStatus, testIdempotency } from './messaging/testSmsQueueCallable';
+
+// Plan B Phase 1 - System welcome SMS (queue-first)
+export { enqueueWelcomeSmsOnUserCreated } from './messaging/systemSmsTriggers';
+
+// Unified Messaging Framework - Template Engine
+export {
+  getMessageTemplate,
+  createMessageTemplate,
+  updateMessageTemplate,
+  getMessageTemplates,
+  previewMessageTemplate
+} from './messaging/templateFunctions';
+
+// Unified Messaging Framework - Two-Way Messaging
+export {
+  sendRecruiterMessage,
+  getThread,
+  getThreads,
+  updateThread,
+  createThread
+} from './messaging/twoWayMessagingFunctions';
+
+// Unified Messaging Framework - HTTP API Routes
+export {
+  sendMessageApi,
+  testRenderApi
+} from './messaging/messagingApi';
+
+export {
+  listTemplatesApi,
+  getTemplateApi,
+  createTemplateApi,
+  updateTemplateApi,
+  deleteTemplateApi,
+  listMessageTypesApi
+} from './messaging/templatesApi';
+
+export {
+  listAutomationRulesApi,
+  createAutomationRuleApi,
+  updateAutomationRuleApi,
+  deleteAutomationRuleApi,
+  listTriggerCatalogApi,
+  testAutomationTemplateApi
+} from './messaging/messageAutomationRulesApi';
+
+export {
+  listThreadsApi,
+  getThreadApi,
+  sendThreadMessageApi,
+  createThreadApi
+} from './messaging/threadsApi';
+
+// Unified Worker Notifications + Inbox (HRX-Unified-Notifications-and-Inbox-Spec)
+export {
+  sendNotificationAndPush,
+  markWorkerNotificationRead,
+  markWorkerThreadRead,
+  sendWorkerThreadMessage,
+  registerWorkerDeviceToken
+} from './messaging/unifiedWorkerNotifications';
+
+export {
+  sendConversationMessage,
+  sendSmsFromConversation,
+  markConversationRead,
+} from './messaging/conversations/conversationsApi';
+
+// Unified Messaging Framework - Webhooks
+export {
+  twilioInboundSmsWebhook,
+  twilioStatusCallback
+} from './messaging/webhooksApi';
+
+// Unified Messaging Framework - Automations
+export {
+  profileIncompleteAutomation,
+  shiftConfirmationsAutomation,
+  retryFailedMessagesAutomation
+} from './messaging/automationsApi';
+
+// Unified Messaging Framework - AI Assist
+export {
+  classifyInboundApi,
+  suggestReplyApi,
+  translateApi
+} from './messaging/aiAssistApi';
+
+// Unified Messaging Framework - Admin Logging
+export {
+  listMessageLogsApi,
+  getConsentHistoryApi
+} from './messaging/adminApi';
+
+// Unified Messaging Framework - Analytics
+export {
+  getMessagingSummary,
+  getUserMessageHistory,
+  getOptOuts
+} from './messaging/analyticsApi';
+
+// Unified Messaging Framework - Email Threads
+export {
+  listEmailThreadsApi,
+  getEmailThreadApi,
+  sendEmailReplyApi,
+  sendNewEmailApi,
+  updateEmailThreadApi,
+  archiveEmailThreadApi,
+  unarchiveEmailThreadApi,
+  starEmailThreadApi,
+  bulkUpdateEmailThreadsApi
+} from './messaging/emailThreadsApi';
+
+// Bulk Send (system sender only)
+export { bulkSendEmailApi, bulkSendSmsApi } from './messaging/bulkSendApi';
+
+// Phase 2 backfill: populate participantContactIds/CompanyIds on email_logs + emailThreads
+export { backfillEmailParticipantContactIds } from './messaging/backfillEmailParticipants';
+
+// Phase 3: Gmail push notifications (watch + Pub/Sub push + history.list incremental sync)
+export {
+  startGmailWatch,
+  stopGmailWatch,
+  onGmailPush,
+  renewGmailWatches,
+} from './messaging/gmailPush';
+
+// Calendar push notifications (watch + webhook + syncToken-based incremental sync).
+// Mirrors the Gmail push architecture but uses Google Calendar's webhook delivery model
+// instead of Pub/Sub. See functions/src/calendar/calendarPush.ts for details.
+export {
+  startCalendarPush,
+  stopCalendarPush,
+  onCalendarPush,
+  renewCalendarWatches,
+} from './calendar/calendarPush';
+
+// Scoring distribution (relative AI score per tenant)
+export {
+  scheduledScoringDistribution,
+  recomputeScoringDistribution,
+  computeDistributionForTenant,
+  type ScoringDistributionDoc,
+  type Percentiles,
+} from './scoringDistribution';
+
+// Hiring Score v1.1 — stale score repair (batch / daily scheduler; no users onWrite trigger)
+export { scheduledRefreshStaleHiringScores } from './hiringScore/scheduledRefreshHiringScores';
+
+// Email Migration
+export { migrateEmailLogsToThreads } from './messaging/migrateEmailLogsToThreads';
+
+// Email Thread Search
+export { searchEmailThreadsApi } from './messaging/searchApi';
+
+// Internal Messaging (Slack-style)
+export {
+  getInternalMessageCountsApi,
+  getDirectMessagesApi,
+  getChannelsApi,
+  getConversationMessagesApi,
+  sendInternalMessageApi,
+  markInternalMessagesReadApi,
+  createChannelApi,
+  addReactionToMessageApi,
+} from './messaging/internalMessagingApi';
+
+export {
+  updateSlackUserMappingApi,
+  updateSlackChannelMappingApi,
+  getSlackMappingsApi,
+} from './messaging/slackMappingApi';
+
+// Slack Integration
+export { slackEvents } from './slackEvents';
+export { sendMessageToSlackApi } from './messaging/sendMessageToSlack';
+export { backfillSlackChannels } from './slack/backfillSlackChannels';
+export { onSlackMessageActivity } from './slack/onSlackMessageActivity';
+export { sendSlackChannelMessage } from './slack/sendSlackChannelMessage';
+export { reactToSlackMessage } from './slack/reactToSlackMessage';
+
+// Unified Messaging Framework - Email Provider
+export { getEmailProvider } from './messaging/emailProviderFactory';
+export { SendGridEmailProvider } from './messaging/sendGridEmailProvider';
+export type { EmailProvider, SendEmailOptions, EmailSendResult } from './messaging/EmailProvider';
+
+// Unified Messaging Framework - SendGrid Webhook
+export { sendGridWebhook } from './messaging/sendGridWebhook';
+
+// Recruiter Number Management
+export {
+  getAvailableTwilioNumbers,
+  searchAvailableTwilioNumbers,
+  purchaseTwilioNumber,
+  assignRecruiterNumber,
+  releaseRecruiterNumber,
+  getRecruiterNumbers
+} from './recruiterNumbers';
+
+// Sender Verification
+export {
+  verifyTwilioNumber,
+  verifyGmailConnection,
+  testSenderIdentity
+} from './messaging/senderVerification';
+
+// HTTP Workers for Cloud Tasks
+export {
+  logTaskUpdate,
+  logUserUpdate,
+  updateActiveSalespeople
+} from './httpWorkers';
+
+// Scheduled Orchestrator (Phase 3)
+export { scheduledOrchestrator };
+
+// Complete-requirements reminder (once per application when missing items, ~24h after submit)
+export { scheduledCompleteRequirementsReminder } from './completeRequirementsReminder';
+
+// Job Title Management
+export { addJobTitle };
+
+// Category score evolution (server-only processor + HRX/secret-gated callable)
+export {
+  applyCategoryScoreEvent,
+  applyCategoryScoreEventInternal,
+  CATEGORY_SCORE_EVENTS_COLLECTION,
+  CATEGORY_SCORE_EVENT_KEYS_COLLECTION,
+  idempotencyKeyHash,
+  type ApplyCategoryScoreEventInput,
+  type ApplyCategoryScoreEventResult,
+} from './categoryScoreEvolution/applyCategoryScoreEvent';
+
+export { syncActivityCategoryScoreOnUserGeocodeWrite } from './categoryScoreEvolution/activityCategoryScoreOnUserWrite';

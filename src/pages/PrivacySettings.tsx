@@ -17,6 +17,9 @@ import {
   Button,
   Snackbar,
   Chip,
+  FormControl,
+  Select,
+  MenuItem,
 } from '@mui/material';
 import {
   Notifications,
@@ -28,11 +31,14 @@ import {
   Save,
   CheckCircle,
   Info,
+  Language,
 } from '@mui/icons-material';
 import { doc, updateDoc, getDoc } from 'firebase/firestore';
 
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
+import { setLanguage, useT } from '../i18n';
+import { writeLocalLanguage } from '../utils/languagePreference';
 
 interface NotificationSettings {
   emailNotifications: boolean;
@@ -43,6 +49,7 @@ interface NotificationSettings {
   systemUpdates: boolean;
   marketingEmails: boolean;
 }
+// scheduleUpdates, assignmentUpdates, systemUpdates are stored for backward compat but not shown in UI (not wired to messaging backend).
 
 interface PrivacySettings {
   profileVisibility: 'public' | 'private' | 'team';
@@ -53,6 +60,7 @@ interface PrivacySettings {
 }
 
 const PrivacySettings: React.FC = () => {
+  const t = useT();
   const { user } = useAuth();
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>({
     emailNotifications: true,
@@ -71,6 +79,8 @@ const PrivacySettings: React.FC = () => {
     allowDataAnalytics: true,
     allowLocationSharing: false,
   });
+
+  const [preferredLanguage, setPreferredLanguage] = useState<'en' | 'es'>('en');
 
   const [loading, setLoading] = useState(false);
   const [snackbar, setSnackbar] = useState<{
@@ -99,13 +109,18 @@ const PrivacySettings: React.FC = () => {
       if (userSnap.exists()) {
         const userData = userSnap.data();
         
-        // Load notification settings
-        if (userData.notificationSettings) {
-          setNotificationSettings(prev => ({
-            ...prev,
-            ...userData.notificationSettings,
-          }));
-        }
+        // SMS toggle is driven by backend opt-in: smsOptIn and smsBlockedSystem (STOP keyword).
+        // So the toggle matches Twilio STOP/START and can be re-enabled here after STOP.
+        const smsEnabled =
+          userData.smsOptIn !== false &&
+          userData.smsBlockedSystem !== true;
+
+        // Load notification settings; override SMS from source of truth
+        setNotificationSettings(prev => ({
+          ...prev,
+          ...(userData.notificationSettings || {}),
+          smsNotifications: smsEnabled,
+        }));
         
         // Load privacy settings
         if (userData.privacySettings) {
@@ -114,10 +129,18 @@ const PrivacySettings: React.FC = () => {
             ...userData.privacySettings,
           }));
         }
+
+        // Load preferred message language
+        if (userData.preferredLanguage === 'es' || userData.preferredLanguage === 'en') {
+          setPreferredLanguage(userData.preferredLanguage);
+          if (user?.uid === userData.uid) {
+            writeLocalLanguage(userData.preferredLanguage);
+          }
+        }
       }
     } catch (error) {
       console.error('Error loading settings:', error);
-      showSnackbar('Error loading settings', 'error');
+      showSnackbar(t('workerSettings.errorLoading'), 'error');
     }
   };
 
@@ -127,13 +150,22 @@ const PrivacySettings: React.FC = () => {
     setLoading(true);
     try {
       const userRef = doc(db, 'users', user.uid);
-      await updateDoc(userRef, {
+      const updates: Record<string, unknown> = {
         notificationSettings,
         privacySettings,
+        preferredLanguage,
         updatedAt: new Date(),
-      });
+      };
+      // Keep SMS opt-in in sync with backend (STOP/START and other checks use these)
+      updates.smsOptIn = notificationSettings.smsNotifications;
+      if (notificationSettings.smsNotifications) {
+        updates.smsBlockedSystem = false; // Re-enabling from UI clears STOP state
+      }
+      await updateDoc(userRef, updates);
+      setLanguage(preferredLanguage);
+      writeLocalLanguage(preferredLanguage, { markChangedThisSession: true });
       
-      showSnackbar('Settings saved successfully!', 'success');
+      showSnackbar(t('workerSettings.savedSuccess'), 'success');
     } catch (error) {
       console.error('Error saving settings:', error);
       showSnackbar('Error saving settings', 'error');
@@ -180,18 +212,18 @@ const PrivacySettings: React.FC = () => {
   return (
     <Container maxWidth="md" sx={{ py: 4 }}>
       <Typography variant="h4" gutterBottom sx={{ mb: 4 }}>
-        Privacy & Notifications
+        {t('workerSettings.pageTitle')}
       </Typography>
 
-      {/* Notification Settings */}
+      {/* Notification Settings — channels (Email, Push, SMS) and Marketing Emails are shown; Schedule/Assignment/System toggles removed (not wired to backend). */}
       <Card sx={{ mb: 4 }}>
         <CardHeader
-          title="Notification Preferences"
+          title={t('workerSettings.notificationPreferences')}
           avatar={<Notifications />}
           action={
             <Chip
               icon={<CheckCircle />}
-              label="Active"
+              label={t('workerSettings.active')}
               color="success"
               size="small"
             />
@@ -199,17 +231,39 @@ const PrivacySettings: React.FC = () => {
         />
         <CardContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            Choose how you want to receive notifications about your work schedule, assignments, and system updates.
+            {t('workerSettings.notificationIntro')}
           </Typography>
 
           <List>
             <ListItem>
               <ListItemIcon>
+                <Language />
+              </ListItemIcon>
+              <ListItemText
+                primary={t('workerSettings.preferredMessageLanguage')}
+                secondary={t('workerSettings.preferredMessageLanguageSecondary')}
+              />
+              <ListItemSecondaryAction>
+                <FormControl size="small" sx={{ minWidth: 120 }}>
+                  <Select
+                    value={preferredLanguage}
+                    onChange={(e) => setPreferredLanguage(e.target.value as 'en' | 'es')}
+                    displayEmpty
+                  >
+                    <MenuItem value="en">{t('workerSettings.english')}</MenuItem>
+                    <MenuItem value="es">{t('workerSettings.spanish')}</MenuItem>
+                  </Select>
+                </FormControl>
+              </ListItemSecondaryAction>
+            </ListItem>
+            <Divider sx={{ my: 2 }} />
+            <ListItem>
+              <ListItemIcon>
                 <Email />
               </ListItemIcon>
               <ListItemText
-                primary="Email Notifications"
-                secondary="Receive notifications via email"
+                primary={t('workerSettings.emailNotifications')}
+                secondary={t('workerSettings.emailNotificationsSecondary')}
               />
               <ListItemSecondaryAction>
                 <Switch
@@ -225,8 +279,8 @@ const PrivacySettings: React.FC = () => {
                 <Notifications />
               </ListItemIcon>
               <ListItemText
-                primary="Push Notifications"
-                secondary="Receive notifications on your device"
+                primary={t('workerSettings.pushNotifications')}
+                secondary={t('workerSettings.pushNotificationsSecondary')}
               />
               <ListItemSecondaryAction>
                 <Switch
@@ -242,8 +296,8 @@ const PrivacySettings: React.FC = () => {
                 <Phone />
               </ListItemIcon>
               <ListItemText
-                primary="SMS Notifications"
-                secondary="Receive notifications via text message"
+                primary={t('workerSettings.smsNotifications')}
+                secondary={t('workerSettings.smsNotificationsSecondary')}
               />
               <ListItemSecondaryAction>
                 <Switch
@@ -258,50 +312,8 @@ const PrivacySettings: React.FC = () => {
 
             <ListItem>
               <ListItemText
-                primary="Schedule Updates"
-                secondary="Notifications about schedule changes"
-              />
-              <ListItemSecondaryAction>
-                <Switch
-                  edge="end"
-                  checked={notificationSettings.scheduleUpdates}
-                  onChange={() => handleNotificationChange('scheduleUpdates')}
-                />
-              </ListItemSecondaryAction>
-            </ListItem>
-
-            <ListItem>
-              <ListItemText
-                primary="Assignment Updates"
-                secondary="Notifications about new assignments or changes"
-              />
-              <ListItemSecondaryAction>
-                <Switch
-                  edge="end"
-                  checked={notificationSettings.assignmentUpdates}
-                  onChange={() => handleNotificationChange('assignmentUpdates')}
-                />
-              </ListItemSecondaryAction>
-            </ListItem>
-
-            <ListItem>
-              <ListItemText
-                primary="System Updates"
-                secondary="Important system and maintenance notifications"
-              />
-              <ListItemSecondaryAction>
-                <Switch
-                  edge="end"
-                  checked={notificationSettings.systemUpdates}
-                  onChange={() => handleNotificationChange('systemUpdates')}
-                />
-              </ListItemSecondaryAction>
-            </ListItem>
-
-            <ListItem>
-              <ListItemText
-                primary="Marketing Emails"
-                secondary="Receive promotional and marketing content"
+                primary={t('workerSettings.marketingEmails')}
+                secondary={t('workerSettings.marketingEmailsSecondary')}
               />
               <ListItemSecondaryAction>
                 <Switch
@@ -315,15 +327,15 @@ const PrivacySettings: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Privacy Settings */}
+      {/* Privacy Settings — stored in Firestore; profile visibility / show contact / show schedule / data analytics / location are for future use (not yet enforced everywhere). */}
       <Card sx={{ mb: 4 }}>
         <CardHeader
-          title="Privacy Settings"
+          title={t('workerSettings.privacySettings')}
           avatar={<Security />}
         />
         <CardContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            Control who can see your information and how your data is used.
+            {t('workerSettings.privacyIntro')}
           </Typography>
 
           <List>
@@ -332,25 +344,25 @@ const PrivacySettings: React.FC = () => {
                 {getVisibilityIcon(privacySettings.profileVisibility)}
               </ListItemIcon>
               <ListItemText
-                primary="Profile Visibility"
-                secondary={`Your profile is currently ${privacySettings.profileVisibility}`}
+                primary={t('workerSettings.profileVisibility')}
+                secondary={`${t('workerSettings.profileVisibilitySecondary')} ${t(`workerSettings.${privacySettings.profileVisibility}`)}`}
               />
               <ListItemSecondaryAction>
                 <Box sx={{ display: 'flex', gap: 1 }}>
                   <Chip
-                    label="Public"
+                    label={t('workerSettings.public')}
                     size="small"
                     variant={privacySettings.profileVisibility === 'public' ? 'filled' : 'outlined'}
                     onClick={() => handlePrivacyChange('profileVisibility', 'public')}
                   />
                   <Chip
-                    label="Team"
+                    label={t('workerSettings.team')}
                     size="small"
                     variant={privacySettings.profileVisibility === 'team' ? 'filled' : 'outlined'}
                     onClick={() => handlePrivacyChange('profileVisibility', 'team')}
                   />
                   <Chip
-                    label="Private"
+                    label={t('workerSettings.private')}
                     size="small"
                     variant={privacySettings.profileVisibility === 'private' ? 'filled' : 'outlined'}
                     onClick={() => handlePrivacyChange('profileVisibility', 'private')}
@@ -361,8 +373,8 @@ const PrivacySettings: React.FC = () => {
 
             <ListItem>
               <ListItemText
-                primary="Show Contact Information"
-                secondary="Allow others to see your email and phone number"
+                primary={t('workerSettings.showContactInfo')}
+                secondary={t('workerSettings.showContactInfoSecondary')}
               />
               <ListItemSecondaryAction>
                 <Switch
@@ -375,8 +387,8 @@ const PrivacySettings: React.FC = () => {
 
             <ListItem>
               <ListItemText
-                primary="Show Schedule"
-                secondary="Allow others to see your work schedule"
+                primary={t('workerSettings.showSchedule')}
+                secondary={t('workerSettings.showScheduleSecondary')}
               />
               <ListItemSecondaryAction>
                 <Switch
@@ -389,8 +401,8 @@ const PrivacySettings: React.FC = () => {
 
             <ListItem>
               <ListItemText
-                primary="Data Analytics"
-                secondary="Allow us to use your data for improving our services"
+                primary={t('workerSettings.dataAnalytics')}
+                secondary={t('workerSettings.dataAnalyticsSecondary')}
               />
               <ListItemSecondaryAction>
                 <Switch
@@ -403,8 +415,8 @@ const PrivacySettings: React.FC = () => {
 
             <ListItem>
               <ListItemText
-                primary="Location Sharing"
-                secondary="Share your location for work-related purposes"
+                primary={t('workerSettings.locationSharing')}
+                secondary={t('workerSettings.locationSharingSecondary')}
               />
               <ListItemSecondaryAction>
                 <Switch
@@ -421,8 +433,7 @@ const PrivacySettings: React.FC = () => {
       {/* Information Alert */}
       <Alert severity="info" sx={{ mb: 4 }}>
         <Typography variant="body2">
-          <strong>Note:</strong> Some settings may be required for your role and cannot be disabled. 
-          Contact your administrator if you have questions about specific settings.
+          {t('workerSettings.noteRequiredByRole')}
         </Typography>
       </Alert>
 
@@ -435,7 +446,7 @@ const PrivacySettings: React.FC = () => {
           disabled={loading}
           size="large"
         >
-          {loading ? 'Saving...' : 'Save Settings'}
+          {loading ? t('workerSettings.saving') : t('workerSettings.saveSettings')}
         </Button>
       </Box>
 

@@ -37,10 +37,10 @@ import {
   ThumbUp as ThumbUpIcon,
   ThumbDown as ThumbDownIcon,
   Refresh as RefreshIcon,
-  ArrowBack as ArrowBackIcon,
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -323,14 +323,7 @@ const HelpManagement: React.FC = () => {
             Manage help topics, review feedback, and track usage analytics
           </Typography>
         </Box>
-        <Button
-          variant="outlined"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/admin/ai')}
-          sx={{ height: 40 }}
-        >
-          Back to Launchpad
-        </Button>
+        <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
       </Box>
 
       {error && (

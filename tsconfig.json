@@ -21,9 +21,8 @@
     "noUnusedParameters": false,
     "useUnknownInCatchVariables": false,
     "noImplicitThis": false,
-    "noImplicitReturns": false,
     "noUncheckedIndexedAccess": false
   },
-  "include": ["src"],
+  "include": ["src", "shared"],
   "exclude": ["node_modules", "build", "functions/lib"]
 }

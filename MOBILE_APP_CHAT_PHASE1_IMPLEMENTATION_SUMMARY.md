@@ -210,7 +210,7 @@ node testMobileChatFunctions.js
 
 ## 📊 **Monitoring & Analytics**
 
-- All actions logged via `logAIAction()`
+- All actions logged via `logger.aiEvent()`
 - Performance metrics tracked
 - Error patterns monitored
 - User engagement analytics

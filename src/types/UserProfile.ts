@@ -66,9 +66,22 @@ export interface UserProfile {
   preferredName?: string;
   email: string;
   phone: string;
+  phoneE164?: string; // E.164 formatted phone number
+  phoneVerified?: boolean; // Phone verification status
+  phoneVerifiedAt?: Date; // When phone was verified
+  dob?: string; // Date of birth for eligibility verification
   dateOfBirth?: Date;
+  /** Last four digits of SSN (optional; payroll / identity hints). */
+  last4SSN?: string;
+  preferredLanguage?: 'en' | 'es'; // Preferred language for templated messaging
   gender?: 'Male' | 'Female' | 'Nonbinary' | 'Other' | 'Prefer not to say';
   avatar?: string; // file URL
+  /**
+   * Automated headshot verification result (Cloud Vision face detection). Written by the
+   * `onUserAvatarChangedVerify` Cloud Function on every avatar change. See
+   * `./avatarVerification` for the full shape + rejection reason copy.
+   */
+  avatarVerification?: import('./avatarVerification').AvatarVerification;
 
   // 📍 Employment Classification
   securityLevel: '0' | '1' | '2' | '3' | '4' | '5'; // 0=Dismissed, 1=Applicant, 2=Flex, 3=Worker, 4=Manager, 5=Admin
@@ -84,7 +97,10 @@ export interface UserProfile {
   workStatus: 'Active' | 'On Leave' | 'Terminated' | 'Suspended' | 'Pending';
   workerId?: string; // Optional custom ID from HRIS
   union?: string; // Union name or boolean flag
-  workEligibility?: boolean; // Eligibility for employment in the region
+  /** Legacy/derived: true if authorized to work (from workEligibilityAttestation or legacy boolean). */
+  workEligibility?: boolean;
+  /** Work eligibility attestation (source of truth); workEligibility is derived for compatibility. */
+  workEligibilityAttestation?: import('./workEligibility').WorkEligibilityAttestation;
   languages?: string[]; // Spoken/written languages
 
   // 🧠 Behavioral AI (HRX-Specific) - Auto-generated
@@ -93,6 +109,34 @@ export interface UserProfile {
   burnoutRiskScore?: number; // Rolling score (1–100)
   companionLastActiveAt?: Date; // Last Companion activity timestamp
   careerPathSuggestions?: CareerPathSuggestion[]; // AI-generated career suggestions
+
+  /**
+   * Denormalized score summary for fast rendering (per spec).
+   * Stored on the user doc and updated by interview/review writes.
+   */
+  scoreSummary?: {
+    aiScore?: number; // 0..100
+    aiScoreUpdatedAt?: any;
+
+    interviewAvg?: number; // 0..10 (1 decimal)
+    interviewCount?: number;
+    interviewLastAt?: any;
+    interviewLastScore10?: number; // 0..10 (most recent interview score)
+
+    reviewAvg?: number; // 1..5 (1 decimal)
+    reviewCount?: number;
+    reviewLastAt?: any;
+
+    responsivenessScore?: number; // 0..100
+    completenessScore?: number; // 0..100
+    qualityScore?: number; // 0..100
+
+    aiWeights?: {
+      completeness: number;
+      responsiveness: number;
+      quality: number;
+    };
+  };
 
   // 🔐 System & Sync
   createdBy: string; // ref ID to admin user who created this worker
@@ -103,7 +147,9 @@ export interface UserProfile {
 
   // 🧪 Enrichments
   emergencyContact?: EmergencyContact;
-  transportMethod?: 'Car' | 'Public Transit' | 'Bike' | 'Walk';
+  transportMethod?: 'Car' | 'Public Transit' | 'Bike' | 'Walk' | 'Other';
+  /** Admin: worker was added to Indeed Flex (shows badge in profile header when true). */
+  addedToIndeedFlex?: boolean;
 
   // 🔒 Privacy & Notifications
   notificationSettings?: NotificationSettings;
@@ -118,6 +164,8 @@ export interface UserProfile {
   activeTenantId?: string;
   tenantIds?: string[] | { [tenantId: string]: any };
   userGroupIds?: string[];
+  /** Smart Groups: geographic and industry dimensions from application events (separate from User Groups) */
+  smartGroupData?: import('../services/smartGroupService').SmartGroupData;
   addressInfo?: any;
   certifications?: any[];
   skills?: any[];
@@ -126,11 +174,139 @@ export interface UserProfile {
   backgroundCheckStatus?: string;
   vaccinationStatus?: string;
   specialTraining?: string;
-  resume?: any;
   // Module access flags (per-user overrides)
   crm_sales?: boolean;
   recruiter?: boolean;
   jobsBoard?: boolean;
+  // Resume object - single resume per user
+  resume?: {
+    fileName: string; // Original filename (e.g., "GregResume.pdf")
+    size: number; // File size in bytes (e.g., 106 * 1024 = 108544)
+    sizeKB?: number; // File size in KB for display (e.g., 106)
+    timestamp: Date; // Upload date
+    storagePath: string; // Firebase Storage path
+    downloadUrl?: string; // Generated download URL (optional, can be generated client-side)
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 🆕 Typed schema additions (Phase B — job requirement matchers)
+  //
+  // These supersede the freeform legacy fields above (`educationLevel`,
+  // `languages`, and the cert-or-license string mash inside `certifications`).
+  // Both shapes coexist during migration; matchers read the V2 field first,
+  // falling back to the legacy field via the parsers in:
+  //
+  //   - `shared/educationLevel.ts`         → `parseLegacyEducationLevel()`
+  //   - `shared/languageProficiency.ts`    → `parseLegacyLanguageString()`
+  //   - `shared/licenseRecord.ts`          → no parser; greenfield
+  //
+  // See `docs/READINESS_EXECUTION_MATRIX.md` §4.2, §4.4, §4.5.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** Typed education level. Supersedes the freeform `educationLevel` legacy field. */
+  educationLevelV2?: import('../shared/educationLevel').EducationLevel;
+  /** Typed language proficiencies. Supersedes the untyped `languages: string[]` legacy field. */
+  languagesV2?: import('../shared/languageProficiency').LanguageProficiencyV1[];
+  /**
+   * Typed license records. Greenfield — split out of the legacy `certifications[]`
+   * mash (which previously held both certs and license strings). Holds CDL,
+   * forklift, food-handler, OSHA-30, etc., with class + endorsements + expiration.
+   */
+  licenses?: import('../shared/licenseRecord').LicenseRecordV1[];
+
+  /**
+   * Self-attestation answers collected on the application wizard. Workers can
+   * also edit these post-application via the Flutter app (R.9). See
+   * `docs/READINESS_R0_HANDOFF.md` (R.0a) for the schema rationale and
+   * `src/utils/workerReadinessWriteModel.ts` (`ATTESTATION_KEY_MAP`) for the
+   * legacy → canonical key mapping that writes into this object.
+   */
+  workerAttestations?: WorkerAttestations;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Worker self-attestations (R.0a — Readiness Rebuild)
+//
+// Flat values + a per-field `_meta` provenance sidecar. The flat shape lets
+// matchers read `profile.workerAttestations.eVerifyWillingness` directly
+// without traversing a `{ value }` wrapper. The sidecar tracks where each
+// answer came from and when (application submit / backfill / worker edit /
+// CSA override) so CSA UI can show "self-attested on Apr 22" and matchers
+// can apply staleness rules later.
+//
+// Source of truth for the legacy → canonical key mapping that populates this
+// object: `src/utils/workerReadinessWriteModel.ts` (`ATTESTATION_KEY_MAP`).
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Tri-state willingness response used across attestation fields. */
+export type AttestationWillingness = 'yes' | 'no' | 'maybe' | '';
+
+/** Where an attestation answer originated. */
+export type WorkerAttestationSource =
+  | 'application'           // Original wizard submission (or server-side sync trigger)
+  | 'application_backfill'  // R.0c backfill from existing application docs
+  | 'worker_edit'           // Flutter / web profile edit (R.9)
+  | 'csa_override';         // CSA edited on the worker's behalf
+
+/**
+ * Per-field provenance entry. Keyed by the same field name as the flat value
+ * (e.g. `_meta.eVerifyWillingness` describes `eVerifyWillingness`).
+ */
+export interface WorkerAttestationFieldMeta {
+  /** When the answer was recorded. Firestore Timestamp on read; `serverTimestamp()` on write. */
+  attestedAt?: any;
+  /** Where the answer came from. */
+  source?: WorkerAttestationSource;
+}
+
+/**
+ * Self-attestation answers collected on the application wizard
+ * (`RequirementsAcknowledgementStep` + `EVerifyComfortStep` + `Wizard.tsx`).
+ *
+ * Field naming mirrors `ATTESTATION_KEY_MAP` in
+ * `src/utils/workerReadinessWriteModel.ts`. New fields land here FIRST,
+ * then in the canonical map, then on the wizard UI.
+ */
+export interface WorkerAttestations {
+  /** E-Verify comfort. Sourced from `EVerifyComfortStep`. */
+  eVerifyWillingness?: AttestationWillingness;
+
+  /** Drug screening comfort. */
+  drugScreeningWillingness?: AttestationWillingness;
+  /** Free-text explanation when drug = no/maybe. */
+  drugScreeningNotes?: string;
+
+  /** Background check comfort. */
+  backgroundCheckWillingness?: AttestationWillingness;
+  /** Free-text explanation when background = no. */
+  backgroundCheckNotes?: string;
+
+  /** Per-screening-name map from the JO's `additionalScreenings`. */
+  additionalScreenings?: Record<string, AttestationWillingness>;
+
+  /** Comfortable working in the JO's required languages. */
+  languageRequirementWillingness?: AttestationWillingness;
+
+  /** Comfortable with the JO's physical demands (lifting, standing, etc.). */
+  physicalRequirementWillingness?: AttestationWillingness;
+
+  /** Comfortable wearing the JO's uniform. */
+  uniformRequirementWillingness?: AttestationWillingness;
+
+  /** Comfortable with custom uniform notes (free-text on the JO). */
+  customUniformRequirementWillingness?: AttestationWillingness;
+
+  /** Comfortable wearing the JO's required PPE. */
+  requiredPpeWillingness?: AttestationWillingness;
+
+  /**
+   * Per-field provenance sidecar. Keys are the field names above
+   * (e.g. `_meta.eVerifyWillingness`); for `additionalScreenings` the
+   * meta key is the same screening name (e.g. `_meta["TWIC Card"]`).
+   */
+  _meta?: {
+    [fieldKey: string]: WorkerAttestationFieldMeta;
+  };
 }
 
 // Form interface for editing user profiles
@@ -143,6 +319,7 @@ export interface UserProfileForm {
   phone: string;
   linkedinUrl?: string;
   dateOfBirth?: string; // ISO date string for form input
+  last4SSN?: string;
   gender?: 'Male' | 'Female' | 'Nonbinary' | 'Other' | 'Prefer not to say';
   
   // Employment Classification
@@ -164,8 +341,9 @@ export interface UserProfileForm {
   
   // Enrichments
   emergencyContact?: EmergencyContact;
-  transportMethod?: 'Car' | 'Public Transit' | 'Bike' | 'Walk';
-  
+  transportMethod?: 'Car' | 'Public Transit' | 'Bike' | 'Walk' | 'Other';
+  addedToIndeedFlex?: boolean;
+
   // Legacy fields
   role?: string;
   jobTitle?: string;

@@ -26,6 +26,7 @@ import {
   Checkbox,
   Divider,
   Paper,
+  MenuItem,
 } from '@mui/material';
 import { PhotoCamera, CheckCircle } from '@mui/icons-material';
 
@@ -50,10 +51,16 @@ interface FormData {
   firstName: string;
   lastName: string;
   phone: string;
+  preferredLanguage: 'en' | 'es';
   photoUrl: string;
   acceptTerms: boolean;
   acceptPrivacy: boolean;
 }
+
+const detectDefaultLanguage = (): 'en' | 'es' => {
+  if (typeof navigator === 'undefined') return 'en';
+  return navigator.language?.toLowerCase().startsWith('es') ? 'es' : 'en';
+};
 
 const steps = ['Account Setup', 'Profile Information', 'Verification'];
 
@@ -73,6 +80,7 @@ const OnboardingProfileForm: React.FC = () => {
     firstName: '',
     lastName: '',
     phone: '',
+    preferredLanguage: detectDefaultLanguage(),
     photoUrl: '',
     acceptTerms: false,
     acceptPrivacy: false,
@@ -183,6 +191,7 @@ const OnboardingProfileForm: React.FC = () => {
             ? 'Customer_Worker'
             : 'Agency_Worker',
         onboarded: false,
+        preferredLanguage: formData.preferredLanguage,
         createdAt: new Date(),
         // Org assignment will be handled by assignOrgToUser function
       };
@@ -268,6 +277,20 @@ const OnboardingProfileForm: React.FC = () => {
                   : ''
               }
             />
+            <TextField
+              fullWidth
+              select
+              label="Preferred Message Language"
+              value={formData.preferredLanguage}
+              onChange={(e) =>
+                handleInputChange('preferredLanguage', e.target.value as 'en' | 'es')
+              }
+              margin="normal"
+              helperText="This controls automated message language."
+            >
+              <MenuItem value="en">English</MenuItem>
+              <MenuItem value="es">Spanish</MenuItem>
+            </TextField>
           </Box>
         );
 

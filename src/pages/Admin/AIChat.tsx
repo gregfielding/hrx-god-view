@@ -41,7 +41,6 @@ import {
   Upload as UploadIcon,
   Person as PersonIcon,
   Security as SecurityIcon,
-  ArrowBack as ArrowBackIcon,
   Psychology as PsychologyIcon,
   Add as AddIcon,
   Delete as DeleteIcon,
@@ -57,6 +56,7 @@ import { useTheme } from '@mui/material/styles';
 import CircularProgress from '@mui/material/CircularProgress';
 import { Line, Doughnut } from 'react-chartjs-2';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import {
   Chart,
   CategoryScale,
@@ -610,15 +610,7 @@ const AIChat: React.FC = () => {
         <Typography variant="h3">
         AI Chat Management
         </Typography>
-        <Button
-          variant="outlined"
-          color="primary"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/admin/ai')}
-          sx={{ fontWeight: 600 }}
-        >
-          Back to Launchpad
-        </Button>
+        <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
       </Box>
       
 

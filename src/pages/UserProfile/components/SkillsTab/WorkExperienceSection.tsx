@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { toChipLabel } from '../../../../utils/chipLabel';
 import {
   Accordion,
   AccordionSummary,
@@ -50,7 +51,21 @@ const WorkExperienceSection = ({
 }) => {
   const [work, setWork] = useState(value || []);
 
+  // Sync with external value changes
+  useEffect(() => {
+    if (Array.isArray(value)) {
+      setWork(value);
+    }
+  }, [value]);
+
   const handleFieldChange = (idx: number, field: string, val: any) => {
+    // Only update local state on change, don't trigger save
+    const updated = work.map((entry, i) => (i === idx ? { ...entry, [field]: val } : entry));
+    setWork(updated);
+  };
+
+  const handleFieldBlur = (idx: number, field: string, val: any) => {
+    // Save to parent on blur (triggers save to Firestore)
     const updated = work.map((entry, i) => (i === idx ? { ...entry, [field]: val } : entry));
     setWork(updated);
     onChange(updated);
@@ -70,15 +85,12 @@ const WorkExperienceSection = ({
 
   return (
     <div>
-      <Typography variant="h6" gutterBottom>
-        Work Experience
-      </Typography>
       {work.map((entry, idx) => (
         <Accordion key={idx} sx={{ mb: 2 }}>
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
             <Typography>
-              {entry.jobTitle || 'Job Title'} @ {entry.employer || 'Employer'}
-              {entry.startDate && ` (${entry.startDate} - ${entry.endDate || 'Present'})`}
+              {toChipLabel(entry.jobTitle) || 'Job Title'} @ {toChipLabel(entry.employer) || 'Employer'}
+              {entry.startDate && ` (${toChipLabel(entry.startDate)} - ${toChipLabel(entry.endDate) || 'Present'})`}
             </Typography>
             <IconButton
               onClick={(e) => {
@@ -160,19 +172,20 @@ const WorkExperienceSection = ({
                   minRows={2}
                   value={entry.responsibilities}
                   onChange={(e) => handleFieldChange(idx, 'responsibilities', e.target.value)}
+                  onBlur={(e) => handleFieldBlur(idx, 'responsibilities', e.target.value)}
                 />
               </Grid>
               <Grid item xs={12}>
                 <Autocomplete
                   multiple
                   options={onetSkills}
-                  groupBy={(option) => option.type}
-                  getOptionLabel={(option) => option.name}
+                  groupBy={(option) => (option as any)?.type ?? (option as any)?.category ?? ''}
+                  getOptionLabel={(option) => toChipLabel(option)}
                   value={entry.skillsUsed}
                   onChange={(_, newValue) => handleFieldChange(idx, 'skillsUsed', newValue)}
                   renderTags={(value, getTagProps) =>
                     value.map((option, index) => (
-                      <Chip label={option.name} {...getTagProps({ index })} key={option.name} />
+                      <Chip label={toChipLabel(option)} {...getTagProps({ index })} key={`${toChipLabel(option)}-${index}`} />
                     ))
                   }
                   renderInput={(params) => <TextField {...params} label="Skills Used" fullWidth />}

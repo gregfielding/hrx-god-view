@@ -1,5 +1,5 @@
 import * as admin from 'firebase-admin';
-import { logAIAction } from './utils/aiLogging';
+import { logger } from './utils/logger';
 
 const db = admin.firestore();
 
@@ -73,7 +73,7 @@ export const processWithDealStageAIEngine = async (logData: any, logId: string):
     results.stageInsights = stageRecommendations.insights;
 
     // Log the AI processing
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'deal_stage_ai_engine.processed',
       targetType: 'deal_stage_analysis',
       targetId: dealId,
@@ -111,7 +111,7 @@ export const processWithDealStageAIEngine = async (logData: any, logId: string):
     console.error('Error in Deal Stage AI Engine:', error);
     
     // Log the error
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'deal_stage_ai_engine.error',
       targetType: 'deal_stage_analysis',
       targetId: logData.targetId || 'error',

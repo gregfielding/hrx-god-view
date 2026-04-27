@@ -669,7 +669,7 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
             {toast?.message}
           </Alert>
         </Snackbar>
-        <Box sx={{ mt: 3, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+        <Box sx={{ mt: 3, pt: 2, borderTop: '1px solid', borderColor: 'divider', px: 2, pb: 2 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
             <Typography variant="h6" sx={{ fontWeight: 'bold' }}>Saved Conversations</Typography>
           </Box>

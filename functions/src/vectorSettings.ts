@@ -1,6 +1,6 @@
 import * as admin from 'firebase-admin';
 import { onCall } from 'firebase-functions/v2/https';
-import { logAIAction } from './feedbackEngine';
+import { logger } from './utils/logger';
 
 const db = admin.firestore();
 
@@ -74,7 +74,7 @@ export const createVectorChunk = onCall(async (request) => {
 
     const docRef = await db.collection('vector_chunks').add(chunkData);
 
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'vector_chunk_created',
       targetType: 'chunk',
       targetId: docRef.id,
@@ -164,7 +164,7 @@ export const searchVectorChunks = onCall({
       .sort((a, b) => b.similarity - a.similarity)
       .slice(0, limit);
 
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'vector_search',
       targetType: 'search',
       targetId: 'vector_search',
@@ -207,7 +207,7 @@ export const updateChunkRelevance = onCall(async (request) => {
       lastUpdated: admin.firestore.Timestamp.now()
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'chunk_relevance_updated',
       targetType: 'chunk',
       targetId: chunkId,
@@ -252,7 +252,7 @@ export const archiveChunk = onCall(async (request) => {
       });
     }
 
-    await logAIAction({
+    await logger.aiEvent({
       eventType: `chunk_${action}d`,
       targetType: 'chunk',
       targetId: chunkId,
@@ -306,7 +306,7 @@ export const createChunkingStrategy = onCall(async (request) => {
 
     const docRef = await db.collection('chunking_strategies').add(strategyData);
 
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'chunking_strategy_created',
       targetType: 'strategy',
       targetId: docRef.id,
@@ -365,30 +365,15 @@ export const getVectorAnalytics = onCall({
   maxInstances: 3,
   timeoutSeconds: 60
 }, async (request) => {
-  const { customerId, timeRange = '7d' } = request.data;
+  const { customerId } = request.data;
 
   try {
-    const startDate = new Date();
-    if (timeRange === '7d') {
-      startDate.setDate(startDate.getDate() - 7);
-    } else if (timeRange === '30d') {
-      startDate.setDate(startDate.getDate() - 30);
-    }
-
-    // Get vector-related logs
-    const logsSnapshot = await db.collection('ai_logs')
-      .where('eventType', 'in', ['vector_chunk_created', 'vector_search', 'chunk_relevance_updated'])
-      .where('timestamp', '>=', admin.firestore.Timestamp.fromDate(startDate))
-      .get();
-
-    const logs = logsSnapshot.docs.map(doc => doc.data());
-
-    // Get chunk statistics
     const chunksSnapshot = await db.collection('vector_chunks')
       .where('customerId', '==', customerId)
       .get();
 
     const chunks = chunksSnapshot.docs.map(doc => doc.data());
+    const logs: any[] = []; // AI logging disabled, so no historical log data is available.
 
     const analytics = {
       totalChunks: chunks.length,
@@ -396,20 +381,17 @@ export const getVectorAnalytics = onCall({
       averageRelevance: chunks.length > 0 
         ? chunks.reduce((sum, chunk) => sum + chunk.relevance, 0) / chunks.length 
         : 0,
-      totalSearches: logs.filter(log => log.eventType === 'vector_search').length,
-      totalChunksCreated: logs.filter(log => log.eventType === 'vector_chunk_created').length,
-      averageSearchLatency: logs.filter(log => log.eventType === 'vector_search').length > 0
-        ? logs.filter(log => log.eventType === 'vector_search')
-            .reduce((sum, log) => sum + (log.latencyMs || 0), 0) / 
-            logs.filter(log => log.eventType === 'vector_search').length
-        : 0,
+      totalSearches: 0,
+      totalChunksCreated: 0,
+      averageSearchLatency: 0,
       topTags: getTopTags(chunks),
       searchPerformance: getSearchPerformance(logs)
     };
 
     return {
       success: true,
-      data: analytics
+      data: analytics,
+      note: 'AI logging has been disabled, so search metrics reflect chunk metadata only.'
     };
   } catch (error: any) {
     console.error('Error getting vector analytics:', error);

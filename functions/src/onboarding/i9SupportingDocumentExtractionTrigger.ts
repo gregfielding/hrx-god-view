@@ -1,0 +1,411 @@
+/**
+ * Firestore trigger: when a worker uploads an I-9 supporting document (storagePath set),
+ * run Google Document AI and persist namespaced documentExtraction (assistive only; no auto-approval).
+ */
+import * as admin from 'firebase-admin';
+import { DocumentProcessorServiceClient, protos } from '@google-cloud/documentai';
+import { logger } from 'firebase-functions/v2';
+import { onDocumentWritten } from 'firebase-functions/v2/firestore';
+import { getStorage } from 'firebase-admin/storage';
+import sharp from 'sharp';
+
+import { getStorageBucketName } from '../utils/storageBucket';
+import {
+  mapDocumentAiToExtractedFields,
+  resolveExtractionRouting,
+} from './i9SupportingDocumentExtractionMapper';
+
+if (!admin.apps.length) {
+  admin.initializeApp();
+}
+
+const db = admin.firestore();
+
+type ExtractionStatus = 'extraction_pending' | 'extraction_complete' | 'extraction_failed' | 'extraction_unsupported';
+
+const TERMINAL: ExtractionStatus[] = ['extraction_complete', 'extraction_failed', 'extraction_unsupported'];
+
+const KEYS_STABLE: Array<keyof admin.firestore.DocumentData> = [
+  'tenantId',
+  'userId',
+  'documentType',
+  'storagePath',
+  'status',
+  'uploadedAt',
+  'reviewedAt',
+  'reviewedBy',
+  'rejectionReason',
+  'uploadedFileName',
+  'uploadedContentType',
+  'requestedForEntityId',
+  'requestedFromAssignmentId',
+  'createdByUid',
+  'createdAt',
+  'retainUntil',
+  'lastUsedForEntityId',
+  'lastUsedAt',
+];
+
+function tsMillis(v: unknown): number | null {
+  if (v == null) return null;
+  if (v instanceof admin.firestore.Timestamp) return v.toMillis();
+  if (typeof v === 'object' && v !== null && 'toMillis' in v && typeof (v as { toMillis: () => number }).toMillis === 'function') {
+    try {
+      return (v as admin.firestore.Timestamp).toMillis();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function fieldEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  const ma = tsMillis(a);
+  const mb = tsMillis(b);
+  if (ma != null && mb != null) return ma === mb;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * Second invocation after we write documentExtraction — avoid re-processing and infinite loops.
+ */
+function isOnlyDocumentExtractionEcho(
+  before: admin.firestore.DocumentData | undefined,
+  after: admin.firestore.DocumentData | undefined,
+): boolean {
+  if (!before || !after) return false;
+  for (const k of KEYS_STABLE) {
+    if (!fieldEqual(before[k], after[k])) return false;
+  }
+  return !fieldEqual(before.documentExtraction, after.documentExtraction);
+}
+
+function terminalExtractionForPath(
+  ext: Record<string, unknown> | undefined,
+  storagePath: string,
+): boolean {
+  if (!ext || String(ext.sourceStoragePath || '').trim() !== storagePath) return false;
+  const st = String(ext.status || '') as ExtractionStatus;
+  return TERMINAL.includes(st);
+}
+
+/**
+ * Document AI `rawDocument.mimeType` must be a real IANA type. Some clients send garbage
+ * (e.g. `media0.image/jp`) which yields `3 INVALID_ARGUMENT`.
+ */
+function mimeForUpload(contentType: unknown, storagePath: string): string {
+  const c = String(contentType || '').trim().toLowerCase();
+  const fromPath = (): string => {
+    const lower = storagePath.toLowerCase();
+    if (lower.endsWith('.pdf')) return 'application/pdf';
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.heic')) return 'image/heic';
+    if (lower.endsWith('.heif')) return 'image/heif';
+    return 'application/pdf';
+  };
+
+  const malformed =
+    !c ||
+    c === 'application/octet-stream' ||
+    c.includes('.image/') ||
+    c === 'image/jp';
+
+  if (malformed) {
+    return fromPath();
+  }
+
+  if (c === 'image/jpeg' || c === 'image/jpg') return 'image/jpeg';
+  if (
+    c === 'application/pdf' ||
+    c === 'image/png' ||
+    c === 'image/webp' ||
+    c === 'image/heic' ||
+    c === 'image/heif' ||
+    c === 'image/gif'
+  ) {
+    return c;
+  }
+
+  if (c.startsWith('image/')) {
+    const sub = c.slice(6);
+    if (/^[a-z][a-z0-9.+_-]{0,60}$/.test(sub)) return c;
+  }
+
+  return fromPath();
+}
+
+export const onWorkerI9SupportingDocumentExtract = onDocumentWritten(
+  {
+    document: 'tenants/{tenantId}/worker_i9_supporting_documents/{documentId}',
+    region: 'us-central1',
+    memory: '512MiB',
+    timeoutSeconds: 120,
+    maxInstances: 10,
+  },
+  async (event) => {
+    const { tenantId, documentId } = event.params as { tenantId: string; documentId: string };
+    const beforeSnap = event.data?.before;
+    const afterSnap = event.data?.after;
+
+    if (!afterSnap?.exists) {
+      return;
+    }
+
+    const beforeData = beforeSnap?.exists ? beforeSnap.data() : undefined;
+    const afterData = afterSnap.data() as Record<string, unknown>;
+
+    if (isOnlyDocumentExtractionEcho(beforeData, afterData)) {
+      return;
+    }
+
+    const storagePath = String(afterData.storagePath || '').trim();
+    const userId = String(afterData.userId || '').trim();
+    const metaTenant = String(afterData.tenantId || '').trim();
+
+    if (beforeData) {
+      const pathSame = String(beforeData.storagePath || '').trim() === storagePath;
+      const uploadSame = fieldEqual(beforeData.uploadedAt, afterData.uploadedAt);
+      if (pathSame && uploadSame && storagePath) {
+        // Staff review / retention / last-used updates — not a new upload.
+        return;
+      }
+    }
+
+    if (!storagePath || metaTenant !== tenantId || !userId) {
+      return;
+    }
+
+    const expectedPrefix = `i9_docs/${tenantId}/${userId}/`;
+    if (!storagePath.startsWith(expectedPrefix)) {
+      logger.warn('i9_supporting_extraction.bad_path_prefix', { tenantId, documentId, storagePath });
+      return;
+    }
+
+    if (terminalExtractionForPath(afterData.documentExtraction as Record<string, unknown> | undefined, storagePath)) {
+      return;
+    }
+
+    const documentType = String(afterData.documentType || '').trim();
+    const routing = resolveExtractionRouting(documentType, process.env);
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const docRef = db.doc(`tenants/${tenantId}/worker_i9_supporting_documents/${documentId}`);
+
+    if (routing.type === 'unsupported') {
+      await docRef.set(
+        {
+          documentExtraction: {
+            status: 'extraction_unsupported' as ExtractionStatus,
+            requestedAt: now,
+            completedAt: now,
+            error: null,
+            processorType: null,
+            processorResourceName: null,
+            sourceStoragePath: storagePath,
+            extractedFields: null,
+            extractedRawEntities: [],
+            extractionWarnings: [
+              'No automated Document AI extractor is configured for this document type (e.g. other_supporting). Use manual review.',
+            ],
+            confidenceSummary: null,
+            documentAiProcessorVersion: null,
+            updatedAt: now,
+          },
+          updatedAt: now,
+        },
+        { merge: true },
+      );
+      logger.info('i9_supporting_extraction.unsupported', { tenantId, documentId, documentType });
+      return;
+    }
+
+    if (routing.type === 'missing_env') {
+      await docRef.set(
+        {
+          documentExtraction: {
+            status: 'extraction_failed' as ExtractionStatus,
+            requestedAt: now,
+            completedAt: now,
+            error: {
+              code: 'missing_processor_config',
+              message: routing.message.slice(0, 500),
+            },
+            processorType: routing.processorType,
+            processorResourceName: null,
+            sourceStoragePath: storagePath,
+            extractedFields: null,
+            extractedRawEntities: [],
+            extractionWarnings: [],
+            confidenceSummary: null,
+            documentAiProcessorVersion: null,
+            updatedAt: now,
+          },
+          updatedAt: now,
+        },
+        { merge: true },
+      );
+      logger.error('i9_supporting_extraction.missing_config', { tenantId, documentId, processorType: routing.processorType });
+      return;
+    }
+
+    const processorKind = routing.kind;
+    const processorName = routing.resourceName;
+
+    const pendingPayload = {
+      status: 'extraction_pending' as ExtractionStatus,
+      requestedAt: now,
+      completedAt: null,
+      error: null,
+      processorType: processorKind,
+      processorResourceName: processorName,
+      sourceStoragePath: storagePath,
+      extractedFields: null,
+      extractedRawEntities: [],
+      extractionWarnings: [],
+      confidenceSummary: null,
+      documentAiProcessorVersion: null,
+      updatedAt: now,
+    };
+
+    await docRef.set({ documentExtraction: pendingPayload, updatedAt: now }, { merge: true });
+
+    try {
+      const mimeType = mimeForUpload(afterData.uploadedContentType, storagePath);
+
+      const bucket = getStorage().bucket(getStorageBucketName());
+      const [buf] = await bucket.file(storagePath).download();
+
+      // Document AI `rawDocument` does not accept HEIC/HEIF; convert server-side (sharp) when needed.
+      let processBuf: Buffer = buf;
+      let processMime = mimeType;
+      if (mimeType === 'image/heic' || mimeType === 'image/heif') {
+        try {
+          processBuf = await sharp(buf).jpeg({ quality: 92 }).toBuffer();
+          processMime = 'image/jpeg';
+          logger.info('i9_supporting_extraction.heic_converted', {
+            tenantId,
+            documentId,
+            bytesIn: buf.length,
+            bytesOut: processBuf.length,
+          });
+        } catch (convErr) {
+          const cm = convErr instanceof Error ? convErr.message : String(convErr);
+          const failAt = admin.firestore.FieldValue.serverTimestamp();
+          await docRef.set(
+            {
+              documentExtraction: {
+                status: 'extraction_failed' as ExtractionStatus,
+                requestedAt: pendingPayload.requestedAt,
+                completedAt: failAt,
+                error: {
+                  code: 'heic_convert_failed',
+                  message: `Could not convert HEIC/HEIF to JPEG (${cm.slice(0, 200)}). Re-upload as JPEG/PNG or try from a different device.`,
+                },
+                processorType: processorKind,
+                processorResourceName: processorName,
+                sourceStoragePath: storagePath,
+                extractedFields: null,
+                extractedRawEntities: [],
+                extractionWarnings: [],
+                confidenceSummary: null,
+                documentAiProcessorVersion: null,
+                updatedAt: failAt,
+              },
+              updatedAt: failAt,
+            },
+            { merge: true },
+          );
+          logger.error('i9_supporting_extraction.heic_convert_failed', {
+            tenantId,
+            documentId,
+            error: cm.slice(0, 300),
+          });
+          return;
+        }
+      }
+
+      const client = new DocumentProcessorServiceClient();
+      const request: protos.google.cloud.documentai.v1.IProcessRequest = {
+        name: processorName,
+        rawDocument: {
+          content: processBuf,
+          mimeType: processMime,
+        },
+      };
+
+      const [result] = await client.processDocument(request);
+
+      const mapped = mapDocumentAiToExtractedFields(result.document, processorKind);
+      if (mimeType === 'image/heic' || mimeType === 'image/heif') {
+        mapped.extractionWarnings = [
+          ...mapped.extractionWarnings,
+          'Converted from HEIC/HEIF to JPEG for automated reading.',
+        ];
+      }
+      const doneAt = admin.firestore.FieldValue.serverTimestamp();
+
+      await docRef.set(
+        {
+          documentExtraction: {
+            status: 'extraction_complete' as ExtractionStatus,
+            requestedAt: pendingPayload.requestedAt,
+            completedAt: doneAt,
+            error: null,
+            processorType: processorKind,
+            processorResourceName: processorName,
+            sourceStoragePath: storagePath,
+            extractedFields: mapped.extractedFields,
+            extractedRawEntities: mapped.extractedRawEntities,
+            extractionWarnings: mapped.extractionWarnings,
+            confidenceSummary: mapped.confidenceSummary,
+            documentAiProcessorVersion: null,
+            updatedAt: doneAt,
+          },
+          updatedAt: doneAt,
+        },
+        { merge: true },
+      );
+
+      logger.info('i9_supporting_extraction.complete', {
+        tenantId,
+        documentId,
+        documentType,
+        processorKind,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const failAt = admin.firestore.FieldValue.serverTimestamp();
+      await docRef.set(
+        {
+          documentExtraction: {
+            status: 'extraction_failed' as ExtractionStatus,
+            requestedAt: pendingPayload.requestedAt,
+            completedAt: failAt,
+            error: {
+              code: 'documentai_or_storage',
+              message: msg.slice(0, 500),
+            },
+            processorType: processorKind,
+            processorResourceName: processorName,
+            sourceStoragePath: storagePath,
+            extractedFields: null,
+            extractedRawEntities: [],
+            extractionWarnings: [],
+            confidenceSummary: null,
+            documentAiProcessorVersion: null,
+            updatedAt: failAt,
+          },
+          updatedAt: failAt,
+        },
+        { merge: true },
+      );
+      logger.error('i9_supporting_extraction.failed', {
+        tenantId,
+        documentId,
+        error: msg.slice(0, 300),
+      });
+    }
+  },
+);

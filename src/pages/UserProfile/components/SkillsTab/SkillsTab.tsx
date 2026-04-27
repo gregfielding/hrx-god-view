@@ -1,5 +1,9 @@
-import React, { useState } from 'react';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import React, { useState, useEffect } from 'react';
+import { warnLegacyCertUsageDetected } from '../../../../shared/certifications/certificationsLogging';
+import { toChipLabel } from '../../../../utils/chipLabel';
+import { logger } from '../../../../utils/logger';
+import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { db, auth } from '../../../../firebase';
 import {
   Box,
   Typography,
@@ -21,6 +25,9 @@ import {
   FormControlLabel,
   Switch,
   Snackbar,
+  Card,
+  CardHeader,
+  CardContent,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -42,7 +49,7 @@ import Autocomplete from '@mui/material/Autocomplete';
 import ResumeUpload from '../../../../components/ResumeUpload';
 import { educationOptions } from '../../../../data/experienceOptions';
 
-import { EducationSection, WorkExperienceSection } from './index';
+// Education and Work Experience are now in separate tabs
 
 const educationLevels = educationOptions.map(option => option.label);
 const skillLevels = ['Beginner', 'Intermediate', 'Advanced', 'Expert'];
@@ -51,18 +58,41 @@ const languageProficiencies = ['Basic', 'Conversational', 'Fluent', 'Native'];
 export interface SkillsTabProps {
   user: any;
   onUpdate: (updated: any) => void;
-  onetSkills: { name: string; category: string }[];
-  onetJobTitles: string[];
+  hideCertsAndReferences?: boolean;
+  onetSkills?: any[];
+  onetJobTitles?: any[];
+  hideIndustryPreferences?: boolean;
+  hideEducation?: boolean;
+  hideWorkExperience?: boolean;
+  hideLanguages?: boolean;
 }
 
-const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJobTitles }) => {
+const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJobTitles, hideCertsAndReferences, hideIndustryPreferences, hideEducation, hideWorkExperience, hideLanguages }) => {
+  logger.debug('SkillsTab - Component rendered with props:', { 
+    user, 
+    userSkills: user?.skills, 
+    userSkillsLength: user?.skills?.length,
+    onetSkills: onetSkills.length, 
+    onetJobTitles: onetJobTitles.length 
+  });
   // Map onetSkills (with category) to internal format (with type and level)
   const mapOnetSkillsToInternal = (onetSkillsList: { name: string; category: string }[]) => {
-    return onetSkillsList.map(skill => ({
-      name: skill.name,
-      type: skill.category,
-      level: 'Intermediate' // Default level
-    }));
+    // Remove duplicates and create unique skills
+    const uniqueSkills = new Map();
+    onetSkillsList.forEach(skill => {
+      const key = `${skill.name}-${skill.category}`;
+      if (!uniqueSkills.has(key)) {
+        uniqueSkills.set(key, {
+          name: skill.name,
+          canonicalId: skill.name,
+          source: 'predefined' as const,
+          type: skill.category,
+          level: 'Intermediate' as const,
+          confidence: 1.0
+        });
+      }
+    });
+    return Array.from(uniqueSkills.values());
   };
 
   // Personal & Professional Info
@@ -148,22 +178,91 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
   const industryOptions = [
     'Technology', 'Healthcare', 'Finance', 'Education', 'Manufacturing',
     'Retail', 'Construction', 'Transportation', 'Energy', 'Government',
-    'Non-profit', 'Entertainment', 'Real Estate', 'Consulting', 'Marketing'
+    'Non-profit', 'Entertainment', 'Real Estate', 'Consulting', 'Marketing',
+    'Hospitality', 'Telecommunications', 'Agriculture', 'Logistics',
+    'Pharmaceuticals', 'Insurance'
   ];
 
-  // Skills & Competencies
-  const [skills, setSkills] = useState<{ name: string; type: string; level?: string }[]>(
-    (user.skills || []).map(
-      (skillName: string) => {
-        const foundSkill = onetSkills.find((s) => s.name === skillName);
-        return foundSkill 
-          ? { name: foundSkill.name, type: foundSkill.category, level: 'Intermediate' }
-          : { name: skillName, type: 'Other', level: 'Intermediate' };
-      },
-    ),
-  );
-  const [skillInput, setSkillInput] = useState('');
-  const [selectedSkillLevel, setSelectedSkillLevel] = useState('Intermediate');
+  // Suggested common skills (clickable chips) – complements ONET dataset
+  const suggestedSkills = [
+    'Communication', 'Teamwork', 'Leadership', 'Customer Service', 'Problem Solving',
+    'Time Management', 'Sales', 'Project Management', 'Microsoft Excel', 'Scheduling',
+    'Data Entry', 'Inventory'
+  ];
+
+  // const maxSkills = 10; // Removed skill limit
+
+  // Skills & Competencies with new schema support
+  const [skills, setSkills] = useState<{ 
+    name: string; 
+    canonicalId?: string; 
+    source: 'predefined' | 'custom'; 
+    type: string; 
+    level?: string;
+    confidence?: number;
+  }[]>([]);
+
+  // Live sync skills from Firestore onSnapshot (real-time updates)
+  useEffect(() => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) return;
+    const userRef = doc(db, 'users', currentUser.uid);
+    const unsub = onSnapshot(userRef, (snap) => {
+      const data = snap.data() as any;
+      const dbSkills = Array.isArray(data?.skills) ? data.skills : [];
+      if (!dbSkills.length) return;
+
+      const processedSkills = dbSkills.map((skillItem: any) => {
+        const skillName = typeof skillItem === 'string' ? skillItem : (skillItem?.name || '');
+        // Capitalize first letter of each word for consistency
+        const capitalizedName = skillName
+          .split(' ')
+          .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+          .join(' ');
+        const type = skillItem?.type || skillItem?.category || 'Other';
+        const source = (skillItem?.source as ('predefined'|'custom')) || 'custom';
+        const confidence = typeof skillItem?.confidence === 'number' ? skillItem.confidence : 1.0;
+        return {
+          name: capitalizedName,
+          canonicalId: skillItem?.canonicalId || capitalizedName,
+          source,
+          type,
+          confidence,
+        } as {
+          name: string; canonicalId?: string; source: 'predefined' | 'custom'; type: string; confidence?: number;
+        };
+      });
+
+      setSkills(processedSkills);
+    });
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Live sync languages from Firestore onSnapshot (real-time updates)
+  useEffect(() => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) return;
+    const userRef = doc(db, 'users', currentUser.uid);
+    const unsub = onSnapshot(userRef, (snap) => {
+      const data = snap.data() as any;
+      const dbLanguages = Array.isArray(data?.languages) ? data.languages : [];
+      if (dbLanguages.length > 0) {
+        setLanguages(normalizeLanguages(dbLanguages));
+      }
+    });
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Also sync languages when user prop changes (for admin viewing other users)
+  useEffect(() => {
+    if (user?.languages) {
+      setLanguages(normalizeLanguages(user.languages));
+    }
+  }, [user?.languages]);
+  // Removed inline custom skill input; users add via main Autocomplete
+  // Removed skill level selection per design request
 
   // Assessments & Verifications
   const [assessments, setAssessments] = useState(user.assessments || {
@@ -183,12 +282,38 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
   }>>(user.certifications || []);
   const [certInput, setCertInput] = useState({ name: '', issuer: '', dateObtained: '', expiryDate: '', credentialId: '' });
 
+  useEffect(() => {
+    warnLegacyCertUsageDetected({ surface: 'SkillsTab', field: 'user.certifications' });
+  }, []);
+
+  // Helper to normalize languages from Firestore (handles both string[] and object[] formats)
+  const normalizeLanguages = (langs: any[]): Array<{
+    language: string;
+    proficiency: string;
+    isNative: boolean;
+  }> => {
+    if (!Array.isArray(langs)) return [];
+    return langs.map((lang) => {
+      if (typeof lang === 'string') {
+        return { language: lang, proficiency: 'Conversational', isNative: false };
+      }
+      if (lang && typeof lang === 'object') {
+        return {
+          language: lang.language || String(lang),
+          proficiency: lang.proficiency || 'Conversational',
+          isNative: lang.isNative || false,
+        };
+      }
+      return { language: String(lang), proficiency: 'Conversational', isNative: false };
+    }).filter(l => l.language);
+  };
+
   // Languages
   const [languages, setLanguages] = useState<Array<{
     language: string;
     proficiency: string;
     isNative: boolean;
-  }>>(user.languages || []);
+  }>>(normalizeLanguages(user.languages || []));
   const [langInput, setLangInput] = useState({ language: '', proficiency: 'Conversational', isNative: false });
 
   // References & Recommendations
@@ -272,15 +397,25 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
     severity: 'info'
   });
 
-  const handleAddSkill = () => {
-    if (skillInput) {
-      setSkills([...skills, { name: skillInput, type: 'Other', level: selectedSkillLevel }]);
-      setSkillInput('');
+  // Custom add via Autocomplete only; manual input removed per design
+
+  const saveUserPartial = async (partial: any) => {
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) return;
+      const uref = doc(db, 'users', currentUser.uid);
+      await updateDoc(uref, partial);
+    } catch (error) {
+      logger.error('Failed to save user partial', error);
     }
   };
 
   const handleDeleteSkill = (idx: number) => {
-    setSkills(skills.filter((_, i) => i !== idx));
+    const next = skills.filter((_, i) => i !== idx);
+    setSkills(next);
+    const normalized = normalizeSkills(next);
+    onUpdate(buildUpdatedDataWith({ skills: next }));
+    saveUserPartial({ skills: normalized });
   };
 
   const handleAddCertification = () => {
@@ -382,8 +517,7 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
     if (parsedData.skills && parsedData.skills.length > 0) {
       const newSkills = parsedData.skills.map((skill: any) => ({
         name: skill.name,
-        type: skill.category || 'Other',
-        level: skill.level || 'Intermediate'
+        type: skill.category || 'Other'
       }));
       setSkills([...skills, ...newSkills.filter((newSkill: any) => 
         !skills.some(existing => existing.name === newSkill.name)
@@ -460,99 +594,90 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
   };
 
   const handleSave = async () => {
-    const updatedData = {
-      currentJobTitle,
-      appliedJobTitle,
-      aspirationalJobTitles,
-      yearsOfExperience,
-      specialTraining,
-      // Demographics & Compliance
-      dateOfBirth,
-      gender,
-      veteranStatus,
-      disabilityStatus,
-      workAuthorization,
-      workAuthExpiry,
-      emergencyContact,
-      // Compensation & Preferences
-      salaryExpectations,
-      workPreferences,
-      // New Preference Fields
-      remoteWorkPreferences,
-      communicationPreferences,
-      workEnvironmentPreferences,
-      preferredLearningMethods,
-      industryPreferences,
-      // Skills & Competencies
-      skills: skills.map((s) => ({ name: s.name, type: s.type, level: s.level })),
-      assessments,
-      // Certifications & References
-      certifications,
-      languages,
-      references,
-      // Compliance & Background
-      compliance,
-      // Availability & Scheduling
-      availability,
-      // Digital Presence
-      digitalPresence,
-      // Documents
-      resume,
-      resumeFileName,
-      additionalDocuments,
-      // Education & Experience
-      education,
-      employmentHistory,
-      // AI Insights
-      aiInsights,
-    };
+    const updatedData = buildUpdatedData();
 
     // Update the user data
     onUpdate(updatedData);
-
-    // Log the qualifications update and trigger AI review
-    try {
-      const functions = getFunctions();
-      const logAIAction = httpsCallable(functions, 'logAIAction');
-      
-      // Get the current user ID from the user object or props
-      const workerId = user?.uid || user?.id || 'unknown';
-      
-      await logAIAction({
-        actionType: 'qualifications_updated',
-        sourceModule: 'SkillsTab',
-        userId: workerId,
-        targetId: workerId,
-        targetType: 'worker_qualifications',
-        aiRelevant: true,
-        contextType: 'worker_profile',
-        urgencyScore: 5,
-        eventType: 'worker.qualifications.updated',
-        reason: `Worker qualifications updated with ${Object.keys(updatedData).length} fields`,
-        success: true,
-        latencyMs: 0,
-        versionTag: 'v1',
-        metadata: {
-          fieldsUpdated: Object.keys(updatedData),
-          skillsCount: skills.length,
-          certificationsCount: certifications.length,
-          languagesCount: languages.length,
-          referencesCount: references.length,
-          hasNewSkills: skills.some(s => s.level),
-          hasNewCertifications: certifications.length > 0,
-          complianceStatus: compliance,
-        }
-      });
-
-      // Note: triggerAIReview function doesn't exist yet, so we'll just log the action
-      // The AI engine processor will handle the review based on the log entry
-      console.log('Qualifications update logged successfully. AI review will be triggered by the engine processor.');
-
-    } catch (error) {
-      console.error('Error logging qualifications update:', error);
-      // Don't throw - the save should still work even if logging fails
-    }
+    // Persist directly to user profile as a fallback (Save All Changes)
+    saveUserPartial({
+      skills: normalizeSkills(skills),
+      industryPreferences,
+    });
   };
+
+  // Build a full qualifications payload using current local state
+  const buildUpdatedData = () => ({
+    currentJobTitle,
+    appliedJobTitle,
+    aspirationalJobTitles,
+    yearsOfExperience,
+    specialTraining,
+    // Demographics & Compliance
+    dateOfBirth,
+    gender,
+    veteranStatus,
+    disabilityStatus,
+    workAuthorization,
+    workAuthExpiry,
+    emergencyContact,
+    // Compensation & Preferences
+    salaryExpectations,
+    workPreferences,
+    // New Preference Fields
+    remoteWorkPreferences,
+    communicationPreferences,
+    workEnvironmentPreferences,
+    preferredLearningMethods,
+    industryPreferences,
+    // Skills & Competencies with new schema
+    skills: skills.map((s) => ({
+      name: s.name,
+      canonicalId: s.canonicalId || s.name,
+      source: s.source,
+      type: s.type,
+      confidence: s.confidence ?? 1,
+    })),
+    assessments,
+    // Certifications & References
+    certifications,
+    languages,
+    references,
+    // Compliance & Background
+    compliance,
+    // Availability & Scheduling
+    availability,
+    // Digital Presence
+    digitalPresence,
+    // Documents
+    resume,
+    resumeFileName,
+    additionalDocuments,
+    // Education & Experience
+    education,
+    employmentHistory,
+    // AI Insights
+    aiInsights,
+  });
+
+  // Normalize skills to required shape
+  const normalizeSkills = (arr: Array<{ name: string; canonicalId?: string; source: 'predefined' | 'custom'; type: string; confidence?: number }>) =>
+    arr.map((s) => ({
+      name: s.name,
+      canonicalId: s.canonicalId || s.name,
+      source: s.source,
+      type: s.type,
+      confidence: s.confidence ?? 1,
+    }));
+
+  // Helper: shallow override specific fields and build payload
+  const buildUpdatedDataWith = (overrides: any) => {
+    const base = buildUpdatedData();
+    if (overrides?.skills) base.skills = normalizeSkills(overrides.skills);
+    if (overrides?.industryPreferences) base.industryPreferences = overrides.industryPreferences;
+    return base;
+  };
+
+  // Remove auto-sync effects to prevent onSnapshot loops; we now push updates only on user actions above
 
   const getSkillLevelColor = (level: string) => {
     switch (level) {
@@ -576,22 +701,21 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
 
   return (
     <Box sx={{ p: 0 /* removed maxWidth and mx for full width */ }}>
-      <Box display="flex" flexDirection="column" mb={3}>
+      {/* <Box display="flex" flexDirection="column" mb={3}>
         <Typography variant="h6" gutterBottom>
           Qualifications & Skills
         </Typography>
         <Typography variant="body1" color="text.secondary">
           Comprehensive overview of your professional qualifications, skills, and experience
         </Typography>
-      </Box>
+      </Box> */}
 
       <Grid container spacing={3}>
-        {/* Personal & Professional Information */}
-        <Grid item xs={12} md={6}>
+        {/* <Grid item xs={12} md={6}>
           <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
             <Box display="flex" alignItems="center" mb={2}>
               <PersonIcon color="primary" sx={{ mr: 1 }} />
-              <Typography variant="h6">Professional Information</Typography>
+              <Typography variant="h6">Professional Information2</Typography>
             </Box>
             <Grid container spacing={2}>
                 <Grid item xs={12}>
@@ -648,10 +772,10 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                 </Grid>
               </Grid>
           </Box>
-        </Grid>
+        </Grid> */}
 
         {/* Demographics & Compliance */}
-        <Grid item xs={12} md={6}>
+        {/* <Grid item xs={12} md={6}>
           <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
             <Box display="flex" alignItems="center" mb={2}>
               <PersonIcon color="secondary" sx={{ mr: 1 }} />
@@ -714,10 +838,10 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                 </Grid>
               </Grid>
           </Box>
-        </Grid>
+        </Grid> */}
 
         {/* AI Insights */}
-        <Grid item xs={12} md={6}>
+        {/* <Grid item xs={12} md={6}>
           <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
             <Box display="flex" alignItems="center" mb={2}>
               <PsychologyIcon color="secondary" sx={{ mr: 1 }} />
@@ -744,7 +868,7 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                   </Typography>
                   <Box display="flex" flexWrap="wrap" gap={1}>
                     {aiInsights.skillGaps.slice(0, 3).map((gap, idx) => (
-                      <Chip key={idx} label={gap} size="small" color="warning" variant="outlined" />
+                      <Chip key={idx} label={toChipLabel(gap)} size="small" color="warning" variant="outlined" />
                     ))}
                   </Box>
                 </Box>
@@ -772,74 +896,129 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                 Last analyzed: {new Date(aiInsights.lastAnalyzed).toLocaleDateString()}
               </Typography>
           </Box>
-        </Grid>
+        </Grid> */}
 
         {/* Skills & Competencies */}
         <Grid item xs={12}>
-          <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
-            <Box display="flex" alignItems="center" mb={2}>
-              <TimelineIcon color="primary" sx={{ mr: 1 }} />
-              <Typography variant="h6">Skills & Competencies</Typography>
-            </Box>
-            <Grid container spacing={2}>
+          <Card variant="outlined">
+            <CardHeader title={<Typography variant="h6">Skills & Competencies</Typography>} />
+            <CardContent>
+              <Grid container spacing={2}>
                 <Grid item xs={12} md={8}>
                   <Autocomplete
                     multiple
-                    options={mapOnetSkillsToInternal(onetSkills)}
+                    freeSolo
+                    options={mapOnetSkillsToInternal(onetSkills).sort((a, b) => a.type.localeCompare(b.type))}
                     groupBy={(option) => option.type}
-                    getOptionLabel={(option) => option.name}
-                    value={skills}
-                    onChange={(_, newValue) => setSkills(newValue)}
-                    renderTags={(value, getTagProps) =>
-                      value.map((option, index) => (
-                        <Chip
-                          label={`${option.name}${option.level ? ` (${option.level})` : ''}`}
-                          {...getTagProps({ index })}
-                          color={getSkillLevelColor(option.level || 'Intermediate')}
-                          variant="outlined"
-                          key={option.name}
-                        />
-                      ))
-                    }
+                    getOptionLabel={(option) => toChipLabel(option) || 'Unknown Skill'}
+                    value={(() => {
+                      // debug: Autocomplete value
+                      // logger.debug('Autocomplete value - skills array:', skills);
+                      // logger.debug('Autocomplete value - skills length:', skills.length);
+                      return skills;
+                    })()}
+                    onChange={(_, newValue) => {
+                      const updatedSkills = newValue.map((value) => {
+                        if (typeof value === 'string') {
+                          // Custom skill entered - capitalize for consistency
+                          const capitalizedName = value
+                            .split(' ')
+                            .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                            .join(' ');
+                          return {
+                            name: capitalizedName,
+                            canonicalId: undefined,
+                            source: 'custom' as const,
+                            type: 'Other',
+                            confidence: 0.8
+                          };
+                        } else {
+                          // Predefined skill selected
+                          return value;
+                        }
+                      });
+                      // No skill limit - allow unlimited skills
+                      setSkills(updatedSkills);
+                      // Persist immediately to parent (and draft)
+                      onUpdate(buildUpdatedDataWith({ skills: updatedSkills }));
+                      // Write to Firestore user doc
+                      saveUserPartial({ skills: normalizeSkills(updatedSkills) });
+                    }}
+                    renderTags={(value, getTagProps) => {
+                      // logger.debug('Rendering skills tags, value:', value);
+                      return value.map((option, index) => {
+                        // logger.debug('Rendering option:', option, 'name:', option.name, 'level:', option.level);
+                        const skillName = toChipLabel(option) || 'Unknown Skill';
+                        return (
+                          <Chip
+                            label={skillName}
+                            {...getTagProps({ index })}
+                            color="primary"
+                            variant="filled"
+                            icon={<CheckCircle fontSize="small" />}
+                            sx={{
+                              '& .MuiChip-icon': { color: 'inherit' },
+                            }}
+                            key={`${skillName}-${option.source || 'custom'}-${index}`}
+                          />
+                        );
+                      });
+                    }}
                     renderInput={(params) => (
-                      <TextField {...params} label="Professional Skills" fullWidth />
+                      <TextField 
+                        {...params} 
+                        fullWidth 
+                        variant="outlined"
+                        placeholder="Add skills..."
+                        sx={{
+                          '& .MuiOutlinedInput-root': {
+                            backgroundColor: 'white',
+                            '& fieldset': {
+                              border: 'none',
+                            },
+                            '&:hover fieldset': {
+                              border: 'none',
+                            },
+                            '&.Mui-focused fieldset': {
+                              border: 'none',
+                            },
+                          },
+                        }}
+                      />
                     )}
                   />
                 </Grid>
+                {/* Inline custom skill input removed per design */}
                 <Grid item xs={12} md={4}>
-                  <Box display="flex" gap={1}>
-                    <TextField
-                      label="Add Custom Skill"
-                      value={skillInput}
-                      onChange={(e) => setSkillInput(e.target.value)}
-                      size="small"
-                      fullWidth
-                    />
-                    <FormControl size="small" sx={{ minWidth: 120 }}>
-                      <InputLabel>Level</InputLabel>
-                      <Select
-                        value={selectedSkillLevel}
-                        onChange={(e) => setSelectedSkillLevel(e.target.value)}
-                        label="Level"
-                      >
-                        {skillLevels.map((level) => (
-                          <MenuItem key={level} value={level}>
-                            {level}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-                    <IconButton onClick={handleAddSkill} color="primary">
-                      <AddIcon />
-                    </IconButton>
+                  <Typography variant="subtitle2" gutterBottom>
+                    Suggested skills (tap to add)
+                  </Typography>
+                  <Box display="flex" flexWrap="wrap" gap={1}>
+                    {suggestedSkills
+                      .filter(s => !skills.find(k => (k.name || '').toLowerCase() === s.toLowerCase()))
+                      .map((s) => (
+                        <Chip
+                          key={s}
+                          label={s}
+                          onClick={() => {
+                            const next = [...skills, { name: s, source: 'custom' as const, type: 'Other', confidence: 0.9 }];
+                            setSkills(next);
+                            onUpdate(buildUpdatedDataWith({ skills: next }));
+                            saveUserPartial({ skills: normalizeSkills(next) });
+                          }}
+                          size="small"
+                          variant="outlined"
+                        />
+                      ))}
                   </Box>
                 </Grid>
               </Grid>
-          </Box>
+            </CardContent>
+          </Card>
         </Grid>
 
         {/* Compensation & Preferences */}
-        <Grid item xs={12} md={6}>
+        {/* <Grid item xs={12} md={6}>
           <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
             <Box display="flex" alignItems="center" mb={2}>
               <EmojiEventsIcon color="primary" sx={{ mr: 1 }} />
@@ -909,17 +1088,101 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                 </Grid>
               </Grid>
           </Box>
-        </Grid>
+        </Grid> */}
+
+        {/* Industry Preferences (Optional) – gated */}
+        {!hideIndustryPreferences && (
+        <Grid item xs={12}>
+          <Card variant="outlined">
+            <CardHeader title={<Typography variant="h6">Industry Preferences (optional)</Typography>} />
+            <CardContent>
+              <Grid container spacing={2}>
+              <Grid item xs={12} md={8}>
+                <Autocomplete
+                  multiple
+                  freeSolo
+                  options={industryOptions}
+                  value={industryPreferences}
+                  onChange={(_, newValue) => {
+                    const unique = Array.from(new Set(newValue.filter(Boolean)));
+                    setIndustryPreferences(unique);
+                    onUpdate(buildUpdatedDataWith({ industryPreferences: unique }));
+                    saveUserPartial({ industryPreferences: unique });
+                  }}
+                    renderTags={(value, getTagProps) =>
+                    value.map((option, index) => (
+                      <Chip
+                        key={`${toChipLabel(option)}-${index}`}
+                        label={toChipLabel(option)}
+                        {...getTagProps({ index })}
+                        color="primary"
+                        variant="filled"
+                        icon={<CheckCircle fontSize="small" />}
+                        sx={{
+                          '& .MuiChip-icon': { color: 'inherit' },
+                        }}
+                      />
+                    ))
+                  }
+                  renderInput={(params) => (
+                    <TextField 
+                      {...params} 
+                      fullWidth 
+                      variant="outlined"
+                      placeholder="Add industries..."
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          backgroundColor: 'white',
+                          '& fieldset': {
+                            border: 'none',
+                          },
+                          '&:hover fieldset': {
+                            border: 'none',
+                          },
+                          '&.Mui-focused fieldset': {
+                            border: 'none',
+                          },
+                        },
+                      }}
+                    />
+                  )}
+                />
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <Typography variant="subtitle2" gutterBottom>
+                  Suggested industries (tap to add)
+                </Typography>
+                <Box display="flex" flexWrap="wrap" gap={1}>
+                  {industryOptions.map((ind) => (
+                    <Chip
+                      key={ind}
+                      label={ind}
+                      onClick={() => {
+                        if (industryPreferences.includes(ind)) return;
+                        const next = [...industryPreferences, ind];
+                        setIndustryPreferences(next);
+                        onUpdate(buildUpdatedDataWith({ industryPreferences: next }));
+                        saveUserPartial({ industryPreferences: next });
+                      }}
+                      size="small"
+                      variant="outlined"
+                    />
+                  ))}
+                </Box>
+              </Grid>
+              </Grid>
+            </CardContent>
+          </Card>
+        </Grid>)}
 
         {/* Work & Cultural Preferences */}
-        <Grid item xs={12}>
+        {/* <Grid item xs={12}>
           <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
             <Box display="flex" alignItems="center" mb={2}>
               <PsychologyIcon color="primary" sx={{ mr: 1 }} />
               <Typography variant="h6">Work & Cultural Preferences</Typography>
             </Box>
             <Grid container spacing={3}>
-              {/* Remote Work Preferences */}
               <Grid item xs={12} md={6}>
                 <Typography variant="subtitle1" gutterBottom>
                   Remote Work Preferences
@@ -950,8 +1213,6 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                   ))}
                 </Box>
               </Grid>
-
-              {/* Communication Preferences */}
               <Grid item xs={12} md={6}>
                 <Typography variant="subtitle1" gutterBottom>
                   Communication Preferences
@@ -982,8 +1243,6 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                   ))}
                 </Box>
               </Grid>
-
-              {/* Work Environment Preferences */}
               <Grid item xs={12} md={6}>
                 <Typography variant="subtitle1" gutterBottom>
                   Work Environment Preferences
@@ -1014,8 +1273,6 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                   ))}
                 </Box>
               </Grid>
-
-              {/* Preferred Learning Methods */}
               <Grid item xs={12} md={6}>
                 <Typography variant="subtitle1" gutterBottom>
                   Preferred Learning Methods
@@ -1046,8 +1303,6 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                   ))}
                 </Box>
               </Grid>
-
-              {/* Industry Preferences */}
               <Grid item xs={12}>
                 <Typography variant="subtitle1" gutterBottom>
                   Industry Preferences
@@ -1080,64 +1335,22 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
               </Grid>
             </Grid>
           </Box>
-        </Grid>
+        </Grid> */}
 
-        {/* References */}
-        <Grid item xs={12} md={6}>
-          <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
-            <Box display="flex" alignItems="center" mb={2}>
-              <PersonIcon color="primary" sx={{ mr: 1 }} />
-              <Typography variant="h6">Professional References</Typography>
-            </Box>
-            <List dense>
-              {references.map((ref, idx) => (
-                <Paper key={idx} sx={{ p: 2, mb: 2, bgcolor: 'grey.50' }}>
-                  <Box display="flex" justifyContent="space-between" alignItems="flex-start">
-                    <Box flex={1}>
-                      <Typography variant="subtitle2" fontWeight="bold">
-                        {ref.name} - {ref.title}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        {ref.company} • {ref.relationship}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {ref.phone} • {ref.email}
-                      </Typography>
-                      <Chip 
-                        label={ref.status} 
-                        size="small" 
-                        color={ref.status === 'completed' ? 'success' : ref.status === 'failed' ? 'error' : 'warning'}
-                        sx={{ mt: 1 }}
-                      />
-                    </Box>
-                    <IconButton size="small" onClick={() => handleDeleteReference(idx)}>
-                      <DeleteIcon fontSize="small" />
-                    </IconButton>
-                  </Box>
-                </Paper>
-              ))}
-              
-              <Button variant="outlined" onClick={handleAddReference} startIcon={<AddIcon />} fullWidth>
-                Add Reference
-              </Button>
-            </List>
-          </Box>
-        </Grid>
-
-        {/* Certifications & Languages Row */}
-        <Grid item xs={12} md={6}>
-          <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
-            <Box display="flex" alignItems="center" mb={2}>
-              <EmojiEventsIcon color="primary" sx={{ mr: 1 }} />
-              <Typography variant="h6">Certifications & Licenses</Typography>
-            </Box>
-            <List dense>
+        {!hideCertsAndReferences && (
+          <Grid item xs={12} md={6}>
+            <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
+              <Box display="flex" alignItems="center" mb={2}>
+                <EmojiEventsIcon color="primary" sx={{ mr: 1 }} />
+                <Typography variant="h6">Certifications & Licenses</Typography>
+              </Box>
+              <List dense>
               {certifications.map((cert, idx) => (
                 <Paper key={idx} sx={{ p: 2, mb: 2, bgcolor: 'grey.50' }}>
                   <Box display="flex" justifyContent="space-between" alignItems="flex-start">
                     <Box flex={1}>
                       <Typography variant="subtitle2" fontWeight="bold">
-                        {cert.name}
+                        {toChipLabel(cert)}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
                         Issued by: {cert.issuer}
@@ -1179,15 +1392,16 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
               </Box>
             </List>
           </Box>
-        </Grid>
+        </Grid>)}
 
-        <Grid item xs={12} md={6}>
-          <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
-            <Box display="flex" alignItems="center" mb={2}>
-              <LanguageIcon color="primary" sx={{ mr: 1 }} />
-              <Typography variant="h6">Languages</Typography>
-            </Box>
-            <List dense>
+        {!hideLanguages && (
+          <Grid item xs={12} md={6}>
+            <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
+              <Box display="flex" alignItems="center" mb={2}>
+                <LanguageIcon color="primary" sx={{ mr: 1 }} />
+                <Typography variant="h6">Languages</Typography>
+              </Box>
+              <List dense>
               {languages.map((lang, idx) => (
                 <Box key={idx} display="flex" justifyContent="space-between" alignItems="center" mb={1}>
                   <Box display="flex" alignItems="center" gap={1}>
@@ -1238,37 +1452,12 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
               </Box>
             </List>
           </Box>
-        </Grid>
+        </Grid>)}
 
-        {/* Education Section */}
-        <Grid item xs={12}>
-          <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
-            <Box display="flex" alignItems="center" mb={2}>
-              <SchoolIcon color="primary" sx={{ mr: 1 }} />
-              <Typography variant="h6">Education & Training</Typography>
-            </Box>
-            <EducationSection value={education} onChange={setEducation} />
-          </Box>
-        </Grid>
-
-        {/* Work Experience Section */}
-        <Grid item xs={12}>
-          <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
-            <Box display="flex" alignItems="center" mb={2}>
-              <WorkIcon color="primary" sx={{ mr: 1 }} />
-              <Typography variant="h6">Work Experience</Typography>
-            </Box>
-            <WorkExperienceSection
-                value={employmentHistory}
-                onChange={setEmploymentHistory}
-                onetSkills={onetSkills}
-                onetJobTitles={onetJobTitles}
-              />
-          </Box>
-        </Grid>
+        {/* Education and Work Experience are now in separate tabs */}
 
         {/* Compliance & Background */}
-        <Grid item xs={12} md={6}>
+        {/* <Grid item xs={12} md={6}>
           <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
             <Box display="flex" alignItems="center" mb={2}>
               <CheckCircle color="primary" sx={{ mr: 1 }} />
@@ -1349,10 +1538,10 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                 </Grid>
               </Grid>
           </Box>
-        </Grid>
+        </Grid> */}
 
         {/* Availability & Scheduling */}
-        <Grid item xs={12} md={6}>
+        {/* <Grid item xs={12} md={6}>
           <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
             <Box display="flex" alignItems="center" mb={2}>
               <TimelineIcon color="primary" sx={{ mr: 1 }} />
@@ -1414,10 +1603,10 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                 </Grid>
               </Grid>
           </Box>
-        </Grid>
+        </Grid> */}
 
         {/* Documents Section */}
-        <Grid item xs={12}>
+        {/* <Grid item xs={12}>
           <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
             <Box display="flex" alignItems="center" mb={2}>
               <DescriptionIcon color="primary" sx={{ mr: 1 }} />
@@ -1461,20 +1650,9 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                 </Grid>
               </Grid>
           </Box>
-        </Grid>
+        </Grid> */}
       </Grid>
 
-      <Box display="flex" justifyContent="flex-start" mt={4}>
-        <Button
-          variant="contained"
-          color="primary"
-          size="large"
-          onClick={handleSave}
-          startIcon={<UploadIcon />}
-        >
-          Save All Changes
-        </Button>
-      </Box>
 
       {/* Notification Snackbar */}
       <Snackbar

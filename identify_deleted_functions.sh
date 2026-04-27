@@ -50,7 +50,6 @@ syncGmailCalendarAsTasks
 sendEmailTaskViaGmail
 triggerAINoteReview
 enrichContactOnDemand
-logAIActionCallable
 analyzeAITraining
 generateJobDescription
 getVectorCollections

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
+import { GoogleMap, Marker } from '@react-google-maps/api';
 import { Box, Typography } from '@mui/material';
 
 type LatLng = {
@@ -14,11 +14,14 @@ type Props = {
   workLng?: number | null;
   currentLat?: number | null;
   currentLng?: number | null;
-};
-
-const containerStyle = {
-  width: '100%',
-  height: '400px',
+  /** Optional label for the home marker (e.g. "Location"). Default "Home". */
+  homeMarkerLabel?: string;
+  /** Optional tooltip for the home marker (shown on hover). */
+  homeMarkerTitle?: string;
+  /** Map container height in pixels (default 400). */
+  mapHeightPx?: number;
+  /** Tighter top margin when embedded in compact cards (e.g. overview). */
+  dense?: boolean;
 };
 
 const MapWithMarkers: React.FC<Props> = ({
@@ -28,21 +31,36 @@ const MapWithMarkers: React.FC<Props> = ({
   workLng,
   currentLat,
   currentLng,
+  homeMarkerLabel = 'Home',
+  homeMarkerTitle,
+  mapHeightPx = 400,
+  dense = false,
 }) => {
-  const { isLoaded } = useJsApiLoader({
-    googleMapsApiKey: process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '',
-    libraries: ['places', 'maps'],
-  });
+  // Only render GoogleMap when the Maps API is fully ready (Map constructor available).
+  // Poll until ready so we show the map when LoadScript finishes loading after mount.
+  const [mapsReady, setMapsReady] = useState(() => typeof (window as any).google?.maps?.Map === 'function');
+  useEffect(() => {
+    if (mapsReady) return;
+    const t = setInterval(() => {
+      if (typeof (window as any).google?.maps?.Map === 'function') {
+        setMapsReady(true);
+      }
+    }, 200);
+    return () => clearInterval(t);
+  }, [mapsReady]);
+  const isLoaded = mapsReady;
 
   const [center, setCenter] = useState<LatLng | null>(null);
 
   useEffect(() => {
-    if (homeLat && homeLng) {
+    if (homeLat !== null && homeLat !== undefined && homeLng !== null && homeLng !== undefined) {
       setCenter({ lat: homeLat, lng: homeLng });
-    } else if (workLat && workLng) {
+    } else if (workLat !== null && workLat !== undefined && workLng !== null && workLng !== undefined) {
       setCenter({ lat: workLat, lng: workLng });
-    } else if (currentLat && currentLng) {
+    } else if (currentLat !== null && currentLat !== undefined && currentLng !== null && currentLng !== undefined) {
       setCenter({ lat: currentLat, lng: currentLng });
+    } else {
+      setCenter(null);
     }
   }, [homeLat, homeLng, workLat, workLng, currentLat, currentLng]);
 
@@ -61,15 +79,26 @@ const MapWithMarkers: React.FC<Props> = ({
     currentLng !== undefined;
 
   if (!hasHome && !hasWork && !hasCurrent) {
-    return <Typography sx={{ width: '100%', marginTop: '24px' }}>No location data available to display on the map.</Typography>;
+    return (
+      <Typography sx={{ width: '100%', marginTop: dense ? '8px' : '24px' }}>
+        No location data available to display on the map.
+      </Typography>
+    );
   }
 
+  const topMargin = dense ? '8px' : '24px';
+
   return (
-    <Box sx={{ width: '100%', marginTop: '24px' }}>
+    <Box sx={{ width: '100%', marginTop: topMargin }}>
       {center && (
-        <GoogleMap mapContainerStyle={{ width: '100%', height: '400px' }} center={center} zoom={12}>
+        <GoogleMap mapContainerStyle={{ width: '100%', height: `${mapHeightPx}px` }} center={center} zoom={12}>
           {hasHome && (
-            <Marker position={{ lat: homeLat as number, lng: homeLng as number }} label="Home" />
+            <Marker
+              key={`home-${homeLat}-${homeLng}`}
+              position={{ lat: homeLat as number, lng: homeLng as number }}
+              label={homeMarkerLabel}
+              title={homeMarkerTitle}
+            />
           )}
           {hasWork && (
             <Marker position={{ lat: workLat as number, lng: workLng as number }} label="Work" />

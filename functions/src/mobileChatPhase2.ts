@@ -1,5 +1,6 @@
 import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
+import { logger } from './utils/logger';
 
 const db = admin.firestore();
 
@@ -134,7 +135,7 @@ export const createBroadcastMessage = functions.https.onCall(async (request) => 
       sentCount: uniqueUserIds.length
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'broadcast_created',
       sourceModule: 'BroadcastSystem',
@@ -159,7 +160,7 @@ export const createBroadcastMessage = functions.https.onCall(async (request) => 
       targetUsers: uniqueUserIds
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'broadcast_created',
       sourceModule: 'BroadcastSystem',
@@ -227,7 +228,7 @@ export const getUserBroadcasts = functions.https.onCall({
       };
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'user_broadcasts_retrieved',
       sourceModule: 'BroadcastSystem',
@@ -252,7 +253,7 @@ export const getUserBroadcasts = functions.https.onCall({
       hasMore: broadcasts.length === limit
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'user_broadcasts_retrieved',
       sourceModule: 'BroadcastSystem',
@@ -312,7 +313,7 @@ export const markBroadcastRead = functions.https.onCall({
       readCount: admin.firestore.FieldValue.increment(1)
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'broadcast_marked_read',
       sourceModule: 'BroadcastSystem',
@@ -332,7 +333,7 @@ export const markBroadcastRead = functions.https.onCall({
     
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'broadcast_marked_read',
       sourceModule: 'BroadcastSystem',
@@ -436,7 +437,7 @@ export const replyToBroadcast = functions.https.onCall({
       replyCount: admin.firestore.FieldValue.increment(1)
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'broadcast_replied',
       sourceModule: 'BroadcastSystem',
@@ -460,7 +461,7 @@ export const replyToBroadcast = functions.https.onCall({
       message: replyMessage.content[language]
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'broadcast_replied',
       sourceModule: 'BroadcastSystem',
@@ -557,7 +558,7 @@ export const sendChatMessage = functions.https.onCall(async (request) => {
       lastActivityAt: admin.firestore.FieldValue.serverTimestamp()
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'chat_message_sent',
       sourceModule: 'ChatSystem',
@@ -582,7 +583,7 @@ export const sendChatMessage = functions.https.onCall(async (request) => {
       aiResponse: aiResponse.content[language]
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'chat_message_sent',
       sourceModule: 'ChatSystem',
@@ -650,7 +651,7 @@ export const getChatHistory = functions.https.onCall(async (request) => {
       timestamp: msg.timestamp?.toDate().toISOString()
     }));
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'chat_history_retrieved',
       sourceModule: 'ChatSystem',
@@ -674,7 +675,7 @@ export const getChatHistory = functions.https.onCall(async (request) => {
       hasMore: messages.length > limit
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'chat_history_retrieved',
       sourceModule: 'ChatSystem',
@@ -848,7 +849,7 @@ async function translateContent(params: any) {
   return { translatedContent: params.content };
 }
 
-async function logAIAction(params: any) {
+async function logAiEvent(params: any) {
   // This should be imported from the main index.ts
   // For now, we'll create a placeholder
   console.log('AI Action logged:', params);

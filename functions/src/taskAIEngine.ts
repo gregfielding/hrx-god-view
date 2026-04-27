@@ -1,5 +1,5 @@
 import * as admin from 'firebase-admin';
-import { logAIAction } from './utils/aiLogging';
+import { logger } from './utils/logger';
 
 const db = admin.firestore();
 
@@ -67,7 +67,7 @@ export const processWithTasksAIEngine = async (logData: any, logId: string): Pro
     results.aiGeneratedTasks = await generateAITasks(contextData, logData);
 
     // Log the AI processing
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'tasks_ai_engine.processed',
       targetType: 'task_ai_analysis',
       targetId: taskId || 'general',
@@ -102,7 +102,7 @@ export const processWithTasksAIEngine = async (logData: any, logId: string): Pro
     console.error('Error in Tasks AI Engine:', error);
     
     // Log the error
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'tasks_ai_engine.error',
       targetType: 'task_ai_analysis',
       targetId: logData.targetId || 'error',

@@ -1,0 +1,652 @@
+[
+  {
+    "metroKey": "dallas_fort_worth",
+    "label": "Dallas–Fort Worth",
+    "subareas": [
+      {
+        "subareaKey": "dallas",
+        "label": "Dallas",
+        "cityKeys": [
+          "cockrell_hill_tx",
+          "dallas_tx",
+          "highland_park_tx",
+          "university_park_tx"
+        ]
+      },
+      {
+        "subareaKey": "fort_worth",
+        "label": "Fort Worth",
+        "cityKeys": [
+          "alvarado_tx",
+          "azle_tx",
+          "benbrook_tx",
+          "burleson_tx",
+          "cleburne_tx",
+          "crowley_tx",
+          "edgecliff_village_tx",
+          "everman_tx",
+          "forest_hill_tx",
+          "fort_worth_tx",
+          "granbury_tx",
+          "kennedale_tx",
+          "lakeworth_tx",
+          "river_oaks_tx",
+          "sansom_park_tx",
+          "weatherford_tx",
+          "westover_hills_tx",
+          "westworth_village_tx",
+          "white_settlement_tx"
+        ]
+      },
+      {
+        "subareaKey": "mid_cities",
+        "label": "Mid Cities",
+        "cityKeys": [
+          "addison_tx",
+          "bedford_tx",
+          "colleyville_tx",
+          "coppell_tx",
+          "euless_tx",
+          "farmers_branch_tx",
+          "garland_tx",
+          "grapevine_tx",
+          "hurst_tx",
+          "irving_tx",
+          "richardson_tx"
+        ]
+      },
+      {
+        "subareaKey": "north_dfw",
+        "label": "North DFW",
+        "cityKeys": [
+          "allen_tx",
+          "anna_tx",
+          "argyle_tx",
+          "aubrey_tx",
+          "blue_mound_tx",
+          "carrollton_tx",
+          "celina_tx",
+          "corinth_tx",
+          "denton_tx",
+          "farmersville_tx",
+          "flower_mound_tx",
+          "frisco_tx",
+          "haltom_city_tx",
+          "heath_tx",
+          "highland_village_tx",
+          "keller_tx",
+          "krum_tx",
+          "lake_dallas_tx",
+          "lavon_tx",
+          "lewisville_tx",
+          "little_elm_tx",
+          "mckinney_tx",
+          "murphy_tx",
+          "north_richland_hills_tx",
+          "parker_tx",
+          "pilot_point_tx",
+          "plano_tx",
+          "princeton_tx",
+          "prosper_tx",
+          "roanoke_tx",
+          "rockwall_tx",
+          "rowlett_tx",
+          "sachse_tx",
+          "saginaw_tx",
+          "southlake_tx",
+          "the_colony_tx",
+          "trophy_club_tx",
+          "van_alstyne_tx",
+          "watauga_tx",
+          "westlake_tx",
+          "wylie_tx"
+        ]
+      },
+      {
+        "subareaKey": "south_dfw",
+        "label": "South DFW",
+        "cityKeys": [
+          "arlington_tx",
+          "athens_tx",
+          "balch_springs_tx",
+          "cedar_hill_tx",
+          "corsicana_tx",
+          "crandall_tx",
+          "desoto_tx",
+          "duncanville_tx",
+          "ennis_tx",
+          "ferris_tx",
+          "forney_tx",
+          "glenn_heights_tx",
+          "grand_prairie_tx",
+          "gun_barrel_city_tx",
+          "hutchins_tx",
+          "kaufman_tx",
+          "lancaster_tx",
+          "mansfield_tx",
+          "mesquite_tx",
+          "midlothian_tx",
+          "ovilla_tx",
+          "red_oak_tx",
+          "seagoville_tx",
+          "sunnyvale_tx",
+          "terrell_tx",
+          "waxahachie_tx",
+          "wilmer_tx"
+        ]
+      }
+    ]
+  },
+  {
+    "metroKey": "austin",
+    "label": "Austin",
+    "subareas": [
+      {
+        "subareaKey": "austin",
+        "label": "Austin",
+        "cityKeys": [
+          "austin_tx",
+          "bastrop_tx",
+          "bee_cave_tx",
+          "brushy_creek_tx",
+          "buda_tx",
+          "cedar_park_tx",
+          "del_valle_tx",
+          "dripping_springs_tx",
+          "elgin_tx",
+          "georgetown_tx",
+          "hutto_tx",
+          "jonestown_tx",
+          "kyle_tx",
+          "lago_vista_tx",
+          "lakeway_tx",
+          "leander_tx",
+          "lockhart_tx",
+          "luling_tx",
+          "manor_tx",
+          "new_braunfels_tx",
+          "pflugerville_tx",
+          "rollingwood_tx",
+          "round_rock_tx",
+          "san_marcos_tx",
+          "smithville_tx",
+          "taylor_tx",
+          "west_lake_hills_tx",
+          "wimberley_tx"
+        ]
+      }
+    ]
+  },
+  {
+    "metroKey": "houston",
+    "label": "Houston",
+    "subareas": [
+      {
+        "subareaKey": "central",
+        "label": "Central Houston",
+        "cityKeys": [
+          "bellaire_tx",
+          "bunker_hill_village_tx",
+          "galena_park_tx",
+          "hedwig_village_tx",
+          "hilshire_village_tx",
+          "houston_tx",
+          "hunters_creek_village_tx",
+          "jacinto_city_tx",
+          "meadows_place_tx",
+          "piney_point_village_tx",
+          "south_houston_tx",
+          "southside_place_tx",
+          "spring_valley_village_tx",
+          "west_university_place_tx"
+        ]
+      },
+      {
+        "subareaKey": "east",
+        "label": "East Houston",
+        "cityKeys": [
+          "anahuac_tx",
+          "baytown_tx",
+          "beach_city_tx",
+          "channelview_tx",
+          "deer_park_tx",
+          "galveston_tx",
+          "highlands_tx",
+          "la_porte_tx",
+          "mont_belvieu_tx",
+          "morgans_point_tx",
+          "pasadena_tx",
+          "shoreacres_tx"
+        ]
+      },
+      {
+        "subareaKey": "north",
+        "label": "North Houston",
+        "cityKeys": [
+          "aldine_tx",
+          "atascocita_tx",
+          "cleveland_tx",
+          "conroe_tx",
+          "crosby_tx",
+          "cypress_tx",
+          "dayton_tx",
+          "humble_tx",
+          "jersey_village_tx",
+          "kingwood_tx",
+          "magnolia_tx",
+          "montgomery_tx",
+          "oak_ridge_north_tx",
+          "panorama_village_tx",
+          "patton_village_tx",
+          "roman_forest_tx",
+          "shenandoah_tx",
+          "splendora_tx",
+          "spring_tx",
+          "the_woodlands_tx",
+          "tomball_tx",
+          "willis_tx"
+        ]
+      },
+      {
+        "subareaKey": "south",
+        "label": "South Houston",
+        "cityKeys": [
+          "alvin_tx",
+          "bacliff_tx",
+          "brookside_village_tx",
+          "clear_lake_shores_tx",
+          "clear_lake_tx",
+          "danbury_tx",
+          "dickinson_tx",
+          "el_lago_tx",
+          "friendswood_tx",
+          "hitchcock_tx",
+          "iowa_colony_tx",
+          "kemah_tx",
+          "la_marque_tx",
+          "league_city_tx",
+          "manvel_tx",
+          "nassau_bay_tx",
+          "pearland_tx",
+          "richwood_tx",
+          "san_leon_tx",
+          "santa_fe_tx",
+          "seabrook_tx",
+          "taylor_lake_village_tx",
+          "texas_city_tx",
+          "webster_tx"
+        ]
+      },
+      {
+        "subareaKey": "west",
+        "label": "West Houston / Katy / Sugar Land",
+        "cityKeys": [
+          "beasley_tx",
+          "brookshire_tx",
+          "cinco_ranch_tx",
+          "fresno_tx",
+          "fulshear_tx",
+          "greatwood_tx",
+          "katy_tx",
+          "mission_bend_tx",
+          "missouri_city_tx",
+          "needville_tx",
+          "new_territory_tx",
+          "pattison_tx",
+          "richmond_tx",
+          "rosenberg_tx",
+          "sealy_tx",
+          "sienna_plantation_tx",
+          "simonton_tx",
+          "stafford_tx",
+          "sugar_land_tx",
+          "wallis_tx"
+        ]
+      }
+    ]
+  },
+  {
+    "metroKey": "san_antonio",
+    "label": "San Antonio",
+    "subareas": [
+      {
+        "subareaKey": "central",
+        "label": "Central San Antonio",
+        "cityKeys": [
+          "san_antonio_tx"
+        ]
+      },
+      {
+        "subareaKey": "north",
+        "label": "North San Antonio",
+        "cityKeys": [
+          "new_braunfels_tx",
+          "san_marcos_tx",
+          "schertz_tx",
+          "universal_city_tx"
+        ]
+      },
+      {
+        "subareaKey": "south",
+        "label": "South San Antonio",
+        "cityKeys": [
+          "converse_tx",
+          "elmendorf_tx",
+          "live_oak_tx"
+        ]
+      }
+    ]
+  },
+  {
+    "metroKey": "chicago",
+    "label": "Chicago",
+    "subareas": [
+      {
+        "subareaKey": "chc",
+        "label": "Chicago (city)",
+        "cityKeys": [
+          "chicago_il"
+        ]
+      },
+      {
+        "subareaKey": "nch",
+        "label": "North Chicago / North Shore",
+        "cityKeys": [
+          "evanston_il",
+          "glenview_il",
+          "skokie_il",
+          "wilmette_il",
+          "winnetka_il"
+        ]
+      },
+      {
+        "subareaKey": "nwi",
+        "label": "Northwest Indiana",
+        "cityKeys": [
+          "crown_point_in",
+          "gary_in",
+          "hammond_in",
+          "merrillville_in",
+          "michigan_city_in",
+          "portage_in",
+          "valparaiso_in"
+        ]
+      },
+      {
+        "subareaKey": "nwc",
+        "label": "Northwest Suburbs",
+        "cityKeys": [
+          "arlington_heights_il",
+          "bartlett_il",
+          "elgin_il",
+          "hoffman_estates_il",
+          "palatine_il",
+          "schaumburg_il",
+          "streamwood_il"
+        ]
+      },
+      {
+        "subareaKey": "sox",
+        "label": "South Side / South Suburbs",
+        "cityKeys": [
+          "calumet_city_il",
+          "chicago_heights_il",
+          "cicero_il",
+          "oak_lawn_il"
+        ]
+      },
+      {
+        "subareaKey": "southwest",
+        "label": "Southwest Suburbs",
+        "cityKeys": [
+          "bolingbrook_il",
+          "homer_glen_il",
+          "joliet_il",
+          "lockport_il",
+          "orland_park_il",
+          "plainfield_il",
+          "romeoville_il",
+          "tinley_park_il"
+        ]
+      },
+      {
+        "subareaKey": "wcl",
+        "label": "West / Western Suburbs",
+        "cityKeys": [
+          "aurora_il",
+          "downers_grove_il",
+          "elmhurst_il",
+          "glen_ellyn_il",
+          "lombard_il",
+          "naperville_il",
+          "oak_brook_il",
+          "wheaton_il"
+        ]
+      }
+    ]
+  },
+  {
+    "metroKey": "los_angeles",
+    "label": "Los Angeles",
+    "subareas": [
+      {
+        "subareaKey": "antelope_valley",
+        "label": "Antelope Valley / North LA",
+        "cityKeys": [
+          "acton_ca",
+          "lancaster_ca",
+          "lebec_ca",
+          "littlerock_ca",
+          "palmdale_ca",
+          "santa_clarita_ca",
+          "valencia_ca"
+        ]
+      },
+      {
+        "subareaKey": "inland_empire",
+        "label": "Inland Empire",
+        "cityKeys": [
+          "corona_ca",
+          "fontana_ca",
+          "moreno_valley_ca",
+          "ontario_ca",
+          "rancho_cucamonga_ca",
+          "riverside_ca",
+          "san_bernardino_ca",
+          "temecula_ca"
+        ]
+      },
+      {
+        "subareaKey": "long_beach",
+        "label": "Long Beach / Harbor",
+        "cityKeys": [
+          "lakewood_ca",
+          "long_beach_ca",
+          "san_pedro_ca",
+          "signal_hill_ca",
+          "wilmington_ca"
+        ]
+      },
+      {
+        "subareaKey": "la",
+        "label": "Los Angeles (city)",
+        "cityKeys": [
+          "los_angeles_ca"
+        ]
+      },
+      {
+        "subareaKey": "sfv",
+        "label": "San Fernando Valley",
+        "cityKeys": [
+          "burbank_ca",
+          "encino_ca",
+          "glendale_ca",
+          "northridge_ca",
+          "san_fernando_ca",
+          "sherman_oaks_ca",
+          "van_nuys_ca"
+        ]
+      },
+      {
+        "subareaKey": "sgv",
+        "label": "San Gabriel Valley",
+        "cityKeys": [
+          "alhambra_ca",
+          "arcadia_ca",
+          "el_monte_ca",
+          "monrovia_ca",
+          "pasadena_ca",
+          "pomona_ca",
+          "west_covina_ca"
+        ]
+      },
+      {
+        "subareaKey": "south_bay",
+        "label": "South Bay",
+        "cityKeys": [
+          "carson_ca",
+          "gardena_ca",
+          "hawthorne_ca",
+          "inglewood_ca",
+          "manhattan_beach_ca",
+          "redondo_beach_ca",
+          "torrance_ca"
+        ]
+      }
+    ]
+  },
+  {
+    "metroKey": "salt_lake_city",
+    "label": "Salt Lake City",
+    "subareas": [
+      {
+        "subareaKey": "north",
+        "label": "North (Ogden / Davis)",
+        "cityKeys": [
+          "bountiful_ut",
+          "clearfield_ut",
+          "farmington_ut",
+          "kaysville_ut",
+          "layton_ut",
+          "ogden_ut"
+        ]
+      },
+      {
+        "subareaKey": "south_utah",
+        "label": "Provo / Utah County",
+        "cityKeys": [
+          "american_fork_ut",
+          "lehi_ut",
+          "orem_ut",
+          "pleasant_grove_ut",
+          "provo_ut",
+          "springville_ut"
+        ]
+      },
+      {
+        "subareaKey": "slc",
+        "label": "Salt Lake City",
+        "cityKeys": [
+          "cottonwood_heights_ut",
+          "holladay_ut",
+          "millcreek_ut",
+          "salt_lake_city_ut"
+        ]
+      },
+      {
+        "subareaKey": "south_valley",
+        "label": "South Valley",
+        "cityKeys": [
+          "bluffdale_ut",
+          "draper_ut",
+          "herriman_ut",
+          "riverton_ut",
+          "sandy_ut",
+          "south_jordan_ut"
+        ]
+      },
+      {
+        "subareaKey": "west_valley",
+        "label": "West Valley",
+        "cityKeys": [
+          "kearns_ut",
+          "magna_ut",
+          "taylorsville_ut",
+          "west_jordan_ut",
+          "west_valley_city_ut"
+        ]
+      }
+    ]
+  },
+  {
+    "metroKey": "san_francisco_bay_area",
+    "label": "San Francisco Bay Area",
+    "subareas": [
+      {
+        "subareaKey": "east_bay",
+        "label": "East Bay",
+        "cityKeys": [
+          "alameda_ca",
+          "berkeley_ca",
+          "concord_ca",
+          "dublin_ca",
+          "fremont_ca",
+          "hayward_ca",
+          "livermore_ca",
+          "newark_ca",
+          "oakland_ca",
+          "pleasanton_ca",
+          "richmond_ca",
+          "san_ramon_ca",
+          "union_city_ca",
+          "walnut_creek_ca"
+        ]
+      },
+      {
+        "subareaKey": "north_bay",
+        "label": "North Bay",
+        "cityKeys": [
+          "napa_ca",
+          "novato_ca",
+          "petaluma_ca",
+          "san_rafael_ca",
+          "santa_rosa_ca",
+          "vallejo_ca"
+        ]
+      },
+      {
+        "subareaKey": "peninsula",
+        "label": "Peninsula",
+        "cityKeys": [
+          "daly_city_ca",
+          "mountain_view_ca",
+          "palo_alto_ca",
+          "redwood_city_ca",
+          "san_mateo_ca",
+          "south_san_francisco_ca",
+          "sunnyvale_ca"
+        ]
+      },
+      {
+        "subareaKey": "sf",
+        "label": "San Francisco",
+        "cityKeys": [
+          "san_francisco_ca"
+        ]
+      },
+      {
+        "subareaKey": "south_bay",
+        "label": "South Bay / San Jose",
+        "cityKeys": [
+          "campbell_ca",
+          "cupertino_ca",
+          "los_gatos_ca",
+          "milpitas_ca",
+          "san_jose_ca",
+          "santa_clara_ca",
+          "saratoga_ca"
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,285 @@
+/**
+ * Full Firestore scan for recruiter "All users" search — matches `RecruiterUsers` client filter semantics
+ * without loading only the first 500 rows by `createdAt`.
+ */
+import * as admin from 'firebase-admin';
+import type { QueryDocumentSnapshot } from 'firebase-admin/firestore';
+import { FieldPath } from 'firebase-admin/firestore';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { logger } from 'firebase-functions/v2';
+import {
+  entityEmploymentDocHasQualifyingStatus,
+  normalizeRecruiterEntityKey,
+} from './entityEmploymentRecruiterFilter';
+import {
+  firestoreUserDocMatchesRecruiterGroup,
+  firestoreUserDocMatchesRecruiterSearch,
+  firestoreUserDocMatchesRecruiterState,
+} from './recruiterUsersSearchMatch';
+
+if (!admin.apps.length) {
+  admin.initializeApp();
+}
+
+const db = admin.firestore();
+
+/** Align with `src/constants/tenantWorkerSecurityLevels.ts` — Firestore `in` is type-sensitive. */
+const TENANT_LISTABLE_SECURITY_LEVELS: Array<string | number> = ['0', '1', '2', '3', '4', 0, 1, 2, 3, 4];
+
+const BATCH_SIZE = 500;
+const MAX_MATCH_IDS = 2500;
+/** Safety cap: 400 batches = 200k user docs scanned per request. */
+const MAX_BATCHES = 400;
+
+async function assertCallerCanSearchTenant(callerUid: string, tenantId: string): Promise<void> {
+  const snap = await db.collection('users').doc(callerUid).get();
+  if (!snap.exists) {
+    throw new HttpsError('permission-denied', 'User not found');
+  }
+  const data = snap.data() as Record<string, unknown>;
+  if (data.isHRX === true || data.hrx === true) {
+    return;
+  }
+  const tenantMeta = (data.tenantIds as Record<string, unknown> | undefined)?.[tenantId] as
+    | Record<string, unknown>
+    | undefined;
+  if (!tenantMeta) {
+    throw new HttpsError('permission-denied', 'No access to this tenant');
+  }
+  const role = String(tenantMeta.role || '').trim().toLowerCase();
+  if (['recruiter', 'manager', 'admin'].includes(role)) {
+    return;
+  }
+  const secRaw = tenantMeta.securityLevel ?? data.securityLevel ?? '0';
+  const sec = parseInt(String(secRaw), 10);
+  if (!Number.isNaN(sec) && sec >= 4) {
+    return;
+  }
+  throw new HttpsError('permission-denied', 'Not authorized to search tenant users');
+}
+
+export type SearchRecruiterTableUsersRequest = {
+  tenantId: string;
+  /** Empty string = no text filter (use with groupId and/or stateCode). */
+  searchQuery: string;
+  /** Tenant user group document id; omit or "all" for no filter. */
+  groupId?: string;
+  /** USPS state code or name; omit or "all" for no filter. */
+  stateCode?: string;
+  /** C1 entity key: select | workforce | events */
+  entityKey?: string;
+};
+
+export type SearchRecruiterTableUsersResponse = {
+  userIds: string[];
+  scannedDocuments: number;
+  batches: number;
+  capped: boolean;
+};
+
+/**
+ * Scans `entity_employments` for the tenant + entity key; returns user ids with at least one
+ * qualifying employment row (meaningful status), deduped.
+ */
+async function loadEntityUserIdSet(
+  tenantId: string,
+  entityKey: string,
+): Promise<{ entityUserIds: Set<string>; scannedDocuments: number; batches: number }> {
+  const entityUserIds = new Set<string>();
+  let lastDoc: QueryDocumentSnapshot | null = null;
+  let batches = 0;
+  let scanned = 0;
+  const coll = db.collection(`tenants/${tenantId}/entity_employments`);
+
+  while (batches < MAX_BATCHES) {
+    const base = coll.where('entityKey', '==', entityKey).orderBy(FieldPath.documentId()).limit(BATCH_SIZE);
+    const snap = await (lastDoc ? base.startAfter(lastDoc) : base).get();
+    if (snap.empty) {
+      break;
+    }
+    batches += 1;
+    scanned += snap.docs.length;
+
+    for (const doc of snap.docs) {
+      const d = doc.data() as Record<string, unknown>;
+      if (!entityEmploymentDocHasQualifyingStatus(d)) continue;
+      const uid = String(d.userId || '').trim();
+      if (uid) entityUserIds.add(uid);
+    }
+
+    lastDoc = snap.docs[snap.docs.length - 1] ?? null;
+
+    if (snap.docs.length < BATCH_SIZE) {
+      break;
+    }
+  }
+
+  return { entityUserIds, scannedDocuments: scanned, batches };
+}
+
+export const searchRecruiterTableUsers = onCall(
+  {
+    enforceAppCheck: false,
+    /**
+     * Reflect request origin (auth still required). Using `true` avoids Gen2 CORS regressions where a
+     * curated list/RegExp misses the browser origin and the preflight returns no
+     * `Access-Control-Allow-Origin` (client shows a misleading CORS error instead of the real failure).
+     */
+    cors: true,
+    memory: '1GiB',
+    timeoutSeconds: 300,
+  },
+  async (request): Promise<SearchRecruiterTableUsersResponse> => {
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
+    const raw = (request.data || {}) as SearchRecruiterTableUsersRequest;
+    const tenantId = typeof raw.tenantId === 'string' ? raw.tenantId.trim() : '';
+    const searchQuery = typeof raw.searchQuery === 'string' ? raw.searchQuery.trim() : '';
+    const groupIdRaw = typeof raw.groupId === 'string' ? raw.groupId.trim() : '';
+    const stateCodeRaw = typeof raw.stateCode === 'string' ? raw.stateCode.trim() : '';
+    const entityKeyNorm = normalizeRecruiterEntityKey(typeof raw.entityKey === 'string' ? raw.entityKey : '');
+
+    const hasGroup = groupIdRaw.length > 0 && groupIdRaw !== 'all';
+    const hasState = stateCodeRaw.length > 0 && stateCodeRaw !== 'all';
+    const hasSearch = searchQuery.length > 0;
+    const hasEntity = entityKeyNorm != null;
+
+    if (!tenantId) {
+      throw new HttpsError('invalid-argument', 'tenantId is required');
+    }
+    if (!hasSearch && !hasGroup && !hasState && !hasEntity) {
+      throw new HttpsError(
+        'invalid-argument',
+        'Provide searchQuery and/or groupId and/or stateCode and/or entityKey (at least one filter)',
+      );
+    }
+    if (searchQuery.length > 200) {
+      throw new HttpsError('invalid-argument', 'searchQuery is too long');
+    }
+
+    try {
+      await assertCallerCanSearchTenant(request.auth.uid, tenantId);
+
+      let entityUserIds: Set<string> | null = null;
+      let entityScanned = 0;
+      let entityBatches = 0;
+
+      if (hasEntity && entityKeyNorm) {
+        const loaded = await loadEntityUserIdSet(tenantId, entityKeyNorm);
+        entityUserIds = loaded.entityUserIds;
+        entityScanned = loaded.scannedDocuments;
+        entityBatches = loaded.batches;
+        if (entityUserIds.size === 0) {
+          logger.info('searchRecruiterTableUsers.done', {
+            tenantId,
+            callerUid: request.auth.uid,
+            hasSearch,
+            hasGroup,
+            hasState,
+            hasEntity,
+            entityKey: entityKeyNorm,
+            matchCount: 0,
+            scannedDocuments: entityScanned,
+            batches: entityBatches,
+            capped: false,
+            entityEmploymentScan: true,
+          });
+          return {
+            userIds: [],
+            scannedDocuments: entityScanned,
+            batches: entityBatches,
+            capped: false,
+          };
+        }
+      }
+
+      const userIds: string[] = [];
+      let lastDoc: QueryDocumentSnapshot | null = null;
+      let batches = 0;
+      let scanned = 0;
+      let capped = false;
+
+      while (batches < MAX_BATCHES && userIds.length < MAX_MATCH_IDS) {
+        const base = db
+          .collection('users')
+          .where(`tenantIds.${tenantId}.securityLevel`, 'in', TENANT_LISTABLE_SECURITY_LEVELS)
+          .orderBy('createdAt', 'desc')
+          .limit(BATCH_SIZE);
+        const snap = await (lastDoc ? base.startAfter(lastDoc) : base).get();
+        if (snap.empty) {
+          break;
+        }
+
+        batches += 1;
+        scanned += snap.docs.length;
+
+        for (const doc of snap.docs) {
+          const data = doc.data() as Record<string, unknown>;
+          if (hasEntity && entityUserIds && !entityUserIds.has(doc.id)) continue;
+          if (!firestoreUserDocMatchesRecruiterSearch(data, tenantId, searchQuery)) continue;
+          if (hasGroup && !firestoreUserDocMatchesRecruiterGroup(data, tenantId, groupIdRaw)) continue;
+          if (hasState && !firestoreUserDocMatchesRecruiterState(data, stateCodeRaw)) continue;
+          userIds.push(doc.id);
+          if (userIds.length >= MAX_MATCH_IDS) {
+            capped = true;
+            break;
+          }
+        }
+
+        lastDoc = snap.docs[snap.docs.length - 1] ?? null;
+
+        if (snap.docs.length < BATCH_SIZE) {
+          break;
+        }
+        if (capped) {
+          break;
+        }
+      }
+
+      logger.info('searchRecruiterTableUsers.done', {
+        tenantId,
+        callerUid: request.auth.uid,
+        hasSearch,
+        hasGroup,
+        hasState,
+        hasEntity,
+        entityKey: entityKeyNorm,
+        matchCount: userIds.length,
+        scannedDocuments: scanned + entityScanned,
+        batches: batches + entityBatches,
+        capped,
+        entityEmploymentScan: hasEntity,
+      });
+
+      return {
+        userIds,
+        scannedDocuments: scanned + entityScanned,
+        batches: batches + entityBatches,
+        capped,
+      };
+    } catch (e: unknown) {
+      if (e instanceof HttpsError) throw e;
+      const msg = e instanceof Error ? e.message : String(e);
+      const rawCode =
+        e && typeof e === 'object' && 'code' in e ? String((e as { code?: unknown }).code ?? '') : '';
+      const isFailedPrecondition =
+        rawCode === '9' ||
+        rawCode === 'failed-precondition' ||
+        /requires an index|The query requires an index|failed[- ]precondition/i.test(msg);
+      logger.error('searchRecruiterTableUsers.failed', {
+        tenantId,
+        callerUid: request.auth.uid,
+        message: msg,
+        code: rawCode,
+      });
+      if (isFailedPrecondition) {
+        throw new HttpsError(
+          'failed-precondition',
+          `Firestore needs a composite index for this search (or the query could not run). ${msg}`,
+        );
+      }
+      throw new HttpsError('internal', `User search failed: ${msg}`);
+    }
+  },
+);

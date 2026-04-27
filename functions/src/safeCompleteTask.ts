@@ -160,29 +160,6 @@ async function getUserNameSafely(userId: string): Promise<string> {
 }
 
 /**
- * Create AI log safely
- */
-async function createTaskAILogSafely(
-  eventType: string,
-  taskId: string,
-  reason: string,
-  tenantId: string,
-  userId: string,
-  associations: any,
-  aiResponse: string
-): Promise<void> {
-  SafeFunctionUtils.checkSafetyLimits();
-  CostTracker.trackOperation('createTaskAILogSafely', 0.001);
-
-  try {
-    const { createTaskAILog } = await import('./utils/aiLogging');
-    await createTaskAILog(eventType, taskId, reason, tenantId, userId, associations, aiResponse);
-  } catch (error) {
-    console.warn('⚠️ Failed to create AI log:', error);
-  }
-}
-
-/**
  * Create follow-up task safely
  */
 async function createFollowUpTaskSafely(
@@ -299,21 +276,7 @@ export const completeTask = onCall(
       }
 
       // Create AI log for task completion
-      await createTaskAILogSafely(
-        'task.completed',
-        taskId,
-        `Task "${taskData.title}" completed by ${taskData.assignedTo}`,
-        tenantId,
-        taskData.assignedTo,
-        taskData.associations,
-        JSON.stringify({
-          actionResult,
-          followUpTask,
-          originalType: taskData.type,
-          originalPriority: taskData.priority,
-          quotaCategory: taskData.quotaCategory
-        })
-      );
+      // AI logging removed as part of cost containment
 
       // Check abort signal
       if (abort.aborted) {
@@ -332,15 +295,7 @@ export const completeTask = onCall(
 
         // Create AI log for follow-up task
         if (followUpTaskId) {
-          await createTaskAILogSafely(
-            'task.follow_up_created',
-            followUpTaskId,
-            `Follow-up task "${followUpTask.title}" created after completing "${taskData.title}"`,
-            tenantId,
-            taskData.assignedTo,
-            taskData.associations,
-            JSON.stringify(followUpTask)
-          );
+          console.log(`Follow-up task logged for ${followUpTaskId}`);
         }
       }
 

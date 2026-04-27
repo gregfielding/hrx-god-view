@@ -26,7 +26,6 @@ import {
   ListItem,
   ListItemText,
   Chip,
-  Breadcrumbs,
   Link as MUILink,
   Select,
   MenuItem,
@@ -39,8 +38,9 @@ import {
   Info as InfoIcon,
   Timeline as TimelineIcon,
   Notes as NotesIcon,
+  Note as NoteIcon,
   List as ListIcon,
-  Task as TaskIcon,
+  AddTask as AddTaskIcon,
   Delete as DeleteIcon,
 
   Edit as EditIcon,
@@ -56,12 +56,12 @@ import {
   Check as CheckIcon,
   CheckCircle as CheckCircleIcon,
   CloudUpload as UploadIcon,
-  Dashboard as DashboardIcon,
   Stairs as StairsIcon,
   Work as WorkIcon,
   Description as DescriptionIcon,
+  RocketLaunch as RocketLaunchIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, updateDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, deleteDoc, collection, query, where, getDocs, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 
 
@@ -69,27 +69,28 @@ import { db, storage } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { createUnifiedAssociationService } from '../../utils/unifiedAssociationService';
 import StageChip from '../../components/StageChip';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 import CRMNotesTab from '../../components/CRMNotesTab';
 import DealStageForms from '../../components/DealStageForms';
 import DealFormRenderer from '../../forms/DealFormRenderer';
 import { getDealCompanyIds, getDealPrimaryCompanyId } from '../../utils/associationsAdapter';
 import DealActivityTab from '../../components/DealActivityTab';
 import DealStageAISuggestions from '../../components/DealStageAISuggestions';
-import SalesCoach from '../../components/SalesCoach';
+import { useChatGPT } from '../../contexts/ChatGPTContext';
 import TasksDashboard from '../../components/TasksDashboard';
 import AppointmentsDashboard from '../../components/AppointmentsDashboard';
-import DealAISummary from '../../components/DealAISummary';
-import DealAgeChip from '../../components/DealAgeChip';
-import HealthBadge from '../../components/HealthBadge';
 
 import CreateTaskDialog from '../../components/CreateTaskDialog';
 import LogActivityDialog from '../../components/LogActivityDialog';
 import AddNoteDialog from '../../components/AddNoteDialog';
 import ManageSalespeopleDialog from '../../components/ManageSalespeopleDialog';
 import ManageContactsDialog from '../../components/ManageContactsDialog';
+import ManageDecisionMakerDialog from '../../components/ManageDecisionMakerDialog';
 import ManageLocationDialog from '../../components/ManageLocationDialog';
-import NextStepsWidget from '../../components/NextStepsWidget';
+import ManageCompaniesDialog, { CompanyOption } from '../../components/ManageCompaniesDialog';
 import GenerateJobOrderButton from '../../components/GenerateJobOrderButton';
+import PageHeader from '../../components/PageHeader';
+import { formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
 
 interface DealData {
   id: string;
@@ -100,6 +101,7 @@ interface DealData {
   locationName?: string;
   stage: string;
   status?: 'open' | 'won' | 'lost' | 'on_hold' | 'canceled' | 'dormant';
+  archived?: boolean;
   estimatedRevenue: number;
   closeDate: string;
   owner: string;
@@ -121,8 +123,8 @@ interface DealData {
     timestamp: number;
   };
   associations?: {
-    companies?: string[];
-    locations?: string[];
+    companies?: Array<string | { id: string; isPrimary?: boolean }>;
+    locations?: Array<string | { id: string; companyId: string }>;
     contacts?: Array<string | {
       id: string;
       snapshot: {
@@ -208,6 +210,7 @@ const DealDetails: React.FC = () => {
   const { dealId } = useParams<{ dealId: string }>();
   const navigate = useNavigate();
   const { tenantId, user } = useAuth();
+  const { openChatGPT } = useChatGPT();
   
   // FOUNDATIONAL DATA - Load first, before anything else
   const [deal, setDeal] = useState<DealData | null>(null);
@@ -241,9 +244,13 @@ const DealDetails: React.FC = () => {
   const [showLogActivityDialog, setShowLogActivityDialog] = useState(false);
   const [logActivityLoading, setLogActivityLoading] = useState(false);
   const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
+  const [activatingDeal, setActivatingDeal] = useState(false);
   const [showManageSalespeopleDialog, setShowManageSalespeopleDialog] = useState(false);
   const [showManageContactsDialog, setShowManageContactsDialog] = useState(false);
+  const [showDecisionMakerDialog, setShowDecisionMakerDialog] = useState(false);
   const [showManageLocationDialog, setShowManageLocationDialog] = useState(false);
+  const [showManageCompaniesDialog, setShowManageCompaniesDialog] = useState(false);
+  const [associatedCompanies, setAssociatedCompanies] = useState<CompanyOption[]>([]);
   const [dealCoachKey, setDealCoachKey] = useState<string>(`${dealId}-${Date.now()}`);
   const [tasksDashboardKey, setTasksDashboardKey] = useState<string>(`${dealId}-${Date.now()}`);
   const [loadingSalespeople, setLoadingSalespeople] = useState(false);
@@ -767,6 +774,33 @@ const DealDetails: React.FC = () => {
     }
   };
 
+  const handleActivateDeal = async () => {
+    if (!deal || !tenantId) return;
+    try {
+      setActivatingDeal(true);
+      const now = new Date();
+      // Reset age (createdAt) and health (lastActivityAt) when reactivating
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
+        archived: false,
+        createdAt: now,        // Reset age to 0 days
+        lastActivityAt: now,   // Reset health (prevents "Stale" status)
+        updatedAt: now,
+      });
+      setDeal((prev) => (prev ? { 
+        ...prev, 
+        archived: false,
+        createdAt: now,
+        lastActivityAt: now,
+        updatedAt: now,
+      } : prev));
+    } catch (err) {
+      console.error('Error activating deal:', err);
+      alert('Failed to activate deal. Please try again.');
+    } finally {
+      setActivatingDeal(false);
+    }
+  };
+
   const loadAssociatedContacts = async (dealData?: DealData) => {
     const targetDeal = dealData || deal;
     if (!targetDeal || !tenantId || !user?.uid) return;
@@ -843,15 +877,11 @@ const DealDetails: React.FC = () => {
         
 
         
-        // Merge with existing salespeople data, preferring the new data with better names
+        // Only enrich existing (deal-associated) salespeople with better names; do not add others
         setAssociatedSalespeople(prevSalespeople => {
-          const existingIds = new Set(prevSalespeople.map(sp => sp.id));
-          const newSalespeople = mappedSalespeople.filter(sp => !existingIds.has(sp.id));
-          
-          // Update existing salespeople with better name data if available
           const updatedExisting = prevSalespeople.map(existing => {
             const betterData = mappedSalespeople.find(newSp => newSp.id === existing.id);
-            if (betterData && existing.fullName === 'Unknown Salesperson') {
+            if (betterData && (existing.fullName === 'Unknown Salesperson' || !existing.email)) {
               return {
                 ...existing,
                 fullName: betterData.displayName,
@@ -862,8 +892,7 @@ const DealDetails: React.FC = () => {
             }
             return existing;
           });
-          
-          return [...updatedExisting, ...newSalespeople];
+          return updatedExisting;
         });
       } else {
         setAssociatedSalespeople([]);
@@ -944,6 +973,27 @@ const DealDetails: React.FC = () => {
       startingCount,
       after180DaysCount
     };
+  };
+
+  const getLastTouchDate = () => {
+    const ts = (deal as any)?.updatedAt || (deal as any)?.dealStatusUpdated?.timestamp || (deal as any)?.createdAt;
+    if (!ts) return null;
+    try {
+      const d =
+        ts instanceof Date ? ts :
+        ts?.toDate ? ts.toDate() :
+        typeof ts === 'number' ? new Date(ts) :
+        new Date(ts);
+      return isNaN(d.getTime()) ? null : d;
+    } catch {
+      return null;
+    }
+  };
+
+  const getDaysSinceLastTouch = () => {
+    const last = getLastTouchDate();
+    if (!last) return null;
+    return Math.max(0, Math.floor((Date.now() - last.getTime()) / (1000 * 60 * 60 * 24)));
   };
 
   // Deal Coach Action Handlers
@@ -1046,70 +1096,94 @@ const DealDetails: React.FC = () => {
 
   const handleContactsChange = async (updatedContacts: any[]) => {
     if (!deal || !tenantId) return;
-    
+
+    const previousContacts = associatedContacts;
+    // Update the local state immediately for responsive UI
+    setAssociatedContacts(updatedContacts);
+
+    const currentAssociations = deal.associations || {};
+    const updatedContactIds = updatedContacts.map(c => c.id).filter(Boolean);
+    const updatedAssociations = {
+      ...currentAssociations,
+      contacts: updatedContacts.map(contact => ({
+        id: contact.id,
+        snapshot: {
+          fullName: contact.fullName ?? '',
+          firstName: contact.firstName ?? '',
+          lastName: contact.lastName ?? '',
+          email: contact.email ?? '',
+          phone: contact.phone ?? '',
+          title: contact.title ?? ''
+        }
+      }))
+    };
+
     try {
-      // Update the local state immediately for responsive UI
-      setAssociatedContacts(updatedContacts);
-      
-      // Prepare the associations update
-      const currentAssociations = deal.associations || {};
-      const updatedContactIds = Array.from(new Set(updatedContacts.map(c => c.id).filter(Boolean)));
-      const updatedAssociations = {
-        ...currentAssociations,
-        contacts: updatedContacts.map(contact => ({
-          id: contact.id,
-          snapshot: {
-            fullName: contact.fullName,
-            firstName: contact.firstName,
-            lastName: contact.lastName,
-            email: contact.email,
-            phone: contact.phone,
-            title: contact.title
-          }
-        }))
-      };
-      
-      // Update the deal document with new associations
+      setError('');
       await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
         associations: updatedAssociations,
         contactIds: updatedContactIds,
-        updatedAt: new Date()
+        updatedAt: serverTimestamp()
       });
-      
-      // Update local deal state
+
       setDeal(prev => prev ? { ...prev, associations: updatedAssociations, contactIds: updatedContactIds } : null);
-      
-      console.log('Contacts updated successfully');
-    } catch (error) {
-      console.error('Error updating contacts:', error);
-      // Revert local state if update fails
-      setAssociatedContacts(deal?.associations?.contacts || []);
+    } catch (err: any) {
+      console.error('Error updating contacts:', err);
+      setAssociatedContacts(previousContacts);
+      setDeal(prev => prev ? { ...prev, associations: currentAssociations } : null);
+      setError(err?.message || 'Failed to save contact changes. Please try again.');
     }
   };
 
-  const handleLocationChange = async (locationId: string | null) => {
+  const handleLocationChange = async (locationId: string | null, companyId?: string) => {
     if (!deal || !tenantId) return;
-    
     try {
-      // Prepare the associations update
       const currentAssociations = deal.associations || {};
+      const locationsPayload = locationId
+        ? companyId
+          ? [{ id: locationId, companyId }]
+          : [locationId]
+        : [];
       const updatedAssociations = {
         ...currentAssociations,
-        locations: locationId ? [locationId] : []
+        locations: locationsPayload,
       };
-      
-      // Update the deal document with new associations
       await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
         associations: updatedAssociations,
-        updatedAt: new Date()
+        updatedAt: serverTimestamp(),
       });
-      
-      // Update local deal state
-      setDeal(prev => prev ? { ...prev, associations: updatedAssociations } : null);
-      
-      console.log('Location updated successfully');
+      setDeal((prev) => (prev ? { ...prev, associations: updatedAssociations } : null));
     } catch (error) {
       console.error('Error updating location:', error);
+    }
+  };
+
+  const handleCompaniesChange = async (companies: CompanyOption[]) => {
+    if (!deal || !tenantId) return;
+    try {
+      const currentAssociations = deal.associations || {};
+      const companiesPayload = companies.map((c, i) => ({ id: c.id, isPrimary: i === 0 }));
+      const updatedAssociations = {
+        ...currentAssociations,
+        companies: companiesPayload,
+      };
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
+        associations: updatedAssociations,
+        updatedAt: serverTimestamp(),
+      });
+      setDeal((prev) => (prev ? { ...prev, associations: updatedAssociations } : null));
+      setAssociatedCompanies(companies);
+      const primary = companies[0];
+      if (primary) {
+        const companyDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', primary.id));
+        if (companyDoc.exists()) {
+          setCompany({ id: companyDoc.id, ...companyDoc.data() });
+        }
+      } else {
+        setCompany(null);
+      }
+    } catch (err) {
+      console.error('Error updating companies:', err);
     }
   };
 
@@ -1571,14 +1645,33 @@ const DealDetails: React.FC = () => {
           setStageData({});
         }
 
-        // Load associated company using primary company id from associations
+        // Load all associated companies (deal can have multiple: end-client, MSP, etc.)
+        const companyIds = getDealCompanyIds(deal as any);
         const primaryCompanyId = getDealPrimaryCompanyId(deal as any);
-        if (primaryCompanyId) {
-          const companyDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', primaryCompanyId));
-          if (companyDoc.exists()) {
-            const companyData = { id: companyDoc.id, ...companyDoc.data() } as any;
-            setCompany(companyData);
+        if (companyIds.length > 0) {
+          const companiesList: CompanyOption[] = [];
+          for (const cid of companyIds) {
+            const companyDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', cid));
+            if (companyDoc.exists()) {
+              const data = companyDoc.data();
+              const name = data.companyName || data.name || data.displayName || '';
+              companiesList.push({
+                id: companyDoc.id,
+                companyName: name,
+                name,
+                industry: data.industry || data.sector || '',
+              });
+              if (companyDoc.id === primaryCompanyId) {
+                setCompany({ id: companyDoc.id, ...data });
+              }
+            }
           }
+          setAssociatedCompanies(companiesList);
+          if (!primaryCompanyId && companiesList.length > 0) {
+            setCompany({ id: companiesList[0].id, companyName: companiesList[0].companyName, name: companiesList[0].name });
+          }
+        } else {
+          setAssociatedCompanies([]);
         }
         
 
@@ -1630,23 +1723,19 @@ const DealDetails: React.FC = () => {
     }
   }, [deal, aiComponentsLoaded]);
 
-  // Load location data when needed
+  // Load location data when needed (supports locations as [id] or [{ id, companyId }])
   useEffect(() => {
     if (!deal || !company || locationData || loadingLocation) return;
-    
     const locations = (deal as any)?.associations?.locations || [];
     if (locations.length === 0) return;
-    
     const locationEntry = locations[0];
     const locationId = typeof locationEntry === 'string' ? locationEntry : locationEntry.id;
+    const companyIdForLocation = typeof locationEntry === 'object' && locationEntry?.companyId ? locationEntry.companyId : company.id;
     const locationName = typeof locationEntry === 'string' ? 'Unknown Location' : (locationEntry.snapshot?.name || locationEntry.name || 'Unknown Location');
     const locationNickname = typeof locationEntry === 'string' ? '' : (locationEntry.snapshot?.nickname || locationEntry.nickname || '');
     const locationAddress = typeof locationEntry === 'string' ? '' : (locationEntry.snapshot?.address || locationEntry.address || '');
-    
-    // Only load if we have incomplete location data
     if ((!locationNickname || !locationAddress || locationName === 'Unknown Location') && locationId) {
-      console.log('🔍 Loading location data from database via useEffect...');
-      loadLocationData(locationId, company.id);
+      loadLocationData(locationId, companyIdForLocation);
     }
   }, [deal?.associations?.locations, company?.id, locationData, loadingLocation]);
 
@@ -1697,8 +1786,658 @@ const DealDetails: React.FC = () => {
 
 
 
+  const dealTabs = [
+    { label: 'Stages', icon: <StairsIcon fontSize="small" />, index: 0 },
+    { label: 'Tasks', icon: <AddTaskIcon fontSize="small" />, index: 1 },
+    { label: 'Notes', icon: <NotesIcon fontSize="small" />, index: 2 },
+    { label: 'Activity', icon: <TimelineIcon fontSize="small" />, index: 3 },
+    { label: 'Draft Job Order', icon: <WorkIcon fontSize="small" />, index: 4 },
+    { label: 'Contracts', icon: <DescriptionIcon fontSize="small" />, index: 5 },
+  ];
+
+  // Inline sidebar content (no inner component) so date pickers don't unmount on parent re-render
+  const dealSidebarContent = (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {/* Recent Activity */}
+      <Box sx={{ mb: 0 }}>
+        <SectionCard title="Recent Activity">
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            {activityCount > 0 ? (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <Typography variant="body2" color="text.secondary">
+                  {activityCount} activities recorded
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Last activity: {new Date().toLocaleDateString()}
+                </Typography>
+              </Box>
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                No recent activity. Activities will appear here as they occur.
+              </Typography>
+            )}
+          </Box>
+        </SectionCard>
+      </Box>
+
+      {/* Financials */}
+      <Box sx={{ mb: 0 }}>
+        <SectionCard title="Financials">
+          {(() => {
+            const qual = stageData?.qualification || deal?.stageData?.qualification || {};
+            const timeline = qual?.staffPlacementTimeline || {};
+            const setQualificationValue = (nextQualification: any) => {
+              void handleStageDataChange({
+                ...stageData,
+                qualification: nextQualification,
+              });
+            };
+
+            const handleTimelineChange = (key: 'starting' | 'after30Days' | 'after90Days' | 'after180Days', rawValue: string) => {
+              const nextValue = rawValue === '' ? undefined : parseInt(rawValue, 10);
+              setQualificationValue({
+                ...qual,
+                staffPlacementTimeline: {
+                  ...timeline,
+                  [key]: Number.isNaN(nextValue as number) ? undefined : nextValue,
+                },
+              });
+            };
+
+            const handleNumericQualificationChange = (key: 'expectedAveragePayRate' | 'expectedAverageMarkup', rawValue: string) => {
+              const nextValue = rawValue === '' ? undefined : parseFloat(rawValue);
+              setQualificationValue({
+                ...qual,
+                [key]: Number.isNaN(nextValue as number) ? undefined : nextValue,
+              });
+            };
+
+            return (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <Typography variant="body2" color="text.secondary">
+                  Update the expected staffing ramp, pay rate, and markup directly from the sidebar.
+                </Typography>
+
+                <Box sx={{ p: 1.25, borderRadius: 1, bgcolor: 'grey.50' }}>
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                    Staff placement timeline
+                  </Typography>
+                  <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 1 }}>
+                    <TextField
+                      label="Initial order"
+                      type="number"
+                      size="small"
+                      value={timeline?.starting ?? ''}
+                      onChange={(e) => handleTimelineChange('starting', e.target.value)}
+                    />
+                    <TextField
+                      label="Potential after 30 days"
+                      type="number"
+                      size="small"
+                      value={timeline?.after30Days ?? ''}
+                      onChange={(e) => handleTimelineChange('after30Days', e.target.value)}
+                    />
+                    <TextField
+                      label="Potential after 90 days"
+                      type="number"
+                      size="small"
+                      value={timeline?.after90Days ?? ''}
+                      onChange={(e) => handleTimelineChange('after90Days', e.target.value)}
+                    />
+                    <TextField
+                      label="Potential after 180 days"
+                      type="number"
+                      size="small"
+                      value={timeline?.after180Days ?? ''}
+                      onChange={(e) => handleTimelineChange('after180Days', e.target.value)}
+                    />
+                  </Box>
+                </Box>
+
+                <Box sx={{ p: 1.25, borderRadius: 1, bgcolor: 'grey.50' }}>
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                    Pricing assumptions
+                  </Typography>
+                  <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 1 }}>
+                    <TextField
+                      label="Expected average pay rate"
+                      type="number"
+                      size="small"
+                      value={qual?.expectedAveragePayRate ?? ''}
+                      onChange={(e) => handleNumericQualificationChange('expectedAveragePayRate', e.target.value)}
+                      InputProps={{ startAdornment: <Typography sx={{ mr: 1, color: 'text.secondary' }}>$</Typography> }}
+                    />
+                    <TextField
+                      label="Expected average markup"
+                      type="number"
+                      size="small"
+                      value={qual?.expectedAverageMarkup ?? ''}
+                      onChange={(e) => handleNumericQualificationChange('expectedAverageMarkup', e.target.value)}
+                      InputProps={{ endAdornment: <Typography sx={{ ml: 1, color: 'text.secondary' }}>%</Typography> }}
+                    />
+                  </Box>
+                </Box>
+              </Box>
+            );
+          })()}
+        </SectionCard>
+      </Box>
+
+      {/* Important Dates */}
+      <Box sx={{ mb: 0 }}>
+        <SectionCard title="Important Dates">
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            {(() => {
+              const parseDate = (val: any): Date | null => {
+                if (!val) return null;
+                try {
+                  const d = val instanceof Date ? val : val?.toDate ? val.toDate() : new Date(val);
+                  return isNaN(d.getTime()) ? null : d;
+                } catch {
+                  return null;
+                }
+              };
+              const toInputValue = (val: any): string => {
+                const d = parseDate(val);
+                if (!d) return '';
+                const y = d.getFullYear();
+                const m = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                return `${y}-${m}-${day}`;
+              };
+              const created = parseDate((deal as any)?.createdAt);
+              const lastTouch = getLastTouchDate();
+              const closeDateVal = deal?.closeDate || stageData?.qualification?.expectedCloseDate;
+              const expectedCloseInput = closeDateVal ? (typeof closeDateVal === 'string' && closeDateVal.match(/^\d{4}-\d{2}-\d{2}$/) ? closeDateVal : toInputValue(closeDateVal)) : '';
+              const expectedStartVal = stageData?.qualification?.expectedStartDate;
+              const expectedStart = expectedStartVal ? (typeof expectedStartVal === 'string' ? expectedStartVal : toInputValue(expectedStartVal)) : '';
+              const dateSignedVal = stageData?.closedWon?.dateSigned;
+              const isClosedWithDate = (deal?.status === 'won' || deal?.stage === 'closedWon') && dateSignedVal;
+              const actualCloseDate = dateSignedVal ? parseDate(dateSignedVal) : null;
+              // Format date-only in UTC so "Actual close" matches Closing stage "Close Date" (no timezone shift)
+              const formatDateOnly = (d: Date): string => {
+                const y = d.getUTCFullYear();
+                const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+                const day = String(d.getUTCDate()).padStart(2, '0');
+                return `${m}/${day}/${y}`;
+              };
+              const handleExpectedStartChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+                const v = e.target.value;
+                handleStageDataChange({
+                  ...stageData,
+                  qualification: { ...stageData?.qualification, expectedStartDate: v || undefined },
+                });
+              };
+              const handleExpectedCloseChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+                const v = e.target.value;
+                handleDealUpdate('closeDate', v || '');
+              };
+              const rows: { label: string; date: Date | null }[] = [
+                { label: 'Created', date: created },
+                { label: 'Last touch', date: lastTouch },
+              ];
+              return (
+                <>
+                  {rows.map(({ label, date }) => (
+                    <Box
+                      key={label}
+                      sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}
+                    >
+                      <EventIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="caption" color="text.secondary" display="block">
+                          {label}
+                        </Typography>
+                        <Typography variant="body2" fontWeight="medium">
+                          {date ? date.toLocaleDateString() : '—'}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  ))}
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
+                    <EventIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.25 }}>
+                        Expected close
+                      </Typography>
+                      <TextField
+                        type="date"
+                        size="small"
+                        fullWidth
+                        value={expectedCloseInput}
+                        onChange={handleExpectedCloseChange}
+                        InputLabelProps={{ shrink: true }}
+                        inputProps={{ placeholder: '' }}
+                        sx={{ '& .MuiInputBase-input': { fontSize: '0.875rem', py: 0.75 } }}
+                      />
+                    </Box>
+                  </Box>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
+                    <EventIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.25 }}>
+                        Expected start date
+                      </Typography>
+                      <TextField
+                        type="date"
+                        size="small"
+                        fullWidth
+                        value={expectedStart}
+                        onChange={handleExpectedStartChange}
+                        InputLabelProps={{ shrink: true }}
+                        inputProps={{ placeholder: '' }}
+                        sx={{ '& .MuiInputBase-input': { fontSize: '0.875rem', py: 0.75 } }}
+                      />
+                    </Box>
+                  </Box>
+                  {isClosedWithDate && (
+                    <Box
+                      sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}
+                    >
+                      <EventIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="caption" color="text.secondary" display="block">
+                          Actual close
+                        </Typography>
+                        <Typography variant="body2" fontWeight="medium">
+                          {actualCloseDate ? formatDateOnly(actualCloseDate) : '—'}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  )}
+                </>
+              );
+            })()}
+          </Box>
+        </SectionCard>
+      </Box>
+
+      {/* Company Widget */}
+      <Box sx={{ mb: 0 }}>
+        <SectionCard
+          title="Company"
+          action={
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => setShowManageCompaniesDialog(true)}
+              sx={{
+                minWidth: 'auto',
+                px: 1,
+                py: 0.5,
+                fontSize: '0.75rem',
+                textTransform: 'none',
+              }}
+            >
+              Edit
+            </Button>
+          }
+        >
+          {associatedCompanies.length > 0 ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              {associatedCompanies.map((comp) => (
+                <Box
+                  key={comp.id}
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    p: 1,
+                    borderRadius: 1,
+                    bgcolor: 'grey.50',
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => navigate(`/companies/${comp.id}`)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      navigate(`/companies/${comp.id}`);
+                    }
+                  }}
+                >
+                  <Avatar
+                    sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}
+                  >
+                    {(comp.companyName || comp.name || 'C').charAt(0).toUpperCase()}
+                  </Avatar>
+                  <Box sx={{ flex: 1 }}>
+                    <Typography variant="body2" fontWeight="medium">
+                      {comp.companyName || comp.name || 'Unknown Company'}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {comp.industry || 'No industry'}
+                    </Typography>
+                  </Box>
+                </Box>
+              ))}
+            </Box>
+          ) : (
+            <Box sx={{ textAlign: 'center', py: 3 }}>
+              <Typography variant="body2" color="text.secondary">
+                No company assigned
+              </Typography>
+            </Box>
+          )}
+        </SectionCard>
+      </Box>
+
+      {/* Active Salespeople Widget */}
+      <Box sx={{ mb: 0 }}>
+        <SectionCard
+          title="Active Salespeople"
+          action={
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => setShowManageSalespeopleDialog(true)}
+              sx={{
+                minWidth: 'auto',
+                px: 1,
+                py: 0.5,
+                fontSize: '0.75rem',
+                textTransform: 'none',
+              }}
+            >
+              Edit
+            </Button>
+          }
+        >
+          {loadingSalespeople ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <Skeleton variant="rectangular" height={48} />
+              <Skeleton variant="rectangular" height={48} />
+            </Box>
+          ) : associatedSalespeople.length > 0 ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              {associatedSalespeople.map((salesperson) => (
+                <Box
+                  key={salesperson.id}
+                  sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}
+                >
+                  <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
+                    {salesperson.fullName?.charAt(0) ||
+                      salesperson.firstName?.charAt(0) ||
+                      salesperson.displayName?.charAt(0) ||
+                      'S'}
+                  </Avatar>
+                  <Box sx={{ flex: 1 }}>
+                    <Typography variant="body2" fontWeight="medium">
+                      {salesperson.fullName ||
+                        salesperson.displayName ||
+                        `${salesperson.firstName || ''} ${salesperson.lastName || ''}`.trim() ||
+                        'Unknown Salesperson'}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {salesperson.email || salesperson.title || 'No additional info'}
+                    </Typography>
+                  </Box>
+                </Box>
+              ))}
+            </Box>
+          ) : (
+            <Box sx={{ textAlign: 'center', py: 3 }} />
+          )}
+        </SectionCard>
+      </Box>
+
+      {/* Decision Maker Widget */}
+      <Box sx={{ mb: 0 }}>
+        <SectionCard
+          title="Decision Maker"
+          action={
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => setShowDecisionMakerDialog(true)}
+              sx={{
+                minWidth: 'auto',
+                px: 1,
+                py: 0.5,
+                fontSize: '0.75rem',
+                textTransform: 'none',
+              }}
+            >
+              Edit
+            </Button>
+          }
+        >
+          {(() => {
+            const dm = stageData?.qualification?.decisionMaker;
+            if (!dm) {
+              return (
+                <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
+                  No decision maker selected
+                </Typography>
+              );
+            }
+            const name = dm.fullName || `${dm.firstName || ''} ${dm.lastName || ''}`.trim() || dm.name || 'Unknown';
+            return (
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                  p: 1,
+                  borderRadius: 1,
+                  bgcolor: 'grey.50',
+                  cursor: 'pointer',
+                }}
+                onClick={() => dm?.id && navigate(`/contacts/${dm.id}`)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (dm?.id && (e.key === 'Enter' || e.key === ' ')) {
+                    e.preventDefault();
+                    navigate(`/contacts/${dm.id}`);
+                  }
+                }}
+              >
+                <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
+                  {(name || 'C').charAt(0).toUpperCase()}
+                </Avatar>
+                <Box sx={{ flex: 1 }}>
+                  <Typography variant="body2" fontWeight="medium">
+                    {name}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {dm.title || 'No title'}
+                  </Typography>
+                </Box>
+              </Box>
+            );
+          })()}
+        </SectionCard>
+      </Box>
+
+      {/* Contacts Widget */}
+      <Box sx={{ mb: 0 }}>
+        <SectionCard
+          title="Deal Contacts"
+          action={
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => setShowManageContactsDialog(true)}
+              sx={{
+                minWidth: 'auto',
+                px: 1,
+                py: 0.5,
+                fontSize: '0.75rem',
+                textTransform: 'none',
+              }}
+            >
+              Edit
+            </Button>
+          }
+        >
+          {associatedContacts.length > 0 ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              {associatedContacts.map((contact) => (
+                <Box
+                  key={contact.id}
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    p: 1,
+                    borderRadius: 1,
+                    bgcolor: 'grey.50',
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => navigate(`/contacts/${contact.id}`)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      navigate(`/contacts/${contact.id}`);
+                    }
+                  }}
+                >
+                  <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
+                    {contact.fullName?.charAt(0) || contact.firstName?.charAt(0) || contact.name?.charAt(0) || 'C'}
+                  </Avatar>
+                  <Box sx={{ flex: 1 }}>
+                    <Typography variant="body2" fontWeight="medium">
+                      {contact.fullName ||
+                        `${contact.firstName || ''} ${contact.lastName || ''}`.trim() ||
+                        contact.name ||
+                        'Unknown Contact'}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {contact.title || 'No title'}
+                    </Typography>
+                  </Box>
+                </Box>
+              ))}
+            </Box>
+          ) : (
+            <Box sx={{ textAlign: 'center', py: 3 }} />
+          )}
+        </SectionCard>
+      </Box>
+
+      {/* Location Widget */}
+      <Box sx={{ mb: 0 }}>
+        <SectionCard
+          title="Location"
+          action={
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => setShowManageLocationDialog(true)}
+              sx={{
+                minWidth: 'auto',
+                px: 1,
+                py: 0.5,
+                fontSize: '0.75rem',
+                textTransform: 'none',
+              }}
+            >
+              Edit
+            </Button>
+          }
+        >
+          {(() => {
+            const locations = (deal as any)?.associations?.locations || [];
+            const hasLocations = locations.length > 0;
+
+            if (hasLocations) {
+              const locationEntry = locations[0];
+              const locationId = typeof locationEntry === 'string' ? locationEntry : locationEntry.id;
+              const locationName =
+                typeof locationEntry === 'string'
+                  ? 'Unknown Location'
+                  : locationEntry.snapshot?.name || locationEntry.name || 'Unknown Location';
+              const locationNickname =
+                typeof locationEntry === 'string' ? '' : locationEntry.snapshot?.nickname || locationEntry.nickname || '';
+              const locationAddress =
+                typeof locationEntry === 'string' ? '' : locationEntry.snapshot?.address || locationEntry.address || '';
+
+              const displayName = locationData?.nickname || locationData?.name || locationNickname || locationName;
+              const displayAddress = locationData?.address || locationAddress;
+
+              return (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  {loadingLocation ? (
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                        p: 1,
+                        borderRadius: 1,
+                        bgcolor: 'grey.50',
+                      }}
+                    >
+                      <CircularProgress size={16} />
+                      <Typography variant="body2" color="text.secondary">
+                        Loading location...
+                      </Typography>
+                    </Box>
+                  ) : (
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                        p: 1,
+                        borderRadius: 1,
+                        bgcolor: 'grey.50',
+                        cursor: 'pointer',
+                      }}
+                      onClick={() => {
+                        const cid = typeof locationEntry === 'object' && locationEntry?.companyId ? locationEntry.companyId : company?.id;
+                        if (cid && locationId) {
+                          navigate(`/companies/${cid}/locations/${locationId}`);
+                        }
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          const cid = typeof locationEntry === 'object' && locationEntry?.companyId ? locationEntry.companyId : company?.id;
+                          if (cid && locationId) {
+                            navigate(`/companies/${cid}/locations/${locationId}`);
+                          }
+                        }
+                      }}
+                    >
+                      <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}>
+                        <BusinessIcon sx={{ fontSize: 16 }} />
+                      </Avatar>
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="body2" fontWeight="medium">
+                          {displayName}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {displayAddress || 'No address'}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  )}
+                </Box>
+              );
+            }
+
+            return (
+              <Box sx={{ textAlign: 'center', py: 3 }}>
+                <Typography variant="body2" color="text.secondary">
+                  No location assigned
+                </Typography>
+              </Box>
+            );
+          })()}
+        </SectionCard>
+      </Box>
+    </Box>
+  );
+
   return (
-    <Box sx={{ p: 0 }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <style>
         {`
           @keyframes pulse {
@@ -1712,303 +2451,337 @@ const DealDetails: React.FC = () => {
           }
         `}
       </style>
-      {/* Breadcrumbs */}
-      <Box sx={{ mb: 2 }}>
-        <Breadcrumbs aria-label="breadcrumb">
-          <MUILink underline="hover" color="inherit" href="/crm" onClick={(e) => { e.preventDefault(); navigate('/crm'); }}>
-            CRM
-          </MUILink>
-          <MUILink underline="hover" color="inherit" href="/opportunities" onClick={(e) => { e.preventDefault(); navigate('/crm?tab=opportunities'); }}>
-            Opportunities
-          </MUILink>
-          <Typography color="text.primary">{deal?.name || 'Deal'}</Typography>
-        </Breadcrumbs>
-      </Box>
-
-      {/* Enhanced Header - Persistent Deal Information */}
-      <Box sx={{ mb: 3 }}>
-        <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 3 }}>
-            {/* Deal Logo/Avatar */}
-            <Box sx={{ position: 'relative' }}>
+      <PageHeader
+        title={
+          <Box>
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
               <Avatar
-                src={company?.logo}
-                alt={company?.companyName || company?.name || 'Deal'}
-                sx={{ 
-                  width: 128, 
-                  height: 128,
-                  bgcolor: 'primary.main',
-                  fontSize: '2rem',
-                  fontWeight: 'bold'
+                src={company?.logo || undefined}
+                sx={{
+                  width: 108,
+                  height: 108,
+                  bgcolor: company?.logo ? 'transparent' : 'primary.main',
+                  fontSize: '40px',
+                  fontWeight: 600,
+                  flexShrink: 0,
                 }}
               >
-                {(company?.companyName || company?.name || 'D').charAt(0).toUpperCase()}
+                {(company?.companyName || company?.name || deal.name || 'D').charAt(0).toUpperCase()}
               </Avatar>
-            </Box>
 
-            {/* Deal Information */}
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
-                  {deal.name}
-                </Typography>
-                <IconButton size="small" aria-label="Edit deal name" onClick={handleStartEditDealName} sx={{ mt: 0.5 }}>
-                  <EditIcon fontSize="small" />
-                </IconButton>
-              </Box>
-              
-              {/* Deal Value Range and Est Close Date */}
-              <Box sx={{ mt: 0, display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap' }}>
-                {(() => {
-                  const revenueRange = calculateExpectedRevenueRange();
-                  return revenueRange.hasData ? (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <DealIcon sx={{ fontSize: 18, color: 'success.main' }} />
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        ${revenueRange.min.toLocaleString()} – ${revenueRange.max.toLocaleString()}
-                      </Typography>
-                    </Box>
-                  ) : null;
-                })()}
-                
-                {/* Est Close Date */}
-                {(() => {
-                  const qualData = stageData?.qualification;
-                  const expectedCloseDate = qualData?.expectedCloseDate;
-                  return expectedCloseDate ? (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Est. Close:</Typography>
-                      <Typography variant="body2" color="text.primary">
-                        {new Date(expectedCloseDate + 'T00:00:00').toLocaleDateString()}
-                      </Typography>
-                    </Box>
-                  ) : null;
-                })()}
-              </Box>
-
-              {/* Deal Stats */}
-              <Box 
-                className="deal-stats-box"
-                sx={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: 2, 
-                  mt: 0, 
-                  marginTop: 0,
-                  '&.deal-stats-box': {
-                    marginTop: '0 !important'
-                  }
+              <Box
+                sx={{
+                  flex: 1,
+                  minWidth: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  minHeight: 108,
                 }}
               >
-                {/* Stage */}
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, marginTop: 0.25, marginBottom: 0.25 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Stage:</Typography>
-                  <StageChip stage={deal.stage} size="small" useCustomColors={true} />
-                </Box>
-
-                {/* Status */}
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, marginTop: 0.25, marginBottom: 0.25 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Status:</Typography>
-                  <StatusChip 
-                    status={getCurrentStatus()} 
-                    onStatusChange={handleStatusChange}
-                  />
-                </Box>
-
-
-                {/* Owner */}
-                {deal.owner && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Owner:</Typography>
-                    <Typography variant="body2" color="text.primary">{deal.owner}</Typography>
-                  </Box>
-                )}
-              </Box>
-
-              {/* Status Change Information */}
-              {deal?.dealStatusUpdated && getCurrentStatus() !== 'open' && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
-                    Status changed to {deal.dealStatusUpdated.toStatus} by {deal.dealStatusUpdated.changedBy.displayName} on {new Date(deal.dealStatusUpdated.changedAt).toLocaleDateString()}
-                  </Typography>
-                </Box>
-              )}
-
-              {/* Company and Location */}
-              {company && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0 }}>
-                  <BusinessIcon fontSize="small" color="primary" />
-                  <Typography 
-                    variant="body2" 
-                    color="primary"
-                    sx={{ cursor: 'pointer', textDecoration: 'underline', '&:hover': { color: 'primary.dark' } }}
-                    onClick={() => navigate(`/crm/companies/${company.id}`)}
+                {/* Row 1 – Identity: name + stage + status + stale */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                  <Typography
+                    variant="h6"
+                    sx={{
+                      fontSize: { xs: '20px', md: '24px' },
+                      fontWeight: 600,
+                      lineHeight: 1.2,
+                    }}
                   >
-                    {company.companyName || company.name}
+                    {deal.name}
                   </Typography>
+                  <IconButton size="small" aria-label="Edit deal name" onClick={handleStartEditDealName}>
+                    <EditIcon fontSize="small" />
+                  </IconButton>
+                  <StageChip stage={deal.stage} size="small" useCustomColors={true} />
+                  <StatusChip status={getCurrentStatus()} onStatusChange={handleStatusChange} />
+                  {(() => {
+                    const d = getDaysSinceLastTouch();
+                    if (d == null) return null;
+                    const isStale = d >= 7;
+                    return (
+                      <Tooltip title="Days since last touch (based on last updated time)">
+                        <Chip
+                          size="small"
+                          label={`${d}d`}
+                          sx={{
+                            height: 28,
+                            fontWeight: 600,
+                            bgcolor: isStale ? 'rgba(239, 68, 68, 0.10)' : 'rgba(16, 185, 129, 0.10)',
+                            color: isStale ? '#EF4444' : '#10B981',
+                            border: '1px solid',
+                            borderColor: isStale ? 'rgba(239, 68, 68, 0.25)' : 'rgba(16, 185, 129, 0.25)',
+                          }}
+                        />
+                      </Tooltip>
+                    );
+                  })()}
+                </Box>
+
+                {/* Line 2: Icon Row (Record Spec) */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap', mb: 0.5 }}>
+                  <Tooltip title="Add Task">
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowCreateTaskDialog(true)}
+                      sx={{
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                        },
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <AddTaskIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Add Note">
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowAddNoteDialog(true)}
+                      sx={{
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                        },
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      {/* Match Contact header note icon */}
+                      <NoteIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Log Activity">
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowLogActivityDialog(true)}
+                      sx={{
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                        },
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <CheckCircleIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
+
+                {/* Row 3 – Company / Location / Contacts / Salespeople (keep this row) */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+                  {company && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                      <BusinessIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          fontSize: '14px',
+                          fontWeight: 600,
+                          color: 'rgb(74, 144, 226)',
+                          cursor: 'pointer',
+                          '&:hover': { textDecoration: 'underline' },
+                        }}
+                        onClick={() => navigate(`/companies/${company.id}`)}
+                      >
+                        {company.companyName || company.name}
+                      </Typography>
+                    </Box>
+                  )}
+
                   {(() => {
                     const locations = (deal as any)?.associations?.locations || [];
-                    if (!Array.isArray(locations) || locations.length === 0) return null;
+                    if (!company || !Array.isArray(locations) || locations.length === 0) return null;
                     const locEntry: any = locations.find((l: any) => typeof l === 'object') || locations[0];
                     const locationId = typeof locEntry === 'string' ? locEntry : locEntry.id;
                     const assocName = typeof locEntry === 'string' ? '' : (locEntry.snapshot?.name || locEntry.name || '');
                     const displayName = assocName || locationData?.name || locationData?.nickname || '';
                     if (!locationId || !displayName) return null;
                     return (
-                      <>
-                        <Typography variant="body2" color="text.secondary">/</Typography>
-                        <Typography 
-                          variant="body2" 
-                          color="primary"
-                          sx={{ 
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                        <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.35)' }}>
+                          /
+                        </Typography>
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            fontSize: '14px',
+                            fontWeight: 600,
+                            color: 'rgb(74, 144, 226)',
                             cursor: 'pointer',
-                            textDecoration: 'underline',
-                            '&:hover': { color: 'primary.dark' }
+                            '&:hover': { textDecoration: 'underline' },
                           }}
-                          onClick={() => navigate(`/crm/companies/${company.id}/locations/${locationId}`)}
+                          onClick={() => navigate(`/companies/${company.id}/locations/${locationId}`)}
                         >
                           {displayName}
                         </Typography>
+                      </Box>
+                    );
+                  })()}
+
+                  {associatedContacts.length > 0 && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
+                      <GroupIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                      {associatedContacts.slice(0, 3).map((c: any, idx: number) => (
+                        <Typography
+                          key={c.id || idx}
+                          variant="body2"
+                          sx={{
+                            fontSize: '14px',
+                            fontWeight: 600,
+                            color: 'rgb(74, 144, 226)',
+                            cursor: 'pointer',
+                            '&:hover': { textDecoration: 'underline' },
+                          }}
+                          onClick={() => c.id && navigate(`/contacts/${c.id}`)}
+                        >
+                          {c.fullName || c.name || 'Contact'}
+                        </Typography>
+                      ))}
+                      {associatedContacts.length > 3 && (
+                        <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                          +{associatedContacts.length - 3}
+                        </Typography>
+                      )}
+                    </Box>
+                  )}
+
+                  {associatedSalespeople.length > 0 && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
+                      <PersonIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                      <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                        {associatedSalespeople
+                          .slice(0, 2)
+                          .map((sp: any) => sp.displayName || sp.fullName || sp.name || sp.email || 'Salesperson')
+                          .join(' • ')}
+                        {associatedSalespeople.length > 2 ? ` • +${associatedSalespeople.length - 2}` : ''}
+                      </Typography>
+                    </Box>
+                  )}
+                </Box>
+
+                {/* Row 2 – Economics + Momentum */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+                  {(() => {
+                    const range = calculateExpectedRevenueRange();
+                    const qual = stageData?.qualification || {};
+                    const markup = typeof qual.expectedAverageMarkup === 'number' ? qual.expectedAverageMarkup : null;
+                    const fallbackEstimatedRevenue =
+                      typeof (deal as any)?.estimatedRevenue === 'number' && (deal as any).estimatedRevenue > 0
+                        ? Number((deal as any).estimatedRevenue)
+                        : null;
+
+                    const dealSizeDisplay = range?.hasData
+                      ? `$${Math.round(range.min).toLocaleString()} – $${Math.round(range.max).toLocaleString()}`
+                      : fallbackEstimatedRevenue != null
+                      ? `$${Math.round(fallbackEstimatedRevenue).toLocaleString()}`
+                      : '—';
+
+                    const monthlyDisplay = (() => {
+                      if (range?.hasData && typeof range.min === 'number' && typeof range.max === 'number') {
+                        const min = Math.round(range.min / 12);
+                        const max = Math.round(range.max / 12);
+                        return `$${min.toLocaleString()} – $${max.toLocaleString()}`;
+                      }
+                      if (fallbackEstimatedRevenue != null) {
+                        return `$${Math.round(fallbackEstimatedRevenue / 12).toLocaleString()}`;
+                      }
+                      return '—';
+                    })();
+
+                    return (
+                      <>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                          <DealIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                          <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                            Deal size:
+                          </Typography>
+                          <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.85)', fontWeight: 600 }}>
+                            {dealSizeDisplay}
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                          <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                            Est. monthly:
+                          </Typography>
+                          <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.85)', fontWeight: 600 }}>
+                            {monthlyDisplay}
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                          <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                            Markup:
+                          </Typography>
+                          <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.85)', fontWeight: 600 }}>
+                            {markup != null ? `${markup}%` : '—'}
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                          <TimelineIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                          <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                            Last touch:
+                          </Typography>
+                          <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.85)', fontWeight: 600 }}>
+                            {getLastTouchDate()?.toLocaleDateString() || '—'}
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                          <EventIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                          <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                            Next:
+                          </Typography>
+                          <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.85)', fontWeight: 600 }}>
+                            —
+                          </Typography>
+                        </Box>
                       </>
                     );
                   })()}
                 </Box>
-              )}
-
-              {/* Associated Contacts inline */}
-              {Array.isArray(associatedContacts) && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.25, flexWrap: 'wrap' }}>
-                  <GroupIcon fontSize="small" color="primary" />
-                  {/* <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500, mr: 0.25 }}>Contacts:</Typography> */}
-                  {associatedContacts.length > 0 ? (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
-                      {associatedContacts.slice(0, 10).map((contact: any, index: number) => (
-                        <Box key={contact.id || index} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                          <MUILink
-                            underline="hover"
-                            color="primary"
-                            href={`/crm/contacts/${contact.id}`}
-                            onClick={(e) => { e.preventDefault(); navigate(`/crm/contacts/${contact.id}`); }}
-                          >
-                            <Typography variant="body2" color="primary">
-                              {(contact.fullName || contact.name || 'Contact')}
-                            </Typography>
-                          </MUILink>
-                          {index < Math.min(associatedContacts.length, 10) - 1 && (
-                            <Typography variant="body2" color="text.secondary">•</Typography>
-                          )}
-                        </Box>
-                      ))}
-                      {/* {associatedContacts.length > 3 && (
-                        <Typography variant="body2" color="text.secondary">+{associatedContacts.length - 5} more</Typography>
-                      )} */}
-                    </Box>
-                  ) : (
-                    <Typography variant="body2" color="text.secondary">None</Typography>
-                  )}
-                </Box>
-              )}
-
-              {/* Associated Salespeople inline */}
-              {Array.isArray(associatedSalespeople) && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.25, flexWrap: 'wrap' }}>
-                  <PersonIcon fontSize="small" color="primary" />
-                  {associatedSalespeople.length > 0 ? (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
-                      {associatedSalespeople.slice(0, 10).map((sp: any, index: number) => (
-                        <Box key={sp.id || index} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                          <Typography variant="body2" color="text.primary">
-                            {sp.displayName || sp.fullName || sp.name || sp.email || 'Salesperson'}
-                          </Typography>
-                          {index < Math.min(associatedSalespeople.length, 10) - 1 && (
-                            <Typography variant="body2" color="text.secondary">•</Typography>
-                          )}
-                        </Box>
-                      ))}
-                    </Box>
-                  ) : (
-                    <Typography variant="body2" color="text.secondary">None</Typography>
-                  )}
-                </Box>
-              )}
-
-                              {/* Deal Age & Health Indicators */}
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 0, marginTop: 0 }}>
-                  {/* Deal Age */}
-                  {(() => {
-                    const age = getDealAge((deal as any)?.createdAt);
-                    if (!age) return null;
-                    
-                    return (
-                      <DealAgeChip 
-                        ageDays={age.days} 
-                        createdAt={age.date}
-                        showEmoji={true}
-                        variant="default"
-                      />
-                    );
-                  })()}
-                  
-                  {/* Deal Health */}
-                  {(() => {
-                    const age = getDealAge((deal as any)?.createdAt);
-                    const health = getDealHealth(deal, age);
-                    
-                    return (
-                      <HealthBadge 
-                        bucket={health.bucket as any}
-                        score={health.score}
-                        reasons={health.reasons}
-                        showScore={true}
-                        variant="default"
-                      />
-                    );
-                  })()}
-                  
-                  {/* Deal Priority */}
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Priority:</Typography>
-                    <Chip
-                      label={deal.estimatedRevenue > 100000 ? 'High' : deal.estimatedRevenue > 50000 ? 'Medium' : 'Low'}
-                      size="small"
-                      sx={{
-                        bgcolor: deal.estimatedRevenue > 100000 ? 'error.light' : deal.estimatedRevenue > 50000 ? 'warning.light' : 'success.light',
-                        color: deal.estimatedRevenue > 100000 ? 'error.dark' : deal.estimatedRevenue > 50000 ? 'warning.dark' : 'success.dark',
-                        fontWeight: 500,
-                        fontSize: '0.75rem',
-                        my: 0.5
-                      }}
-                    />
-                  </Box>
-                </Box>
+              </Box>
             </Box>
           </Box>
-
-          {/* Action Buttons */}
-          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
-            <Box sx={{ display: 'flex', gap: 1 }}>
-              <Button 
-                variant="outlined" 
-                startIcon={<AddIcon />}
-                onClick={() => setShowAddNoteDialog(true)}
+        }
+        titleRightActions={
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, flexWrap: 'wrap' }}>
+            {deal.archived === true ? (
+              <Button
+                variant="contained"
                 size="small"
-              >
-                Add Note
-              </Button>
-              <Button 
-                variant="contained" 
-                startIcon={<CheckCircleIcon />}
-                onClick={() => setShowLogActivityDialog(true)}
-                sx={{ 
-                  bgcolor: 'primary.main',
+                disabled={activatingDeal}
+                onClick={handleActivateDeal}
+                sx={{
+                  bgcolor: '#0B63C5',
                   color: 'white',
-                  '&:hover': {
-                    bgcolor: 'primary.dark'
-                  }
+                  textTransform: 'none',
+                  borderRadius: 2,
+                  px: 2.25,
+                  '&:hover': { bgcolor: '#0A58AE' },
+                  '&:disabled': { bgcolor: 'grey.400', color: 'grey.600' },
                 }}
               >
-                Log Activity
+                {activatingDeal ? 'Activating…' : 'Activate'}
               </Button>
+            ) : (
               <GenerateJobOrderButton
                 dealId={deal.id}
                 dealName={deal.name}
@@ -2016,7 +2789,6 @@ const DealDetails: React.FC = () => {
                 companyName={deal.companyName}
                 jobTitles={stageData?.discovery?.jobTitles || []}
                 onJobOrderCreated={(jobOrderIds) => {
-                  // Optionally navigate to the job orders or show success message
                   console.log('Job Orders created:', jobOrderIds);
                 }}
                 disabled={deal.stage !== 'closedWon' && deal.stage !== 'verbalAgreement'}
@@ -2026,130 +2798,121 @@ const DealDetails: React.FC = () => {
                   bgcolor: deal.stage === 'closedWon' || deal.stage === 'verbalAgreement' ? 'success.main' : 'grey.400',
                   color: 'white',
                   '&:hover': {
-                    bgcolor: deal.stage === 'closedWon' || deal.stage === 'verbalAgreement' ? 'success.dark' : 'grey.500'
+                    bgcolor: deal.stage === 'closedWon' || deal.stage === 'verbalAgreement' ? 'success.dark' : 'grey.500',
                   },
                   '&:disabled': {
                     bgcolor: 'grey.400',
-                    color: 'grey.600'
-                  }
+                    color: 'grey.600',
+                  },
                 }}
               />
-            </Box>
+            )}
+            <UniversalBackButton to="/crm" />
           </Box>
-        </Box>
-        
-
-      </Box>
+        }
+        showDivider={false}
+      />
 
       {/* Main Content Area */}
-      <Box sx={{ display: 'flex', gap: 3 }}>
-        {/* Main Content Area */}
-        <Box sx={{ width: '100%' }}>
-          {/* Tabs */}
-          <Paper elevation={1} sx={{ mb: 3, borderRadius: 1 }}>
-            <Tabs
-              value={tabValue}
-              onChange={handleTabChange}
-              indicatorColor="primary"
-              textColor="primary"
-              variant="scrollable"
-              scrollButtons="auto"
-              aria-label="Deal details tabs"
-            >
-              <Tab 
-                label={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <DashboardIcon fontSize="small" />
-                    Dashboard
-                  </Box>
-                } 
-              />
-
-              <Tab 
-                label={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <StairsIcon fontSize="small" />
-                    Stages
-                  </Box>
-                } 
-              />
-              <Tab 
-                label={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <NotesIcon fontSize="small" />
-                    Notes
-                  </Box>
-                } 
-              />
-              <Tab 
-                label={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <TimelineIcon fontSize="small" />
-                    Activity
-                  </Box>
-                } 
-              />
-              <Tab 
-                label={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <WorkIcon fontSize="small" />
-                    Draft Job Order
-                  </Box>
-                } 
-              />
-              <Tab 
-                label={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <DescriptionIcon fontSize="small" />
-                    Contracts
-                  </Box>
-                } 
-              />
-            </Tabs>
-          </Paper>
+      <Box sx={{ px: { xs: 2, md: 3 }, pt: 1, pb: 3, flex: 1, minHeight: 0 }}>
+        {/* Record-spec tab nav */}
+        <Box
+          sx={{
+            mt: 0,
+            mb: 2,
+            px: 2,
+            py: 1.25,
+            backgroundColor: '#F9FAFB',
+            borderRadius: 2,
+            border: '1px solid #EAEEF4',
+            overflowX: 'auto',
+            overflowY: 'hidden',
+            '&::-webkit-scrollbar': { height: '6px' },
+            '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)', borderRadius: '4px' },
+            '&::-webkit-scrollbar-thumb': {
+              background: 'rgba(0, 0, 0, 0.15)',
+              borderRadius: '4px',
+              '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+            },
+            scrollbarWidth: 'thin',
+            scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+          }}
+        >
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
+            {dealTabs.map((t) => {
+              const isActive = tabValue === t.index;
+              return (
+                <Button
+                  key={t.label}
+                  startIcon={t.icon}
+                  onClick={() => setTabValue(t.index)}
+                  variant={isActive ? 'contained' : 'text'}
+                  sx={{
+                    borderRadius: '18px',
+                    textTransform: 'none',
+                    fontWeight: 500,
+                    px: 2.5,
+                    py: 0.75,
+                    height: 36,
+                    ...(isActive
+                      ? {
+                          backgroundColor: '#0B63C5',
+                          color: 'white',
+                          '&:hover': { backgroundColor: '#0B63C5' },
+                        }
+                      : {
+                          color: '#6B7280',
+                          backgroundColor: 'white',
+                          border: '1px solid #E5E7EB',
+                          '&:hover': { backgroundColor: '#F3F4F6' },
+                        }),
+                  }}
+                >
+                  {t.label}
+                </Button>
+              );
+            })}
+          </Box>
+        </Box>
 
       {/* Tab Panels */}
-      <TabPanel value={tabValue} index={0}>
-        {/* Dashboard - Matching CompanyDetails Layout */}
-        <Grid container spacing={3}>
-          {/* Left Column - Action Focused */}
-          <Grid item xs={12} md={4}>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Next Steps Widget */}
-              <Box sx={{ mb: 0 }}>
-                <SectionCard title="Next Steps">
-                  <NextStepsWidget
-                    stageData={stageData}
-                    currentStage={deal.stage}
-                    onNavigateToStages={() => setTabValue(1)}
-                    onSkipQuestion={handleSkipQuestion}
-                  />
-                </SectionCard>
-              </Box>
 
-              {/* To-Dos Widget */}
-              <Box sx={{ mb: 0 }}>
-                <SectionCard title="To-Dos" action={
-                  <IconButton 
-                    size="small" 
-                    title="Add new task"
-                    onClick={() => {
-                      const primaryCompanyId = getDealPrimaryCompanyId(deal);
-                      setPrefilledTaskData({
-                        associations: {
-                          deals: [deal.id],
-                          companies: primaryCompanyId ? [primaryCompanyId] : [],
-                          contacts: [],
-                          salespeople: []
-                        }
-                      });
-                      setShowCreateTaskDialog(true);
-                    }}
-                  >
-                    <AddIcon />
-                  </IconButton>
-                }>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <TabPanel value={tabValue} index={1}>
+        {/* Tasks - Match ContactDetails tab layout */}
+        <Grid container spacing={3}>
+          <Grid item xs={12} md={9}>
+            <Grid container spacing={3}>
+              {/* Left Column (35%): Action Focused - To-Dos Only */}
+              <Grid item xs={12} md={4}>
+                <Card sx={{ minHeight: 600 }}>
+                  <CardHeader
+                    title="To-Dos"
+                    subheader="Priority tasks for this deal"
+                    action={
+                      <IconButton
+                        size="small"
+                        title="Add new task"
+                        onClick={() => {
+                          const primaryCompanyId = getDealPrimaryCompanyId(deal);
+                          setPrefilledTaskData({
+                            associations: {
+                              deals: [deal.id],
+                              companies: primaryCompanyId ? [primaryCompanyId] : [],
+                              contacts: associatedContacts.map((c: any) => c?.id).filter(Boolean),
+                              salespeople: associatedSalespeople.map((s: any) => s?.id).filter(Boolean),
+                            },
+                          });
+                          setShowCreateTaskDialog(true);
+                        }}
+                      >
+                        <AddIcon />
+                      </IconButton>
+                    }
+                    sx={{ p: 0, mb: 2 }}
+                    titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                    subheaderTypographyProps={{ variant: 'body2', color: 'text.secondary' }}
+                  />
+                  <CardContent sx={{ p: 0 }}>
                     <TasksDashboard
                       key={tasksDashboardKey}
                       entityId={deal.id}
@@ -2159,38 +2922,46 @@ const DealDetails: React.FC = () => {
                       preloadedContacts={associatedContacts}
                       preloadedSalespeople={associatedSalespeople}
                       preloadedCompany={company}
-                      showOnlyTodos={true}
+                      showOnlyTodos
                     />
-                  </Box>
-                </SectionCard>
-              </Box>
+                  </CardContent>
+                </Card>
+              </Grid>
 
-              {/* Appointments Widget */}
-              <Box sx={{ mb: 0 }}>
-                <SectionCard title="Appointments" action={
-                  <IconButton 
-                    size="small" 
-                    title="Schedule meeting"
-                    onClick={() => {
-                      const primaryCompanyIdAppt = getDealPrimaryCompanyId(deal);
-                      setPrefilledTaskData({
-                        classification: 'appointment',
-                        type: 'scheduled_meeting_virtual',
-                        title: 'New Meeting',
-                        associations: {
-                          deals: [deal.id],
-                          companies: primaryCompanyIdAppt ? [primaryCompanyIdAppt] : [],
-                          contacts: [],
-                          salespeople: []
-                        }
-                      });
-                      setShowCreateTaskDialog(true);
-                    }}
-                  >
-                    <AddIcon />
-                  </IconButton>
-                }>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              {/* Appointments Widget (Expanded to take up remaining space) */}
+              <Grid item xs={12} md={8}>
+                <Card sx={{ minHeight: 600 }}>
+                  <CardHeader
+                    title="Appointments"
+                    subheader="Upcoming meetings & calls"
+                    action={
+                      <IconButton
+                        size="small"
+                        title="Schedule meeting"
+                        onClick={() => {
+                          const primaryCompanyIdAppt = getDealPrimaryCompanyId(deal);
+                          setPrefilledTaskData({
+                            classification: 'appointment',
+                            type: 'scheduled_meeting_virtual',
+                            title: 'New Meeting',
+                            associations: {
+                              deals: [deal.id],
+                              companies: primaryCompanyIdAppt ? [primaryCompanyIdAppt] : [],
+                              contacts: associatedContacts.map((c: any) => c?.id).filter(Boolean),
+                              salespeople: associatedSalespeople.map((s: any) => s?.id).filter(Boolean),
+                            },
+                          });
+                          setShowCreateTaskDialog(true);
+                        }}
+                      >
+                        <AddIcon />
+                      </IconButton>
+                    }
+                    sx={{ p: 0, mb: 2 }}
+                    titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                    subheaderTypographyProps={{ variant: 'body2', color: 'text.secondary' }}
+                  />
+                  <CardContent sx={{ p: 0 }}>
                     <AppointmentsDashboard
                       entityId={deal.id}
                       entityType="deal"
@@ -2200,505 +2971,91 @@ const DealDetails: React.FC = () => {
                       preloadedSalespeople={associatedSalespeople}
                       preloadedCompany={company}
                     />
-                  </Box>
-                </SectionCard>
-              </Box>
-            </Box>
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
           </Grid>
 
-          {/* Center Column - Deal Intelligence */}
-          <Grid item xs={12} md={5}>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Sales Coach */}
-              <Card>
-                <CardHeader 
-                  title="Sales Coach" 
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                  action={
-                    <IconButton size="small" onClick={() => {
-                      const event = new CustomEvent('startNewSalesCoachConversation', {
-                        detail: { entityId: deal.id }
-                      });
-                      window.dispatchEvent(event);
-                    }}>
-                      <AddIcon />
-                    </IconButton>
-                  }
-                />
-                <CardContent sx={{ p: 0 }}>
-                  <Box sx={{ height: 650 }}>
-                    <SalesCoach 
-                      entityType="deal"
-                      entityId={deal.id}
-                      entityName={deal.name || 'Deal'}
-                      tenantId={tenantId}
-                      associations={{
-                        companies: company ? [company] : [],
-                        contacts: associatedContacts,
-                        deals: [deal],
-                        salespeople: associatedSalespeople,
-                        locations: (deal as any)?.associations?.locations || []
-                      }}
-                      hideHeader
-                    />
-                  </Box>
-                </CardContent>
-              </Card>
-
-              {/* Relationship Map */}
-              <Box sx={{ mb: 0 }}>
-                <SectionCard title="Relationship Map">
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                    {associatedContacts.length > 0 ? (
-                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        {associatedContacts.slice(0, 4).map((contact, index) => (
-                          <Box key={contact.id || index} sx={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: 0.5, 
-                            p: 0.5, 
-                            bgcolor: 'grey.50', 
-                            borderRadius: 0.5,
-                            flex: 1
-                          }}>
-                            <Avatar sx={{ width: 16, height: 16, fontSize: '0.625rem' }}>
-                              <PersonIcon sx={{ fontSize: 12 }} />
-                            </Avatar>
-                            <Typography variant="caption" fontSize="0.625rem" sx={{ flex: 1 }}>
-                              {contact.fullName?.length > 15 ? contact.fullName.substring(0, 15) + '...' : contact.fullName}
-                            </Typography>
-                            <Chip 
-                              label="contact" 
-                              size="small" 
-                              color="primary"
-                              sx={{ height: 16, fontSize: '0.625rem' }}
-                            />
-                          </Box>
-                        ))}
-                      </Box>
-                    ) : (
-                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        <Skeleton variant="rectangular" height={32} />
-                        <Skeleton variant="rectangular" height={24} />
-                        <Skeleton variant="rectangular" height={24} />
-                        <Skeleton variant="rectangular" height={24} />
-                      </Box>
-                    )}
-                  </Box>
-                </SectionCard>
-              </Box>
-
-              {/* Suggested by AI */}
-              <Box sx={{ mb: 0 }}>
-                <SectionCard title="Suggested by AI">
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                    {dealCoachActions.length > 0 ? (
-                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        {dealCoachActions.slice(0, 3).map((action, index) => (
-                          <Box key={action.action} sx={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: 0.5, 
-                            p: 0.5, 
-                            bgcolor: 'grey.50', 
-                            borderRadius: 0.5,
-                            flex: 1
-                          }}>
-                            <Avatar sx={{ width: 16, height: 16, fontSize: '0.625rem' }}>
-                              <AIIcon sx={{ fontSize: 12 }} />
-                            </Avatar>
-                            <Typography variant="caption" fontSize="0.625rem" sx={{ flex: 1 }}>
-                              {action.label?.length > 15 ? action.label.substring(0, 15) + '...' : action.label}
-                            </Typography>
-                            <Chip 
-                              label={action.priority} 
-                              size="small" 
-                              color={action.priority === 'high' ? 'error' : 'warning'}
-                              sx={{ height: 16, fontSize: '0.625rem' }}
-                            />
-                          </Box>
-                        ))}
-                      </Box>
-                    ) : (
-                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        <Skeleton variant="rectangular" height={32} />
-                        <Skeleton variant="rectangular" height={24} />
-                        <Skeleton variant="rectangular" height={24} />
-                      </Box>
-                    )}
-                  </Box>
-                </SectionCard>
-              </Box>
-            </Box>
-          </Grid>
-
-          {/* Right Column - Recent Activity, Active Salespeople & Contacts */}
           <Grid item xs={12} md={3}>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Recent Activity */}
-              <Box sx={{ mb: 0 }}>
-                <SectionCard title="Recent Activity">
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                    {activityCount > 0 ? (
-                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        <Typography variant="body2" color="text.secondary">
-                          {activityCount} activities recorded
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          Last activity: {new Date().toLocaleDateString()}
-                        </Typography>
-                      </Box>
-                    ) : (
-                      <Typography variant="body2" color="text.secondary">
-                        No recent activity. Activities will appear here as they occur.
-                      </Typography>
-                    )}
-                  </Box>
-                </SectionCard>
-              </Box>
-
-              {/* Company Widget */}
-              <Box sx={{ mb: 0 }}>
-                <SectionCard title="Company" action={
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    onClick={() => {
-                      if (company) {
-                        navigate(`/crm/companies/${company.id}`);
-                      }
-                    }}
-                    sx={{ 
-                      minWidth: 'auto',
-                      px: 1,
-                      py: 0.5,
-                      fontSize: '0.75rem',
-                      textTransform: 'none'
-                    }}
-                  >
-                    View
-                  </Button>
-                }>
-                  {company ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      <Box
-                        sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                        onClick={() => navigate(`/crm/companies/${company.id}`)}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => { 
-                          if (e.key === 'Enter' || e.key === ' ') { 
-                            e.preventDefault(); 
-                            navigate(`/crm/companies/${company.id}`);
-                          } 
-                        }}
-                      >
-                        <Avatar 
-                          src={company.logo || company.logoUrl || company.logo_url || company.avatar}
-                          sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}
-                        >
-                          {(company.companyName || company.name || 'C').charAt(0).toUpperCase()}
-                        </Avatar>
-                        <Box sx={{ flex: 1 }}>
-                          <Typography variant="body2" fontWeight="medium">
-                            {company.companyName || company.name || 'Unknown Company'}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {company.industry || company.sector || 'No industry'}
-                          </Typography>
-                        </Box>
-                      </Box>
-                    </Box>
-                  ) : (
-                    <Box sx={{ textAlign: 'center', py: 3 }}>
-                      <Typography variant="body2" color="text.secondary">
-                        No company assigned
-                      </Typography>
-                    </Box>
-                  )}
-                </SectionCard>
-              </Box>
-
-              {/* Active Salespeople Widget */}
-              <Box sx={{ mb: 0 }}>
-                <SectionCard title="Active Salespeople" action={
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    onClick={() => setShowManageSalespeopleDialog(true)}
-                    sx={{ 
-                      minWidth: 'auto',
-                      px: 1,
-                      py: 0.5,
-                      fontSize: '0.75rem',
-                      textTransform: 'none'
-                    }}
-                  >
-                    Edit
-                  </Button>
-                }>
-                  {loadingSalespeople ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      <Skeleton variant="rectangular" height={48} />
-                      <Skeleton variant="rectangular" height={48} />
-                    </Box>
-                  ) : associatedSalespeople.length > 0 ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      {associatedSalespeople.map((salesperson) => (
-                        <Box
-                          key={salesperson.id}
-                          sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}
-                        >
-                          <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
-                            {salesperson.fullName?.charAt(0) || salesperson.firstName?.charAt(0) || salesperson.displayName?.charAt(0) || 'S'}
-                          </Avatar>
-                          <Box sx={{ flex: 1 }}>
-                            <Typography variant="body2" fontWeight="medium">
-                              {salesperson.fullName || salesperson.displayName || `${salesperson.firstName || ''} ${salesperson.lastName || ''}`.trim() || 'Unknown Salesperson'}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {salesperson.email || salesperson.title || 'No additional info'}
-                            </Typography>
-                          </Box>
-                        </Box>
-                      ))}
-                    </Box>
-                  ) : (
-                    <Box sx={{ textAlign: 'center', py: 3 }}>
-                      {/* <Typography variant="h6" color="text.secondary" sx={{ mb: 1 }}>
-                        No salespeople assigned
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                        Assign salespeople to this deal
-                      </Typography>
-                      <Button 
-                        variant="outlined" 
-                        size="small"
-                        onClick={() => {
-                          console.log('Assign salespeople to deal');
-                        }}
-                      >
-                        Assign Salespeople
-                      </Button> */}
-                    </Box>
-                  )}
-                </SectionCard>
-              </Box>
-
-              {/* Contacts Widget */}
-              <Box sx={{ mb: 0 }}>
-                <SectionCard title="Deal Contacts" action={
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    onClick={() => setShowManageContactsDialog(true)}
-                    sx={{ 
-                      minWidth: 'auto',
-                      px: 1,
-                      py: 0.5,
-                      fontSize: '0.75rem',
-                      textTransform: 'none'
-                    }}
-                  >
-                    Edit
-                  </Button>
-                }>
-                  {associatedContacts.length > 0 ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      {associatedContacts.map((contact) => (
-                        <Box
-                          key={contact.id}
-                          sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                          onClick={() => navigate(`/crm/contacts/${contact.id}`)}
-                          role="button"
-                          tabIndex={0}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/crm/contacts/${contact.id}`); } }}
-                        >
-                          <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
-                            {contact.fullName?.charAt(0) || contact.firstName?.charAt(0) || contact.name?.charAt(0) || 'C'}
-                          </Avatar>
-                          <Box sx={{ flex: 1 }}>
-                            <Typography variant="body2" fontWeight="medium">
-                              {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || contact.name || 'Unknown Contact'}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {contact.title || 'No title'}
-                            </Typography>
-                          </Box>
-                        </Box>
-                      ))}
-                    </Box>
-                  ) : (
-                    <Box sx={{ textAlign: 'center', py: 3 }}>
-                      {/* <Typography variant="h6" color="text.secondary" sx={{ mb: 1 }}>
-                        No contacts yet
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                        Add contacts to this deal to get started
-                      </Typography>
-                      <Button 
-                        variant="outlined" 
-                        size="small"
-                        onClick={() => {
-                          // TODO: Open add contact dialog or navigate to contacts tab
-                          console.log('Add contact to deal');
-                        }}
-                      >
-                        Add Contact
-                      </Button> */}
-                    </Box>
-                  )}
-                </SectionCard>
-              </Box>
-
-              {/* Location Widget */}
-              <Box sx={{ mb: 0 }}>
-                <SectionCard title="Location" action={
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    onClick={() => setShowManageLocationDialog(true)}
-                    sx={{ 
-                      minWidth: 'auto',
-                      px: 1,
-                      py: 0.5,
-                      fontSize: '0.75rem',
-                      textTransform: 'none'
-                    }}
-                  >
-                    Edit
-                  </Button>
-                }>
-                  {(() => {
-                    const locations = (deal as any)?.associations?.locations || [];
-                    const hasLocations = locations.length > 0;
-                    
-                    if (hasLocations) {
-                      // Get the first location (assuming primary location)
-                      const locationEntry = locations[0];
-                      
-                      const locationId = typeof locationEntry === 'string' ? locationEntry : locationEntry.id;
-                      const locationName = typeof locationEntry === 'string' ? 'Unknown Location' : (locationEntry.snapshot?.name || locationEntry.name || 'Unknown Location');
-                      const locationNickname = typeof locationEntry === 'string' ? '' : (locationEntry.snapshot?.nickname || locationEntry.nickname || '');
-                      const locationAddress = typeof locationEntry === 'string' ? '' : (locationEntry.snapshot?.address || locationEntry.address || '');
-                      
-                      // Location data loading is handled by useEffect hook to prevent infinite re-renders
-                      
-                      // Use database location data if available, otherwise use association data
-                      const displayName = locationData?.nickname || locationData?.name || locationNickname || locationName;
-                      const displayAddress = locationData?.address || locationAddress;
-                      
-                      return (
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                          {loadingLocation ? (
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
-                              <CircularProgress size={16} />
-                              <Typography variant="body2" color="text.secondary">
-                                Loading location...
-                              </Typography>
-                            </Box>
-                          ) : (
-                            <Box
-                              sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                              onClick={() => {
-                                if (company && locationId) {
-                                  navigate(`/crm/companies/${company.id}/locations/${locationId}`);
-                                }
-                              }}
-                              role="button"
-                              tabIndex={0}
-                              onKeyDown={(e) => { 
-                                if (e.key === 'Enter' || e.key === ' ') { 
-                                  e.preventDefault(); 
-                                  if (company && locationId) {
-                                    navigate(`/crm/companies/${company.id}/locations/${locationId}`);
-                                  }
-                                } 
-                              }}
-                            >
-                              <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}>
-                                <BusinessIcon sx={{ fontSize: 16 }} />
-                              </Avatar>
-                              <Box sx={{ flex: 1 }}>
-                                <Typography variant="body2" fontWeight="medium">
-                                  {displayName}
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary">
-                                  {displayAddress || 'No address'}
-                                </Typography>
-                              </Box>
-                            </Box>
-                          )}
-                        </Box>
-                      );
-                    } else {
-                      return (
-                        <Box sx={{ textAlign: 'center', py: 3 }}>
-                          <Typography variant="body2" color="text.secondary">
-                            No location assigned
-                          </Typography>
-                        </Box>
-                      );
-                    }
-                  })()}
-                </SectionCard>
-              </Box>
-            </Box>
+            {dealSidebarContent}
           </Grid>
         </Grid>
       </TabPanel>
 
-      <TabPanel value={tabValue} index={1}>
-        {featureFlags.replatformDealForms ? (
-          <DealFormRenderer
-            deal={deal}
-            tenantId={tenantId}
-            stage={deal.stage === 'qualification' ? 'qualification' : deal.stage === 'scoping' ? 'scoping' : 'discovery'}
-            featureEnabled={true}
-            onSaved={async () => {
-              // reload foundational stageData so other parts stay in sync
-              try {
-                const dealDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id));
-                if (dealDoc.exists()) {
-                  const d = { id: dealDoc.id, ...dealDoc.data() } as any;
-                  setDeal(d);
-                  setStageData(d.stageData || {});
-                }
-              } catch (e) { /* ignore */ }
-            }}
-          />
-        ) : (
-          <DealStageForms
-            dealId={deal.id}
-            tenantId={tenantId}
-            currentStage={deal.stage}
-            stageData={stageData || {}}
-            onStageDataChange={handleStageDataChange}
-            onStageAdvance={handleStageAdvance}
-            onStageIncomplete={handleMarkStageIncomplete}
-            associatedContacts={associatedContacts}
-          />
-        )}
+      <TabPanel value={tabValue} index={0}>
+        <Grid container spacing={3}>
+          <Grid item xs={12} md={9}>
+            {featureFlags.replatformDealForms ? (
+              <DealFormRenderer
+                deal={deal}
+                tenantId={tenantId}
+                stage={deal.stage === 'qualification' ? 'qualification' : deal.stage === 'scoping' ? 'scoping' : 'discovery'}
+                featureEnabled={true}
+                onSaved={async () => {
+                  // reload foundational stageData so other parts stay in sync
+                  try {
+                    const dealDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id));
+                    if (dealDoc.exists()) {
+                      const d = { id: dealDoc.id, ...dealDoc.data() } as any;
+                      setDeal(d);
+                      setStageData(d.stageData || {});
+                    }
+                  } catch (e) {
+                    /* ignore */
+                  }
+                }}
+              />
+            ) : (
+              <DealStageForms
+                dealId={deal.id}
+                tenantId={tenantId}
+                currentStage={deal.stage}
+                stageData={stageData || {}}
+                onStageDataChange={handleStageDataChange}
+                onStageAdvance={handleStageAdvance}
+                onStageIncomplete={handleMarkStageIncomplete}
+                associatedContacts={associatedContacts}
+              />
+            )}
+          </Grid>
+          <Grid item xs={12} md={3}>
+            {dealSidebarContent}
+          </Grid>
+        </Grid>
       </TabPanel>
 
       <TabPanel value={tabValue} index={2}>
-        <CRMNotesTab
-          entityId={deal.id}
-          entityType="deal"
-          entityName={deal.name || 'Deal'}
-          tenantId={tenantId}
-        />
+        <Grid container spacing={3}>
+          <Grid item xs={12} md={9}>
+            <CRMNotesTab
+              entityId={deal.id}
+              entityType="deal"
+              entityName={deal.name || 'Deal'}
+              tenantId={tenantId}
+            />
+          </Grid>
+          <Grid item xs={12} md={3}>
+            {dealSidebarContent}
+          </Grid>
+        </Grid>
       </TabPanel>
 
       <TabPanel value={tabValue} index={3}>
-        <DealActivityTab
-          deal={deal}
-          tenantId={tenantId}
-        />
+        <Grid container spacing={3}>
+          <Grid item xs={12} md={9}>
+            <DealActivityTab deal={deal} tenantId={tenantId} />
+          </Grid>
+          <Grid item xs={12} md={3}>
+            {dealSidebarContent}
+          </Grid>
+        </Grid>
       </TabPanel>
 
       <TabPanel value={tabValue} index={4}>
-        <Box sx={{ mb: 3 }}>
+        <Grid container spacing={3}>
+          <Grid item xs={12} md={9}>
+            <Box sx={{ mb: 3 }}>
           <Typography variant="h6" fontWeight={700} sx={{ mb: 1 }}>
             Job Order Generation
           </Typography>
@@ -2725,7 +3082,7 @@ const DealDetails: React.FC = () => {
                     }
                   </Typography>
                 </Box>
-                {(deal.stage === 'verbalAgreement' || deal.stage === 'closedWon') && (
+                {(deal.stage === 'verbalAgreement' || deal.stage === 'closedWon') && deal.archived !== true && (
                   <GenerateJobOrderButton
                     dealId={deal.id}
                     dealName={deal.name}
@@ -2796,7 +3153,14 @@ const DealDetails: React.FC = () => {
                     Shifts: {stageData?.discovery?.shifts?.join(', ') || 'Not specified'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Pay Rate: ${stageData?.qualification?.expectedAveragePayRate || 'Not specified'}/hr
+                    Pay Rate:{' '}
+                    {(() => {
+                      const raw = stageData?.qualification?.expectedAveragePayRate;
+                      const formatted = formatHourlyPayRateForDisplay(raw);
+                      if (formatted) return formatted;
+                      if (raw != null && String(raw).trim() !== '') return String(raw);
+                      return 'Not specified';
+                    })()}
                   </Typography>
                 </Box>
               </Grid>
@@ -2813,7 +3177,7 @@ const DealDetails: React.FC = () => {
                     After 180 Days: {stageData?.qualification?.staffPlacementTimeline?.after180Days || 'Not specified'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Expected Close: {stageData?.qualification?.expectedCloseDate || 'Not specified'}
+                    Expected Close: {deal?.closeDate ? (() => { const d = new Date(deal.closeDate); return isNaN(d.getTime()) ? deal.closeDate : d.toLocaleDateString(); })() : (stageData?.qualification?.expectedCloseDate || 'Not specified')}
                   </Typography>
                 </Box>
               </Grid>
@@ -2827,14 +3191,22 @@ const DealDetails: React.FC = () => {
             </Alert>
           </CardContent>
         </Card>
+          </Grid>
+          <Grid item xs={12} md={3}>
+            {dealSidebarContent}
+          </Grid>
+        </Grid>
       </TabPanel>
 
       <TabPanel value={tabValue} index={5}>
-        <ContractsTab
-          deal={deal}
-          tenantId={tenantId}
-          stageData={stageData}
-        />
+        <Grid container spacing={3}>
+          <Grid item xs={12} md={9}>
+            <ContractsTab deal={deal} tenantId={tenantId} stageData={stageData} />
+          </Grid>
+          <Grid item xs={12} md={3}>
+            {dealSidebarContent}
+          </Grid>
+        </Grid>
       </TabPanel>
 
       <TabPanel value={tabValue} index={6}>
@@ -2863,31 +3235,32 @@ const DealDetails: React.FC = () => {
           </CardContent>
         </Card>
       </TabPanel>
-        </Box>
-      </Box>
-
-      {/* Delete Deal Button - Bottom of page */}
-      <Box sx={{ 
-        display: 'flex', 
-        justifyContent: 'center', 
-        mt: 9, // 72px spacing from content above
-        pb: 3 
-      }}>
-        <Button 
-          variant="outlined" 
+      
+      {/* Delete Deal Button - Bottom of scrollable content */}
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'center',
+          mt: 8,
+          pb: 3,
+        }}
+      >
+        <Button
+          variant="outlined"
           color="error"
-          sx={{ 
+          sx={{
             borderColor: 'error.main',
             '&:hover': {
               borderColor: 'error.dark',
-              backgroundColor: 'error.light'
-            }
+              backgroundColor: 'error.light',
+            },
           }}
           startIcon={<DeleteIcon />}
           onClick={handleDeleteDeal}
         >
           Delete Deal
         </Button>
+      </Box>
       </Box>
 
       {/* Keyboard Shortcuts Dialog */}
@@ -3057,6 +3430,15 @@ const DealDetails: React.FC = () => {
         onSalespeopleChange={handleSalespeopleChange}
       />
 
+      {/* Manage Companies Dialog */}
+      <ManageCompaniesDialog
+        open={showManageCompaniesDialog}
+        onClose={() => setShowManageCompaniesDialog(false)}
+        tenantId={tenantId}
+        currentCompanies={associatedCompanies}
+        onCompaniesChange={handleCompaniesChange}
+      />
+
       {/* Manage Contacts Dialog */}
       <ManageContactsDialog
         open={showManageContactsDialog}
@@ -3065,13 +3447,29 @@ const DealDetails: React.FC = () => {
         currentContacts={associatedContacts}
         onContactsChange={handleContactsChange}
         dealCompanyId={getDealPrimaryCompanyId(deal)}
+        dealCompanyIds={getDealCompanyIds(deal)}
+      />
+
+      {/* Manage Decision Maker Dialog */}
+      <ManageDecisionMakerDialog
+        open={showDecisionMakerDialog}
+        onClose={() => setShowDecisionMakerDialog(false)}
+        dealContacts={associatedContacts}
+        currentDecisionMaker={stageData?.qualification?.decisionMaker || null}
+        onSave={(contact) => {
+          handleStageDataChange({
+            ...stageData,
+            qualification: { ...stageData?.qualification, decisionMaker: contact || undefined },
+          });
+        }}
       />
 
       {/* Manage Location Dialog */}
       {(() => {
-        const companyId = getDealPrimaryCompanyId(deal);
-        if (!companyId) {
-          console.log('ManageLocationDialog: No company associated with deal, skipping dialog');
+        const companyIds = getDealCompanyIds(deal);
+        const primaryCompanyId = getDealPrimaryCompanyId(deal);
+        if (companyIds.length === 0) {
+          console.log('ManageLocationDialog: No companies associated with deal, skipping dialog');
           return null;
         }
         
@@ -3080,12 +3478,21 @@ const DealDetails: React.FC = () => {
             open={showManageLocationDialog}
             onClose={() => setShowManageLocationDialog(false)}
             tenantId={tenantId}
-            companyId={companyId}
+            companyId={primaryCompanyId || companyIds[0]}
+            companyIds={companyIds}
             currentLocationId={(() => {
               const locations = (deal as any)?.associations?.locations || [];
               if (locations.length > 0) {
                 const locationEntry = locations[0];
                 return typeof locationEntry === 'string' ? locationEntry : locationEntry.id;
+              }
+              return undefined;
+            })()}
+            currentLocationCompanyId={(() => {
+              const locations = (deal as any)?.associations?.locations || [];
+              if (locations.length > 0) {
+                const locationEntry = locations[0];
+                return typeof locationEntry === 'object' && locationEntry?.companyId ? locationEntry.companyId : undefined;
               }
               return undefined;
             })()}

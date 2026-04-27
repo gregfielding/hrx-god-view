@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "module": "commonjs",
+    "moduleResolution": "node",
     "noImplicitReturns": false,
     "noUnusedLocals": false,
     "outDir": "lib",
@@ -8,14 +9,17 @@
     "sourceMap": true,
     "strict": false,
     "target": "es2017",
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true
   },
   "compileOnSave": true,
-  "include": [
-    "src"
-  ],
+  "include": ["src"],
   "exclude": [
     "src/**/*.test.ts",
-    "src/**/__tests__/**/*"
+    "src/**/__tests__/**/*",
+    "src/onboarding/onboardingEngineSyncBundleEntry.ts",
+    "src/readiness/syncHrxReadinessSnapshotV1.ts",
+    "src/readiness/hrxReadinessSnapshotLoadContext.ts"
   ]
 }

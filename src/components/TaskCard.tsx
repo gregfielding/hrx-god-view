@@ -141,15 +141,6 @@ const TaskCard: React.FC<TaskCardProps> = ({
   };
 
   const contactDisplay = useMemo(() => {
-    // Debug logging
-    console.log('🔍 TaskCard contact resolution:', {
-      taskId: task.id,
-      taskTitle: task.title,
-      taskContactIds: task.associations?.contacts,
-      contactsProp: contacts,
-      contactsLength: contacts?.length
-    });
-
     // First, try to get contacts from task associations
     if (task.associations?.contacts && task.associations.contacts.length > 0) {
       // If we have contact IDs in task associations, try to resolve them
@@ -162,12 +153,6 @@ const TaskCard: React.FC<TaskCardProps> = ({
         const matchedContacts = contacts.filter((contact: any) => 
           taskContactIds.includes(contact.id)
         );
-        
-        console.log('🔍 TaskCard matched contacts:', {
-          taskContactIds,
-          matchedContacts,
-          contactKeys: matchedContacts.map(c => Object.keys(c))
-        });
         
         if (matchedContacts.length > 0) {
           if (matchedContacts.length === 1) {
@@ -309,6 +294,106 @@ const TaskCard: React.FC<TaskCardProps> = ({
   const [isHovered, setIsHovered] = useState(false);
 
   return (
+    variant === 'compact' ? (
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 2,
+          px: 2,
+          py: 1.5,
+          mb: 1,
+          borderRadius: 2,
+          border: '1px solid',
+          borderColor: 'divider',
+          backgroundColor: 'background.paper',
+          cursor: 'pointer',
+          minHeight: 56,
+          '&:hover': { backgroundColor: 'action.hover', borderColor: 'primary.main' },
+          ...sx,
+        }}
+        onClick={() => onTaskClick(task)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            onTaskClick(task);
+          }
+          if (e.key === ' ') {
+            e.preventDefault();
+            onQuickComplete(task.id);
+          }
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0, flex: 1 }}>
+          <IconButton
+            size="small"
+            onClick={(e) => {
+              e.stopPropagation();
+              onQuickComplete(task.id);
+            }}
+            sx={{ width: 44, height: 44 }}
+            aria-label={task.status === 'completed' ? 'Mark incomplete' : 'Mark complete'}
+          >
+            <CheckCircleIcon
+              sx={{
+                fontSize: 20,
+                color: task.status === 'completed' ? 'success.main' : 'text.disabled',
+              }}
+            />
+          </IconButton>
+
+          <Box sx={{ minWidth: 0, flex: 1 }}>
+            <Typography
+              variant="body2"
+              sx={{
+                fontWeight: 600,
+                lineHeight: 1.5,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {task.title}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.5 }}>
+              {(() => {
+                const dateStr = task.dueDate || task.scheduledDate;
+                const due = dateStr ? `Due: ${formatDate(dateStr)}` : null;
+                const prio = task.priority ? `Priority: ${task.priority}` : null;
+                const parts = [due, prio].filter(Boolean);
+                return parts.length ? parts.join(' • ') : '—';
+              })()}
+            </Typography>
+          </Box>
+        </Box>
+
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Chip
+            label={getTaskStatusDisplay(task)}
+            color={getStatusColor(getTaskStatusDisplay(task)) as any}
+            size="small"
+            variant="outlined"
+            sx={{ fontSize: '0.75rem', height: 22 }}
+          />
+          {onEditTask && (
+            <IconButton
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEditTask(task);
+              }}
+              sx={{ width: 44, height: 44 }}
+              aria-label="Edit task"
+            >
+              <MoreVertIcon fontSize="small" />
+            </IconButton>
+          )}
+        </Box>
+      </Box>
+    ) : (
     <Box 
       sx={{ 
         display: 'flex', 
@@ -492,6 +577,7 @@ const TaskCard: React.FC<TaskCardProps> = ({
         </Box>
       )}
     </Box>
+    )
   );
 };
 

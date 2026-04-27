@@ -398,18 +398,29 @@ describe('AssociationUtils', () => {
 
   describe('debugAssociation', () => {
     let consoleSpy: jest.SpyInstance;
+    let originalEnv: string | undefined;
 
     beforeEach(() => {
+      originalEnv = process.env.NODE_ENV;
       consoleSpy = jest.spyOn(console, 'log').mockImplementation();
     });
 
     afterEach(() => {
+      // NODE_ENV is read-only in some TS/Jest typings; restore via defineProperty
+      Object.defineProperty(process.env, 'NODE_ENV', {
+        value: originalEnv,
+        configurable: true,
+        writable: true,
+      });
       consoleSpy.mockRestore();
     });
 
     it('should log debug information in development mode', () => {
-      const originalEnv = process.env.NODE_ENV;
-      process.env.NODE_ENV = 'development';
+      Object.defineProperty(process.env, 'NODE_ENV', {
+        value: 'development',
+        configurable: true,
+        writable: true,
+      });
 
       const company = {
         id: testCompanyId,
@@ -432,20 +443,19 @@ describe('AssociationUtils', () => {
           associationsSalespeopleCount: 1
         })
       );
-
-      process.env.NODE_ENV = originalEnv;
     });
 
     it('should not log in production mode', () => {
-      const originalEnv = process.env.NODE_ENV;
-      process.env.NODE_ENV = 'production';
+      Object.defineProperty(process.env, 'NODE_ENV', {
+        value: 'production',
+        configurable: true,
+        writable: true,
+      });
 
       const company = { id: testCompanyId };
       AssociationUtils.debugAssociation(company, testUserId, 'company');
 
       expect(consoleSpy).not.toHaveBeenCalled();
-
-      process.env.NODE_ENV = originalEnv;
     });
   });
 });

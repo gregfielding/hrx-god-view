@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -20,36 +20,109 @@ import {
   OutlinedInput,
   Divider,
   Autocomplete,
+  IconButton,
+  Switch,
+  InputAdornment,
 } from '@mui/material';
 import {
   Save as SaveIcon,
   Cancel as CancelIcon,
+  Add as AddIcon,
+  Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
-import { collection, addDoc, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
+import {
+  collection,
+  addDoc,
+  getDocs,
+  doc,
+  getDoc,
+  updateDoc,
+  query,
+  where,
+  orderBy,
+  deleteField,
+} from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { p } from '../data/firestorePaths';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
-import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../data/screeningsOptions';
-import { JobOrder } from '../types/recruiter/jobOrder';
+import { additionalScreeningOptions } from '../data/screeningsOptions';
+import { JobOrder, JobOrderContact } from '../types/recruiter/jobOrder';
 import { getFieldDef } from '../fields/useFieldDef';
 import { toNumberSafe, toISODate, coerceSelect } from '../utils/fieldCoercions';
 import { getRegistryPath, setDeep, getRegistryIdForField } from '../utils/registryHelpers';
 import { getOptionsForField } from '../utils/fieldOptions';
+import jobTitlesList from '../data/onetJobTitles.json';
+import { JobsBoardService } from '../services/recruiter/jobsBoardService';
+import { ensureCityInSmartGroups } from '../services/smartGroupMetroSync';
+import { getRequirementPackIds, JOB_REQUIREMENT_PACKS } from '../data/jobRequirementPacks';
+import { useWorkersCompRatesByJobTitle } from '../hooks/useWorkersCompRatesByJobTitle';
+import {
+  pickWorkersCompJobTitleLookup,
+  resolveWorkersCompModifierAccountId,
+} from '../utils/workersCompRateMaps';
+import { AccusourcePackageSelector } from './recruiter/AccusourcePackageSelector';
+import { useEntity } from '../hooks/useEntity';
+import {
+  normalizeStateCode,
+  getSutaRateByState,
+  getFutaRateByState,
+} from '../utils/unemploymentRates';
+import {
+  fetchResolvedAccountPricingPositions,
+  buildPricingByJobTitle,
+} from '../utils/accountPricingForJobOrder';
+import { fetchMergedRecruiterOrderDefaultsForJobOrder } from '../utils/recruiterAccountOrderDefaultsMerge';
+import type { AccountPositionPricing } from '../types/recruiter/account';
 
-// ---- Local helpers to centralize date/number handling in this form ----
-const formatDateForInput = (v: any): string => {
-  if (!v) return '';
-  const d = v instanceof Date ? v : new Date(v);
-  return isNaN(d.getTime()) ? '' : d.toISOString().split('T')[0];
-};
+/** Apply account Pricing row (exact job title match) to career job order form fields. */
+function mergeCareerFormWithPricingPreset(
+  prev: Record<string, unknown>,
+  title: string,
+  map: Map<string, AccountPositionPricing>
+): Record<string, unknown> {
+  const trimmed = String(title).trim();
+  const preset = trimmed ? map.get(trimmed) : undefined;
+  const next: Record<string, unknown> = { ...prev, jobTitle: title };
+  if (!preset) return next;
+  if (preset.payRate != null && Number.isFinite(Number(preset.payRate))) {
+    next.payRate = String(preset.payRate);
+  }
+  if (preset.markupPercent != null && Number.isFinite(Number(preset.markupPercent))) {
+    next.markup = String(preset.markupPercent);
+    const pay = parseFloat(String(next.payRate)) || 0;
+    const m = Number(preset.markupPercent);
+    if (!Number.isNaN(m) && m > 0 && pay > 0) {
+      const br = Number((pay * (1 + m / 100)).toFixed(2));
+      next.billRate = String(br);
+      next.calculatedBillRate = String(br);
+    }
+  } else if (preset.billRate != null && Number.isFinite(Number(preset.billRate))) {
+    next.billRate = String(preset.billRate);
+  }
+  if (preset.workersCompCode) next.workersCompClassCode = String(preset.workersCompCode);
+  if (preset.workersCompRate != null) next.workersCompRate = String(preset.workersCompRate);
+  const jd = (preset.jobDescriptionFromClient || '').trim();
+  if (jd) next.jobDescriptionFromClient = jd;
+  return next;
+}
 
-const parseDateFromInput = (v: string): Date | null => {
-  if (!v) return null;
-  const d = new Date(v);
-  return isNaN(d.getTime()) ? null : d;
-};
+/** Persist SUTA/FUTA as numbers on each gig position (matches account `pricing.positions`). */
+function normalizeGigPositionsForPersist(
+  positions: Array<Record<string, unknown> & { sutaRate?: string; futaRate?: string }>,
+) {
+  const parseOptPct = (v: string | undefined) => {
+    if (v == null || String(v).trim() === '') return undefined;
+    const n = parseFloat(String(v));
+    return Number.isFinite(n) ? n : undefined;
+  };
+  return positions.map((pos) => ({
+    ...pos,
+    sutaRate: parseOptPct(pos.sutaRate),
+    futaRate: parseOptPct(pos.futaRate),
+  }));
+}
 
 // Helper function to remove undefined values from objects (Firestore doesn't allow undefined)
 const removeUndefinedValues = (obj: any): any => {
@@ -73,6 +146,24 @@ const removeUndefinedValues = (obj: any): any => {
   
   return obj;
 };
+
+/** Gig financials: gross profit = estimated value − (estimated value ÷ (1 + markup%)). E.g. $1,000 @ 25% → $200. */
+function formatGigGrossProfit(estimatedValueStr: string, markupPctStr: string): string {
+  const ev = parseFloat(String(estimatedValueStr ?? '').replace(/,/g, ''));
+  const m = parseFloat(String(markupPctStr ?? ''));
+  if (!Number.isFinite(ev) || ev <= 0) return '';
+  if (!Number.isFinite(m) || m < 0) return '';
+  const denom = 1 + m / 100;
+  if (denom <= 0) return '';
+  const gp = ev - ev / denom;
+  if (!Number.isFinite(gp)) return '';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(gp);
+}
 
 interface Company {
   id: string;
@@ -100,29 +191,174 @@ interface JobOrderFormProps {
   dealId?: string; // If provided, we can load associated contacts from the deal
   onSave?: () => void; // Optional callback after successful save
   onCancel?: () => void; // Optional callback for cancel
+  // Additional props for compatibility with recruiter components
+  tenantId?: string; // Optional tenant ID (will use from auth context if not provided)
+  createdBy?: string; // Optional created by user ID (will use from auth context if not provided)
+  jobOrder?: any; // Optional job order data for editing
+  initialData?: any; // Optional initial form data
+  loading?: boolean; // Optional loading state
+  companies?: any[]; // Optional companies list
+  locations?: any[]; // Optional locations list
+  recruiters?: any[]; // Optional recruiters list
+  jobTitles?: string[]; // Optional job titles list
+  groups?: any[]; // Optional groups list
+  /** When creating from Account Details, persist this so Job Orders tab can scope by account (and child by worksite). */
+  recruiterAccountId?: string | null;
+  /**
+   * When true (e.g. Jobs hub modal / New Job Order page), user must pick a recruiter Account first;
+   * Company is limited to that account’s linked companies and auto-filled when only one.
+   */
+  requireAccountSelection?: boolean;
 }
 
 const JobOrderForm: React.FC<JobOrderFormProps> = ({ 
   jobOrderId, 
   dealId,
   onSave, 
-  onCancel 
+  onCancel,
+  tenantId: propTenantId,
+  createdBy: propCreatedBy,
+  jobOrder,
+  initialData,
+  loading: propLoading,
+  companies: propCompanies,
+  locations: propLocations,
+  recruiters: propRecruiters,
+  jobTitles: propJobTitles,
+  groups: propGroups,
+  recruiterAccountId: propRecruiterAccountId,
+  requireAccountSelection = false,
 }) => {
-  const { tenantId, user } = useAuth();
+  const { tenantId: authTenantId, user: authUser } = useAuth();
   const navigate = useNavigate();
   
-  const [loading, setLoading] = useState(!!jobOrderId); // Loading if editing
+  // Use props if provided, otherwise fall back to auth context
+  const tenantId = propTenantId || authTenantId;
+  const user = propCreatedBy ? { uid: propCreatedBy } : authUser;
+  const wcMaps = useWorkersCompRatesByJobTitle(tenantId);
+
+  /** Account Pricing tab positions (child → national fallback); empty ⇒ use O*NET unless propJobTitles overrides */
+  const [resolvedAccountPositions, setResolvedAccountPositions] = useState<AccountPositionPricing[]>([]);
+  const pricingByJobTitle = useMemo(
+    () => buildPricingByJobTitle(resolvedAccountPositions),
+    [resolvedAccountPositions]
+  );
+
+  /** Detect when pricing rows (titles + client JD text) change, not only row count. */
+  const pricingPositionsSyncKey = useMemo(
+    () =>
+      resolvedAccountPositions
+        .map((p) => `${String(p.jobTitle ?? '').trim()}\t${String(p.jobDescriptionFromClient ?? '').trim()}`)
+        .join('\n'),
+    [resolvedAccountPositions]
+  );
+
+  const jobTitleOptions = useMemo(() => {
+    if (propJobTitles && propJobTitles.length > 0) return propJobTitles;
+    if (resolvedAccountPositions.length > 0) {
+      const titles = resolvedAccountPositions.map((p) => String(p.jobTitle || '').trim()).filter(Boolean);
+      return [...new Set(titles)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    }
+    return jobTitlesList as string[];
+  }, [propJobTitles, resolvedAccountPositions]);
+
+  const [loading, setLoading] = useState(propLoading ?? !!jobOrderId); // Loading if editing
   const [saving, setSaving] = useState(false);
-  const [companies, setCompanies] = useState<Company[]>([]);
-  const [locations, setLocations] = useState<Location[]>([]);
+  const [loadedJobOrderData, setLoadedJobOrderData] = useState<any>(null); // Store loaded job order for preserving associations
+
+  type PickerAccount = {
+    id: string;
+    name: string;
+    /** Display line in dropdown (e.g. sub-account + parent). */
+    label: string;
+    companyIds: string[];
+    hiringEntityId: string | null;
+    parentAccountId: string | null;
+    /** Child account worksites from associations.locations (companyId + locationId). */
+    linkedLocations: Array<{ companyId: string; locationId: string }>;
+  };
+  /** Full list (e.g. optional “Linked recruiter account” on edit can include national parents). */
+  const [recruiterAccountsAll, setRecruiterAccountsAll] = useState<PickerAccount[]>([]);
+  const [recruiterAccountsForPicker, setRecruiterAccountsForPicker] = useState<PickerAccount[]>([]);
+  const [pickedRecruiterAccountId, setPickedRecruiterAccountId] = useState<string | null>(null);
+
+  const effectiveRecruiterAccountId = useMemo(
+    () =>
+      pickedRecruiterAccountId ||
+      propRecruiterAccountId ||
+      (loadedJobOrderData as any)?.recruiterAccountId ||
+      (jobOrder as any)?.recruiterAccountId ||
+      null,
+    [pickedRecruiterAccountId, propRecruiterAccountId, loadedJobOrderData, jobOrder]
+  );
+
+  /** National or standalone recruiter account id for WC rules scoped by account modifier (child venues → parent). */
+  const wcModifierAccountId = useMemo(() => {
+    const aid = effectiveRecruiterAccountId;
+    if (!aid) return null;
+    const acc =
+      recruiterAccountsForPicker.find((a) => a.id === aid) ||
+      recruiterAccountsAll.find((a) => a.id === aid);
+    return resolveWorkersCompModifierAccountId(acc || null);
+  }, [effectiveRecruiterAccountId, recruiterAccountsForPicker, recruiterAccountsAll]);
+
+  /** Hiring entity from the job order's linked recruiter account (fixes stale job orders created before the account had hiringEntityId). */
+  const recruiterAccountHiringEntityId = useMemo(() => {
+    const accId = effectiveRecruiterAccountId;
+    if (!accId) return null;
+    const acc =
+      recruiterAccountsForPicker.find((a) => a.id === accId) ||
+      recruiterAccountsAll.find((a) => a.id === accId);
+    return acc?.hiringEntityId ? String(acc.hiringEntityId) : null;
+  }, [effectiveRecruiterAccountId, recruiterAccountsForPicker, recruiterAccountsAll]);
+
+  /** Hiring Entity (Employer of Record): E-Verify comes from here (read-only downstream). */
+  const hiringEntityIdForForm = useMemo(
+    () =>
+      recruiterAccountHiringEntityId ??
+      initialData?.hiringEntityId ??
+      jobOrder?.hiringEntityId ??
+      (loadedJobOrderData as any)?.hiringEntityId ??
+      null,
+    [recruiterAccountHiringEntityId, initialData?.hiringEntityId, jobOrder?.hiringEntityId, loadedJobOrderData]
+  );
+  const { entity: formEntity } = useEntity(tenantId ?? null, hiringEntityIdForForm);
+  /** Same hiring entities as Account → Pricing (SUTA/FUTA on pay for margin). */
+  const showSutaFutaOnGigPositions = useMemo(
+    () => /C1 Workforce|C1 Select/i.test(formEntity?.name || ''),
+    [formEntity?.name],
+  );
+  const [gigPositions, setGigPositions] = useState<
+    Array<{
+      jobTitle: string;
+      workersNeeded: number;
+      payRate: string;
+      workersCompClassCode?: string;
+      workersCompRate?: string;
+      sutaRate?: string;
+      futaRate?: string;
+    }>
+  >([{ jobTitle: '', workersNeeded: 1, payRate: '' }]); // For gig-type jobs with multiple positions
+  /** Draft text for career Job Title Autocomplete (value commits on blur / pick / Enter — avoids save+re-render each keystroke). */
+  const [careerJobTitleInput, setCareerJobTitleInput] = useState('');
+  const careerJobTitleInputRef = useRef('');
+  careerJobTitleInputRef.current = careerJobTitleInput;
+  /** Supersedes stale async merges when account/company/worksite changes quickly */
+  const orderDefaultsMergeSeqRef = useRef(0);
+  const [companies, setCompanies] = useState<Company[]>(propCompanies || []);
+  const [locations, setLocations] = useState<Location[]>(propLocations || []);
   const [filteredLocations, setFilteredLocations] = useState<Location[]>([]);
   const [associatedContacts, setAssociatedContacts] = useState<Contact[]>([]);
+  const [companyContacts, setCompanyContacts] = useState<JobOrderContact[]>([]);
+  const [loadedContacts, setLoadedContacts] = useState<any[]>([]);
+  const [contactDropdownValue, setContactDropdownValue] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   
   // Company Defaults State
   const [backgroundCheckPackages, setBackgroundCheckPackages] = useState<Array<{title: string, description: string}>>([]);
-  const [drugScreeningPanels, setDrugScreeningPanels] = useState<Array<{title: string, description: string}>>([]);
+  // R.0d (Apr 2026): drugScreeningPanels state removed — soft-deprecated;
+  // no UI binding remained. See docs/READINESS_R0_HANDOFF.md.
   const [uniformRequirements, setUniformRequirements] = useState<Array<{title: string, description: string}>>([]);
   const [ppeOptions, setPpeOptions] = useState<Array<{title: string, description: string}>>([]);
   const [licensesCerts, setLicensesCerts] = useState<Array<{title: string, description: string}>>([]);
@@ -133,7 +369,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   const [skills, setSkills] = useState<Array<{title: string, description: string}>>([]);
   const companyDefaultsForOptions = {
     backgroundPackages: backgroundCheckPackages,
-    screeningPanels: drugScreeningPanels,
     uniformRequirements,
     ppe: ppeOptions,
     licensesCerts: licensesCerts,
@@ -146,12 +381,15 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
 
   const [formData, setFormData] = useState({
     // Basic Information
+    jobOrderNumber: '',
     jobOrderName: '',
     jobTitle: '',
     description: '',
+    jobDescriptionFromClient: '',
     companyId: '',
     worksiteId: '',
     status: 'draft',
+    jobType: 'career' as 'gig' | 'career',
     workersNeeded: 1,
     payRate: '',
     markup: '',
@@ -161,6 +399,12 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     endDate: '',
     requirements: '',
     notes: '',
+    /** Gig Financials (preliminary event budget) */
+    poNumber: '',
+    gigEstimatedValue: '',
+    gigAverageMarkup: '',
+    gigEstimatedStartDate: '',
+    gigEstimatedEndDate: '',
     
     // Discovery Stage Fields
     currentStaffCount: '',
@@ -195,10 +439,12 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     replacingExistingAgency: false,
     rolloverExistingStaff: false,
     backgroundCheckPackages: [],
-    drugScreeningPanels: [],
+    // R.0d (Apr 2026): drugScreeningPanels removed from form state init.
     additionalScreenings: [],
     eVerifyRequired: false,
     dressCode: [],
+    customUniformRequirements: '',
+    showCustomUniformRequirements: false,
     timeclockSystem: '',
     disciplinePolicy: '',
     poRequired: false,
@@ -217,6 +463,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     physicalRequirements: [],
     ppeRequirements: [],
     ppeProvidedBy: 'company',
+    requirementPackId: '',
+    workersCompClassCode: '',
+    workersCompRate: '',
+    screeningPackageId: '',
+    screeningPackageName: '',
     
     // Customer Rules
     attendancePolicy: '',
@@ -239,9 +490,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     rateSheetOnFile: false,
     msaSigned: false,
     
-    // Financial
-    estimatedRevenue: '',
-    
     // HR Contact
     hrContactId: '',
     
@@ -258,10 +506,140 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
 
   const isEditing = !!jobOrderId;
 
-  // Load companies and company defaults
+  // Keep career job title draft aligned when loaded data or external updates change `formData.jobTitle`.
+  useEffect(() => {
+    setCareerJobTitleInput(String(formData.jobTitle ?? ''));
+  }, [formData.jobTitle]);
+
+  // Load account Pricing positions for gig job title options (after formData / loadedJobOrderData exist)
+  useEffect(() => {
+    if (!tenantId) return;
+    let cancelled = false;
+    const rid = effectiveRecruiterAccountId;
+    const cid = formData.companyId || null;
+    (async () => {
+      try {
+        const positions = await fetchResolvedAccountPricingPositions(tenantId, {
+          recruiterAccountId: rid,
+          companyId: cid,
+        });
+        if (!cancelled) setResolvedAccountPositions(positions);
+      } catch {
+        if (!cancelled) setResolvedAccountPositions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, effectiveRecruiterAccountId, formData.companyId]);
+
+  // Recruiter accounts: required picker (new job, Jobs hub) OR optional linker (edit / account-scoped create)
+  useEffect(() => {
+    if (!tenantId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const ref = collection(db, p.recruiterAccounts(tenantId));
+        const snap = await getDocs(query(ref, orderBy('name', 'asc')));
+        if (cancelled) return;
+        const byId = new Map(snap.docs.map((d) => [d.id, d]));
+
+        const list: PickerAccount[] = snap.docs
+          .map((d) => {
+            const data = d.data() as Record<string, unknown>;
+            if (data.active === false) return null;
+            const assoc = data.associations as
+              | { companyIds?: string[]; locations?: unknown[] }
+              | undefined;
+            let companyIds = Array.isArray(assoc?.companyIds)
+              ? assoc!.companyIds!.filter((x): x is string => typeof x === 'string' && !!x.trim())
+              : [];
+            const parentIdRaw = data.parentAccountId;
+            const parentAccountId =
+              typeof parentIdRaw === 'string' && parentIdRaw.trim() ? parentIdRaw.trim() : null;
+            if (!companyIds.length && parentAccountId) {
+              const parentDoc = byId.get(parentAccountId);
+              const pa = parentDoc?.data()?.associations as { companyIds?: string[] } | undefined;
+              if (Array.isArray(pa?.companyIds)) {
+                companyIds = pa!.companyIds!.filter((x): x is string => typeof x === 'string' && !!x.trim());
+              }
+            }
+            const he = data.hiringEntityId;
+            const name = String(data.name ?? '').trim() || 'Unnamed account';
+            const parentName = parentAccountId
+              ? String(byId.get(parentAccountId)?.data()?.name ?? '').trim()
+              : '';
+            const label = parentName ? `${name} — ${parentName}` : name;
+            const locRaw = assoc?.locations;
+            const linkedLocations = Array.isArray(locRaw)
+              ? locRaw
+                  .filter(
+                    (x: unknown): x is { companyId: string; locationId: string } =>
+                      !!x &&
+                      typeof x === 'object' &&
+                      typeof (x as { companyId?: unknown }).companyId === 'string' &&
+                      typeof (x as { locationId?: unknown }).locationId === 'string' &&
+                      String((x as { companyId: string }).companyId).trim() !== '' &&
+                      String((x as { locationId: string }).locationId).trim() !== '',
+                  )
+                  .map((x) => ({
+                    companyId: String(x.companyId).trim(),
+                    locationId: String(x.locationId).trim(),
+                  }))
+              : [];
+            return {
+              id: d.id,
+              name,
+              label,
+              companyIds,
+              hiringEntityId: he != null && String(he).trim() ? String(he) : null,
+              parentAccountId,
+              linkedLocations,
+            };
+          })
+          .filter((x): x is PickerAccount => x != null);
+
+        const accountIdsThatAreParents = new Set<string>();
+        snap.docs.forEach((docSnap) => {
+          const pid = (docSnap.data() as { parentAccountId?: unknown }).parentAccountId;
+          if (typeof pid === 'string' && pid.trim()) accountIdsThatAreParents.add(pid.trim());
+        });
+
+        const listForNewJobRequiredAccount = list.filter((row) => {
+          if (accountIdsThatAreParents.has(row.id)) return false;
+          const raw = byId.get(row.id)?.data() as
+            | { childAccountIds?: unknown; accountType?: unknown }
+            | undefined;
+          const childIds = raw?.childAccountIds;
+          if (Array.isArray(childIds) && childIds.length > 0) return false;
+          if (raw?.accountType === 'national') return false;
+          return true;
+        });
+
+        setRecruiterAccountsAll(list);
+        setRecruiterAccountsForPicker(listForNewJobRequiredAccount);
+      } catch (e) {
+        console.error('JobOrderForm: load recruiter accounts', e);
+        if (!cancelled) {
+          setRecruiterAccountsAll([]);
+          setRecruiterAccountsForPicker([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId]);
+
+  /** Optional bottom link only when creating without required account pick; edit mode uses Account in Basic Information instead. */
+  const showOptionalRecruiterAccountLink = !isEditing && !requireAccountSelection;
+
+  // Load companies (only when not provided, e.g. from account-scoped modal) and company defaults
   useEffect(() => {
     if (tenantId) {
-      loadCompanies();
+      if (!propCompanies?.length) {
+        loadCompanies();
+      }
       loadCompanyDefaults();
       if (isEditing && jobOrderId) {
         loadJobOrder();
@@ -271,6 +649,228 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       }
     }
   }, [tenantId, jobOrderId, dealId]);
+
+  // When account-scoped companies are passed (e.g. from Account > New Job Order), use only those
+  useEffect(() => {
+    if (propCompanies?.length) {
+      setCompanies(propCompanies as Company[]);
+    }
+  }, [propCompanies]);
+
+  // Dedupe companies by id so Autocomplete never has duplicate keys (fixes "two children with the same key")
+  const companiesDeduped = React.useMemo(() => {
+    const seen = new Set<string>();
+    return (companies || []).filter((c) => {
+      if (!c?.id || seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    });
+  }, [companies]);
+
+  /**
+   * Account driving Company/Worksite when Account-first flow is on: explicit picker choice, or page context
+   * (e.g. Account Details → New Order) when that account is a valid picker option (child/standalone, not national-only).
+   */
+  const scopeRecruiterAccountId = useMemo(() => {
+    if (pickedRecruiterAccountId) return pickedRecruiterAccountId;
+    if (
+      requireAccountSelection &&
+      !isEditing &&
+      propRecruiterAccountId &&
+      recruiterAccountsForPicker.some((a) => a.id === propRecruiterAccountId)
+    ) {
+      return propRecruiterAccountId;
+    }
+    return null;
+  }, [pickedRecruiterAccountId, requireAccountSelection, isEditing, propRecruiterAccountId, recruiterAccountsForPicker]);
+
+  const accountLinkedCompanyIds = useMemo(() => {
+    if (!scopeRecruiterAccountId) return null;
+    const acc =
+      recruiterAccountsForPicker.find((a) => a.id === scopeRecruiterAccountId) ||
+      recruiterAccountsAll.find((a) => a.id === scopeRecruiterAccountId);
+    if (!acc) return null;
+    const accountDrivesCompany =
+      (requireAccountSelection && !isEditing) || isEditing;
+    if (!accountDrivesCompany) return null;
+    if (acc.parentAccountId && acc.linkedLocations.length === 1) {
+      return [acc.linkedLocations[0].companyId];
+    }
+    const ids = (acc.companyIds || []).filter(Boolean);
+    return ids.length ? ids : null;
+  }, [
+    requireAccountSelection,
+    isEditing,
+    scopeRecruiterAccountId,
+    recruiterAccountsForPicker,
+    recruiterAccountsAll,
+  ]);
+
+  const singleCompanyIdForAccount = useMemo(
+    () => (accountLinkedCompanyIds?.length === 1 ? accountLinkedCompanyIds[0] : null),
+    [accountLinkedCompanyIds]
+  );
+
+  const accountOptions = useMemo(
+    () => (recruiterAccountsAll.length ? recruiterAccountsAll : recruiterAccountsForPicker),
+    [recruiterAccountsAll, recruiterAccountsForPicker],
+  );
+
+  /** Child account with exactly one linked worksite on the account record — user cannot pick a different worksite. */
+  const childWorksiteLocked = useMemo(() => {
+    if (!scopeRecruiterAccountId) return false;
+    const acc =
+      recruiterAccountsForPicker.find((a) => a.id === scopeRecruiterAccountId) ||
+      recruiterAccountsAll.find((a) => a.id === scopeRecruiterAccountId);
+    if (!acc?.parentAccountId) return false;
+    return acc.linkedLocations.length === 1;
+  }, [scopeRecruiterAccountId, recruiterAccountsForPicker, recruiterAccountsAll]);
+
+  const companiesForCompanyField = useMemo(() => {
+    if (!requireAccountSelection || isEditing) return companiesDeduped;
+    if (!accountLinkedCompanyIds?.length) return [];
+    const idSet = new Set(accountLinkedCompanyIds);
+    return companiesDeduped.filter((c) => idSet.has(c.id));
+  }, [requireAccountSelection, isEditing, companiesDeduped, accountLinkedCompanyIds]);
+
+  useEffect(() => {
+    const accountDrivesCompanyWorksite =
+      (requireAccountSelection && !isEditing) || isEditing;
+    if (!accountDrivesCompanyWorksite) return;
+    if (!scopeRecruiterAccountId) {
+      if (isEditing) return;
+      setFormData((prev) => {
+        if (!prev.companyId && !prev.worksiteId) return prev;
+        return { ...prev, companyId: '', worksiteId: '' };
+      });
+      return;
+    }
+    const acc =
+      recruiterAccountsForPicker.find((a) => a.id === scopeRecruiterAccountId) ||
+      recruiterAccountsAll.find((a) => a.id === scopeRecruiterAccountId);
+    if (!acc) return;
+
+    // Child venue account: use the single CRM worksite linked on the account (associations.locations).
+    if (acc.parentAccountId && acc.linkedLocations.length === 1) {
+      const { companyId: cid, locationId: lid } = acc.linkedLocations[0];
+      setFormData((prev) => {
+        if (prev.companyId === cid && prev.worksiteId === lid) return prev;
+        return { ...prev, companyId: cid, worksiteId: lid };
+      });
+      return;
+    }
+
+    const ids = acc.companyIds.filter(Boolean);
+    setFormData((prev) => {
+      if (ids.length === 1) {
+        return prev.companyId === ids[0] && prev.worksiteId === ''
+          ? prev
+          : { ...prev, companyId: ids[0], worksiteId: '' };
+      }
+      if (ids.length > 1) {
+        if (prev.companyId && ids.includes(prev.companyId)) return prev;
+        return { ...prev, companyId: '', worksiteId: '' };
+      }
+      return { ...prev, companyId: '', worksiteId: '' };
+    });
+  }, [
+    requireAccountSelection,
+    isEditing,
+    scopeRecruiterAccountId,
+    recruiterAccountsForPicker,
+    recruiterAccountsAll,
+  ]);
+
+  // National → child account → location_defaults → pre-fill compliance when creating a job order
+  useEffect(() => {
+    if (!tenantId || isEditing) return;
+    const rid = effectiveRecruiterAccountId;
+    if (!rid) return;
+    const mergeSeq = ++orderDefaultsMergeSeqRef.current;
+    let cancelled = false;
+    (async () => {
+      try {
+        const merged = await fetchMergedRecruiterOrderDefaultsForJobOrder(tenantId, {
+          recruiterAccountId: rid,
+          companyId: formData.companyId || null,
+          worksiteId: formData.worksiteId || null,
+        });
+        if (cancelled || !merged || mergeSeq !== orderDefaultsMergeSeqRef.current) return;
+        const od = merged.orderDetails;
+        const bgLen = od.backgroundCheckPackages?.length ?? 0;
+        // R.0d (Apr 2026): `od.drugScreeningPanels` is reading a soft-deprecated
+        // field. Kept for now so legacy account-defaults docs continue to derive
+        // `drugScreenRequired` correctly during the 90-day audit window.
+        // Remove during R.0d hard-remove follow-up.
+        const drugLen = od.drugScreeningPanels?.length ?? 0;
+        const hasScreeningPackage = Boolean(
+          merged.screeningPackageId != null && String(merged.screeningPackageId).trim() !== '',
+        );
+        setFormData((prev) => ({
+          ...prev,
+          screeningPackageId: merged.screeningPackageId,
+          screeningPackageName: merged.screeningPackageName,
+          eVerifyRequired: merged.eVerifyRequired,
+          /* R.0d (Apr 2026): Legacy free-text BG/drug dropdowns retired —
+             use AccuSource package + Additional Screenings. drugScreeningPanels
+             write removed; backgroundCheckPackages still cleared explicitly
+             during this transition. */
+          backgroundCheckPackages: [] as string[],
+          additionalScreenings: od.additionalScreenings ?? [],
+          licensesCerts: od.licensesCerts ?? [],
+          experienceRequired: od.experienceRequired ?? '',
+          educationRequired: od.educationRequired ?? '',
+          languagesRequired: od.languagesRequired ?? [],
+          skillsRequired: od.skillsRequired ?? [],
+          physicalRequirements: od.physicalRequirements ?? [],
+          ppeRequirements: od.ppeRequirements ?? [],
+          ppeProvidedBy: od.ppeProvidedBy ?? 'company',
+          requirementPackId: od.requirementPackId ?? '',
+          dressCode: od.dressCode ?? [],
+          customUniformRequirements: od.customUniformRequirements ?? '',
+          decisionMaker: od.decisionMaker ?? '',
+          hrContactId: od.hrContactId ?? '',
+          operationsContactId: od.operationsContactId ?? '',
+          procurementContactId: od.procurementContactId ?? '',
+          billingContactId: od.billingContactId ?? '',
+          safetyContactId: od.safetyContactId ?? '',
+          invoiceContactId: od.invoiceContactId ?? '',
+          backgroundCheckRequired: hasScreeningPackage || bgLen > 0,
+          drugScreenRequired: drugLen > 0,
+        }));
+      } catch (e) {
+        console.warn('JobOrderForm: merged recruiter order defaults failed', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, isEditing, effectiveRecruiterAccountId, formData.companyId, formData.worksiteId]);
+
+  const gigGrossProfitDisplay = useMemo(
+    () => formatGigGrossProfit(formData.gigEstimatedValue, formData.gigAverageMarkup),
+    [formData.gigEstimatedValue, formData.gigAverageMarkup]
+  );
+
+  // When opening New Job Order from an account/location, pre-fill Company and Worksite
+  useEffect(() => {
+    if (requireAccountSelection && !isEditing && !propRecruiterAccountId) return;
+    if (!isEditing && (initialData?.companyId || initialData?.worksiteId)) {
+      setFormData((prev) => {
+        const next = { ...prev };
+        if (initialData?.companyId && !prev.companyId) next.companyId = initialData.companyId;
+        if (initialData?.worksiteId && !prev.worksiteId) next.worksiteId = initialData.worksiteId;
+        return next;
+      });
+    }
+  }, [initialData?.companyId, initialData?.worksiteId, isEditing, requireAccountSelection, propRecruiterAccountId]);
+
+  // When Hiring Entity is set, E-Verify comes from entity (source of truth)
+  useEffect(() => {
+    if (formEntity) {
+      setFormData((prev) => ({ ...prev, eVerifyRequired: formEntity.everifyRequired }));
+    }
+  }, [formEntity?.id, formEntity?.everifyRequired]);
 
   // Load locations when company changes
   useEffect(() => {
@@ -284,11 +884,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
 
   // Set filtered locations (now they're already company-specific)
   useEffect(() => {
-    console.log('🔍 Setting filtered locations:', {
-      locations: locations,
-      currentWorksiteId: formData.worksiteId,
-      companyId: formData.companyId
-    });
     
     // If we have a worksiteId but it's not in the current locations, we need to include it
     const finalLocations = formData.worksiteId && !locations.find(loc => loc.id === formData.worksiteId)
@@ -304,11 +899,112 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       : [...locations];
     
     if (formData.worksiteId && !locations.find(loc => loc.id === formData.worksiteId)) {
-      console.log('🔍 Current worksiteId not found in locations, adding placeholder');
     }
     
     setFilteredLocations(finalLocations);
   }, [locations, formData.worksiteId, formData.companyId]);
+
+  /** Worksite state for SUTA/FUTA (same as Account Pricing). */
+  const worksiteStateCodeForPricing = useMemo(() => {
+    const selectedLocation = filteredLocations.find((loc) => loc.id === formData.worksiteId) as
+      | (Location & { state?: string; address?: { state?: string } })
+      | undefined;
+    const stateRaw = selectedLocation?.state ?? selectedLocation?.address?.state;
+    return normalizeStateCode(stateRaw).trim().toUpperCase();
+  }, [filteredLocations, formData.worksiteId]);
+
+  const applySutaFutaFromWorksiteState = () => {
+    if (!worksiteStateCodeForPricing) return;
+    const suta = getSutaRateByState(worksiteStateCodeForPricing);
+    const futa = getFutaRateByState(worksiteStateCodeForPricing);
+    setGigPositions((prev) =>
+      prev.map((pos) => ({
+        ...pos,
+        ...(suta != null ? { sutaRate: String(suta) } : {}),
+        futaRate: String(futa),
+      })),
+    );
+  };
+
+  // Load company contacts when companyId is present in formData
+  useEffect(() => {
+    if (formData.companyId && tenantId) {
+      loadCompanyContacts(formData.companyId);
+    }
+  }, [formData.companyId, tenantId]);
+
+  // Auto-apply WC code/rate from master when job title + worksite state match (Settings > Workers Comp Rates).
+  // If Account Pricing only stored class code, fill rate from master by state+code (same as Account Pricing tab).
+  useEffect(() => {
+    if (
+      !formData.worksiteId ||
+      (Object.keys(wcMaps.byStateAndJobTitle).length === 0 &&
+        Object.keys(wcMaps.byStateJobTitleAndModifierAccount).length === 0 &&
+        Object.keys(wcMaps.wcRatesByStateAndCode).length === 0)
+    )
+      return;
+    const selectedLocation = filteredLocations.find((loc) => loc.id === formData.worksiteId) as (Location & { state?: string; address?: { state?: string } }) | undefined;
+    const stateRaw = selectedLocation?.state ?? selectedLocation?.address?.state;
+    const stateCode = normalizeStateCode(stateRaw).trim().toUpperCase();
+    if (!stateCode) return;
+
+    if (formData.jobType === 'gig') {
+      let updated = false;
+      const next = gigPositions.map((pos) => {
+        const jobTitle = (pos.jobTitle ?? '').trim();
+        if (jobTitle) {
+          const lookup = pickWorkersCompJobTitleLookup(wcMaps, stateCode, jobTitle, wcModifierAccountId);
+          if (lookup) {
+            if (pos.workersCompClassCode === lookup.code && String(pos.workersCompRate ?? '') === String(lookup.rate)) return pos;
+            updated = true;
+            return { ...pos, workersCompClassCode: lookup.code, workersCompRate: String(lookup.rate) };
+          }
+        }
+        const code = (pos.workersCompClassCode ?? '').trim();
+        if (code) {
+          const rate = wcMaps.wcRatesByStateAndCode[`${stateCode}_${code}`];
+          if (rate != null && !Number.isNaN(rate) && String(pos.workersCompRate ?? '') !== String(rate)) {
+            updated = true;
+            return { ...pos, workersCompRate: String(rate) };
+          }
+        }
+        return pos;
+      });
+      if (updated) setGigPositions(next);
+      return;
+    }
+
+    const jobTitle = (formData.jobTitle ?? '').trim();
+    if (jobTitle) {
+      const lookup = pickWorkersCompJobTitleLookup(wcMaps, stateCode, jobTitle, wcModifierAccountId);
+      if (lookup) {
+        setFormData((prev) => {
+          if (prev.workersCompClassCode === lookup.code && String(prev.workersCompRate ?? '') === String(lookup.rate)) return prev;
+          return { ...prev, workersCompClassCode: lookup.code, workersCompRate: String(lookup.rate) };
+        });
+        return;
+      }
+    }
+    const code = (formData.workersCompClassCode ?? '').trim();
+    if (code) {
+      const rate = wcMaps.wcRatesByStateAndCode[`${stateCode}_${code}`];
+      if (rate != null && !Number.isNaN(rate)) {
+        setFormData((prev) => {
+          if (String(prev.workersCompRate ?? '') === String(rate)) return prev;
+          return { ...prev, workersCompRate: String(rate) };
+        });
+      }
+    }
+  }, [
+    formData.worksiteId,
+    formData.jobTitle,
+    formData.jobType,
+    formData.workersCompClassCode,
+    gigPositions,
+    filteredLocations,
+    wcMaps,
+    wcModifierAccountId,
+  ]);
 
   const loadCompanies = async () => {
     try {
@@ -352,7 +1048,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       if (docSnap.exists()) {
         const data = docSnap.data();
         setBackgroundCheckPackages(data.backgroundPackages || []);
-        setDrugScreeningPanels(data.screeningPanels || []);
+        // R.0d (Apr 2026): setDrugScreeningPanels removed (state was already
+        // dropped above). The screeningPanels collection on company-defaults
+        // is no longer surfaced anywhere.
         setUniformRequirements(data.uniformRequirements || []);
         setPpeOptions(data.ppe || []);
         setLicensesCerts(data.licensesCerts || []);
@@ -364,6 +1062,169 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       }
     } catch (error) {
       console.error('Error loading company defaults:', error);
+    }
+  };
+
+  const loadAndApplyCompanyDefaults = async (companyId: string, currentFormData: any) => {
+    if (!companyId || !tenantId) return;
+    
+    try {
+      const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId);
+      const companySnap = await getDoc(companyRef);
+      
+      if (!companySnap.exists()) return;
+      
+      const companyData = companySnap.data();
+      const defaults = companyData.defaults || {};
+      const rules = defaults.rules || {};
+      const eVerify = defaults.eVerify || {};
+      const billing = defaults.billing || {};
+      
+      const updates: any = {};
+      
+      // For NEW job orders: Always apply company defaults (overwrite existing values)
+      // For EXISTING job orders: Only apply defaults if fields are empty (preserve existing values)
+      const shouldApplyDefault = (fieldValue: any, defaultValue: any) => {
+        if (!isEditing) {
+          // New job order: always apply if default exists
+          return defaultValue !== undefined;
+        } else {
+          // Existing job order: only apply if field is empty and default exists
+          return !fieldValue && defaultValue !== undefined;
+        }
+      };
+      
+      if (shouldApplyDefault(currentFormData.replacingExistingAgency, rules.replacingExistingAgency)) {
+        updates.replacingExistingAgency = rules.replacingExistingAgency;
+      }
+      if (shouldApplyDefault(currentFormData.rolloverExistingStaff, rules.rolloverExistingStaff)) {
+        updates.rolloverExistingStaff = rules.rolloverExistingStaff;
+      }
+      if (shouldApplyDefault(currentFormData.timeclockSystem, rules.timeclockSystem)) {
+        updates.timeclockSystem = rules.timeclockSystem;
+      }
+      if (shouldApplyDefault(currentFormData.attendancePolicy, rules.attendancePolicy)) {
+        updates.attendancePolicy = rules.attendancePolicy;
+      }
+      if (shouldApplyDefault(currentFormData.noShowPolicy, rules.noShowPolicy)) {
+        updates.noShowPolicy = rules.noShowPolicy;
+      }
+      if (shouldApplyDefault(currentFormData.overtimePolicy, rules.overtimePolicy)) {
+        updates.overtimePolicy = rules.overtimePolicy;
+      }
+      if (shouldApplyDefault(currentFormData.callOffPolicy, rules.callOffPolicy)) {
+        updates.callOffPolicy = rules.callOffPolicy;
+      }
+      if (shouldApplyDefault(currentFormData.injuryHandlingPolicy, rules.injuryHandlingPolicy)) {
+        updates.injuryHandlingPolicy = rules.injuryHandlingPolicy;
+      }
+      if (shouldApplyDefault(currentFormData.disciplinePolicy, rules.disciplinePolicy)) {
+        updates.disciplinePolicy = rules.disciplinePolicy;
+      }
+      if (shouldApplyDefault(currentFormData.eVerifyRequired, eVerify.eVerifyRequired)) {
+        updates.eVerifyRequired = eVerify.eVerifyRequired;
+      }
+      if (shouldApplyDefault(currentFormData.poRequired, billing.poRequired)) {
+        updates.poRequired = billing.poRequired;
+      }
+      if (shouldApplyDefault(currentFormData.paymentTerms, billing.paymentTerms)) {
+        updates.paymentTerms = billing.paymentTerms;
+      }
+      if (shouldApplyDefault(currentFormData.invoiceDeliveryMethod, billing.invoiceDeliveryMethod)) {
+        updates.invoiceDeliveryMethod = billing.invoiceDeliveryMethod;
+      }
+      if (shouldApplyDefault(currentFormData.invoiceFrequency, billing.invoiceFrequency)) {
+        updates.invoiceFrequency = billing.invoiceFrequency;
+      }
+      
+      // Apply updates to formData if any
+      if (Object.keys(updates).length > 0) {
+        setFormData((prev: any) => ({ ...prev, ...updates }));
+        
+        // If editing, save to Firestore
+        if (isEditing && jobOrderId) {
+          // Save each field individually to Firestore
+          for (const [field, value] of Object.entries(updates)) {
+            await saveFieldToFirestore(field, value, { ...currentFormData, ...updates });
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error loading company defaults:', error);
+    }
+  };
+
+  const loadCompanyContacts = async (companyId: string) => {
+    if (!companyId || !tenantId) return;
+    
+    console.log('🔍 Loading company contacts for company:', companyId);
+    
+    try {
+      const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
+      const contactsQuery = query(contactsRef, where('companyId', '==', companyId));
+      const contactsSnapshot = await getDocs(contactsQuery);
+      const contactsData = contactsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      console.log('🔍 Loaded contacts for company', companyId, ':', contactsData.length, 'contacts');
+      console.log('🔍 Contact details:', contactsData.map((c: any) => ({ 
+        id: c.id, 
+        name: c.contactName || c.fullName || c.firstName + ' ' + c.lastName,
+        companyName: c.companyName,
+        dealRole: c.dealRole
+      })));
+      
+      // Load worksite information for each contact
+      const contactsWithWorksites = await Promise.all(
+        contactsData.map(async (contact: any) => {
+          const worksites = [];
+          
+          // Check if contact has locationId
+          if (contact.locationId) {
+            try {
+              const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations', contact.locationId);
+              const locationDoc = await getDoc(locationRef);
+              if (locationDoc.exists()) {
+                worksites.push({
+                  id: contact.locationId,
+                  name: locationDoc.data().nickname || locationDoc.data().name || contact.locationName || 'Unknown Location'
+                });
+              }
+            } catch (error) {
+              console.warn('Error loading location for contact:', contact.id, error);
+            }
+          }
+          
+          // Check if contact has associations.locations
+          if (contact.associations?.locations) {
+            for (const locationId of contact.associations.locations) {
+              try {
+                const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations', locationId);
+                const locationDoc = await getDoc(locationRef);
+                if (locationDoc.exists()) {
+                  worksites.push({
+                    id: locationId,
+                    name: locationDoc.data().nickname || locationDoc.data().name || 'Unknown Location'
+                  });
+                }
+              } catch (error) {
+                console.warn('Error loading associated location for contact:', contact.id, locationId, error);
+              }
+            }
+          }
+          
+          return {
+            ...contact,
+            worksites
+          };
+        })
+      );
+      
+      setLoadedContacts(contactsWithWorksites);
+      console.log('🔍 Set loaded contacts with worksites:', contactsWithWorksites);
+      
+    } catch (error) {
+      console.error('Error loading company contacts:', error);
+      setLoadedContacts([]);
     }
   };
 
@@ -474,17 +1335,24 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       
       if (jobOrderSnap.exists()) {
         const data = jobOrderSnap.data() as JobOrder;
+        // Store the loaded job order data for preserving associations
+        setLoadedJobOrderData(data);
+        
         // Check for stageData in both top-level and embedded deal object
         const stageData = (data as any).stageData || (data as any).deal?.stageData || {};
         
+
         setFormData({
           // Basic Information
+          jobOrderNumber: data.jobOrderNumber || '',
           jobOrderName: data.jobOrderName || '',
           jobTitle: (data as any).jobTitle || (stageData.discovery?.jobTitles?.[0] || ''),
           description: data.jobOrderDescription || '',
+          jobDescriptionFromClient: (data as any).jobDescriptionFromClient || '',
           companyId: (data as any).companyId || '',
           worksiteId: (data as any).worksiteId || '',
           status: data.status || 'draft',
+          jobType: (data as any).jobType || 'career',
           workersNeeded: data.workersNeeded || 1,
           payRate: (data as any).payRate || '',
           markup: (data as any).markup || '',
@@ -499,8 +1367,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           })(),
           priority: (data as any).priority || '',
           shiftType: (data as any).shiftType || '',
-          startDate: formatDateForInput((data as any).startDate),
-          endDate: formatDateForInput((data as any).endDate),
+          startDate: (data as any).startDate || '',
+          endDate: (data as any).endDate || '',
           requirements: (data as any).requirements || '',
           notes: (data as any).notes || '',
           
@@ -534,11 +1402,19 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           // Scoping Stage Fields - from stageData.scoping
           replacingExistingAgency: stageData.scoping?.replacingExistingAgency || false,
           rolloverExistingStaff: stageData.scoping?.rolloverExistingStaff || false,
-          backgroundCheckPackages: stageData.scoping?.compliance?.backgroundCheckPackages || [],
-          drugScreeningPanels: stageData.scoping?.compliance?.drugScreeningPanels || [],
-          additionalScreenings: stageData.scoping?.compliance?.additionalScreenings || [],
+          /* R.0d (Apr 2026): drugScreeningPanels write removed; legacy data
+             on the JO doc is preserved untouched. backgroundCheckPackages
+             still cleared explicitly during the AccuSource transition. */
+          backgroundCheckPackages: [] as string[],
+          additionalScreenings: Array.isArray((data as any).additionalScreenings)
+            ? (data as any).additionalScreenings
+            : (stageData.scoping?.compliance?.additionalScreenings || []),
           eVerifyRequired: stageData.scoping?.compliance?.eVerify || false,
-          dressCode: stageData.scoping?.uniformRequirements || [],
+          dressCode: Array.isArray((data as any).dressCode)
+            ? (data as any).dressCode
+            : stageData.scoping?.uniformRequirements || [],
+          customUniformRequirements: (data as any).customUniformRequirements || stageData.scoping?.customUniformRequirements || '',
+          showCustomUniformRequirements: (data as any).showCustomUniformRequirements || stageData.scoping?.showCustomUniformRequirements || false,
           timeclockSystem: stageData.scoping?.timeclockSystem || '',
           disciplinePolicy: stageData.scoping?.disciplinePolicy || '',
           poRequired: stageData.scoping?.poRequired || false,
@@ -549,14 +1425,29 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           // Compliance Fields - from stageData.scoping.compliance
           backgroundCheckRequired: stageData.scoping?.compliance?.backgroundCheck || false,
           drugScreenRequired: stageData.scoping?.compliance?.drugScreen || false,
-          licensesCerts: stageData.scoping?.compliance?.licensesCerts || [],
+          licensesCerts: Array.isArray((data as any).licensesCerts)
+            ? (data as any).licensesCerts
+            : (stageData.scoping?.compliance?.licensesCerts || []),
           experienceRequired: stageData.scoping?.compliance?.experience || '',
           educationRequired: stageData.scoping?.compliance?.education || '',
-          languagesRequired: stageData.scoping?.compliance?.languages || [],
-          skillsRequired: stageData.scoping?.compliance?.skills || [],
-          physicalRequirements: stageData.scoping?.compliance?.physicalRequirements || [],
-          ppeRequirements: stageData.scoping?.compliance?.ppe || [],
+          languagesRequired: Array.isArray((data as any).languagesRequired)
+            ? (data as any).languagesRequired
+            : (stageData.scoping?.compliance?.languages || []),
+          skillsRequired: Array.isArray((data as any).skillsRequired)
+            ? (data as any).skillsRequired
+            : (stageData.scoping?.compliance?.skills || []),
+          physicalRequirements: Array.isArray((data as any).physicalRequirements)
+            ? (data as any).physicalRequirements
+            : (stageData.scoping?.compliance?.physicalRequirements || []),
+          ppeRequirements: Array.isArray((data as any).ppeRequirements)
+            ? (data as any).ppeRequirements
+            : (stageData.scoping?.compliance?.ppe || []),
           ppeProvidedBy: stageData.scoping?.compliance?.ppeProvidedBy || 'company',
+          requirementPackId: (data as any).requirementPackId || '',
+          workersCompClassCode: (data as any).workersCompClassCode || '',
+          workersCompRate: (data as any).workersCompRate != null ? String((data as any).workersCompRate) : '',
+          screeningPackageId: String((data as any).screeningPackageId ?? '').trim(),
+          screeningPackageName: String((data as any).screeningPackageName ?? '').trim(),
           
           // Customer Rules - from stageData.scoping.customerRules
           attendancePolicy: stageData.scoping?.customerRules?.attendance || '',
@@ -579,9 +1470,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           rateSheetOnFile: stageData.closedWon?.rateSheetOnFile || false,
           msaSigned: stageData.closedWon?.msaSigned || false,
           
-          // Financial
-          estimatedRevenue: (data as any).estimatedRevenue?.toString() || '',
-          
           // HR Contact
           hrContactId: (data as any).hrContactId || (data as any).deal?.hrContactId || '',
           
@@ -594,7 +1482,54 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           billingContactId: (data as any).billingContactId || (data as any).deal?.billingContactId || '',
           safetyContactId: (data as any).safetyContactId || (data as any).deal?.safetyContactId || '',
           invoiceContactId: (data as any).invoiceContactId || (data as any).deal?.invoiceContactId || '',
+          
+          // Gig Financials
+          poNumber: (data as any).poNumber ?? '',
+          gigEstimatedValue:
+            (data as any).gigEstimatedValue != null && (data as any).gigEstimatedValue !== ''
+              ? String((data as any).gigEstimatedValue)
+              : '',
+          gigAverageMarkup:
+            (data as any).gigAverageMarkup != null && (data as any).gigAverageMarkup !== ''
+              ? String((data as any).gigAverageMarkup)
+              : '',
+          gigEstimatedStartDate: toISODate((data as any).gigEstimatedStartDate) || '',
+          gigEstimatedEndDate: toISODate((data as any).gigEstimatedEndDate) || '',
         });
+
+        const rid = (data as any).recruiterAccountId;
+        setPickedRecruiterAccountId(
+          typeof rid === 'string' && rid.trim() ? rid.trim() : null
+        );
+        
+        // Load gig positions if job type is gig
+        if ((data as any).jobType === 'gig' && (data as any).gigPositions) {
+          const loaded = ((data as any).gigPositions as any[]).map((p: any) => ({
+            jobTitle: p.jobTitle ?? '',
+            workersNeeded: p.workersNeeded ?? 1,
+            payRate: String(p.payRate ?? ''),
+            markup: p.markup,
+            billRate: p.billRate,
+            workersCompClassCode: p.workersCompClassCode ?? '',
+            workersCompRate: p.workersCompRate != null ? String(p.workersCompRate) : '',
+            sutaRate: p.sutaRate != null && p.sutaRate !== '' ? String(p.sutaRate) : '',
+            futaRate: p.futaRate != null && p.futaRate !== '' ? String(p.futaRate) : '',
+          }));
+          setGigPositions(loaded);
+        } else if ((data as any).jobType === 'gig') {
+          // If gig type but no positions saved, initialize with data from main fields
+          setGigPositions([{
+            jobTitle: (data as any).jobTitle || '',
+            workersNeeded: data.workersNeeded || 1,
+            payRate: String((data as any).payRate || ''),
+            markup: String((data as any).markup || ''),
+            billRate: String((data as any).billRate || ''),
+            workersCompClassCode: (data as any).workersCompClassCode ?? '',
+            workersCompRate: (data as any).workersCompRate != null ? String((data as any).workersCompRate) : '',
+            sutaRate: '',
+            futaRate: '',
+          } as any]);
+        }
         
         // Load locations for the company if companyId is set
         const companyForLocations = (data as any).companyId;
@@ -633,20 +1568,25 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         ...(numericMarkup > 0 ? { billRate: computed ? String(Number(computed.toFixed(2))) : '' } : {})
       };
     }
+
+    // Load company contacts when company is selected
+    if (field === 'companyId' && value) {
+      await loadCompanyContacts(value);
+      // Load and apply company defaults
+      await loadAndApplyCompanyDefaults(value, updatedFormData);
+    }
     
     setFormData(updatedFormData);
     
-    // Auto-save on change
-    if (isEditing && jobOrderId) {
-      console.log('🔍 handleInputChange - Auto-saving field:', field, 'value:', value);
-      await saveFieldToFirestore(field, value, updatedFormData);
-    }
+    // Auto-save on change (skip auto-save for startDate and endDate to avoid conflicts)
+      if (isEditing && jobOrderId && field !== 'startDate' && field !== 'endDate') {
+        await saveFieldToFirestore(field, value, updatedFormData);
+      }
   };
 
   const handleFieldBlur = async (field: string, value: any) => {
-    // Auto-save on blur for additional safety
-    if (isEditing && jobOrderId) {
-      console.log('🔍 handleFieldBlur - Auto-saving field:', field, 'value:', value);
+    // Auto-save on blur for additional safety (skip auto-save for startDate and endDate)
+    if (isEditing && jobOrderId && field !== 'startDate' && field !== 'endDate') {
       await saveFieldToFirestore(field, value, formData);
     }
   };
@@ -656,25 +1596,37 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
 
     // Use the passed form data or fall back to current state
     const dataToUse = currentFormData || formData;
-
-    console.log('🔍 Auto-saving field:', field, 'value:', value, 'startDate in dataToUse:', dataToUse.startDate);
-
+    
     try {
-      // Get company and location names if needed
+      // Resolve company and location names (and parent account) for lookup fields
+      const cid = dataToUse.companyId || (field === 'companyId' ? value : '');
+      const wid = dataToUse.worksiteId || (field === 'worksiteId' ? value : '');
       let companyName = '';
       let worksiteName = '';
-      
-      if (field === 'companyId' && value) {
-        const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', value);
+      let parentAccountId: string | null = null;
+      let parentAccountName: string | null = null;
+
+      if (cid) {
+        const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', cid);
         const companySnap = await getDoc(companyRef);
         if (companySnap.exists()) {
           const companyData = companySnap.data() as any;
           companyName = companyData.companyName || companyData.name || '';
+          const parentId = companyData.companyStructure?.parentId ?? companyData.parentCompany ?? (typeof companyData.parentId === 'string' ? companyData.parentId : null);
+          if (parentId) {
+            parentAccountId = typeof parentId === 'object' && parentId?.id ? parentId.id : parentId;
+            const parentRef = doc(db, 'tenants', tenantId, 'crm_companies', parentAccountId);
+            const parentSnap = await getDoc(parentRef);
+            if (parentSnap.exists()) {
+              const parentData = parentSnap.data() as any;
+              parentAccountName = parentData.companyName || parentData.name || null;
+            }
+          }
         }
       }
 
-      if (field === 'worksiteId' && value && dataToUse.companyId) {
-        const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', dataToUse.companyId, 'locations', value);
+      if (wid && cid) {
+        const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', cid, 'locations', wid);
         const locationSnap = await getDoc(locationRef);
         if (locationSnap.exists()) {
           const locationData = locationSnap.data() as any;
@@ -715,11 +1667,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         scoping: {
           replacingExistingAgency: (dataToUse as any).replacingExistingAgency || undefined,
           rolloverExistingStaff: (dataToUse as any).rolloverExistingStaff || undefined,
-          compliance: {
+            compliance: {
             backgroundCheck: (dataToUse as any).backgroundCheckRequired || undefined,
-            backgroundCheckPackages: (dataToUse as any).backgroundCheckPackages || [],
+            backgroundCheckPackages: [],
             drugScreen: (dataToUse as any).drugScreenRequired || undefined,
-            drugScreeningPanels: (dataToUse as any).drugScreeningPanels || [],
+            // R.0d (Apr 2026): drugScreeningPanels write removed from compliance save.
             additionalScreenings: (dataToUse as any).additionalScreenings || [],
             eVerify: (dataToUse as any).eVerifyRequired || undefined,
             licensesCerts: (dataToUse as any).licensesCerts || [],
@@ -732,6 +1684,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             ppeProvidedBy: (dataToUse as any).ppeProvidedBy || undefined,
           },
           uniformRequirements: (dataToUse as any).dressCode || undefined,
+          customUniformRequirements: (dataToUse as any).customUniformRequirements || undefined,
+          showCustomUniformRequirements: (dataToUse as any).showCustomUniformRequirements || undefined,
           timeclockSystem: (dataToUse as any).timeclockSystem || undefined,
           disciplinePolicy: (dataToUse as any).disciplinePolicy || undefined,
           poRequired: (dataToUse as any).poRequired || undefined,
@@ -768,16 +1722,10 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         setDeep(stageDataUpdate as any, path, value);
       }
 
-      // Parse dates properly - convert string to Date object
-      const startDateParsed = dataToUse.startDate ? parseDateFromInput(dataToUse.startDate) : null;
-      const endDateParsed = dataToUse.endDate ? parseDateFromInput(dataToUse.endDate) : null;
+      // Use dates as simple strings - no parsing needed
+      const startDateParsed = dataToUse.startDate || null;
+      const endDateParsed = dataToUse.endDate || null;
       
-      console.log('🔍 Date parsing:', {
-        startDateInput: dataToUse.startDate,
-        startDateParsed,
-        endDateInput: dataToUse.endDate,
-        endDateParsed
-      });
 
       // Compute calculated bill rate if markup/payRate present
       const numericPay = toNumberSafe((dataToUse as any).payRate) ?? 0;
@@ -788,7 +1736,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         tenantId,
         jobOrderName: dataToUse.jobOrderName,
         jobOrderDescription: dataToUse.description,
+        jobDescriptionFromClient: dataToUse.jobDescriptionFromClient || undefined,
         status: dataToUse.status,
+        jobType: dataToUse.jobType || 'career',
         workersNeeded: toNumberSafe(dataToUse.workersNeeded) ?? 1,
         payRate: toNumberSafe(dataToUse.payRate) ?? 0,
         markup: toNumberSafe(dataToUse.markup) ?? 0,
@@ -801,7 +1751,47 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         companyName,
         worksiteId: dataToUse.worksiteId || '',
         worksiteName,
-        estimatedRevenue: toNumberSafe(dataToUse.estimatedRevenue) ?? 0,
+        accountId: cid || undefined,
+        parentAccountId: parentAccountId ?? undefined,
+        locationId: wid || undefined,
+        accountName: companyName || undefined,
+        parentAccountName: parentAccountName ?? undefined,
+        locationName: worksiteName || undefined,
+        poNumber:
+          (dataToUse as any).jobType === 'gig' ? (dataToUse as any).poNumber || undefined : undefined,
+        gigEstimatedValue:
+          (dataToUse as any).jobType === 'gig'
+            ? (() => {
+                const v = toNumberSafe((dataToUse as any).gigEstimatedValue);
+                return v != null && v >= 0 ? v : undefined;
+              })()
+            : undefined,
+        gigAverageMarkup:
+          (dataToUse as any).jobType === 'gig'
+            ? (() => {
+                const v = toNumberSafe((dataToUse as any).gigAverageMarkup);
+                return v != null && v >= 0 ? v : undefined;
+              })()
+            : undefined,
+        gigEstimatedStartDate:
+          (dataToUse as any).jobType === 'gig'
+            ? (dataToUse as any).gigEstimatedStartDate || null
+            : undefined,
+        gigEstimatedEndDate:
+          (dataToUse as any).jobType === 'gig'
+            ? (dataToUse as any).gigEstimatedEndDate || null
+            : undefined,
+        estimatedRevenue: (() => {
+          if ((dataToUse as any).jobType === 'gig') {
+            const ev = toNumberSafe((dataToUse as any).gigEstimatedValue);
+            if (ev != null && ev >= 0) return ev;
+            return 0;
+          }
+          // Career: Bill Rate × 2080 hours × Workers Needed
+          const billRate = toNumberSafe(dataToUse.billRate) || toNumberSafe(dataToUse.calculatedBillRate) || 0;
+          const workersNeeded = parseInt(dataToUse.workersNeeded?.toString() || '1') || 1;
+          return billRate * 2080 * workersNeeded;
+        })(),
         notes: dataToUse.notes,
         hrContactId: dataToUse.hrContactId || '',
         decisionMaker: dataToUse.decisionMaker || '',
@@ -810,6 +1800,16 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         billingContactId: dataToUse.billingContactId || '',
         safetyContactId: dataToUse.safetyContactId || '',
         invoiceContactId: dataToUse.invoiceContactId || '',
+        customUniformRequirements: dataToUse.customUniformRequirements || undefined,
+        screeningPackageId: String((dataToUse as any).screeningPackageId ?? '').trim() || null,
+        screeningPackageName: String((dataToUse as any).screeningPackageName ?? '').trim() || null,
+        jobTitle:
+          (dataToUse as any).jobType === 'gig'
+            ? String(gigPositions[0]?.jobTitle ?? '')
+            : String((dataToUse as any).jobTitle ?? ''),
+        ...( (dataToUse as any).jobType === 'gig'
+          ? { gigPositions: normalizeGigPositionsForPersist(gigPositions as any) }
+          : {}),
         stageData: stageDataUpdate,
         updatedAt: new Date(),
         updatedBy: user.uid,
@@ -818,27 +1818,76 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       // Remove undefined values from the data before saving to Firestore
       const cleanJobOrderData = removeUndefinedValues(updates);
       
-      console.log('🔍 About to save to Firestore:', {
-        field,
-        rawStartDate: updates.startDate,
-        rawEndDate: updates.endDate,
-        cleanStartDate: cleanJobOrderData.startDate,
-        cleanEndDate: cleanJobOrderData.endDate
-      });
       
       const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
+      let statusBeforeWrite: string | undefined;
+      if (field === 'status') {
+        const priorSnap = await getDoc(jobOrderRef);
+        if (priorSnap.exists()) {
+          statusBeforeWrite = (priorSnap.data() as { status?: string })?.status;
+        }
+      }
       await updateDoc(jobOrderRef, cleanJobOrderData);
-      
-      console.log('✅ Auto-save successful for field:', field, 'saved data:', {
-        startDate: cleanJobOrderData.startDate,
-        endDate: cleanJobOrderData.endDate
-      });
+
+      if (field === 'status') {
+        try {
+          await JobsBoardService.getInstance().syncLinkedJobPostingsToJobOrderStatus(
+            tenantId,
+            jobOrderId,
+            value,
+            statusBeforeWrite,
+          );
+        } catch (error) {
+          console.error('Error updating connected job posts status:', error);
+        }
+      }
       
     } catch (error) {
       console.error('Error auto-saving field:', error);
       // Don't show error to user for auto-save failures
     }
   };
+
+  /** Commit career job title from draft (pricing preset, form state, Firestore). Not used on every keystroke. */
+  const commitCareerJobTitle = (title: string) => {
+    setFormData((prev) => {
+      if (String(prev.jobTitle ?? '') === title) return prev;
+      const merged = mergeCareerFormWithPricingPreset(prev as any, title, pricingByJobTitle) as any;
+      if (isEditing && jobOrderId) {
+        void saveFieldToFirestore('jobTitle', title, merged as any);
+      }
+      return merged as any;
+    });
+    setCareerJobTitleInput(title);
+  };
+
+  // When account Pricing loads or updates, backfill Job description from client for career orders that still have it empty.
+  useEffect(() => {
+    if (!isEditing || !jobOrderId || formData.jobType !== 'career') return;
+    if (String(formData.jobDescriptionFromClient || '').trim()) return;
+    const t = String(formData.jobTitle || '').trim();
+    if (!t) return;
+    const preset = pricingByJobTitle.get(t);
+    const jd = (preset?.jobDescriptionFromClient || '').trim();
+    if (!jd) return;
+    let mergedSnapshot: Record<string, unknown> | null = null;
+    setFormData((prev) => {
+      if (String(prev.jobDescriptionFromClient || '').trim()) return prev;
+      mergedSnapshot = mergeCareerFormWithPricingPreset(prev as any, t, pricingByJobTitle) as any;
+      return mergedSnapshot as any;
+    });
+    if (mergedSnapshot) {
+      void saveFieldToFirestore('jobDescriptionFromClient', jd, mergedSnapshot);
+    }
+  }, [
+    pricingPositionsSyncKey,
+    formData.jobTitle,
+    formData.jobType,
+    formData.jobDescriptionFromClient,
+    isEditing,
+    jobOrderId,
+    pricingByJobTitle,
+  ]);
 
   const handleSave = async () => {
     if (!tenantId || !user) return;
@@ -847,16 +1896,61 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     setError(null);
     
     try {
-      // Get company and location names
+      if (!isEditing && requireAccountSelection) {
+        if (!scopeRecruiterAccountId) {
+          setError('Please select an account.');
+          setSaving(false);
+          return;
+        }
+        const accPick = recruiterAccountsForPicker.find((a) => a.id === scopeRecruiterAccountId);
+        if (!accPick) {
+          setError('Please select an account.');
+          setSaving(false);
+          return;
+        }
+        const allowedIds = new Set((accPick.companyIds || []).filter(Boolean));
+        accPick.linkedLocations.forEach((l) => {
+          if (l.companyId) allowedIds.add(l.companyId);
+        });
+        if (allowedIds.size === 0) {
+          setError(
+            'This account has no linked companies or worksites. Link at least one company on the account before creating a job order.'
+          );
+          setSaving(false);
+          return;
+        }
+        if (!formData.companyId || !allowedIds.has(formData.companyId)) {
+          setError('Select a company for this account.');
+          setSaving(false);
+          return;
+        }
+      }
+
+      // Get company and location names (and worksite city/state for Smart Groups metro sync)
+      // Also resolve parent account (national) for account/parent/location lookup fields
       let companyName = '';
       let worksiteName = '';
-      
+      let worksiteCity = '';
+      let worksiteState = '';
+      let parentAccountId: string | null = null;
+      let parentAccountName: string | null = null;
+
       if (formData.companyId) {
         const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', formData.companyId);
         const companySnap = await getDoc(companyRef);
         if (companySnap.exists()) {
           const companyData = companySnap.data() as any;
           companyName = companyData.companyName || companyData.name || '';
+          const parentId = companyData.companyStructure?.parentId ?? companyData.parentCompany ?? (typeof companyData.parentId === 'string' ? companyData.parentId : null);
+          if (parentId) {
+            parentAccountId = typeof parentId === 'object' && parentId?.id ? parentId.id : parentId;
+            const parentRef = doc(db, 'tenants', tenantId, 'crm_companies', parentAccountId);
+            const parentSnap = await getDoc(parentRef);
+            if (parentSnap.exists()) {
+              const parentData = parentSnap.data() as any;
+              parentAccountName = parentData.companyName || parentData.name || null;
+            }
+          }
         }
       }
 
@@ -866,22 +1960,36 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         if (locationSnap.exists()) {
           const locationData = locationSnap.data() as any;
           worksiteName = locationData.nickname || locationData.name || '';
+          worksiteCity = locationData.city || locationData.address?.city || '';
+          worksiteState = locationData.state || locationData.address?.state || '';
         }
       }
 
       // Build the updated deal data structure
-      const updatedDealData = {
+      const updatedDealData: any = {
         // Basic deal information
         name: formData.jobOrderName,
         companyId: formData.companyId,
         companyName,
         locationId: formData.worksiteId,
         locationName: worksiteName,
-        estimatedRevenue: parseFloat(formData.estimatedRevenue) || 0,
+        estimatedRevenue: (() => {
+          if (formData.jobType === 'gig') {
+            const v = parseFloat(String(formData.gigEstimatedValue || ''));
+            return !Number.isNaN(v) && v >= 0 ? v : 0;
+          }
+          const billRate = parseFloat(formData.billRate) || parseFloat(formData.calculatedBillRate) || 0;
+          const workersNeeded = parseInt(formData.workersNeeded.toString()) || 1;
+          return billRate * 2080 * workersNeeded;
+        })(),
         notes: formData.notes,
-        
-        // Stage data structure
-        stageData: {
+      };
+
+      // Only include stageData if job order is created from a deal (has dealId) or updating existing job order with dealId
+      // Standalone job orders don't need stageData
+      const hasDealId = dealId || jobOrder?.dealId;
+      if (hasDealId) {
+        updatedDealData.stageData = {
           discovery: {
             currentStaffCount: parseInt(formData.currentStaffCount) || undefined,
             currentAgencyCount: parseInt(formData.currentAgencyCount) || undefined,
@@ -915,11 +2023,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             rolloverExistingStaff: formData.rolloverExistingStaff,
             compliance: {
               backgroundCheck: formData.backgroundCheckRequired,
-              backgroundCheckPackages: formData.backgroundCheckPackages,
+              backgroundCheckPackages: [],
               drugScreen: formData.drugScreenRequired,
-              drugScreeningPanels: formData.drugScreeningPanels,
+              // R.0d (Apr 2026): drugScreeningPanels write removed from compliance save.
               additionalScreenings: formData.additionalScreenings,
-              eVerify: formData.eVerifyRequired,
+              eVerify: formEntity ? formEntity.everifyRequired : formData.eVerifyRequired,
               licensesCerts: formData.licensesCerts,
               experience: formData.experienceRequired || undefined,
               education: formData.educationRequired || undefined,
@@ -930,6 +2038,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               ppeProvidedBy: formData.ppeProvidedBy,
             },
             uniformRequirements: formData.dressCode || undefined,
+            customUniformRequirements: formData.customUniformRequirements || undefined,
+            showCustomUniformRequirements: formData.showCustomUniformRequirements || undefined,
             timeclockSystem: formData.timeclockSystem || undefined,
             disciplinePolicy: formData.disciplinePolicy || undefined,
             poRequired: formData.poRequired,
@@ -958,11 +2068,17 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             rateSheetOnFile: formData.rateSheetOnFile,
             msaSigned: formData.msaSigned,
           },
-        },
-        
-        // Update timestamp
-        updatedAt: new Date(),
-      };
+        };
+      }
+      // For standalone job orders (not from a deal), don't include stageData at all
+      // The removeUndefinedValues function will ensure no undefined values slip through
+      
+      // CRITICAL: Preserve existing associations (contacts, salespeople, locations, etc.)
+      // Do NOT overwrite associations that were added via Deal Contacts dialog
+      updatedDealData.associations = loadedJobOrderData?.deal?.associations || jobOrder?.deal?.associations || {};
+      
+      // Update timestamp
+      updatedDealData.updatedAt = new Date();
 
       // Compute bill rate consistency
       const numericPayForCreate = parseFloat(String(formData.payRate || '')) || 0;
@@ -975,37 +2091,56 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         // Job Order specific fields
         tenantId,
         jobOrderName: formData.jobOrderName,
+        jobTitle: formData.jobType === 'gig' ? (gigPositions[0]?.jobTitle || '') : formData.jobTitle,
         jobOrderDescription: formData.description,
+        jobDescriptionFromClient: formData.jobDescriptionFromClient || undefined,
         status: formData.status,
-        workersNeeded: parseInt(formData.workersNeeded.toString()) || 1,
-        payRate: parseFloat(formData.payRate) || 0,
-        markup: parseFloat(formData.markup) || 0,
-        billRate: (numericMarkupForCreate > 0 ? computedBillForCreate : (parseFloat(formData.billRate) || 0)),
-        calculatedBillRate: computedBillForCreate,
-        startDate: formData.startDate ? (() => {
-          try {
-            const date = new Date(formData.startDate);
-            return isNaN(date.getTime()) ? null : date;
-          } catch (error) {
-            console.warn('Invalid start date in form data:', formData.startDate);
-            return null;
-          }
-        })() : null,
-        endDate: formData.endDate ? (() => {
-          try {
-            const date = new Date(formData.endDate);
-            return isNaN(date.getTime()) ? null : date;
-          } catch (error) {
-            console.warn('Invalid end date in form data:', formData.endDate);
-            return null;
-          }
-        })() : null,
+        jobType: formData.jobType || 'career',
+        workersNeeded: formData.jobType === 'gig' 
+          ? gigPositions.reduce((sum, pos) => sum + (pos.workersNeeded || 0), 0) 
+          : (parseInt(formData.workersNeeded.toString()) || 1),
+        companyId: formData.companyId || '',
+        worksiteId: formData.worksiteId || '',
+        accountId: formData.companyId || undefined,
+        parentAccountId: parentAccountId ?? undefined,
+        locationId: formData.worksiteId || undefined,
+        accountName: companyName || undefined,
+        parentAccountName: parentAccountName ?? undefined,
+        locationName: worksiteName || undefined,
+        payRate: formData.jobType === 'gig' 
+          ? (parseFloat(gigPositions[0]?.payRate || '0') || 0)
+          : (parseFloat(formData.payRate) || 0),
+        markup: formData.jobType === 'gig'
+          ? (parseFloat((gigPositions[0] as any)?.markup || '0') || 0)
+          : (parseFloat(formData.markup) || 0),
+        billRate: formData.jobType === 'gig'
+          ? (() => {
+              const payRate = parseFloat(gigPositions[0]?.payRate || '0') || 0;
+              const markup = parseFloat((gigPositions[0] as any)?.markup || '0') || 0;
+              return markup > 0 && payRate > 0 ? Number((payRate * (1 + markup / 100)).toFixed(2)) : (parseFloat((gigPositions[0] as any)?.billRate || '0') || 0);
+            })()
+          : (numericMarkupForCreate > 0 ? computedBillForCreate : (parseFloat(formData.billRate) || 0)),
+        calculatedBillRate: formData.jobType === 'gig'
+          ? (() => {
+              const payRate = parseFloat(gigPositions[0]?.payRate || '0') || 0;
+              const markup = parseFloat((gigPositions[0] as any)?.markup || '0') || 0;
+              return markup > 0 && payRate > 0 ? Number((payRate * (1 + markup / 100)).toFixed(2)) : 0;
+            })()
+          : computedBillForCreate,
+        startDate: formData.startDate || null,
+        endDate: formData.endDate || null,
+        
+        // Gig positions array (only for gig type); SUTA/FUTA as numbers for Firestore (same as account Pricing)
+        gigPositions: formData.jobType === 'gig' ? normalizeGigPositionsForPersist(gigPositions as any) : undefined,
         
         // Update the deal data
         deal: updatedDealData,
         
         // HR Contact
         hrContactId: formData.hrContactId || '',
+
+        /** Decision maker contact (Company Contacts section). */
+        decisionMaker: formData.decisionMaker || '',
         
         // Additional Contact Roles
         operationsContactId: formData.operationsContactId || '',
@@ -1014,16 +2149,138 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         safetyContactId: formData.safetyContactId || '',
         invoiceContactId: formData.invoiceContactId || '',
         
+        // Shift and Employment Details
+        shiftType: formData.shiftType || '',
+        shiftTimes: formData.shiftTimes || '',
+        
+        // Additional Form Fields
+        requirements: formData.requirements || '',
+        notes: formData.notes || '',
+        priority: formData.priority || '',
+        employmentType: formData.employmentType || '',
+        experienceLevel: formData.experienceLevel || '',
+        poNumber: formData.jobType === 'gig' ? formData.poNumber || undefined : undefined,
+        gigEstimatedValue:
+          formData.jobType === 'gig'
+            ? (() => {
+                const v = parseFloat(String(formData.gigEstimatedValue || ''));
+                return !Number.isNaN(v) && v >= 0 ? v : undefined;
+              })()
+            : undefined,
+        gigAverageMarkup:
+          formData.jobType === 'gig'
+            ? (() => {
+                const v = parseFloat(String(formData.gigAverageMarkup || ''));
+                return !Number.isNaN(v) && v >= 0 ? v : undefined;
+              })()
+            : undefined,
+        gigEstimatedStartDate:
+          formData.jobType === 'gig' ? formData.gigEstimatedStartDate || null : undefined,
+        gigEstimatedEndDate:
+          formData.jobType === 'gig' ? formData.gigEstimatedEndDate || null : undefined,
+        estimatedRevenue: (() => {
+          if (formData.jobType === 'gig') {
+            const v = parseFloat(String(formData.gigEstimatedValue || ''));
+            return !Number.isNaN(v) && v >= 0 ? v : 0;
+          }
+          const billRate = parseFloat(formData.billRate) || parseFloat(formData.calculatedBillRate) || 0;
+          const workersNeeded = parseInt(formData.workersNeeded.toString()) || 1;
+          return billRate * 2080 * workersNeeded;
+        })(),
+        
+        // Compliance Fields (E-Verify from Hiring Entity when set)
+        backgroundCheckRequired: formData.backgroundCheckRequired || false,
+        drugScreenRequired: formData.drugScreenRequired || false,
+        eVerifyRequired: formEntity ? formEntity.everifyRequired : (formData.eVerifyRequired || false),
+        ...(hiringEntityIdForForm ? { hiringEntityId: hiringEntityIdForForm } : {}),
+        experienceRequired: formData.experienceRequired || '',
+        educationRequired: formData.educationRequired || '',
+        licensesCerts: formData.licensesCerts || [],
+        languagesRequired: formData.languagesRequired || [],
+        skillsRequired: formData.skillsRequired || [],
+        physicalRequirements: formData.physicalRequirements || [],
+        ppeRequirements: formData.ppeRequirements || [],
+        workersCompClassCode: formData.jobType === 'gig'
+          ? (gigPositions[0]?.workersCompClassCode || undefined)
+          : (formData.workersCompClassCode || undefined),
+        workersCompRate: formData.jobType === 'gig'
+          ? (gigPositions[0]?.workersCompRate ? parseFloat(gigPositions[0].workersCompRate) : undefined)
+          : (formData.workersCompRate ? parseFloat(formData.workersCompRate) : undefined),
+        ppeProvidedBy: formData.ppeProvidedBy || 'company',
+        customUniformRequirements:
+          typeof formData.customUniformRequirements === 'string' && formData.customUniformRequirements.trim()
+            ? formData.customUniformRequirements.trim()
+            : formData.customUniformRequirements === ''
+              ? ''
+              : undefined,
+        showCustomUniformRequirements: formData.showCustomUniformRequirements,
+        /** Uniform Requirements multi-select (library titles); also mirrored in deal.stageData when from a deal. */
+        dressCode: Array.isArray(formData.dressCode) ? formData.dressCode : [],
+        requirementPackId: formData.requirementPackId || undefined,
+        screeningPackageId: String(formData.screeningPackageId ?? '').trim() || null,
+        screeningPackageName: String(formData.screeningPackageName ?? '').trim() || null,
+        
+        // Background / drug screening via AccuSource package + Additional Screenings.
+        // R.0d (Apr 2026): drugScreeningPanels top-level write removed.
+        backgroundCheckPackages: [],
+        additionalScreenings: formData.additionalScreenings || [],
+        
+        // Customer Rules
+        attendancePolicy: formData.attendancePolicy || '',
+        noShowPolicy: formData.noShowPolicy || '',
+        overtimePolicy: formData.overtimePolicy || '',
+        callOffPolicy: formData.callOffPolicy || '',
+        injuryHandlingPolicy: formData.injuryHandlingPolicy || '',
+        
+        // Agreement Fields
+        verbalAgreementContact: formData.verbalAgreementContact || '',
+        verbalAgreementDate: formData.verbalAgreementDate || '',
+        verbalAgreementMethod: formData.verbalAgreementMethod || '',
+        conditionsToFulfill: formData.conditionsToFulfill || '',
+        approvalsNeeded: formData.approvalsNeeded || '',
+        insuranceSubmitted: formData.insuranceSubmitted || false,
+        
+        // Contract Fields
+        contractSignedDate: formData.contractSignedDate || '',
+        contractExpirationDate: formData.contractExpirationDate || '',
+        rateSheetOnFile: formData.rateSheetOnFile || false,
+        msaSigned: formData.msaSigned || false,
+        
         // Metadata
         updatedAt: new Date(),
         updatedBy: user.uid,
+        ...(effectiveRecruiterAccountId ? { recruiterAccountId: effectiveRecruiterAccountId } : {}),
       };
 
       if (isEditing && jobOrderId) {
+        const newStatus = formData.status;
+
         // Update existing job order
         const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
-        await updateDoc(jobOrderRef, jobOrderData);
+        const priorSnap = await getDoc(jobOrderRef);
+        const previousStatus = priorSnap.exists()
+          ? (priorSnap.data() as { status?: string })?.status
+          : undefined;
+
+        // Remove undefined values before saving
+        const cleanJobOrderData = removeUndefinedValues(jobOrderData);
+
+        await updateDoc(jobOrderRef, cleanJobOrderData);
+
+        try {
+          await JobsBoardService.getInstance().syncLinkedJobPostingsToJobOrderStatus(
+            tenantId,
+            jobOrderId,
+            newStatus,
+            previousStatus,
+          );
+        } catch (error) {
+          console.error('Error updating connected job posts status:', error);
+        }
+
         setSuccess('Job order updated successfully!');
+        console.log('✅ Job order updated successfully');
+        ensureCityInSmartGroups(tenantId, worksiteCity, worksiteState).catch(() => {});
       } else {
         // Create new job order
         const jobOrdersRef = collection(db, p.jobOrders(tenantId));
@@ -1038,17 +2295,21 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           headcountFilled: 0,
         };
 
-        await addDoc(jobOrdersRef, newJobOrderData);
+        // Remove undefined values before saving (Firestore doesn't allow undefined)
+        const cleanJobOrderData = removeUndefinedValues(newJobOrderData);
+
+        await addDoc(jobOrdersRef, cleanJobOrderData);
         setSuccess('Job order created successfully!');
+        ensureCityInSmartGroups(tenantId, worksiteCity, worksiteState).catch(() => {});
       }
-      
+
       // Call onSave callback if provided
       if (onSave) {
         onSave();
       } else {
         // Default behavior: redirect after delay
         setTimeout(() => {
-          navigate('/recruiter/job-orders');
+          navigate('/jobs/job-orders');
         }, 1500);
       }
       
@@ -1064,7 +2325,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     if (onCancel) {
       onCancel();
     } else {
-      navigate('/recruiter/job-orders');
+      navigate('/jobs/job-orders');
     }
   };
 
@@ -1107,15 +2368,16 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               <Grid item xs={12} md={6}>
                 <TextField
                   fullWidth
-                  label={(getFieldDef('jobTitle')?.label || 'Job Title')}
-                  value={formData.jobTitle}
-                  onChange={(e) => handleInputChange('jobTitle', e.target.value)}
-                  onBlur={(e) => handleFieldBlur('jobTitle', e.target.value)}
+                  label={getFieldDef('jobOrderName')?.label || 'Job Order Name'}
+                  value={formData.jobOrderName}
+                  onChange={(e) => handleInputChange('jobOrderName', e.target.value)}
+                  onBlur={(e) => handleFieldBlur('jobOrderName', e.target.value)}
+                  placeholder="e.g., Warehouse Staff - Q4 2025"
                   required
                 />
               </Grid>
               
-              <Grid item xs={12} md={6}>
+              <Grid item xs={6} md={3}>
                 <FormControl fullWidth>
                   <InputLabel>Status</InputLabel>
                   <Select
@@ -1133,151 +2395,1375 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                   </Select>
                 </FormControl>
               </Grid>
-            </Grid>
 
-            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={6} md={3}>
+                <FormControl fullWidth required>
+                  <InputLabel>Job Type</InputLabel>
+                  <Select
+                    value={formData.jobType}
+                    onChange={(e) => handleInputChange('jobType', e.target.value)}
+                    onBlur={(e) => handleFieldBlur('jobType', e.target.value)}
+                    label="Job Type"
+                  >
+                    <MenuItem value="gig">Gig</MenuItem>
+                    <MenuItem value="career">Career</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
 
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label={(getFieldDef('workersNeeded')?.label || 'Workers Needed')}
-                type="number"
-                value={formData.workersNeeded}
-                onChange={(e) => handleInputChange('workersNeeded', parseInt(e.target.value) || 1)}
-                onBlur={(e) => handleFieldBlur('workersNeeded', parseInt(e.target.value) || 1)}
-                required
-                inputProps={{ min: 1 }}
-              />
-            </Grid>
+              {requireAccountSelection && !isEditing && (
+                <Grid item xs={12}>
+                  <Autocomplete
+                    fullWidth
+                    options={recruiterAccountsForPicker}
+                    getOptionLabel={(option) => option.label || option.name}
+                    isOptionEqualToValue={(a, b) => a.id === b.id}
+                    value={recruiterAccountsForPicker.find((a) => a.id === scopeRecruiterAccountId) || null}
+                    onChange={(_, newValue) => {
+                      setPickedRecruiterAccountId(newValue?.id ?? null);
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Account"
+                        required
+                        helperText="Select a client account (venue child or standalone). National parent accounts with sub-accounts are not listed. Company and worksite follow linked CRM data."
+                      />
+                    )}
+                  />
+                </Grid>
+              )}
 
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>{getFieldDef('shiftType')?.label || 'Shift Type'}</InputLabel>
-                <Select
-                  value={(formData as any).shiftType}
-                  onChange={(e) => handleInputChange('shiftType', e.target.value)}
-                  onBlur={(e) => handleFieldBlur('shiftType', e.target.value)}
-                  label={getFieldDef('shiftType')?.label || 'Shift Type'}
-                >
-                  {(getFieldDef('shiftType')?.options || []).map((opt) => (
-                    <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
+              <Grid item xs={12} md={6}>
+                {isEditing ? (
+                  <Autocomplete
+                    fullWidth
+                    options={accountOptions}
+                    getOptionLabel={(option) => option.label || option.name}
+                    isOptionEqualToValue={(a, b) => a.id === b.id}
+                    value={
+                      accountOptions.find(
+                        (a) => a.id === (pickedRecruiterAccountId || propRecruiterAccountId || null),
+                      ) || null
+                    }
+                    onChange={async (_, newValue) => {
+                      const nextId = newValue?.id ?? null;
+                      setPickedRecruiterAccountId(nextId);
+                      if (jobOrderId && tenantId && user?.uid) {
+                        try {
+                          const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
+                          await updateDoc(jobOrderRef, {
+                            updatedAt: new Date(),
+                            updatedBy: user.uid,
+                            recruiterAccountId: nextId ? nextId : deleteField(),
+                          } as any);
+                          setLoadedJobOrderData((prev: any) =>
+                            prev ? { ...prev, recruiterAccountId: nextId || undefined } : prev,
+                          );
+                          setSuccess('Account updated.');
+                          setTimeout(() => setSuccess(null), 3000);
+                        } catch (e) {
+                          console.error('JobOrderForm: recruiter account', e);
+                          setError('Could not save account. Try again.');
+                          setTimeout(() => setError(null), 5000);
+                        }
+                      }
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Account"
+                        required
+                        helperText="Client account (same as New Job Order). Child accounts use the linked worksite below."
+                      />
+                    )}
+                  />
+                ) : (
+                  <Autocomplete
+                    fullWidth
+                    options={companiesForCompanyField}
+                    getOptionLabel={(option) => option.companyName || option.name || ''}
+                    value={companiesForCompanyField.find((company) => company.id === formData.companyId) || null}
+                    onChange={(event, newValue) => {
+                      handleInputChange('companyId', newValue?.id || '');
+                      if (newValue?.id) {
+                        handleFieldBlur('companyId', newValue.id);
+                      }
+                    }}
+                    disabled={
+                      requireAccountSelection &&
+                      (!scopeRecruiterAccountId ||
+                        !accountLinkedCompanyIds?.length ||
+                        singleCompanyIdForAccount !== null)
+                    }
+                    renderOption={(props, option) => (
+                      <li {...props} key={option.id}>
+                        {option.companyName || option.name || ''}
+                      </li>
+                    )}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Company"
+                        required
+                        helperText={
+                          requireAccountSelection && scopeRecruiterAccountId && !accountLinkedCompanyIds?.length
+                            ? 'No companies linked to this account. Add companies on the account record.'
+                            : requireAccountSelection && singleCompanyIdForAccount
+                              ? 'Set automatically from the selected account.'
+                              : undefined
+                        }
+                        onBlur={(e) => {
+                          if (formData.companyId) {
+                            handleFieldBlur('companyId', formData.companyId);
+                          }
+                        }}
+                      />
+                    )}
+                  />
+                )}
+              </Grid>
             
-            <Grid item xs={12} md={4}>
-              <TextField
-                fullWidth
-                label={getFieldDef('payRate')?.label || 'Pay Rate'}
-                value={formData.payRate}
-                onChange={(e) => handleInputChange('payRate', e.target.value)}
-                onBlur={(e) => handleFieldBlur('payRate', e.target.value)}
-                placeholder="e.g., $15/hour, $500/week"
-              />
-            </Grid>
-
-            <Grid item xs={12} md={4}>
-              <TextField
-                fullWidth
-                label={getFieldDef('markup')?.label || 'Markup (%)'}
-                value={formData.markup}
-                onChange={(e) => handleInputChange('markup', e.target.value)}
-                placeholder="e.g., 25"
-              />
-            </Grid>
-
-            {(!formData.markup || String(formData.markup).trim() === '' || Number(formData.markup) === 0) ? (
-              <Grid item xs={12} md={4}>
-                <TextField
+              <Grid item xs={12} md={6}>
+                <Autocomplete
                   fullWidth
-                  label={getFieldDef('billRate')?.label || 'Bill Rate'}
-                  value={formData.billRate}
-                  onChange={(e) => handleInputChange('billRate', e.target.value)}
-                  onBlur={(e) => handleFieldBlur('billRate', e.target.value)}
-                  placeholder="e.g., $22.50"
+                  options={filteredLocations}
+                  getOptionLabel={(option) => option.nickname || option.name || ''}
+                  value={filteredLocations.find(location => location.id === formData.worksiteId) || null}
+                  onChange={(event, newValue) => {
+                    handleInputChange('worksiteId', newValue?.id || '');
+                    if (newValue?.id) {
+                      handleFieldBlur('worksiteId', newValue.id);
+                    }
+                  }}
+                  disabled={!formData.companyId || childWorksiteLocked}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Worksite"
+                      helperText={
+                        childWorksiteLocked
+                          ? 'Set from the selected child account (linked worksite).'
+                          : undefined
+                      }
+                      onBlur={(e) => {
+                        if (formData.worksiteId) {
+                          handleFieldBlur('worksiteId', formData.worksiteId);
+                        }
+                      }}
+                    />
+                  )}
                 />
               </Grid>
-            ) : (
-              <Grid item xs={12} md={4}>
-                <TextField
+
+              {showOptionalRecruiterAccountLink && (
+                <Grid item xs={12}>
+                  <Autocomplete
+                    fullWidth
+                    options={accountOptions}
+                    getOptionLabel={(option) => option.label || option.name}
+                    isOptionEqualToValue={(a, b) => a.id === b.id}
+                    value={
+                      accountOptions.find(
+                        (a) => a.id === (pickedRecruiterAccountId || propRecruiterAccountId || null),
+                      ) || null
+                    }
+                    onChange={async (_, newValue) => {
+                      const nextId = newValue?.id ?? null;
+                      setPickedRecruiterAccountId(nextId);
+                      if (!isEditing || !jobOrderId || !tenantId || !user?.uid) return;
+                      try {
+                        const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
+                        const patch: Record<string, unknown> = {
+                          updatedAt: new Date(),
+                          updatedBy: user.uid,
+                          recruiterAccountId: nextId ? nextId : deleteField(),
+                        };
+                        await updateDoc(jobOrderRef, patch as any);
+                        setLoadedJobOrderData((prev: any) =>
+                          prev
+                            ? {
+                                ...prev,
+                                recruiterAccountId: nextId || undefined,
+                              }
+                            : prev
+                        );
+                        setSuccess('Linked recruiter account updated.');
+                        setTimeout(() => setSuccess(null), 3000);
+                      } catch (e) {
+                        console.error('JobOrderForm: link recruiter account', e);
+                        setError('Could not save linked account. Try again.');
+                        setTimeout(() => setError(null), 5000);
+                      }
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Linked recruiter account"
+                        helperText="Optional. Tie this job to a client account (e.g. Maryland Warehouse under CORT) so it appears on Account → Job Orders. Clear to remove the link."
+                      />
+                    )}
+                  />
+                </Grid>
+              )}
+
+              {/* Gig: estimated event window (below Account or Company / Worksite) */}
+              {formData.jobType === 'gig' && (
+                <>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="Estimated Start Date"
+                      type="date"
+                      value={formData.gigEstimatedStartDate}
+                      onChange={(e) => handleInputChange('gigEstimatedStartDate', e.target.value)}
+                      onBlur={(e) => handleFieldBlur('gigEstimatedStartDate', e.target.value)}
+                      InputLabelProps={{ shrink: true }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="Estimated End Date"
+                      type="date"
+                      value={formData.gigEstimatedEndDate}
+                      onChange={(e) => handleInputChange('gigEstimatedEndDate', e.target.value)}
+                      onBlur={(e) => handleFieldBlur('gigEstimatedEndDate', e.target.value)}
+                      InputLabelProps={{ shrink: true }}
+                    />
+                  </Grid>
+                </>
+              )}
+
+              {/* Only show Start/End Date for Career jobs (not for Gig jobs) */}
+              {formData.jobType !== 'gig' && (
+                <>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label={getFieldDef('startDate')?.label || 'Start Date'}
+                      type="date"
+                      value={formData.startDate}
+                      onChange={(e) => handleInputChange('startDate', e.target.value)}
+                      onBlur={(e) => handleFieldBlur('startDate', e.target.value)}
+                      InputLabelProps={{ shrink: true }}
+                    />
+                  </Grid>
+
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label={getFieldDef('endDate')?.label || 'End Date'}
+                      type="date"
+                      value={formData.endDate}
+                      onChange={(e) => handleInputChange('endDate', e.target.value)}
+                      onBlur={(e) => handleFieldBlur('endDate', e.target.value)}
+                      InputLabelProps={{ shrink: true }}
+                    />
+                  </Grid>
+                </>
+              )}
+
+              {/* Career Type: Single Job Title and Workers Needed */}
+              {formData.jobType === 'career' && (
+                <>
+                  <Grid item xs={12} md={6}>
+                    <Autocomplete
+                      fullWidth
+                      freeSolo
+                      options={jobTitleOptions}
+                      value={formData.jobTitle}
+                      inputValue={careerJobTitleInput}
+                      onInputChange={(_, newInputValue, reason) => {
+                        if (reason === 'input') {
+                          setCareerJobTitleInput(newInputValue);
+                          careerJobTitleInputRef.current = newInputValue;
+                        } else if (reason === 'clear') {
+                          setCareerJobTitleInput('');
+                          careerJobTitleInputRef.current = '';
+                        } else if (reason === 'reset') {
+                          setCareerJobTitleInput(newInputValue);
+                          careerJobTitleInputRef.current = newInputValue;
+                        }
+                      }}
+                      onChange={(_event, newValue, reason) => {
+                        if (reason === 'selectOption' || reason === 'createOption') {
+                          commitCareerJobTitle(String(newValue ?? ''));
+                          return;
+                        }
+                        if (reason === 'clear') {
+                          commitCareerJobTitle('');
+                        }
+                      }}
+                      onClose={(_, reason) => {
+                        if (reason === 'blur') {
+                          commitCareerJobTitle(careerJobTitleInputRef.current);
+                        }
+                      }}
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          label={getFieldDef('jobTitle')?.label || 'Job Title'}
+                          required
+                        />
+                      )}
+                    />
+                  </Grid>
+
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label={(getFieldDef('workersNeeded')?.label || 'Workers Needed')}
+                      type="number"
+                      value={formData.workersNeeded}
+                      onChange={(e) => handleInputChange('workersNeeded', parseInt(e.target.value) || 1)}
+                      onBlur={(e) => handleFieldBlur('workersNeeded', parseInt(e.target.value) || 1)}
+                      required
+                      inputProps={{ min: 1 }}
+                    />
+                  </Grid>
+                </>
+              )}
+
+              {/* Financials — Gig only (preliminary event budget); below Basic Information, above Positions & Compliance */}
+              {formData.jobType === 'gig' && (
+                <>
+                  <Grid item xs={12}>
+                    <Typography variant="h6" gutterBottom sx={{ mt: 2, mb: 1, color: 'primary.main' }}>
+                      Financials
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <TextField
+                      fullWidth
+                      label="PO Number"
+                      value={formData.poNumber}
+                      onChange={(e) => handleInputChange('poNumber', e.target.value)}
+                      onBlur={(e) => handleFieldBlur('poNumber', e.target.value)}
+                      placeholder="e.g. PO-2025-001"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <TextField
+                      fullWidth
+                      label="Estimated Value"
+                      type="number"
+                      value={formData.gigEstimatedValue}
+                      onChange={(e) => handleInputChange('gigEstimatedValue', e.target.value)}
+                      onBlur={(e) => handleFieldBlur('gigEstimatedValue', e.target.value)}
+                      placeholder="0.00"
+                      inputProps={{ min: 0, step: 0.01 }}
+                      helperText="Preliminary budget for this event"
+                      InputProps={{
+                        startAdornment: <InputAdornment position="start">$</InputAdornment>,
+                      }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <TextField
+                      fullWidth
+                      label="Average Markup (%)"
+                      type="number"
+                      value={formData.gigAverageMarkup}
+                      onChange={(e) => handleInputChange('gigAverageMarkup', e.target.value)}
+                      onBlur={(e) => handleFieldBlur('gigAverageMarkup', e.target.value)}
+                      placeholder="e.g. 25"
+                      inputProps={{ min: 0, step: 0.1 }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <TextField
+                      fullWidth
+                      label="Gross Profit"
+                      value={gigGrossProfitDisplay || '—'}
+                      InputProps={{ readOnly: true }}
+                      helperText="Estimate − [estimate ÷ (1 + markup%)]"
+                    />
+                  </Grid>
+                </>
+              )}
+
+              {/* Gig Type: Multiple Positions */}
+              {formData.jobType === 'gig' && (
+                <Grid item xs={12}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                        Positions
+                      </Typography>
+                      <Button
+                        size="small"
+                        startIcon={<AddIcon />}
+                        onClick={() => {
+                          setGigPositions([
+                            ...gigPositions,
+                            {
+                              jobTitle: '',
+                              workersNeeded: 1,
+                              payRate: '',
+                              workersCompClassCode: '',
+                              workersCompRate: '',
+                              sutaRate: '',
+                              futaRate: '',
+                            },
+                          ]);
+                        }}
+                      >
+                        Add Position
+                      </Button>
+                    </Box>
+
+                    {showSutaFutaOnGigPositions && (
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={applySutaFutaFromWorksiteState}
+                          disabled={!worksiteStateCodeForPricing}
+                        >
+                          Apply SUTA/FUTA from worksite state
+                        </Button>
+                        <Typography variant="caption" color="text.secondary">
+                          {worksiteStateCodeForPricing
+                            ? `Estimated new-employer SUTA and FUTA for ${worksiteStateCodeForPricing} (same as Account → Pricing).`
+                            : 'Select a worksite with a state to apply rates.'}
+                        </Typography>
+                      </Box>
+                    )}
+
+                    {gigPositions.map((position, index) => (
+                      <Box key={index} sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                          {/* Row 1: Job Title (Workers Needed removed for Gig type) */}
+                          <Box sx={{ display: 'flex', gap: 2 }}>
+                            <Box sx={{ flex: '1 1 400px' }}>
+                              <Autocomplete
+                                fullWidth
+                                freeSolo
+                                options={jobTitleOptions}
+                                value={position.jobTitle}
+                                onChange={(_event, newValue) => {
+                                  const title = newValue ?? '';
+                                  const preset = String(title).trim()
+                                    ? pricingByJobTitle.get(String(title).trim())
+                                    : undefined;
+                                  const jdFromPreset = (preset?.jobDescriptionFromClient || '').trim();
+                                  const selectedLoc = filteredLocations.find((loc) => loc.id === formData.worksiteId) as
+                                    | (Location & { state?: string; address?: { state?: string } })
+                                    | undefined;
+                                  const pricingStateCode = normalizeStateCode(
+                                    selectedLoc?.state ?? selectedLoc?.address?.state,
+                                  )
+                                    .trim()
+                                    .toUpperCase();
+                                  setGigPositions((prev) => {
+                                    const updated = [...prev];
+                                    const row: any = { ...updated[index], jobTitle: title };
+                                    if (preset) {
+                                      row.payRate =
+                                        preset.payRate != null ? String(preset.payRate) : row.payRate;
+                                      const m = preset.markupPercent;
+                                      row.markup =
+                                        m != null && !Number.isNaN(Number(m)) ? String(m) : row.markup;
+                                      const payNum = parseFloat(row.payRate) || 0;
+                                      const mNum = parseFloat(String(row.markup || '')) || 0;
+                                      if (mNum > 0 && payNum > 0) {
+                                        row.billRate = String(Number((payNum * (1 + mNum / 100)).toFixed(2)));
+                                      } else if (preset.billRate != null) {
+                                        row.billRate = String(preset.billRate);
+                                      }
+                                      if (preset.workersCompCode) {
+                                        row.workersCompClassCode = String(preset.workersCompCode);
+                                      }
+                                      const wcCode = (preset.workersCompCode ?? '').toString().trim();
+                                      if (preset.workersCompRate != null && !Number.isNaN(Number(preset.workersCompRate))) {
+                                        row.workersCompRate = String(preset.workersCompRate);
+                                      } else if (pricingStateCode && wcCode) {
+                                        const r = wcMaps.wcRatesByStateAndCode[`${pricingStateCode}_${wcCode}`];
+                                        if (r != null && !Number.isNaN(r)) {
+                                          row.workersCompRate = String(r);
+                                        }
+                                      }
+                                      if (preset.sutaRate != null && !Number.isNaN(Number(preset.sutaRate))) {
+                                        row.sutaRate = String(preset.sutaRate);
+                                      }
+                                      if (preset.futaRate != null && !Number.isNaN(Number(preset.futaRate))) {
+                                        row.futaRate = String(preset.futaRate);
+                                      }
+                                    }
+                                    updated[index] = row;
+                                    return updated;
+                                  });
+                                  if (index === 0 && jdFromPreset) {
+                                    setFormData((fd) => {
+                                      const next = { ...fd, jobDescriptionFromClient: jdFromPreset };
+                                      if (isEditing && jobOrderId) {
+                                        void saveFieldToFirestore(
+                                          'jobDescriptionFromClient',
+                                          jdFromPreset,
+                                          next
+                                        );
+                                      }
+                                      return next;
+                                    });
+                                  }
+                                }}
+                                renderInput={(params) => (
+                                  <TextField
+                                    {...params}
+                                    label="Job Title"
+                                    size="small"
+                                    required
+                                    helperText={
+                                      resolvedAccountPositions.length > 0
+                                        ? 'From account Pricing; type any title if yours is not listed.'
+                                        : undefined
+                                    }
+                                    onBlur={(e) => {
+                                      const title = String(e.target.value ?? '');
+                                      const preset = String(title).trim()
+                                        ? pricingByJobTitle.get(String(title).trim())
+                                        : undefined;
+                                      const jdFromPreset = (preset?.jobDescriptionFromClient || '').trim();
+                                      const selectedLoc = filteredLocations.find((loc) => loc.id === formData.worksiteId) as
+                                        | (Location & { state?: string; address?: { state?: string } })
+                                        | undefined;
+                                      const pricingStateCode = normalizeStateCode(
+                                        selectedLoc?.state ?? selectedLoc?.address?.state,
+                                      )
+                                        .trim()
+                                        .toUpperCase();
+                                      setGigPositions((prev) => {
+                                        const updated = [...prev];
+                                        const row: any = { ...updated[index], jobTitle: title };
+                                        if (preset) {
+                                          row.payRate =
+                                            preset.payRate != null ? String(preset.payRate) : row.payRate;
+                                          const m = preset.markupPercent;
+                                          row.markup =
+                                            m != null && !Number.isNaN(Number(m))
+                                              ? String(m)
+                                              : row.markup;
+                                          const payNum = parseFloat(row.payRate) || 0;
+                                          const mNum = parseFloat(String(row.markup || '')) || 0;
+                                          if (mNum > 0 && payNum > 0) {
+                                            row.billRate = String(
+                                              Number((payNum * (1 + mNum / 100)).toFixed(2))
+                                            );
+                                          } else if (preset.billRate != null) {
+                                            row.billRate = String(preset.billRate);
+                                          }
+                                          if (preset.workersCompCode) {
+                                            row.workersCompClassCode = String(preset.workersCompCode);
+                                          }
+                                          const wcCode = (preset.workersCompCode ?? '').toString().trim();
+                                          if (preset.workersCompRate != null && !Number.isNaN(Number(preset.workersCompRate))) {
+                                            row.workersCompRate = String(preset.workersCompRate);
+                                          } else if (pricingStateCode && wcCode) {
+                                            const r = wcMaps.wcRatesByStateAndCode[`${pricingStateCode}_${wcCode}`];
+                                            if (r != null && !Number.isNaN(r)) {
+                                              row.workersCompRate = String(r);
+                                            }
+                                          }
+                                          if (preset.sutaRate != null && !Number.isNaN(Number(preset.sutaRate))) {
+                                            row.sutaRate = String(preset.sutaRate);
+                                          }
+                                          if (preset.futaRate != null && !Number.isNaN(Number(preset.futaRate))) {
+                                            row.futaRate = String(preset.futaRate);
+                                          }
+                                        }
+                                        updated[index] = row;
+                                        return updated;
+                                      });
+                                      if (index === 0 && jdFromPreset) {
+                                        setFormData((fd) => {
+                                          const next = { ...fd, jobDescriptionFromClient: jdFromPreset };
+                                          if (isEditing && jobOrderId) {
+                                            void saveFieldToFirestore(
+                                              'jobDescriptionFromClient',
+                                              jdFromPreset,
+                                              next
+                                            );
+                                          }
+                                          return next;
+                                        });
+                                      }
+                                    }}
+                                  />
+                                )}
+                              />
+                            </Box>
+                          </Box>
+
+                          {/* Row 2: Pay Rate, Markup, Bill Rate */}
+                          <Box sx={{ display: 'flex', gap: 2 }}>
+                            <Box sx={{ flex: 1 }}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Pay Rate"
+                                value={position.payRate}
+                                onChange={(e) => {
+                                  const updated = [...gigPositions];
+                                  updated[index].payRate = e.target.value;
+                                  setGigPositions(updated);
+                                }}
+                                placeholder="e.g., 15"
+                                required
+                              />
+                            </Box>
+                            <Box sx={{ flex: 1 }}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Markup (%)"
+                                value={(position as any).markup || ''}
+                                onChange={(e) => {
+                                  const updated = [...gigPositions];
+                                  (updated[index] as any).markup = e.target.value;
+                                  setGigPositions(updated);
+                                }}
+                                placeholder="e.g., 25"
+                              />
+                            </Box>
+                            <Box sx={{ flex: 1 }}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Bill Rate"
+                                value={(() => {
+                                  const payRate = parseFloat(position.payRate) || 0;
+                                  const markup = parseFloat((position as any).markup || '0') || 0;
+                                  if (markup > 0 && payRate > 0) {
+                                    return (payRate * (1 + markup / 100)).toFixed(2);
+                                  }
+                                  return (position as any).billRate || '';
+                                })()}
+                                onChange={(e) => {
+                                  const updated = [...gigPositions];
+                                  (updated[index] as any).billRate = e.target.value;
+                                  setGigPositions(updated);
+                                }}
+                                placeholder="e.g., 26.25"
+                                InputProps={{ 
+                                  readOnly: !!((position as any).markup && parseFloat((position as any).markup) > 0)
+                                }}
+                              />
+                            </Box>
+                          </Box>
+
+                          {/* Row 3: Workers Comp Class Code, Workers Comp Rate */}
+                          <Box sx={{ display: 'flex', gap: 2 }}>
+                            <Box sx={{ flex: 1 }}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Workers Comp Class Code"
+                                value={position.workersCompClassCode ?? ''}
+                                onChange={(e) => {
+                                  const updated = [...gigPositions];
+                                  updated[index] = { ...updated[index], workersCompClassCode: e.target.value };
+                                  setGigPositions(updated);
+                                }}
+                                placeholder="e.g. 9015"
+                                helperText="From Settings > Onboarding Library > WC Class Codes"
+                              />
+                            </Box>
+                            <Box sx={{ flex: 1 }}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Workers Comp Rate"
+                                value={position.workersCompRate ?? ''}
+                                onChange={(e) => {
+                                  const updated = [...gigPositions];
+                                  updated[index] = { ...updated[index], workersCompRate: e.target.value };
+                                  setGigPositions(updated);
+                                }}
+                                placeholder="e.g. 2.34"
+                                type="number"
+                                inputProps={{ step: 0.01, min: 0 }}
+                              />
+                            </Box>
+                          </Box>
+
+                          {showSutaFutaOnGigPositions && (
+                            <Box sx={{ display: 'flex', gap: 2 }}>
+                              <Box sx={{ flex: 1 }}>
+                                <TextField
+                                  fullWidth
+                                  size="small"
+                                  label="SUTA %"
+                                  value={(position as any).sutaRate ?? ''}
+                                  onChange={(e) => {
+                                    const updated = [...gigPositions];
+                                    (updated[index] as any).sutaRate = e.target.value;
+                                    setGigPositions(updated);
+                                  }}
+                                  placeholder="e.g. 2.7"
+                                  type="number"
+                                  inputProps={{ step: 0.01, min: 0 }}
+                                  helperText="State unemployment on pay (C1 Workforce / C1 Select)"
+                                />
+                              </Box>
+                              <Box sx={{ flex: 1 }}>
+                                <TextField
+                                  fullWidth
+                                  size="small"
+                                  label="FUTA %"
+                                  value={(position as any).futaRate ?? ''}
+                                  onChange={(e) => {
+                                    const updated = [...gigPositions];
+                                    (updated[index] as any).futaRate = e.target.value;
+                                    setGigPositions(updated);
+                                  }}
+                                  placeholder="e.g. 0.6"
+                                  type="number"
+                                  inputProps={{ step: 0.01, min: 0 }}
+                                  helperText="Federal unemployment on pay"
+                                />
+                              </Box>
+                            </Box>
+                          )}
+                        </Box>
+                        {gigPositions.length > 1 && (
+                          <IconButton
+                            size="small"
+                            color="error"
+                            onClick={() => {
+                              setGigPositions(gigPositions.filter((_, i) => i !== index));
+                            }}
+                            sx={{ mt: 0.5 }}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        )}
+                      </Box>
+                    ))}
+                  </Box>
+                </Grid>
+              )}
+
+              {/* Pay Rate/Markup/Bill Rate - Only for Career type */}
+              {formData.jobType === 'career' && (
+                <>
+                  <Grid item xs={12} md={4}>
+                    <TextField
+                      fullWidth
+                      label={getFieldDef('payRate')?.label || 'Pay Rate'}
+                      value={formData.payRate}
+                      onChange={(e) => handleInputChange('payRate', e.target.value)}
+                      onBlur={(e) => handleFieldBlur('payRate', e.target.value)}
+                      placeholder="e.g., $15/hour, $500/week"
+                    />
+                  </Grid>
+
+                  <Grid item xs={12} md={4}>
+                    <TextField
+                      fullWidth
+                      label={getFieldDef('markup')?.label || 'Markup (%)'}
+                      value={formData.markup}
+                      onChange={(e) => handleInputChange('markup', e.target.value)}
+                      placeholder="e.g., 25"
+                    />
+                  </Grid>
+
+                  {(!formData.markup || String(formData.markup).trim() === '' || Number(formData.markup) === 0) ? (
+                    <Grid item xs={12} md={4}>
+                      <TextField
+                        fullWidth
+                        label={getFieldDef('billRate')?.label || 'Bill Rate'}
+                        value={formData.billRate}
+                        onChange={(e) => handleInputChange('billRate', e.target.value)}
+                        onBlur={(e) => handleFieldBlur('billRate', e.target.value)}
+                        placeholder="e.g., $22.50"
+                      />
+                    </Grid>
+                  ) : (
+                    <Grid item xs={12} md={4}>
+                      <TextField
+                        fullWidth
+                        label={getFieldDef('calculatedBillRate')?.label || 'Calculated Bill Rate'}
+                        value={formData.calculatedBillRate}
+                        InputProps={{ readOnly: true }}
+                      />
+                    </Grid>
+                  )}
+                  {/* Row 3: Workers Comp Class Code, Workers Comp Rate */}
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="Workers Comp Class Code"
+                      value={formData.workersCompClassCode || ''}
+                      onChange={(e) => handleInputChange('workersCompClassCode', e.target.value)}
+                      placeholder="e.g. 9015"
+                      helperText="From Settings > Onboarding Library > WC Class Codes"
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="Workers Comp Rate"
+                      value={formData.workersCompRate || ''}
+                      onChange={(e) => handleInputChange('workersCompRate', e.target.value)}
+                      placeholder="e.g. 2.34"
+                      type="number"
+                      inputProps={{ step: 0.01, min: 0 }}
+                    />
+                  </Grid>
+                </>
+              )}
+
+            {formData.jobType === 'career' && (
+              <Grid item xs={12} md={12}>
+                <Autocomplete
+                  multiple
                   fullWidth
-                  label={getFieldDef('calculatedBillRate')?.label || 'Calculated Bill Rate'}
-                  value={formData.calculatedBillRate}
-                  InputProps={{ readOnly: true }}
+                  options={['Full Time', 'Part Time', 'Temporary', 'On Call', 'First Shift', 'Second Shift', 'Third Shift', 'Day Shift', 'Night Shift', 'Swing Shift', 'Weekends', 'Some Weekends', 'Some Nights', '8 Hour', '10 Hour', '12 Hour']}
+                  value={Array.isArray((formData as any).shiftType) ? (formData as any).shiftType : ((formData as any).shiftType ? [(formData as any).shiftType] : [])}
+                  onChange={(event, newValue) => {
+                    handleInputChange('shiftType', newValue);
+                    handleFieldBlur('shiftType', newValue);
+                  }}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Shift Details"
+                      helperText="Select shift requirements for this position"
+                    />
+                  )}
+                  renderTags={(value, getTagProps) =>
+                    value.map((option, index) => (
+                      <Chip
+                        variant="outlined"
+                        label={option}
+                        {...getTagProps({ index })}
+                        key={option}
+                      />
+                    ))
+                  }
                 />
               </Grid>
             )}
 
-            
-
-            
-            <Grid item xs={12} md={6}>
+            {/* Job Description from Client */}
+            <Grid item xs={12}>
               <TextField
                 fullWidth
-                label={getFieldDef('startDate')?.label || 'Start Date'}
-                type="date"
-                value={formData.startDate}
-                onChange={(e) => handleInputChange('startDate', e.target.value)}
-                onBlur={(e) => handleFieldBlur('startDate', e.target.value)}
-                InputLabelProps={{ shrink: true }}
+                label="Job Description from Client"
+                value={formData.jobDescriptionFromClient}
+                onChange={(e) => handleInputChange('jobDescriptionFromClient', e.target.value)}
+                onBlur={(e) => handleFieldBlur('jobDescriptionFromClient', e.target.value)}
+                multiline
+                rows={4}
+                placeholder="Enter the job description provided by the client..."
               />
             </Grid>
 
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label={getFieldDef('endDate')?.label || 'End Date'}
-                type="date"
-                value={formData.endDate}
-                onChange={(e) => handleInputChange('endDate', e.target.value)}
-                onBlur={(e) => handleFieldBlur('endDate', e.target.value)}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
             </Grid>
 
+            {/* Compliance & Requirements Section */}
+            <Grid item xs={12}>
+              <Divider sx={{ my: 3 }} />
+              <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
+                Compliance & Requirements
+              </Typography>
+            </Grid>
 
             <Grid container spacing={2} sx={{ mb: 3 }}>
+                <Grid item xs={12}>
+                  <AccusourcePackageSelector
+                    packageId={formData.screeningPackageId}
+                    packageName={formData.screeningPackageName}
+                    onChange={(next) => {
+                      const merged = { ...formData, screeningPackageId: next.packageId, screeningPackageName: next.packageName };
+                      setFormData(merged);
+                      if (isEditing && jobOrderId) {
+                        void saveFieldToFirestore('screeningPackageId', next.packageId, merged);
+                      }
+                    }}
+                    showDiagnostics
+                    emptyMenuLabel="None"
+                    helperText="Overrides account and location order defaults for AccuSource screening (merge order: job → location → account)."
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={Array.isArray(additionalScreeningOptions) ? additionalScreeningOptions.map(option => option.label) : []}
+                    value={formData.additionalScreenings}
+                    onChange={(event, newValue) => {
+                      handleInputChange('additionalScreenings', newValue);
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Additional Screenings"
+                        helperText="Select required additional screening types (healthcare, credentials, etc.)"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <Autocomplete
+                    multiple
+                    options={Array.isArray(getOptionsForField('licensesCerts', companyDefaultsForOptions)) ? getOptionsForField('licensesCerts', companyDefaultsForOptions) : []}
+                    value={formData.licensesCerts.map(cred => ({ value: cred, label: cred }))}
+                    onChange={(_, newValue) => {
+                      const credValues = newValue.map(option => option.value);
+                      handleInputChange('licensesCerts', credValues);
+                    }}
+                    getOptionLabel={(option) => typeof option === 'string' ? option : option.label}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => {
+                        const { key, ...chipProps } = getTagProps({ index });
+                        return (
+                          <Chip
+                            key={key}
+                            label={typeof option === 'string' ? option : option.label}
+                            size="small"
+                            {...chipProps}
+                          />
+                        );
+                      })
+                    }
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label={getFieldDef('licensesCerts')?.label || 'Licenses & Certifications'}
+                        placeholder="Type to search licenses and certifications..."
+                        helperText="Start typing to search from 100+ standard credentials"
+                      />
+                    )}
+                    filterSelectedOptions
+                    freeSolo={false}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Experience Required</InputLabel>
+                    <Select
+                      value={formData.experienceRequired}
+                      onChange={(e) => handleInputChange('experienceRequired', e.target.value)}
+                      label="Experience Required"
+                    >
+                      {experienceOptions.map((option, index) => (
+                        <MenuItem key={index} value={option.value}>
+                          {option.label}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Education Required</InputLabel>
+                    <Select
+                      value={formData.educationRequired}
+                      onChange={(e) => handleInputChange('educationRequired', e.target.value)}
+                      label="Education Required"
+                    >
+                      {educationOptions.map((option, index) => (
+                        <MenuItem key={index} value={option.value}>
+                          {option.label}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
               <Grid item xs={12} md={6}>
-                <FormControl fullWidth>
-                  <InputLabel>{(getFieldDef('companyId')?.label || 'Company') + ' *'}</InputLabel>
-                  <Select
-                    value={formData.companyId}
-                    onChange={(e) => handleInputChange('companyId', e.target.value)}
-                    onBlur={(e) => handleFieldBlur('companyId', e.target.value)}
-                    label={(getFieldDef('companyId')?.label || 'Company') + ' *'}
-                    required
-                  >
-                    {companies.map((company) => (
-                      <MenuItem key={company.id} value={company.id}>
-                        {company.companyName || company.name}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+                <Autocomplete
+                  multiple
+                  fullWidth
+                  options={Array.isArray(getOptionsForField('languages', companyDefaultsForOptions)) ? getOptionsForField('languages', companyDefaultsForOptions).map(opt => opt.value) : []}
+                  value={formData.languagesRequired}
+                  onChange={(event, newValue) => {
+                    handleInputChange('languagesRequired', newValue);
+                  }}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label={getFieldDef('languages')?.label || 'Languages Required'}
+                      helperText="Select required languages"
+                    />
+                  )}
+                  renderTags={(value, getTagProps) =>
+                    value.map((option, index) => (
+                      <Chip
+                        variant="outlined"
+                        label={option}
+                        {...getTagProps({ index })}
+                        key={option}
+                      />
+                    ))
+                  }
+                />
               </Grid>
-            
-              <Grid item xs={12} md={6}>
-                <FormControl fullWidth>
-                  <InputLabel>{getFieldDef('worksiteId')?.label || 'Location'}</InputLabel>
-                  <Select
-                    value={formData.worksiteId}
-                    onChange={(e) => handleInputChange('worksiteId', e.target.value)}
-                    onBlur={(e) => handleFieldBlur('worksiteId', e.target.value)}
-                    label={getFieldDef('worksiteId')?.label || 'Location'}
-                    disabled={!formData.companyId}
-                  >
-                    {filteredLocations.map((location) => (
-                      <MenuItem key={location.id} value={location.id}>
-                        {location.nickname || location.name}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
+                <Grid item xs={12} md={6}>
+                  <Autocomplete
+                    multiple
+                    options={Array.isArray(getOptionsForField('skills', companyDefaultsForOptions)) ? getOptionsForField('skills', companyDefaultsForOptions) : []}
+                    value={formData.skillsRequired.map(skill => ({ value: skill, label: skill }))}
+                    onChange={(_, newValue) => {
+                      const skillValues = newValue.map(option => option.value);
+                      handleInputChange('skillsRequired', skillValues);
+                    }}
+                    getOptionLabel={(option) => typeof option === 'string' ? option : option.label}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => {
+                        const { key, ...chipProps } = getTagProps({ index });
+                        return (
+                          <Chip
+                            key={key}
+                            label={typeof option === 'string' ? option : option.label}
+                            size="small"
+                            {...chipProps}
+                          />
+                        );
+                      })
+                    }
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label={getFieldDef('skills')?.label || 'Skills Required'}
+                        placeholder="Type to search skills..."
+                        helperText="Start typing to search from 500+ O*NET skills"
+                      />
+                    )}
+                    filterSelectedOptions
+                    freeSolo={false}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={[
+                      'Standing',
+                      'Walking',
+                      'Sitting',
+                      'Lifting 25 lbs',
+                      'Lifting 50 lbs',
+                      'Lifting 75 lbs',
+                      'Lifting 100+ lbs',
+                      'Carrying 25 lbs',
+                      'Carrying 50 lbs',
+                      'Carrying 75 lbs',
+                      'Carrying 100+ lbs',
+                      'Pushing',
+                      'Pulling',
+                      'Climbing',
+                      'Balancing',
+                      'Stooping',
+                      'Kneeling',
+                      'Crouching',
+                      'Crawling',
+                      'Reaching',
+                      'Handling',
+                      'Fingering',
+                      'Feeling',
+                      'Talking',
+                      'Hearing',
+                      'Seeing',
+                      'Color Vision',
+                      'Depth Perception',
+                      'Field of Vision',
+                      'Driving',
+                      'Operating Machinery',
+                      'Working at Heights',
+                      'Confined Spaces',
+                      'Outdoor Work',
+                      'Indoor Work',
+                      'Temperature Extremes',
+                      'Noise',
+                      'Vibration',
+                      'Fumes/Odors',
+                      'Dust',
+                      'Chemicals',
+                      'Radiation',
+                      'Other'
+                    ]}
+                    value={formData.physicalRequirements}
+                    onChange={(event, newValue) => {
+                      handleInputChange('physicalRequirements', newValue);
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Physical Requirements"
+                        helperText="Select physical requirements for this position"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={[
+                      'Hard Hat',
+                      'Safety Glasses',
+                      'Safety Goggles',
+                      'Face Shield',
+                      'Respirator',
+                      'Dust Mask',
+                      'N95 Mask',
+                      'Hearing Protection',
+                      'Ear Plugs',
+                      'Ear Muffs',
+                      'High-Visibility Vest',
+                      'Reflective Clothing',
+                      'Safety Boots',
+                      'Steel-Toe Boots',
+                      'Non-Slip Shoes',
+                      'Cut-Resistant Gloves',
+                      'Chemical-Resistant Gloves',
+                      'Heat-Resistant Gloves',
+                      'Fall Protection Harness',
+                      'Safety Lanyard',
+                      'Lifeline',
+                      'Confined Space Equipment',
+                      'Gas Monitor',
+                      'Air Purifying Respirator',
+                      'Self-Contained Breathing Apparatus',
+                      'First Aid Kit',
+                      'Emergency Shower',
+                      'Eye Wash Station',
+                      'Fire Extinguisher',
+                      'Safety Data Sheets',
+                      'Lockout/Tagout Devices',
+                      'Barricades',
+                      'Warning Signs',
+                      'Personal Alarm',
+                      'Two-Way Radio',
+                      'Flashlight',
+                      'Headlamp',
+                      'Protective Coveralls',
+                      'Disposable Suits',
+                      'Chemical Apron',
+                      'Lab Coat',
+                      'Hair Net',
+                      'Beard Cover',
+                      'Disposable Gloves',
+                      'Nitrile Gloves',
+                      'Latex Gloves',
+                      'Vinyl Gloves',
+                      'Insulated Gloves',
+                      'Electrical Gloves',
+                      'Welding Helmet',
+                      'Welding Gloves',
+                      'Welding Apron',
+                      'Welding Boots',
+                      'Welding Jacket',
+                      'Chainsaw Chaps',
+                      'Cutting Gloves',
+                      'Abrasion-Resistant Clothing',
+                      'Flame-Resistant Clothing',
+                      'Arc Flash Protection',
+                      'Voltage-Rated Gloves',
+                      'Rubber Insulating Gloves',
+                      'Leather Protectors',
+                      'Insulating Blankets',
+                      'Insulating Covers',
+                      'Hot Sticks',
+                      'Voltage Detectors',
+                      'Ground Fault Circuit Interrupters',
+                      'Other'
+                    ]}
+                    value={formData.ppeRequirements}
+                    onChange={(event, newValue) => {
+                      handleInputChange('ppeRequirements', newValue);
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label={getFieldDef('ppe')?.label || 'PPE Requirements'}
+                        helperText="Select required personal protective equipment"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>{getFieldDef('ppeProvidedBy')?.label || 'PPE Provided By'}</InputLabel>
+                    <Select
+                      value={formData.ppeProvidedBy}
+                      onChange={(e) => handleInputChange('ppeProvidedBy', e.target.value)}
+                      label={getFieldDef('ppeProvidedBy')?.label || 'PPE Provided By'}
+                    >
+                      <MenuItem value="company">Company</MenuItem>
+                      <MenuItem value="worker">Worker</MenuItem>
+                      <MenuItem value="both">Both</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Job Score requirement pack</InputLabel>
+                    <Select
+                      value={formData.requirementPackId || ''}
+                      onChange={(e) => handleInputChange('requirementPackId', e.target.value)}
+                      label="Job Score requirement pack"
+                    >
+                      <MenuItem value="">None</MenuItem>
+                      {getRequirementPackIds().map((id) => (
+                        <MenuItem key={id} value={id}>
+                          {JOB_REQUIREMENT_PACKS[id as keyof typeof JOB_REQUIREMENT_PACKS]?.name ?? id}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
             </Grid>
 
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+                <Grid item xs={12}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={[
+                      'Business Casual',
+                      'Business Professional',
+                      'Black Bistro',
+                      'Casual',
+                      'Scrubs',
+                      'Uniform Provided',
+                      'Black Pants',
+                      'White Shirt',
+                      'Polo Shirt',
+                      'Button-Down Shirt',
+                      'Black Button-Down Shirt',
+                      'Dress Shirt',
+                      'Khaki Pants',
+                      'Dress Pants',
+                      'Jeans (Dark)',
+                      'Jeans (No Holes)',
+                      'Slacks',
+                      'Skirt/Dress',
+                      'Blouse',
+                      'Sweater',
+                      'Cardigan',
+                      'Blazer',
+                      'Suit',
+                      'Tie Required',
+                      'No Tie',
+                      'Closed-Toe Shoes',
+                      'Steel-Toe Boots',
+                      'Non-Slip Shoes',
+                      'Dress Shoes',
+                      'Sneakers',
+                      'Boots',
+                      'Sandals Allowed',
+                      'No Sandals',
+                      'No Flip-Flops',
+                      'No Shorts',
+                      'No Tank Tops',
+                      'No Graphic Tees',
+                      'No Hoodies',
+                      'No Sweatpants',
+                      'No Leggings',
+                      'No Yoga Pants',
+                      'No Athletic Wear',
+                      'No Ripped Clothing',
+                      'No Visible Tattoos',
+                      'No Facial Piercings',
+                      'Minimal Jewelry',
+                      'No Jewelry',
+                      'Hair Tied Back',
+                      'Clean Shaven',
+                      'Facial Hair Allowed',
+                      'Hair Color Restrictions',
+                      'No Hair Color Restrictions',
+                      'Coveralls',
+                      'Safety Vest',
+                      'Hard Hat',
+                      'Reflective Clothing',
+                      'Weather-Appropriate',
+                      'Seasonal Attire',
+                      'Formal Occasions',
+                      'Customer-Facing',
+                      'Back Office',
+                      'Laboratory',
+                      'Kitchen',
+                      'Warehouse',
+                      'Construction',
+                      'Healthcare',
+                      'Food Service',
+                      'Retail',
+                      'Office',
+                      'Other'
+                    ]}
+                    value={formData.dressCode}
+                    onChange={(event, newValue) => {
+                      handleInputChange('dressCode', newValue);
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Uniform Requirements"
+                        helperText="Select dress code and uniform requirements"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+            </Grid>
+
+            {/* Custom Uniform Requirements Section */}
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Custom Uniform Requirements"
+                  multiline
+                  rows={3}
+                  value={formData.customUniformRequirements}
+                  onChange={(e) => handleInputChange('customUniformRequirements', e.target.value)}
+                  placeholder="Enter custom uniform requirements text..."
+                  helperText="Enter any additional or custom uniform requirements"
+                />
+              </Grid>
+            </Grid>
 
             <Grid item xs={12} md={6}>
               <Typography variant="h6" gutterBottom sx={{ mt: 2, mb: 3, color: 'primary.main' }}>
@@ -1288,1301 +3774,262 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             <Grid container spacing={2} sx={{ mb: 3 }}>
 
             <Grid item xs={12} md={6}>
-                <FormControl fullWidth>
-                <InputLabel>{getFieldDef('decisionMaker')?.label || 'HR Contact'}</InputLabel>
-                  <Select
-                    value={formData.decisionMaker || ''}
-                    onChange={(e) => handleInputChange('decisionMaker', e.target.value)}
-                    onBlur={(e) => handleFieldBlur('decisionMaker', e.target.value)}
-                    label="Decision Maker"
-                    disabled={associatedContacts.length === 0}
-                  >
-                    <MenuItem value="">
-                      <em>
-                        {associatedContacts.length === 0 
-                          ? 'No contacts available' 
-                          : 'Select Decision Maker'
-                        }
-                      </em>
-                    </MenuItem>
-                    {associatedContacts.map((contact) => (
-                      <MenuItem key={contact.id} value={contact.id}>
-                        {contact.fullName} {contact.title && `(${contact.title})`}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                  {associatedContacts.length === 0 && dealId && (
-                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                      No contacts are associated with this deal. Add contacts to the deal first.
-                    </Typography>
+                <Autocomplete
+                  fullWidth
+                  options={loadedContacts}
+                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
+                  value={loadedContacts.find(contact => contact.id === formData.decisionMaker) || null}
+                  onChange={(event, newValue) => handleInputChange('decisionMaker', newValue?.id || '')}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Decision Maker"
+                      placeholder="Search by name or email..."
+                    />
                   )}
-                  {!dealId && (
-                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                      HR Contact selection requires a deal to be associated with this job order.
-                    </Typography>
+                  renderOption={(props, option) => (
+                    <li {...props}>
+                      {option.fullName || option.name} {option.title && `(${option.title})`}
+                    </li>
                   )}
-                </FormControl>
+                  disabled={loadedContacts.length === 0}
+                />
+                {loadedContacts.length === 0 && formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    No contacts found for this company. Add contacts to the company first.
+                  </Typography>
+                )}
+                {!formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    Select a company to load contacts.
+                  </Typography>
+                )}
               </Grid>
             </Grid>
             <Grid container spacing={2} sx={{ mb: 3 }}>
               <Grid item xs={12} md={6}>
-                <FormControl fullWidth>
-                <InputLabel>{getFieldDef('hrContactId')?.label || 'HR Contact'}</InputLabel>
-                  <Select
-                    value={formData.hrContactId || ''}
-                    onChange={(e) => handleInputChange('hrContactId', e.target.value)}
-                    onBlur={(e) => handleFieldBlur('hrContactId', e.target.value)}
-                    label="HR Contact"
-                    disabled={associatedContacts.length === 0}
-                  >
-                    <MenuItem value="">
-                      <em>
-                        {associatedContacts.length === 0 
-                          ? 'No contacts available' 
-                          : 'Select HR Contact'
-                        }
-                      </em>
-                    </MenuItem>
-                    {associatedContacts.map((contact) => (
-                      <MenuItem key={contact.id} value={contact.id}>
-                        {contact.fullName} {contact.title && `(${contact.title})`}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                  {associatedContacts.length === 0 && dealId && (
-                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                      No contacts are associated with this deal. Add contacts to the deal first.
-                    </Typography>
+                <Autocomplete
+                  fullWidth
+                  options={loadedContacts}
+                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
+                  value={loadedContacts.find(contact => contact.id === formData.hrContactId) || null}
+                  onChange={(event, newValue) => handleInputChange('hrContactId', newValue?.id || '')}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="HR Contact"
+                      placeholder="Search by name or email..."
+                    />
                   )}
-                  {!dealId && (
-                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                      HR Contact selection requires a deal to be associated with this job order.
-                    </Typography>
+                  renderOption={(props, option) => (
+                    <li {...props}>
+                      {option.fullName || option.name} {option.title && `(${option.title})`}
+                    </li>
                   )}
-                </FormControl>
+                  disabled={loadedContacts.length === 0}
+                />
+                {loadedContacts.length === 0 && formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    No contacts found for this company. Add contacts to the company first.
+                  </Typography>
+                )}
+                {!formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    Select a company to load contacts.
+                  </Typography>
+                )}
               </Grid>
 
               {/* Additional Contact Roles */}
               <Grid item xs={12} md={6}>
-                <FormControl fullWidth>
-                <InputLabel>{getFieldDef('operationsContactId')?.label || 'Operations Contact'}</InputLabel>
-                  <Select
-                    value={formData.operationsContactId || ''}
-                    onChange={(e) => handleInputChange('operationsContactId', e.target.value)}
-                    onBlur={(e) => handleFieldBlur('operationsContactId', e.target.value)}
-                    label="Operations Contact"
-                    disabled={associatedContacts.length === 0}
-                  >
-                    <MenuItem value="">
-                      <em>
-                        {associatedContacts.length === 0 
-                          ? 'No contacts available' 
-                          : 'Select Operations Contact'
-                        }
-                      </em>
-                    </MenuItem>
-                    {associatedContacts.map((contact) => (
-                      <MenuItem key={contact.id} value={contact.id}>
-                        {contact.fullName} {contact.title && `(${contact.title})`}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                  {associatedContacts.length === 0 && dealId && (
-                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                      No contacts are associated with this deal. Add contacts to the deal first.
-                    </Typography>
+                <Autocomplete
+                  fullWidth
+                  options={loadedContacts}
+                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
+                  value={loadedContacts.find(contact => contact.id === formData.operationsContactId) || null}
+                  onChange={(event, newValue) => handleInputChange('operationsContactId', newValue?.id || '')}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Operations Contact"
+                      placeholder="Search by name or email..."
+                    />
                   )}
-                  {!dealId && (
-                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                      Operations Contact selection requires a deal to be associated with this job order.
-                    </Typography>
+                  renderOption={(props, option) => (
+                    <li {...props}>
+                      {option.fullName || option.name} {option.title && `(${option.title})`}
+                    </li>
                   )}
-                </FormControl>
+                  disabled={loadedContacts.length === 0}
+                />
+                {loadedContacts.length === 0 && formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    No contacts found for this company. Add contacts to the company first.
+                  </Typography>
+                )}
+                {!formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    Select a company to load contacts.
+                  </Typography>
+                )}
               </Grid>
             </Grid>
 
-          <Grid container spacing={2} sx={{ mb: 3 }}>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-              <InputLabel>{getFieldDef('procurementContactId')?.label || 'Procurement Contact'}</InputLabel>
-                <Select
-                  value={formData.procurementContactId || ''}
-                  onChange={(e) => handleInputChange('procurementContactId', e.target.value)}
-                  onBlur={(e) => handleFieldBlur('procurementContactId', e.target.value)}
-                  label="Procurement Contact"
-                  disabled={associatedContacts.length === 0}
-                >
-                  <MenuItem value="">
-                    <em>
-                      {associatedContacts.length === 0 
-                        ? 'No contacts available' 
-                        : 'Select Procurement Contact'
-                      }
-                    </em>
-                  </MenuItem>
-                  {associatedContacts.map((contact) => (
-                    <MenuItem key={contact.id} value={contact.id}>
-                      {contact.fullName} {contact.title && `(${contact.title})`}
-                    </MenuItem>
-                  ))}
-                </Select>
-                {associatedContacts.length === 0 && dealId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    No contacts are associated with this deal. Add contacts to the deal first.
-                  </Typography>
-                )}
-                {!dealId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    Procurement Contact selection requires a deal to be associated with this job order.
-                  </Typography>
-                )}
-              </FormControl>
-            </Grid>
-
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-              <InputLabel>{getFieldDef('billingContactId')?.label || 'Billing Contact'}</InputLabel>
-                <Select
-                  value={formData.billingContactId || ''}
-                  onChange={(e) => handleInputChange('billingContactId', e.target.value)}
-                  onBlur={(e) => handleFieldBlur('billingContactId', e.target.value)}
-                  label="Billing Contact"
-                  disabled={associatedContacts.length === 0}
-                >
-                  <MenuItem value="">
-                    <em>
-                      {associatedContacts.length === 0 
-                        ? 'No contacts available' 
-                        : 'Select Billing Contact'
-                      }
-                    </em>
-                  </MenuItem>
-                  {associatedContacts.map((contact) => (
-                    <MenuItem key={contact.id} value={contact.id}>
-                      {contact.fullName} {contact.title && `(${contact.title})`}
-                    </MenuItem>
-                  ))}
-                </Select>
-                {associatedContacts.length === 0 && dealId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    No contacts are associated with this deal. Add contacts to the deal first.
-                  </Typography>
-                )}
-                {!dealId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    Billing Contact selection requires a deal to be associated with this job order.
-                  </Typography>
-                )}
-              </FormControl>
-            </Grid>
-          </Grid>
-
-          <Grid container spacing={2} sx={{ mb: 3 }}>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-              <InputLabel>{getFieldDef('safetyContactId')?.label || 'Safety Contact'}</InputLabel>
-                <Select
-                  value={formData.safetyContactId || ''}
-                  onChange={(e) => handleInputChange('safetyContactId', e.target.value)}
-                  onBlur={(e) => handleFieldBlur('safetyContactId', e.target.value)}
-                  label="Safety Contact"
-                  disabled={associatedContacts.length === 0}
-                >
-                  <MenuItem value="">
-                    <em>
-                      {associatedContacts.length === 0 
-                        ? 'No contacts available' 
-                        : 'Select Safety Contact'
-                      }
-                    </em>
-                  </MenuItem>
-                  {associatedContacts.map((contact) => (
-                    <MenuItem key={contact.id} value={contact.id}>
-                      {contact.fullName} {contact.title && `(${contact.title})`}
-                    </MenuItem>
-                  ))}
-                </Select>
-                {associatedContacts.length === 0 && dealId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    No contacts are associated with this deal. Add contacts to the deal first.
-                  </Typography>
-                )}
-                {!dealId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    Safety Contact selection requires a deal to be associated with this job order.
-                  </Typography>
-                )}
-              </FormControl>
-            </Grid>
-
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>{getFieldDef('invoiceContactId')?.label || 'Invoice Contact'}</InputLabel>
-                <Select
-                  value={formData.invoiceContactId || ''}
-                  onChange={(e) => handleInputChange('invoiceContactId', e.target.value)}
-                  onBlur={(e) => handleFieldBlur('invoiceContactId', e.target.value)}
-                  label="Invoice Contact"
-                  disabled={associatedContacts.length === 0}
-                >
-                  <MenuItem value="">
-                    <em>
-                      {associatedContacts.length === 0 
-                        ? 'No contacts available' 
-                        : 'Select Invoice Contact'
-                      }
-                    </em>
-                  </MenuItem>
-                  {associatedContacts.map((contact) => (
-                    <MenuItem key={contact.id} value={contact.id}>
-                      {contact.fullName} {contact.title && `(${contact.title})`}
-                    </MenuItem>
-                  ))}
-                </Select>
-                {associatedContacts.length === 0 && dealId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    No contacts are associated with this deal. Add contacts to the deal first.
-                  </Typography>
-                )}
-                {!dealId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    Invoice Contact selection requires a deal to be associated with this job order.
-                  </Typography>
-                )}
-              </FormControl>
-            </Grid>
-          </Grid>
-
-
-           <Grid item xs={12}>
-               <Typography variant="h6" gutterBottom sx={{ mt: 2, mb: 3, color: 'primary.main' }}>
-                 Company Background
-               </Typography>
-             </Grid>
-
-             <Grid container spacing={2} sx={{ mb: 3 }}>
-
-             <Grid item xs={12}>
-               <FormControl component="fieldset" sx={{ mb: 3 }}>
-                 <Typography variant="subtitle2" sx={{ mb: 2 }}>
-                   Do they currently use staffing agencies?
-                 </Typography>
-                 <Box sx={{ display: 'flex', gap: 2 }}>
-                   <Button
-                     variant={formData.currentAgencyCount && parseInt(formData.currentAgencyCount) > 0 ? 'contained' : 'outlined'}
-                     onClick={() => {
-                       if (!formData.currentAgencyCount || parseInt(formData.currentAgencyCount) === 0) {
-                         handleInputChange('currentAgencyCount', '1');
-                       }
-                     }}
-                   >
-                     Yes
-                   </Button>
-                   <Button
-                     variant={!formData.currentAgencyCount || parseInt(formData.currentAgencyCount) === 0 ? 'contained' : 'outlined'}
-                     onClick={() => handleInputChange('currentAgencyCount', '0')}
-                   >
-                     No
-                   </Button>
-                 </Box>
-               </FormControl>
-             </Grid>
-             </Grid>
-             <Grid container spacing={2} sx={{ mb: 3 }}>
-      
-                 <Grid item xs={12} md={6}>
-                   <TextField
-                     fullWidth
-                     label={getFieldDef('currentStaffCount')?.label || 'Current Staff Count'}
-                     type="number"
-                     value={formData.currentStaffCount}
-                     onChange={(e) => handleInputChange('currentStaffCount', e.target.value)}
-                     onBlur={(e) => handleFieldBlur('currentStaffCount', e.target.value)}
-                   />
-                 </Grid>
-                 <Grid item xs={12} md={6}>
-                   <TextField
-                     fullWidth
-                     label={getFieldDef('currentAgencyCount')?.label || 'Current Agency Count'}
-                     type="number"
-                     value={formData.currentAgencyCount}
-                     onChange={(e) => handleInputChange('currentAgencyCount', e.target.value)}
-                     onBlur={(e) => handleFieldBlur('currentAgencyCount', e.target.value)}
-                   />
-                 </Grid>
-                 <Grid item xs={12}>
-                   <FormControl fullWidth>
-                     <InputLabel>Satisfaction Level With Current Staffing Agencies</InputLabel>
-                     <Select
-                       value={formData.currentSatisfactionLevel || ''}
-                       onChange={(e) => handleInputChange('currentSatisfactionLevel', e.target.value)}
-                       onBlur={(e) => handleFieldBlur('currentSatisfactionLevel', e.target.value)}
-                       label="Satisfaction Level With Current Staffing Agencies"
-                     >
-                       <MenuItem value="very_happy">Very Happy</MenuItem>
-                       <MenuItem value="somewhat">Somewhat Satisfied</MenuItem>
-                       <MenuItem value="frustrated">Frustrated</MenuItem>
-                     </Select>
-                   </FormControl>
-                 </Grid>
-                 </Grid>
-
-                 <Grid container spacing={2} sx={{ mb: 3 }}>  
-  
-                 <Grid item xs={12}>
-                   <FormControl component="fieldset" sx={{ mb: 2 }}>
-                     <Typography variant="subtitle2" sx={{ mb: 2 }}>
-                       Have they used staffing agencies before?
-                     </Typography>
-                     <Box sx={{ display: 'flex', gap: 2 }}>
-                       <Button
-                         variant={formData.hasUsedAgenciesBefore ? 'contained' : 'outlined'}
-                         onClick={() => handleInputChange('hasUsedAgenciesBefore', true)}
-                       >
-                         Yes
-                       </Button>
-                       <Button
-                         variant={!formData.hasUsedAgenciesBefore ? 'contained' : 'outlined'}
-                         onClick={() => handleInputChange('hasUsedAgenciesBefore', false)}
-                       >
-                         No
-                       </Button>
-                     </Box>
-                   </FormControl>
-                 </Grid>
-                 </Grid>
-
-
-            {/* Job Details Section */}
-            <Grid item xs={12}>
-              <Divider sx={{ my: 3 }} />
-              <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
-                Job Details
-              </Typography>
-            </Grid>
-            
-            
-
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label={getFieldDef('estimatedRevenue')?.label || 'Estimated Revenue'}
-                value={formData.estimatedRevenue}
-                onChange={(e) => handleInputChange('estimatedRevenue', e.target.value)}
-                placeholder="e.g., 50000"
-              />
-            </Grid>
-
-
-            {/* Qualification Information Section */}
-            <Grid item xs={12}>
-              <Divider sx={{ my: 3 }} />
-              <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
-                Qualification Information
-              </Typography>
-            </Grid>
-            
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label={getFieldDef('mustHave')?.label || 'Must Have Requirements'}
-                value={formData.mustHaveRequirements}
-                onChange={(e) => handleInputChange('mustHaveRequirements', e.target.value)}
-                multiline
-                rows={2}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label={getFieldDef('mustAvoid')?.label || 'Must Avoid Requirements'}
-                value={formData.mustAvoidRequirements}
-                onChange={(e) => handleInputChange('mustAvoidRequirements', e.target.value)}
-                multiline
-                rows={2}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label={getFieldDef('potentialObstacles')?.label || 'Potential Obstacles'}
-                value={formData.potentialObstacles}
-                onChange={(e) => handleInputChange('potentialObstacles', e.target.value)}
-                placeholder="Comma-separated list of potential obstacles"
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label={getFieldDef('expectedStartDate')?.label || 'Expected Start Date'}
-                type="date"
-                value={formData.expectedStartDate}
-                onChange={(e) => handleInputChange('expectedStartDate', e.target.value)}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label={getFieldDef('expectedAveragePayRate')?.label || 'Expected Pay Rate'}
-                value={formData.expectedPayRate}
-                onChange={(e) => handleInputChange('expectedPayRate', e.target.value)}
-                placeholder="e.g., 15.00"
-              />
-            </Grid>
-            <Grid item xs={12} md={3}>
-              <TextField
-                fullWidth
-                label="Initial Headcount"
-                type="number"
-                value={formData.initialHeadcount}
-                onChange={(e) => handleInputChange('initialHeadcount', e.target.value)}
-              />
-            </Grid>
-            <Grid item xs={12} md={3}>
-              <TextField
-                fullWidth
-                label="After 30 Days"
-                type="number"
-                value={formData.headcountAfter30Days}
-                onChange={(e) => handleInputChange('headcountAfter30Days', e.target.value)}
-              />
-            </Grid>
-            <Grid item xs={12} md={3}>
-              <TextField
-                fullWidth
-                label="After 90 Days"
-                type="number"
-                value={formData.headcountAfter90Days}
-                onChange={(e) => handleInputChange('headcountAfter90Days', e.target.value)}
-              />
-            </Grid>
-            <Grid item xs={12} md={3}>
-              <TextField
-                fullWidth
-                label="After 180 Days"
-                type="number"
-                value={formData.headcountAfter180Days}
-                onChange={(e) => handleInputChange('headcountAfter180Days', e.target.value)}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label={getFieldDef('expectedAverageMarkup')?.label || 'Expected Markup (%)'}
-                value={formData.expectedMarkup}
-                onChange={(e) => handleInputChange('expectedMarkup', e.target.value)}
-                placeholder="e.g., 25"
-              />
-            </Grid>
-
-            {/* Compliance & Requirements Section */}
-            <Grid item xs={12}>
-              <Divider sx={{ my: 3 }} />
-              <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
-                Compliance & Requirements
-              </Typography>
-            </Grid>
-            
-            <Grid item xs={12} md={6}>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formData.eVerifyRequired}
-                    onChange={(e) => handleInputChange('eVerifyRequired', e.target.checked)}
-                  />
-                }
-                label="E-Verify Required"
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>{getFieldDef('ppeProvidedBy')?.label || 'PPE Provided By'}</InputLabel>
-                <Select
-                  value={formData.ppeProvidedBy}
-                  onChange={(e) => handleInputChange('ppeProvidedBy', e.target.value)}
-                  label={getFieldDef('ppeProvidedBy')?.label || 'PPE Provided By'}
-                >
-                  <MenuItem value="company">Company</MenuItem>
-                  <MenuItem value="worker">Worker</MenuItem>
-                  <MenuItem value="both">Both</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12}>
-              <Autocomplete
-                multiple
-                fullWidth
-                options={backgroundCheckOptions.map(option => option.label)}
-                value={formData.backgroundCheckPackages}
-                onChange={(event, newValue) => {
-                  handleInputChange('backgroundCheckPackages', newValue);
-                }}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label={getFieldDef('backgroundCheckPackages')?.label || 'Background Check Packages'}
-                    helperText="Select required background check types"
-                  />
-                )}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip
-                      variant="outlined"
-                      label={option}
-                      {...getTagProps({ index })}
-                      key={option}
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={12} md={6}>
+                <Autocomplete
+                  fullWidth
+                  options={loadedContacts}
+                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
+                  value={loadedContacts.find(contact => contact.id === formData.procurementContactId) || null}
+                  onChange={(event, newValue) => handleInputChange('procurementContactId', newValue?.id || '')}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Procurement Contact"
+                      placeholder="Search by name or email..."
                     />
-                  ))
-                }
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <Autocomplete
-                multiple
-                fullWidth
-                options={drugScreeningOptions.map(option => option.label)}
-                value={formData.drugScreeningPanels}
-                onChange={(event, newValue) => {
-                  handleInputChange('drugScreeningPanels', newValue);
-                }}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label={getFieldDef('drugScreeningPanels')?.label || 'Drug Screening Panels'}
-                    helperText="Select required drug screening panels"
-                  />
-                )}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip
-                      variant="outlined"
-                      label={option}
-                      {...getTagProps({ index })}
-                      key={option}
-                    />
-                  ))
-                }
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <Autocomplete
-                multiple
-                fullWidth
-                options={additionalScreeningOptions.map(option => option.label)}
-                value={formData.additionalScreenings}
-                onChange={(event, newValue) => {
-                  handleInputChange('additionalScreenings', newValue);
-                }}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Additional Screenings"
-                    helperText="Select required additional screening types (healthcare, credentials, etc.)"
-                  />
-                )}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip
-                      variant="outlined"
-                      label={option}
-                      {...getTagProps({ index })}
-                      key={option}
-                    />
-                  ))
-                }
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <Autocomplete
-                multiple
-                options={getOptionsForField('licensesCerts', companyDefaultsForOptions)}
-                value={formData.licensesCerts.map(cred => ({ value: cred, label: cred }))}
-                onChange={(_, newValue) => {
-                  const credValues = newValue.map(option => option.value);
-                  handleInputChange('licensesCerts', credValues);
-                }}
-                getOptionLabel={(option) => typeof option === 'string' ? option : option.label}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => {
-                    const { key, ...chipProps } = getTagProps({ index });
-                    return (
-                      <Chip
-                        key={key}
-                        label={typeof option === 'string' ? option : option.label}
-                        size="small"
-                        {...chipProps}
-                      />
-                    );
-                  })
-                }
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label={getFieldDef('licensesCerts')?.label || 'Licenses & Certifications'}
-                    placeholder="Type to search licenses and certifications..."
-                    helperText="Start typing to search from 100+ standard credentials"
-                  />
-                )}
-                filterSelectedOptions
-                freeSolo={false}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Experience Required</InputLabel>
-                <Select
-                  value={formData.experienceRequired}
-                  onChange={(e) => handleInputChange('experienceRequired', e.target.value)}
-                  label="Experience Required"
-                >
-                  {experienceOptions.map((option, index) => (
-                    <MenuItem key={index} value={option.value}>
-                      {option.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Education Required</InputLabel>
-                <Select
-                  value={formData.educationRequired}
-                  onChange={(e) => handleInputChange('educationRequired', e.target.value)}
-                  label="Education Required"
-                >
-                  {educationOptions.map((option, index) => (
-                    <MenuItem key={index} value={option.value}>
-                      {option.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>{getFieldDef('languages')?.label || 'Languages Required'}</InputLabel>
-                <Select
-                  multiple
-                  value={formData.languagesRequired}
-                  onChange={(e) => handleInputChange('languagesRequired', e.target.value)}
-                  input={<OutlinedInput label={getFieldDef('languages')?.label || 'Languages Required'} />}
-                  renderValue={(selected) => (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                      {selected.map((value) => (
-                        <Chip key={value} label={value} size="small" />
-                      ))}
-                    </Box>
                   )}
-                >
-                  {getOptionsForField('languages', companyDefaultsForOptions).map((opt, index) => (
-                    <MenuItem key={index} value={opt.value}>
-                      {opt.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <Autocomplete
-                multiple
-                options={getOptionsForField('skills', companyDefaultsForOptions)}
-                value={formData.skillsRequired.map(skill => ({ value: skill, label: skill }))}
-                onChange={(_, newValue) => {
-                  const skillValues = newValue.map(option => option.value);
-                  handleInputChange('skillsRequired', skillValues);
-                }}
-                getOptionLabel={(option) => typeof option === 'string' ? option : option.label}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => {
-                    const { key, ...chipProps } = getTagProps({ index });
-                    return (
-                      <Chip
-                        key={key}
-                        label={typeof option === 'string' ? option : option.label}
-                        size="small"
-                        {...chipProps}
-                      />
-                    );
-                  })
-                }
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label={getFieldDef('skills')?.label || 'Skills Required'}
-                    placeholder="Type to search skills..."
-                    helperText="Start typing to search from 500+ O*NET skills"
-                  />
+                  renderOption={(props, option) => (
+                    <li {...props}>
+                      {option.fullName || option.name} {option.title && `(${option.title})`}
+                    </li>
+                  )}
+                  disabled={loadedContacts.length === 0}
+                />
+                {loadedContacts.length === 0 && formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    No contacts found for this company. Add contacts to the company first.
+                  </Typography>
                 )}
-                filterSelectedOptions
-                freeSolo={false}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <Autocomplete
-                multiple
-                fullWidth
-                options={[
-                  'Standing',
-                  'Walking',
-                  'Sitting',
-                  'Lifting 25 lbs',
-                  'Lifting 50 lbs',
-                  'Lifting 75 lbs',
-                  'Lifting 100+ lbs',
-                  'Carrying 25 lbs',
-                  'Carrying 50 lbs',
-                  'Carrying 75 lbs',
-                  'Carrying 100+ lbs',
-                  'Pushing',
-                  'Pulling',
-                  'Climbing',
-                  'Balancing',
-                  'Stooping',
-                  'Kneeling',
-                  'Crouching',
-                  'Crawling',
-                  'Reaching',
-                  'Handling',
-                  'Fingering',
-                  'Feeling',
-                  'Talking',
-                  'Hearing',
-                  'Seeing',
-                  'Color Vision',
-                  'Depth Perception',
-                  'Field of Vision',
-                  'Driving',
-                  'Operating Machinery',
-                  'Working at Heights',
-                  'Confined Spaces',
-                  'Outdoor Work',
-                  'Indoor Work',
-                  'Temperature Extremes',
-                  'Noise',
-                  'Vibration',
-                  'Fumes/Odors',
-                  'Dust',
-                  'Chemicals',
-                  'Radiation',
-                  'Other'
-                ]}
-                value={formData.physicalRequirements}
-                onChange={(event, newValue) => {
-                  handleInputChange('physicalRequirements', newValue);
-                }}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Physical Requirements"
-                    helperText="Select physical requirements for this position"
-                  />
+                {!formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    Select a company to load contacts.
+                  </Typography>
                 )}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip
-                      variant="outlined"
-                      label={option}
-                      {...getTagProps({ index })}
-                      key={option}
+              </Grid>
+
+              <Grid item xs={12} md={6}>
+                <Autocomplete
+                  fullWidth
+                  options={loadedContacts}
+                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
+                  value={loadedContacts.find(contact => contact.id === formData.billingContactId) || null}
+                  onChange={(event, newValue) => handleInputChange('billingContactId', newValue?.id || '')}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Billing Contact"
+                      placeholder="Search by name or email..."
                     />
-                  ))
-                }
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <Autocomplete
-                multiple
-                fullWidth
-                options={[
-                  'Hard Hat',
-                  'Safety Glasses',
-                  'Safety Goggles',
-                  'Face Shield',
-                  'Respirator',
-                  'Dust Mask',
-                  'N95 Mask',
-                  'Hearing Protection',
-                  'Ear Plugs',
-                  'Ear Muffs',
-                  'High-Visibility Vest',
-                  'Reflective Clothing',
-                  'Safety Boots',
-                  'Steel-Toe Boots',
-                  'Non-Slip Shoes',
-                  'Cut-Resistant Gloves',
-                  'Chemical-Resistant Gloves',
-                  'Heat-Resistant Gloves',
-                  'Fall Protection Harness',
-                  'Safety Lanyard',
-                  'Lifeline',
-                  'Confined Space Equipment',
-                  'Gas Monitor',
-                  'Air Purifying Respirator',
-                  'Self-Contained Breathing Apparatus',
-                  'First Aid Kit',
-                  'Emergency Shower',
-                  'Eye Wash Station',
-                  'Fire Extinguisher',
-                  'Safety Data Sheets',
-                  'Lockout/Tagout Devices',
-                  'Barricades',
-                  'Warning Signs',
-                  'Personal Alarm',
-                  'Two-Way Radio',
-                  'Flashlight',
-                  'Headlamp',
-                  'Protective Coveralls',
-                  'Disposable Suits',
-                  'Chemical Apron',
-                  'Lab Coat',
-                  'Hair Net',
-                  'Beard Cover',
-                  'Disposable Gloves',
-                  'Nitrile Gloves',
-                  'Latex Gloves',
-                  'Vinyl Gloves',
-                  'Insulated Gloves',
-                  'Electrical Gloves',
-                  'Welding Helmet',
-                  'Welding Gloves',
-                  'Welding Apron',
-                  'Welding Boots',
-                  'Welding Jacket',
-                  'Chainsaw Chaps',
-                  'Cutting Gloves',
-                  'Abrasion-Resistant Clothing',
-                  'Flame-Resistant Clothing',
-                  'Arc Flash Protection',
-                  'Voltage-Rated Gloves',
-                  'Rubber Insulating Gloves',
-                  'Leather Protectors',
-                  'Insulating Blankets',
-                  'Insulating Covers',
-                  'Hot Sticks',
-                  'Voltage Detectors',
-                  'Ground Fault Circuit Interrupters',
-                  'Other'
-                ]}
-                value={formData.ppeRequirements}
-                onChange={(event, newValue) => {
-                  handleInputChange('ppeRequirements', newValue);
-                }}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label={getFieldDef('ppe')?.label || 'PPE Requirements'}
-                    helperText="Select required personal protective equipment"
-                  />
+                  )}
+                  renderOption={(props, option) => (
+                    <li {...props}>
+                      {option.fullName || option.name} {option.title && `(${option.title})`}
+                    </li>
+                  )}
+                  disabled={loadedContacts.length === 0}
+                />
+                {loadedContacts.length === 0 && formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    No contacts found for this company. Add contacts to the company first.
+                  </Typography>
                 )}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip
-                      variant="outlined"
-                      label={option}
-                      {...getTagProps({ index })}
-                      key={option}
-                    />
-                  ))
-                }
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <Autocomplete
-                multiple
-                fullWidth
-                options={[
-                  'Business Casual',
-                  'Business Professional',
-                  'Casual',
-                  'Scrubs',
-                  'Uniform Provided',
-                  'Black Pants',
-                  'White Shirt',
-                  'Polo Shirt',
-                  'Button-Down Shirt',
-                  'Dress Shirt',
-                  'Khaki Pants',
-                  'Dress Pants',
-                  'Jeans (Dark)',
-                  'Jeans (No Holes)',
-                  'Slacks',
-                  'Skirt/Dress',
-                  'Blouse',
-                  'Sweater',
-                  'Cardigan',
-                  'Blazer',
-                  'Suit',
-                  'Tie Required',
-                  'No Tie',
-                  'Closed-Toe Shoes',
-                  'Steel-Toe Boots',
-                  'Non-Slip Shoes',
-                  'Dress Shoes',
-                  'Sneakers',
-                  'Boots',
-                  'Sandals Allowed',
-                  'No Sandals',
-                  'No Flip-Flops',
-                  'No Shorts',
-                  'No Tank Tops',
-                  'No Graphic Tees',
-                  'No Hoodies',
-                  'No Sweatpants',
-                  'No Leggings',
-                  'No Yoga Pants',
-                  'No Athletic Wear',
-                  'No Ripped Clothing',
-                  'No Visible Tattoos',
-                  'No Facial Piercings',
-                  'Minimal Jewelry',
-                  'No Jewelry',
-                  'Hair Tied Back',
-                  'Clean Shaven',
-                  'Facial Hair Allowed',
-                  'Hair Color Restrictions',
-                  'No Hair Color Restrictions',
-                  'Coveralls',
-                  'Safety Vest',
-                  'Hard Hat',
-                  'Reflective Clothing',
-                  'Weather-Appropriate',
-                  'Seasonal Attire',
-                  'Formal Occasions',
-                  'Customer-Facing',
-                  'Back Office',
-                  'Laboratory',
-                  'Kitchen',
-                  'Warehouse',
-                  'Construction',
-                  'Healthcare',
-                  'Food Service',
-                  'Retail',
-                  'Office',
-                  'Other'
-                ]}
-                value={formData.dressCode}
-                onChange={(event, newValue) => {
-                  handleInputChange('dressCode', newValue);
-                }}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Uniform Requirements"
-                    helperText="Select dress code and uniform requirements"
-                  />
+                {!formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    Select a company to load contacts.
+                  </Typography>
                 )}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip
-                      variant="outlined"
-                      label={option}
-                      {...getTagProps({ index })}
-                      key={option}
+              </Grid>
+            </Grid>
+
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={12} md={6}>
+                <Autocomplete
+                  fullWidth
+                  options={loadedContacts}
+                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
+                  value={loadedContacts.find(contact => contact.id === formData.safetyContactId) || null}
+                  onChange={(event, newValue) => handleInputChange('safetyContactId', newValue?.id || '')}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Safety Contact"
+                      placeholder="Search by name or email..."
                     />
-                  ))
-                }
-              />
+                  )}
+                  renderOption={(props, option) => (
+                    <li {...props}>
+                      {option.fullName || option.name} {option.title && `(${option.title})`}
+                    </li>
+                  )}
+                  disabled={loadedContacts.length === 0}
+                />
+                {loadedContacts.length === 0 && formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    No contacts found for this company. Add contacts to the company first.
+                  </Typography>
+                )}
+                {!formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    Select a company to load contacts.
+                  </Typography>
+                )}
+              </Grid>
+
+              <Grid item xs={12} md={6}>
+                <Autocomplete
+                  fullWidth
+                  options={loadedContacts}
+                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
+                  value={loadedContacts.find(contact => contact.id === formData.invoiceContactId) || null}
+                  onChange={(event, newValue) => handleInputChange('invoiceContactId', newValue?.id || '')}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Invoice Contact"
+                      placeholder="Search by name or email..."
+                    />
+                  )}
+                  renderOption={(props, option) => (
+                    <li {...props}>
+                      {option.fullName || option.name} {option.title && `(${option.title})`}
+                    </li>
+                  )}
+                  disabled={loadedContacts.length === 0}
+                />
+                {loadedContacts.length === 0 && formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    No contacts found for this company. Add contacts to the company first.
+                  </Typography>
+                )}
+                {!formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    Select a company to load contacts.
+                  </Typography>
+                )}
+              </Grid>
             </Grid>
 
-            {/* Customer Rules & Policies Section */}
-            <Grid item xs={12}>
-              <Divider sx={{ my: 3 }} />
-              <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
-                Customer Rules & Policies
-              </Typography>
-            </Grid>
-            
-            <Grid item xs={12} md={6}>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formData.replacingExistingAgency}
-                    onChange={(e) => handleInputChange('replacingExistingAgency', e.target.checked)}
-                  />
-                }
-                label="Replacing Existing Agency"
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formData.rolloverExistingStaff}
-                    onChange={(e) => handleInputChange('rolloverExistingStaff', e.target.checked)}
-                  />
-                }
-                label="Rollover Existing Staff"
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Timeclock System"
-                value={formData.timeclockSystem}
-                onChange={(e) => handleInputChange('timeclockSystem', e.target.value)}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Attendance Policy"
-                value={formData.attendancePolicy}
-                onChange={(e) => handleInputChange('attendancePolicy', e.target.value)}
-                multiline
-                rows={2}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="No-Show Policy"
-                value={formData.noShowPolicy}
-                onChange={(e) => handleInputChange('noShowPolicy', e.target.value)}
-                multiline
-                rows={2}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Overtime Policy"
-                value={formData.overtimePolicy}
-                onChange={(e) => handleInputChange('overtimePolicy', e.target.value)}
-                multiline
-                rows={2}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Call-Off Policy"
-                value={formData.callOffPolicy}
-                onChange={(e) => handleInputChange('callOffPolicy', e.target.value)}
-                multiline
-                rows={2}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Injury Handling Policy"
-                value={formData.injuryHandlingPolicy}
-                onChange={(e) => handleInputChange('injuryHandlingPolicy', e.target.value)}
-                multiline
-                rows={2}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Discipline Policy"
-                value={formData.disciplinePolicy}
-                onChange={(e) => handleInputChange('disciplinePolicy', e.target.value)}
-                multiline
-                rows={2}
-              />
-            </Grid>
-
-            {/* Billing & Invoicing Section */}
-            <Grid item xs={12}>
-              <Divider sx={{ my: 3 }} />
-              <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
-                Billing & Invoicing
-              </Typography>
-            </Grid>
-            
-            <Grid item xs={12} md={6}>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formData.poRequired}
-                    onChange={(e) => handleInputChange('poRequired', e.target.checked)}
-                  />
-                }
-                label="PO Required"
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Payment Terms"
-                value={formData.paymentTerms}
-                onChange={(e) => handleInputChange('paymentTerms', e.target.value)}
-                placeholder="e.g., Net 30"
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Invoice Delivery Method</InputLabel>
-                <Select
-                  value={formData.invoiceDeliveryMethod}
-                  onChange={(e) => handleInputChange('invoiceDeliveryMethod', e.target.value)}
-                  label="Invoice Delivery Method"
-                >
-                  <MenuItem value="email">Email</MenuItem>
-                  <MenuItem value="portal">Portal</MenuItem>
-                  <MenuItem value="mail">Mail</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Invoice Frequency</InputLabel>
-                <Select
-                  value={formData.invoiceFrequency}
-                  onChange={(e) => handleInputChange('invoiceFrequency', e.target.value)}
-                  label="Invoice Frequency"
-                >
-                  <MenuItem value="weekly">Weekly</MenuItem>
-                  <MenuItem value="biweekly">Bi-weekly</MenuItem>
-                  <MenuItem value="monthly">Monthly</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-
-            {/* Agreement & Contract Information Section */}
-            <Grid item xs={12}>
-              <Divider sx={{ my: 3 }} />
-              <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
-                Agreement & Contract Information
-              </Typography>
-            </Grid>
-            
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Verbal Agreement Contact"
-                value={formData.verbalAgreementContact}
-                onChange={(e) => handleInputChange('verbalAgreementContact', e.target.value)}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Verbal Agreement Date"
-                type="date"
-                value={formData.verbalAgreementDate}
-                onChange={(e) => handleInputChange('verbalAgreementDate', e.target.value)}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Verbal Agreement Method</InputLabel>
-                <Select
-                  value={formData.verbalAgreementMethod}
-                  onChange={(e) => handleInputChange('verbalAgreementMethod', e.target.value)}
-                  label="Verbal Agreement Method"
-                >
-                  <MenuItem value="phone">Phone</MenuItem>
-                  <MenuItem value="email">Email</MenuItem>
-                  <MenuItem value="in_person">In Person</MenuItem>
-                  <MenuItem value="other">Other</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formData.insuranceSubmitted}
-                    onChange={(e) => handleInputChange('insuranceSubmitted', e.target.checked)}
-                  />
-                }
-                label="Insurance Submitted"
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Conditions to Fulfill"
-                value={formData.conditionsToFulfill}
-                onChange={(e) => handleInputChange('conditionsToFulfill', e.target.value)}
-                placeholder="Comma-separated list of conditions"
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Approvals Needed"
-                value={formData.approvalsNeeded}
-                onChange={(e) => handleInputChange('approvalsNeeded', e.target.value)}
-                placeholder="Comma-separated list of approvals needed"
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Contract Signed Date"
-                type="date"
-                value={formData.contractSignedDate}
-                onChange={(e) => handleInputChange('contractSignedDate', e.target.value)}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Contract Expiration Date"
-                type="date"
-                value={formData.contractExpirationDate}
-                onChange={(e) => handleInputChange('contractExpirationDate', e.target.value)}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formData.rateSheetOnFile}
-                    onChange={(e) => handleInputChange('rateSheetOnFile', e.target.checked)}
-                  />
-                }
-                label="Rate Sheet On File"
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formData.msaSigned}
-                    onChange={(e) => handleInputChange('msaSigned', e.target.checked)}
-                  />
-                }
-                label="MSA Signed"
-              />
-            </Grid>
-
-            {/* Notes Section */}
-            <Grid item xs={12}>
-              <Divider sx={{ my: 3 }} />
-              <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
-                Notes
-              </Typography>
-            </Grid>
-            
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label={getFieldDef('notes')?.label || 'Internal Notes'}
-                value={formData.notes}
-                onChange={(e) => handleInputChange('notes', e.target.value)}
-                multiline
-                rows={4}
-                placeholder="Additional notes or special instructions..."
-              />
-            </Grid>
 
             {/* Action Buttons */}
             <Grid item xs={12}>
               <Divider sx={{ my: 3 }} />
               <Stack direction="row" spacing={2}>
                 <Button
+                  variant="contained"
+                  startIcon={<SaveIcon />}
+                  onClick={handleSave}
+                  disabled={saving}
+                  sx={{ minWidth: 120 }}
+                >
+                  {saving ? <CircularProgress size={20} /> : (isEditing ? 'Update Job Order' : 'Create Job Order')}
+                </Button>
+                <Button
                   variant="outlined"
                   startIcon={<CancelIcon />}
                   onClick={handleCancel}
+                  disabled={saving}
                 >
                   Cancel
                 </Button>

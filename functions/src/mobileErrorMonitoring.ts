@@ -1,7 +1,7 @@
 import { getFirestore } from 'firebase-admin/firestore';
 import { onCall } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import { logAIAction } from './feedbackEngine';
+import { logger } from './utils/logger';
 
 const db = getFirestore();
 
@@ -150,7 +150,7 @@ export const logMobileAppError = onCall(async (request) => {
     await db.collection('mobileAppErrors').doc(errorId).set(mobileError);
     
     // Log to AI logs for AutoDevOps monitoring
-    await logAIAction({
+    await logger.aiEvent({
       userId: userId || 'mobile_app',
       actionType: 'mobile_error_logged',
       sourceModule: 'MobileErrorMonitoring',
@@ -179,7 +179,7 @@ export const logMobileAppError = onCall(async (request) => {
       message: 'Mobile error logged successfully'
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: userId || 'mobile_app',
       actionType: 'mobile_error_logged',
       sourceModule: 'MobileErrorMonitoring',
@@ -231,7 +231,7 @@ export const monitorMobileAppErrors = onCall(async (request) => {
     const analytics = generateMobileErrorAnalytics(errors);
     await db.collection('mobileErrorAnalytics').doc(analytics.id).set(analytics);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'monitor_mobile_app_errors',
       sourceModule: 'MobileErrorMonitoring',
@@ -257,7 +257,7 @@ export const monitorMobileAppErrors = onCall(async (request) => {
       analytics
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'monitor_mobile_app_errors',
       sourceModule: 'MobileErrorMonitoring',
@@ -358,7 +358,7 @@ async function analyzeMobileError(error: MobileAppError, userId: string): Promis
       aiAnalysis: analysis
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'analyze_mobile_error',
       sourceModule: 'MobileErrorMonitoring',
@@ -428,7 +428,7 @@ async function attemptMobileErrorAutoFix(error: MobileAppError, userId: string):
       resolvedAt: new Date()
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'auto_fix_mobile_error',
       sourceModule: 'MobileErrorMonitoring',

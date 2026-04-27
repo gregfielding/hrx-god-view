@@ -62,7 +62,6 @@ import {
   Delete as DeleteIcon
 } from '@mui/icons-material';
 import { doc, updateDoc, serverTimestamp, getDoc } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 
 import { useAuth } from '../contexts/AuthContext';
@@ -71,7 +70,20 @@ import { getOptionsForField } from '../utils/fieldOptions';
 import jobTitlesList from '../data/onetJobTitles.json';
 import { getFieldDef } from '../fields/useFieldDef';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
-import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../data/screeningsOptions';
+import { additionalScreeningOptions } from '../data/screeningsOptions';
+import { logger } from '../utils/logger';
+
+const normalizeAutocompleteKey = (v: any): string => {
+  if (v == null) return '';
+  const raw = typeof v === 'string' ? v : (v.value ?? v.label ?? '');
+  return String(raw).trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+};
+
+const normalizeAutocompleteLabel = (v: any): string => {
+  if (v == null) return '';
+  if (typeof v === 'string') return v;
+  return String(v.label ?? v.value ?? '');
+};
 
 
 interface Contact {
@@ -149,6 +161,12 @@ interface ScopingData {
     backgroundCheckPackages?: string[];
     backgroundCheckDetails?: string;
     drugScreen?: boolean;
+    /**
+     * @deprecated R.0d (Apr 2026) — soft-deprecated by the Readiness Rebuild.
+     * Subsumed by AccuSource `screeningPackageId` + `additionalScreenings`.
+     * No new writes; existing data on legacy deal docs is preserved. See
+     * docs/READINESS_R0_HANDOFF.md.
+     */
     drugScreeningPanels?: string[];
     drugScreenDetails?: string;
     additionalScreenings?: string[];
@@ -327,7 +345,8 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
   const [hasInitialized, setHasInitialized] = useState(false);
   const [uploadingContract, setUploadingContract] = useState(false);
   const [backgroundCheckPackages, setBackgroundCheckPackages] = useState<Array<{title: string, description: string}>>([]);
-  const [drugScreeningPanels, setDrugScreeningPanels] = useState<Array<{title: string, description: string}>>([]);
+  // R.0d (Apr 2026): drugScreeningPanels state removed — soft-deprecated;
+  // no UI binding remained. See docs/READINESS_R0_HANDOFF.md.
   const [uniformRequirements, setUniformRequirements] = useState<Array<{title: string, description: string}>>([]);
   const [ppeOptions, setPpeOptions] = useState<Array<{title: string, description: string}>>([]);
   const [licensesCerts, setLicensesCerts] = useState<Array<{title: string, description: string}>>([]);
@@ -339,7 +358,6 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
   // Build a single company defaults object for options sourcing
   const companyDefaultsForOptions = {
     backgroundPackages: backgroundCheckPackages,
-    screeningPanels: drugScreeningPanels,
     uniformRequirements,
     ppe: ppeOptions,
     licensesCerts: licensesCerts,
@@ -397,7 +415,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         if (docSnap.exists()) {
           const data = docSnap.data();
           const packages = data.backgroundPackages || [];
-          const panels = data.screeningPanels || [];
+          // R.0d (Apr 2026): drugScreeningPanels load removed — no consumer.
           const uniforms = data.uniformRequirements || [];
           const ppe = data.ppe || [];
           const licensesCerts = data.licensesCerts || [];
@@ -407,7 +425,6 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           const langs = data.languages || [];
           const skillOptions = data.skills || [];
           console.log('📦 Fetched background check packages:', packages);
-          console.log('💊 Fetched drug screening panels:', panels);
           console.log('👔 Fetched uniform requirements:', uniforms);
           console.log('🦺 Fetched PPE options:', ppe);
           console.log('📜🏆 Fetched licenses & certifications:', licensesCerts);
@@ -417,7 +434,6 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           console.log('🗣️ Fetched languages:', langs);
           console.log('🛠️ Fetched skills:', skillOptions);
           setBackgroundCheckPackages(packages);
-          setDrugScreeningPanels(panels);
           setUniformRequirements(uniforms);
           setPpeOptions(ppe);
           setLicensesCerts(licensesCerts);
@@ -568,13 +584,10 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
     };
     onStageDataChange(updatedData);
 
-    // TODO: Re-enable AI logging once Cloud Function is properly configured
     // Log field change for AI analysis (fire-and-forget)
     (async () => {
       try {
-        const functions = getFunctions();
-        const logAIAction = httpsCallable(functions, 'logAIActionCallable');
-        await logAIAction({
+        await logger.aiEvent({
           userId: user?.uid,
           actionType: 'deal_field_changed',
           sourceModule: 'DealStageForms',
@@ -628,9 +641,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
       
       // Log stage data save for AI analysis
       try {
-        const functions = getFunctions();
-        const logAIAction = httpsCallable(functions, 'logAIActionCallable');
-        await logAIAction({
+        await logger.aiEvent({
           userId: user?.uid,
           actionType: 'deal_stage_saved',
           sourceModule: 'DealStageForms',
@@ -720,9 +731,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         // Log stage advancement for AI analysis (fire-and-forget)
         (async () => {
           try {
-            const functions = getFunctions();
-            const logAIAction = httpsCallable(functions, 'logAIActionCallable');
-            await logAIAction({
+            await logger.aiEvent({
               userId: user?.uid,
               actionType: 'deal_stage_advanced',
               sourceModule: 'DealStageForms',
@@ -869,7 +878,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               <Autocomplete
                 multiple
                 freeSolo
-                options={jobTitlesList as any}
+                options={Array.isArray(jobTitlesList) ? jobTitlesList : []}
                 value={data.jobTitles || []}
                 onChange={(_, newValue) => {
                   handleStageDataChange('discovery', 'jobTitles', newValue);
@@ -923,7 +932,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               <Autocomplete
                 multiple
                 freeSolo
-                options={['Full Time', 'Part Time', 'Temporary', '1st Shift', '2nd Shift', '3rd Shift', 'Night Shift', 'Weekend Shift', 'Flexible']}
+                options={['Full Time', 'Part Time', 'Temporary', 'On Call', '1st Shift', '2nd Shift', '3rd Shift', 'Night Shift', 'Weekend Shift', 'Flexible']}
                 value={data.shifts || []}
                 onChange={(_, newValue) => {
                   handleStageDataChange('discovery', 'shifts', newValue);
@@ -1154,7 +1163,8 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         
         
 
-        <FormControl fullWidth size="small" sx={{ mb: 3 }}>
+        {/* Decision Maker is now managed from the sidebar "Decision Maker" widget above Deal Contacts */}
+        {/* <FormControl fullWidth size="small" sx={{ mb: 3 }}>
           <InputLabel>{getFieldDef('decisionMaker')?.label || 'Decision Maker'}</InputLabel>
           <Select
             value={data.decisionMaker?.id || ''}
@@ -1178,7 +1188,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               No contacts associated with this deal yet. Add contacts first.
             </FormHelperText>
           )}
-        </FormControl>
+        </FormControl> */}
 
         <TextField
           label={getFieldDef('mustHave')?.label || 'Must Have Requirements'}
@@ -1227,100 +1237,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           helperText="What could prevent this deal from closing? Separate with commas"
         />
 
-        <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>{'Staff Placement Timeline'}</Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          How many staff should we expect to place?
-        </Typography>
-        
-        <Grid container spacing={2} sx={{ mb: 3 }}>
-          <Grid item xs={6} md={3}>
-            <TextField
-              label={getFieldDef('starting')?.label || 'Initial Order'}
-              type="number"
-              value={data.staffPlacementTimeline?.starting || ''}
-              onChange={(e) => handleStageDataChange('qualification', 'staffPlacementTimeline', {
-                ...data.staffPlacementTimeline,
-                starting: parseInt(e.target.value) || 0
-              })}
-              fullWidth
-              size="small"
-              placeholder="Initial Order"
-            />
-          </Grid>
-          <Grid item xs={6} md={3}>
-            <TextField
-              label={getFieldDef('after30Days')?.label || 'Potential After 30 Days'}
-              type="number"
-              value={data.staffPlacementTimeline?.after30Days || ''}
-              onChange={(e) => handleStageDataChange('qualification', 'staffPlacementTimeline', {
-                ...data.staffPlacementTimeline,
-                after30Days: parseInt(e.target.value) || 0
-              })}
-              fullWidth
-              size="small"
-              placeholder="Potential After 30 Days"
-            />
-          </Grid>
-          <Grid item xs={6} md={3}>
-            <TextField
-              label={getFieldDef('after90Days')?.label || 'Potential After 90 Days'}
-              type="number"
-              value={data.staffPlacementTimeline?.after90Days || ''}
-              onChange={(e) => handleStageDataChange('qualification', 'staffPlacementTimeline', {
-                ...data.staffPlacementTimeline,
-                after90Days: parseInt(e.target.value) || 0
-              })}
-              fullWidth
-              size="small"
-              placeholder="Potential After 90 Days"
-            />
-          </Grid>
-          <Grid item xs={6} md={3}>
-            <TextField
-              label={getFieldDef('after180Days')?.label || 'Potential After 180 Days'}
-              type="number"
-              value={data.staffPlacementTimeline?.after180Days || ''}
-              onChange={(e) => handleStageDataChange('qualification', 'staffPlacementTimeline', {
-                ...data.staffPlacementTimeline,
-                after180Days: parseInt(e.target.value) || 0
-              })}
-              fullWidth
-              size="small"
-              placeholder="Potential After 180 Days"
-            />
-          </Grid>
-        </Grid>
-
-        <Grid container spacing={2} sx={{ mb: 3 }}>
-          <Grid item xs={12} md={6}>
-            <TextField
-              label={getFieldDef('expectedAveragePayRate')?.label || 'Expected Average Pay Rate'}
-              type="number"
-              value={data.expectedAveragePayRate || ''}
-              onChange={(e) => handleStageDataChange('qualification', 'expectedAveragePayRate', parseFloat(e.target.value) || 0)}
-              fullWidth
-              size="small"
-              InputProps={{
-                startAdornment: <Typography sx={{ mr: 1 }}>$</Typography>
-              }}
-              helperText="Expected average hourly pay rate"
-            />
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <TextField
-              label={getFieldDef('expectedAverageMarkup')?.label || 'Expected Average Markup (%)'}
-              type="number"
-              value={data.expectedAverageMarkup || ''}
-              onChange={(e) => handleStageDataChange('qualification', 'expectedAverageMarkup', parseFloat(e.target.value) || 0)}
-              fullWidth
-              size="small"
-              InputProps={{
-                endAdornment: <Typography sx={{ ml: 1 }}>%</Typography>
-              }}
-              helperText="Expected average markup percentage"
-            />
-          </Grid>
-        </Grid>
+        {/* Financial inputs moved to the Deal Details sidebar Financials widget. */}
 
         <Divider sx={{ my: 3 }} />
 
@@ -1372,17 +1289,6 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           fullWidth
           size="small"
           sx={{ mb: 2 }}
-        />
-
-        <TextField
-          label={getFieldDef('expectedCloseDate')?.label || 'Expected Close Date'}
-          type="date"
-          value={data.expectedCloseDate || ''}
-          onChange={(e) => handleStageDataChange('qualification', 'expectedCloseDate', e.target.value)}
-          fullWidth
-          size="small"
-          sx={{ mb: 2 }}
-          helperText="When do you expect this deal to close?"
         />
 
         <Divider sx={{ my: 3 }} />
@@ -1464,74 +1370,6 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         
         <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={4}>
-            <Autocomplete
-              multiple
-              fullWidth
-              size="small"
-              options={backgroundCheckOptions.map(option => option.label)}
-              value={data.compliance?.backgroundCheckPackages || []}
-              onChange={(event, newValue) => {
-                handleStageDataChange('scoping', 'compliance', {
-                  ...data.compliance,
-                  backgroundCheckPackages: newValue,
-                  backgroundCheck: newValue.length > 0
-                });
-              }}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label={getFieldDef('backgroundCheckPackages')?.label || 'Background Check Packages'}
-                  helperText="Select required background check types"
-                />
-              )}
-              renderTags={(value, getTagProps) =>
-                value.map((option, index) => (
-                  <Chip
-                    variant="outlined"
-                    label={option}
-                    size="small"
-                    {...getTagProps({ index })}
-                    key={option}
-                  />
-                ))
-              }
-            />
-          </Grid>
-          <Grid item xs={4}>
-            <Autocomplete
-              multiple
-              fullWidth
-              size="small"
-              options={drugScreeningOptions.map(option => option.label)}
-              value={data.compliance?.drugScreeningPanels || []}
-              onChange={(event, newValue) => {
-                handleStageDataChange('scoping', 'compliance', {
-                  ...data.compliance,
-                  drugScreeningPanels: newValue,
-                  drugScreen: newValue.length > 0
-                });
-              }}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label={getFieldDef('drugScreeningPanels')?.label || 'Drug Screening Panels'}
-                  helperText="Select required drug screening panels"
-                />
-              )}
-              renderTags={(value, getTagProps) =>
-                value.map((option, index) => (
-                  <Chip
-                    variant="outlined"
-                    label={option}
-                    size="small"
-                    {...getTagProps({ index })}
-                    key={option}
-                  />
-                ))
-              }
-            />
-          </Grid>
-          <Grid item xs={4}>
             <FormControlLabel
               control={
                 <Switch
@@ -1553,7 +1391,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               multiple
               fullWidth
               size="small"
-              options={additionalScreeningOptions.map(option => option.label)}
+              options={Array.isArray(additionalScreeningOptions) ? additionalScreeningOptions.map(option => option.label) : []}
               value={data.compliance?.additionalScreenings || []}
               onChange={(event, newValue) => {
                 handleStageDataChange('scoping', 'compliance', {
@@ -1587,7 +1425,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <Autocomplete
           multiple
           size="small"
-          options={getOptionsForField('licensesCerts', companyDefaultsForOptions)}
+          options={Array.isArray(getOptionsForField('licensesCerts', companyDefaultsForOptions)) ? getOptionsForField('licensesCerts', companyDefaultsForOptions) : []}
           value={(data.compliance?.licensesCerts || []).map(cred => ({ value: cred, label: cred }))}
           onChange={(_, newValue) => {
             const credValues = newValue.map(option => option.value);
@@ -1597,13 +1435,14 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
             });
           }}
           getOptionLabel={(option) => typeof option === 'string' ? option : option.label}
+          isOptionEqualToValue={(option, value) => normalizeAutocompleteKey(option) === normalizeAutocompleteKey(value)}
           renderTags={(value, getTagProps) =>
             value.map((option, index) => {
               const { key, ...chipProps } = getTagProps({ index });
               return (
                 <Chip
                   key={key}
-                  label={typeof option === 'string' ? option : option.label}
+                  label={normalizeAutocompleteLabel(option)}
                   size="small"
                   {...chipProps}
                 />
@@ -1686,7 +1525,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                   </Box>
                 )}
               >
-                {experienceOptions.map((opt, index) => (
+                {(Array.isArray(experienceOptions) ? experienceOptions : []).map((opt, index) => (
                   <MenuItem key={index} value={opt.value}>
                     {opt.label}
                   </MenuItem>
@@ -1755,7 +1594,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                   </Box>
                 )}
               >
-                {educationOptions.map((opt, index) => (
+                {(Array.isArray(educationOptions) ? educationOptions : []).map((opt, index) => (
                   <MenuItem key={index} value={opt.value}>
                     {opt.label}
                   </MenuItem>
@@ -1816,7 +1655,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                 'Radiation',
                 'Other'
               ]}
-              value={data.compliance?.physicalRequirements || []}
+              value={Array.isArray(data.compliance?.physicalRequirements) ? data.compliance.physicalRequirements : (data.compliance?.physicalRequirements ? [data.compliance.physicalRequirements] : [])}
               onChange={(event, newValue) => {
                 handleStageDataChange('scoping', 'compliance', {
                   ...data.compliance,
@@ -1904,7 +1743,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                   </Box>
                 )}
               >
-                {getOptionsForField('languages', companyDefaultsForOptions).map((opt, index) => (
+                {(Array.isArray(getOptionsForField('languages', companyDefaultsForOptions)) ? getOptionsForField('languages', companyDefaultsForOptions) : []).map((opt, index) => (
                   <MenuItem key={index} value={opt.value}>
                     {opt.label}
                   </MenuItem>
@@ -1917,7 +1756,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <Autocomplete
           multiple
           size="small"
-          options={getOptionsForField('skills', companyDefaultsForOptions)}
+          options={Array.isArray(getOptionsForField('skills', companyDefaultsForOptions)) ? getOptionsForField('skills', companyDefaultsForOptions) : []}
           value={(data.compliance?.skills || []).map(skill => ({ value: skill, label: skill }))}
           onChange={(_, newValue) => {
             const skillValues = newValue.map(option => option.value);
@@ -1927,13 +1766,14 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
             });
           }}
           getOptionLabel={(option) => typeof option === 'string' ? option : option.label}
+          isOptionEqualToValue={(option, value) => normalizeAutocompleteKey(option) === normalizeAutocompleteKey(value)}
           renderTags={(value, getTagProps) =>
             value.map((option, index) => {
               const { key, ...chipProps } = getTagProps({ index });
               return (
                 <Chip
                   key={key}
-                  label={typeof option === 'string' ? option : option.label}
+                  label={normalizeAutocompleteLabel(option)}
                   size="small"
                   {...chipProps}
                 />
@@ -2030,7 +1870,8 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                 'Ground Fault Circuit Interrupters',
                 'Other'
               ]}
-              value={data.compliance?.ppe || []}
+              value={Array.isArray(data.compliance?.ppe) ? data.compliance.ppe : (data.compliance?.ppe ? [data.compliance.ppe] : [])}
+              isOptionEqualToValue={(option, value) => normalizeAutocompleteKey(option) === normalizeAutocompleteKey(value)}
               onChange={(event, newValue) => {
                 handleStageDataChange('scoping', 'compliance', {
                   ...data.compliance,
@@ -2084,6 +1925,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           options={[
             'Business Casual',
             'Business Professional',
+            'Black Bistro',
             'Casual',
             'Scrubs',
             'Uniform Provided',
@@ -2091,6 +1933,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
             'White Shirt',
             'Polo Shirt',
             'Button-Down Shirt',
+            'Black Button-Down Shirt',
             'Dress Shirt',
             'Khaki Pants',
             'Dress Pants',
@@ -2151,7 +1994,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
             'Office',
             'Other'
           ]}
-          value={data.compliance?.uniformRequirement || []}
+          value={Array.isArray(data.compliance?.uniformRequirement) ? data.compliance.uniformRequirement : (data.compliance?.uniformRequirement ? [data.compliance.uniformRequirement] : [])}
           onChange={(event, newValue) => {
             handleStageDataChange('scoping', 'compliance', {
               ...data.compliance,
@@ -2549,10 +2392,11 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
   const renderProposalDraftedForm = () => {
     const data = stageData.proposalDrafted || {};
     const positionRates = data.positionRates || [];
+    const discoveryJobTitles = stageData.discovery?.jobTitles || [];
 
     const addPosition = () => {
       const newPosition = {
-        jobTitle: '',
+        jobTitle: discoveryJobTitles.length > 0 ? discoveryJobTitles[0] : '',
         markupPercent: 0,
         payRate: 0,
         billRate: 0
@@ -2587,6 +2431,11 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           </Button>
         </Box>
 
+        {discoveryJobTitles.length === 0 && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            Add job titles in the <strong>Discovery</strong> stage to specify positions and pricing here.
+          </Alert>
+        )}
         {positionRates.length === 0 ? (
           <Box sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
             <Typography variant="body2">No positions added yet. Click &quot;Add Position&quot; to get started.</Typography>
@@ -2607,13 +2456,28 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                 {positionRates.map((position, index) => (
                   <TableRow key={index}>
                     <TableCell>
-                      <TextField
-                        value={position.jobTitle}
-                        onChange={(e) => updatePosition(index, 'jobTitle', e.target.value)}
-                        size="small"
-                        fullWidth
-                        placeholder="e.g., Forklift Driver"
-                      />
+                      {discoveryJobTitles.length > 0 ? (
+                        <FormControl size="small" fullWidth>
+                          <Select
+                            value={position.jobTitle}
+                            onChange={(e) => updatePosition(index, 'jobTitle', e.target.value)}
+                            displayEmpty
+                            renderValue={(v) => v || 'Select job title'}
+                          >
+                            {discoveryJobTitles.map((title) => (
+                              <MenuItem key={title} value={title}>{title}</MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      ) : (
+                        <TextField
+                          value={position.jobTitle}
+                          onChange={(e) => updatePosition(index, 'jobTitle', e.target.value)}
+                          size="small"
+                          fullWidth
+                          placeholder="Add job titles in Discovery first"
+                        />
+                      )}
                     </TableCell>
                     <TableCell align="right">
                       <TextField
@@ -3340,7 +3204,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
             <Grid container spacing={2} sx={{ mb: 3 }}>
               <Grid item xs={12} md={6}>
                 <TextField
-                  label={getFieldDef('dateSigned')?.label || 'Date Signed'}
+                  label={getFieldDef('dateSigned')?.label || 'Close Date'}
                   type="date"
                   value={data.dateSigned || ''}
                   onChange={(e) => handleStageDataChange('closedWon', 'dateSigned', e.target.value)}

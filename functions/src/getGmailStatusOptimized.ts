@@ -1,7 +1,8 @@
 import { onCall } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { HttpsError } from 'firebase-functions/v2/https';
-import { logAIAction } from './utils/aiLogging';
+import { logger } from './utils/logger';
+import { getAiCacheDoc } from './utils/inMemoryCache';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -325,13 +326,13 @@ export const getGmailStatusOptimized = onCall({
     // Hard cap: reject repeated requests within 60 minutes unless force=true
     const now = Date.now();
     const dedupeKey = `gmail_status_dedupe_${userId}`;
-    const dedupeRef = db.collection('ai_cache').doc(dedupeKey);
+    const dedupeRef = getAiCacheDoc(dedupeKey);
     const dedupeSnap = await dedupeRef.get();
     if (!force && !testConnection && dedupeSnap.exists) {
       const dd = dedupeSnap.data() as any;
       const updatedAt = dd.updatedAt?.toMillis ? dd.updatedAt.toMillis() : (typeof dd.updatedAt === 'number' ? dd.updatedAt : 0);
       if (updatedAt && (now - updatedAt) < (60 * 60 * 1000) && dd.payload) { // 60-minute hard cap
-        try { if (Math.random() < 0.1) { await logAIAction({ eventType: 'gmail.status.deduped', targetType: 'user', targetId: userId, reason: 'deduped_90m', contextType: 'integrations', aiTags: ['gmail','status','dedupe'], urgencyScore: 2, tenantId: '', aiResponse: JSON.stringify(dd.payload) }); } } catch {}
+        try { if (Math.random() < 0.1) { await logger.aiEvent({ eventType: 'gmail.status.deduped', targetType: 'user', targetId: userId, reason: 'deduped_90m', contextType: 'integrations', aiTags: ['gmail','status','dedupe'], urgencyScore: 2, tenantId: '', aiResponse: JSON.stringify(dd.payload) }); } } catch {}
         return { ...dd.payload, success: true, cached: true, deduped: true, cacheAge: now - updatedAt };
       }
     }
@@ -438,7 +439,7 @@ export const getGmailStatusOptimized = onCall({
           });
           
           console.log('✅ Gmail status verified via API for user:', userId);
-          try { await dedupeRef.set({ payload: result, updatedAt: admin.firestore.FieldValue.serverTimestamp(), lastGmailApiCall: now, gmailApiCallCount: (cached?.gmailApiCallCount || 0) + 1 }, { merge: true }); } catch {}
+          try { await dedupeRef.set({ payload: result, lastGmailApiCall: now, gmailApiCallCount: (cached?.gmailApiCallCount || 0) + 1 }, { merge: true }); } catch {}
           return result;
           
         } else {
@@ -462,7 +463,7 @@ export const getGmailStatusOptimized = onCall({
             gmailApiCallCount: (cached?.gmailApiCallCount || 0) + 1
           });
           
-          try { await dedupeRef.set({ payload: result, updatedAt: admin.firestore.FieldValue.serverTimestamp(), lastGmailApiCall: now, gmailApiCallCount: (cached?.gmailApiCallCount || 0) + 1 }, { merge: true }); } catch {}
+          try { await dedupeRef.set({ payload: result, lastGmailApiCall: now, gmailApiCallCount: (cached?.gmailApiCallCount || 0) + 1 }, { merge: true }); } catch {}
           return result;
         }
       }
@@ -487,7 +488,7 @@ export const getGmailStatusOptimized = onCall({
         lastGmailApiCall: cached?.lastGmailApiCall || 0,
         gmailApiCallCount: cached?.gmailApiCallCount || 0
       });
-      try { await dedupeRef.set({ payload: result, updatedAt: admin.firestore.FieldValue.serverTimestamp(), lastGmailApiCall: cached?.lastGmailApiCall || 0, gmailApiCallCount: cached?.gmailApiCallCount || 0 }, { merge: true }); } catch {}
+      try { await dedupeRef.set({ payload: result, lastGmailApiCall: cached?.lastGmailApiCall || 0, gmailApiCallCount: cached?.gmailApiCallCount || 0 }, { merge: true }); } catch {}
       
       console.log('✅ Gmail status retrieved from user data for user:', userId);
       return result;

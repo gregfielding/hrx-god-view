@@ -1,0 +1,1727 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../components/common/UniversalBackButton';
+import {
+  Box,
+  Typography,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  Chip,
+  Divider,
+  CircularProgress,
+  Alert,
+  Stack,
+  Paper,
+  Grid,
+  Link,
+} from '@mui/material';
+import {
+  LocationOn as LocationIcon,
+  Work as WorkIcon,
+  AttachMoney as MoneyIcon,
+  Schedule as ScheduleIcon,
+  Business as BusinessIcon,
+  CheckCircle as CheckCircleIcon,
+  Cancel as CancelIcon,
+  Pending as PendingIcon,
+  Map as MapIcon,
+  OpenInNew as OpenInNewIcon,
+  Checkroom as CheckroomIcon,
+  Engineering as EngineeringIcon,
+  CalendarMonth as CalendarMonthIcon,
+} from '@mui/icons-material';
+import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../firebase';
+import { useAuth } from '../contexts/AuthContext';
+import type { ClaimsRole } from '../contexts/AuthContext';
+import { useWorkerPreferredLanguage } from '../hooks/useWorkerPreferredLanguage';
+import { useT } from '../i18n';
+import SmsWarningBanner from '../components/worker/SmsWarningBanner';
+import { getShiftDisplayText } from '../utils/shiftI18n';
+import { normalizeClockInUrl } from '../utils/urlUtils';
+import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
+import { parseCalendarDateLocal } from '../utils/dateUtils';
+import { getDateScheduleEntriesWithHours } from '../utils/dateSchedule';
+import { format } from 'date-fns';
+import { downloadAssignmentIcs } from '../utils/assignmentCalendarIcs';
+
+interface AssignmentDetails {
+  id: string;
+  tenantId: string;
+  jobOrderId?: string;
+  /** Company (e.g. CRM company) id for easy data access */
+  companyId?: string;
+  /** Worksite / company location id for easy data access */
+  worksiteId?: string;
+  /** Shift id for hours, days, and other shift details */
+  shiftId?: string;
+  jobTitle?: string;
+  companyName?: string;
+  location?: string;
+  worksiteName?: string;
+  worksiteAddress?: {
+    street?: string;
+    city?: string;
+    state?: string;
+    zipCode?: string;
+  };
+  payRate?: number;
+  startDate?: Date;
+  endDate?: Date;
+  /** HH:mm - from assignment or shift */
+  startTime?: string;
+  endTime?: string;
+  /** gig = fixed end date possible; career = often ongoing */
+  jobOrderType?: 'gig' | 'career';
+  status: string;
+  hoursWorked?: number;
+  totalEarnings?: number;
+  notes?: string;
+  createdAt?: Date;
+  updatedAt?: Date;
+  // Staff instructions from job order
+  staffInstructions?: {
+    uniform?: { text?: unknown; files?: any[] };
+    checkIn?: { text?: unknown; files?: any[] };
+    firstDay?: { text?: unknown; files?: any[] };
+    parking?: { text?: unknown; files?: any[] };
+    [key: string]: { text?: unknown; files?: any[] } | undefined;
+  };
+  /** Bilingual staff instruction text (worker-facing): section -> { en, es }. Fallback to staffInstructions.*.text */
+  staffInstructions_i18n?: Record<string, { en?: string; es?: string }>;
+  checkInInstructions?: string;
+  /** Job order "Uniform Requirements" (pack selection e.g. Business Casual); string or array joined for display */
+  uniformRequirements?: string;
+  /** Job order "Custom Uniform Requirements" (free text); used on Assignment Info card only */
+  customUniformRequirements?: string;
+  /** Required PPE (from job order); string or array joined */
+  ppeRequirements?: string;
+  /** Physical requirements (from job order); shown in Job preparation section */
+  physicalRequirements?: string;
+  /** Critical requirement flags for worker readiness on this assignment */
+  showBackgroundChecks?: boolean;
+  showDrugScreening?: boolean;
+  eVerifyRequired?: boolean;
+  /** Assignment-level rules-based prediction (`assignments.*.noShowRiskPredictionV1`). */
+  noShowRiskPredictionV1?: {
+    score?: number;
+    band?: string;
+    reasons?: string[];
+    recommendedAction?: string;
+  };
+}
+
+type StaffInstructionSection = { text?: unknown; files?: any[] };
+type StaffInstructionMap = Record<string, StaffInstructionSection | undefined>;
+type StaffInstructionI18nMap = Record<string, { en?: string; es?: string } | undefined>;
+
+const STAFF_SECTION_KEYS = ['firstDay', 'parking', 'checkIn', 'uniform', 'credentials', 'other', 'attachments'];
+
+const normalizeStaffInstructionMap = (input: unknown): StaffInstructionMap => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const map = input as Record<string, unknown>;
+  const out: StaffInstructionMap = {};
+  STAFF_SECTION_KEYS.forEach((key) => {
+    const value = map[key];
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    const section = value as Record<string, unknown>;
+    out[key] = {
+      text: section.text,
+      files: Array.isArray(section.files) ? section.files : [],
+    };
+  });
+  return out;
+};
+
+const normalizeStaffInstructionI18nMap = (input: unknown): StaffInstructionI18nMap => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const map = input as Record<string, unknown>;
+  const out: StaffInstructionI18nMap = {};
+  STAFF_SECTION_KEYS.forEach((key) => {
+    const value = map[key];
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    const section = value as Record<string, unknown>;
+    const en = typeof section.en === 'string' ? section.en : undefined;
+    const es = typeof section.es === 'string' ? section.es : undefined;
+    if (en || es) out[key] = { en, es };
+  });
+  return out;
+};
+
+const hasStaffTextValue = (value: unknown): boolean => {
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const obj = value as Record<string, unknown>;
+  const en = typeof obj.en === 'string' ? obj.en : '';
+  const es = typeof obj.es === 'string' ? obj.es : '';
+  return en.trim().length > 0 || es.trim().length > 0;
+};
+
+const toIsoDayLocal = (date: Date | undefined): string => {
+  if (!date || Number.isNaN(date.getTime())) return '';
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const STAFF_CLAIMS_ROLES: ClaimsRole[] = ['Admin', 'Manager', 'Recruiter'];
+
+function normalizeNoShowRiskPredictionV1(raw: unknown): AssignmentDetails['noShowRiskPredictionV1'] | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  return {
+    score: typeof o.score === 'number' ? o.score : undefined,
+    band: typeof o.band === 'string' ? o.band : undefined,
+    reasons: Array.isArray(o.reasons) ? (o.reasons as string[]) : undefined,
+    recommendedAction: typeof o.recommendedAction === 'string' ? o.recommendedAction : undefined,
+  };
+}
+
+function noShowRiskBandMuiColor(
+  band: string | undefined,
+): 'default' | 'primary' | 'secondary' | 'error' | 'info' | 'success' | 'warning' {
+  const b = String(band || '').toLowerCase();
+  if (b === 'critical') return 'error';
+  if (b === 'high') return 'warning';
+  if (b === 'moderate') return 'info';
+  if (b === 'low') return 'success';
+  return 'default';
+}
+
+/** Tenant staff (not the assigned worker) may open placements for candidates in their active / member tenant. */
+function canViewAssignmentAsTenantStaff(
+  assignmentTenantId: string | undefined,
+  opts: {
+    activeTenantId?: string;
+    tenantIds?: string[];
+    recruiterEnabled: boolean;
+    claimsRoles: Record<string, { role: ClaimsRole; securityLevel: string }>;
+  }
+): boolean {
+  if (!assignmentTenantId) return false;
+  const tid = assignmentTenantId.trim();
+  if (!tid) return false;
+  const inTenant = opts.activeTenantId === tid || Boolean(opts.tenantIds?.includes(tid));
+  if (!inTenant) return false;
+  if (opts.recruiterEnabled) return true;
+  const role = opts.claimsRoles[tid]?.role;
+  return Boolean(role && STAFF_CLAIMS_ROLES.includes(role));
+}
+
+const AssignmentDetails: React.FC = () => {
+  const { assignmentId } = useParams<{ assignmentId: string }>();
+  const navigate = useNavigate();
+  const { user, activeTenant, tenantIds, recruiterEnabled, claimsRoles } = useAuth();
+  const preferredLanguage = useWorkerPreferredLanguage();
+  const t = useT();
+  const [assignment, setAssignment] = useState<AssignmentDetails | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [recruiters, setRecruiters] = useState<Array<{ id: string; displayName: string; email?: string; phone?: string }>>([]);
+  const [scheduleShift, setScheduleShift] = useState<{
+    shiftMode?: 'single' | 'multi';
+    shiftDate?: string;
+    endDate?: string;
+    weeklySchedule?: Record<string, { enabled: boolean; startTime: string; endTime: string }>;
+    dateSchedule?: Record<string, { startTime: string; endTime: string }>;
+    defaultStartTime?: string;
+    defaultEndTime?: string;
+    shiftDescription?: string;
+    emailIntro?: string;
+    clockInUrl?: string;
+    shiftDescription_i18n?: { en?: string; es?: string };
+    emailIntro_i18n?: { en?: string; es?: string };
+    staffInstructions?: StaffInstructionMap;
+    staffInstructions_i18n?: StaffInstructionI18nMap;
+    checkInInstructions?: string;
+    uniformRequirements?: string;
+    customUniformRequirements?: string;
+    ppeRequirements?: string;
+    physicalRequirements?: string;
+  } | null>(null);
+
+  /** Looked-up company name, worksite name, and worksite address when assignment has IDs */
+  const [resolvedCompanyName, setResolvedCompanyName] = useState<string | null>(null);
+  const [resolvedWorksiteName, setResolvedWorksiteName] = useState<string | null>(null);
+  const [resolvedWorksiteAddress, setResolvedWorksiteAddress] = useState<string | null>(null);
+
+  /** Full worksite address string for display and map (resolved or from assignment) */
+  const worksiteAddressStr = useMemo(() => {
+    const wa = assignment?.worksiteAddress as { street?: string; address?: string; city?: string; state?: string; zipCode?: string } | undefined;
+    const fromAssignment = wa ? [(wa.street || wa.address), wa.city, wa.state, wa.zipCode].filter(Boolean).join(', ') : '';
+    return resolvedWorksiteAddress || fromAssignment || '';
+  }, [assignment?.worksiteAddress, resolvedWorksiteAddress]);
+
+  useEffect(() => {
+    console.debug('[AssignmentDetails] init', {
+      route: '/c1/workers/assignments/:assignmentId',
+      params: { assignmentId: assignmentId ?? null },
+      uid: user?.uid ?? null,
+    });
+    if (!assignmentId) {
+      setLoading(false);
+      setError('Missing assignmentId route parameter');
+      return;
+    }
+    if (!user?.uid) {
+      setLoading(false);
+      setError('You must be signed in to view assignment details');
+      return;
+    }
+    loadAssignment();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when assignment or user changes; staff gates read live values inside loadAssignment
+  }, [assignmentId, user?.uid]);
+
+  useEffect(() => {
+    if (!assignment?.tenantId || !assignment?.jobOrderId || !assignment?.shiftId) {
+      setScheduleShift(null);
+      return;
+    }
+    let cancelled = false;
+    const loadShift = async () => {
+      try {
+        const shiftRef = doc(db, 'tenants', assignment.tenantId, 'job_orders', assignment.jobOrderId, 'shifts', assignment.shiftId);
+        const shiftSnap = await getDoc(shiftRef);
+        if (cancelled) return;
+        if (shiftSnap.exists()) {
+          const d = shiftSnap.data() as Record<string, unknown>;
+          setScheduleShift({
+            shiftMode: d.shiftMode as 'single' | 'multi' | undefined,
+            shiftDate: typeof d.shiftDate === 'string' ? d.shiftDate : undefined,
+            endDate: typeof d.endDate === 'string' ? d.endDate : undefined,
+            weeklySchedule: d.weeklySchedule as Record<string, { enabled: boolean; startTime: string; endTime: string }> | undefined,
+            dateSchedule: d.dateSchedule as Record<string, { startTime: string; endTime: string }> | undefined,
+            defaultStartTime: typeof d.defaultStartTime === 'string' ? d.defaultStartTime : undefined,
+            defaultEndTime: typeof d.defaultEndTime === 'string' ? d.defaultEndTime : undefined,
+            shiftDescription: typeof d.shiftDescription === 'string' ? d.shiftDescription : undefined,
+            emailIntro: typeof d.emailIntro === 'string' ? d.emailIntro : undefined,
+            clockInUrl: typeof d.clockInUrl === 'string' ? d.clockInUrl : undefined,
+            shiftDescription_i18n: d.shiftDescription_i18n as { en?: string; es?: string } | undefined,
+            emailIntro_i18n: d.emailIntro_i18n as { en?: string; es?: string } | undefined,
+            staffInstructions: normalizeStaffInstructionMap(d.staffInstructions),
+            staffInstructions_i18n: normalizeStaffInstructionI18nMap(d.staffInstructions_i18n),
+            checkInInstructions: typeof d.checkInInstructions === 'string' ? d.checkInInstructions : undefined,
+            uniformRequirements: typeof d.uniformRequirements === 'string'
+              ? d.uniformRequirements
+              : Array.isArray(d.uniformRequirements)
+                ? d.uniformRequirements.filter(Boolean).join(', ')
+                : undefined,
+            customUniformRequirements: typeof d.customUniformRequirements === 'string' ? d.customUniformRequirements : undefined,
+            ppeRequirements: typeof d.ppeRequirements === 'string'
+              ? d.ppeRequirements
+              : Array.isArray(d.ppeRequirements)
+                ? d.ppeRequirements.filter(Boolean).join(', ')
+                : undefined,
+            physicalRequirements: typeof d.physicalRequirements === 'string'
+              ? d.physicalRequirements
+              : Array.isArray(d.physicalRequirements)
+                ? d.physicalRequirements.filter(Boolean).join(', ')
+                : undefined,
+          });
+        } else {
+          setScheduleShift(null);
+        }
+      } catch (_) {
+        if (!cancelled) setScheduleShift(null);
+      }
+    };
+    loadShift();
+    return () => { cancelled = true; };
+  }, [assignment?.tenantId, assignment?.jobOrderId, assignment?.shiftId]);
+
+  useEffect(() => {
+    if (!assignment?.tenantId || !assignment?.jobOrderId) {
+      setRecruiters([]);
+      return;
+    }
+    let cancelled = false;
+    const loadRecruiters = async () => {
+      try {
+        const jobOrderRef = doc(db, 'tenants', assignment.tenantId, 'job_orders', assignment.jobOrderId);
+        const jobOrderSnap = await getDoc(jobOrderRef);
+        if (cancelled) return;
+        const ids: string[] = [];
+        if (jobOrderSnap.exists()) {
+          const data = jobOrderSnap.data() as Record<string, unknown>;
+          const assigned = data.assignedRecruiters as string[] | undefined;
+          const legacyId = data.recruiterId as string | undefined;
+          if (Array.isArray(assigned) && assigned.length > 0) {
+            ids.push(...assigned);
+          } else if (legacyId) {
+            ids.push(legacyId);
+          }
+        }
+        const uniq = Array.from(new Set(ids));
+        const list: Array<{ id: string; displayName: string; email?: string; phone?: string }> = [];
+        for (const uid of uniq) {
+          try {
+            const userSnap = await getDoc(doc(db, 'users', uid));
+            if (cancelled) return;
+            if (userSnap.exists()) {
+              const d = userSnap.data() as Record<string, unknown>;
+              const firstName = (d.firstName as string) || '';
+              const lastName = (d.lastName as string) || '';
+              const displayName = `${firstName} ${lastName}`.trim() || (d.displayName as string) || (d.email as string) || 'Recruiter';
+              const phone = (d.phone as string) || (d.phoneNumber as string) || (d.phoneE164 as string) || undefined;
+              list.push({
+                id: uid,
+                displayName,
+                email: d.email as string | undefined,
+                phone: phone && String(phone).trim() ? String(phone).trim() : undefined,
+              });
+            } else {
+              list.push({ id: uid, displayName: 'Recruiter' });
+            }
+          } catch (_) {
+            list.push({ id: uid, displayName: 'Your recruiter' });
+          }
+        }
+        if (list.length === 0) {
+          const fallbackName = String(
+            (assignment as any)?.recruiterName ||
+            (assignment as any)?.assignedRecruiterName ||
+            ''
+          ).trim();
+          const fallbackEmail = String(
+            (assignment as any)?.recruiterEmail ||
+            (assignment as any)?.assignedRecruiterEmail ||
+            ''
+          ).trim();
+          const fallbackPhone = String(
+            (assignment as any)?.recruiterPhone ||
+            (assignment as any)?.assignedRecruiterPhone ||
+            ''
+          ).trim();
+          if (fallbackName || fallbackEmail || fallbackPhone) {
+            list.push({
+              id: 'assignment_fallback',
+              displayName: fallbackName || 'Recruiter',
+              email: fallbackEmail || undefined,
+              phone: fallbackPhone || undefined,
+            });
+          }
+        }
+        if (!cancelled) setRecruiters(list);
+      } catch (_) {
+        if (!cancelled) setRecruiters([]);
+      }
+    };
+    loadRecruiters();
+    return () => { cancelled = true; };
+  }, [assignment?.tenantId, assignment?.jobOrderId, assignment]);
+
+  useEffect(() => {
+    if (!assignment?.tenantId) {
+      setResolvedCompanyName(null);
+      setResolvedWorksiteName(null);
+      setResolvedWorksiteAddress(null);
+      return;
+    }
+    let cancelled = false;
+    const tid = assignment.tenantId;
+    const companyId = assignment.companyId;
+    const worksiteId = assignment.worksiteId;
+
+    const looksLikeDocId = (s: unknown): boolean => {
+      if (typeof s !== 'string' || !s) return false;
+      const t = s.trim();
+      return t.length >= 15 && t.length <= 30 && /^[a-zA-Z0-9_-]+$/.test(t);
+    };
+
+    const load = async () => {
+      try {
+        if (!companyId) setResolvedCompanyName(null);
+        if (!worksiteId) {
+          setResolvedWorksiteName(null);
+          setResolvedWorksiteAddress(null);
+        }
+        if (companyId && (!assignment.companyName || looksLikeDocId(assignment.companyName))) {
+          const companyRef = doc(db, 'tenants', tid, 'crm_companies', companyId);
+          const companySnap = await getDoc(companyRef);
+          if (cancelled) return;
+          if (companySnap.exists()) {
+            const d = companySnap.data() as Record<string, unknown>;
+            const name = (d.name || d.companyName) as string | undefined;
+            if (name && !looksLikeDocId(name)) setResolvedCompanyName(name);
+          }
+        } else {
+          setResolvedCompanyName(null);
+        }
+
+        if (worksiteId) {
+          const needLookup = !assignment.worksiteName && !assignment.location ||
+            looksLikeDocId(assignment.worksiteName) || looksLikeDocId(assignment.location);
+          const needAddress = !assignment.worksiteAddress || (
+            !assignment.worksiteAddress.street && !assignment.worksiteAddress.city &&
+            !assignment.worksiteAddress.state && !assignment.worksiteAddress.zipCode
+          );
+          if (needLookup || needAddress) {
+            let locSnap = null;
+            if (companyId) {
+              locSnap = await getDoc(doc(db, 'tenants', tid, 'crm_companies', companyId, 'locations', worksiteId));
+            }
+            if (!locSnap?.exists()) {
+              locSnap = await getDoc(doc(db, 'tenants', tid, 'locations', worksiteId));
+            }
+            if (cancelled) return;
+            if (locSnap?.exists()) {
+              const loc = locSnap.data() as Record<string, unknown>;
+              if (needLookup) {
+                const name = (loc.nickname || loc.title || loc.name || loc.locationName) as string | undefined;
+                if (name && !looksLikeDocId(name)) setResolvedWorksiteName(name);
+              }
+              if (needAddress) {
+                const street = (loc.address || loc.street) as string | undefined;
+                const zip = (loc.zipCode ?? loc.zipcode) as string | undefined;
+                const parts = [street, loc.city, loc.state, zip].filter(Boolean) as string[];
+                if (parts.length) setResolvedWorksiteAddress(parts.join(', '));
+              }
+            } else {
+              if (needLookup) setResolvedWorksiteName(null);
+              if (needAddress) setResolvedWorksiteAddress(null);
+            }
+          } else {
+            setResolvedWorksiteName(null);
+            setResolvedWorksiteAddress(null);
+          }
+        } else {
+          setResolvedWorksiteName(null);
+          setResolvedWorksiteAddress(null);
+        }
+      } catch (_) {
+        if (!cancelled) {
+          setResolvedCompanyName(null);
+          setResolvedWorksiteName(null);
+          setResolvedWorksiteAddress(null);
+        }
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [assignment?.tenantId, assignment?.companyId, assignment?.worksiteId, assignment?.companyName, assignment?.worksiteName, assignment?.location, assignment?.worksiteAddress]);
+
+  useEffect(() => {
+    if (assignment && typeof console !== 'undefined' && console.log) {
+      console.log('[Assignment Details] assignment (resolved for UI)', assignment);
+    }
+  }, [assignment]);
+
+  const loadAssignment = async () => {
+    if (!assignmentId || !user?.uid) return;
+
+    try {
+      setLoading(true);
+      setError('');
+      console.debug('[AssignmentDetails] fetch start', {
+        assignmentId,
+        uid: user.uid,
+      });
+
+      // Check if this is a confirmed application (prefixed with "app_")
+      if (assignmentId.startsWith('app_')) {
+        // Load from confirmed application
+        const applicationId = assignmentId.replace('app_', '');
+        
+        // Get tenant IDs from user
+        const userRef = doc(db, 'users', user.uid);
+        const userSnap = await getDoc(userRef);
+        const tenantIds: string[] = [];
+        
+        if (userSnap.exists()) {
+          const userData = userSnap.data();
+          if (userData.tenantIds && typeof userData.tenantIds === 'object') {
+            tenantIds.push(...Object.keys(userData.tenantIds));
+          }
+          if (!tenantIds.includes('c1')) {
+            tenantIds.push('c1');
+          }
+        }
+        
+        // Find the application across tenants
+        let applicationData: any = null;
+        let foundTenantId = '';
+        
+        for (const tenantId of tenantIds) {
+          try {
+            const applicationRef = doc(db, 'tenants', tenantId, 'applications', applicationId);
+            const applicationSnap = await getDoc(applicationRef);
+            
+            if (applicationSnap.exists() && applicationSnap.data().userId === user.uid) {
+              applicationData = applicationSnap.data();
+              foundTenantId = tenantId;
+              break;
+            }
+          } catch (err) {
+            // Continue to next tenant
+          }
+        }
+        
+        if (!applicationData || !applicationData.jobOrderId) {
+          setError('Assignment not found');
+          setLoading(false);
+          return;
+        }
+        
+        // Load job order details
+        await loadFromJobOrder(foundTenantId, applicationData.jobOrderId, applicationData);
+        return;
+      }
+
+      const C1_TENANT_ID = 'BCiP2bQ9CgVOCTfV6MhD';
+
+      const staffAuth = {
+        activeTenantId: activeTenant?.id as string | undefined,
+        tenantIds,
+        recruiterEnabled: Boolean(recruiterEnabled),
+        claimsRoles: claimsRoles || {},
+      };
+
+      // Try legacy structure first (root assignments collection)
+      const assignmentRef = doc(db, 'assignments', assignmentId);
+      let assignmentSnap = await getDoc(assignmentRef);
+
+      // If not in legacy collection, try tenant-scoped. Prefer active tenant for recruiters, then C1, then other memberships.
+      if (!assignmentSnap.exists()) {
+        const tenantIdsToTry: string[] = [];
+        const pushTid = (tid: string | undefined) => {
+          if (tid && !tenantIdsToTry.includes(tid)) tenantIdsToTry.push(tid);
+        };
+        pushTid(activeTenant?.id);
+        pushTid(C1_TENANT_ID);
+        try {
+          const userRef = doc(db, 'users', user.uid);
+          const userSnap = await getDoc(userRef);
+          if (userSnap.exists()) {
+            const userData = userSnap.data();
+            if (userData?.tenantIds && typeof userData.tenantIds === 'object') {
+              const keys = Object.keys(userData.tenantIds);
+              keys.forEach((k) => pushTid(k));
+            }
+          }
+        } catch (_) {
+          // Proceed with whatever tenant ids we have
+        }
+        for (const tid of tenantIdsToTry) {
+          const tenantAssignmentRef = doc(db, 'tenants', tid, 'assignments', assignmentId);
+          const snap = await getDoc(tenantAssignmentRef);
+          if (snap.exists()) {
+            const d = snap.data();
+            const candidateId = d?.userId || d?.candidateId;
+            const isOwner = candidateId === user.uid;
+            const isStaff = canViewAssignmentAsTenantStaff(tid, staffAuth);
+            if (isOwner || isStaff) {
+              assignmentSnap = snap;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!assignmentSnap.exists()) {
+        console.warn('[AssignmentDetails] fetch missing', { assignmentId });
+        setError('Assignment not found');
+        setLoading(false);
+        return;
+      }
+
+      const data = assignmentSnap.data();
+      const resolvedTenantId = data.tenantId || (assignmentSnap.ref.parent?.parent?.id);
+
+      if (typeof console !== 'undefined' && console.log) {
+        console.log('[Assignment Details] assignment by id (raw doc)', {
+          assignmentId: assignmentSnap.id,
+          tenantId: resolvedTenantId,
+          ...data,
+        });
+      }
+
+      const candidateUserId = data.userId || data.candidateId;
+      const isOwner = candidateUserId === user.uid;
+      const tenantForAccess =
+        typeof resolvedTenantId === 'string' && resolvedTenantId.trim()
+          ? resolvedTenantId.trim()
+          : (assignmentSnap.ref.parent?.parent?.id as string | undefined);
+      const isStaffViewer = canViewAssignmentAsTenantStaff(tenantForAccess, staffAuth);
+
+      if (!isOwner && !isStaffViewer) {
+        console.warn('[AssignmentDetails] fetch forbidden', {
+          assignmentId: assignmentSnap.id,
+          assignmentUserId: candidateUserId || null,
+          uid: user.uid,
+        });
+        setError('You do not have permission to view this assignment');
+        setLoading(false);
+        return;
+      }
+
+      // Parse dates (support both Firestore Timestamp and string, and startTime/endTime)
+      let startDate: Date | undefined;
+      let endDate: Date | undefined;
+      let createdAt: Date | undefined;
+      let updatedAt: Date | undefined;
+
+      if (data.startDate) {
+        startDate = parseCalendarDateLocal(data.startDate);
+      }
+      if (data.endDate) {
+        endDate = parseCalendarDateLocal(data.endDate);
+      } else if (data.startDate && (data.startTime || data.endTime)) {
+        const dayStr = typeof data.startDate === 'string' ? data.startDate.split('T')[0] : data.startDate?.toDate?.()?.toISOString?.()?.slice(0, 10);
+        if (dayStr && data.endTime) {
+          const [y, m, d] = dayStr.split('-').map(Number);
+          const [hh, mm] = String(data.endTime).slice(0, 5).split(':').map(Number);
+          endDate = new Date(y, m - 1, d, hh || 0, mm || 0);
+        }
+      }
+      if (data.createdAt) {
+        createdAt = data.createdAt.toDate ? data.createdAt.toDate() : new Date(data.createdAt);
+      }
+      if (data.updatedAt) {
+        updatedAt = data.updatedAt.toDate ? data.updatedAt.toDate() : new Date(data.updatedAt);
+      }
+
+      const jobTitle = data.jobTitle || '';
+      const companyName = data.companyName || '';
+      const location = data.location || data.worksiteName || data.locationNickname || '';
+      const worksiteName = data.worksiteName || data.locationNickname || '';
+      const worksiteAddress = data.worksiteAddress || data.address;
+
+      // Load job order details if available
+      if (data.jobOrderId && resolvedTenantId) {
+        await loadFromJobOrder(resolvedTenantId, data.jobOrderId, data, assignmentSnap.id);
+        return;
+      }
+
+      // If no job order, set assignment with basic data
+      setAssignment({
+        id: assignmentSnap.id,
+        tenantId: resolvedTenantId || '',
+        jobOrderId: data.jobOrderId,
+        companyId: data.companyId,
+        worksiteId: data.worksiteId || data.locationId,
+        shiftId: data.shiftId,
+        jobTitle,
+        companyName,
+        location,
+        worksiteName,
+        worksiteAddress,
+        payRate: data.payRate,
+        startDate,
+        endDate,
+        startTime: data.startTime,
+        endTime: data.endTime,
+        jobOrderType: data.jobOrderType === 'career' || data.jobOrderType === 'gig' ? data.jobOrderType : undefined,
+        status: (data.status || 'pending').toLowerCase(),
+        hoursWorked: data.hoursWorked,
+        totalEarnings: data.totalEarnings,
+        notes: data.notes,
+        createdAt,
+        updatedAt,
+        staffInstructions: data.staffInstructions,
+        uniformRequirements: typeof data.uniformRequirements === 'string' ? data.uniformRequirements : (Array.isArray(data.uniformRequirements) ? data.uniformRequirements.filter(Boolean).join(', ') : undefined),
+        customUniformRequirements: data.customUniformRequirements,
+        ppeRequirements: Array.isArray(data.ppeRequirements)
+          ? data.ppeRequirements.filter(Boolean).join(', ')
+          : typeof data.ppeRequirements === 'string'
+            ? data.ppeRequirements
+            : undefined,
+        physicalRequirements: Array.isArray(data.physicalRequirements)
+          ? data.physicalRequirements.filter(Boolean).join(', ')
+          : typeof data.physicalRequirements === 'string'
+            ? data.physicalRequirements
+            : undefined,
+        showBackgroundChecks: Boolean(data.showBackgroundChecks ?? data.backgroundCheckRequired),
+        showDrugScreening: Boolean(data.showDrugScreening ?? data.drugScreenRequired),
+        eVerifyRequired: Boolean(data.eVerifyRequired),
+        noShowRiskPredictionV1: normalizeNoShowRiskPredictionV1(data.noShowRiskPredictionV1),
+      });
+      console.debug('[AssignmentDetails] fetch success', {
+        assignmentId: assignmentSnap.id,
+        tenantId: resolvedTenantId || null,
+        hasJobOrderId: Boolean(data.jobOrderId),
+      });
+    } catch (err: any) {
+      console.error('Error loading assignment:', err);
+      console.error('[AssignmentDetails] fetch failure', {
+        assignmentId,
+        code: err?.code,
+        message: err?.message,
+      });
+      setError(err.message || 'Failed to load assignment');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadFromJobOrder = async (
+    tenantId: string,
+    jobOrderId: string,
+    sourceData: any,
+    assignmentId?: string
+  ) => {
+    try {
+      const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
+      const jobOrderSnap = await getDoc(jobOrderRef);
+
+      if (!jobOrderSnap.exists()) {
+        setError('Job order not found');
+        setLoading(false);
+        return;
+      }
+
+      const jobOrderData = jobOrderSnap.data();
+
+      // Resolve downhill staff instructions with explicit precedence:
+      // parent account defaults < account defaults < location defaults < job order < shift < assignment.
+      const accountId = sourceData.accountId || sourceData.companyId || jobOrderData.accountId || jobOrderData.companyId;
+      const parentAccountId = sourceData.parentAccountId || jobOrderData.parentAccountId;
+      const locationId = sourceData.locationId || sourceData.worksiteId || jobOrderData.locationId || jobOrderData.worksiteId;
+      const locationKeyCandidates = [
+        typeof jobOrderData.locationKey === 'string' ? jobOrderData.locationKey : '',
+        accountId && locationId ? `${accountId}_${locationId}` : '',
+        jobOrderData.companyId && locationId ? `${jobOrderData.companyId}_${locationId}` : '',
+      ].filter(Boolean);
+
+      let parentAccountStaff: StaffInstructionMap = {};
+      let accountStaff: StaffInstructionMap = {};
+      let locationStaff: StaffInstructionMap = {};
+      let shiftStaff: StaffInstructionMap = {};
+      const assignmentStaff: StaffInstructionMap = normalizeStaffInstructionMap(sourceData.staffInstructions);
+      let parentAccountStaffI18n: StaffInstructionI18nMap = {};
+      let accountStaffI18n: StaffInstructionI18nMap = {};
+      let locationStaffI18n: StaffInstructionI18nMap = {};
+      let shiftStaffI18n: StaffInstructionI18nMap = {};
+      const assignmentStaffI18n: StaffInstructionI18nMap = normalizeStaffInstructionI18nMap(sourceData.staffInstructions_i18n);
+      let shiftCheckInInstructions = '';
+      let shiftUniformRequirements = '';
+      let shiftCustomUniformRequirements = '';
+      let shiftPpeRequirements = '';
+      let shiftPhysicalRequirements = '';
+
+      try {
+        if (parentAccountId) {
+          const parentSnap = await getDoc(doc(db, 'tenants', tenantId, 'accounts', parentAccountId));
+          if (parentSnap.exists()) {
+            const parentData = parentSnap.data() as Record<string, unknown>;
+            parentAccountStaff = normalizeStaffInstructionMap((parentData.orderDefaults as any)?.staffInstructions);
+            parentAccountStaffI18n = normalizeStaffInstructionI18nMap((parentData.orderDefaults as any)?.staffInstructions_i18n);
+          }
+        }
+      } catch (_) {
+        // Keep best effort; worker page must not fail when account defaults are inaccessible.
+      }
+
+      try {
+        if (accountId) {
+          const accountSnap = await getDoc(doc(db, 'tenants', tenantId, 'accounts', accountId));
+          if (accountSnap.exists()) {
+            const accountData = accountSnap.data() as Record<string, unknown>;
+            accountStaff = normalizeStaffInstructionMap((accountData.orderDefaults as any)?.staffInstructions);
+            accountStaffI18n = normalizeStaffInstructionI18nMap((accountData.orderDefaults as any)?.staffInstructions_i18n);
+          }
+        }
+      } catch (_) {}
+
+      try {
+        if (accountId && locationKeyCandidates.length > 0) {
+          for (const key of locationKeyCandidates) {
+            const locationDefaultsSnap = await getDoc(
+              doc(db, 'tenants', tenantId, 'accounts', accountId, 'location_defaults', key)
+            );
+            if (!locationDefaultsSnap.exists()) continue;
+            const locationDefaultsData = locationDefaultsSnap.data() as Record<string, unknown>;
+            locationStaff = normalizeStaffInstructionMap((locationDefaultsData.orderDefaults as any)?.staffInstructions);
+            locationStaffI18n = normalizeStaffInstructionI18nMap((locationDefaultsData.orderDefaults as any)?.staffInstructions_i18n);
+            break;
+          }
+        }
+      } catch (_) {}
+
+      try {
+        if (sourceData.shiftId) {
+          const shiftSnap = await getDoc(
+            doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts', String(sourceData.shiftId))
+          );
+          if (shiftSnap.exists()) {
+            const shiftData = shiftSnap.data() as Record<string, unknown>;
+            shiftStaff = normalizeStaffInstructionMap(shiftData.staffInstructions);
+            shiftStaffI18n = normalizeStaffInstructionI18nMap(shiftData.staffInstructions_i18n);
+            shiftCheckInInstructions = typeof shiftData.checkInInstructions === 'string' ? shiftData.checkInInstructions : '';
+            shiftUniformRequirements = typeof shiftData.uniformRequirements === 'string'
+              ? shiftData.uniformRequirements
+              : Array.isArray(shiftData.uniformRequirements)
+                ? (shiftData.uniformRequirements as unknown[]).map((v) => String(v || '').trim()).filter(Boolean).join(', ')
+                : '';
+            shiftCustomUniformRequirements = typeof shiftData.customUniformRequirements === 'string' ? shiftData.customUniformRequirements : '';
+            shiftPpeRequirements = typeof shiftData.ppeRequirements === 'string'
+              ? shiftData.ppeRequirements
+              : Array.isArray(shiftData.ppeRequirements)
+                ? (shiftData.ppeRequirements as unknown[]).map((v) => String(v || '').trim()).filter(Boolean).join(', ')
+                : '';
+            shiftPhysicalRequirements = typeof shiftData.physicalRequirements === 'string'
+              ? shiftData.physicalRequirements
+              : Array.isArray(shiftData.physicalRequirements)
+                ? (shiftData.physicalRequirements as unknown[]).map((v) => String(v || '').trim()).filter(Boolean).join(', ')
+                : '';
+          }
+        }
+      } catch (_) {}
+
+      const jobOrderStaff = normalizeStaffInstructionMap(jobOrderData.staffInstructions);
+      const jobOrderStaffI18n = normalizeStaffInstructionI18nMap(jobOrderData.staffInstructions_i18n);
+
+      const staffSources: StaffInstructionMap[] = [
+        parentAccountStaff,
+        accountStaff,
+        locationStaff,
+        jobOrderStaff,
+        shiftStaff,
+        assignmentStaff,
+      ];
+      const staffI18nSources: StaffInstructionI18nMap[] = [
+        parentAccountStaffI18n,
+        accountStaffI18n,
+        locationStaffI18n,
+        jobOrderStaffI18n,
+        shiftStaffI18n,
+        assignmentStaffI18n,
+      ];
+
+      const resolvedStaff: StaffInstructionMap = {};
+      const resolvedStaffI18n: StaffInstructionI18nMap = {};
+      STAFF_SECTION_KEYS.forEach((sectionKey) => {
+        let pickedText: unknown = undefined;
+        let pickedFiles: any[] | undefined = undefined;
+        let pickedI18n: { en?: string; es?: string } | undefined = undefined;
+
+        for (let i = staffSources.length - 1; i >= 0; i -= 1) {
+          const candidate = staffSources[i]?.[sectionKey];
+          if (!candidate) continue;
+          if (pickedText === undefined && hasStaffTextValue(candidate.text)) {
+            pickedText = candidate.text;
+          }
+          if (pickedFiles === undefined && Array.isArray(candidate.files) && candidate.files.length > 0) {
+            pickedFiles = candidate.files;
+          }
+        }
+        for (let i = staffI18nSources.length - 1; i >= 0; i -= 1) {
+          const candidate = staffI18nSources[i]?.[sectionKey];
+          if (!candidate) continue;
+          if (!pickedI18n && ((candidate.en && candidate.en.trim()) || (candidate.es && candidate.es.trim()))) {
+            pickedI18n = candidate;
+          }
+        }
+        if (pickedText !== undefined || (pickedFiles && pickedFiles.length > 0)) {
+          resolvedStaff[sectionKey] = { text: pickedText, files: pickedFiles || [] };
+        }
+        if (pickedI18n) {
+          resolvedStaffI18n[sectionKey] = pickedI18n;
+        }
+      });
+
+      const resolvedCheckInInstructions = String(
+        sourceData.checkInInstructions ||
+        shiftCheckInInstructions ||
+        jobOrderData.checkInInstructions ||
+        ''
+      ).trim();
+      
+      // Parse dates: prefer assignment (shift) start/end when present
+      let startDate: Date | undefined;
+      let endDate: Date | undefined;
+      let createdAt: Date | undefined;
+      let updatedAt: Date | undefined;
+
+      if (sourceData.startDate) {
+        startDate = parseCalendarDateLocal(sourceData.startDate);
+      }
+      if (!startDate && jobOrderData.startDate) {
+        startDate = parseCalendarDateLocal(jobOrderData.startDate);
+      }
+      if (sourceData.endDate) {
+        endDate = parseCalendarDateLocal(sourceData.endDate);
+      }
+      if (!endDate && jobOrderData.endDate) {
+        endDate = parseCalendarDateLocal(jobOrderData.endDate);
+      }
+      if (sourceData.createdAt) {
+        createdAt = sourceData.createdAt.toDate ? sourceData.createdAt.toDate() : new Date(sourceData.createdAt);
+      }
+      if (sourceData.updatedAt) {
+        updatedAt = sourceData.updatedAt.toDate ? sourceData.updatedAt.toDate() : new Date(sourceData.updatedAt);
+      }
+
+      // Get location from worksite: prefer assignment denormalized, else job order
+      const worksiteAddress = sourceData.worksiteAddress || sourceData.address || jobOrderData.worksiteAddress;
+      let location = sourceData.location || sourceData.worksiteName || sourceData.locationNickname || '';
+      let worksiteName = sourceData.worksiteName || sourceData.locationNickname || '';
+      if (!worksiteName && jobOrderData.worksiteName) {
+        worksiteName = jobOrderData.worksiteName;
+        if (!location) location = jobOrderData.worksiteName;
+      }
+      if (!location && jobOrderData.worksiteAddress) {
+        const addr = jobOrderData.worksiteAddress;
+        if (addr.city && addr.state) location = `${addr.city}, ${addr.state}`;
+      }
+
+      setAssignment({
+        id: assignmentId || `jobOrder_${jobOrderId}`,
+        tenantId: tenantId,
+        jobOrderId: jobOrderId,
+        companyId: sourceData.companyId ?? jobOrderData.companyId,
+        worksiteId: sourceData.locationId ?? jobOrderData.worksiteId ?? jobOrderData.locationId,
+        shiftId: sourceData.shiftId,
+        jobTitle: sourceData.jobTitle || jobOrderData.jobOrderName || jobOrderData.jobTitle || '',
+        companyName: sourceData.companyName || jobOrderData.companyName || '',
+        location,
+        worksiteName,
+        worksiteAddress,
+        payRate: sourceData.payRate ?? jobOrderData.payRate,
+        startDate,
+        endDate,
+        startTime: sourceData.startTime,
+        endTime: sourceData.endTime,
+        jobOrderType: sourceData.jobOrderType === 'career' || sourceData.jobOrderType === 'gig' ? sourceData.jobOrderType : (jobOrderData.jobType === 'career' || jobOrderData.jobType === 'gig' ? jobOrderData.jobType : undefined),
+        status: sourceData.status || 'confirmed',
+        hoursWorked: sourceData.hoursWorked,
+        totalEarnings: sourceData.totalEarnings,
+        notes: sourceData.notes || jobOrderData.jobOrderDescription,
+        createdAt,
+        updatedAt,
+        staffInstructions: resolvedStaff,
+        staffInstructions_i18n: resolvedStaffI18n,
+        checkInInstructions: resolvedCheckInInstructions,
+        uniformRequirements: sourceData.uniformRequirements ||
+          shiftUniformRequirements ||
+          (Array.isArray(jobOrderData.uniformRequirements) ? jobOrderData.uniformRequirements.filter(Boolean).join(', ') : (typeof jobOrderData.uniformRequirements === 'string' ? jobOrderData.uniformRequirements : undefined)),
+        customUniformRequirements: sourceData.customUniformRequirements ||
+          shiftCustomUniformRequirements ||
+          (typeof jobOrderData.customUniformRequirements === 'string' ? jobOrderData.customUniformRequirements : undefined),
+        ppeRequirements: sourceData.ppeRequirements ||
+          shiftPpeRequirements ||
+          (Array.isArray(jobOrderData.ppeRequirements)
+          ? jobOrderData.ppeRequirements.filter(Boolean).join(', ')
+          : typeof jobOrderData.ppeRequirements === 'string'
+            ? jobOrderData.ppeRequirements
+            : undefined),
+        physicalRequirements: sourceData.physicalRequirements ||
+          shiftPhysicalRequirements ||
+          (Array.isArray(jobOrderData.physicalRequirements)
+          ? jobOrderData.physicalRequirements.filter(Boolean).join(', ')
+          : typeof jobOrderData.physicalRequirements === 'string'
+            ? jobOrderData.physicalRequirements
+            : undefined),
+        showBackgroundChecks: Boolean(sourceData.showBackgroundChecks ?? jobOrderData.showBackgroundChecks ?? jobOrderData.backgroundCheckRequired),
+        showDrugScreening: Boolean(sourceData.showDrugScreening ?? jobOrderData.showDrugScreening ?? jobOrderData.drugScreenRequired),
+        eVerifyRequired: Boolean(sourceData.eVerifyRequired ?? jobOrderData.eVerifyRequired),
+        noShowRiskPredictionV1: normalizeNoShowRiskPredictionV1(sourceData.noShowRiskPredictionV1),
+      });
+    } catch (err: any) {
+      console.error('Error loading job order:', err);
+      setError(err.message || 'Failed to load job order details');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getStatusColor = (status: string): 'default' | 'primary' | 'success' | 'error' | 'warning' => {
+    switch (status.toLowerCase()) {
+      case 'active':
+        return 'success';
+      case 'completed':
+        return 'default';
+      case 'pending':
+      case 'proposed':
+      case 'confirmed':
+        return 'warning';
+      case 'cancelled':
+      case 'terminated':
+        return 'error';
+      default:
+        return 'default';
+    }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status.toLowerCase()) {
+      case 'active':
+        return <CheckCircleIcon />;
+      case 'completed':
+        return <CheckCircleIcon />;
+      case 'cancelled':
+      case 'terminated':
+        return <CancelIcon />;
+      default:
+        return <PendingIcon />;
+    }
+  };
+
+  const formatDate = (date: Date): string => {
+    return format(date, 'MMMM dd, yyyy');
+  };
+
+  const formatDateTime = (date: Date): string => {
+    return format(date, 'MMMM dd, yyyy, h:mm a');
+  };
+
+  /** Format HH:mm to "9:00 AM" */
+  const formatTime = (t: string | undefined): string => {
+    if (!t || typeof t !== 'string') return '';
+    const [h, m] = t.trim().split(':');
+    const hh = Math.max(0, Math.min(23, parseInt(h, 10) || 0));
+    const mm = Math.max(0, Math.min(59, parseInt(m, 10) || 0));
+    const d = new Date(2000, 0, 1, hh, mm);
+    return format(d, 'h:mm a');
+  };
+
+  /** Day-of-week order for display: Mon .. Sun (1..6, 0). Labels translated. */
+  const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0];
+  const DOW_LABELS: Record<number, string> = {
+    0: t('assignment.sunday'),
+    1: t('assignment.monday'),
+    2: t('assignment.tuesday'),
+    3: t('assignment.wednesday'),
+    4: t('assignment.thursday'),
+    5: t('assignment.friday'),
+    6: t('assignment.saturday'),
+  };
+
+  const assignmentIsoDay = toIsoDayLocal(assignment?.startDate);
+  const assignmentDateScheduleEntry = useMemo(() => {
+    if (!assignmentIsoDay || !scheduleShift?.dateSchedule || !scheduleShift?.shiftDate) return null;
+    const entries = getDateScheduleEntriesWithHours(
+      scheduleShift.dateSchedule,
+      scheduleShift.shiftDate,
+      scheduleShift.endDate,
+    );
+    return entries.find((entry) => entry.date === assignmentIsoDay) || null;
+  }, [assignmentIsoDay, scheduleShift?.dateSchedule, scheduleShift?.shiftDate, scheduleShift?.endDate]);
+
+  const effectiveStartTime = assignment?.startTime || assignmentDateScheduleEntry?.startTime || scheduleShift?.defaultStartTime || '';
+  const effectiveEndTime = assignment?.endTime || assignmentDateScheduleEntry?.endTime || scheduleShift?.defaultEndTime || '';
+
+  const canAddToCalendar = Boolean(assignment?.startDate);
+
+  const handleAddToCalendar = React.useCallback(() => {
+    if (!assignment?.startDate) return;
+    downloadAssignmentIcs({
+      assignmentId: assignment.id,
+      title: assignment.jobTitle || t('assignment.title'),
+      description: [
+        resolvedCompanyName || assignment.companyName,
+        resolvedWorksiteName || assignment.worksiteName || assignment.location,
+      ]
+        .filter((s) => typeof s === 'string' && s.trim().length > 0)
+        .join('\n'),
+      location: worksiteAddressStr || undefined,
+      startDate: assignment.startDate,
+      endDate: assignment.endDate,
+      startTime: effectiveStartTime || undefined,
+      endTime: effectiveEndTime || undefined,
+    });
+  }, [
+    assignment,
+    t,
+    resolvedCompanyName,
+    resolvedWorksiteName,
+    worksiteAddressStr,
+    effectiveStartTime,
+    effectiveEndTime,
+  ]);
+
+  const shiftSpecificDetailsText = useMemo(
+    () => getShiftDisplayText(scheduleShift ?? undefined, 'shiftDescription', preferredLanguage).trim(),
+    [scheduleShift, preferredLanguage],
+  );
+  const shiftEmailIntroText = useMemo(
+    () => getShiftDisplayText(scheduleShift ?? undefined, 'emailIntro', preferredLanguage).trim(),
+    [scheduleShift, preferredLanguage],
+  );
+
+  const clockInHref = useMemo(
+    () => normalizeClockInUrl(scheduleShift?.clockInUrl),
+    [scheduleShift?.clockInUrl],
+  );
+
+  const criticalRequirementLabels = [
+    assignment?.showBackgroundChecks ? 'Background check' : null,
+    assignment?.showDrugScreening ? 'Drug screening' : null,
+    assignment?.eVerifyRequired ? 'E-Verify' : null,
+  ].filter(Boolean) as string[];
+
+  if (loading) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  if (error) {
+    return (
+      <Box sx={{ p: 3 }}>
+        <Alert severity="error">{error}</Alert>
+        <Box sx={{ mt: 2 }}>
+          <UniversalBackButton tooltip={t('common.back')} />
+        </Box>
+      </Box>
+    );
+  }
+
+  if (!assignment) {
+    return (
+      <Box sx={{ p: 3 }}>
+        <Alert severity="info">{t('assignment.notFound')}</Alert>
+        <Box sx={{ mt: 2 }}>
+          <UniversalBackButton tooltip={t('common.back')} />
+        </Box>
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ maxWidth: 1200, mx: 'auto', p: 3 }}>
+      <Box sx={{ mb: 2 }}>
+        <SmsWarningBanner />
+      </Box>
+      {/* Header */}
+      <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 3 }} flexWrap="wrap" useFlexGap>
+        <Typography variant="h4" sx={{ flexGrow: 1, fontWeight: 700 }}>
+          {t('assignment.detailsTitle')}
+        </Typography>
+        <Chip
+          icon={getStatusIcon(assignment.status)}
+          label={assignment.status.charAt(0).toUpperCase() + assignment.status.slice(1)}
+          color={getStatusColor(assignment.status)}
+          size="medium"
+        />
+        <Button
+          variant="outlined"
+          startIcon={<CalendarMonthIcon />}
+          onClick={handleAddToCalendar}
+          disabled={!canAddToCalendar}
+        >
+          {t('assignment.addToCalendar')}
+        </Button>
+        <UniversalBackButton tooltip={t('common.back')} />
+      </Stack>
+
+      {/* Main content: full-width stack; My Recruiter appended at bottom only when assigned */}
+      <Stack spacing={3}>
+        {/* Assignment Info (combined): two columns, company/worksite/address looked up when needed */}
+        <Card elevation={0} sx={{ borderRadius: 0 }}>
+          <CardContent>
+            <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
+              {t('assignment.assignmentInfo')}
+            </Typography>
+            <Grid container spacing={3}>
+              <Grid item xs={12} sm={6}>
+                <Stack spacing={2}>
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <WorkIcon color="action" sx={{ flexShrink: 0 }} />
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.jobTitle')}</Typography>
+                      <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                        {assignment.jobTitle || '—'}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <ScheduleIcon color="action" sx={{ flexShrink: 0 }} />
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">{t('common.startDate')}</Typography>
+                      <Typography variant="body1">
+                        {assignment.startDate ? formatDate(assignment.startDate) : '—'}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <ScheduleIcon color="action" sx={{ flexShrink: 0 }} />
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.time')}</Typography>
+                      <Typography variant="body1">
+                        {[formatTime(effectiveStartTime), formatTime(effectiveEndTime)].filter(Boolean).join(' – ') || '—'}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <MoneyIcon color="action" sx={{ flexShrink: 0 }} />
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">{t('jobs.payRate')}</Typography>
+                      <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                        {formatHourlyPayRateForDisplay(assignment.payRate) ?? '—'}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <BusinessIcon color="action" sx={{ flexShrink: 0 }} />
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.companyName')}</Typography>
+                      <Typography variant="body1">
+                        {resolvedCompanyName ?? assignment.companyName ?? '—'}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                </Stack>
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <Stack spacing={2}>
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <LocationIcon color="action" sx={{ flexShrink: 0 }} />
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.worksiteName')}</Typography>
+                      <Typography variant="body1">
+                        {resolvedWorksiteName ?? assignment.worksiteName ?? assignment.location ?? '—'}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <MapIcon color="action" sx={{ flexShrink: 0 }} />
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.worksiteAddress')}</Typography>
+                      {worksiteAddressStr ? (
+                          <Button
+                            size="small"
+                            startIcon={<OpenInNewIcon />}
+                            href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(worksiteAddressStr)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            sx={{ textTransform: 'none', p: 0, minHeight: 'auto' }}
+                          >
+                            {worksiteAddressStr}
+                          </Button>
+                        ) : (
+                          <Typography variant="body1">—</Typography>
+                        )}
+                    </Box>
+                  </Stack>
+                  {/* Job preparation — uniform, PPE, physical (moved from job post to assignment) */}
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 600, mt: 0.5 }}>
+                    {t('jobs.jobPreparation')}
+                  </Typography>
+                  <Stack direction="row" spacing={2} alignItems="flex-start">
+                    <CheckroomIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.requiredUniform')}</Typography>
+                      <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+                        {(assignment.uniformRequirements || assignment.customUniformRequirements)
+                          ? [assignment.uniformRequirements, assignment.customUniformRequirements].filter(Boolean).join('\n\n')
+                          : '—'}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                  {String(assignment.ppeRequirements ?? '').trim().length > 0 ? (
+                    <Stack direction="row" spacing={2} alignItems="flex-start">
+                      <EngineeringIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
+                      <Box>
+                        <Typography variant="body2" color="text.secondary">{t('assignment.requiredPpe')}</Typography>
+                        <Typography variant="body1">{assignment.ppeRequirements}</Typography>
+                      </Box>
+                    </Stack>
+                  ) : null}
+                  {assignment.physicalRequirements && (
+                    <Stack direction="row" spacing={2} alignItems="flex-start">
+                      <WorkIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
+                      <Box>
+                        <Typography variant="body2" color="text.secondary">{t('assignment.physicalRequirements')}</Typography>
+                        <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+                          {assignment.physicalRequirements}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                  )}
+                  {criticalRequirementLabels.length > 0 ? (
+                    <Stack direction="row" spacing={2} alignItems="flex-start">
+                      <EngineeringIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
+                      <Box>
+                        <Typography variant="body2" color="text.secondary">{t('assignment.criticalRequirements')}</Typography>
+                        <Typography variant="body1">{criticalRequirementLabels.join(', ')}</Typography>
+                      </Box>
+                    </Stack>
+                  ) : null}
+                </Stack>
+              </Grid>
+            </Grid>
+          </CardContent>
+        </Card>
+
+        {assignment.noShowRiskPredictionV1 &&
+        (assignment.noShowRiskPredictionV1.score != null || assignment.noShowRiskPredictionV1.band) ? (
+          <Card elevation={0} sx={{ borderRadius: 0 }}>
+            <CardContent>
+              <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
+                No-show risk (assignment)
+              </Typography>
+              <Stack spacing={1.5}>
+                <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" useFlexGap>
+                  {assignment.noShowRiskPredictionV1.band ? (
+                    <Chip
+                      size="small"
+                      label={String(assignment.noShowRiskPredictionV1.band).charAt(0).toUpperCase() + String(assignment.noShowRiskPredictionV1.band).slice(1)}
+                      color={noShowRiskBandMuiColor(assignment.noShowRiskPredictionV1.band)}
+                      variant="filled"
+                    />
+                  ) : null}
+                  {typeof assignment.noShowRiskPredictionV1.score === 'number' ? (
+                    <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                      Score {Math.round(assignment.noShowRiskPredictionV1.score)}/100
+                    </Typography>
+                  ) : null}
+                </Stack>
+                {assignment.noShowRiskPredictionV1.recommendedAction ? (
+                  <Alert severity="info" sx={{ py: 0.5 }}>
+                    <Typography variant="body2" component="span" fontWeight={600}>
+                      Recommended:{' '}
+                    </Typography>
+                    <Typography variant="body2" component="span">
+                      {assignment.noShowRiskPredictionV1.recommendedAction.replace(/_/g, ' ')}
+                    </Typography>
+                  </Alert>
+                ) : null}
+                {Array.isArray(assignment.noShowRiskPredictionV1.reasons) &&
+                assignment.noShowRiskPredictionV1.reasons.length > 0 ? (
+                  <Box>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75 }}>
+                      Top reasons
+                    </Typography>
+                    <Stack direction="row" flexWrap="wrap" gap={0.5} useFlexGap>
+                      {assignment.noShowRiskPredictionV1.reasons.slice(0, 8).map((r) => (
+                        <Chip key={r} size="small" label={r.replace(/_/g, ' ')} variant="outlined" />
+                      ))}
+                    </Stack>
+                  </Box>
+                ) : null}
+              </Stack>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {/* Schedule */}
+        <Card elevation={0} sx={{ borderRadius: 0 }}>
+          <CardContent>
+            <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
+              {t('assignment.mySchedule')}
+            </Typography>
+            <Stack spacing={2}>
+              {assignment.startDate ? (
+                <>
+                  <Box>
+                    <Typography variant="body2" color="text.secondary">{t('assignment.date')}</Typography>
+                    <Typography variant="body1">{formatDate(assignment.startDate)}</Typography>
+                  </Box>
+                  {(effectiveStartTime || effectiveEndTime) && (
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.time')}</Typography>
+                      <Typography variant="body1">
+                        {[formatTime(effectiveStartTime), formatTime(effectiveEndTime)].filter(Boolean).join(' – ')}
+                      </Typography>
+                    </Box>
+                  )}
+                  {assignment.endDate && (
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.endDate')}</Typography>
+                      <Typography variant="body1">{formatDate(assignment.endDate)}</Typography>
+                    </Box>
+                  )}
+                </>
+              ) : (
+                <>
+                  {scheduleShift?.shiftMode === 'multi' && scheduleShift?.weeklySchedule && Object.keys(scheduleShift.weeklySchedule).length > 0 ? (
+                    <Box>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                        {t('assignment.weeklySchedule')}
+                      </Typography>
+                      <Stack spacing={0.5} component="ul" sx={{ pl: 2.5, m: 0 }}>
+                        {DOW_ORDER.map((dow) => {
+                          const entry = scheduleShift.weeklySchedule![String(dow)];
+                          if (!entry?.enabled) return null;
+                          return (
+                            <Typography key={dow} component="li" variant="body2">
+                              {DOW_LABELS[dow]}: {formatTime(entry.startTime)} – {formatTime(entry.endTime)}
+                            </Typography>
+                          );
+                        })}
+                      </Stack>
+                    </Box>
+                  ) : null}
+                  {(effectiveStartTime || effectiveEndTime) && (
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.time')}</Typography>
+                      <Typography variant="body1">
+                        {[formatTime(effectiveStartTime), formatTime(effectiveEndTime)].filter(Boolean).join(' – ')}
+                      </Typography>
+                    </Box>
+                  )}
+                  {!effectiveStartTime && !effectiveEndTime && !scheduleShift?.weeklySchedule && (
+                    <Typography variant="body2" color="text.secondary">{t('assignment.noScheduleDetails')}</Typography>
+                  )}
+                </>
+              )}
+
+              {clockInHref ? (
+                <Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                    {t('assignment.clockInUrl')}
+                  </Typography>
+                  <Link href={clockInHref} target="_blank" rel="noopener noreferrer" sx={{ fontWeight: 600 }}>
+                    {clockInHref}
+                  </Link>
+                </Box>
+              ) : null}
+
+              {/* Shift-Specific Details / Job Description from tenants/.../job_orders/.../shifts/{shiftId} (ShiftSetupTab) */}
+              {shiftSpecificDetailsText ? (
+                <Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>{t('assignment.shiftDetailsOrJobDescription')}</Typography>
+                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{shiftSpecificDetailsText}</Typography>
+                </Box>
+              ) : null}
+
+              {shiftEmailIntroText ? (
+                <Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>{t('assignment.shiftInfoToEmailStaff')}</Typography>
+                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{shiftEmailIntroText}</Typography>
+                </Box>
+              ) : null}
+            </Stack>
+          </CardContent>
+        </Card>
+
+        {/* Staff Instructions: one card per section; show i18n text by preferred language, fallback to legacy .text */}
+        {(() => {
+          const legacyToStr = (val: unknown): string => {
+            if (val == null) return '';
+            if (typeof val === 'string') return val;
+            if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+              const o = val as Record<string, unknown>;
+              const en = o.en;
+              const es = o.es;
+              if (preferredLanguage === 'es' && typeof es === 'string') return es;
+              if (typeof en === 'string') return en;
+              if (typeof es === 'string') return es;
+              return '';
+            }
+            return '';
+          };
+          const getStaffText = (sectionKey: string): string => {
+            const i18n = assignment.staffInstructions_i18n?.[sectionKey];
+            const legacy = assignment.staffInstructions?.[sectionKey]?.text;
+            const fromI18n = i18n?.[preferredLanguage];
+            const fromLegacy = legacyToStr(legacy);
+            const fallback = sectionKey === 'checkIn' ? (assignment.checkInInstructions ?? '') : '';
+            const text = (fromI18n ?? fromLegacy ?? fallback).trim();
+            return typeof text === 'string' ? text : '';
+          };
+          const sections: Array<{ key: string; title: string; getText: () => string; getFiles: () => any[] }> = [
+            {
+              key: 'firstDay',
+              title: t('assignment.firstDayInstructions'),
+              getText: () => getStaffText('firstDay'),
+              getFiles: () => assignment.staffInstructions?.firstDay?.files ?? [],
+            },
+            {
+              key: 'parking',
+              title: t('assignment.parkingInstructions'),
+              getText: () => getStaffText('parking'),
+              getFiles: () => assignment.staffInstructions?.parking?.files ?? [],
+            },
+            {
+              key: 'checkIn',
+              title: t('assignment.checkInInstructions'),
+              getText: () => getStaffText('checkIn'),
+              getFiles: () => assignment.staffInstructions?.checkIn?.files ?? [],
+            },
+            {
+              key: 'uniform',
+              title: t('assignment.uniformInstructions'),
+              getText: () => getStaffText('uniform'),
+              getFiles: () => assignment.staffInstructions?.uniform?.files ?? [],
+            },
+            {
+              key: 'credentials',
+              title: t('assignment.credentialInstructions'),
+              getText: () => getStaffText('credentials'),
+              getFiles: () => assignment.staffInstructions?.credentials?.files ?? [],
+            },
+            {
+              key: 'other',
+              title: t('assignment.otherInstructions'),
+              getText: () => getStaffText('other'),
+              getFiles: () => assignment.staffInstructions?.other?.files ?? [],
+            },
+            {
+              key: 'attachments',
+              title: t('assignment.otherAttachments'),
+              getText: () => '',
+              getFiles: () => assignment.staffInstructions?.attachments?.files ?? [],
+            },
+          ];
+          return sections
+            .filter((s) => {
+              const text = s.getText();
+              const files = s.getFiles();
+              return (typeof text === 'string' && text.trim() !== '') || (Array.isArray(files) && files.length > 0);
+            })
+            .map((s) => {
+              const text = s.getText();
+              const files = s.getFiles();
+              return (
+                <Card key={s.key} elevation={0} sx={{ borderRadius: 0 }}>
+                  <CardContent>
+                    <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
+                      {s.title}
+                    </Typography>
+                    <Stack spacing={1.5}>
+                      {text.trim() !== '' && (
+                        <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
+                          {text}
+                        </Typography>
+                      )}
+                      {Array.isArray(files) && files.length > 0 && (
+                        <Stack spacing={1} direction="row" flexWrap="wrap" useFlexGap>
+                          {files.map((file: any, index: number) => (
+                            <Button
+                              key={index}
+                              variant="outlined"
+                              size="small"
+                              href={file.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              {file.label || file.name || t('common.viewFile')}
+                            </Button>
+                          ))}
+                        </Stack>
+                      )}
+                    </Stack>
+                  </CardContent>
+                </Card>
+              );
+            });
+        })()}
+
+        {/* Notes */}
+        {assignment.notes && (
+          <Card elevation={0} sx={{ borderRadius: 0 }}>
+            <CardContent>
+              <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
+                Additional Notes
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
+                {assignment.notes}
+              </Typography>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Metadata */}
+        {(assignment.createdAt || assignment.updatedAt) && (
+          <Paper elevation={0} sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 0 }}>
+            <Stack spacing={1}>
+              {assignment.createdAt && (
+                <Typography variant="caption" color="text.secondary">
+                  Created: {formatDateTime(assignment.createdAt)}
+                </Typography>
+              )}
+              {assignment.updatedAt && (
+                <Typography variant="caption" color="text.secondary">
+                  Last Updated: {formatDateTime(assignment.updatedAt)}
+                </Typography>
+              )}
+            </Stack>
+          </Paper>
+        )}
+
+        {/* Location map card — only when we have a worksite address */}
+        {worksiteAddressStr && (
+          <Card elevation={0} sx={{ borderRadius: 0 }}>
+            <CardContent>
+              <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
+                {t('assignment.locationMap')}
+              </Typography>
+              <Box
+                sx={{
+                  width: '100%',
+                  height: 320,
+                  borderRadius: 1,
+                  overflow: 'hidden',
+                  bgcolor: 'grey.100',
+                }}
+              >
+                <iframe
+                  title={t('assignment.locationMap')}
+                  src={`https://www.google.com/maps?output=embed&q=${encodeURIComponent(worksiteAddressStr)}`}
+                  width="100%"
+                  height="100%"
+                  style={{ border: 0 }}
+                  allowFullScreen
+                  loading="lazy"
+                  referrerPolicy="no-referrer-when-downgrade"
+                />
+              </Box>
+              <Button
+                size="small"
+                startIcon={<OpenInNewIcon />}
+                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(worksiteAddressStr)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                sx={{ mt: 1.5, textTransform: 'none' }}
+              >
+                {t('assignment.openInGoogleMaps')}
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {recruiters.length > 0 ? (
+          <Card elevation={0} sx={{ borderRadius: 0 }}>
+            <CardHeader
+              title="My Recruiter"
+              titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+            />
+            <CardContent sx={{ pt: 0 }}>
+              <Stack spacing={2}>
+                {recruiters.map((r) => (
+                  <Stack key={r.id} spacing={0.75} component="div">
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                      {r.displayName}
+                    </Typography>
+                    {r.phone && (
+                      <Typography variant="body2">
+                        <Link
+                          component="a"
+                          href={`sms:${r.phone.replace(/[^\d+]/g, '')}`}
+                          sx={{ color: 'primary.main', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
+                        >
+                          {r.phone}
+                        </Link>
+                      </Typography>
+                    )}
+                    {r.email && (
+                      <Typography variant="body2">
+                        <Link
+                          component="a"
+                          href={`mailto:${r.email}`}
+                          sx={{ color: 'primary.main', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
+                        >
+                          {r.email}
+                        </Link>
+                      </Typography>
+                    )}
+                  </Stack>
+                ))}
+              </Stack>
+            </CardContent>
+          </Card>
+        ) : null}
+      </Stack>
+    </Box>
+  );
+};
+
+export default AssignmentDetails;
+
+

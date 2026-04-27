@@ -531,7 +531,7 @@ export const logTaskActivity = async (task: CRMTask, action: string, outcome?: a
 ```typescript
 // AI Logging for Task Operations
 export const logTaskAIAction = async (action: string, task: CRMTask, context: any) => {
-  await logAIAction({
+  await logger.aiEvent({
     userId: task.assignedTo,
     actionType: `task_${action}`,
     sourceModule: 'TaskEngine',

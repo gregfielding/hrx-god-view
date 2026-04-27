@@ -3,7 +3,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { getApolloKey, getOpenAIKey } from './utils/secrets';
 import { apolloCompanyByDomain, apolloPeopleSearch, apolloContactEnrichment } from './utils/apollo';
-import { logAIAction } from './utils/aiLogging';
+import { logger } from './utils/logger';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -343,7 +343,7 @@ export const runProspecting = onCall(
 
     try {
       // Log the prospecting request
-      await logAIAction({
+      await logger.aiEvent({
         eventType: 'prospecting.search_started',
         targetType: 'prospecting',
         targetId: `search_${Date.now()}`,
@@ -509,7 +509,7 @@ export const runProspecting = onCall(
         });
 
       // Log successful completion
-      await logAIAction({
+      await logger.aiEvent({
         eventType: 'prospecting.search_completed',
         targetType: 'prospecting',
         targetId: runRef.id,
@@ -535,7 +535,7 @@ export const runProspecting = onCall(
     } catch (error: any) {
       console.error('Error in prospecting search:', error);
       
-      await logAIAction({
+      await logger.aiEvent({
         eventType: 'prospecting.search_error',
         targetType: 'prospecting',
         targetId: `error_${Date.now()}`,
@@ -591,7 +591,7 @@ export const saveProspectingSearch = onCall(
           updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
-      await logAIAction({
+      await logger.aiEvent({
         eventType: 'prospecting.search_saved',
         targetType: 'prospecting',
         targetId: searchRef.id,
@@ -718,7 +718,7 @@ export const addProspectsToCRM = onCall(
 
       await batch.commit();
 
-      await logAIAction({
+      await logger.aiEvent({
         eventType: 'prospecting.prospects_added_to_crm',
         targetType: 'prospecting',
         targetId: `batch_${Date.now()}`,
@@ -825,7 +825,7 @@ export const createCallList = onCall(
 
       await batch.commit();
 
-      await logAIAction({
+      await logger.aiEvent({
         eventType: 'prospecting.call_list_created',
         targetType: 'prospecting',
         targetId: `calllist_${Date.now()}`,

@@ -14,13 +14,21 @@ export interface AssignmentsTableProps {
   assignments: any[];
   showAgency?: boolean;
   showFullAgencyTable?: boolean;
+  /** When true (default), rows with `jobOrderId` open `/jobs/job-orders/:id` in a new tab. */
+  openJobOrderInNewTabOnRowClick?: boolean;
 }
 
 const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
   assignments,
   showAgency = true,
   showFullAgencyTable = false,
+  openJobOrderInNewTabOnRowClick = true,
 }) => {
+  const openJobOrder = (jobOrderId: unknown) => {
+    if (!jobOrderId || typeof jobOrderId !== 'string' || !jobOrderId.trim()) return;
+    const url = `${window.location.origin}/jobs/job-orders/${encodeURIComponent(jobOrderId.trim())}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
   const [sortField, setSortField] = useState<string>('startDate');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
@@ -151,7 +159,7 @@ const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
             ) : (
               <>
                 <TableCell>Title</TableCell>
-                {showAgency && <TableCell>Agency</TableCell>}
+                {showAgency && <TableCell>Company</TableCell>}
                 <TableCell>Worksite</TableCell>
                 <TableCell>Start Date</TableCell>
                 <TableCell>End Date</TableCell>
@@ -169,7 +177,14 @@ const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
             </TableRow>
           ) : showFullAgencyTable ? (
             sortedAssignments.map((a) => (
-              <TableRow key={a.id}>
+              <TableRow
+                key={a.id}
+                hover={Boolean(openJobOrderInNewTabOnRowClick && a.jobOrderId)}
+                onClick={() => openJobOrderInNewTabOnRowClick && openJobOrder(a.jobOrderId)}
+                sx={{
+                  cursor: openJobOrderInNewTabOnRowClick && a.jobOrderId ? 'pointer' : 'default',
+                }}
+              >
                 <TableCell>{a.firstName || '-'}</TableCell>
                 <TableCell>{a.lastName || '-'}</TableCell>
                 <TableCell>{a.jobOrderTitle || '-'}</TableCell>
@@ -184,10 +199,33 @@ const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
             ))
           ) : (
             sortedAssignments.map((a) => (
-              <TableRow key={a.id}>
+              <TableRow
+                key={a.id}
+                hover={Boolean(openJobOrderInNewTabOnRowClick && a.jobOrderId)}
+                onClick={() => openJobOrderInNewTabOnRowClick && openJobOrder(a.jobOrderId)}
+                sx={{
+                  cursor: openJobOrderInNewTabOnRowClick && a.jobOrderId ? 'pointer' : 'default',
+                }}
+              >
                 <TableCell>{a.shiftTitle || '-'}</TableCell>
-                {showAgency && <TableCell>{a.agencyName || a.tenantId || '-'}</TableCell>}
-                <TableCell>{a.worksiteName || '-'}</TableCell>
+                {showAgency && (
+                  <TableCell>
+                    {a.companyDisplayName ||
+                      a.companyName ||
+                      a.agencyName ||
+                      a.tenantName ||
+                      a.customerName ||
+                      '-'}
+                  </TableCell>
+                )}
+                <TableCell>
+                  {a.worksiteDisplayName ||
+                    a.worksiteName ||
+                    a.worksiteNickname ||
+                    a.worksiteTitle ||
+                    a.location ||
+                    '-'}
+                </TableCell>
                 <TableCell>{a.startDate || '-'}</TableCell>
                 <TableCell>{a.endDate || '-'}</TableCell>
                 <TableCell>{a.status || '-'}</TableCell>

@@ -1,0 +1,546 @@
+/**
+ * Rescore / backfill stored worker AI prescreen interviews using current `composePrescreenAiBundle` (rules + penalties + hiring engine).
+ *
+ * Does **not** use filtered Firestore queries on `interviews` (no `where` / no `collectionGroup` on interviews):
+ * reads subcollections with `.get()` and filters `interviewKind === 'worker_ai_prescreen'` in memory so admin runs
+ * do not depend on interview indexes.
+ *
+ * Updates: `users/{uid}/interviews/{id}` (`score`, `score10`, `ai.*`), linked `applications.aiAutomation` when guards pass,
+ * and `recomputeUserInterviewScoreSummary` for the user (includes `riskProfile` when interview AI data / compliance inputs change; signature-guarded).
+ *
+ * Usage (from repo root):
+ *   npm run prescreen:rescore -- --dry-run --source=system --limit=50
+ *   npm run prescreen:rescore -- --all --source=system --dry-run   # scan cap removed (very large limit)
+ *   npm run prescreen:rescore -- --source=system --limit=500
+ *   npm run prescreen:rescore -- --tenantId=TENANT_ID --source=system --limit=500
+ *   npm run prescreen:rescore -- --dry-run --limit=10
+ *
+ * From `functions/`:
+ *   npx ts-node src/scripts/rescoreWorkerAiPrescreenInterviews.ts --dry-run --limit=10
+ *
+ * `--source=system` keeps interviews scored with `ai.model === rules_v1` (standard rules pipeline).
+ * `--source=all` (default) processes every `worker_ai_prescreen` interview.
+ *
+ * After `npm run build` in functions:
+ *   node lib/scripts/rescoreWorkerAiPrescreenInterviews.js --dry-run --limit=10
+ */
+import * as admin from 'firebase-admin';
+import { extractPrescreenAnswersFromInterviewDoc } from '../workerAiPrescreen/extractPrescreenAnswersFromInterviewDoc';
+import { composePrescreenAiBundle } from '../workerAiPrescreen/composePrescreenAiBundle';
+import { buildAiInterviewContext, resolveApplicationDoc } from '../workerAiPrescreen/buildAiInterviewContext';
+import { recomputeUserInterviewScoreSummary } from '../workerAiPrescreen/recomputeInterviewScoreSummary';
+
+if (!admin.apps.length) {
+  admin.initializeApp();
+}
+const db = admin.firestore();
+
+type Args = {
+  dryRun: boolean;
+  printChanged: boolean;
+  tenantId: string | null;
+  limit: number;
+  userId: string | null;
+  applicationId: string | null;
+  /** Only process interviews with createdAt/timestamp strictly after this instant. */
+  after: Date | null;
+  /** Resume global user scan after this user document id (Firestore `users` orderBy documentId). */
+  startAfterUserId: string | null;
+  /** `all` | `system` — see file header. */
+  source: 'all' | 'system';
+  /** When true, effectively no interview cap (uses a very large limit). */
+  all: boolean;
+};
+
+function parseArgs(argv: string[]): Args {
+  let dryRun = false;
+  let printChanged = false;
+  let tenantId: string | null = null;
+  let limit = 100;
+  let userId: string | null = null;
+  let applicationId: string | null = null;
+  let after: Date | null = null;
+  let startAfterUserId: string | null = null;
+  let source: 'all' | 'system' = 'all';
+  let all = false;
+
+  for (const a of argv) {
+    if (a === '--dry-run') dryRun = true;
+    else if (a === '--all') all = true;
+    else if (a === '--print-changed') printChanged = true;
+    else if (a === '--source=system') source = 'system';
+    else if (a === '--source=all') source = 'all';
+    else if (a.startsWith('--tenantId=')) tenantId = a.slice('--tenantId='.length).trim() || null;
+    else if (a.startsWith('--limit=')) limit = Math.max(1, parseInt(a.slice('--limit='.length), 10) || 100);
+    else if (a.startsWith('--userId=')) userId = a.slice('--userId='.length).trim() || null;
+    else if (a.startsWith('--applicationId=')) applicationId = a.slice('--applicationId='.length).trim() || null;
+    else if (a.startsWith('--after=')) {
+      const raw = a.slice('--after='.length).trim();
+      const d = new Date(raw);
+      after = Number.isNaN(d.getTime()) ? null : d;
+    } else if (a.startsWith('--start-after-user-id=')) {
+      startAfterUserId = a.slice('--start-after-user-id='.length).trim() || null;
+    }
+  }
+  if (all) {
+    limit = Number.MAX_SAFE_INTEGER;
+  }
+  return { dryRun, printChanged, tenantId, limit, userId, applicationId, after, startAfterUserId, source, all };
+}
+
+/** `system` = rules_v1 pipeline interviews (safe filter when no dedicated submissionSource field exists). */
+function interviewMatchesSourceFilter(data: Record<string, unknown>, source: 'all' | 'system'): boolean {
+  if (source === 'all') return true;
+  const ai = data.ai as Record<string, unknown> | undefined;
+  const model = String(ai?.model ?? '').trim();
+  return model === 'rules_v1';
+}
+
+function tenantFromInterviewData(data: Record<string, unknown>): string | null {
+  const ai = data.ai as Record<string, unknown> | undefined;
+  const ctx = ai?.aiInterviewContext as Record<string, unknown> | undefined;
+  const br = ctx?.businessRules as Record<string, unknown> | undefined;
+  const t = br?.tenant;
+  return typeof t === 'string' && t.trim() ? t.trim() : null;
+}
+
+function summarizeDecision(d: unknown): string {
+  return typeof d === 'string' ? d : 'unknown';
+}
+
+function summarizeRecommendation(d: unknown): string {
+  return typeof d === 'string' ? d : 'unknown';
+}
+
+function shouldSyncApplicationAiAutomation(args: { sourceInterviewIdOnApp: string; interviewDocId: string }): boolean {
+  const src = String(args.sourceInterviewIdOnApp ?? '').trim();
+  if (src === '') return true;
+  return src === args.interviewDocId;
+}
+
+function orderedTenantHints(...parts: (string | null | undefined)[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const p of parts) {
+    const t = String(p ?? '').trim();
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
+}
+
+function interviewCreatedAt(data: Record<string, unknown>): Date | null {
+  const c = data.createdAt as { toDate?: () => Date } | undefined;
+  const t = data.timestamp as { toDate?: () => Date } | undefined;
+  return c?.toDate?.() ?? t?.toDate?.() ?? null;
+}
+
+const WORKER_AI_PRESCREEN = 'worker_ai_prescreen';
+
+function isPrescreenInterviewDoc(data: Record<string, unknown>): boolean {
+  return data.interviewKind === WORKER_AI_PRESCREEN;
+}
+
+async function collectPrescreenInterviewRefsForUser(
+  userId: string,
+  limit: number,
+  tenantFilter: string | null,
+): Promise<FirebaseFirestore.DocumentReference[]> {
+  const snap = await db.collection('users').doc(userId).collection('interviews').get();
+  const refs: FirebaseFirestore.DocumentReference[] = [];
+  for (const d of snap.docs) {
+    const data = d.data() as Record<string, unknown>;
+    if (!isPrescreenInterviewDoc(data)) continue;
+    if (tenantFilter) {
+      if (tenantFromInterviewData(data) !== tenantFilter) continue;
+    }
+    refs.push(d.ref);
+    if (refs.length >= limit) break;
+  }
+  return refs;
+}
+
+const GLOBAL_USER_PAGE_SIZE = 300;
+
+async function collectPrescreenInterviewRefsGlobal(args: {
+  limit: number;
+  tenantId: string | null;
+  startAfterUserId: string | null;
+}): Promise<{ refs: FirebaseFirestore.DocumentReference[]; usersPagesScanned: number; usersDocsVisited: number }> {
+  const refs: FirebaseFirestore.DocumentReference[] = [];
+  let usersPagesScanned = 0;
+  let usersDocsVisited = 0;
+  let lastUser: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+  let firstPage = true;
+
+  while (refs.length < args.limit) {
+    let q = db.collection('users').orderBy(admin.firestore.FieldPath.documentId()).limit(GLOBAL_USER_PAGE_SIZE);
+    if (lastUser) q = q.startAfter(lastUser);
+    else if (firstPage && args.startAfterUserId) {
+      q = q.startAfter(args.startAfterUserId);
+    }
+    firstPage = false;
+    const usersSnap = await q.get();
+    usersPagesScanned += 1;
+    if (usersSnap.empty) break;
+
+    for (const userDoc of usersSnap.docs) {
+      usersDocsVisited += 1;
+      const uid = userDoc.id;
+      const intSnap = await db.collection('users').doc(uid).collection('interviews').get();
+      for (const d of intSnap.docs) {
+        const data = d.data() as Record<string, unknown>;
+        if (!isPrescreenInterviewDoc(data)) continue;
+        if (args.tenantId) {
+          if (tenantFromInterviewData(data) !== args.tenantId) continue;
+        }
+        refs.push(d.ref);
+        if (refs.length >= args.limit) {
+          return { refs, usersPagesScanned, usersDocsVisited };
+        }
+      }
+    }
+
+    lastUser = usersSnap.docs[usersSnap.docs.length - 1];
+    if (usersSnap.docs.length < GLOBAL_USER_PAGE_SIZE) break;
+  }
+
+  return { refs, usersPagesScanned, usersDocsVisited };
+}
+
+async function run(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+  const stats = {
+    interviewsScanned: 0,
+    interviewsChanged: 0,
+    interviewsUnchanged: 0,
+    skippedBeforeAfter: 0,
+    skippedNoAnswers: 0,
+    failed: 0,
+    applicationsUpdated: 0,
+    applicationsSyncSkippedNoTenant: 0,
+    applicationsSyncSkippedSourceInterviewGuard: 0,
+    transitionLabels: {} as Record<string, number>,
+    recommendationChanges: 0,
+    hiringDecisionChanges: 0,
+    autoAdvanceChanges: 0,
+    deltaSum: 0,
+    deltaCount: 0,
+    maxPositiveDelta: null as number | null,
+    maxNegativeDelta: null as number | null,
+    usersPagesScanned: 0 as number,
+    usersDocsVisited: 0 as number,
+  };
+
+  let refs: FirebaseFirestore.DocumentReference[] = [];
+
+  if (args.applicationId && args.tenantId) {
+    const appSnap = await db.doc(`tenants/${args.tenantId}/applications/${args.applicationId}`).get();
+    if (!appSnap.exists) {
+      console.error('Application not found');
+      process.exit(1);
+    }
+    const app = appSnap.data() as Record<string, unknown>;
+    const uid = String(app.userId || app.candidateId || '').trim();
+    const sourceInterviewId = String((app.aiAutomation as Record<string, unknown> | undefined)?.sourceInterviewId || '').trim();
+    if (!uid || !sourceInterviewId) {
+      console.error('Application missing userId/candidateId or aiAutomation.sourceInterviewId');
+      process.exit(1);
+    }
+    refs.push(db.collection('users').doc(uid).collection('interviews').doc(sourceInterviewId));
+  } else if (args.userId) {
+    refs = await collectPrescreenInterviewRefsForUser(args.userId, args.limit, args.tenantId);
+  } else {
+    const global = await collectPrescreenInterviewRefsGlobal({
+      limit: args.limit,
+      tenantId: args.tenantId,
+      startAfterUserId: args.startAfterUserId,
+    });
+    refs = global.refs;
+    stats.usersPagesScanned = global.usersPagesScanned;
+    stats.usersDocsVisited = global.usersDocsVisited;
+  }
+
+  for (const ref of refs) {
+    stats.interviewsScanned += 1;
+    try {
+      const snap = await ref.get();
+      if (!snap.exists) continue;
+      const data = snap.data() as Record<string, unknown>;
+      if (data.interviewKind !== WORKER_AI_PRESCREEN) continue;
+      if (!interviewMatchesSourceFilter(data, args.source)) continue;
+
+      if (args.after) {
+        const ca = interviewCreatedAt(data);
+        if (!ca || ca <= args.after) {
+          stats.skippedBeforeAfter += 1;
+          continue;
+        }
+      }
+
+      const userId = ref.parent.parent?.id;
+      if (!userId) continue;
+
+      const extracted = extractPrescreenAnswersFromInterviewDoc(data);
+      if (!extracted.answers) {
+        stats.skippedNoAnswers += 1;
+        console.warn('skip (answers)', ref.path);
+        continue;
+      }
+
+      const userSnap = await db.collection('users').doc(userId).get();
+      const userDoc = (userSnap.data() || {}) as Record<string, unknown>;
+
+      const applicationId =
+        data.applicationId != null && String(data.applicationId).trim() !== ''
+          ? String(data.applicationId).trim()
+          : null;
+
+      let tenantHint: string | null = tenantFromInterviewData(data);
+      if (applicationId) {
+        const hints = orderedTenantHints(tenantHint, args.tenantId);
+        const resolved = await resolveApplicationDoc(db, userId, applicationId, hints, userDoc);
+        if (resolved) {
+          tenantHint = resolved.tenantId;
+        } else if (!tenantHint) {
+          console.warn(
+            'Could not resolve tenant for application (direct paths only); context may be incomplete',
+            { ref: ref.path, applicationId, hintsTried: hints },
+          );
+        }
+      }
+
+      let interviewContext = null;
+      try {
+        if (applicationId) {
+          interviewContext = await buildAiInterviewContext(db, {
+            userId,
+            applicationId,
+            tenantId: tenantHint,
+          });
+        }
+      } catch (e) {
+        console.warn('buildAiInterviewContext failed', ref.path, e instanceof Error ? e.message : e);
+      }
+
+      const bundle = await composePrescreenAiBundle({
+        db,
+        userId,
+        answers: extracted.answers,
+        dynamicAnswers: extracted.dynamicAnswers,
+        interviewContext,
+        applicationId,
+        tenantIdHint: tenantHint,
+        interviewId: ref.id,
+        userDoc,
+      });
+
+      const oldAi = (data.ai || {}) as Record<string, unknown>;
+      const oldFlags = JSON.stringify([...((oldAi.flags as string[]) || [])].sort());
+      const newFlags = JSON.stringify([...(bundle.aiFlags || [])].sort());
+      const oldBase =
+        typeof oldAi.baseInterviewScore === 'number' ? oldAi.baseInterviewScore : oldAi.overallScore;
+      const newBase = bundle.scored.overallScore;
+      const oldAdj =
+        typeof oldAi.overrideAdjustedScore === 'number' ? oldAi.overrideAdjustedScore : oldBase;
+      const newAdj = bundle.operationalOverride.adjustedScore;
+      const oldRec = summarizeRecommendation(oldAi.recommendation);
+      const newRec = summarizeRecommendation(bundle.operationalOverride.recommendedRecommendation);
+      const oldDec = summarizeDecision((oldAi.hiringDecision as Record<string, unknown> | undefined)?.decision);
+      const newDec = summarizeDecision(bundle.hiringResult.decision);
+      const oldAa = Boolean((oldAi.hiringDecision as Record<string, unknown> | undefined)?.eligibleForAutoAdvance);
+      const newAa = Boolean(bundle.hiringResult.eligibleForAutoAdvance);
+
+      const changed =
+        oldFlags !== newFlags ||
+        oldBase !== newBase ||
+        oldAdj !== newAdj ||
+        oldRec !== newRec ||
+        oldDec !== newDec;
+
+      const tid = tenantHint || interviewContext?.businessRules?.tenant || null;
+
+      if (!changed) {
+        stats.interviewsUnchanged += 1;
+      }
+
+      if (changed) {
+        stats.interviewsChanged += 1;
+        const key = `${oldDec}->${newDec}`;
+        stats.transitionLabels[key] = (stats.transitionLabels[key] || 0) + 1;
+        if (oldRec !== newRec) stats.recommendationChanges += 1;
+        if (oldDec !== newDec) stats.hiringDecisionChanges += 1;
+        if (oldAa !== newAa) stats.autoAdvanceChanges += 1;
+        const d = Number(newAdj) - Number(oldAdj);
+        if (Number.isFinite(d)) {
+          stats.deltaSum += d;
+          stats.deltaCount += 1;
+          if (stats.maxPositiveDelta == null || d > stats.maxPositiveDelta) stats.maxPositiveDelta = d;
+          if (stats.maxNegativeDelta == null || d < stats.maxNegativeDelta) stats.maxNegativeDelta = d;
+        }
+      }
+
+      if (changed && args.printChanged) {
+        let applicationPath: string | null = null;
+        let appSyncNote = 'no_application_on_interview';
+        if (applicationId && tid) {
+          applicationPath = `tenants/${tid}/applications/${applicationId}`;
+          const appSnap = await db.doc(applicationPath).get();
+          const src = appSnap.data()?.aiAutomation as Record<string, unknown> | undefined;
+          const srcId = String(src?.sourceInterviewId ?? '').trim();
+          if (shouldSyncApplicationAiAutomation({ sourceInterviewIdOnApp: srcId, interviewDocId: ref.id })) {
+            appSyncNote =
+              srcId === '' ? 'will_sync (sourceInterviewId empty on app; allowed)' : 'will_sync (sourceInterviewId matches)';
+          } else {
+            appSyncNote = `skipped_app_sync: sourceInterviewId on app is "${srcId}", expected "${ref.id}"`;
+          }
+        } else if (applicationId && !tid) {
+          appSyncNote = 'skipped_app_sync: tenant not resolved (no tid)';
+        }
+        console.log(
+          JSON.stringify(
+            {
+              kind: 'print-changed',
+              interviewPath: ref.path,
+              applicationPath,
+              score: { oldBase, newBase, oldAdjusted: oldAdj, newAdjusted: newAdj },
+              recommendation: { old: oldRec, new: newRec },
+              decision: { old: oldDec, new: newDec },
+              flags: { old: oldAi.flags ?? [], new: bundle.aiFlags ?? [] },
+              appSyncNote,
+            },
+            null,
+            2,
+          ),
+        );
+      }
+
+      if (args.dryRun) {
+        if (changed && !args.printChanged) {
+          console.log('[dry-run] would update', ref.path, {
+            oldBase,
+            newBase,
+            oldAdj,
+            newAdj,
+            oldFlags: oldAi.flags,
+            newFlags: bundle.aiFlags,
+          });
+        }
+        continue;
+      }
+
+      if (!changed) continue;
+
+      const newAi = {
+        ...bundle.aiBlockCore,
+        model: 'rules_v1',
+        computedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+
+      await ref.update({
+        score: bundle.score10,
+        score10: bundle.score10,
+        ai: newAi,
+      });
+
+      try {
+        await ref.collection('rescore_audit').add({
+          interviewId: ref.id,
+          userId,
+          previousBaseScore: oldBase,
+          previousAdjustedScore: oldAdj,
+          previousRecommendation: oldRec,
+          previousHiringDecision: oldDec,
+          newBaseScore: newBase,
+          newAdjustedScore: newAdj,
+          newRecommendation: newRec,
+          newHiringDecision: newDec,
+          changedAt: admin.firestore.FieldValue.serverTimestamp(),
+          changedBy: 'system_rescore',
+          rulesVersionBefore: String(oldAi.overrideRulesVersion ?? oldAi.model ?? ''),
+          rulesVersionAfter: String(bundle.operationalOverride.rulesVersion ?? 'rules_v1'),
+        });
+      } catch (e) {
+        console.warn('rescore_audit write failed', ref.path, e instanceof Error ? e.message : e);
+      }
+
+      try {
+        await recomputeUserInterviewScoreSummary(db, userId, {
+          recruiterSnapshotGeneratedBy: 'rescore_script',
+        });
+      } catch (e) {
+        console.warn('recomputeUserInterviewScoreSummary failed', userId, e instanceof Error ? e.message : e);
+      }
+
+      if (applicationId && tid) {
+        const appRef = db.doc(`tenants/${tid}/applications/${applicationId}`);
+        const appSnap = await appRef.get();
+        const appData = appSnap.data() as Record<string, unknown> | undefined;
+        const src = appData?.aiAutomation as Record<string, unknown> | undefined;
+        const srcId = String(src?.sourceInterviewId ?? '').trim();
+        if (shouldSyncApplicationAiAutomation({ sourceInterviewIdOnApp: srcId, interviewDocId: ref.id })) {
+          await appRef.set(
+            {
+              aiAutomation: {
+                lastEvaluatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                sourceInterviewId: ref.id,
+                decision: bundle.hiringResult.decision,
+                eligibleForAutoAdvance: bundle.hiringResult.eligibleForAutoAdvance,
+                priorityBucket: bundle.priorityBucket,
+                recommendedActions: bundle.recommendedActions,
+                reasonCodes: bundle.hiringResult.reasonCodes,
+                score: bundle.operationalOverride.adjustedScore,
+                baseInterviewScore: bundle.scored.overallScore,
+                overrideAdjustedScore: bundle.operationalOverride.adjustedScore,
+                overrideScoreDelta: bundle.operationalOverride.scoreDelta,
+                categoryScores: bundle.categoryScores,
+                categoryEvidence: bundle.categoryEvidence,
+                noShowRisk: {
+                  engineVersion: bundle.applicationNoShowRisk.engineVersion,
+                  score: bundle.applicationNoShowRisk.score,
+                  band: bundle.applicationNoShowRisk.band,
+                  reasons: bundle.applicationNoShowRisk.reasons,
+                  recommendedAction: bundle.applicationNoShowRisk.recommendedAction,
+                  computedAt: admin.firestore.FieldValue.serverTimestamp(),
+                },
+                ...(bundle.orchestratorV1Firestore ? { orchestratorV1: bundle.orchestratorV1Firestore } : {}),
+              },
+            },
+            { merge: true },
+          );
+          stats.applicationsUpdated += 1;
+        } else {
+          stats.applicationsSyncSkippedSourceInterviewGuard += 1;
+        }
+      } else if (applicationId && !tid) {
+        stats.applicationsSyncSkippedNoTenant += 1;
+      }
+    } catch (e) {
+      stats.failed += 1;
+      console.error('rescore failed', ref.path, e instanceof Error ? e.message : e);
+    }
+  }
+
+  const avgDelta =
+    stats.deltaCount > 0 ? Math.round((stats.deltaSum / stats.deltaCount) * 100) / 100 : null;
+  console.log(
+    JSON.stringify(
+      {
+        ok: true,
+        args,
+        stats: {
+          ...stats,
+          averageAdjustedDelta: avgDelta,
+        },
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+run().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

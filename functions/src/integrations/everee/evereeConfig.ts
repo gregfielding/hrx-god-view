@@ -1,0 +1,90 @@
+/**
+ * Everee config: resolve entity → evereeTenantId + baseUrl (HRX Everee Master Plan §4.1).
+ * Reads from Firestore entity doc; no API token here (evereeAuth handles secrets).
+ */
+
+import { getFirestore } from 'firebase-admin/firestore';
+import { HttpsError } from 'firebase-functions/v2/https';
+
+export type EvereeEnvironment = 'sandbox' | 'production';
+
+export interface EvereeEntityConfig {
+  evereeTenantId: string;
+  evereeEnvironment: EvereeEnvironment;
+  evereeApiBaseUrl?: string;
+  evereeEnabled: boolean;
+}
+
+const DEFAULT_SANDBOX_BASE = 'https://api.sandbox.everee.com';
+const DEFAULT_PROD_BASE = 'https://api.everee.com';
+
+/**
+ * Resolve Everee config for an entity. Returns null if entity has no Everee or not enabled.
+ */
+export async function getEvereeConfigForEntity(
+  tenantId: string,
+  entityId: string
+): Promise<EvereeEntityConfig | null> {
+  const db = getFirestore();
+  const entityRef = db.doc(`tenants/${tenantId}/entities/${entityId}`);
+  const snap = await entityRef.get();
+  if (!snap.exists) return null;
+  const data = snap.data() as Record<string, unknown> | undefined;
+  const provider = data?.payrollProvider as string | undefined;
+  const enabled = data?.evereeEnabled === true && provider === 'everee';
+  const evereeTenantId = data?.evereeTenantId as string | undefined;
+  if (!enabled || !evereeTenantId?.trim()) return null;
+  const env = (data?.evereeEnvironment as EvereeEnvironment) || 'sandbox';
+  const baseUrl =
+    (data?.evereeApiBaseUrl as string)?.trim() ||
+    (env === 'production' ? DEFAULT_PROD_BASE : DEFAULT_SANDBOX_BASE);
+  return {
+    evereeTenantId: evereeTenantId.trim(),
+    evereeEnvironment: env,
+    evereeApiBaseUrl: baseUrl,
+    evereeEnabled: true,
+  };
+}
+
+/**
+ * Callable gate helper — AND of env-var and per-entity flag.
+ *
+ * Used at the top of every Everee callable so rollout can be staged per entity
+ * (e.g. turn on C1 Workforce before C1 Events) without flipping the env-wide
+ * switch. The env-var `EVEREE_ENABLED=true` is required at the process level
+ * (evereeGate.ts); this adds the second AND: the entity must opt in via its
+ * `evereeEnabled=true` + `payrollProvider='everee'` settings.
+ *
+ * Throws HttpsError('failed-precondition') so the error surfaces uniformly on
+ * the client regardless of which callable blocked. Returns the resolved config
+ * so callers don't need a second round-trip.
+ */
+export async function requireEvereeEnabledEntity(
+  tenantId: string,
+  entityId: string,
+): Promise<EvereeEntityConfig> {
+  if (process.env.EVEREE_ENABLED !== 'true') {
+    throw new HttpsError(
+      'failed-precondition',
+      'Everee is disabled at the process level (EVEREE_ENABLED !== "true").',
+    );
+  }
+  const config = await getEvereeConfigForEntity(tenantId, entityId);
+  if (!config) {
+    throw new HttpsError(
+      'failed-precondition',
+      `Everee is not enabled for entity ${entityId}. Set entity.evereeEnabled=true and payrollProvider="everee".`,
+    );
+  }
+  return config;
+}
+
+/** Path helpers for Everee collections (functions-side). */
+export const evereePaths = {
+  workers: (tid: string) => `tenants/${tid}/everee_workers`,
+  worker: (tid: string, entityId: string, userId: string) =>
+    `tenants/${tid}/everee_workers/${entityId}__${userId}`,
+  embedSessions: (tid: string) => `tenants/${tid}/everee_embed_sessions`,
+  webhookEvents: (tid: string) => `tenants/${tid}/everee_webhook_events`,
+  payHistoryCache: (tid: string) => `tenants/${tid}/everee_pay_history_cache`,
+};

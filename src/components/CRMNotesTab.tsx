@@ -2,11 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
-  TextField,
   Button,
-  Card,
-  CardContent,
-  CardHeader,
   Table,
   TableBody,
   TableCell,
@@ -17,11 +13,6 @@ import {
   IconButton,
   Chip,
   Avatar,
-  Grid,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   Alert,
   Snackbar,
   Tooltip,
@@ -30,14 +21,13 @@ import {
   DialogContent,
   DialogActions,
   Divider,
+  Skeleton,
 } from '@mui/material';
 import {
   Visibility as ViewIcon,
   Delete as DeleteIcon,
-  Note as NoteIcon,
 } from '@mui/icons-material';
-import { doc, collection, addDoc, getDocs, query, orderBy, where, deleteDoc, serverTimestamp } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { doc, collection, getDocs, query, orderBy, where, deleteDoc } from 'firebase/firestore';
 
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -55,17 +45,17 @@ interface Note {
     url: string;
     type: string;
   }>;
-  category: 'general' | 'sales' | 'meeting' | 'follow_up' | 'proposal' | 'negotiation' | 'closing' | 'other';
+  category: 'general' | 'sales' | 'meeting' | 'follow_up' | 'proposal' | 'negotiation' | 'closing' | 'other' | 'staffing' | 'compliance' | 'performance' | 'client_feedback';
   priority: 'low' | 'medium' | 'high' | 'urgent';
   aiReviewed: boolean;
   aiInsights?: string;
   tags?: string[];
-  source?: 'location' | 'company' | 'contact' | 'deal';
+  source?: 'location' | 'company' | 'contact' | 'deal' | 'jobOrder' | 'account';
 }
 
 interface CRMNotesTabProps {
   entityId: string;
-  entityType: 'contact' | 'company' | 'location' | 'deal';
+  entityType: 'contact' | 'company' | 'location' | 'deal' | 'jobOrder' | 'account';
   entityName: string;
   tenantId: string;
   companyId?: string; // For location notes to filter up to company
@@ -79,6 +69,8 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
   const [successMessage, setSuccessMessage] = useState('');
   const [viewNoteDialog, setViewNoteDialog] = useState<{ open: boolean; note: Note | null }>({ open: false, note: null });
   const [userRole, setUserRole] = useState<'hrx' | 'agency' | 'customer'>('customer');
+  
+  // Form state removed - using Add Note dialog from layout instead
 
 
 
@@ -143,8 +135,9 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
           new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
         );
       } else {
-        // For contacts and companies, load normally
-        const notesRef = collection(db, 'tenants', tenantId, `${entityType}_notes`);
+        // For contacts, companies, deals, and job orders, load normally
+        const collectionName = entityType === 'jobOrder' ? 'job_order_notes' : `${entityType}_notes`;
+        const notesRef = collection(db, 'tenants', tenantId, collectionName);
         const notesQuery = query(
           notesRef,
           where('entityId', '==', entityId),
@@ -169,10 +162,13 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
 
 
 
+  // Form functions removed - using Add Note dialog from layout instead
+
   const handleDeleteNote = async (noteId: string) => {
     if (window.confirm('Are you sure you want to delete this note?')) {
       try {
-        const noteRef = doc(db, 'tenants', tenantId, `${entityType}_notes`, noteId);
+        const collectionName = entityType === 'jobOrder' ? 'job_order_notes' : `${entityType}_notes`;
+        const noteRef = doc(db, 'tenants', tenantId, collectionName, noteId);
         await deleteDoc(noteRef);
         await loadNotes();
         setSuccessMessage('Note deleted successfully');
@@ -224,104 +220,203 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
   };
 
   return (
-    <Box sx={{ px: 0, py: 0 }}>
-      {/* Header */}
-      <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mt: 0, mb: 0, px: 3 }}>
-        <Typography variant="h6" fontWeight={700}>
-          {entityType === 'contact' ? 'Contact' : entityType === 'location' ? 'Location' : entityType === 'deal' ? 'Deal' : 'Company'} Notes History ({notes.length})
-        </Typography>
-      </Box>
-      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1, px: 3 }}>
-        {entityType === 'location' 
-          ? 'Add notes about this location. Location notes and company notes tagged for this location will be shown together.'
-          : entityType === 'deal'
-          ? 'Add notes, observations, and feedback about this deal. All notes trigger AI review for insights.'
-          : `Add notes, observations, and feedback about this ${entityType}. All notes trigger AI review for insights.`}
-      </Typography>
-      <Divider sx={{ my: 2 }} />
-
-      {/* Add Note Button */}
-      {/* <Box sx={{ mb: 3, textAlign: 'center' }}>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Use the "Add Note" button in the header to add new notes to this {entityType}.
-        </Typography>
-      </Box> */}
-
-      {/* Notes History */}
-      <Card sx={{ p: 0, m: 0 }}>
-        <CardContent sx={{ p: 0, m: 0 }}>
-          {loading ? (
-            <Box display="flex" justifyContent="center" p={3}>
-              <Typography>Loading notes...</Typography>
-            </Box>
-          ) : notes.length === 0 ? (
-            <Box textAlign="center" p={3}>
-              <Typography variant="body2" color="text.secondary">
-                No notes yet. Add the first note above.
-              </Typography>
-            </Box>
-          ) : (
-            <TableContainer 
-              component={Paper} 
-              variant="outlined"
-              sx={{
-                overflowX: 'auto',
-                borderRadius: '8px',
-                boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
-              }}
-            >
-              <Table sx={{ minWidth: 1200 }}>
-                <TableHead>
-                  <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
-                    <TableCell sx={{
+    <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      {/* Notes Table with Fixed Header */}
+      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+        {loading ? (
+          <TableContainer 
+            component={Paper} 
+            sx={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              overflowY: 'auto',
+              overflowX: 'auto',
+              borderRadius: 0,
+              border: '1px solid #EAEEF4',
+              boxShadow: 'none',
+              // Inbox-standard scrollbar
+              '&::-webkit-scrollbar': {
+                width: '8px',
+                height: '8px',
+              },
+              '&::-webkit-scrollbar-track': {
+                background: 'rgba(0, 0, 0, 0.02)',
+                borderRadius: '4px',
+              },
+              '&::-webkit-scrollbar-thumb': {
+                background: 'rgba(0, 0, 0, 0.15)',
+                borderRadius: '4px',
+                '&:hover': {
+                  background: 'rgba(0, 0, 0, 0.25)',
+                },
+              },
+              scrollbarWidth: 'thin',
+              scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+            }}
+          >
+            <Table stickyHeader sx={{ minWidth: 1200 }}>
+              <TableHead>
+                <TableRow sx={{ height: '32px', backgroundColor: 'background.paper' }}>
+                  {['Content', 'Author', 'Date', 'Actions'].map((header) => (
+                    <TableCell key={header} sx={{
                       fontSize: '0.75rem',
                       fontWeight: 600,
-                      color: '#374151',
+                      color: 'text.secondary',
                       textTransform: 'uppercase',
                       letterSpacing: '0.05em',
-                      borderBottom: '1px solid #E5E7EB',
-                      py: 1.5
+                      borderBottom: '1px solid',
+                      borderColor: 'divider',
+                      py: 1,
+                      backgroundColor: 'background.paper',
                     }}>
-                      Content
+                      {header}
                     </TableCell>
-                    <TableCell sx={{
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: '#374151',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      borderBottom: '1px solid #E5E7EB',
-                      py: 1.5
-                    }}>
-                      Author
+                  ))}
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <TableRow key={`skeleton-${index}`} sx={{ bgcolor: index % 2 === 0 ? 'background.paper' : '#FAFAFA' }}>
+                    <TableCell sx={{ py: 1.5 }}>
+                      <Skeleton variant="text" width="100%" height={20} />
+                      <Skeleton variant="text" width="60%" height={16} sx={{ mt: 0.5 }} />
                     </TableCell>
-                    <TableCell sx={{
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: '#374151',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      borderBottom: '1px solid #E5E7EB',
-                      py: 1.5
-                    }}>
-                      Date
+                    <TableCell sx={{ py: 1.5 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Skeleton variant="circular" width={32} height={32} />
+                        <Skeleton variant="text" width={100} height={20} />
+                      </Box>
+                    </TableCell>
+                    <TableCell sx={{ py: 1.5 }}>
+                      <Skeleton variant="text" width={120} height={20} />
+                    </TableCell>
+                    <TableCell sx={{ py: 1.5 }}>
+                      <Box sx={{ display: 'flex', gap: 1 }}>
+                        <Skeleton variant="circular" width={32} height={32} />
+                        <Skeleton variant="circular" width={32} height={32} />
+                      </Box>
                     </TableCell>
                   </TableRow>
-                </TableHead>
-                <TableBody>
-                  {notes.map((note) => (
-                    <TableRow 
-                      key={note.id}
-                      onClick={() => setViewNoteDialog({ open: true, note })}
-                      sx={{
-                        height: '48px',
-                        cursor: 'pointer',
-                        '&:hover': {
-                          backgroundColor: '#F9FAFB'
-                        }
-                      }}
-                    >
-                      <TableCell sx={{ py: 1, px: 2 }}>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        ) : notes.length === 0 ? (
+          <Box textAlign="center" py={8} sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                No notes yet
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Use the "Add Note" button to create your first note
+              </Typography>
+            </Box>
+          </Box>
+        ) : (
+          <TableContainer 
+            component={Paper}
+            sx={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              overflowY: 'auto',
+              overflowX: 'auto',
+              borderRadius: 0,
+              border: '1px solid #EAEEF4',
+              boxShadow: 'none',
+              // Inbox-standard scrollbar
+              '&::-webkit-scrollbar': {
+                width: '8px',
+                height: '8px',
+              },
+              '&::-webkit-scrollbar-track': {
+                background: 'rgba(0, 0, 0, 0.02)',
+                borderRadius: '4px',
+              },
+              '&::-webkit-scrollbar-thumb': {
+                background: 'rgba(0, 0, 0, 0.15)',
+                borderRadius: '4px',
+                '&:hover': {
+                  background: 'rgba(0, 0, 0, 0.25)',
+                },
+              },
+              scrollbarWidth: 'thin',
+              scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+            }}
+          >
+            <Table stickyHeader sx={{ minWidth: 1200 }}>
+              <TableHead>
+                <TableRow sx={{ height: '32px', backgroundColor: 'background.paper' }}>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: 'text.secondary',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid',
+                    borderColor: 'divider',
+                    py: 1,
+                    backgroundColor: 'background.paper',
+                  }}>
+                    Content
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: 'text.secondary',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid',
+                    borderColor: 'divider',
+                    py: 1,
+                    backgroundColor: 'background.paper',
+                  }}>
+                    Author
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: 'text.secondary',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid',
+                    borderColor: 'divider',
+                    py: 1,
+                    backgroundColor: 'background.paper',
+                  }}>
+                    Date
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: 'text.secondary',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid',
+                    borderColor: 'divider',
+                    py: 1,
+                    backgroundColor: 'background.paper',
+                  }}>
+                    Actions
+                  </TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {notes.map((note, index) => (
+                  <TableRow 
+                    key={note.id}
+                    sx={{
+                      bgcolor: index % 2 === 0 ? 'background.paper' : '#FAFAFA',
+                      '&:hover': {
+                        bgcolor: 'action.hover'
+                      }
+                    }}
+                  >
+                      <TableCell 
+                        sx={{ py: 1, px: 2, cursor: 'pointer' }}
+                        onClick={() => setViewNoteDialog({ open: true, note })}
+                      >
                         <Typography sx={{
                           variant: "body2",
                           color: "#111827",
@@ -414,14 +509,37 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                           {formatDate(note.timestamp)}
                         </Typography>
                       </TableCell>
+                      <TableCell sx={{ py: 1 }}>
+                        <Box display="flex" gap={1}>
+                          <Tooltip title="View Note">
+                            <IconButton
+                              size="small"
+                              onClick={() => setViewNoteDialog({ open: true, note })}
+                            >
+                              <ViewIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title="Delete Note">
+                            <IconButton
+                              size="small"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteNote(note.id);
+                              }}
+                              color="error"
+                            >
+                              <DeleteIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
+                      </TableCell>
                     </TableRow>
                   ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
-        </CardContent>
-      </Card>
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </Box>
 
       {/* View Note Dialog */}
       <Dialog
@@ -477,6 +595,11 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                       key={index}
                       label={file.name}
                       variant="outlined"
+                      component="a"
+                      href={file.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      clickable
                       sx={{ mr: 1, mb: 1 }}
                     />
                   ))}

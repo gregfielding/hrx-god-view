@@ -154,11 +154,7 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
           const baseTasks = showOnlyTodos
             ? tasks.filter(t => (t.classification || '').toLowerCase() === 'todo')
             : tasks;
-          if (process.env.NODE_ENV === 'development') {
-            console.log('🔍 TasksDashboard: Received tasks from service:', tasks);
-            console.log('🔍 TasksDashboard: Visible (after filter) tasks:', baseTasks);
-            console.log('🔍 TasksDashboard: Current user:', user.uid);
-          }
+          // Avoid console spam in dashboard contexts; keep logs out of the hot subscription path.
 
           // Load contact and company data for tasks that have associations
           const contactIds = new Set<string>();
@@ -197,25 +193,25 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
               const { db } = await import('../firebase');
               
               const contactIdsArray = Array.from(contactIds);
-              console.log('🔍 TasksDashboard: Contact IDs to query:', contactIdsArray);
+              // (debug removed)
               
               // Validate all IDs are strings
               const validContactIds = contactIdsArray.filter(id => typeof id === 'string' && id.length > 0);
-              if (validContactIds.length !== contactIdsArray.length) {
-                console.warn('🔍 TasksDashboard: Filtered out invalid contact IDs:', {
-                  original: contactIdsArray,
-                  valid: validContactIds
-                });
-              }
+              // (debug removed)
               
               if (validContactIds.length > 0) {
-                // Try to load from crm_contacts first, then crm_companies as fallback
+                const chunk = <T,>(arr: T[], size: number) =>
+                  Array.from({ length: Math.ceil(arr.length / size) }, (_, i) => arr.slice(i * size, i * size + size));
+
                 const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
-                const contactsQuery = query(contactsRef, where('__name__', 'in', validContactIds));
-                const contactsSnapshot = await getDocs(contactsQuery);
-                loadedContacts = contactsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                
-                console.log('🔍 TasksDashboard: Loaded contacts:', loadedContacts);
+                const chunks = chunk(validContactIds, 30); // Firestore 'in' supports max 30
+                const all: any[] = [];
+                for (const ids of chunks) {
+                  const contactsQuery = query(contactsRef, where('__name__', 'in', ids));
+                  const contactsSnapshot = await getDocs(contactsQuery);
+                  all.push(...contactsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+                }
+                loadedContacts = all;
               }
             } catch (error) {
               console.error('Error loading contacts for tasks:', error);
@@ -230,24 +226,25 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
               const { db } = await import('../firebase');
               
               const companyIdsArray = Array.from(companyIds);
-              console.log('🔍 TasksDashboard: Company IDs to query:', companyIdsArray);
+              // (debug removed)
               
               // Validate all IDs are strings
               const validCompanyIds = companyIdsArray.filter(id => typeof id === 'string' && id.length > 0);
-              if (validCompanyIds.length !== companyIdsArray.length) {
-                console.warn('🔍 TasksDashboard: Filtered out invalid company IDs:', {
-                  original: companyIdsArray,
-                  valid: validCompanyIds
-                });
-              }
+              // (debug removed)
               
               if (validCompanyIds.length > 0) {
+                const chunk = <T,>(arr: T[], size: number) =>
+                  Array.from({ length: Math.ceil(arr.length / size) }, (_, i) => arr.slice(i * size, i * size + size));
+
                 const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
-                const companiesQuery = query(companiesRef, where('__name__', 'in', validCompanyIds));
-                const companiesSnapshot = await getDocs(companiesQuery);
-                loadedCompanies = companiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                
-                console.log('🔍 TasksDashboard: Loaded companies:', loadedCompanies);
+                const chunks = chunk(validCompanyIds, 30); // Firestore 'in' supports max 30
+                const all: any[] = [];
+                for (const ids of chunks) {
+                  const companiesQuery = query(companiesRef, where('__name__', 'in', ids));
+                  const companiesSnapshot = await getDocs(companiesQuery);
+                  all.push(...companiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+                }
+                loadedCompanies = all;
               }
             } catch (error) {
               console.error('Error loading companies for tasks:', error);
@@ -276,7 +273,7 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
           const completedTasks = baseTasks.filter(task => task.status === 'completed');
           
           // Show all tasks in the main list, not just those due today
-          const allTasks = baseTasks.filter(task => task.status !== 'completed');
+          const allTasks = baseTasks.filter(task => task.status !== 'completed' && task.status !== 'dismissed');
           
           // Add overdue tasks to today's tasks
           const overdueTasks = baseTasks.filter(task => task.status === 'overdue');
@@ -371,35 +368,19 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
             mainDashboardTasks = showCompletedInTodos ? [...openSorted, ...completedSorted] : openSorted;
           }
           
-          console.log('🔍 TasksDashboard: Filtered tasks:', {
-            totalTasks: tasks.length,
-            mainDashboardTasks: mainDashboardTasks.length,
-            breakdown: {
-              overdue: dashboardOverdueTasks.length,
-              today: dashboardTodayTasks.length,
-              tomorrow: dashboardTomorrowTasks.length,
-              nextWeek: dashboardNextWeekTasks.length
-            },
-            mainDashboardTasksDetails: mainDashboardTasks.map(t => ({
-              id: t.id,
-              title: t.title,
-              status: t.status,
-              dueDate: t.dueDate,
-              assignedTo: t.assignedTo
-            }))
-          });
+          // (debug removed)
           
           const dashboardData: TaskDashboardData = {
             today: {
               totalTasks: todayTasksWithOverdue.length,
               completedTasks: todayTasksWithOverdue.filter(t => t.status === 'completed').length,
-              pendingTasks: todayTasksWithOverdue.filter(t => t.status !== 'completed').length,
+              pendingTasks: todayTasksWithOverdue.filter(t => t.status !== 'completed' && t.status !== 'dismissed').length,
               tasks: todayTasksWithOverdue
             },
             thisWeek: {
               totalTasks: thisWeekTasks.length,
               completedTasks: thisWeekTasks.filter(t => t.status === 'completed').length,
-              pendingTasks: thisWeekTasks.filter(t => t.status !== 'completed').length,
+              pendingTasks: thisWeekTasks.filter(t => t.status !== 'completed' && t.status !== 'dismissed').length,
               quotaProgress: {
                 percentage: thisWeekTasks.length > 0 ? (thisWeekTasks.filter(t => t.status === 'completed').length / thisWeekTasks.length) * 100 : 0,
                 completed: thisWeekTasks.filter(t => t.status === 'completed').length,
@@ -611,6 +592,87 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
       );
     }
 
+    const toDate = (t: any): Date | null => {
+      const dateStr = t.dueDate || t.scheduledDate;
+      if (!dateStr) return null;
+      const d = new Date(dateStr + (String(dateStr).length === 10 ? 'T00:00:00' : ''));
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+
+    const isSameDay = (a: Date, b: Date) =>
+      a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    // Dashboard To‑Dos UX: group into Overdue / Today / Upcoming when in To‑Dos mode
+    const shouldGroupTodos = showOnlyTodos;
+    const overdue: any[] = [];
+    const dueToday: any[] = [];
+    const upcoming: any[] = [];
+    const noDate: any[] = [];
+
+    if (shouldGroupTodos) {
+      tasks.forEach((t) => {
+        const d = toDate(t);
+        if (!d) {
+          noDate.push(t);
+          return;
+        }
+        const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+        if (day.getTime() < today.getTime()) overdue.push(t);
+        else if (isSameDay(day, today)) dueToday.push(t);
+        else upcoming.push(t);
+      });
+    }
+
+    const Section: React.FC<{ title: string; items: any[] }> = ({ title, items }) => {
+      if (items.length === 0) return null;
+      return (
+        <Box sx={{ mb: 1.5 }}>
+          <Typography
+            variant="caption"
+            sx={{ fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6B7280', px: 1 }}
+          >
+            {title}
+          </Typography>
+          <Box sx={{ mt: 1 }}>
+            {items.map((task) => (
+              <TaskCard
+                key={task.id}
+                task={task}
+                onTaskClick={handleTaskClick}
+                onQuickComplete={handleQuickComplete}
+                onEditTask={handleEditTask}
+                getStatusColor={getStatusColor}
+                getTaskStatusDisplay={getTaskStatusDisplay}
+                showCompany={entityType === 'contact' || entityType === 'salesperson'}
+                showDeal={entityType === 'deal' || entityType === 'salesperson'}
+                showContacts={true}
+                deal={entityType === 'deal' ? entity : undefined}
+                company={associatedCompany || preloadedCompany}
+                contacts={associatedContacts || preloadedContacts || []}
+                salespeople={preloadedSalespeople || []}
+                deals={preloadedDeals || []}
+                companies={preloadedCompanies || []}
+                variant="compact"
+              />
+            ))}
+          </Box>
+        </Box>
+      );
+    };
+
+    if (shouldGroupTodos) {
+      return (
+        <Box sx={{ px: 1, pb: 1 }}>
+          <Section title="Overdue" items={overdue} />
+          <Section title="Today" items={dueToday} />
+          <Section title="Upcoming" items={[...upcoming, ...noDate]} />
+        </Box>
+      );
+    }
+
     return (
       <Box>
         {tasks.map((task) => (
@@ -629,10 +691,9 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
             company={associatedCompany || preloadedCompany}
             contacts={associatedContacts || preloadedContacts || []}
             salespeople={preloadedSalespeople || []}
-            // Pass additional context data for association resolution
             deals={preloadedDeals || []}
             companies={preloadedCompanies || []}
-            variant="default"
+            variant={showOnlyTodos ? 'compact' : 'default'}
           />
         ))}
       </Box>
@@ -640,56 +701,75 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
   };
 
   return (
-    <Box>
-      {/* Combined Task List - Show all non-completed tasks for the main dashboard */}
-      {activeTab === 0 && (
-        <TasksList
-          tasks={dashboardData?.mainDashboardTasks || []}
-          emptyStateMessage={`No tasks for this ${entityType}`}
-          preloadedContacts={associatedContacts || preloadedContacts}
-          preloadedSalespeople={preloadedSalespeople}
-          preloadedCompany={associatedCompany || preloadedCompany}
-        />
-      )}
-      
-
-      {activeTab === 1 && (
-        <TasksList
-          tasks={(() => {
-            // Combine tasks but ensure uniqueness by ID
-            const thisWeekTasks = dashboardData?.thisWeek?.tasks || [];
-            const completedTasks = dashboardData?.completed?.tasks || [];
-            
-            // Create a Map to ensure unique tasks by ID
-            const uniqueTasksMap = new Map();
-            
-            // Add this week tasks first
-            thisWeekTasks.forEach(task => {
-              uniqueTasksMap.set(task.id, task);
-            });
-            
-            // Add completed tasks (will overwrite if same ID exists)
-            completedTasks.forEach(task => {
-              uniqueTasksMap.set(task.id, task);
-            });
-            
-            return Array.from(uniqueTasksMap.values());
-          })()}
-          emptyStateMessage="No tasks for this period"
-          preloadedContacts={associatedContacts || preloadedContacts}
-          preloadedSalespeople={preloadedSalespeople}
-          preloadedCompany={associatedCompany || preloadedCompany}
-        />
-      )}
-      {activeTab === 2 && (
-        <TasksList
-          tasks={dashboardData?.completed?.tasks || []}
-          emptyStateMessage="No completed tasks"
-          preloadedContacts={associatedContacts || preloadedContacts}
-          preloadedSalespeople={preloadedSalespeople}
-          preloadedCompany={associatedCompany || preloadedCompany}
-        />
-      )}
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+      {/* Scroll container for task items (so the widget content scrolls, not the whole page) */}
+      <Box
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          // Lighter/thinner scrollbar to match app standard
+          '&::-webkit-scrollbar': { width: '8px' },
+          '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)' },
+          '&::-webkit-scrollbar-thumb': {
+            background: 'rgba(0, 0, 0, 0.15)',
+            borderRadius: '4px',
+            '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+          },
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+        }}
+      >
+        {/* Combined Task List - Show all non-completed tasks for the main dashboard */}
+        {activeTab === 0 && (
+          <TasksList
+            tasks={dashboardData?.mainDashboardTasks || []}
+            emptyStateMessage={`No tasks for this ${entityType}`}
+            preloadedContacts={associatedContacts || preloadedContacts}
+            preloadedSalespeople={preloadedSalespeople}
+            preloadedCompany={associatedCompany || preloadedCompany}
+          />
+        )}
+        
+        {activeTab === 1 && (
+          <TasksList
+            tasks={(() => {
+              // Combine tasks but ensure uniqueness by ID
+              const thisWeekTasks = dashboardData?.thisWeek?.tasks || [];
+              const completedTasks = dashboardData?.completed?.tasks || [];
+              
+              // Create a Map to ensure unique tasks by ID
+              const uniqueTasksMap = new Map();
+              
+              // Add this week tasks first
+              thisWeekTasks.forEach(task => {
+                uniqueTasksMap.set(task.id, task);
+              });
+              
+              // Add completed tasks (will overwrite if same ID exists)
+              completedTasks.forEach(task => {
+                uniqueTasksMap.set(task.id, task);
+              });
+              
+              return Array.from(uniqueTasksMap.values());
+            })()}
+            emptyStateMessage="No tasks for this period"
+            preloadedContacts={associatedContacts || preloadedContacts}
+            preloadedSalespeople={preloadedSalespeople}
+            preloadedCompany={associatedCompany || preloadedCompany}
+          />
+        )}
+        {activeTab === 2 && (
+          <TasksList
+            tasks={dashboardData?.completed?.tasks || []}
+            emptyStateMessage="No completed tasks"
+            preloadedContacts={associatedContacts || preloadedContacts}
+            preloadedSalespeople={preloadedSalespeople}
+            preloadedCompany={associatedCompany || preloadedCompany}
+          />
+        )}
+      </Box>
 
       {/* Create Task Dialog */}
       {showCreateDialog && (

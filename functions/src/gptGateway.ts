@@ -1,7 +1,7 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { embedText } from './codeAware';
-import { logAIAction } from './utils/aiLogging';
+import { logger } from './utils/logger';
 import { withIdempotency } from './middleware/aiGuard';
 import { updateLocationAssociation as _ignore } from './updateLocationAssociation';
 import { performUpdate as performLocationUpdate } from './updateLocationAssociation';
@@ -491,7 +491,7 @@ async function executeCreateTask(raw: any, session: { tenantId: string; userId: 
 
   // Log
   try {
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'ai_task.created',
       targetType: 'task',
       targetId: ref.id,
@@ -520,7 +520,7 @@ async function executeUpdateLocationAssociation(raw: any, session: { tenantId: s
   };
   const result = await performLocationUpdate(payload as any);
   try {
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'ai_location.association_updated',
       targetType: payload.entityType,
       targetId: payload.entityId,
@@ -627,7 +627,7 @@ async function executeDraftEmail(raw: any, session: { tenantId: string; userId: 
   };
 
   try {
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'ai_email.draft_created',
       targetType: 'email_draft',
       targetId: contact?.id || raw.contactEmail || 'unknown_contact',
@@ -677,7 +677,7 @@ async function executeSummarizeEmailThread(raw: any, session: { tenantId: string
   }
 
   try {
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'ai_email.thread_summarized',
       targetType: 'email_thread',
       targetId: raw.threadId || raw.dealId || raw.contactId || 'unknown',

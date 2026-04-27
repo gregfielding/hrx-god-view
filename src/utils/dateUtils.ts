@@ -87,3 +87,83 @@ export const formatDateForDisplay = (dateString: string): string => {
   const date = new Date(dateString);
   return date.toLocaleDateString();
 };
+
+/**
+ * Format a calendar date for display without timezone shift.
+ * Use for dates that represent "a day" (e.g. job start date) rather than "a moment in time".
+ * When Firestore stores 2026-04-10T00:00:00.000Z, toLocaleDateString() shows 4/9 in US zones.
+ * This uses UTC date components so 4/10 displays correctly.
+ */
+export const formatCalendarDate = (dateValue: Date | { toDate: () => Date } | string | null | undefined): string => {
+  if (!dateValue) return '';
+  try {
+    let date: Date;
+    if (typeof dateValue === 'string') {
+      date = new Date(dateValue);
+    } else if (dateValue && typeof (dateValue as { toDate?: () => Date }).toDate === 'function') {
+      date = (dateValue as { toDate: () => Date }).toDate();
+    } else if (dateValue instanceof Date) {
+      date = dateValue;
+    } else {
+      date = new Date(dateValue as unknown as string | number | Date);
+    }
+    if (isNaN(date.getTime())) return '';
+    const m = date.getUTCMonth() + 1;
+    const d = date.getUTCDate();
+    const y = date.getUTCFullYear();
+    return `${m}/${d}/${y}`;
+  } catch {
+    return '';
+  }
+};
+
+/** Values that can be reduced to a local calendar YYYY-MM-DD (Firestore timestamps often use optional `toDate`). */
+export type CalendarDayLocalInput = string | Date | { toDate?: () => Date } | null | undefined;
+
+/**
+ * Return the calendar day (YYYY-MM-DD) for a shift date in the user's local timezone.
+ * Use for "same day" comparisons (e.g. double-book checks) so that a shift at 11 PM Saturday
+ * and a shift at 1 AM Sunday are not considered the same day when the user is in a timezone
+ * where Saturday 11 PM is still Saturday.
+ * - Plain date-only strings (YYYY-MM-DD) are returned as-is (no timezone applied).
+ * - Timestamps and date-time strings are interpreted as a moment and converted to the
+ *   local calendar day (getFullYear/getMonth/getDate).
+ */
+export function getCalendarDayLocal(shiftDate: CalendarDayLocalInput): string {
+  if (shiftDate == null || shiftDate === '') return '';
+  if (typeof shiftDate === 'string') {
+    const dateOnly = shiftDate.split('T')[0];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) return dateOnly;
+  }
+  try {
+    let date: Date;
+    if (typeof shiftDate === 'string') {
+      date = new Date(shiftDate);
+    } else if (shiftDate && typeof (shiftDate as { toDate?: () => Date }).toDate === 'function') {
+      date = (shiftDate as { toDate: () => Date }).toDate();
+    } else if (shiftDate instanceof Date) {
+      date = shiftDate;
+    } else {
+      return '';
+    }
+    if (isNaN(date.getTime())) return '';
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Parse a value (YYYY-MM-DD string, Timestamp, or Date) as a calendar date and return a Date at local midnight.
+ * Avoids UTC interpretation: "2026-03-13" stays March 13 in the user's timezone instead of becoming March 12.
+ */
+export function parseCalendarDateLocal(value: CalendarDayLocalInput): Date | undefined {
+  const dayStr = getCalendarDayLocal(value);
+  if (!dayStr || !/^\d{4}-\d{2}-\d{2}$/.test(dayStr)) return undefined;
+  const [y, m, d] = dayStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  return isNaN(date.getTime()) ? undefined : date;
+}

@@ -1,6 +1,7 @@
 import { onCall } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { HttpsError } from 'firebase-functions/v2/https';
+import { logger } from './utils/logger';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -475,8 +476,7 @@ export const updateTaskOptimized = onCall({
 
       // Create AI log for task update (with rate limiting)
       try {
-        const { logAIAction } = require('./aiLoggingOptimization');
-        await logAIAction({
+        await logger.aiEvent({
           userId: userId,
           actionType: 'task_updated',
           sourceModule: 'updateTaskOptimized',

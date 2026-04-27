@@ -36,6 +36,7 @@ import { Delete as DeleteIcon, Edit as EditIcon, Save as SaveIcon, Cancel as Can
 
 import { geocodeAddress } from '../../../utils/geocodeAddress';
 import { db } from '../../../firebase';
+import { ensureCityInSmartGroups } from '../../../services/smartGroupMetroSync';
 
 // Location type options
 const locationTypeOptions = [
@@ -65,6 +66,8 @@ const locationTypeOptions = [
   'Library',
   'School',
   'University',
+  'College',
+  'High School',
   'Government Building',
   'Police Station',
   'Fire Station',
@@ -103,6 +106,7 @@ const locationTypeOptions = [
   'Theater',
   'Stadium',
   'Arena',
+  'Fairgrounds',
   'Gym',
   'Fitness Center',
   'Spa',
@@ -128,6 +132,8 @@ const locationTypeOptions = [
   'Aquarium',
   'Park',
   'Recreation Center',
+  'Golf Course',
+  'Race Track',
   'Community Center',
   'Senior Center',
   'Day Care',
@@ -505,6 +511,7 @@ const LocationsTab: React.FC<LocationsTabProps> = ({ tenantId }) => {
         longitude: geo.lng,
         createdAt: serverTimestamp(),
       });
+      ensureCityInSmartGroups(tenantId, form.city || '', form.state || '').catch(() => {});
       setForm({ 
         nickname: '', 
         cid: '', 

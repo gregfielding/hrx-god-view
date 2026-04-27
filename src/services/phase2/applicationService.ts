@@ -11,11 +11,124 @@ import {
   orderBy,
   limit,
   serverTimestamp,
-  collectionGroup
+  collectionGroup,
+  type DocumentData,
 } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { Application, ApplicationFormData, ApplicationFilters, ApplicationSortOptions } from '../../types/phase2';
 import { safeToDate } from '../../utils/dateUtils';
+import type { ApplicationHiringLifecycle } from '../../types/applicationHiringLifecycle';
+
+import {
+  applyHiringLifecycleTimestampMetadata,
+  buildHiringLifecycleOnApplicationCreate,
+  buildHiringLifecycleOnStageUpdate,
+} from '../../shared/hiringLifecyclePatch';
+import {
+  firestoreSafeHiringLifecycle,
+  hiringLifecycleCoreFromApplicationData,
+} from '../../utils/hiringLifecycleFirestoreHelpers';
+
+/** Optional inputs for dual-writing `hiringLifecycle` on create (defaults are conservative). */
+export type TenantApplicationLifecycleWriteOptions = {
+  aiPrescreenInterviewRequired?: boolean;
+  profileEligible?: boolean;
+  profileBlockerCodes?: string[];
+  workerAiPrescreenInterviewCompletedAt?: unknown | null;
+};
+
+/**
+ * Sprint 3: canonical Firestore payload for new job-linked applications at
+ * `tenants/{tenantId}/applications`. Include `candidate.email` and `candidate.phone` whenever
+ * the form provides non-empty values (triggers and recruiters rely on them when present).
+ */
+export function buildJobLinkedTenantApplicationCreatePayload(
+  tenantId: string,
+  formData: ApplicationFormData,
+  createdBy: string,
+  lifecycleOptions?: TenantApplicationLifecycleWriteOptions,
+): Omit<Application, 'id'> {
+  const jo = String(formData.jobOrderId || '').trim();
+  if (!jo) {
+    throw new Error('jobOrderId is required for job-linked tenant applications');
+  }
+
+  const emailRaw = typeof formData.candidate?.email === 'string' ? formData.candidate.email.trim() : '';
+  const phoneRaw = typeof formData.candidate?.phone === 'string' ? formData.candidate.phone.trim() : '';
+
+  const candidate: Application['candidate'] = {
+    ...formData.candidate,
+    firstName: String(formData.candidate.firstName || '').trim(),
+    lastName: String(formData.candidate.lastName || '').trim(),
+  };
+  if (emailRaw) {
+    candidate.email = emailRaw;
+  }
+  if (phoneRaw) {
+    candidate.phone = phoneRaw;
+  }
+
+  const now = serverTimestamp();
+  const base: Omit<Application, 'id'> = {
+    ...formData,
+    tenantId,
+    jobOrderId: jo,
+    candidate,
+    stageChangedAt: now,
+    createdAt: now,
+    createdBy,
+    updatedAt: now,
+    updatedBy: createdBy,
+  };
+
+  const uid = typeof formData.userId === 'string' ? formData.userId.trim() : '';
+  if (uid) {
+    (base as Application & { userId?: string }).userId = uid;
+  }
+  const candId = typeof formData.candidateId === 'string' ? formData.candidateId.trim() : '';
+  if (candId) {
+    (base as Application & { candidateId?: string }).candidateId = candId;
+  }
+  const jobId = formData.jobId != null && String(formData.jobId).trim() ? String(formData.jobId).trim() : '';
+  if (jobId) {
+    (base as Application & { jobId?: string }).jobId = jobId;
+  }
+  const postId = formData.postId != null && String(formData.postId).trim() ? String(formData.postId).trim() : '';
+  if (postId) {
+    (base as Application & { postId?: string }).postId = postId;
+  }
+  const shiftId = formData.shiftId != null && String(formData.shiftId).trim() ? String(formData.shiftId).trim() : '';
+  if (shiftId) {
+    (base as Application & { shiftId?: string }).shiftId = shiftId;
+  }
+  if (Array.isArray(formData.shiftIds) && formData.shiftIds.length > 0) {
+    const ids = formData.shiftIds.map((x) => String(x).trim()).filter(Boolean);
+    if (ids.length) {
+      (base as Application & { shiftIds?: string[] }).shiftIds = ids;
+    }
+  }
+  if (Array.isArray(formData.selectedShifts) && formData.selectedShifts.length > 0) {
+    (base as Application & { selectedShifts?: unknown[] }).selectedShifts = formData.selectedShifts;
+  }
+
+  const { hiringLifecycle: hlCore } = buildHiringLifecycleOnApplicationCreate({
+    applicationStatus: String(formData.status ?? 'applied'),
+    aiPrescreenInterviewRequired: lifecycleOptions?.aiPrescreenInterviewRequired ?? false,
+    profileEligible: lifecycleOptions?.profileEligible ?? true,
+    profileBlockerCodes: lifecycleOptions?.profileBlockerCodes,
+    workerAiPrescreenInterviewCompletedAt: lifecycleOptions?.workerAiPrescreenInterviewCompletedAt,
+  });
+  const hiringLifecycleFull = applyHiringLifecycleTimestampMetadata({
+    core: hlCore,
+    previous: null,
+    nowIso: new Date().toISOString(),
+  });
+
+  return {
+    ...base,
+    hiringLifecycle: firestoreSafeHiringLifecycle(hiringLifecycleFull) as ApplicationHiringLifecycle,
+  };
+}
 
 export class ApplicationService {
   private static instance: ApplicationService;
@@ -28,37 +141,43 @@ export class ApplicationService {
   }
 
   /**
-   * Create a new application (standalone or job-linked)
+   * Create a new application (standalone or job-linked). Job-linked creates use tenant `applications` only (Sprint 3).
    */
   async createApplication(
     tenantId: string,
     formData: ApplicationFormData,
-    createdBy: string
+    createdBy: string,
+    lifecycleOptions?: TenantApplicationLifecycleWriteOptions,
   ): Promise<string> {
     try {
-      const applicationData: Omit<Application, 'id'> = {
-        ...formData,
-        tenantId,
-        stageChangedAt: serverTimestamp(),
-        createdAt: serverTimestamp(),
-        createdBy,
-        updatedAt: serverTimestamp(),
-        updatedBy: createdBy
-      };
-
       let docRef;
       if (formData.jobOrderId) {
-        // Job-linked application
-        docRef = await addDoc(
-          collection(db, 'tenants', tenantId, 'job_orders', formData.jobOrderId, 'applications'),
-          applicationData
-        );
+        const payload = buildJobLinkedTenantApplicationCreatePayload(tenantId, formData, createdBy, lifecycleOptions);
+        docRef = await addDoc(collection(db, 'tenants', tenantId, 'applications'), payload);
       } else {
-        // Standalone application (talent pool)
-        docRef = await addDoc(
-          collection(db, 'tenants', tenantId, 'applications'),
-          applicationData
-        );
+        const { hiringLifecycle: hlCore } = buildHiringLifecycleOnApplicationCreate({
+          applicationStatus: String(formData.status ?? 'applied'),
+          aiPrescreenInterviewRequired: lifecycleOptions?.aiPrescreenInterviewRequired ?? false,
+          profileEligible: lifecycleOptions?.profileEligible ?? true,
+          profileBlockerCodes: lifecycleOptions?.profileBlockerCodes,
+          workerAiPrescreenInterviewCompletedAt: lifecycleOptions?.workerAiPrescreenInterviewCompletedAt,
+        });
+        const hiringLifecycleFull = applyHiringLifecycleTimestampMetadata({
+          core: hlCore,
+          previous: null,
+          nowIso: new Date().toISOString(),
+        });
+        const applicationData: Omit<Application, 'id'> = {
+          ...formData,
+          tenantId,
+          stageChangedAt: serverTimestamp(),
+          createdAt: serverTimestamp(),
+          createdBy,
+          updatedAt: serverTimestamp(),
+          updatedBy: createdBy,
+          hiringLifecycle: firestoreSafeHiringLifecycle(hiringLifecycleFull) as ApplicationHiringLifecycle,
+        };
+        docRef = await addDoc(collection(db, 'tenants', tenantId, 'applications'), applicationData);
       }
 
       return docRef.id;
@@ -69,7 +188,8 @@ export class ApplicationService {
   }
 
   /**
-   * Update an existing application
+   * Update an existing application at `tenants/{tenantId}/applications/{applicationId}`.
+   * `jobOrderId` is ignored (kept for call-site compatibility).
    */
   async updateApplication(
     tenantId: string,
@@ -79,20 +199,33 @@ export class ApplicationService {
     jobOrderId?: string
   ): Promise<void> {
     try {
-      let applicationRef;
-      if (jobOrderId) {
-        // Job-linked application
-        applicationRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'applications', applicationId);
-      } else {
-        // Standalone application
-        applicationRef = doc(db, 'tenants', tenantId, 'applications', applicationId);
+      void jobOrderId;
+      const applicationRef = doc(db, 'tenants', tenantId, 'applications', applicationId);
+      const snap = await getDoc(applicationRef);
+      if (!snap.exists()) {
+        throw new Error(`Application not found: ${applicationId}`);
       }
 
-      await updateDoc(applicationRef, {
+      const prevData = snap.data() as Record<string, unknown>;
+      const payload: Record<string, unknown> = {
         ...updates,
         updatedAt: serverTimestamp(),
-        updatedBy
-      });
+        updatedBy,
+      };
+      if (updates.status !== undefined) {
+        const prevCore = hiringLifecycleCoreFromApplicationData(prevData);
+        const { hiringLifecycle: core } = buildHiringLifecycleOnStageUpdate({
+          nextLegacyStatus: String(updates.status),
+        });
+        const full = applyHiringLifecycleTimestampMetadata({
+          core,
+          previous: prevCore,
+          nowIso: new Date().toISOString(),
+        });
+        payload.hiringLifecycle = firestoreSafeHiringLifecycle(full);
+      }
+
+      await updateDoc(applicationRef, payload as DocumentData);
     } catch (error) {
       console.error('Error updating application:', error);
       throw error;
@@ -100,7 +233,8 @@ export class ApplicationService {
   }
 
   /**
-   * Update application stage
+   * Update application stage at `tenants/{tenantId}/applications/{applicationId}`.
+   * `jobOrderId` is ignored (kept for call-site compatibility).
    */
   async updateApplicationStage(
     tenantId: string,
@@ -110,18 +244,30 @@ export class ApplicationService {
     jobOrderId?: string
   ): Promise<void> {
     try {
-      let applicationRef;
-      if (jobOrderId) {
-        applicationRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'applications', applicationId);
-      } else {
-        applicationRef = doc(db, 'tenants', tenantId, 'applications', applicationId);
+      void jobOrderId;
+      const applicationRef = doc(db, 'tenants', tenantId, 'applications', applicationId);
+      const snap = await getDoc(applicationRef);
+      if (!snap.exists()) {
+        throw new Error(`Application not found: ${applicationId}`);
       }
+
+      const prevData = snap.data() as Record<string, unknown>;
+      const prevCore = hiringLifecycleCoreFromApplicationData(prevData);
+      const { hiringLifecycle: core } = buildHiringLifecycleOnStageUpdate({
+        nextLegacyStatus: String(newStage),
+      });
+      const full = applyHiringLifecycleTimestampMetadata({
+        core,
+        previous: prevCore,
+        nowIso: new Date().toISOString(),
+      });
 
       await updateDoc(applicationRef, {
         status: newStage,
         stageChangedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-        updatedBy
+        updatedBy,
+        hiringLifecycle: firestoreSafeHiringLifecycle(full),
       });
     } catch (error) {
       console.error('Error updating application stage:', error);
@@ -130,7 +276,8 @@ export class ApplicationService {
   }
 
   /**
-   * Get application by ID
+   * Get application by id from `tenants/{tenantId}/applications/{applicationId}`.
+   * `jobOrderId` is ignored (kept for call-site compatibility).
    */
   async getApplication(
     tenantId: string,
@@ -138,19 +285,15 @@ export class ApplicationService {
     jobOrderId?: string
   ): Promise<Application | null> {
     try {
-      let applicationRef;
-      if (jobOrderId) {
-        applicationRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'applications', applicationId);
-      } else {
-        applicationRef = doc(db, 'tenants', tenantId, 'applications', applicationId);
+      void jobOrderId;
+      const tenantRef = doc(db, 'tenants', tenantId, 'applications', applicationId);
+      const tenantDoc = await getDoc(tenantRef);
+
+      if (tenantDoc.exists()) {
+        const data = tenantDoc.data() as Omit<Application, 'id'>;
+        return { id: tenantDoc.id, ...data };
       }
 
-      const applicationDoc = await getDoc(applicationRef);
-      
-      if (applicationDoc.exists()) {
-        const data = applicationDoc.data() as Omit<Application, 'id'>;
-        return { id: applicationDoc.id, ...data };
-      }
       return null;
     } catch (error) {
       console.error('Error getting application:', error);
@@ -168,13 +311,11 @@ export class ApplicationService {
     limitCount?: number
   ): Promise<Application[]> {
     try {
-      // Build base query for collection group (searches both standalone and job-linked)
       let q = query(
         collectionGroup(db, 'applications'),
         where('tenantId', '==', tenantId)
       );
 
-      // Apply filters
       if (filters.status) {
         q = query(q, where('status', '==', filters.status));
       }
@@ -188,35 +329,33 @@ export class ApplicationService {
         q = query(q, where('rating', '==', filters.rating));
       }
 
-      // Apply sorting
       const sortField = sortOptions.field === 'candidate.lastName' ? 'candidate.lastName' : sortOptions.field;
       q = query(q, orderBy(sortField, sortOptions.direction));
 
-      // Apply limit
       if (limitCount) {
         q = query(q, limit(limitCount));
       }
 
       const querySnapshot = await getDocs(q);
-      let applications = querySnapshot.docs.map(doc => {
-        const data = doc.data() as Omit<Application, 'id'>;
-        return { id: doc.id, ...data };
+      let applications = querySnapshot.docs.map((d) => {
+        const data = d.data() as Omit<Application, 'id'>;
+        return { id: d.id, ...data };
       });
 
-      // Apply client-side filters that can't be done in Firestore
       if (filters.search) {
         const searchTerm = filters.search.toLowerCase();
-        applications = applications.filter(app => 
-          app.candidate.firstName.toLowerCase().includes(searchTerm) ||
-          app.candidate.lastName.toLowerCase().includes(searchTerm) ||
-          app.candidate.email?.toLowerCase().includes(searchTerm) ||
-          app.notes?.toLowerCase().includes(searchTerm)
+        applications = applications.filter(
+          (app) =>
+            app.candidate.firstName.toLowerCase().includes(searchTerm) ||
+            app.candidate.lastName.toLowerCase().includes(searchTerm) ||
+            app.candidate.email?.toLowerCase().includes(searchTerm) ||
+            app.notes?.toLowerCase().includes(searchTerm)
         );
       }
 
       if (filters.tags && filters.tags.length > 0) {
-        applications = applications.filter(app => 
-          app.tags && filters.tags!.some(tag => app.tags!.includes(tag))
+        applications = applications.filter(
+          (app) => app.tags && filters.tags!.some((tag) => app.tags!.includes(tag))
         );
       }
 
@@ -228,7 +367,7 @@ export class ApplicationService {
   }
 
   /**
-   * Get applications for a specific job order
+   * Job-linked applications for a job order: tenant `applications` only, `jobOrderId` equality + `createdAt` desc when indexed.
    */
   async getApplicationsByJobOrder(
     tenantId: string,
@@ -236,20 +375,32 @@ export class ApplicationService {
     status?: Application['status']
   ): Promise<Application[]> {
     try {
-      let q = query(
-        collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'applications'),
-        orderBy('createdAt', 'desc')
-      );
-
-      if (status) {
-        q = query(q, where('status', '==', status));
+      const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+      let snap;
+      try {
+        snap = await getDocs(
+          query(applicationsRef, where('jobOrderId', '==', jobOrderId), orderBy('createdAt', 'desc')),
+        );
+      } catch {
+        snap = await getDocs(query(applicationsRef, where('jobOrderId', '==', jobOrderId)));
       }
 
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => {
-        const data = doc.data() as Omit<Application, 'id'>;
-        return { id: doc.id, ...data };
+      let list: Application[] = snap.docs.map((d) => {
+        const data = d.data() as Omit<Application, 'id'>;
+        return { id: d.id, ...data };
       });
+
+      if (status) {
+        list = list.filter((a) => a.status === status);
+      }
+
+      list.sort((a, b) => {
+        const ta = safeToDate((a as Application & { createdAt?: unknown }).createdAt)?.getTime() ?? 0;
+        const tb = safeToDate((b as Application & { createdAt?: unknown }).createdAt)?.getTime() ?? 0;
+        return tb - ta;
+      });
+
+      return list;
     } catch (error) {
       console.error('Error getting applications by job order:', error);
       throw error;
@@ -257,19 +408,16 @@ export class ApplicationService {
   }
 
   /**
-   * Delete an application
+   * Delete application at `tenants/{tenantId}/applications/{applicationId}`.
+   * `jobOrderId` is ignored (kept for call-site compatibility).
    */
-  async deleteApplication(
-    tenantId: string,
-    applicationId: string,
-    jobOrderId?: string
-  ): Promise<void> {
+  async deleteApplication(tenantId: string, applicationId: string, jobOrderId?: string): Promise<void> {
     try {
-      let applicationRef;
-      if (jobOrderId) {
-        applicationRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'applications', applicationId);
-      } else {
-        applicationRef = doc(db, 'tenants', tenantId, 'applications', applicationId);
+      void jobOrderId;
+      const applicationRef = doc(db, 'tenants', tenantId, 'applications', applicationId);
+      const snap = await getDoc(applicationRef);
+      if (!snap.exists()) {
+        throw new Error(`Application not found: ${applicationId}`);
       }
 
       await deleteDoc(applicationRef);
@@ -289,7 +437,7 @@ export class ApplicationService {
   }> {
     try {
       const applications = await this.getApplications(tenantId);
-      
+
       const stats = {
         total: applications.length,
         byStatus: {
@@ -299,12 +447,12 @@ export class ApplicationService {
           offer: 0,
           hired: 0,
           rejected: 0,
-          withdrawn: 0
+          withdrawn: 0,
         } as Record<Application['status'], number>,
-        bySource: {} as Record<string, number>
+        bySource: {} as Record<string, number>,
       };
 
-      applications.forEach(app => {
+      applications.forEach((app) => {
         stats.byStatus[app.status]++;
         if (app.source) {
           stats.bySource[app.source] = (stats.bySource[app.source] || 0) + 1;
@@ -319,7 +467,6 @@ export class ApplicationService {
   }
 }
 
-// Convenience function to get service instance
 export const getApplicationService = (): ApplicationService => {
   return ApplicationService.getInstance();
 };

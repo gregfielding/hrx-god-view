@@ -1,7 +1,7 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
+
     // ============================================================================
     // PHASE 2 - CLAIMS-BASED AUTHORIZATION (NEW)
     // ============================================================================
@@ -14,22 +14,562 @@ service cloud.firestore {
     }
 
     match /tenants/{tenantId} {
-      allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+      // Allow authenticated users with proper roles
+      allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId));
+      // Allow unauthenticated reads (needed for public job board to access job_postings subcollection)
+      allow read: if true;
       allow write: if request.auth != null && isTenantAdmin(tenantId);
 
       match /job_orders/{doc} {
-        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
-        allow create, update, delete: if request.auth != null && isTenantAdmin(tenantId);
+        // Allow authenticated users with proper roles or tenant assignment (e.g. recruiter in user doc)
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId));
+        // Allow unauthenticated reads for public job board (to load gig job orders)
+        // Client-side filtering will handle visibility
+        allow read: if true;
+        allow create, update, delete: if request.auth != null && (isTenantAdmin(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager']));
+        
+        // Shifts subcollection
+        match /shifts/{shiftId} {
+          allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId));
+          allow create, update, delete: if request.auth != null && (isTenantAdmin(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager']));
+          // Allow public read for job board display
+          allow read: if true;
+        }
       }
 
       match /applications/{doc} {
+        // Temporarily allow all authenticated users to read (TODO: fix custom claims to include tenantId)
+        allow read: if request.auth != null;
+        allow create, update, delete: if request.auth != null && (isTenantAdmin(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role in ['Recruiter','Manager']));
+        // Allow applicants to create/update their own applications
+        allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+        allow update: if request.auth != null && resource.data.userId == request.auth.uid;
+      }
+
+      match /applicationDrafts/{doc} {
         allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
         allow create, update, delete: if request.auth != null && (isTenantAdmin(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role in ['Recruiter','Manager']));
+        // Allow applicants to create/update/delete their own drafts
+        allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+        allow update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
       }
 
       match /userGroups/{doc} {
-        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId));
         allow write: if request.auth != null && (isTenantAdmin(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role == 'Recruiter'));
+        // Allow users to add themselves to memberIds array (for auto-add on application)
+        // Check that only memberIds and updatedAt are being modified
+        allow update: if request.auth != null && 
+                         request.resource.data.keys().hasOnly(['memberIds', 'updatedAt', 'title', 'description', 'createdAt', 'createdBy', 'tenantId']) &&
+                         request.resource.data.memberIds is list && 
+                         request.auth.uid in request.resource.data.memberIds;
+      }
+
+      match /savedSmartGroups/{doc} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isTenantAdmin(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role == 'Recruiter'));
+      }
+
+      // Messaging Sequences — per-sequence targeting config (label, active, accounts, worker types, occurrence).
+      // Written from Settings → Messaging Sequences; read by the cloud-function dispatcher (Phase 2) plus the UI.
+      match /messagingSequences/{doc} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId));
+        allow create, update, delete: if request.auth != null && (isTenantAdmin(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager']));
+      }
+
+      // Phase 1 Readiness items (recruiter-ownership-model.md §13).
+      // Reads: tenant recruiters + the worker the item is about. Writes: callable /
+      // trigger run as admin (bypass rules); client writes are narrow — recruiters
+      // can update the `ownership` field for claim/reassign/release flows, and the
+      // owning worker can update `status` on items where `actor == 'worker'`.
+      match /employeeReadinessItems/{doc} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          request.auth.uid == resource.data.workerUid
+        );
+        // Recruiters / Managers at the tenant can claim / reassign / release via
+        // the ownership field. Worker-actor items also let the worker flip status.
+        allow update: if request.auth != null && (
+          isTenantAdmin(tenantId) ||
+          (request.auth.token.roles != null && tenantId in request.auth.token.roles &&
+           request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager']) ||
+          (request.auth.uid == resource.data.workerUid && resource.data.actor == 'worker')
+        );
+        // Create + delete are server-only (Cloud Functions run with admin privileges
+        // which bypass these rules; client SDK writes blocked).
+        allow create, delete: if false;
+      }
+
+      match /assignmentReadinessItems/{doc} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          request.auth.uid == resource.data.workerUid
+        );
+        allow update: if request.auth != null && (
+          isTenantAdmin(tenantId) ||
+          (request.auth.token.roles != null && tenantId in request.auth.token.roles &&
+           request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager']) ||
+          (request.auth.uid == resource.data.workerUid && resource.data.actor == 'worker')
+        );
+        allow create, delete: if false;
+      }
+      
+      match /job_postings/{doc} {
+        // Allow anyone to read job postings (client-side filtering handles visibility)
+        // This is necessary for public job board to work when not logged in
+        allow read: if true;
+        // Only admins and recruiters can write
+        allow write: if request.auth != null && (isTenantAdmin(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager']));
+      }
+
+      // Recruiter accounts (customer hub: companies, contacts, job orders, etc.)
+      match /accounts/{accountId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId));
+        allow create, update, delete: if request.auth != null && (
+          isTenantAdmin(tenantId) ||
+          (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager']) ||
+          (isAssignedToTenant(tenantId) && hasRecruiterAccess())
+        );
+        // Account file uploads (e.g. contracts)
+        match /uploads/{uploadId} {
+          allow read, create, update, delete: if request.auth != null && (
+            isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId)
+          );
+        }
+        // Location-level order defaults (overrides per worksite)
+        match /location_defaults/{locationKey} {
+          allow read, create, update, delete: if request.auth != null && (
+            isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId)
+          );
+        }
+        // Location-level file uploads (docs have locationKey field)
+        match /location_uploads/{uploadId} {
+          allow read, create, update, delete: if request.auth != null && (
+            isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId)
+          );
+        }
+      }
+      
+      // Assignments subcollection - BULLETPROOF RULES
+      match /assignments/{assignmentId} {
+        // READ Rules: Worker can read own assignments, tenant members can read all tenant assignments.
+        // Worker/candidate checks first so isHRX/hasTenantRole (which may touch user doc) are not required for own assignment.
+        allow read: if request.auth != null && (
+          resource.data.userId == request.auth.uid ||
+          resource.data.candidateId == request.auth.uid ||
+          isHRX() ||
+          (request.auth.token.roles != null && hasTenantRole(tenantId, request.auth.token.roles)) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5)
+        );
+        
+        // CREATE Rules: Only recruiters/managers/admins can create assignments
+        allow create: if request.auth != null && (
+          isHRX() ||
+          (request.auth.token.roles != null && 
+           tenantId in request.auth.token.roles && 
+           request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager', 'Admin'])
+        ) &&
+        // Validate tenantId matches path
+        request.resource.data.tenantId == tenantId &&
+        // Validate required denormalized fields exist
+        request.resource.data.userId != null &&
+        request.resource.data.candidateId != null &&
+        request.resource.data.firstName != null &&
+        request.resource.data.lastName != null &&
+        request.resource.data.companyId != null &&
+        request.resource.data.companyName != null &&
+        request.resource.data.locationId != null &&
+        (request.resource.data.locationNickname != null || request.resource.data.worksiteName != null) &&
+        request.resource.data.latitude != null &&
+        request.resource.data.longitude != null &&
+        request.resource.data.jobOrderType != null &&
+        request.resource.data.status != null &&
+        request.resource.data.startDate != null &&
+        request.resource.data.payRate != null &&
+        request.resource.data.timesheetMode != null &&
+        request.resource.data.createdBy != null &&
+        request.resource.data.createdAt != null;
+        
+        // UPDATE Rules: Recruiters/managers/admins can update, workers can only update own status when active
+        allow update: if request.auth != null && (
+          // Recruiters/Managers/Admins can update anything
+          isHRX() ||
+          (request.auth.token.roles != null && 
+           tenantId in request.auth.token.roles && 
+           request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager', 'Admin']) ||
+          // Workers can only update status and notes on their own assignments when in a worker-actionable state
+          (resource.data.userId == request.auth.uid &&
+           resource.data.status in ['pending', 'proposed', 'confirmed', 'in_progress', 'active'] &&
+           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'notes', 'updatedAt', 'updatedBy']))
+        ) &&
+        // Always enforce tenantId cannot be changed
+        request.resource.data.tenantId == resource.data.tenantId;
+        
+        // DELETE Rules: Only admins can delete assignments
+        allow delete: if request.auth != null && (
+          isHRX() ||
+          (request.auth.token.roles != null && 
+           tenantId in request.auth.token.roles && 
+           request.auth.token.roles[tenantId].role == 'Admin')
+        );
+      }
+
+      // Placements: recruiter staging (placed but not yet offered - no Assignment created)
+      match /placements/{placementId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId));
+        allow create, update: if request.auth != null && (
+          isHRX() ||
+          (request.auth.token.roles != null && tenantId in request.auth.token.roles && 
+           request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager', 'Admin'])
+        ) && request.resource.data.tenantId == tenantId;
+        allow delete: if request.auth != null && (
+          isHRX() ||
+          (request.auth.token.roles != null && tenantId in request.auth.token.roles && 
+           request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager', 'Admin'])
+        );
+      }
+
+      // Onboarding (Phase 1A): entities, requirement_packages, onboarding_instances
+      match /entities/{entityId} {
+        // Employment V2 / user profile: same tenant staff access as entity_employments (claims OR assignment OR level 5+)
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5)
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+        match /private/{privateDoc} {
+          allow read, write: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+        }
+      }
+      match /entity_cost_centers/{costCenterId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /entity_jurisdictions/{jurisdictionId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /compliance_documents/{docId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /workers_comp/{wcId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /workers_comp_class_codes/{classCodeId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /workers_comp_rate_sets/{rateSetId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      // Master WC rates by state+code (single source of truth); job titles link for auto-apply. Levels 5,6,7 (Recruiter/Manager/Admin) can manage.
+      match /workers_comp_rates/{rateId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (
+          isHRX() ||
+          isTenantAdmin(tenantId) ||
+          (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager', 'Admin'])
+        );
+      }
+      match /requirement_packages/{packageId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /onboarding_instances/{instanceId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /worker_onboarding/{pipelineId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /onboarding_item_library/{itemId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /onboarding_documents/{docId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      // E-Verify cases (HRX E-Verify Master Plan) - tenant staff same as Employment tab; workers use everify_cases_public.
+      match /everify_cases/{caseId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5)
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+        match /events/{eventId} {
+          allow read: if request.auth != null && (
+            isHRX() ||
+            hasTenantRole(tenantId, request.auth.token.roles) ||
+            isAssignedToTenant(tenantId) ||
+            hasSecurityLevel(tenantId, 5)
+          );
+          allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+        }
+      }
+      // E-Verify public mirror: worker-safe (tenantId, userId, caseId, public, updatedAt). Workers read own;
+      // tenant staff same read path as everify_cases (JWT role OR assignment OR securityLevel 5+).
+      match /everify_cases_public/{caseId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+
+      // Everee payroll (HRX Everee Master Plan) - admins full; workers read own linkage
+      match /everee_workers/{workerDocId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          resource.data.firebaseUid == request.auth.uid
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /everee_embed_sessions/{sessionId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /everee_webhook_events/{eventId} {
+        allow read, write: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /everee_pay_history_cache/{cacheId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+
+      // User employments (E-Verify trigger source) - recruiters+ can create/update (same as E-Verify callable); delete admin/HRX only
+      match /user_employments/{employmentId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update: if request.auth != null && (
+          isHRX() ||
+          isTenantAdmin(tenantId) ||
+          (request.auth.token.roles != null &&
+            tenantId in request.auth.token.roles &&
+            request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager', 'Admin'])
+        );
+        allow delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+
+      // Entity employments (Phase 1 onboarding / Employment tab) - recruiters (levels 5–7) read; workers read own; admin/HRX write
+      match /entity_employments/{employmentId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+
+      // Account Workforce (Phase 2 of docs/WORKFORCE_DOMAIN_MODEL.md) —
+      // durable (account, worker) relationship records. Doc id is composite
+      // `{accountId}__{workerId}`. ALL writes flow through server-side
+      // triggers / the setAccountWorkforceStatus callable (admin SDK
+      // bypasses these rules) — direct client writes are blocked so the
+      // validation + cascade logic can't be sidestepped.
+      match /account_workforce/{docId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          hasSecurityLevel(tenantId, 5) ||
+          resource.data.workerId == request.auth.uid
+        );
+        allow create, update, delete: if false;
+      }
+
+      // Worker compliance items (Compliance tab / Employment tab) - same read as entity_employments
+      match /worker_compliance_items/{itemId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+
+      // I-9 supporting uploads metadata (Storage bytes: worker self-service + staff via signed URL callable only)
+      match /worker_i9_supporting_documents/{documentId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
+          resource.data.userId == request.auth.uid
+        );
+        // Pre-upload rows are created via callable (Admin SDK). Client-side: worker may create only with a real Storage path.
+        allow create: if request.auth != null &&
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.tenantId == tenantId &&
+          request.resource.data.storagePath.matches('^i9_docs/' + tenantId + '/' + request.auth.uid + '/.+');
+        allow update: if request.auth != null && (
+          (
+            resource.data.userId == request.auth.uid &&
+            request.resource.data.userId == resource.data.userId &&
+            request.resource.data.tenantId == resource.data.tenantId &&
+            request.resource.data.reviewedBy == resource.data.reviewedBy &&
+            request.resource.data.reviewedAt == resource.data.reviewedAt &&
+            request.resource.data.rejectionReason == resource.data.rejectionReason &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'storagePath', 'status', 'uploadedAt', 'updatedAt', 'documentType',
+              'uploadedFileName', 'uploadedContentType',
+              'requestedForEntityId', 'requestedFromAssignmentId', 'lastUsedForEntityId', 'lastUsedAt'
+            ])
+          ) ||
+          (
+            resource.data.userId == request.auth.uid &&
+            request.resource.data.userId == resource.data.userId &&
+            request.resource.data.tenantId == resource.data.tenantId &&
+            resource.data.status == 'rejected' &&
+            request.resource.data.status == 'pending_review' &&
+            request.resource.data.storagePath.matches('^i9_docs/' + tenantId + '/' + request.auth.uid + '/.+') &&
+            request.resource.data.rejectionReason == null &&
+            request.resource.data.reviewedBy == null &&
+            request.resource.data.reviewedAt == null &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'storagePath', 'status', 'uploadedAt', 'updatedAt', 'documentType',
+              'uploadedFileName', 'uploadedContentType',
+              'requestedForEntityId', 'requestedFromAssignmentId', 'lastUsedForEntityId', 'lastUsedAt',
+              'rejectionReason', 'reviewedAt', 'reviewedBy'
+            ])
+          ) ||
+          (
+            (isHRX() ||
+              hasTenantRole(tenantId, request.auth.token.roles) ||
+              isAssignedToTenant(tenantId) ||
+              hasSecurityLevel(tenantId, 5)) &&
+            request.resource.data.userId == resource.data.userId &&
+            request.resource.data.tenantId == resource.data.tenantId &&
+            request.resource.data.storagePath == resource.data.storagePath &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'reviewedAt', 'reviewedBy', 'rejectionReason', 'retainUntil',
+              'lastUsedForEntityId', 'lastUsedAt', 'updatedAt',
+              'documentReview'
+            ])
+          )
+        );
+        allow delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+
+      // Worker payroll accounts (Employment tab) - same read as entity_employments
+      match /worker_payroll_accounts/{accountId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+
+      // Onboarding automation audit (Cloud Functions write); workers read own rows for Employment V2 narrative
+      match /onboarding_automation_dispatch/{dispatchId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if false;
+      }
+
+      // HRX Signatures Spec: document templates + bundles (read tenant roles; write admin/HRX)
+      match /document_templates/{docTemplateId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /document_bundles/{bundleId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+
+      // Phase 1C: Signature envelopes (write via Cloud Functions only)
+      match /signature_envelopes/{envelopeId} {
+        // Read: tenant staff (Employment tab / assignment packages) + envelope owner (signer)
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
+          resource.data.userId == request.auth.uid
+        );
+        // Write: Cloud Functions only (Admin SDK bypasses rules)
+        allow create, update, delete: if false;
+        match /events/{eventId} {
+          allow read: if request.auth != null && (
+            isHRX() ||
+            hasTenantRole(tenantId, request.auth.token.roles) ||
+            isAssignedToTenant(tenantId) ||
+            hasSecurityLevel(tenantId, 5) ||
+            get(/databases/$(database)/documents/tenants/$(tenantId)/signature_envelopes/$(envelopeId)).data.userId == request.auth.uid
+          );
+          allow create, update, delete: if false;
+        }
+      }
+      // Signing sessions: read signer + admins; write backend only
+      match /signature_sessions/{sessionId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if false;
+      }
+      // Worker-safe envelope mirror (status + optional download link)
+      match /signature_envelopes_public/{envelopeId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if false;
       }
     }
 
@@ -47,6 +587,15 @@ service cloud.firestore {
       allow read: if isAuthenticated() && hasCRMAccess() && belongsToSameTenant(resource.data);
       // Allow high-security-level users to update user profiles
       allow write: if isAuthenticated() && isHighSecurityLevel();
+      // Recruiters / tenant staff (security >= 4 in the target tenant) may set only `avatar` on
+      // another user's doc — matches UserProfile `canEditRecordAvatar` (storage already allows upload).
+      allow update: if isAuthenticated() &&
+        request.auth.uid != userId &&
+        (
+          (resource.data.activeTenantId != null && hasSecurityLevel(resource.data.activeTenantId, 4)) ||
+          (resource.data.activeTenantId == null && resource.data.tenantId != null && hasSecurityLevel(resource.data.tenantId, 4))
+        ) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['avatar']);
       // Unified Association Service access for salespeople
       allow read: if isAuthenticated() && request.auth.uid != null;
       
@@ -59,7 +608,14 @@ service cloud.firestore {
       match /notes/{noteId} {
         allow read, write: if isAuthenticated() && request.auth.uid == userId;
         allow read, write: if isHRX();
-        allow read, write: if isTenantAdmin(resource.data.tenantId);
+        // Internal team (security level 5, 6, 7) can add notes to any user in their tenant
+        function targetUserTenantId() {
+          let target = get(/databases/$(database)/documents/users/$(userId)).data;
+          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+        }
+        allow read, create, update, delete: if isAuthenticated() && (
+          targetUserTenantId() != null && hasSecurityLevel(targetUserTenantId(), 5)
+        );
       }
       
       match /moments/{momentId} {
@@ -85,6 +641,135 @@ service cloud.firestore {
         allow read, write: if isHRX();
         allow read, write: if isTenantAdmin(resource.data.tenantId);
       }
+
+      // --- CERTIFICATION RECORDS (Phase 1 canonical worker certs) ---
+      //
+      // DUAL-WRITE ROLE POLICY (explicit choice — Phase 1C):
+      // **Option B (current):** Tenant staff must be **security level >= 5** on the worker's tenant
+      // to create/update/delete **another user's** `certification_records` (e.g. recruiter dual-write).
+      // **Level-4** recruiters therefore **cannot** write canonical rows for workers via the client SDK;
+      // dual-write may log `dual_write_failed` while legacy `users.certifications` still succeeds.
+      // To adopt **Option A** (allow L4+): add `hasSecurityLevel(certTargetTenantId(), 4)` alongside the
+      // existing `...5)` checks below, and validate with security/compliance before rollout.
+      //
+      // Writes: never `request.auth != null` alone — owner, HRX, high-security internal, or L5+ tenant staff.
+      match /certification_records/{recordId} {
+        function certTargetTenantId() {
+          let target = get(/databases/$(database)/documents/users/$(userId)).data;
+          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+        }
+        allow read, write: if isAuthenticated() && request.auth.uid == userId;
+        allow read, write: if isHRX();
+        allow read, write: if isAuthenticated() && isHighSecurityLevel();
+        allow read: if isAuthenticated() && (
+          request.auth.uid == userId ||
+          isHRX() ||
+          (certTargetTenantId() != null && hasSecurityLevel(certTargetTenantId(), 5))
+        );
+        allow create, update, delete: if isAuthenticated() && (
+          request.auth.uid == userId ||
+          isHRX() ||
+          isHighSecurityLevel() ||
+          (certTargetTenantId() != null && hasSecurityLevel(certTargetTenantId(), 5))
+        );
+      }
+
+      // --- INTERVIEWS (internal scoring) ---
+      match /interviews/{interviewId} {
+        // Internal team (securityLevel >= 5) can read/write; user can read their own.
+        function targetTenantId() {
+          let target = get(/databases/$(database)/documents/users/$(userId)).data;
+          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+        }
+        allow read: if isAuthenticated() && (
+          request.auth.uid == userId ||
+          isHRX() ||
+          (targetTenantId() != null && hasSecurityLevel(targetTenantId(), 5))
+        );
+        allow create, update, delete: if isAuthenticated() && (
+          isHRX() ||
+          (targetTenantId() != null && hasSecurityLevel(targetTenantId(), 5))
+        );
+      }
+
+      // --- CATEGORY SCORE EVENTS (append-only audit; writes via Cloud Functions Admin SDK only) ---
+      match /category_score_events/{eventId} {
+        function targetTenantId() {
+          let target = get(/databases/$(database)/documents/users/$(userId)).data;
+          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+        }
+        allow read: if isAuthenticated() && (
+          request.auth.uid == userId ||
+          isHRX() ||
+          (targetTenantId() != null && hasSecurityLevel(targetTenantId(), 5))
+        );
+        allow create, update, delete: if false;
+      }
+
+      // Idempotency keys for category score events (server-written; clients read-only for debugging)
+      match /category_score_event_keys/{keyId} {
+        function targetTenantId() {
+          let target = get(/databases/$(database)/documents/users/$(userId)).data;
+          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+        }
+        allow read: if isAuthenticated() && (
+          request.auth.uid == userId ||
+          isHRX() ||
+          (targetTenantId() != null && hasSecurityLevel(targetTenantId(), 5))
+        );
+        allow create, update, delete: if false;
+      }
+
+      // --- REVIEWS (star ratings) ---
+      match /reviews/{reviewId} {
+        // Internal team (securityLevel >= 5) can read/write; user can read their own (optional).
+        function targetTenantId() {
+          let target = get(/databases/$(database)/documents/users/$(userId)).data;
+          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+        }
+        allow read: if isAuthenticated() && (
+          request.auth.uid == userId ||
+          isHRX() ||
+          (targetTenantId() != null && hasSecurityLevel(targetTenantId(), 5))
+        );
+        allow create, update, delete: if isAuthenticated() && (
+          isHRX() ||
+          (targetTenantId() != null && hasSecurityLevel(targetTenantId(), 5))
+        );
+      }
+
+      // --- PUSH TOKENS (FCM web/mobile) — signed-in user stores their own tokens
+      match /pushTokens/{tokenId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+
+      // --- NOTIFICATIONS (worker in-app + push) — server creates; user reads and marks read
+      match /notifications/{notificationId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow update: if request.auth != null && request.auth.uid == userId;
+        allow create: if false;
+        allow delete: if false;
+      }
+    }
+
+    // Cert engine shadow telemetry (Phase 6+) — append-only; HRX reads for mismatch rate analysis
+    match /cert_engine_shadow_events/{eventId} {
+      allow create: if request.auth != null &&
+        request.resource.data.keys().hasAll([
+          'createdAt', 'userId', 'surface', 'requirementSource',
+          'legacyLabels', 'engineLabels', 'mismatched', 'details',
+        ]) &&
+        request.resource.data.userId is string &&
+        request.resource.data.surface in ['apply', 'placement', 'readiness'] &&
+        request.resource.data.requirementSource in ['job_posting', 'job_order', 'assignment'] &&
+        request.resource.data.mismatched is bool &&
+        request.resource.data.legacyLabels is list &&
+        request.resource.data.engineLabels is list &&
+        request.resource.data.details is map &&
+        request.resource.data.legacyLabels.size() <= 80 &&
+        request.resource.data.engineLabels.size() <= 80;
+      allow read: if isHRX();
+      allow update, delete: if false;
     }
 
     // --- TENANTS (Unified Agencies and Customers) ---
@@ -103,6 +788,7 @@ service cloud.firestore {
       // --- REGIONS (Tenants) ---
       match /regions/{regionId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAssignedToTenant(tenantId);
       }
 
       // --- DIVISION TYPES (Tenants) ---
@@ -149,6 +835,37 @@ service cloud.firestore {
         allow read, write: if isAuthenticated() && isAssignedToTenant(tenantId);
       }
 
+      // --- EMAIL THREADS (Inbox - unread count listener and inbox page) ---
+      // Path: tenants/{tenantId}/emailThreads/{threadId}
+      match /emailThreads/{threadId} {
+        // Read: user must be in tenant, AND be a participant either by userId
+        // OR by email. Matching by email is required so the dual-subscription
+        // inbox hook (which queries by both participantUserIds and participants)
+        // doesn't hit "missing or insufficient permissions" on legacy threads
+        // where userId wasn't stamped during ingestion.
+        allow read: if isAuthenticated() &&
+                       (isAssignedToTenant(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles)) &&
+                       (
+                         request.auth.uid in resource.data.get('participantUserIds', []) ||
+                         (
+                           request.auth.token.email != null &&
+                           request.auth.token.email.lower() in resource.data.get('participants', [])
+                         )
+                       );
+        // Create/update: tenant members can create/update (e.g. mark read); writes also from Cloud Functions
+        allow create: if isAuthenticated() && isAssignedToTenant(tenantId);
+        allow update: if isAuthenticated() &&
+                         isAssignedToTenant(tenantId) &&
+                         (
+                           request.auth.uid in resource.data.get('participantUserIds', []) ||
+                           (
+                             request.auth.token.email != null &&
+                             request.auth.token.email.lower() in resource.data.get('participants', [])
+                           )
+                         );
+        allow delete: if isHRX() || isTenantAdmin(tenantId);
+      }
+
       // --- AI CHAT THREADS (Tenant-level) ---
       // Conversations stored at tenants/{tenantId}/ai_chats/{threadId}/messages/{messageId}
       match /ai_chats/{threadId} {
@@ -174,6 +891,8 @@ service cloud.firestore {
       match /locations/{locationId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read: if isAssignedToTenant(tenantId);
+        // Allow unauthenticated reads for public job board (to fetch worksite location data)
+        allow read: if true;
       }
 
       // --- COMPANY LOCATIONS MIRROR (for fast state queries) ---
@@ -241,6 +960,18 @@ service cloud.firestore {
         allow read: if isAssignedToTenant(tenantId);
       }
 
+      // --- INVITE LOG (Tenants) - recruiter sent invites; written by sendRecruiterInvite callable ---
+      match /invite_log/{entryId} {
+        allow read: if isHRX() || isTenantAdmin(tenantId) || (request.auth != null && request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager', 'Admin']);
+        allow create, update, delete: if false;
+      }
+
+      // --- SAVED SMART GROUPS (Tenants) ---
+      match /savedSmartGroups/{groupId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAssignedToTenant(tenantId);
+      }
+
       // --- USERS (Tenants) ---
       match /users/{userId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
@@ -251,6 +982,259 @@ service cloud.firestore {
       match /settings/{settingsId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read: if isAssignedToTenant(tenantId);
+      }
+
+      // --- SCORING DISTRIBUTION (Tenants) - written by Cloud Functions, read by client for relative AI score ---
+      match /scoringDistribution/{docId} {
+        allow read: if isAssignedToTenant(tenantId);
+        allow write: if false;
+      }
+      
+      // --- SLACK CHANNEL MEMBERSHIPS (Tenants) ---
+      match /slackChannelMembers/{membershipId} {
+        // Allow authenticated users assigned to tenant to read memberships
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId);
+        
+        // Allow users to create their own membership (join channel)
+        allow create: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         request.resource.data.userId == request.auth.uid &&
+                         request.resource.data.channelId != null &&
+                         request.resource.data.tenantId == tenantId;
+        
+        // Allow users to update their own membership (if needed in future)
+        allow update: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         resource.data.userId == request.auth.uid &&
+                         request.resource.data.userId == request.auth.uid;
+        
+        // Allow users to delete their own membership (leave channel)
+        allow delete: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         resource.data.userId == request.auth.uid;
+        
+        // Allow admins to manage all memberships
+        allow write: if isHRX() || isTenantAdmin(tenantId);
+      }
+      
+      // --- SLACK CHANNELS (Tenants) ---
+      match /slackChannels/{channelId} {
+        // Allow authenticated users assigned to tenant to read channels
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId);
+        
+        // Allow users to update channel status (mute/unmute, watch/unwatch)
+        allow update: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']) &&
+                         (request.resource.data.status == 'watching' || 
+                          request.resource.data.status == 'unlinked' || 
+                          request.resource.data.status == 'muted');
+        
+        // Allow admins to delete channels
+        allow delete: if isHRX() || isTenantAdmin(tenantId);
+        
+        // Create is backend-only
+        allow create: if false;
+      }
+
+      // --- FEED POSTS (Dashboard Post Composer) ---
+      match /feed_posts/{postId} {
+        // Allow authenticated tenant members to read posts
+        allow read: if isAuthenticated() && (
+          isAssignedToTenant(tenantId) ||
+          (request.auth.token.roles != null && tenantId in request.auth.token.roles) ||
+          isHRX()
+        );
+        
+        // Allow authenticated tenant members to create posts (author must match auth.uid)
+        allow create: if isAuthenticated() && 
+                         request.resource.data.authorId == request.auth.uid &&
+                         request.resource.data.tenantId == tenantId &&
+                         (
+                           isAssignedToTenant(tenantId) ||
+                           (request.auth.token.roles != null && tenantId in request.auth.token.roles) ||
+                           isHRX()
+                         );
+        
+        // Allow authors to update their own posts (with reasonable restrictions)
+        allow update: if isAuthenticated() && 
+                         resource.data.authorId == request.auth.uid &&
+                         request.resource.data.tenantId == resource.data.tenantId &&
+                         request.resource.data.authorId == resource.data.authorId &&
+                         request.resource.data.createdAt == resource.data.createdAt &&
+                         (
+                           isAssignedToTenant(tenantId) ||
+                           (request.auth.token.roles != null && tenantId in request.auth.token.roles) ||
+                           isHRX()
+                         );
+        
+        // Only admins can delete posts
+        allow delete: if isAuthenticated() && (isHRX() || isTenantAdmin(tenantId));
+      }
+
+      // --- MENTIONS INDEX (For quick mention queries) ---
+      match /mentions_index/{mentionRefId} {
+        // Allow authenticated tenant members to read mentions index
+        allow read: if isAuthenticated() && (
+          isAssignedToTenant(tenantId) ||
+          (request.auth.token.roles != null && tenantId in request.auth.token.roles) ||
+          isHRX()
+        );
+        
+        // Only backend (Cloud Functions) can write mentions index
+        allow write: if isHRX();
+      }
+      
+      // --- DM THREADS (Tenants) ---
+      match /dmThreads/{threadId} {
+        // Allow authenticated users to read threads where they are a participant
+        allow read: if isAuthenticated() && 
+                       isAssignedToTenant(tenantId) &&
+                       request.auth.uid in resource.data.participantIds;
+        
+        // Allow authenticated users to create threads where they are a participant
+        allow create: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         request.auth.uid in request.resource.data.participantIds;
+        
+        // Allow users to update threads where they are a participant
+        allow update: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         request.auth.uid in resource.data.participantIds;
+        
+        // Allow admins to manage all threads
+        allow write: if isHRX() || isTenantAdmin(tenantId);
+        
+        // DM Messages subcollection
+        match /messages/{messageId} {
+          // Allow authenticated users to read messages in threads where they are a participant
+          allow read: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         request.auth.uid in get(/databases/$(database)/documents/tenants/$(tenantId)/dmThreads/$(threadId)).data.participantIds;
+          
+          // Allow authenticated users to create messages in threads where they are a participant
+          allow create: if isAuthenticated() && 
+                           isAssignedToTenant(tenantId) &&
+                           request.auth.uid in get(/databases/$(database)/documents/tenants/$(tenantId)/dmThreads/$(threadId)).data.participantIds &&
+                           request.resource.data.senderId == request.auth.uid;
+          
+          // Allow users to update their own messages
+          allow update: if isAuthenticated() && 
+                           isAssignedToTenant(tenantId) &&
+                           resource.data.senderId == request.auth.uid;
+          
+          // Allow admins to manage all messages
+          allow write: if isHRX() || isTenantAdmin(tenantId);
+        }
+      }
+      
+      // --- DM TYPING INDICATORS (Tenants) ---
+      match /dmTyping/{typingId} {
+        // Helper: Check if user is a participant in the thread (for read)
+        function isThreadParticipantForTyping() {
+          let threadId = resource.data.threadId;
+          let thread = get(/databases/$(database)/documents/tenants/$(tenantId)/dmThreads/$(threadId)).data;
+          return thread != null && 
+                 thread.participantIds != null && 
+                 thread.participantIds is list &&
+                 request.auth.uid in thread.participantIds;
+        }
+        
+        // Helper: Check if user is a participant in the thread (for create)
+        function isThreadParticipantForTypingCreate() {
+          let threadId = request.resource.data.threadId;
+          let thread = get(/databases/$(database)/documents/tenants/$(tenantId)/dmThreads/$(threadId)).data;
+          return thread != null && 
+                 thread.participantIds != null && 
+                 thread.participantIds is list &&
+                 request.auth.uid in thread.participantIds;
+        }
+        
+        // Read: User must be a participant in the thread
+        allow read: if isAuthenticated() && 
+                      isAssignedToTenant(tenantId) && 
+                      isThreadParticipantForTyping();
+        
+        // Create: User must be a participant and can only create their own typing indicator
+        allow create: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) && 
+                         isThreadParticipantForTypingCreate() &&
+                         request.resource.data.userId == request.auth.uid &&
+                         request.resource.data.threadId != null;
+        
+        // Update: User can only update their own typing indicator
+        allow update: if isAuthenticated() && 
+                        isAssignedToTenant(tenantId) && 
+                        isThreadParticipantForTyping() &&
+                        resource.data.userId == request.auth.uid &&
+                        request.resource.data.userId == request.auth.uid &&
+                        request.resource.data.threadId == resource.data.threadId;
+        
+        // Delete: User can only delete their own typing indicator
+        allow delete: if isAuthenticated() && 
+                        isAssignedToTenant(tenantId) && 
+                        isThreadParticipantForTyping() &&
+                        resource.data.userId == request.auth.uid;
+        
+        // Allow admins to manage all typing indicators
+        allow write: if isHRX() || isTenantAdmin(tenantId);
+      }
+      
+      // --- INTERNAL DMs (Tenants) - for unread count listening ---
+      match /internalDMs/{dmId} {
+        // Allow authenticated users to read DMs where they are a participant
+        allow read: if isAuthenticated() && 
+                       isAssignedToTenant(tenantId) &&
+                       (request.auth.uid in resource.data.participants || 
+                        resource.data.participants == null);
+        
+        // Allow authenticated users to create DMs where they are a participant
+        allow create: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         (request.auth.uid in request.resource.data.participants ||
+                          request.resource.data.participants == null);
+        
+        // Allow users to update DMs where they are a participant (for unread counts, etc.)
+        allow update: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         (request.auth.uid in resource.data.participants ||
+                          resource.data.participants == null);
+        
+        // Allow admins to manage all DMs
+        allow write: if isHRX() || isTenantAdmin(tenantId);
+      }
+      
+      // --- INTERNAL CHANNELS (Tenants) - for unread count listening ---
+      match /internalChannels/{channelId} {
+        // Allow authenticated users to read channels where they are a member
+        allow read: if isAuthenticated() && 
+                       isAssignedToTenant(tenantId) &&
+                       (request.auth.uid in resource.data.memberIds ||
+                        resource.data.memberIds == null);
+        
+        // Allow authenticated users to create channels (with proper membership)
+        allow create: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         (request.auth.uid in request.resource.data.memberIds ||
+                          request.resource.data.memberIds == null);
+        
+        // Allow users to update channels where they are a member (for unread counts, mute status, etc.)
+        allow update: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         (request.auth.uid in resource.data.memberIds ||
+                          resource.data.memberIds == null);
+        
+        // Allow admins to manage all channels
+        allow write: if isHRX() || isTenantAdmin(tenantId);
+      }
+      
+      // --- SLACK MESSAGES (Tenant Subcollection) ---
+      match /slack_messages/{messageId} {
+        // Allow authenticated users assigned to tenant to read messages
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId);
+        
+        // Create/update/delete are backend-only
+        allow write: if false;
       }
       
       // --- BRANDING (Tenants) ---
@@ -289,7 +1273,8 @@ service cloud.firestore {
       match /recruiter_jobOrders/{jobOrderId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
-        allow read: if isAssignedToTenant(tenantId);
+        // Same internal staff path as assignments / entity_employments (security 5+ without full tenantIds map)
+        allow read: if request.auth != null && (isAssignedToTenant(tenantId) || hasSecurityLevel(tenantId, 5));
       }
       
       // --- RECRUITER CANDIDATES ---
@@ -528,11 +1513,15 @@ service cloud.firestore {
       }
       
       // --- CRM NOTES COLLECTIONS ---
+      // All logged-in users with security level 5, 6, or 7 can add notes (user + contact layouts)
       match /contact_notes/{noteId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
         allow read: if isAssignedToTenant(tenantId);
-        allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow create: if isAuthenticated() && (
+          (isAssignedToTenant(tenantId) && hasCRMAccess()) ||
+          hasSecurityLevel(tenantId, 5)
+        );
         allow update: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
         allow delete: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
       }
@@ -541,7 +1530,10 @@ service cloud.firestore {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
         allow read: if isAssignedToTenant(tenantId);
-        allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow create: if isAuthenticated() && (
+          (isAssignedToTenant(tenantId) && hasCRMAccess()) ||
+          hasSecurityLevel(tenantId, 5)
+        );
         allow update: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
         allow delete: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
       }
@@ -550,7 +1542,10 @@ service cloud.firestore {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
         allow read: if isAssignedToTenant(tenantId);
-        allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow create: if isAuthenticated() && (
+          (isAssignedToTenant(tenantId) && hasCRMAccess()) ||
+          hasSecurityLevel(tenantId, 5)
+        );
         allow update: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
         allow delete: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
       }
@@ -559,7 +1554,10 @@ service cloud.firestore {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
         allow read: if isAssignedToTenant(tenantId);
-        allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow create: if isAuthenticated() && (
+          (isAssignedToTenant(tenantId) && hasCRMAccess()) ||
+          hasSecurityLevel(tenantId, 5)
+        );
         allow update: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
         allow delete: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
       }
@@ -608,11 +1606,226 @@ service cloud.firestore {
         allow create: if isHRX() || isTenantAdmin(tenantId);
       }
 
+      // --- SMS OUTBOUND REQUESTS (Tenant Subcollection) ---
+      match /smsOutboundRequests/{requestId} {
+        // Read: Internal users assigned to tenant
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId) && isInternal(tenantId);
+        
+        // Create: Internal users can create outbound requests
+        allow create: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) && 
+                         isInternal(tenantId) &&
+                         request.resource.data.tenantId == tenantId &&
+                         request.resource.data.status == 'queued';
+        
+        // Update: Only backend (Cloud Tasks worker) can update requests
+        allow update: if false; // Cloud Tasks worker uses Admin SDK
+        
+        // Delete: Only admins can delete requests
+        allow delete: if isHRX() || isTenantAdmin(tenantId);
+      }
+      
+      // --- SMS THREADS (Tenant Subcollection) ---
+      match /smsThreads/{threadId} {
+        // Read: Internal users (security level >= 5) assigned to tenant
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId) && isInternal(tenantId);
+        
+        // Create: Internal users can create threads (for outbound messages)
+        allow create: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) && 
+                         isInternal(tenantId) &&
+                         request.resource.data.tenantId == tenantId;
+        
+        // Update: Internal users can update threads (assignment, status, etc.)
+        // But deny client writes to inbound-specific fields (handled by webhook)
+        allow update: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) && 
+                         isInternal(tenantId) &&
+                         request.resource.data.tenantId == resource.data.tenantId &&
+                         // Prevent client from writing inbound message fields
+                         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastInboundAt', 'lastInboundMessageSnippet']);
+        
+        // Delete: Only admins can delete threads
+        allow delete: if isHRX() || isTenantAdmin(tenantId);
+        
+        // Messages subcollection
+        match /messages/{messageId} {
+          // Read: Internal users assigned to tenant
+          allow read: if isAuthenticated() && isAssignedToTenant(tenantId) && isInternal(tenantId);
+          
+          // Create: Internal users can create outbound messages
+          // Inbound messages are created by webhook (Admin SDK), so deny client creates with inbound direction
+          allow create: if isAuthenticated() && 
+                           isAssignedToTenant(tenantId) && 
+                           isInternal(tenantId) &&
+                           request.resource.data.tenantId == tenantId &&
+                           request.resource.data.threadId == threadId &&
+                           // Only allow outbound messages from client
+                           request.resource.data.direction == 'outbound';
+          
+          // Update: Internal users can update their own outbound messages (status, etc.)
+          // Deny updates to inbound messages (handled by webhook)
+          allow update: if isAuthenticated() && 
+                           isAssignedToTenant(tenantId) && 
+                           isInternal(tenantId) &&
+                           resource.data.direction == 'outbound' &&
+                           request.resource.data.tenantId == resource.data.tenantId &&
+                           request.resource.data.threadId == resource.data.threadId;
+          
+          // Delete: Only admins can delete messages
+          allow delete: if isHRX() || isTenantAdmin(tenantId);
+        }
+      }
+      
+      // --- CONVERSATIONS (Canonical tenant-scoped inbox; worker + recruiter)
+      // Spec: HRX Messaging & Notifications — Cursor Build Spec (v1) §5.1
+      // Participant check first so workers (no user doc / internal role) don't trigger getUser() before allow.
+      match /conversations/{conversationId} {
+        allow read: if isAuthenticated() && (
+          (resource.data.participantUids is list && request.auth.uid in resource.data.participantUids) ||
+          isHRX() ||
+          (isAssignedToTenant(tenantId) && isInternal(tenantId))
+        );
+        allow create: if isAuthenticated() && (
+          (isAssignedToTenant(tenantId) && isInternal(tenantId)) ||
+          (
+            request.resource.data.type == "support" &&
+            request.resource.data.tenantId == tenantId &&
+            request.resource.data.participantUids is list &&
+            request.auth.uid in request.resource.data.participantUids
+          )
+        );
+        allow update: if isAuthenticated() && (
+          isHRX() ||
+          (isAssignedToTenant(tenantId) && isInternal(tenantId))
+        ) && request.resource.data.tenantId == tenantId;
+        allow delete: if isAuthenticated() && (isHRX() || isTenantAdmin(tenantId));
+        match /messages/{messageId} {
+          allow read: if isAuthenticated() && (
+            (
+              get(/databases/$(database)/documents/tenants/$(tenantId)/conversations/$(conversationId)).data.participantUids is list &&
+              request.auth.uid in get(/databases/$(database)/documents/tenants/$(tenantId)/conversations/$(conversationId)).data.participantUids
+            ) ||
+            isHRX() ||
+            (isAssignedToTenant(tenantId) && isInternal(tenantId))
+          );
+          allow create: if isAuthenticated() && (
+            (isAssignedToTenant(tenantId) && isInternal(tenantId)) ||
+            (
+              request.resource.data.visibility == "participants" &&
+              request.resource.data.sender.uid == request.auth.uid &&
+              request.resource.data.tenantId == tenantId &&
+              request.resource.data.conversationId == conversationId &&
+              request.auth.uid in get(/databases/$(database)/documents/tenants/$(tenantId)/conversations/$(conversationId)).data.participantUids
+            )
+          );
+          allow update, delete: if isAuthenticated() && (
+            isHRX() || (isAssignedToTenant(tenantId) && isInternal(tenantId))
+          );
+        }
+      }
+      
+      // --- SMS TEMPLATES (Tenant Subcollection) ---
+      match /smsTemplates/{templateId} {
+        // Read: Internal users assigned to tenant
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId) && isInternal(tenantId);
+        
+        // Write: Only admins/managers (security level >= 6) can create/update/delete templates
+        allow write: if isHRX() || 
+                        (isAuthenticated() && 
+                         isAssignedToTenant(tenantId) && 
+                         hasSecurityLevel(tenantId, 6) &&
+                         request.resource.data.tenantId == tenantId);
+      }
+      
+      // --- SMS CONSENTS (Tenant Subcollection) ---
+      match /smsConsents/{userId} {
+        // Read: Internal users assigned to tenant (can read consents for their tenant)
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId) && isInternal(tenantId);
+        
+        // Write: Only admins/managers can update consents (STOP/HELP handled by webhook with Admin SDK)
+        // Users can read their own consent
+        allow read: if isAuthenticated() && request.auth.uid == userId;
+        
+        // Write: Only backend (webhook) or admins can write
+        allow write: if isHRX() || isTenantAdmin(tenantId);
+        
+        // Consent events subcollection
+        match /events/{eventId} {
+          // Read: Internal users assigned to tenant
+          allow read: if isAuthenticated() && isAssignedToTenant(tenantId) && isInternal(tenantId);
+          
+          // Write: Only backend (webhook) can write events
+          allow write: if false; // Webhook uses Admin SDK
+        }
+      }
+      
+      // --- MESSAGE LOGS (Tenant Subcollection - Unified) ---
+      match /messageLogs/{logId} {
+        // Read: Internal users assigned to tenant
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId) && isInternal(tenantId);
+        
+        // Write: Only backend (Cloud Functions) can write logs
+        allow write: if false; // Cloud Functions use Admin SDK
+      }
+      
+      // --- MESSAGE TEMPLATES (Tenant Subcollection - Unified Template System) ---
+      match /messageTemplates/{templateId} {
+        // Read: Internal users assigned to tenant
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId) && isInternal(tenantId);
+        
+        // Write: Only admins/managers (security level >= 6) can create/update/delete templates
+        allow write: if isHRX() || 
+                        (isAuthenticated() && 
+                         isAssignedToTenant(tenantId) && 
+                         hasSecurityLevel(tenantId, 6) &&
+                         request.resource.data.tenantId == tenantId);
+      }
+      
+      // --- RECRUITER NUMBERS (Tenant Subcollection) ---
+      match /recruiterNumbers/{recruiterId} {
+        // Read: Internal users assigned to tenant
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId) && isInternal(tenantId);
+        
+        // Users can read their own number assignment
+        allow read: if isAuthenticated() && request.auth.uid == recruiterId;
+        
+        // Write: Only admins/managers can assign numbers
+        allow write: if isHRX() || 
+                        (isAuthenticated() && 
+                         isAssignedToTenant(tenantId) && 
+                         hasSecurityLevel(tenantId, 6));
+      }
+
       // --- JOB ORDERS (Tenant Subcollection) ---
       match /job_orders/{jobOrderId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
         allow read: if isAssignedToTenant(tenantId);
+        
+        // --- SHIFTS (Job Order Subcollection) ---
+        match /shifts/{shiftId} {
+          allow read, write: if isHRX() || isTenantAdmin(tenantId);
+          allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+          allow read: if isAssignedToTenant(tenantId);
+          // Allow public read for job board display
+          allow read: if true;
+        }
+        
+        // --- APPLICATIONS (Job Order Subcollection - Phase 2 / career jobs) ---
+        match /applications/{applicationId} {
+          allow read, write: if isHRX() || isTenantAdmin(tenantId);
+          allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+          allow read: if isAssignedToTenant(tenantId);
+          allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+          allow update: if request.auth != null && resource.data.userId == request.auth.uid;
+        }
+
+        // Auto messaging (gig): send log readable by recruiters; writes are Cloud Functions only
+        match /autoMessagingSendLog/{logId} {
+          allow read: if isHRX() || isTenantAdmin(tenantId);
+          allow read: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        }
       }
 
       // --- JOBS BOARD POSTS (Tenant Subcollection) ---
@@ -629,8 +1842,9 @@ service cloud.firestore {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
         allow read: if isAssignedToTenant(tenantId);
-        // Allow public read access for job postings
-        allow read: if resource.data.visibility == 'public';
+        // Allow public read access for job postings (for unauthenticated users)
+        // Allow reads for public or restricted posts (client-side will filter restricted by user groups)
+        allow read: if resource.data.visibility == 'public' || resource.data.visibility == 'restricted';
       }
 
       // --- JOB APPLICATIONS (Tenant Subcollection) ---
@@ -680,9 +1894,10 @@ service cloud.firestore {
     
     // --- ASSIGNMENTS ---
     match /assignments/{assignmentId} {
-      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
-      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
-      allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId);
+      // Temporarily allow all authenticated users to read assignments
+      // TODO: Tighten this once we verify tenantId is always set on assignments
+      allow read: if isAuthenticated();
+      allow write: if isHRX() || isTenantAdmin(resource.data.tenantId);
     }
     
     // --- SHIFTS ---
@@ -709,16 +1924,6 @@ service cloud.firestore {
       allow read, write: if isHRX();
     }
 
-    // --- AI MOMENTS ---
-    match /aiMoments/{momentId} {
-      allow read, write: if isHRX();
-    }
-
-    // --- SCHEDULED MOMENTS ---
-    match /scheduledMoments/{scheduledMomentId} {
-      allow read, write: if isHRX();
-    }
-
     // --- FEEDBACK CAMPAIGNS ---
     match /feedbackCampaigns/{campaignId} {
       allow read, write: if isHRX();
@@ -729,35 +1934,62 @@ service cloud.firestore {
       allow read, write: if isHRX();
     }
 
-    // --- AI LOGS ---
-    match /ai_logs/{logId} {
-      allow read, write: if isHRX();
-      allow read: if isAuthenticated() && (
-        request.auth.uid == resource.data.userId ||
-        request.auth.uid == resource.data.workerId ||
-        isTenantAdmin(resource.data.tenantId)
-      );
-      allow read: if isAuthenticated() && hasCRMAccess() && (
-        resource.data.targetType == 'deal' && 
-        resource.data.targetId != null
-      );
-      // Allow reading deal-related AI logs for users with CRM access
-      allow read: if isAuthenticated() && hasCRMAccess() && (
-        resource.data.eventType != null && 
-        resource.data.eventType.matches('deal\\..*')
-      );
-      // Temporary: Allow reading AI logs for any authenticated user assigned to the tenant
-      allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId);
-      // Temporary: Allow all authenticated users for debugging
-      allow read: if isAuthenticated();
+    // --- DASHBOARD FEED (Mentions, etc.) ---
+    match /dashboardFeed/{feedItemId} {
+      // Users can read their own feed items (primary rule for mentions)
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      // HRX can read any feed items
+      allow read: if isHRX();
+      // Tenant admins can read feed items for their tenant (if tenantId exists)
+      allow read: if isAuthenticated() && 
+                     resource.data.tenantId != null &&
+                     isTenantAdmin(resource.data.tenantId);
+      // Only backend/HRX can write feed items (Cloud Functions create mentions)
+      allow write: if isHRX();
     }
-    
+
     // --- EVENTS (Event Bus) ---
     match /events/{eventId} {
       allow read, write: if isHRX();
       allow read, write: if isAuthenticated() && isTenantAdmin(resource.data.tenantId);
       allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId) && hasRecruiterAccess();
       allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId);
+    }
+
+    // --- SLACK MESSAGES (Root-level collection) ---
+    match /slack_messages/{messageId} {
+      // Allow authenticated users to read messages for their active tenant
+      allow read: if isAuthenticated() && 
+                     resource.data.tenantId != null &&
+                     isAssignedToTenant(resource.data.tenantId);
+      
+      // Write is backend-only (Cloud Functions)
+      allow write: if false;
+    }
+
+    // --- USER PRESENCE (Root-level collection) ---
+    match /userPresence/{userId} {
+      // Allow authenticated users to read any user's presence (for status indicators)
+      allow read: if isAuthenticated();
+      
+      // Users can only create/update their own presence document
+      allow create: if isAuthenticated() && 
+                      request.auth.uid == userId;
+      
+      allow update: if isAuthenticated() && 
+                      request.auth.uid == userId;
+      
+      // No deletes (presence should be maintained)
+      allow delete: if false;
+    }
+
+    // --- SLACK MESSAGE REACTIONS (Root-level collection) ---
+    match /slackMessageReactions/{reactionId} {
+      // Allow authenticated users to read reactions (for displaying in UI)
+      allow read: if isAuthenticated();
+      
+      // Write is handled by Cloud Function (reactToSlackMessage uses admin SDK)
+      allow write: if false;
     }
 
     // --- MOMENT ANALYSIS ---
@@ -1081,6 +2313,46 @@ service cloud.firestore {
       allow write: if false; // Only allow writes from Cloud Functions
     }
 
+    // --- BACKGROUND CHECKS (AccuSource; top-level). Writes via Cloud Functions / Admin only. ---
+    match /backgroundChecks/{checkId} {
+      allow read: if isAuthenticated() && (
+        isHRX() ||
+        (
+          resource.data.tenantId != null &&
+          (
+            hasTenantRole(resource.data.tenantId, request.auth.token.roles) ||
+            isAssignedToTenant(resource.data.tenantId) ||
+            hasSecurityLevel(resource.data.tenantId, 5)
+          )
+        )
+      );
+      allow create, update, delete: if false;
+      match /events/{eventId} {
+        allow read: if isAuthenticated() && (
+          isHRX() ||
+          (
+            get(/databases/$(database)/documents/backgroundChecks/$(checkId)).data.tenantId != null &&
+            (
+              hasTenantRole(
+                get(/databases/$(database)/documents/backgroundChecks/$(checkId)).data.tenantId,
+                request.auth.token.roles
+              ) ||
+              isAssignedToTenant(get(/databases/$(database)/documents/backgroundChecks/$(checkId)).data.tenantId) ||
+              hasSecurityLevel(get(/databases/$(database)/documents/backgroundChecks/$(checkId)).data.tenantId, 5)
+            )
+          )
+        );
+        allow create, update, delete: if false;
+      }
+    }
+
+    // --- AccuSource package catalog (GET /api/v2/company/details sync; Functions write only) ---
+    // Use request.auth directly — avoids any ordering/scope issues with isAuthenticated() above catch-all.
+    match /integrations_accusource/{docId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
     // --- DEFAULT CATCH-ALL ---
     match /{document=**} {
       allow read, write: if false;
@@ -1095,39 +2367,48 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
-    // Legacy isHRX function - now uses claims
+    // Legacy isHRX function - now uses claims. Safe when user doc is missing (getUser() == null).
     function isHRX() {
-      return isAuthenticated() && (request.auth.token.hrx == true || getUser().role == "HRX");
+      return isAuthenticated() && (
+        request.auth.token.hrx == true ||
+        (getUser() != null && getUser().role == "HRX")
+      );
     }
 
     function isAssignedToTenant(tenantId) {
+      let u = getUser();
+      // Prefer custom claims (same session as the app) in addition to Firestore profile.
       return isAuthenticated() && (
-        getUser().tenantIds != null && (
-          (getUser().tenantIds is list && getUser().tenantIds.hasAny([tenantId])) ||
-          (getUser().tenantIds is map && tenantId in getUser().tenantIds)
-        ) ||
-        getUser().tenantId == tenantId ||
-        getUser().activeTenantId == tenantId
+        (request.auth.token.roles != null && tenantId in request.auth.token.roles) ||
+        (u != null && (
+          u.tenantIds != null && (
+            (u.tenantIds is list && u.tenantIds.hasAny([tenantId])) ||
+            (u.tenantIds is map && tenantId in u.tenantIds)
+          ) ||
+          u.tenantId == tenantId ||
+          u.activeTenantId == tenantId
+        ))
       );
     }
     
     function isTenantAdmin(tenantId) {
+      let u = getUser();
       // Check claims first (new system)
       return (request.auth.token.hrx == true) ||
              (request.auth.token.roles != null && 
               tenantId in request.auth.token.roles && 
               request.auth.token.roles[tenantId].role == 'Admin') ||
-             // Fallback to legacy system
-             (isAssignedToTenant(tenantId) && (
-               getUser().role == "HRX" ||
-               getUser().securityLevel == "Admin" ||
-               getUser().securityLevel == "6" ||
-               getUser().securityLevel == "7" ||
-               (getUser().tenantIds != null && 
-                tenantId in getUser().tenantIds && 
-                (getUser().tenantIds[tenantId].securityLevel == "Admin" || 
-                 getUser().tenantIds[tenantId].securityLevel == "6" ||
-                 getUser().tenantIds[tenantId].securityLevel == "7"))
+             // Fallback to legacy system (safe when user doc missing)
+             (u != null && isAssignedToTenant(tenantId) && (
+               u.role == "HRX" ||
+               u.securityLevel == "Admin" ||
+               u.securityLevel == "6" ||
+               u.securityLevel == "7" ||
+               (u.tenantIds != null && 
+                tenantId in u.tenantIds && 
+                (u.tenantIds[tenantId].securityLevel == "Admin" || 
+                 u.tenantIds[tenantId].securityLevel == "6" ||
+                 u.tenantIds[tenantId].securityLevel == "7"))
              ));
     }
     
@@ -1180,7 +2461,53 @@ service cloud.firestore {
     
     function isHighSecurityLevel() {
       let user = getUser();
-      return user.securityLevel == "6" || user.securityLevel == "7";
+      return user.securityLevel == "5" || user.securityLevel == "6" || user.securityLevel == "7";
+    }
+    
+    // SMS-specific helpers
+    // Check if user is internal (security level >= 5) for the given tenant
+    function isInternal(tenantId) {
+      return isHRX() || hasSecurityLevel(tenantId, 5);
+    }
+    
+    // Custom claims (setTenantRole / inviteUser): roles[tenantId].securityLevel and/or .role
+    function hasSecurityLevelFromClaims(tenantId, minLevel) {
+      return request.auth.token.roles != null &&
+        tenantId in request.auth.token.roles &&
+        (
+          request.auth.token.roles[tenantId].role == 'Admin' ||
+          request.auth.token.roles[tenantId].role == 'Manager' ||
+          (
+            request.auth.token.roles[tenantId].securityLevel != null &&
+            (
+              (request.auth.token.roles[tenantId].securityLevel is string
+                ? int(request.auth.token.roles[tenantId].securityLevel)
+                : request.auth.token.roles[tenantId].securityLevel) >= minLevel
+            )
+          )
+        );
+    }
+
+    // Check if user has at least the specified security level for the tenant
+    // NOTE: Firestore Rules do not support JS-style if statements; use expressions + ternaries.
+    // Guard all `user.*` access: if getUser() is null, dereferencing fails the rule (deny).
+    function hasSecurityLevel(tenantId, minLevel) {
+      let user = getUser();
+      let tenantLevel = (user != null &&
+        user.tenantIds != null &&
+        user.tenantIds is map &&
+        tenantId in user.tenantIds &&
+        user.tenantIds[tenantId].securityLevel != null)
+          ? (user.tenantIds[tenantId].securityLevel is string ? int(user.tenantIds[tenantId].securityLevel) : user.tenantIds[tenantId].securityLevel)
+          : null;
+      let rootLevel = (user != null && user.securityLevel != null)
+        ? (user.securityLevel is string ? int(user.securityLevel) : user.securityLevel)
+        : null;
+
+      return isHRX() ||
+        hasSecurityLevelFromClaims(tenantId, minLevel) ||
+        (tenantLevel != null && tenantLevel >= minLevel) ||
+        (rootLevel != null && rootLevel >= minLevel);
     }
   }
 }

@@ -22,8 +22,8 @@ import {
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 
 import { app } from '../../firebase';
 
@@ -97,15 +97,7 @@ const CustomerToneOverrides: React.FC = () => {
         <Typography variant="h3">
           Customer Tone Overrides
         </Typography>
-        <Button
-          variant="outlined"
-          color="primary"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/admin/ai')}
-          sx={{ fontWeight: 600 }}
-        >
-          Back to Launchpad
-        </Button>
+        <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
       </Box>
       <Typography variant="subtitle1" color="text.secondary" mb={3}>
         View and manage custom AI tone settings for each customer. Reset to default to remove an

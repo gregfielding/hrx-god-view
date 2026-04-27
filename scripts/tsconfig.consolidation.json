@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "es2018",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "rootDir": "..",
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": [
+    "./applicationConsolidationDryRun.ts",
+    "./applicationConsolidationExecute.ts",
+    "./scanNestedJobOrderApplications.ts",
+    "./applicationConsolidationShared.ts",
+    "../src/utils/applicationConsolidationPolicy.ts",
+    "../src/utils/applicationConsolidationClusterId.ts",
+    "../src/types/applicationConsolidationReview.ts",
+    "../src/types/applicationConsolidationApplicationFields.ts"
+  ]
+}

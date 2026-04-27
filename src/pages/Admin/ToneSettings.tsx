@@ -11,14 +11,15 @@ import {
   CardContent,
   Divider,
 } from '@mui/material';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import SaveIcon from '@mui/icons-material/Save';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
+import UniversalBackButton from '../../components/common/UniversalBackButton';
 
 import { db } from '../../firebase';
 import { LoggableSlider, LoggableTextField, LoggableSelect, LoggableSwitch } from '../../components/LoggableField';
 import { useAuth } from '../../contexts/AuthContext';
+import { logger } from '../../utils/logger';
 
 interface ToneSettings {
   professional: number;
@@ -82,16 +83,12 @@ const ToneSettings: React.FC = () => {
     try {
       const ref = doc(db, 'appAiSettings', 'tone');
       await setDoc(ref, toneSettings, { merge: true });
-      await setDoc(doc(db, 'ai_logs', `admin_ToneSettings_${Date.now()}`), {
-        section: 'ToneSettings',
-        changed: 'tone',
-        oldValue: defaultToneSettings,
-        newValue: toneSettings,
-        timestamp: new Date().toISOString(),
-        eventType: 'ai_settings_update',
-        engineTouched: ['ToneEngine'],
-        userId: currentUser?.uid || null,
-        sourceModule: 'ToneSettings',
+      await logger.info('Admin tone settings updated', {
+        context: 'ToneSettings',
+        extra: {
+          userId: currentUser?.uid || null,
+          eventType: 'ai_settings_update',
+        },
       });
       setSuccess(true);
     } catch (err: any) {
@@ -145,14 +142,7 @@ const ToneSettings: React.FC = () => {
             Configure the global tone and personality of AI interactions across the platform.
           </Typography>
         </Box>
-        <Button
-          variant="outlined"
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/admin/ai')}
-          sx={{ height: 40 }}
-        >
-          Back to Launchpad
-        </Button>
+        <UniversalBackButton to="/admin/ai" tooltip="Back to Launchpad" />
       </Box>
 
       {loading ? (

@@ -1,0 +1,1223 @@
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { 
+  Box, 
+  TextField, 
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Grid,
+  Autocomplete,
+  CircularProgress,
+  Alert,
+  Snackbar,
+  Typography
+} from '@mui/material';
+import { Add as AddIcon } from '@mui/icons-material';
+import { useAuth } from '../contexts/AuthContext';
+import { collection, query, where, orderBy, limit, getDocs, startAfter, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
+import { db, functions } from '../firebase';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import PageHeader from '../components/PageHeader';
+import CompanyTable from '../components/CompanyTable';
+import UniversalSearchBar from '../components/UniversalSearchBar';
+import { useFavorites } from '../hooks/useFavorites';
+import { usePageCache } from '../hooks/usePageCache';
+import FormControl from '@mui/material/FormControl';
+import InputLabel from '@mui/material/InputLabel';
+import Select from '@mui/material/Select';
+import MenuItem from '@mui/material/MenuItem';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
+import ClearIcon from '@mui/icons-material/Clear';
+import BusinessIcon from '@mui/icons-material/Business';
+
+const CompaniesPage: React.FC = () => {
+  const { tenantId, currentUser } = useAuth();
+  const navigate = useNavigate();
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  
+  // Page cache for search and filters
+  const { cacheState, updateCache, getCachedResults } = usePageCache({
+    pageKey: 'companies',
+    defaultState: {
+      search: '',
+      companyFilter: 'all',
+      locationStateFilter: 'all',
+      showFavoritesOnly: false,
+      // Table UI state (so back navigation restores your spot)
+      sortField: 'companyName',
+      sortDirection: 'asc',
+      page: 0,
+      rowsPerPage: 20,
+      scrollTop: 0,
+    },
+  });
+  
+  // State - initialize from cache (including cached results)
+  const cachedResults = getCachedResults();
+  const [companies, setCompanies] = useState<any[]>(cachedResults || []);
+  const [contacts, setContacts] = useState<any[]>([]);
+  const [deals, setDeals] = useState<any[]>([]);
+  const [salesTeam, setSalesTeam] = useState<any[]>([]);
+  const [search, setSearch] = useState(cacheState.search || '');
+  const [companyFilter, setCompanyFilter] = useState<'all' | 'my'>(
+    cacheState.companyFilter === 'my' ? 'my' : 'all',
+  );
+  const [locationStateFilter, setLocationStateFilter] = useState<string>(cacheState.locationStateFilter || 'all');
+  const [companiesLoading, setCompaniesLoading] = useState(!cachedResults); // Don't show loading if we have cached results
+  const [companiesLastDoc, setCompaniesLastDoc] = useState<any>(null);
+  const [companiesHasMore, setCompaniesHasMore] = useState(true);
+  const [companiesPageSize] = useState(20);
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(cacheState.showFavoritesOnly || false);
+  
+  // Pagination state for inbox spec
+  const [page, setPage] = useState<number>(() => {
+    const v = Number((cacheState as any).page ?? 0);
+    return Number.isFinite(v) && v >= 0 ? v : 0;
+  });
+  const [rowsPerPage, setRowsPerPage] = useState<number>(() => {
+    const v = Number((cacheState as any).rowsPerPage ?? 20);
+    return Number.isFinite(v) && v > 0 ? v : 20;
+  });
+
+  // Sorting state - default to ascending alphabetical by company name
+  const [sortField, setSortField] = useState<string>(() => (cacheState as any).sortField || 'companyName');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(() => {
+    return (cacheState as any).sortDirection === 'desc' ? 'desc' : 'asc';
+  });
+  
+  // Add Company Dialog state
+  const [showAddCompanyDialog, setShowAddCompanyDialog] = useState(false);
+  const [companyForm, setCompanyForm] = useState({
+    name: '',
+    website: '',
+    parentCompany: ''
+  });
+  const [savingCompany, setSavingCompany] = useState(false);
+  const [allCompanies, setAllCompanies] = useState<any[]>([]);
+  const [loadingAllCompanies, setLoadingAllCompanies] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+  
+  // Favorites
+  const { isFavorite, toggleFavorite } = useFavorites('companies');
+  const filtersRef = useRef<HTMLDivElement | null>(null);
+  const [filtersHeight, setFiltersHeight] = useState<number>(0);
+  const [isScrolled, setIsScrolled] = useState(false);
+  const restoreScrollOnceRef = useRef(false);
+  const skipResetPageOnceRef = useRef(false);
+  const scrollSaveTimerRef = useRef<number | null>(null);
+
+  // Measure filters height
+  useEffect(() => {
+    const update = () => setFiltersHeight(filtersRef.current?.offsetHeight ?? 0);
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
+  // Track scroll state
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      setIsScrolled(el.scrollTop > 0);
+      // Debounce persisting scrollTop to avoid hot-loop writes.
+      if (scrollSaveTimerRef.current) {
+        window.clearTimeout(scrollSaveTimerRef.current);
+      }
+      scrollSaveTimerRef.current = window.setTimeout(() => {
+        updateCache({ scrollTop: el.scrollTop });
+      }, 150);
+    };
+    onScroll();
+    el.addEventListener('scroll', onScroll, { passive: true } as any);
+    return () => {
+      el.removeEventListener('scroll', onScroll as any);
+      if (scrollSaveTimerRef.current) {
+        window.clearTimeout(scrollSaveTimerRef.current);
+        scrollSaveTimerRef.current = null;
+      }
+    };
+  }, [updateCache]);
+
+  // Load companies
+  const loadCompanies = useCallback(async (searchQuery = '', startDoc: any = null, append = false, filterByUser = false, stateOverride?: string) => {
+    if (!tenantId) return;
+    
+    setCompaniesLoading(true);
+    try {
+      const selectedState = stateOverride ?? locationStateFilter;
+      
+      // Advanced filter: Companies with at least one location in selected state
+      if (selectedState && selectedState !== 'all') {
+        console.log('🔍 Companies state filter active:', { selectedState });
+        
+        // Fast path using mirror collection: tenants/{tenantId}/company_locations
+        const locationsRef = collection(db, 'tenants', tenantId, 'company_locations');
+        const locQ = query(locationsRef, where('stateCode', '==', selectedState));
+        const locSnap = await getDocs(locQ);
+        console.log(`📍 Found ${locSnap.docs.length} location documents in mirror collection for state ${selectedState}`);
+        const companyIdSet = new Set<string>();
+        locSnap.docs.forEach(d => {
+          const data: any = d.data();
+          if (data?.companyId) companyIdSet.add(data.companyId);
+        });
+
+        const ids = Array.from(companyIdSet);
+        console.log(`📍 Found ${ids.length} unique company IDs from mirror collection`);
+
+        // Fallback: if mirror has no entries for this state, scan company subcollections directly
+        if (ids.length === 0) {
+          // Map for full state names by code
+          const STATE_BY_CODE: Record<string, string> = {
+            AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming'
+          };
+          const code = selectedState;
+          const full = STATE_BY_CODE[code] || code;
+          const variants = [code, code.toLowerCase(), (full || '').toString(), (full || '').toString().toLowerCase(), (full || '').toString().toUpperCase()];
+
+          const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
+          const allCompaniesQuery = query(companiesRef, orderBy('companyName', 'asc'));
+          const allCompaniesSnapshot = await getDocs(allCompaniesQuery);
+
+          const validated: any[] = [];
+          for (const companyDoc of allCompaniesSnapshot.docs) {
+            try {
+              const cData = companyDoc.data();
+              const c = { id: companyDoc.id, ...cData } as any;
+              const locRef = collection(db, 'tenants', tenantId, 'crm_companies', companyDoc.id, 'locations');
+              let exists = false;
+              try {
+                const s1 = await getDocs(query(locRef, where('stateCode', '==', code), limit(1)));
+                exists = !s1.empty;
+              } catch {}
+              if (!exists) {
+                try {
+                  const s2 = await getDocs(query(locRef, where('state', 'in', variants.slice(0, 10)), limit(1)));
+                  exists = !s2.empty;
+                } catch {}
+              }
+              if (!exists) {
+                try {
+                  const s3 = await getDocs(query(locRef, where('address.state', 'in', variants.slice(0, 10)), limit(1)));
+                  exists = !s3.empty;
+                } catch {}
+              }
+              if (exists) validated.push(c);
+            } catch {}
+          }
+
+          const searchLower = searchQuery.trim().toLowerCase();
+          const companiesData = validated.filter((company: any) => {
+            if (filterByUser && currentUser?.uid) {
+              if (company.accountOwnerId !== currentUser.uid) return false;
+            }
+            if (!searchLower) return true;
+            const companyName = (company.companyName || company.name || '').toLowerCase();
+            const companyUrl = (company.companyUrl || company.url || '').toLowerCase();
+            const city = (company.city || '').toLowerCase();
+            const industry = (company.industry || '').toLowerCase();
+            return companyName.includes(searchLower) || companyUrl.includes(searchLower) || city.includes(searchLower) || industry.includes(searchLower);
+          });
+
+          const resultData = companiesData;
+          if (append) {
+            setCompanies(prev => [...prev, ...resultData]);
+          } else {
+            setCompanies(resultData);
+            // Cache the results
+            updateCache({ cachedResults: resultData });
+          }
+          setCompaniesHasMore(false);
+          setCompaniesLastDoc(null);
+          setCompaniesLoading(false);
+          return;
+        }
+
+        // OPTIMIZED: Batch fetch companies using 'in' queries (much faster than individual getDoc calls)
+        const companyDocs: any[] = [];
+        const batchSize = 10; // Firestore limit for 'in' queries
+        
+        for (let i = 0; i < ids.length; i += batchSize) {
+          const batch = ids.slice(i, i + batchSize);
+          const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
+          // Use __name__ to query by document ID
+          const q = query(companiesRef, where('__name__', 'in', batch));
+          const snapshot = await getDocs(q);
+          snapshot.docs.forEach(doc => {
+            companyDocs.push({ id: doc.id, ...doc.data() });
+          });
+        }
+        
+        // OPTIMIZATION: Skip re-validation since mirror collection is maintained by Cloud Functions
+        // This saves 100+ subcollection queries. If validation is needed, it can be done in background.
+        const validated = companyDocs;
+
+        // Apply search and my filters client-side
+        const searchLower = searchQuery.trim().toLowerCase();
+        const companiesData = validated.filter((company: any) => {
+          if (filterByUser && currentUser?.uid) {
+            if (company.accountOwnerId !== currentUser.uid) return false;
+          }
+          if (!searchLower) return true;
+          const companyName = (company.companyName || company.name || '').toLowerCase();
+          const companyUrl = (company.companyUrl || company.url || '').toLowerCase();
+          const city = (company.city || '').toLowerCase();
+          const industry = (company.industry || '').toLowerCase();
+          return companyName.includes(searchLower) || companyUrl.includes(searchLower) || city.includes(searchLower) || industry.includes(searchLower);
+        });
+
+        // When filtering by state, return full results (no pagination cap)
+        const resultData = companiesData;
+        console.log(`✅ Applying ${resultData.length} companies for state ${selectedState}`, {
+          totalValidated: validated.length,
+          afterUserFilter: companiesData.length,
+          companyIds: resultData.map(c => c.id).slice(0, 5)
+        });
+        if (append) {
+          setCompanies(prev => [...prev, ...resultData]);
+        } else {
+          setCompanies(resultData);
+          // Cache the results
+          updateCache({ cachedResults: resultData });
+        }
+        setCompaniesHasMore(false);
+        setCompaniesLastDoc(null);
+        setCompaniesLoading(false);
+        return;
+      }
+
+      // Normal load (no state filter). Fetch all docs without orderBy so companies with only "name" (no companyName) are included.
+      const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
+      const sortByName = (a: any, b: any) => {
+        const na = (a.companyName || a.name || '').toLowerCase();
+        const nb = (b.companyName || b.name || '').toLowerCase();
+        return na.localeCompare(nb);
+      };
+
+      let allCompanies: any[];
+      if (filterByUser && currentUser?.uid) {
+        const q = query(companiesRef, where('accountOwnerId', '==', currentUser.uid));
+        const snapshot = await getDocs(q);
+        allCompanies = snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+      } else {
+        const snapshot = await getDocs(companiesRef);
+        allCompanies = snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+      }
+
+      if (searchQuery && searchQuery.trim()) {
+        const searchLower = searchQuery.trim().toLowerCase();
+        const filtered = allCompanies.filter((company: any) => {
+          const companyName = (company.companyName || company.name || '').toLowerCase();
+          const companyUrl = (company.companyUrl || company.url || '').toLowerCase();
+          const city = (company.city || '').toLowerCase();
+          const industry = (company.industry || '').toLowerCase();
+          const state = (company.state || '').toLowerCase();
+          const headquarters = (company.headquarters || '').toLowerCase();
+          return companyName.includes(searchLower) ||
+                 companyUrl.includes(searchLower) ||
+                 city.includes(searchLower) ||
+                 industry.includes(searchLower) ||
+                 state.includes(searchLower) ||
+                 headquarters.includes(searchLower);
+        });
+        filtered.sort(sortByName);
+        if (append) {
+          setCompanies(prev => [...prev, ...filtered]);
+        } else {
+          setCompanies(filtered);
+          updateCache({ cachedResults: filtered });
+        }
+      } else {
+        allCompanies.sort(sortByName);
+        if (append) {
+          setCompanies(prev => [...prev, ...allCompanies]);
+        } else {
+          setCompanies(allCompanies);
+          if (!filterByUser && !searchQuery) {
+            updateCache({ cachedResults: allCompanies });
+          }
+        }
+      }
+      setCompaniesHasMore(false);
+      setCompaniesLastDoc(null);
+    } catch (error: any) {
+      console.error('Error loading companies:', error);
+    } finally {
+      setCompaniesLoading(false);
+    }
+  }, [tenantId, currentUser, locationStateFilter, companiesPageSize]);
+
+  // Load all companies for parent company autocomplete
+  useEffect(() => {
+    if (!tenantId || !showAddCompanyDialog) return;
+    
+    const loadAllCompanies = async () => {
+      setLoadingAllCompanies(true);
+      try {
+        const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
+        const snapshot = await getDocs(companiesRef);
+        setAllCompanies(snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) })));
+      } catch (error) {
+        console.error('Error loading all companies:', error);
+      } finally {
+        setLoadingAllCompanies(false);
+      }
+    };
+    
+    loadAllCompanies();
+  }, [tenantId, showAddCompanyDialog]);
+
+  // Handle company form changes
+  const handleCompanyFormChange = (field: string, value: any) => {
+    setCompanyForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  // Handle close dialog
+  const handleCloseDialog = () => {
+    if (!savingCompany) {
+      setShowAddCompanyDialog(false);
+      setCompanyForm({ name: '', website: '', parentCompany: '' });
+      setError('');
+    }
+  };
+
+  // Handle save company
+  const handleSaveCompany = async () => {
+    if (!tenantId || !currentUser) return;
+    
+    if (!companyForm.name) {
+      setError('Company name is required');
+      return;
+    }
+
+    setSavingCompany(true);
+    setError('');
+    try {
+      const { parentCompany, ...rest } = companyForm as any;
+      const companyData = {
+        ...rest,
+        companyName: companyForm.name, // Use companyName for consistency
+        tenantId,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        // Add the current user as an associated salesperson
+        associations: {
+          salespeople: [currentUser.uid]
+        },
+        parentCompany: parentCompany || null,
+        // Legacy fields for backward compatibility
+        salesOwnerId: currentUser.uid || null,
+        accountOwnerId: currentUser.uid || null,
+        salesOwnerName: currentUser.displayName || currentUser.email || 'Unknown',
+        accountOwnerName: currentUser.displayName || currentUser.email || 'Unknown'
+      };
+
+      const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
+      const newDocRef = await addDoc(companiesRef, companyData);
+      const newCompanyId = newDocRef.id;
+
+      // If parent company selected, call function to register child on parent
+      if (parentCompany) {
+        try {
+          const fn = httpsCallable(getFunctions(), 'registerChildCompany');
+          await fn({ tenantId, parentCompanyId: parentCompany, childCompanyId: newCompanyId });
+        } catch (e) {
+          console.warn('registerChildCompany failed', e);
+        }
+      }
+
+      // Reset form and close dialog
+      setCompanyForm({ name: '', website: '', parentCompany: '' });
+      setShowAddCompanyDialog(false);
+      setSuccess(true);
+      setSuccessMessage('Company added successfully!');
+      
+      // Reload companies
+      loadCompanies('', null, false, companyFilter === 'my');
+    } catch (err: any) {
+      console.error('Error adding company:', err);
+      setError(err.message || 'Failed to add company');
+    } finally {
+      setSavingCompany(false);
+    }
+  };
+
+  // Load contacts and deals for calculations
+  useEffect(() => {
+    if (!tenantId) return;
+    
+    const loadContacts = async () => {
+      try {
+        const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
+        const contactsQuery = query(contactsRef, limit(1000));
+        const snapshot = await getDocs(contactsQuery);
+        setContacts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      } catch (error) {
+        console.error('Error loading contacts:', error);
+      }
+    };
+    
+    const loadDeals = async () => {
+      try {
+        const dealsRef = collection(db, 'tenants', tenantId, 'crm_deals');
+        const dealsQuery = query(dealsRef, limit(1000));
+        const snapshot = await getDocs(dealsQuery);
+        setDeals(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      } catch (error) {
+        console.error('Error loading deals:', error);
+      }
+    };
+    
+    const loadSalesTeam = async () => {
+      try {
+        const usersRef = collection(db, 'users');
+        const usersQuery = query(usersRef, where('tenantIds.' + tenantId + '.securityLevel', '>=', 5), limit(100));
+        const snapshot = await getDocs(usersQuery);
+        setSalesTeam(snapshot.docs.map(doc => ({ id: doc.id, uid: doc.id, ...doc.data() })));
+      } catch (error) {
+        console.error('Error loading sales team:', error);
+      }
+    };
+    
+    loadContacts();
+    loadDeals();
+    loadSalesTeam();
+  }, [tenantId]);
+
+  // Initial load and reload when filters change (NOT search - search is handled separately)
+  useEffect(() => {
+    if (tenantId && !search.trim()) {
+      // Check if we have cached results that match current filters (only if no search)
+      const cached = getCachedResults();
+      if (cached && cached.length > 0) {
+        // Restore cached results immediately (no loading spinner) - only if no search active
+        setCompanies(cached);
+        setCompaniesLoading(false);
+      } else {
+        // No cache, load fresh data
+        setCompanies([]);
+        setCompaniesLoading(true);
+        loadCompanies('', null, false, companyFilter === 'my', locationStateFilter);
+      }
+    }
+  }, [tenantId, companyFilter, locationStateFilter, loadCompanies, getCachedResults]);
+
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      const nextDir = sortDirection === 'asc' ? 'desc' : 'asc';
+      setSortDirection(nextDir);
+      updateCache({ sortField: field, sortDirection: nextDir });
+      return;
+    }
+    setSortField(field);
+    setSortDirection('asc');
+    updateCache({ sortField: field, sortDirection: 'asc' });
+  };
+
+  // Persist pagination state
+  useEffect(() => {
+    updateCache({ page, rowsPerPage });
+  }, [page, rowsPerPage, updateCache]);
+
+  // Restore scroll position once after data is available (e.g. navigating back from detail).
+  useEffect(() => {
+    if (restoreScrollOnceRef.current) return;
+    if (companiesLoading) return;
+    const el = contentRef.current;
+    if (!el) return;
+    const st = Number((cacheState as any).scrollTop ?? 0);
+    if (!Number.isFinite(st) || st <= 0) {
+      restoreScrollOnceRef.current = true;
+      return;
+    }
+    restoreScrollOnceRef.current = true;
+    // Wait a tick so layout/pagination renders before applying scroll.
+    window.requestAnimationFrame(() => {
+      el.scrollTop = st;
+    });
+  }, [companiesLoading, cacheState]);
+
+  // Helper functions
+  const getCompanyContacts = (companyId: string) => {
+    return contacts.filter((contact: any) => {
+      const assocCompanies = (contact.associations?.companies || []).map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean);
+      if (assocCompanies.includes(companyId)) return true;
+      if (contact.companyId === companyId) return true;
+      return false;
+    });
+  };
+
+  const getCompanyDeals = (companyId: string) => {
+    return deals.filter((deal: any) => {
+      const dealCompanyIds = [
+        deal.companyId,
+        ...(deal.associations?.companies || deal.companies || []).map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean)
+      ].filter(Boolean);
+      return dealCompanyIds.includes(companyId);
+    });
+  };
+
+  /** Numeric initial value from deal (stageData.qualification or estimatedRevenue), same logic as CRM table. */
+  const getDealInitialValueNum = (deal: any): number => {
+    if (deal?.stageData?.qualification) {
+      const q = deal.stageData.qualification;
+      const payRate = q.expectedAveragePayRate ?? 16;
+      const markup = q.expectedAverageMarkup ?? 40;
+      const timeline = q.staffPlacementTimeline;
+      if (timeline && (timeline.starting ?? 0) > 0) {
+        const billRate = payRate * (1 + markup / 100);
+        const annualHoursPerEmployee = 2080;
+        const annualRevenuePerEmployee = billRate * annualHoursPerEmployee;
+        return annualRevenuePerEmployee * (timeline.starting || 0);
+      }
+    }
+    if (deal?.estimatedRevenue != null && deal.estimatedRevenue !== '') {
+      const n = Number(deal.estimatedRevenue);
+      if (!Number.isNaN(n)) return n;
+    }
+    return 0;
+  };
+
+  /** Numeric potential value from deal (stageData.qualification or estimatedRevenue), same logic as CRM table. */
+  const getDealPotentialValueNum = (deal: any): number => {
+    if (deal?.stageData?.qualification) {
+      const q = deal.stageData.qualification;
+      const payRate = q.expectedAveragePayRate ?? 16;
+      const markup = q.expectedAverageMarkup ?? 40;
+      const timeline = q.staffPlacementTimeline;
+      if (timeline) {
+        const after180 = timeline.after180Days ?? timeline.after90Days ?? timeline.after30Days ?? timeline.starting ?? 0;
+        if (after180 > 0) {
+          const billRate = payRate * (1 + markup / 100);
+          const annualHoursPerEmployee = 2080;
+          const annualRevenuePerEmployee = billRate * annualHoursPerEmployee;
+          return annualRevenuePerEmployee * after180;
+        }
+      }
+    }
+    if (deal?.estimatedRevenue != null && deal.estimatedRevenue !== '') {
+      const n = Number(deal.estimatedRevenue);
+      if (!Number.isNaN(n)) return n;
+    }
+    return 0;
+  };
+
+  const getSalespersonName = (salespersonId: string) => {
+    const salesperson = salesTeam.find(sp => sp.id === salespersonId || sp.uid === salespersonId);
+    if (salesperson) {
+      const full = [salesperson.firstName, salesperson.lastName].filter(Boolean).join(' ').trim();
+      return salesperson.name || salesperson.displayName || full || salesperson.email || '';
+    }
+
+    // Avoid leaking Firebase-style UIDs into the UI when we couldn't resolve a user record.
+    const looksLikeUid =
+      !!salespersonId &&
+      salespersonId.length > 20 &&
+      !salespersonId.includes('@') &&
+      !salespersonId.includes(' ');
+
+    return looksLikeUid ? '' : salespersonId;
+  };
+
+  const getCompanyPipelineValue = (company: any) => {
+    const companyDeals = getCompanyDeals(company.id);
+    // Pipeline = open or closed/won deals only (exclude lost, canceled)
+    const pipelineDeals = companyDeals.filter((deal: any) => {
+      const status = (deal.status ?? 'open').toLowerCase();
+      return status !== 'lost' && status !== 'canceled';
+    });
+
+    if (pipelineDeals.length === 0) {
+      // No pipeline deals: use stored totals if present, otherwise zeros
+      if (company.pipelineValue && (company.pipelineValue.dealCount > 0 || company.pipelineValue.low > 0 || company.pipelineValue.high > 0)) {
+        return {
+          totalLow: company.pipelineValue.low || 0,
+          totalHigh: company.pipelineValue.high || 0,
+          dealCount: company.pipelineValue.dealCount || 0
+        };
+      }
+      return { totalLow: 0, totalHigh: 0, dealCount: 0 };
+    }
+
+    // Sum initial values (low) and potential values (high) across all pipeline deals
+    let totalLow = 0;
+    let totalHigh = 0;
+    pipelineDeals.forEach((deal: any) => {
+      totalLow += getDealInitialValueNum(deal);
+      totalHigh += getDealPotentialValueNum(deal);
+    });
+
+    return { totalLow, totalHigh, dealCount: pipelineDeals.length };
+  };
+
+  const getCompanySalespeople = (company: any): string[] => {
+    const names: string[] = [];
+    const seen = new Set<string>();
+    const addName = (label?: string) => {
+      const v = (label || '').trim();
+      if (!v) return;
+      if (seen.has(v)) return;
+      seen.add(v);
+      names.push(v);
+    };
+    const assoc = company.associations?.salespeople || [];
+    assoc.forEach((sp: any) => {
+      if (typeof sp === 'string') {
+        addName(getSalespersonName(sp));
+      } else if (sp && typeof sp === 'object') {
+        const snapshot = sp.snapshot || {};
+        const full = [sp.firstName, sp.lastName].filter(Boolean).join(' ').trim();
+        const snapshotFull = [snapshot.firstName, snapshot.lastName].filter(Boolean).join(' ').trim();
+        addName(
+          sp.name ||
+          sp.displayName ||
+          snapshot.displayName ||
+          snapshot.name ||
+          full ||
+          snapshotFull ||
+          sp.email ||
+          snapshot.email ||
+          getSalespersonName(sp.id)
+        );
+      }
+    });
+    if (names.length === 0) {
+      addName(company.salesOwnerName);
+      addName(company.accountOwnerName);
+      if (company.salesOwnerId) addName(getSalespersonName(company.salesOwnerId));
+      if (company.accountOwnerId) addName(getSalespersonName(company.accountOwnerId));
+      addName(company.accountOwner);
+    }
+    return names;
+  };
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  };
+
+  const getAvatarColor = (name: string) => {
+    const colors = ['#F3F4F6', '#FEF3C7', '#DBEAFE', '#D1FAE5', '#FCE7F3', '#EDE9FE', '#FEE2E2', '#FEF5E7'];
+    const index = name.charCodeAt(0) % colors.length;
+    return colors[index];
+  };
+
+  const getAvatarTextColor = (name: string) => {
+    const colors = ['#6B7280', '#92400E', '#1E40AF', '#065F46', '#BE185D', '#5B21B6', '#DC2626', '#EA580C'];
+    const index = name.charCodeAt(0) % colors.length;
+    return colors[index];
+  };
+
+  const getSortableValue = (company: any, field: string) => {
+    switch (field) {
+      case 'companyName':
+        return (company.companyName || company.name || '').toLowerCase();
+      case 'contacts':
+        return getCompanyContacts(company.id).length;
+      case 'deals':
+        return getCompanyDeals(company.id).length;
+      case 'pipelineValue': {
+        const pipeline = getCompanyPipelineValue(company);
+        return pipeline.totalLow + pipeline.totalHigh;
+      }
+      case 'accountOwner':
+        return getCompanySalespeople(company)[0]?.toLowerCase() || '';
+      default:
+        return '';
+    }
+  };
+
+  // Filter and sort companies (search is now handled server-side, but we still filter favorites client-side)
+  const filteredCompanies = React.useMemo(() => {
+    let filtered = companies;
+    
+    if (showFavoritesOnly) {
+      filtered = filtered.filter(company => isFavorite(company.id));
+    }
+    
+    // Search is now handled in loadCompanies by querying Firestore
+    // No need to filter here if search is active (companies already filtered from Firestore)
+    
+    filtered.sort((a, b) => {
+      const aValue = getSortableValue(a, sortField);
+      const bValue = getSortableValue(b, sortField);
+      
+      if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+    
+    return filtered;
+  }, [companies, sortField, sortDirection, showFavoritesOnly, isFavorite]);
+
+  // Paginated companies (for inbox spec)
+  const paginatedCompanies = React.useMemo(() => {
+    const startIndex = page * rowsPerPage;
+    const endIndex = startIndex + rowsPerPage;
+    return filteredCompanies.slice(startIndex, endIndex);
+  }, [filteredCompanies, page, rowsPerPage]);
+
+  // Update cache when search or filters change (but don't clear cached results unless filters actually changed)
+  const prevFiltersRef = useRef({ search, companyFilter, locationStateFilter, showFavoritesOnly });
+  useEffect(() => {
+    const filtersChanged = 
+      prevFiltersRef.current.search !== search ||
+      prevFiltersRef.current.companyFilter !== companyFilter ||
+      prevFiltersRef.current.locationStateFilter !== locationStateFilter ||
+      prevFiltersRef.current.showFavoritesOnly !== showFavoritesOnly;
+    
+    if (filtersChanged) {
+      // Only clear cached results if filters actually changed
+      updateCache({
+        search,
+        companyFilter,
+        locationStateFilter,
+        showFavoritesOnly,
+        cachedResults: undefined,
+        cachedResultsTimestamp: undefined,
+      });
+      prevFiltersRef.current = { search, companyFilter, locationStateFilter, showFavoritesOnly };
+    } else {
+      // Just update the cache state without clearing results
+      updateCache({
+        search,
+        companyFilter,
+        locationStateFilter,
+        showFavoritesOnly,
+      });
+    }
+  }, [search, companyFilter, locationStateFilter, showFavoritesOnly, updateCache]);
+
+  // Reset page when search or filters change
+  useEffect(() => {
+    // Don't clobber restored page on first mount/back navigation.
+    if (!skipResetPageOnceRef.current) {
+      skipResetPageOnceRef.current = true;
+      return;
+    }
+    setPage(0);
+  }, [search, showFavoritesOnly, locationStateFilter, companyFilter]);
+
+  // Trigger search query when search value changes (debounced)
+  useEffect(() => {
+    if (!tenantId) return;
+    
+    const timeoutId = setTimeout(() => {
+      setCompanies([]);
+      setCompaniesLoading(true);
+      loadCompanies(search.trim(), null, false, companyFilter === 'my', locationStateFilter);
+    }, 500); // 500ms debounce
+    
+    return () => clearTimeout(timeoutId);
+  }, [search, tenantId, companyFilter, locationStateFilter, loadCompanies]);
+
+  const handleViewCompany = (company: any) => {
+    // Persist the user's current table position so Back returns to the same spot.
+    updateCache({
+      page,
+      rowsPerPage,
+      sortField,
+      sortDirection,
+      scrollTop: contentRef.current?.scrollTop ?? 0,
+    });
+    navigate(`/companies/${company.id}`);
+  };
+
+  const handleLoadMore = () => {
+    if (!companiesLoading && companiesHasMore && companiesLastDoc) {
+      loadCompanies(search, companiesLastDoc, true, companyFilter === 'my');
+    }
+  };
+
+  const companyScopeTabs = [
+    { id: 'all' as const, label: 'All Companies' },
+    { id: 'my' as const, label: 'My Companies' },
+  ];
+
+  return (
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <PageHeader
+        hideHeading
+        dense
+        title=""
+        filters={
+          <Box sx={{ display: 'flex', gap: 0.35, alignItems: 'center', flexWrap: 'wrap' }}>
+            {companyScopeTabs.map((tab) => {
+              const isActive = companyFilter === tab.id;
+              return (
+                <Button
+                  key={tab.id}
+                  variant="text"
+                  onClick={() => {
+                    setCompanyFilter(tab.id);
+                    updateCache({ companyFilter: tab.id });
+                  }}
+                  sx={{
+                    textTransform: 'none',
+                    borderRadius: '999px',
+                    fontSize: '13px',
+                    fontWeight: isActive ? 600 : 400,
+                    color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                    bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                    px: 1.25,
+                    py: 0.5,
+                    minHeight: 30,
+                    minWidth: 'auto',
+                    whiteSpace: 'nowrap',
+                    '&:hover': {
+                      bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                    },
+                  }}
+                >
+                  {tab.label}
+                </Button>
+              );
+            })}
+          </Box>
+        }
+        rightActions={
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
+            <UniversalSearchBar
+              value={search}
+              onChange={(value) => {
+                setSearch(value);
+                updateCache({ search: value });
+              }}
+              onSearch={(value) => {
+                setSearch(value);
+                updateCache({ search: value });
+                if (tenantId) {
+                  setCompanies([]);
+                  setCompaniesLoading(true);
+                  loadCompanies(value, null, false, companyFilter === 'my', locationStateFilter);
+                }
+              }}
+              placeholder="Search companies..."
+              favoriteType="companies"
+              showFavoritesOnly={showFavoritesOnly}
+              onToggleFavorites={(value) => {
+                setShowFavoritesOnly(value);
+                updateCache({ showFavoritesOnly: value });
+              }}
+            />
+            {/* Universal icon-only Add button — matches the canonical
+                pattern on /accounts and /users/user-groups so every
+                top-of-page Add action looks identical. */}
+            <Tooltip title="Add company">
+              <IconButton
+                onClick={() => setShowAddCompanyDialog(true)}
+                sx={{
+                  width: 32,
+                  height: 32,
+                  bgcolor: '#0057B8',
+                  color: '#fff',
+                  '&:hover': { bgcolor: '#004a9f' },
+                }}
+              >
+                <AddIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Tooltip>
+          </Box>
+        }
+      />
+
+      <Box
+        ref={contentRef}
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          minWidth: 0,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          paddingTop: '8px',
+          '&::-webkit-scrollbar': { width: '8px', height: '8px' },
+          '&::-webkit-scrollbar-track': {
+            background: 'rgba(0, 0, 0, 0.02)',
+            borderRadius: '4px',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            background: 'rgba(0, 0, 0, 0.15)',
+            borderRadius: '4px',
+            '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+          },
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+        }}
+      >
+        {/* Filter & Toolbar Area */}
+        <Box
+          ref={filtersRef}
+          sx={{ 
+            mt: 0,
+            mb: 0,
+            px: 1.5,
+            py: 1.25,
+            backgroundColor: '#F9FAFB',
+            borderRadius: 0,
+            border: '1px solid #E5E7EB',
+            borderBottom: '1px solid #EAEEF4',
+            overflowX: 'auto',
+            overflowY: 'hidden',
+            position: 'sticky',
+            top: 0,
+            zIndex: 15,
+          }}
+        >
+          <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <FormControl size="small" sx={{ minWidth: 160, height: 36 }}>
+                <InputLabel sx={{ fontSize: '0.875rem' }}>State Filter</InputLabel>
+                <Select
+                  value={locationStateFilter}
+                  onChange={(e) => {
+                    const newState = String(e.target.value);
+                    setLocationStateFilter(newState);
+                    updateCache({ locationStateFilter: newState });
+                    // The useEffect will handle reloading when locationStateFilter changes
+                  }}
+                  label="State Filter"
+                  sx={{
+                    height: 36,
+                    borderRadius: '6px',
+                    backgroundColor: 'white',
+                    fontSize: '0.875rem',
+                  }}
+                >
+                  <MenuItem value="all">All States</MenuItem>
+                  {['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'].map((st) => (
+                    <MenuItem key={st} value={st}>{st}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <IconButton
+                size="small"
+                onClick={() => {
+                  setLocationStateFilter('all');
+                  updateCache({ locationStateFilter: 'all' });
+                  // The useEffect will handle reloading when locationStateFilter changes
+                }}
+                disabled={locationStateFilter === 'all'}
+                sx={{ height: 36, width: 36, p: 0.75 }}
+              >
+                <ClearIcon fontSize="small" />
+              </IconButton>
+            </Box>
+          </Box>
+        </Box>
+        
+        {/* Companies Table */}
+        <Box sx={{ 
+          px: 2, 
+          pb: 2, 
+          flex: 1, 
+          minHeight: 0, 
+          display: 'flex', 
+          flexDirection: 'column',
+          position: 'relative',
+        }}>
+          {/* Loading overlay */}
+          {companiesLoading && (
+            <Box
+              sx={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: 'rgba(255, 255, 255, 0.8)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 1000,
+                borderRadius: '8px',
+              }}
+            >
+              <CircularProgress size={40} />
+            </Box>
+          )}
+          
+          {/* No Results Found message */}
+          {!companiesLoading && filteredCompanies.length === 0 && (
+            <Box
+              sx={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 999,
+                flexDirection: 'column',
+                gap: 2,
+              }}
+            >
+              <Typography variant="h6" color="text.secondary" sx={{ fontWeight: 500 }}>
+                No Results Found
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Try adjusting your search or filters
+              </Typography>
+            </Box>
+          )}
+          
+          <CompanyTable
+            companies={paginatedCompanies}
+            loading={companiesLoading}
+            columns={{
+              favorites: true,
+              companyName: true,
+              contacts: true,
+              deals: true,
+              pipelineValue: true,
+              headquarters: true,
+              salespeople: true,
+            }}
+            sortField={sortField}
+            sortDirection={sortDirection}
+            onSort={handleSort}
+            onRowClick={handleViewCompany}
+            isFavorite={isFavorite}
+            toggleFavorite={toggleFavorite}
+            getAvatarColor={getAvatarColor}
+            getAvatarTextColor={getAvatarTextColor}
+            getCompanyContacts={getCompanyContacts}
+            getCompanyDeals={getCompanyDeals}
+            getCompanyPipelineValue={getCompanyPipelineValue}
+            getCompanySalespeople={getCompanySalespeople}
+            formatCurrency={formatCurrency}
+            stickyHeaderOffset={isScrolled ? filtersHeight : 0}
+            useOuterScroll={false}
+            square
+            pagination={{
+              count: filteredCompanies.length,
+              page: page,
+              rowsPerPage: rowsPerPage,
+              onPageChange: (_, newPage) => setPage(newPage),
+              onRowsPerPageChange: (e) => {
+                setRowsPerPage(parseInt(e.target.value, 10));
+                setPage(0);
+              },
+            }}
+            emptyStateMessage="No companies found"
+            emptyStateAction={
+              filteredCompanies.length === 0 && !companiesLoading ? (
+                <Box sx={{ textAlign: 'center' }}>
+                  <Box
+                    sx={{
+                      width: 120,
+                      height: 120,
+                      borderRadius: '50%',
+                      backgroundColor: '#F3F4F6',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      mb: 3,
+                      mx: 'auto',
+                    }}
+                  >
+                    <BusinessIcon sx={{ fontSize: 48, color: '#9CA3AF' }} />
+                  </Box>
+                </Box>
+              ) : undefined
+            }
+          />
+        </Box>
+      </Box>
+
+      {/* Add Company Dialog */}
+      <Dialog open={showAddCompanyDialog} onClose={handleCloseDialog} maxWidth="md" fullWidth>
+        <DialogTitle>Add New Company</DialogTitle>
+        <DialogContent>
+          {error && (
+            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>
+              {error}
+            </Alert>
+          )}
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Company Name"
+                value={companyForm.name}
+                onChange={(e) => handleCompanyFormChange('name', e.target.value)}
+                required
+                disabled={savingCompany}
+                error={!!error && !companyForm.name.trim()}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Website"
+                value={companyForm.website}
+                onChange={(e) => handleCompanyFormChange('website', e.target.value)}
+                placeholder="https://example.com"
+                disabled={savingCompany}
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <Autocomplete
+                options={allCompanies}
+                getOptionLabel={(option) => option.companyName || option.name || ''}
+                value={allCompanies.find((c) => c.id === companyForm.parentCompany) || null}
+                onChange={(event, newValue) => {
+                  handleCompanyFormChange('parentCompany', newValue?.id || '');
+                }}
+                loading={loadingAllCompanies}
+                isOptionEqualToValue={(option, value) => option.id === value.id}
+                disabled={savingCompany}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Parent Company"
+                    placeholder="Select a parent company (optional)"
+                  />
+                )}
+              />
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseDialog} disabled={savingCompany}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleSaveCompany} 
+            variant="contained" 
+            disabled={savingCompany || !companyForm.name}
+          >
+            {savingCompany ? <CircularProgress size={20} /> : 'Save Company'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Success/Error Snackbars */}
+      <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError('')}>
+        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>
+          {error}
+        </Alert>
+      </Snackbar>
+      <Snackbar open={success} autoHideDuration={2000} onClose={() => setSuccess(false)}>
+        <Alert severity="success" sx={{ width: '100%' }}>
+          {successMessage}
+        </Alert>
+      </Snackbar>
+    </Box>
+  );
+};
+
+export default CompaniesPage;

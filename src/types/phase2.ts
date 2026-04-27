@@ -1,4 +1,6 @@
 import { FieldValue } from 'firebase/firestore';
+import type { AssignmentAttendanceOutcome, NoShowRiskPredictionV1 } from './noShowRisk';
+import type { ApplicationHiringLifecycle } from './applicationHiringLifecycle';
 
 /**
  * Phase 2 Application Types
@@ -11,6 +13,13 @@ export type Application = {
 
   // Optional linkage
   jobOrderId?: string | null;
+  userId?: string;
+  candidateId?: string;
+  jobId?: string | null;
+  postId?: string | null;
+  shiftId?: string | null;
+  shiftIds?: string[];
+  selectedShifts?: unknown[];
 
   // Candidate core
   candidate: {
@@ -48,11 +57,21 @@ export type Application = {
 
   // Audit
   source?: 'job_board' | 'manual' | 'referral' | 'import' | 'career_page';
+
+  /** Dual-written funnel snapshot (canonical stages in `shared/hiringLifecycleTypes.ts`). */
+  hiringLifecycle?: ApplicationHiringLifecycle;
 };
 
 export type ApplicationFormData = {
   // Optional linkage
   jobOrderId?: string | null;
+  userId?: string;
+  candidateId?: string;
+  jobId?: string | null;
+  postId?: string | null;
+  shiftId?: string | null;
+  shiftIds?: string[];
+  selectedShifts?: unknown[];
 
   // Candidate core
   candidate: {
@@ -109,7 +128,16 @@ export interface ApplicationSortOptions {
 // PHASE 2.2 - ASSIGNMENTS & SCHEDULING TYPES
 // ============================================================================
 
-export type AssignmentStatus = 'proposed' | 'confirmed' | 'active' | 'completed' | 'ended' | 'canceled';
+/** Canonical values written by new code; legacy strings may still exist in Firestore until backfilled. */
+export type AssignmentStatusCanonical = 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled';
+
+export type AssignmentStatus =
+  | AssignmentStatusCanonical
+  | 'proposed'
+  | 'declined'
+  | 'active'
+  | 'ended'
+  | 'canceled';
 
 export type TimesheetMode = 'mobile' | 'kiosk' | 'paper';
 
@@ -124,6 +152,11 @@ export interface Assignment {
   status: AssignmentStatus;
   startDate: string; // ISO date
   endDate?: string; // Optional, blank if indefinite
+  /**
+   * Optional weekly schedule for multi-day assignments.
+   * Keys are JS day-of-week numbers as strings: 0=Sun ... 6=Sat
+   */
+  weeklySchedule?: Record<string, { enabled: boolean; startTime: string; endTime: string }>;
   payRate: number; // Decimal, tenant currency
   billRate: number; // Decimal, tenant currency
   worksite: string; // Ref to company_locations/{id}
@@ -134,6 +167,13 @@ export interface Assignment {
   updatedAt: Date | FieldValue;
   updatedBy?: string;
   notes?: string;
+
+  /** Rules-based assignment-level no-show risk (see Cloud Functions `computeNoShowRiskForAssignment`). */
+  noShowRiskPredictionV1?: NoShowRiskPredictionV1;
+  /** Recorded attendance for reporting and model training; default in UI is `unknown`. */
+  attendanceOutcome?: AssignmentAttendanceOutcome;
+  attendanceRecordedAt?: Date | FieldValue;
+  attendanceRecordedBy?: string;
 }
 
 export interface AssignmentFormData {
@@ -143,6 +183,7 @@ export interface AssignmentFormData {
   status: AssignmentStatus;
   startDate: string;
   endDate?: string;
+  weeklySchedule?: Record<string, { enabled: boolean; startTime: string; endTime: string }>;
   payRate: number;
   billRate: number;
   worksite: string;
@@ -213,6 +254,7 @@ export interface Timesheet {
 export interface AssignmentFilters {
   status?: AssignmentStatus;
   candidateId?: string;
+  jobOrderId?: string;
   worksite?: string;
   shiftTemplateId?: string;
   dateRange?: {

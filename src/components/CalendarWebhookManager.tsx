@@ -3,379 +3,238 @@ import {
   Box,
   Card,
   CardContent,
-  CardHeader,
   Typography,
-  Button,
+  Chip,
+  Alert,
   Switch,
   FormControlLabel,
-  Alert,
   CircularProgress,
-  Chip,
-  Divider,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemIcon,
-  IconButton,
-  Tooltip
+  Tooltip,
+  Grid,
 } from '@mui/material';
 import {
-  Notifications as NotificationsIcon,
-  NotificationsOff as NotificationsOffIcon,
-  Refresh as RefreshIcon,
-  CheckCircle as CheckCircleIcon,
-  Error as ErrorIcon,
-  Warning as WarningIcon,
-  Info as InfoIcon,
-  Schedule as ScheduleIcon,
-  Event as EventIcon
+  Bolt as BoltIcon,
 } from '@mui/icons-material';
-import { useAuth } from '../contexts/AuthContext';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { doc, onSnapshot, Timestamp } from 'firebase/firestore';
 
-interface CalendarWebhookStatus {
-  active: boolean;
-  watchId?: string;
-  expiration?: string;
-  lastSync?: string;
-  eventsProcessed?: number;
-  contactsMatched?: number;
-  error?: string;
-}
+import { db } from '../firebase';
+import { useAuth } from '../contexts/AuthContext';
 
 interface CalendarWebhookManagerProps {
   tenantId: string;
 }
 
+/**
+ * Calendar real-time sync toggle.
+ *
+ * Wires into the new `startCalendarPush` / `stopCalendarPush` callables
+ * (backed by Google Calendar `events.watch()` with webhook delivery) and
+ * subscribes to the caller's user doc via onSnapshot for live status —
+ * mirrors the Gmail real-time sync toggle pattern in `GmailSettings.tsx`.
+ */
 const CalendarWebhookManager: React.FC<CalendarWebhookManagerProps> = ({ tenantId }) => {
   const { user } = useAuth();
   const functions = getFunctions();
-  const [status, setStatus] = useState<CalendarWebhookStatus>({ active: false });
-  const [loading, setLoading] = useState(false);
+
+  const startCalendarPushFn = httpsCallable(functions, 'startCalendarPush');
+  const stopCalendarPushFn = httpsCallable(functions, 'stopCalendarPush');
+
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [pushBusy, setPushBusy] = useState(false);
 
-  // Firebase Functions
-  const getWebhookStatusFn = httpsCallable(functions, 'getCalendarWebhookStatus');
-  const setupWebhookFn = httpsCallable(functions, 'setupCalendarWatch');
-  const stopWebhookFn = httpsCallable(functions, 'stopCalendarWatch');
-  const refreshWebhookFn = httpsCallable(functions, 'refreshCalendarWatch');
+  // Push notification (real-time sync) state — sourced from user doc, updated via onSnapshot
+  const [pushState, setPushState] = useState<{
+    enabled: boolean;
+    expiration: number | null;
+    lastPushAt: Date | null;
+    lastError: string | null;
+    lastErrorAt: Date | null;
+  }>({
+    enabled: false,
+    expiration: null,
+    lastPushAt: null,
+    lastError: null,
+    lastErrorAt: null,
+  });
 
-  // Load webhook status
-  const loadWebhookStatus = async () => {
-    if (!user?.uid) return;
-    
-    setLoading(true);
-    try {
-      const result = await getWebhookStatusFn({ userId: user.uid, tenantId });
-      const data = result.data as any;
-      
-      if (data.success) {
-        setStatus(data.status);
-      } else {
-        setStatus({ active: false });
-      }
-    } catch (error: any) {
-      console.error('Error loading webhook status:', error);
-      setError('Failed to load webhook status');
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Subscribe to user doc for live calendar push status.
   useEffect(() => {
-    loadWebhookStatus();
-  }, [user?.uid, tenantId]);
-
-  // Set up calendar webhook
-  const setupWebhook = async () => {
     if (!user?.uid) return;
-    
-    setLoading(true);
-    setError(null);
-    setSuccess(null);
-    
-    try {
-      const result = await setupWebhookFn({ userId: user.uid, tenantId });
-      const data = result.data as any;
-      
-      if (data.success) {
-        setSuccess('Calendar webhook set up successfully! You will now receive notifications when prospects schedule meetings.');
-        setStatus({
-          active: true,
-          watchId: data.watchId,
-          expiration: data.expiration
+    const userRef = doc(db, 'users', user.uid);
+    const unsub = onSnapshot(
+      userRef,
+      (snap) => {
+        const d: any = snap.data() || {};
+        const toDate = (v: any): Date | null => {
+          if (!v) return null;
+          if (v instanceof Timestamp) return v.toDate();
+          if (v instanceof Date) return v;
+          if (typeof v === 'number') return new Date(v);
+          if (typeof v?.toDate === 'function') return v.toDate();
+          return null;
+        };
+        setPushState({
+          enabled: !!d.calendarPushEnabled,
+          expiration:
+            typeof d.calendarWatchExpiration === 'number'
+              ? d.calendarWatchExpiration
+              : d.calendarWatchExpiration?.toMillis
+                ? d.calendarWatchExpiration.toMillis()
+                : null,
+          lastPushAt: toDate(d.calendarLastPushAt),
+          lastError: typeof d.calendarWatchLastError === 'string' ? d.calendarWatchLastError : null,
+          lastErrorAt: toDate(d.calendarWatchLastErrorAt),
         });
-      } else {
-        setError(data.error || 'Failed to set up calendar webhook');
+      },
+      (err) => {
+        console.warn('CalendarWebhookManager: user doc onSnapshot failed', err);
       }
-    } catch (error: any) {
-      console.error('Error setting up webhook:', error);
-      setError('Failed to set up calendar webhook');
-    } finally {
-      setLoading(false);
-    }
-  };
+    );
+    return () => {
+      try {
+        unsub();
+      } catch {
+        /* noop */
+      }
+    };
+  }, [user?.uid]);
 
-  // Stop calendar webhook
-  const stopWebhook = async () => {
-    if (!user?.uid) return;
-    
-    setLoading(true);
+  const handleTogglePushSync = async (nextEnabled: boolean) => {
+    if (!user?.uid) {
+      setError('User not authenticated');
+      return;
+    }
+    if (!tenantId) {
+      setError('Missing tenantId — cannot toggle calendar real-time sync.');
+      return;
+    }
+    setPushBusy(true);
     setError(null);
     setSuccess(null);
-    
     try {
-      const result = await stopWebhookFn({ userId: user.uid, tenantId });
-      const data = result.data as any;
-      
-      if (data.success) {
-        setSuccess('Calendar webhook stopped successfully');
-        setStatus({ active: false });
+      if (nextEnabled) {
+        const res: any = await startCalendarPushFn({ tenantId });
+        const data = res?.data || {};
+        if (data?.success) {
+          setSuccess('Real-time calendar sync enabled.');
+        } else {
+          setError('Could not enable real-time calendar sync.');
+        }
       } else {
-        setError(data.error || 'Failed to stop calendar webhook');
+        const res: any = await stopCalendarPushFn({ tenantId });
+        const data = res?.data || {};
+        if (data?.success) {
+          setSuccess('Real-time calendar sync disabled. Events will still refresh via the periodic sync.');
+        } else {
+          setError(`Could not disable real-time calendar sync${data?.reason ? `: ${data.reason}` : ''}.`);
+        }
       }
-    } catch (error: any) {
-      console.error('Error stopping webhook:', error);
-      setError('Failed to stop calendar webhook');
+    } catch (err: any) {
+      console.error('Error toggling Calendar push sync:', err);
+      setError(`Real-time calendar sync toggle failed: ${err?.message || 'unknown error'}`);
     } finally {
-      setLoading(false);
+      setPushBusy(false);
     }
   };
 
-  // Refresh calendar webhook
-  const refreshWebhook = async () => {
-    if (!user?.uid) return;
-    
-    setLoading(true);
-    setError(null);
-    setSuccess(null);
-    
-    try {
-      const result = await refreshWebhookFn({ userId: user.uid, tenantId });
-      const data = result.data as any;
-      
-      if (data.success) {
-        setSuccess('Calendar webhook refreshed successfully');
-        setStatus({
-          active: true,
-          watchId: data.watchId,
-          expiration: data.expiration
-        });
-      } else {
-        setError(data.error || 'Failed to refresh calendar webhook');
-      }
-    } catch (error: any) {
-      console.error('Error refreshing webhook:', error);
-      setError('Failed to refresh calendar webhook');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getStatusIcon = () => {
-    if (status.active) {
-      return <CheckCircleIcon color="success" />;
-    } else if (status.error) {
-      return <ErrorIcon color="error" />;
-    } else {
-      return <WarningIcon color="warning" />;
-    }
-  };
-
-  const getStatusColor = () => {
-    if (status.active) return 'success';
-    if (status.error) return 'error';
-    return 'warning';
-  };
-
-  const formatExpiration = (expiration: string) => {
-    if (!expiration) return 'Unknown';
-    const date = new Date(expiration);
-    return date.toLocaleString();
-  };
-
-  const isExpiringSoon = (expiration: string) => {
-    if (!expiration) return false;
-    const expirationDate = new Date(expiration);
-    const now = new Date();
-    const hoursUntilExpiration = (expirationDate.getTime() - now.getTime()) / (1000 * 60 * 60);
-    return hoursUntilExpiration < 24; // Less than 24 hours
+  const formatRelative = (d: Date | null): string => {
+    if (!d) return '—';
+    const diffMs = Date.now() - d.getTime();
+    if (diffMs < 0) return d.toLocaleString();
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins} min${mins === 1 ? '' : 's'} ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+    const days = Math.floor(hrs / 24);
+    if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`;
+    return d.toLocaleString();
   };
 
   return (
     <Card>
-      <CardHeader
-        title={
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <NotificationsIcon color="primary" />
-            <Typography variant="h6">Calendar Webhooks</Typography>
-          </Box>
-        }
-        subheader="Receive real-time notifications when prospects schedule meetings"
-      />
       <CardContent>
+        <Box display="flex" alignItems="center" gap={1} mb={1}>
+          <BoltIcon color={pushState.enabled ? 'primary' : 'disabled'} />
+          <Typography variant="h6">Real-time Calendar Sync</Typography>
+          <Chip
+            size="small"
+            label={pushState.enabled ? 'On' : 'Off'}
+            color={pushState.enabled ? 'success' : 'default'}
+            sx={{ ml: 1 }}
+          />
+        </Box>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          When enabled, event changes are delivered instantly via Google Calendar push notifications,
+          with automatic incremental sync into HRX. The watch auto-renews daily.
+        </Typography>
+
         {error && (
           <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
             {error}
           </Alert>
         )}
-        
         {success && (
           <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>
             {success}
           </Alert>
         )}
 
-        {/* Status Overview */}
-        <Box sx={{ mb: 3 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-            {getStatusIcon()}
-            <Typography variant="h6">
-              Status: {status.active ? 'Active' : 'Inactive'}
-            </Typography>
-            <Chip 
-              label={status.active ? 'Monitoring' : 'Not Monitoring'} 
-              color={getStatusColor() as any}
-              size="small"
+        <FormControlLabel
+          control={
+            <Switch
+              checked={pushState.enabled}
+              disabled={pushBusy}
+              onChange={(e) => handleTogglePushSync(e.target.checked)}
             />
-          </Box>
+          }
+          label={pushState.enabled ? 'Enabled' : 'Enable real-time sync'}
+        />
 
-          {status.active && (
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-              {status.watchId && (
+        {pushState.enabled && (
+          <Box mt={2}>
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={6}>
                 <Typography variant="body2" color="text.secondary">
-                  Watch ID: {status.watchId}
+                  <strong>Last push received:</strong> {formatRelative(pushState.lastPushAt)}
                 </Typography>
-              )}
-              {status.expiration && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <Tooltip title="Calendar watches expire after ~7 days; we auto-renew daily.">
                   <Typography variant="body2" color="text.secondary">
-                    Expires: {formatExpiration(status.expiration)}
+                    <strong>Watch expires:</strong>{' '}
+                    {pushState.expiration
+                      ? new Date(pushState.expiration).toLocaleString()
+                      : '—'}
                   </Typography>
-                  {isExpiringSoon(status.expiration) && (
-                    <Chip 
-                      label="Expiring Soon" 
-                      color="warning" 
-                      size="small"
-                      icon={<WarningIcon />}
-                    />
-                  )}
-                </Box>
-              )}
-              {status.lastSync && (
-                <Typography variant="body2" color="text.secondary">
-                  Last Sync: {new Date(status.lastSync).toLocaleString()}
-                </Typography>
-              )}
-            </Box>
-          )}
-        </Box>
-
-        <Divider sx={{ my: 2 }} />
-
-        {/* Controls */}
-        <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
-          {!status.active ? (
-            <Button
-              variant="contained"
-              startIcon={<NotificationsIcon />}
-              onClick={setupWebhook}
-              disabled={loading}
-            >
-              {loading ? <CircularProgress size={20} /> : 'Enable Webhooks'}
-            </Button>
-          ) : (
-            <>
-              <Button
-                variant="outlined"
-                startIcon={<NotificationsOffIcon />}
-                onClick={stopWebhook}
-                disabled={loading}
-                color="error"
-              >
-                {loading ? <CircularProgress size={20} /> : 'Disable Webhooks'}
-              </Button>
-              <Button
-                variant="outlined"
-                startIcon={<RefreshIcon />}
-                onClick={refreshWebhook}
-                disabled={loading}
-              >
-                {loading ? <CircularProgress size={20} /> : 'Refresh'}
-              </Button>
-            </>
-          )}
-        </Box>
-
-        {/* Features List */}
-        <Box sx={{ mb: 2 }}>
-          <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
-            What happens when webhooks are enabled:
-          </Typography>
-          <List dense>
-            <ListItem>
-              <ListItemIcon>
-                <EventIcon fontSize="small" color="primary" />
-              </ListItemIcon>
-              <ListItemText 
-                primary="Real-time meeting notifications"
-                secondary="Get notified instantly when prospects schedule meetings"
-              />
-            </ListItem>
-            <ListItem>
-              <ListItemIcon>
-                <InfoIcon fontSize="small" color="primary" />
-              </ListItemIcon>
-              <ListItemText 
-                primary="Automatic contact matching"
-                secondary="Automatically link meeting attendees to your CRM contacts"
-              />
-            </ListItem>
-            <ListItem>
-              <ListItemIcon>
-                <ScheduleIcon fontSize="small" color="primary" />
-              </ListItemIcon>
-              <ListItemText 
-                primary="CRM activity creation"
-                secondary="Create CRM activities from external calendar events"
-              />
-            </ListItem>
-          </List>
-        </Box>
-
-        {/* Statistics */}
-        {status.active && (status.eventsProcessed || status.contactsMatched) && (
-          <Box sx={{ mt: 2 }}>
-            <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
-              Statistics:
-            </Typography>
-            <Box sx={{ display: 'flex', gap: 2 }}>
-              {status.eventsProcessed !== undefined && (
-                <Chip 
-                  label={`${status.eventsProcessed} events processed`}
-                  variant="outlined"
-                  size="small"
-                />
-              )}
-              {status.contactsMatched !== undefined && (
-                <Chip 
-                  label={`${status.contactsMatched} contacts matched`}
-                  variant="outlined"
-                  size="small"
-                />
-              )}
-            </Box>
+                </Tooltip>
+              </Grid>
+            </Grid>
           </Box>
         )}
 
-        {/* Error Display */}
-        {status.error && (
-          <Alert severity="error" sx={{ mt: 2 }}>
+        {pushState.lastError && (
+          <Alert severity="warning" sx={{ mt: 2 }}>
             <Typography variant="body2">
-              Error: {status.error}
+              <strong>Last error:</strong> {pushState.lastError}
+              {pushState.lastErrorAt && (
+                <Box component="span" ml={1} color="text.secondary">
+                  ({formatRelative(pushState.lastErrorAt)})
+                </Box>
+              )}
             </Typography>
           </Alert>
+        )}
+
+        {pushBusy && (
+          <Box mt={2} display="flex" alignItems="center" gap={1}>
+            <CircularProgress size={16} />
+            <Typography variant="caption" color="text.secondary">
+              Updating real-time calendar sync…
+            </Typography>
+          </Box>
         )}
       </CardContent>
     </Card>

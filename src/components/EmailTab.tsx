@@ -32,6 +32,7 @@ import {
 import { format } from 'date-fns';
 
 import EmailService from '../utils/emailService';
+import EmailBodyRenderer from './common/EmailBodyRenderer';
 
 interface EmailLog {
   id?: string;
@@ -133,13 +134,8 @@ const EmailTab: React.FC<EmailTabProps> = ({
     return addresses.map(addr => getContactName(addr)).join(', ');
   };
 
-  const sanitizeHtml = (html: string) => {
-    // Basic HTML sanitization - in production, use a proper sanitizer
-    return html
-      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-      .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
-      .replace(/on\w+="[^"]*"/gi, '');
-  };
+  // Import EmailBodyRenderer for better email rendering
+  // Note: sanitizeHtml removed - using EmailBodyRenderer instead
 
   useEffect(() => {
     const loadEmails = async () => {
@@ -323,17 +319,19 @@ const EmailTab: React.FC<EmailTabProps> = ({
                                     </IconButton>
                                   </Box>
                                   
-                                  <Typography variant="body2" paragraph>
-                                    {email.id && showFullContent.has(email.id) && email.bodyHtml ? (
-                                      <div 
-                                        dangerouslySetInnerHTML={{ 
-                                          __html: sanitizeHtml(email.bodyHtml) 
-                                        }}
-                                      />
-                                    ) : (
-                                      email.bodySnippet
-                                    )}
-                                  </Typography>
+                                  {email.id && showFullContent.has(email.id) && email.bodyHtml ? (
+                                    <EmailBodyRenderer
+                                      html={email.bodyHtml}
+                                      plainText={email.bodySnippet}
+                                      sx={{
+                                        width: '100%',
+                                      }}
+                                    />
+                                  ) : (
+                                    <Typography variant="body2" paragraph>
+                                      {email.bodySnippet}
+                                    </Typography>
+                                  )}
                                   
                                   <Box display="flex" gap={1} flexWrap="wrap">
                                     <Chip

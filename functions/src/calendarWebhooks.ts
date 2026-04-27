@@ -2,6 +2,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { getFirestore } from 'firebase-admin/firestore';
 import { google } from 'googleapis';
 import { defineString } from 'firebase-functions/params';
+import { logger } from './utils/logger';
 
 const db = getFirestore();
 
@@ -347,7 +348,7 @@ async function processCalendarEvent(event: any, tenantId: string, userId: string
     await db.collection('tenants').doc(tenantId).collection('activities').add(activityData);
 
     // Log AI action for analytics
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'calendar_event_processed',
       sourceModule: 'CalendarWebhooks',
@@ -369,7 +370,7 @@ async function processCalendarEvent(event: any, tenantId: string, userId: string
     console.error(`Error processing calendar event ${event.id}:`, error);
     
     // Log AI action for error tracking
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'calendar_event_processed',
       sourceModule: 'CalendarWebhooks',
@@ -480,14 +481,4 @@ export const refreshCalendarWatch = onRequest({
   }
 });
 
-// Helper function for AI logging (import from your existing utils)
-async function logAIAction(data: any) {
-  try {
-    await db.collection('aiLogs').add({
-      ...data,
-      timestamp: new Date()
-    });
-  } catch (error) {
-    console.error('Error logging AI action:', error);
-  }
-}
+// Note: Using logger from utils/logger for AI logging

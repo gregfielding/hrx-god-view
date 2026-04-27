@@ -1,6 +1,6 @@
 import { getFirestore } from 'firebase-admin/firestore';
 import { onCall } from 'firebase-functions/v2/https';
-import { logAIAction } from './feedbackEngine';
+import { logger } from './utils/logger';
 
 const db = getFirestore();
 
@@ -71,17 +71,8 @@ export class AutoDevAssistant {
     let errorMessage = '';
 
     try {
-      // Get recent logs for analysis
-      const endTime = new Date();
-      const startTime = new Date(endTime.getTime() - timeRange);
-
-      const logsSnapshot = await db.collection('ai_logs')
-        .where('timestamp', '>=', startTime)
-        .where('timestamp', '<=', endTime)
-        .orderBy('timestamp', 'desc')
-        .get();
-
-      const logs = logsSnapshot.docs.map(doc => doc.data());
+      // AI logs were removed; analyses now operate on empty datasets.
+      const logs: any[] = [];
       
       // Analyze patterns and generate fixes
       const fixes: AutoDevFix[] = [];
@@ -115,7 +106,7 @@ export class AutoDevAssistant {
       throw error;
     } finally {
       const latencyMs = Date.now() - start;
-      await logAIAction({
+      await logger.aiEvent({
         userId: 'AutoDevAssistant',
         actionType: 'analyze_and_generate_fixes',
         sourceModule: 'AutoDevAssistant',
@@ -206,7 +197,7 @@ export class AutoDevAssistant {
       return { success: false, error: errorMessage };
     } finally {
       const latencyMs = Date.now() - start;
-      await logAIAction({
+      await logger.aiEvent({
         userId: 'AutoDevAssistant',
         actionType: 'generate_and_deploy_fix',
         sourceModule: 'AutoDevAssistant',
@@ -357,7 +348,7 @@ export class AutoDevAssistant {
       await this.updateFixStatus(fix.id, 'rolled-back');
       
       // Log the rollback
-      await logAIAction({
+      await logger.aiEvent({
         userId: 'AutoDevAssistant',
         actionType: 'rollback_deployment',
         sourceModule: 'AutoDevAssistant',
