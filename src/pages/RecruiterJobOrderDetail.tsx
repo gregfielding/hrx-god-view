@@ -112,6 +112,11 @@ import {
 } from '../utils/gigShiftState';
 import { buildShiftPickerSecondLine } from '../utils/shiftPickerLabel';
 import { JobOrder } from '../types/recruiter/jobOrder';
+import {
+  getSchedulerAtActivation,
+  shouldRenderActivationSubline,
+  type JobOrderForSchedulerActivation,
+} from '../shared/jobOrder/getSchedulerAtActivation';
 import PageHeader from '../components/PageHeader';
 import RecordHeaderActionIcon from './UserProfile/components/RecordHeaderActionIcon';
 import {
@@ -3351,6 +3356,65 @@ const RecruiterJobOrderDetail: React.FC = () => {
     };
   }, [jobOrderSchedulerUid]);
 
+  /**
+   * **R.16.2d** — Activation-snapshot scheduler list. The cascade
+   * registry promoted `scheduler` to `snapshot-on-activation` in
+   * R.16.2c, so post-activation JOs carry `jo.snapshot.scheduler:
+   * string[]` independent of the live `jobOrder.schedulerUid` cache.
+   * Surfaced as an "Activated with: <names>" sub-line below the
+   * scheduler chip — divergence-only, hidden when activation matches
+   * current. See `docs/CLEANUP_R4_R16.2D_HANDOFF.md` §L.16.2d.1.
+   */
+  const activationSchedulerUids = useMemo(
+    () => getSchedulerAtActivation(jobOrder as JobOrderForSchedulerActivation | null),
+    [jobOrder],
+  );
+  const showActivationSchedulerSubline = useMemo(
+    () =>
+      shouldRenderActivationSubline({
+        currentSchedulerUid: jobOrderSchedulerUid,
+        activationSchedulers: activationSchedulerUids,
+      }),
+    [jobOrderSchedulerUid, activationSchedulerUids],
+  );
+  const [activationSchedulerNames, setActivationSchedulerNames] = useState<string[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!showActivationSchedulerSubline || !activationSchedulerUids?.length) {
+      setActivationSchedulerNames(null);
+      return;
+    }
+    (async () => {
+      try {
+        // Resolve display names in parallel; degrade per-uid to the raw
+        // uid on miss so a single bad lookup doesn't blank the sub-line.
+        const names = await Promise.all(
+          activationSchedulerUids.map(async (uid) => {
+            try {
+              const snap = await getDoc(doc(db, 'users', uid));
+              if (!snap.exists()) return uid;
+              const data = snap.data() as Record<string, unknown>;
+              const first = typeof data.firstName === 'string' ? data.firstName : '';
+              const last = typeof data.lastName === 'string' ? data.lastName : '';
+              const display =
+                typeof data.displayName === 'string' ? data.displayName.trim() : '';
+              const combined = `${first} ${last}`.trim();
+              return combined || display || uid;
+            } catch {
+              return uid;
+            }
+          }),
+        );
+        if (!cancelled) setActivationSchedulerNames(names);
+      } catch {
+        if (!cancelled) setActivationSchedulerNames(activationSchedulerUids);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showActivationSchedulerSubline, activationSchedulerUids]);
+
   /** When the JO has no `hiringEntityId`, inherit from `recruiterAccountId` (then parent national account). Matches backend `resolveEntityContext` / Placements entity_employments scoping. */
   const [resolvedRecruiterAccountHiringEntityId, setResolvedRecruiterAccountHiringEntityId] = useState<string | null>(null);
   useEffect(() => {
@@ -4361,30 +4425,71 @@ const RecruiterJobOrderDetail: React.FC = () => {
                         Shows the Scheduler who owns this order; the chip is
                         stamped server-side from account.roles.schedulerIds.
                         Renders as a clickable link when the uid resolves and
-                        falls back to "Unassigned" when no Scheduler exists. */}
+                        falls back to "Unassigned" when no Scheduler exists.
+
+                        R.16.2d adds an "Activated with: <names>" sub-line
+                        below the chip when the snapshot scheduler list
+                        diverges from `jobOrder.schedulerUid` (e.g. handoff
+                        after activation). Divergence-only — hidden when
+                        activation matches current. See
+                        `docs/CLEANUP_R4_R16.2D_HANDOFF.md` §L.16.2d.1. */}
                     <>
                       <Typography component="span" sx={{ color: 'text.disabled', lineHeight: 1, userSelect: 'none' }}>
                         ·
                       </Typography>
-                      <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
-                        <PersonIcon sx={{ fontSize: 15, color: 'rgb(74, 144, 226)', flexShrink: 0 }} />
-                        {jobOrderSchedulerUid ? (
-                          <MUILink
-                            component="button"
-                            type="button"
-                            underline="hover"
-                            onClick={() => navigate(`/users/${jobOrderSchedulerUid}`)}
-                            sx={{ ...jobOrderLinkSx, minWidth: 0 }}
+                      <Box
+                        sx={{
+                          display: 'inline-flex',
+                          flexDirection: 'column',
+                          alignItems: 'flex-start',
+                          minWidth: 0,
+                        }}
+                      >
+                        <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
+                          <PersonIcon sx={{ fontSize: 15, color: 'rgb(74, 144, 226)', flexShrink: 0 }} />
+                          {jobOrderSchedulerUid ? (
+                            <MUILink
+                              component="button"
+                              type="button"
+                              underline="hover"
+                              onClick={() => navigate(`/users/${jobOrderSchedulerUid}`)}
+                              sx={{ ...jobOrderLinkSx, minWidth: 0 }}
+                            >
+                              {schedulerName || '…'}
+                            </MUILink>
+                          ) : (
+                            <Typography
+                              component="span"
+                              sx={{ ...recordHeaderBodyTextSx, color: 'text.secondary' }}
+                            >
+                              Scheduler: Unassigned
+                            </Typography>
+                          )}
+                        </Box>
+                        {showActivationSchedulerSubline && (
+                          <Tooltip
+                            title="The schedulers captured when this job order was activated. Differs from the current scheduler — review for handoffs or commission attribution."
+                            placement="bottom-start"
                           >
-                            {schedulerName || '…'}
-                          </MUILink>
-                        ) : (
-                          <Typography
-                            component="span"
-                            sx={{ ...recordHeaderBodyTextSx, color: 'text.secondary' }}
-                          >
-                            Scheduler: Unassigned
-                          </Typography>
+                            <Typography
+                              component="span"
+                              data-testid="activation-scheduler-subline"
+                              sx={{
+                                fontSize: '0.7rem',
+                                color: 'text.secondary',
+                                fontStyle: 'italic',
+                                lineHeight: 1.2,
+                                ml: 2.5,
+                                mt: 0.25,
+                                cursor: 'help',
+                              }}
+                            >
+                              Activated with:{' '}
+                              {activationSchedulerNames
+                                ? activationSchedulerNames.join(', ')
+                                : (activationSchedulerUids ?? []).join(', ') || '\u2026'}
+                            </Typography>
+                          </Tooltip>
                         )}
                       </Box>
                     </>

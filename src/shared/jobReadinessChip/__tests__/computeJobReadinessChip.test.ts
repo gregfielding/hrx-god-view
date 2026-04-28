@@ -91,6 +91,72 @@ describe('computeJobReadinessChip — empty input', () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────
+// **R.4.3** — Defensive `'legacy_review'` branch.
+//
+// Locks the L.4.3.5 test surface from `docs/CLEANUP_R4_R16.2D_HANDOFF.md`:
+//   1. pre-R.1 createdAt + empty + unseeded → 'legacy_review'
+//   2. post-R.1 createdAt + empty + unseeded → 'computing' (existing path)
+//   3. boundary createdAt === R1_DEPLOY_DATE_ISO → 'computing' (strict less-than)
+//   4. no createdAt arg + empty + unseeded → 'computing' (additive — unwired callers preserved)
+//   5. pre-R.1 createdAt + empty + SEEDED=true → 'red' orphan (legacy guard does NOT fire when seeded)
+// ─────────────────────────────────────────────────────────────────────
+
+describe("computeJobReadinessChip — R.4.3 'legacy_review' defensive branch", () => {
+  // R.1 deploy date floor — keep in sync with the helper. Slightly
+  // before / after this boundary tests the strict-less-than comparison.
+  const R1_DEPLOY = '2026-04-27T05:38:46.000Z';
+  const PRE_R1 = '2026-04-25T12:00:00.000Z';
+  const POST_R1 = '2026-04-28T00:00:00.000Z';
+
+  it("(1) pre-R.1 createdAt + empty + unseeded → 'legacy_review'", () => {
+    const r = computeJobReadinessChip(
+      args({ readinessSeeded: false, assignmentCreatedAtIso: PRE_R1 }),
+    );
+    expect(r.state).toBe('legacy_review');
+    expect(r.text).toBe('Legacy \u2014 needs review');
+    expect(r.contributors).toHaveLength(0);
+    expect(r.pendingCount).toBe(0);
+    expect(r.blockerCount).toBe(0);
+  });
+
+  it("(2) post-R.1 createdAt + empty + unseeded → 'computing' (existing path preserved)", () => {
+    const r = computeJobReadinessChip(
+      args({ readinessSeeded: false, assignmentCreatedAtIso: POST_R1 }),
+    );
+    expect(r.state).toBe('computing');
+    expect(r.text).toBe('Job Ready (computing\u2026)');
+  });
+
+  it("(3) boundary createdAt === R1_DEPLOY_DATE_ISO → 'computing' (strict less-than)", () => {
+    // Assignments AT the boundary belong to the post-R.1 era — the const
+    // is the deploy timestamp itself, not the moment after.
+    const r = computeJobReadinessChip(
+      args({ readinessSeeded: false, assignmentCreatedAtIso: R1_DEPLOY }),
+    );
+    expect(r.state).toBe('computing');
+  });
+
+  it("(4) empty + unseeded + no createdAt → 'computing' (additive — unwired callers preserved)", () => {
+    const r = computeJobReadinessChip(
+      args({ readinessSeeded: false /* no assignmentCreatedAtIso */ }),
+    );
+    expect(r.state).toBe('computing');
+  });
+
+  it("(5) pre-R.1 createdAt + empty + SEEDED=true → 'red' orphan (legacy branch does NOT fire when seeded)", () => {
+    // Important boundary: even if R.4.2 backfill stamps `readinessSeededAt`
+    // on a pre-R.1 assignment, the chip should reflect "seeded but no
+    // contributors landed" via the existing red-orphan path — not
+    // `'legacy_review'`. Operators see "Job Not Ready" and re-seed.
+    const r = computeJobReadinessChip(
+      args({ readinessSeeded: true, assignmentCreatedAtIso: PRE_R1 }),
+    );
+    expect(r.state).toBe('red');
+    expect(r.text).toBe('Job Not Ready');
+  });
+});
+
 describe('computeJobReadinessChip — single-item classification', () => {
   it('hard + complete_pass → green', () => {
     const r = computeJobReadinessChip(args({

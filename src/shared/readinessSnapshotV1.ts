@@ -86,6 +86,54 @@ export function requirementToSnapshotRow(r: ReadinessRequirement): ReadinessSnap
   };
 }
 
+/**
+ * **R.4.1** — Recursive object-key normaliser used as a `JSON.stringify`
+ * replacer.
+ *
+ * Why this exists:
+ *   The recompute path in `syncHrxReadinessSnapshotV1.ts` short-circuits
+ *   the Firestore write when
+ *   `readinessSnapshotV1ComparableJson(existing) === readinessSnapshotV1ComparableJson(next)`.
+ *   That comparison is purely string-equality, so the two JSON strings
+ *   must be byte-identical. `tryParseComparable` reconstructs the
+ *   *top-level* shape with explicit key order, but the nested
+ *   `requirements[]` rows and `jobReadinessChip` object are passed
+ *   through as raw casts — and Firestore returns nested objects with
+ *   alphabetically-sorted keys, while `buildReadinessSnapshotV1Comparable`
+ *   produces them in insertion order. For an empty-contributor
+ *   `'computing'` chip the freshly-built `{state, text, pendingCount,
+ *   blockerCount, contributors}` becomes Firestore-shaped
+ *   `{blockerCount, contributors, pendingCount, state, text}` after a
+ *   round-trip, and the `===` check fails → wasted write. Same applies
+ *   to every `requirements[]` row.
+ *
+ * The fix is to canonicalise the JSON output: recursively sort the keys
+ * of every object node before stringification. Both sides go through
+ * the same normaliser, so insertion order on either side stops mattering.
+ *
+ * Scope notes:
+ *   - Arrays preserve their element order — semantic. (`requirements`
+ *     and `contributors` are sorted upstream by the aggregator.)
+ *   - `null` short-circuits via the `value &&` check (`typeof null === 'object'`
+ *     in JS but `Boolean(null) === false`).
+ *   - The persisted Firestore doc also benefits — `assignRef.set(...)`
+ *     receives the canonical-keyed object, so future test fixtures /
+ *     external consumers see deterministic key order too.
+ *
+ * @see docs/CLEANUP_R4_R16.2D_HANDOFF.md §L.4.1.2
+ * @see functions/src/readiness/syncHrxReadinessSnapshotV1.ts (the consumer)
+ */
+function stableKeyReplacer(_key: string, value: unknown): unknown {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const sorted: Record<string, unknown> = {};
+    for (const k of Object.keys(value as object).sort()) {
+      sorted[k] = (value as Record<string, unknown>)[k];
+    }
+    return sorted;
+  }
+  return value;
+}
+
 export function readinessSnapshotV1ComparableJson(c: ReadinessSnapshotV1Comparable): string {
-  return JSON.stringify(c);
+  return JSON.stringify(c, stableKeyReplacer);
 }

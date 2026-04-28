@@ -22,6 +22,7 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Box, Chip, CircularProgress, Popover, Typography } from '@mui/material';
 import type { ChipProps } from '@mui/material';
+import HistoryIcon from '@mui/icons-material/History';
 
 import type {
   JobReadinessChipContributor,
@@ -67,6 +68,14 @@ function chipColorForState(state: JobReadinessChipState): ChipColor {
       return 'warning';
     case 'red':
       return 'error';
+    // R.4.3 — `'legacy_review'` shares the gray `'default'` MUI color
+    // with `'computing'`, but the icon + label distinguish them
+    // visually (history icon vs spinner; "Legacy — needs review" vs
+    // "Job Ready (computing…)"). Gray was a deliberate Greg-lock to
+    // avoid conflating "in-flight processing" (yellow spinner) with
+    // "predates our system" (gray history) — distinct color is the
+    // whole point of adding the new state.
+    case 'legacy_review':
     case 'computing':
     default:
       return 'default';
@@ -147,10 +156,23 @@ const JobReadinessChip: React.FC<JobReadinessChipProps> = ({
   // sees activity without us claiming a green/yellow/red. Per spec wording
   // the LABEL still says "Job Ready (computing\u2026)" — we don't replace it
   // entirely with a spinner.
-  const startIcon =
-    effective.state === 'computing' ? (
+  //
+  // R.4.3 — `'legacy_review'` swaps the spinner for a history icon: the
+  // assignment isn't *processing*, it predates the rebuild. Same gray
+  // chip color as `'computing'` but the icon makes the semantic obvious.
+  let startIcon: React.ReactElement | undefined;
+  if (effective.state === 'computing') {
+    startIcon = (
       <CircularProgress size={10} thickness={5} sx={{ ml: 0.5, color: 'text.secondary' }} />
-    ) : undefined;
+    );
+  } else if (effective.state === 'legacy_review') {
+    startIcon = (
+      <HistoryIcon
+        fontSize="small"
+        sx={{ ml: 0.25, fontSize: '0.95rem', color: 'text.secondary' }}
+      />
+    );
+  }
 
   return (
     <>

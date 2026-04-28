@@ -102,6 +102,15 @@ export interface BuildAssignmentReadinessArgs {
    * ("Readiness not yet computed"). See R.4 helper Q4 for the rationale.
    */
   readinessSeeded?: boolean | null;
+  /**
+   * **R.4.3** — Optional ISO-8601 `assignment.createdAt`. When threaded
+   * through, the chip helper returns `'legacy_review'` for empty +
+   * unseeded assignments that predate the R.1 deploy
+   * (`R1_DEPLOY_DATE_ISO`) instead of an indefinite `'computing'`
+   * spinner. Pre-R.4.3 callers can omit this and continue to receive
+   * `'computing'` in that case.
+   */
+  assignmentCreatedAtIso?: string | null;
 }
 
 export interface BuildAssignmentReadinessResult {
@@ -130,12 +139,22 @@ export function buildAssignmentReadiness({
   assignmentReadinessItems,
   employeeReadinessItems,
   readinessSeeded,
+  assignmentCreatedAtIso,
 }: BuildAssignmentReadinessArgs): BuildAssignmentReadinessResult {
   // R.4 — chip is computed IFF both item arrays are explicitly passed
   // (including `[]`). Pre-R.4 callers (or `undefined`) continue to get the
   // legacy result without `jobReadinessChip`.
   const computeChip =
     assignmentReadinessItems !== undefined && employeeReadinessItems !== undefined;
+
+  // R.4.3 — strip the optional `assignmentCreatedAtIso` arg when it's
+  // null/empty so the chip helper falls into its pre-R.4.3 path
+  // (passing `undefined` rather than `null` matches the helper's typed
+  // contract — `undefined` is "no signal", not "empty signal").
+  const createdAtForChip =
+    typeof assignmentCreatedAtIso === 'string' && assignmentCreatedAtIso.length > 0
+      ? assignmentCreatedAtIso
+      : undefined;
 
   if (!assignment?.id) {
     return {
@@ -148,6 +167,7 @@ export function buildAssignmentReadiness({
               assignmentReadinessItems: assignmentReadinessItems ?? [],
               employeeReadinessItems: employeeReadinessItems ?? [],
               readinessSeeded: Boolean(readinessSeeded),
+              ...(createdAtForChip ? { assignmentCreatedAtIso: createdAtForChip } : {}),
             }),
           }
         : {}),
@@ -273,6 +293,7 @@ export function buildAssignmentReadiness({
             assignmentReadinessItems: assignmentReadinessItems ?? [],
             employeeReadinessItems: employeeReadinessItems ?? [],
             readinessSeeded: Boolean(readinessSeeded),
+            ...(createdAtForChip ? { assignmentCreatedAtIso: createdAtForChip } : {}),
           }),
         }
       : {}),

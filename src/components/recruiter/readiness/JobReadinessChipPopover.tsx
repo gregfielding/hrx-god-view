@@ -43,13 +43,25 @@ const TIER_LABEL: Record<JobReadinessChipContribution, string> = {
 };
 
 const JobReadinessChipPopover: React.FC<JobReadinessChipPopoverProps> = ({ data, onItemClick }) => {
-  // Empty case — chip is either 'computing' or orphan red. Show a hint
-  // so the user understands why the popover has no rows.
+  // Empty case — chip is either 'computing', orphan red, or (R.4.3)
+  // 'legacy_review'. Show a hint so the user understands why the popover
+  // has no rows.
   if (data.contributors.length === 0) {
     if (data.state === 'computing') {
       return (
         <Typography variant="caption" sx={{ color: 'text.secondary' }}>
           Readiness is still being computed for this assignment.
+        </Typography>
+      );
+    }
+    if (data.state === 'legacy_review') {
+      // R.4.3 — surface the legacy state explicitly so operators don't
+      // chase a missing-data ghost. Action: backfill or contact ops.
+      // No "trigger backfill" button here — R.4.2 isn't shipped yet.
+      return (
+        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+          This assignment predates the readiness rebuild (R.1). Run R.4.2-style
+          backfill or contact ops.
         </Typography>
       );
     }

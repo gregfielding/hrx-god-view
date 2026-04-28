@@ -46,6 +46,48 @@ import { getComplianceTypeLabel } from '../../../src/types/compliance';
 import { mergeAssignmentScreeningFromJobOrder } from '../../../src/shared/assignmentScreeningSignals';
 import { mergeJobOrderSyntheticCertificationDemands } from '../../../src/shared/jobOrderSyntheticCertificationDemands';
 
+/**
+ * **R.4.3** — Normalise an unknown `createdAt`-shaped value (Firestore
+ * `Timestamp`, ISO string, JS `Date`, or epoch millis) into an ISO-8601
+ * string for the chip helper. Returns `undefined` when the value is
+ * absent or unparseable — caller treats `undefined` as "no signal" and
+ * the chip helper falls back to its pre-R.4.3 `'computing'` branch.
+ */
+function toIsoOrUndefined(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  if (typeof v === 'string') {
+    const t = Date.parse(v);
+    return Number.isFinite(t) ? new Date(t).toISOString() : undefined;
+  }
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    return new Date(v).toISOString();
+  }
+  if (v instanceof Date) {
+    return Number.isFinite(v.getTime()) ? v.toISOString() : undefined;
+  }
+  // Firestore `Timestamp` shape — duck-type rather than importing the
+  // `admin.firestore` namespace into a pure helper. Both `toDate()` and
+  // `toMillis()` are present on the `Timestamp` class.
+  const obj = v as { toDate?: () => Date; toMillis?: () => number };
+  if (typeof obj?.toDate === 'function') {
+    try {
+      const d = obj.toDate();
+      return Number.isFinite(d.getTime()) ? d.toISOString() : undefined;
+    } catch {
+      // fall through
+    }
+  }
+  if (typeof obj?.toMillis === 'function') {
+    try {
+      const ms = obj.toMillis();
+      return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
+    } catch {
+      // fall through
+    }
+  }
+  return undefined;
+}
+
 function screeningForAssignment(
   assignmentId: string,
   records: Array<Record<string, unknown> & { id?: string }>,
@@ -355,6 +397,14 @@ export async function loadHrxReadinessBuildArgsAdmin(
   const readinessSeeded =
     Boolean(readinessSeededAt) || assignmentReadinessItems.length > 0;
 
+  // R.4.3 — forward `assignment.createdAt` (normalised to ISO) so the
+  // chip helper can return `'legacy_review'` for empty + unseeded
+  // assignments that predate the R.1 deploy. `undefined` when the
+  // assignment doesn't carry a parseable `createdAt` — the helper
+  // gracefully degrades to its pre-R.4.3 `'computing'` branch in that
+  // case.
+  const assignmentCreatedAtIso = toIsoOrUndefined(a.createdAt);
+
   return {
     user: userInput,
     employment: employmentInput,
@@ -364,5 +414,6 @@ export async function loadHrxReadinessBuildArgsAdmin(
     assignmentReadinessItems,
     employeeReadinessItems,
     readinessSeeded,
+    assignmentCreatedAtIso,
   };
 }

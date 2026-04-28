@@ -50,6 +50,32 @@ import type {
   JobReadinessChipState,
 } from './types';
 
+/**
+ * **R.4.3** — R.1 deploy-date floor for the `'legacy_review'` defensive
+ * branch. Assignments with `createdAt` strictly before this timestamp
+ * predate the R.1 readiness rebuild; they have no
+ * `assignmentReadinessItems` rows, no `readinessSeededAt`, and no
+ * `hiringEntityId`. Without the defensive branch the chip would spin
+ * on `'computing'` indefinitely for them.
+ *
+ * Source: merge commit `ca555054` ("Readiness rebuild: R.0–R.7 + R.3 +
+ * post-mortem cleanup") landed 2026-04-26 22:38:46 -0700, which is
+ * 2026-04-27T05:38:46Z UTC. The precise commit-derived timestamp is
+ * deliberate over a UTC date floor (e.g. `2026-04-27T00:00:00Z`) — a
+ * date floor would misclassify any assignment created in the 5h38m
+ * gap between midnight UTC and actual deploy as "non-legacy" when
+ * it's actually pre-deploy.
+ *
+ * If R.4.2 ever ships (legacy backfill of pre-R.1 assignments), this
+ * constant stays — the defensive branch fires on
+ * `contributors.length === 0` regardless, so a backfilled assignment
+ * will resolve to a real chip state instead of `'legacy_review'`
+ * once items land.
+ *
+ * @see docs/CLEANUP_R4_R16.2D_HANDOFF.md §L.4.3.1
+ */
+export const R1_DEPLOY_DATE_ISO = '2026-04-27T05:38:46.000Z';
+
 export interface ComputeJobReadinessChipArgs {
   /**
    * Per-shift items for THIS assignment, loaded from
@@ -73,6 +99,23 @@ export interface ComputeJobReadinessChipArgs {
    * Greg's spec uses this exact split — see Q4 in the planning doc.
    */
   readinessSeeded: boolean;
+  /**
+   * **R.4.3** — Optional ISO-8601 timestamp of the assignment's
+   * `createdAt`. When provided AND no contributors exist AND
+   * `readinessSeeded === false` AND
+   * `assignmentCreatedAtIso < R1_DEPLOY_DATE_ISO`, the helper returns
+   * `'legacy_review'` instead of `'computing'`.
+   *
+   * Lexical ISO comparison is correct (ISO-8601 sorts as text). The
+   * helper stays clock-free / pure — caller-side normalization to ISO
+   * is the contract. See `hrxReadinessSnapshotLoadContext.ts` for the
+   * canonical `Timestamp | string | Date → ISO` conversion.
+   *
+   * Optional + additive: pre-R.4.3 callers don't pass it and continue
+   * to receive `'computing'` for the empty/unseeded case (the
+   * pre-R.4.3 behavior is preserved exactly).
+   */
+  assignmentCreatedAtIso?: string;
 }
 
 /**
@@ -323,6 +366,11 @@ function buildText(state: JobReadinessChipState, pendingCount: number): string {
   switch (state) {
     case 'computing':
       return 'Job Ready (computing\u2026)';
+    case 'legacy_review':
+      // R.4.3 — distinct copy from `'computing'` so operators can tell at a
+      // glance that this is a pre-R.1 assignment (action: backfill or
+      // contact ops), not an in-flight seeder run.
+      return 'Legacy \u2014 needs review';
     case 'red':
       return 'Job Not Ready';
     case 'yellow':
@@ -354,8 +402,28 @@ export function computeJobReadinessChip(args: ComputeJobReadinessChipArgs): JobR
   // This is the only path where an empty-input array produces a non-green
   // result — every other empty case (e.g. all 'not_applicable') resolves
   // green naturally because no contributor is red or yellow.
+  //
+  // **R.4.3 (defensive branch):** before falling into `'computing'`, check
+  // whether the assignment predates the R.1 deploy. If so, the seeder
+  // *can never* run for it without a R.4.2-style backfill — surfacing a
+  // distinct `'legacy_review'` state instead of an indefinite spinner.
+  // Strict-less-than against the floor: assignments AT the boundary
+  // belong to the post-R.1 era (the const is the deploy timestamp itself,
+  // not the moment after).
   if (contributors.length === 0) {
     if (!args.readinessSeeded) {
+      if (
+        typeof args.assignmentCreatedAtIso === 'string' &&
+        args.assignmentCreatedAtIso < R1_DEPLOY_DATE_ISO
+      ) {
+        return {
+          state: 'legacy_review',
+          text: buildText('legacy_review', 0),
+          pendingCount: 0,
+          blockerCount: 0,
+          contributors: [],
+        };
+      }
       return {
         state: 'computing',
         text: buildText('computing', 0),

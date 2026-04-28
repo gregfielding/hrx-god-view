@@ -34,8 +34,22 @@ export type JobReadinessChipSource = 'assignment' | 'employee';
 /** Color tier the contributor adds to the aggregate. */
 export type JobReadinessChipContribution = 'green' | 'yellow' | 'red';
 
-/** Aggregate chip state, including the `'computing'` initial-render sentinel. */
-export type JobReadinessChipState = JobReadinessChipContribution | 'computing';
+/**
+ * Aggregate chip state.
+ *
+ * - `'green'` / `'yellow'` / `'red'` — normal classifier output.
+ * - `'computing'` — initial-render sentinel; no items loaded yet AND
+ *   the seeder hasn't run.
+ * - `'legacy_review'` — **R.4.3** — defensive branch: no items AND
+ *   seeder hasn't run AND the assignment predates the R.1 deploy
+ *   (`R1_DEPLOY_DATE_ISO`). Distinct from `'computing'` so the UI can
+ *   surface "this assignment predates the readiness rebuild" instead
+ *   of an indefinite spinner.
+ */
+export type JobReadinessChipState =
+  | JobReadinessChipContribution
+  | 'computing'
+  | 'legacy_review';
 
 /**
  * One item's contribution to the aggregate, plus the rendering metadata the
