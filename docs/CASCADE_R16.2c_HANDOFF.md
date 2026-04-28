@@ -312,6 +312,34 @@ No new Firestore indexes — snapshot trigger and push callable use existing ind
 
 ---
 
+## Hotfix — empty-array / empty-string fallthrough in `mergeRecruiterOrderDetails` (Apr 28, 2026)
+
+**Bug:** On a child account, `physicalRequirements` (and other multi-select fields) rendered empty in `AccountOrderDetailsForm` even when the parent National account had values. The `SyncToActiveButton` then read the form's empty state and would have pushed `(empty)` to active job orders, blanking the snapshot values.
+
+**Root cause:** `mergeRecruiterOrderDetails` used `??`, which only treats `null` / `undefined` as "no override". An explicit `[]` on the child (commonly persisted by a stray auto-save when the form loaded with `EMPTY_RECRUITER_ORDER_DETAILS` or with a parent that didn't have values yet) suppressed the parent's array. Same problem existed for the snapshot-policy text field `customUniformRequirements` (empty string suppressed parent).
+
+**Fix A — merge semantics** (`src/utils/recruiterAccountOrderDefaultsMerge.ts`):
+- Helpers `isNonEmptyStringArray` / `isNonEmptyTrimmedString`.
+- All array fields (`backgroundCheckPackages`, `drugScreeningPanels`, `additionalScreenings`, `licensesCerts`, `languagesRequired`, `skillsRequired`, `physicalRequirements`, `ppeRequirements`, `dressCode`) now fall through to the parent when the override is empty.
+- `customUniformRequirements` (the only snapshot-policy string in the merge) gets the same fallthrough for empty/whitespace strings.
+- Other string fields (`experienceRequired`, `educationRequired`, `ppeProvidedBy`, contact IDs, etc.) keep their existing spread semantics — they're not snapshot-policy.
+
+**Fix B — empty-push guard** (`src/components/recruiter/SyncToActiveButton.tsx`):
+- New `isEmptyPushValue` helper (exported for unit testing) treats `null`/`undefined`, empty/whitespace strings, and empty arrays as empty. `0`, `false`, plain objects, and non-empty values are **not** empty (covers `markupPercentage`, `eVerifyRequired`, future scheduler shapes).
+- When `getCurrentValue()` returns an empty value, the button now opens an interstitial confirm dialog ("Push empty value? … will clear this field on every selected active job order") with a warning-color "Yes, push empty value" CTA before the standard `PushToActiveDialog` opens. Non-empty pushes flow straight through unchanged.
+
+**Trade-off (documented):** A child account can no longer express "explicitly override the parent's list to nothing" via these multi-select / `customUniformRequirements` fields — auto-save will instantly revert any clear because the merge now treats empty as inherit. In practice this is a much rarer operator intent than "I want inheritance to work", and the V1 UX is strictly better. If a real "force empty override" use case surfaces later, we'll add an explicit "Override parent to nothing" toggle next to the affected fields.
+
+**Tests** (Jest, all passing):
+- `src/utils/__tests__/recruiterAccountOrderDefaultsMerge.test.ts` — 17 cases covering array fallthrough, string fallthrough, location-layer wins, and non-snapshot string fields keeping legacy semantics.
+- `src/components/recruiter/__tests__/SyncToActiveButton.isEmptyPushValue.test.ts` — 8 cases locking the empty-detection semantics.
+
+**Verification:** `tsc --noEmit` adds no new errors (pre-existing certification test errors unchanged); 41/41 jest cases pass across the new + existing R.16.2a wraps suite; ReadLints clean.
+
+**One-time data cleanup (optional):** The merge fix makes new saves correct, but existing children with `physicalRequirements: []` or `customUniformRequirements: ''` overrides will *display* the parent's value going forward (correct). The stale `[]` / `''` Firestore values are harmless under the new merge but could be cleared by a `.scratch/` script if desired — not required for correctness.
+
+---
+
 ## Deferred items (post-R.16.2c)
 
 | Item | Why deferred | Lands in |

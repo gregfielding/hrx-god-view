@@ -57,7 +57,50 @@ export const EMPTY_RECRUITER_ORDER_DETAILS: RecruiterOrderDetailsData = {
   invoiceContactId: '',
 };
 
+function isNonEmptyStringArray(v: unknown): v is string[] {
+  return Array.isArray(v) && v.length > 0;
+}
+
+function isNonEmptyTrimmedString(v: unknown): v is string {
+  return typeof v === 'string' && v.trim() !== '';
+}
+
 /**
+ * Empty-array / empty-string fallthrough — R.16.2c hotfix.
+ *
+ * Why this exists:
+ *   The original merge used `??`, which only treats `null` /
+ *   `undefined` as "no override". An explicit `[]` or `''` on the
+ *   child account therefore *suppressed* the parent's value, leaving
+ *   child-account forms blank even when the parent had real data.
+ *   The auto-save path on `AccountOrderDetailsForm` has been known to
+ *   persist `physicalRequirements: []` on a child whenever the user
+ *   touched any other field — instantly cutting that child off from
+ *   the parent's chips.
+ *
+ *   Concretely, that broke two things:
+ *     1. Display — the child-account multi-selects rendered empty
+ *        even though the JO snapshots (and the parent doc) had the
+ *        right values.
+ *     2. R.16.3-interim Sync — the sync button reads
+ *        `formRef.current.<field>`, so it would happily push the
+ *        empty array out to active job orders, blanking their
+ *        snapshots in one click.
+ *
+ *   Treating empty as "no override" closes both holes for the multi-
+ *   select array fields and the one snapshot-policy text field
+ *   (`customUniformRequirements`).
+ *
+ * Trade-off:
+ *   A child account can no longer express "explicitly override the
+ *   parent's list to nothing" via these fields. In practice that's
+ *   an extremely rare semantic and the UX (auto-save instantly
+ *   reverting any clear) is worse than the lost capability. Other
+ *   string fields (`experienceRequired`, `educationRequired`,
+ *   `ppeProvidedBy`, contact IDs, etc.) keep their existing spread
+ *   semantics — they're not snapshot-policy and the "clear to blank"
+ *   semantic still has legitimate use cases there.
+ *
  * @param overrideLayer — wins when set (e.g. child account or location_defaults)
  * @param baseLayer — fallback (e.g. parent national account)
  */
@@ -65,19 +108,32 @@ export function mergeRecruiterOrderDetails(
   overrideLayer: RecruiterOrderDetailsData | undefined,
   baseLayer: RecruiterOrderDetailsData | undefined
 ): RecruiterOrderDetailsData {
+  const arrayPick = (
+    overrideValue: string[] | undefined,
+    baseValue: string[] | undefined
+  ): string[] => {
+    if (isNonEmptyStringArray(overrideValue)) return overrideValue;
+    if (isNonEmptyStringArray(baseValue)) return baseValue;
+    return [];
+  };
   return {
     ...EMPTY_RECRUITER_ORDER_DETAILS,
     ...baseLayer,
     ...overrideLayer,
-    backgroundCheckPackages: overrideLayer?.backgroundCheckPackages ?? baseLayer?.backgroundCheckPackages ?? [],
-    drugScreeningPanels: overrideLayer?.drugScreeningPanels ?? baseLayer?.drugScreeningPanels ?? [],
-    additionalScreenings: overrideLayer?.additionalScreenings ?? baseLayer?.additionalScreenings ?? [],
-    licensesCerts: overrideLayer?.licensesCerts ?? baseLayer?.licensesCerts ?? [],
-    languagesRequired: overrideLayer?.languagesRequired ?? baseLayer?.languagesRequired ?? [],
-    skillsRequired: overrideLayer?.skillsRequired ?? baseLayer?.skillsRequired ?? [],
-    physicalRequirements: overrideLayer?.physicalRequirements ?? baseLayer?.physicalRequirements ?? [],
-    ppeRequirements: overrideLayer?.ppeRequirements ?? baseLayer?.ppeRequirements ?? [],
-    dressCode: overrideLayer?.dressCode ?? baseLayer?.dressCode ?? [],
+    backgroundCheckPackages: arrayPick(overrideLayer?.backgroundCheckPackages, baseLayer?.backgroundCheckPackages),
+    drugScreeningPanels: arrayPick(overrideLayer?.drugScreeningPanels, baseLayer?.drugScreeningPanels),
+    additionalScreenings: arrayPick(overrideLayer?.additionalScreenings, baseLayer?.additionalScreenings),
+    licensesCerts: arrayPick(overrideLayer?.licensesCerts, baseLayer?.licensesCerts),
+    languagesRequired: arrayPick(overrideLayer?.languagesRequired, baseLayer?.languagesRequired),
+    skillsRequired: arrayPick(overrideLayer?.skillsRequired, baseLayer?.skillsRequired),
+    physicalRequirements: arrayPick(overrideLayer?.physicalRequirements, baseLayer?.physicalRequirements),
+    ppeRequirements: arrayPick(overrideLayer?.ppeRequirements, baseLayer?.ppeRequirements),
+    dressCode: arrayPick(overrideLayer?.dressCode, baseLayer?.dressCode),
+    customUniformRequirements: isNonEmptyTrimmedString(overrideLayer?.customUniformRequirements)
+      ? overrideLayer!.customUniformRequirements
+      : isNonEmptyTrimmedString(baseLayer?.customUniformRequirements)
+        ? baseLayer!.customUniformRequirements
+        : '',
   };
 }
 

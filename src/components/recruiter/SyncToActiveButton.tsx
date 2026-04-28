@@ -43,12 +43,46 @@
  */
 
 import React, { useState } from 'react';
-import { CircularProgress, IconButton, Tooltip } from '@mui/material';
+import {
+  Button,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  IconButton,
+  Tooltip,
+} from '@mui/material';
 import SyncIcon from '@mui/icons-material/Sync';
 import { httpsCallable } from 'firebase/functions';
 
 import { functions } from '../../firebase';
 import { PushToActiveDialog, type PushFieldKey } from './PushToActiveDialog';
+
+/**
+ * R.16.2c hotfix — empty-push guard.
+ *
+ * Treat the following as "would clear the field on selected JOs":
+ *   - `null` / `undefined`
+ *   - empty / whitespace-only string
+ *   - empty array
+ * Everything else (numbers including `0`, booleans, non-empty
+ * objects/arrays, non-empty strings) is *not* an empty push.
+ *
+ * The merge fix in `recruiterAccountOrderDefaultsMerge` already
+ * makes empty-array overrides transparent in the form, so in normal
+ * inheritance scenarios `getCurrentValue()` returns the parent's
+ * non-empty value. This guard is the second line of defense for
+ * (a) operators on standalone accounts who genuinely cleared the
+ * field and (b) any future field shape that bypasses the merge.
+ */
+export function isEmptyPushValue(v: unknown): boolean {
+  if (v === null || v === undefined) return true;
+  if (typeof v === 'string') return v.trim() === '';
+  if (Array.isArray(v)) return v.length === 0;
+  return false;
+}
 
 interface LastPushedValueResult {
   previousValue: unknown;
@@ -94,6 +128,11 @@ const SyncToActiveButton: React.FC<SyncToActiveButtonProps> = ({
 }) => {
   const [loading, setLoading] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  // R.16.2c hotfix — interstitial confirm shown when the value
+  // about to be pushed is "empty" (see `isEmptyPushValue`). Pushing
+  // empty would clear the field on every selected active JO, which
+  // is almost always a mistake — gate it behind an explicit confirm.
+  const [confirmEmptyOpen, setConfirmEmptyOpen] = useState(false);
   // R.16.3-interim: `undefined` means "no previousValue filter" (the
   // dialog falls back to V1 push semantics — every diff is a candidate).
   // A defined value (including `null`) activates the R.16.1.1
@@ -136,8 +175,25 @@ const SyncToActiveButton: React.FC<SyncToActiveButtonProps> = ({
       setPreviousValue(undefined);
     } finally {
       setLoading(false);
-      setDialogOpen(true);
+      // R.16.2c hotfix — route empty pushes through the confirm
+      // step. Non-empty pushes go straight to the standard dialog.
+      if (isEmptyPushValue(currentValue)) {
+        setConfirmEmptyOpen(true);
+      } else {
+        setDialogOpen(true);
+      }
     }
+  };
+
+  const handleConfirmEmpty = () => {
+    setConfirmEmptyOpen(false);
+    setDialogOpen(true);
+  };
+
+  const handleCancelEmpty = () => {
+    setConfirmEmptyOpen(false);
+    setPendingNewValue(null);
+    setPreviousValue(undefined);
   };
 
   const tooltip = tooltipText ?? `Sync ${fieldLabel} to active job orders`;
@@ -157,6 +213,30 @@ const SyncToActiveButton: React.FC<SyncToActiveButtonProps> = ({
           </IconButton>
         </span>
       </Tooltip>
+
+      <Dialog open={confirmEmptyOpen} onClose={handleCancelEmpty} maxWidth="xs" fullWidth>
+        <DialogTitle>Push empty value?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            The current value of <strong>{fieldLabel}</strong> on this account is empty.
+            Pushing will <strong>clear</strong> this field on every selected active job order.
+          </DialogContentText>
+          <DialogContentText sx={{ mt: 2 }}>
+            Are you sure you want to continue?
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCancelEmpty}>Cancel</Button>
+          <Button
+            onClick={handleConfirmEmpty}
+            color="warning"
+            variant="contained"
+            data-testid="sync-confirm-empty"
+          >
+            Yes, push empty value
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <PushToActiveDialog
         open={dialogOpen}
