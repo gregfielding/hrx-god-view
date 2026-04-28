@@ -1360,7 +1360,44 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         
         // Check for stageData in both top-level and embedded deal object
         const stageData = (data as any).stageData || (data as any).deal?.stageData || {};
-        
+
+        // R.16.2c — snapshot precedence for the JO-form display reads.
+        // After Push-to-Active writes `jo.snapshot.physicalRequirements`
+        // (or `customUniformRequirements`), the form must show the
+        // snapshot value rather than the raw JO field — otherwise the
+        // operator pushes from the parent, sees "0 affected" gone away,
+        // then opens a JO and the form looks empty / stale, contradicting
+        // what the push dialog reported.
+        //
+        // Mirrors the `hiringEntityIdForForm` wrap above (R.16.2a).
+        // `data` IS the JO doc, so it carries `snapshot.*` if the JO has
+        // been activated. Drafts + pre-§16.1 active JOs without a
+        // snapshot fall back to the existing read order.
+        const joForFormRead = data as unknown as JobOrderForEffectiveRead;
+        const rawPhysical = Array.isArray((data as any).physicalRequirements)
+          ? ((data as any).physicalRequirements as string[])
+          : ((stageData.scoping?.compliance?.physicalRequirements as string[] | undefined) || []);
+        const { value: physicalRequirementsForForm } = getEffectiveJobOrderField<string[] | string>(
+          joForFormRead,
+          'physicalRequirements',
+          { fallback: rawPhysical },
+        );
+        const physicalRequirementsResolved = Array.isArray(physicalRequirementsForForm)
+          ? physicalRequirementsForForm
+          : typeof physicalRequirementsForForm === 'string' && physicalRequirementsForForm.trim() !== ''
+          ? [physicalRequirementsForForm]
+          : [];
+        const rawCustomUniform =
+          (data as any).customUniformRequirements ||
+          stageData.scoping?.customUniformRequirements ||
+          '';
+        const { value: customUniformForForm } = getEffectiveJobOrderField<string>(
+          joForFormRead,
+          'customUniformRequirements',
+          { fallback: rawCustomUniform as string },
+        );
+        const customUniformResolved =
+          typeof customUniformForForm === 'string' ? customUniformForForm : '';
 
         setFormData({
           // Basic Information
@@ -1433,7 +1470,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           dressCode: Array.isArray((data as any).dressCode)
             ? (data as any).dressCode
             : stageData.scoping?.uniformRequirements || [],
-          customUniformRequirements: (data as any).customUniformRequirements || stageData.scoping?.customUniformRequirements || '',
+          // R.16.2c — snapshot precedence (see `customUniformResolved` above).
+          customUniformRequirements: customUniformResolved,
           showCustomUniformRequirements: (data as any).showCustomUniformRequirements || stageData.scoping?.showCustomUniformRequirements || false,
           timeclockSystem: stageData.scoping?.timeclockSystem || '',
           disciplinePolicy: stageData.scoping?.disciplinePolicy || '',
@@ -1456,9 +1494,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           skillsRequired: Array.isArray((data as any).skillsRequired)
             ? (data as any).skillsRequired
             : (stageData.scoping?.compliance?.skills || []),
-          physicalRequirements: Array.isArray((data as any).physicalRequirements)
-            ? (data as any).physicalRequirements
-            : (stageData.scoping?.compliance?.physicalRequirements || []),
+          // R.16.2c — snapshot precedence (see `physicalRequirementsResolved` above).
+          physicalRequirements: physicalRequirementsResolved,
           ppeRequirements: Array.isArray((data as any).ppeRequirements)
             ? (data as any).ppeRequirements
             : (stageData.scoping?.compliance?.ppe || []),
