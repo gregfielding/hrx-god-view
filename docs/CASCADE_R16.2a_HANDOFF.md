@@ -1,8 +1,14 @@
 # Cascade Propagation Policy — R.16.2a Consumer Rewire (Financial-Critical Slice) Handoff Spec
 
-**Status:** R.16.2a design **LOCKED** (Apr 27, 2026). Code starts when both greenlight conditions are met:
-1. R.16.1 staging smoke confirms — functions deployed + backfill ops sequence clean (dry-run → write → idempotency confirm) + frontend deployed + manual smoke per `CASCADE_PROPAGATION_R16.1_HANDOFF.md` runbook §3–§5.
-2. Brief locks below stand (no late edits).
+**Status:** R.16.2a **implementation complete** (Phases 1, 2, 3, 5 shipped Apr 27, 2026). Greenlight conditions both met before coding started: R.16.1 staging smoke green (CORT push end-to-end successful per R.16.1.1) and brief locks below stood. Awaiting targeted functions deploy + frontend deploy + manual staging smoke per the runbook §3.
+
+**Test counts at ship:**
+- Phase 1 (server wraps) — 21/21 new mocha cases passing.
+- Phase 2 (client wraps) — 17/17 new jest cases passing; 18/18 R.16.1 helper jest cases unchanged.
+- Cascade-affected mocha (jobOrders + cascade + readiness + onboarding + workerAiPrescreen + categoryScoreEvolution + firestore + messaging + translation + utils + accusource + manageAssociations) — **405 passing**, 27 pending (no regressions).
+- `scripts/check-cascade-mirror.sh` — clean (extended to enforce parity on `jobOrder/getEffectiveJobOrderField.ts`).
+- `tsc --noEmit` — clean both projects (modulo same pre-existing `auth/setTenantRole.test.ts` errors unrelated to this slice).
+- `ReadLints` — no new lint errors on any touched file.
 **Predecessor:** `docs/CASCADE_PROPAGATION_R16.1_HANDOFF.md` (snapshot machinery + admin tooling shipped).
 **Successor:** R.16.2b (post-CORT polish — `screeningPackageId`/R.11 fold-in, `additionalScreenings`, per-position `futa`/`suta`/`rateMode`/`jobTitle`/`jobDescription`, remaining banner integrations).
 
@@ -260,18 +266,36 @@ R.16.2a is **read-side only** — no new functions to register, no new indexes, 
 
 ### Step 1 — Functions deploy
 
-Server-side wraps live inside existing functions (e.g. `onAssignmentCreatedAutoSeed`, `workerOnboardingPipeline`). Re-deploy each of those:
+Server-side wraps live inside existing functions. **Verified mapping** of wrap files → deployed function names (traced via `index.ts` exports + import graph, Apr 27, 2026):
+
+| Touched file | Wrap target | Deployed function(s) that consume the wrap |
+|--------------|-------------|--------------------------------------------|
+| `readiness/onAssignmentCreatedAutoSeed.ts` | `eVerifyRequired` | `onAssignmentCreatedAutoSeedReadiness` (note: NOT `onAssignmentCreatedAutoSeed` — the deployed name carries a `Readiness` suffix; `index.ts:318`) |
+| `workerAiPrescreen/aiPrescreenJobSlice.ts` (`extractJobSliceFromJobOrder`) | `eVerifyRequired` + `hiringEntityId` | `submitWorkerAiPrescreenInterview` + `getWorkerAiPrescreenInterviewPlan` (both go through `buildAiInterviewContext`, which is the only consumer of the JO extractor) |
+| `onboarding/workerOnboardingPipeline.ts` (`resolveEntityContext`) | `hiringEntityId` | `triggerWorkerOnboardingPipeline` + `startOnCallEmployment` + `startOnCallOnboarding` + `respondToAssignment` + `confirmAssignmentForWorker` + `logAssignmentUpdated` (the trigger that dynamic-imports `assignmentConfirmedOnboardingSlice`) |
+| `onboarding/loadEntityOnboardingEngineBuildContextAdmin.ts` | `hiringEntityId` (bulk) | `syncEntityEmploymentOnboardingFromWorkerOnboarding` (only consumer, via `entityEmploymentOnboardingSync.ts`) |
+
+Other `workerOnboardingPipeline.ts` callables (`updateWorkerOnboardingStep*`, `updateEntityEmploymentStatus`, `setEntityEmployment*`) operate on existing pipeline docs and don't call `resolveEntityContext` — not in scope.
+
+**Targeted deploy** (10 functions; copy-paste, no spaces inside the comma list):
 
 ```bash
-firebase deploy --only \
-  functions:onAssignmentCreatedAutoSeed,\
-functions:aiPrescreenJobSliceCallable,\
-functions:onboardingPipelineStart,\
-functions:loadEntityOnboardingEngineBuildContextAdmin,\
-functions:<and any others identified during impl>
+firebase deploy --only "functions:onAssignmentCreatedAutoSeedReadiness,functions:submitWorkerAiPrescreenInterview,functions:getWorkerAiPrescreenInterviewPlan,functions:triggerWorkerOnboardingPipeline,functions:startOnCallEmployment,functions:startOnCallOnboarding,functions:respondToAssignment,functions:confirmAssignmentForWorker,functions:logAssignmentUpdated,functions:syncEntityEmploymentOnboardingFromWorkerOnboarding"
 ```
 
-(Final list lands after impl identifies which deployed function names own the wrapped reads.)
+**Sanity-check** before running, to verify all 10 names exist in the deployed registry (should return exactly 10 matches):
+
+```bash
+firebase functions:list 2>&1 | grep -E "(onAssignmentCreatedAutoSeedReadiness|submitWorkerAiPrescreenInterview|getWorkerAiPrescreenInterviewPlan|triggerWorkerOnboardingPipeline|startOnCallEmployment|startOnCallOnboarding|respondToAssignment|confirmAssignmentForWorker|logAssignmentUpdated|syncEntityEmploymentOnboardingFromWorkerOnboarding)"
+```
+
+**Safe fallback:** if any name doesn't match (e.g. a future rename) or you'd rather not chase the targeted list:
+
+```bash
+firebase deploy --only functions
+```
+
+Slower (~5–10 min vs ~2–3 min) but guarantees no missed wraps. R.16.2a is read-side only, so a full functions deploy carries no schema risk.
 
 ### Step 2 — Frontend deploy
 
@@ -342,3 +366,88 @@ Until both are met, the implementation is paused. Status updates land here as th
 ---
 
 *End of R.16.2a kickoff brief. Decisions LOCKED Apr 27, 2026. Standing by for R.16.1 staging smoke to clear.*
+
+---
+
+## Implementation summary (Apr 27, 2026 — what shipped)
+
+### Phase 5 (front-loaded) — Helper mirror + CI guard
+
+- `src/shared/jobOrder/getEffectiveJobOrderField.ts` — refactored to drop the `JobOrderSnapshot` / `ResolvedPositionSnapshot` type imports (which transitively pulled in `firebase/firestore`'s `FieldValue`) in favour of inline structural fragments (`MinimalSnapshot`, `MinimalPositionSnapshot`). Helper is now pure / SDK-agnostic / type-self-contained, so byte-mirroring is safe.
+- `shared/jobOrder/getEffectiveJobOrderField.ts` — new, byte-identical mirror.
+- `scripts/check-cascade-mirror.sh` — extended to enforce the new mirror via the existing `mirrored_files` array (now keyed by sub-path under `cascade/` / `jobOrder/`). Runs in CI; `set -euo pipefail` blocks any drift.
+- `functions/src/shared/jobOrder/getEffectiveJobOrderField.ts` — visible via the existing `functions/src/shared` symlink → `../../shared`. No additional symlink work needed.
+
+### Phase 1 — Server wraps (4 wraps, 1 documented deferral)
+
+| File | Wrap | Field | Deferred? |
+|------|------|-------|-----------|
+| `functions/src/readiness/onAssignmentCreatedAutoSeed.ts` | `eVerifyRequired` | top-level | — |
+| `functions/src/workerAiPrescreen/aiPrescreenJobSlice.ts` (`extractJobSliceFromJobOrder`) | `eVerifyRequired` + `hiringEntityId` | top-level | sibling `extractJobSliceFromPosting` deferred per Q5 (postings are not JO docs) |
+| `functions/src/onboarding/workerOnboardingPipeline.ts` (`resolveEntityContext`) | `hiringEntityId` | top-level | — |
+| `functions/src/onboarding/loadEntityOnboardingEngineBuildContextAdmin.ts` (bulk JO load) | `hiringEntityId` | top-level | — |
+| `functions/src/index.ts:793` (`generateJobDescription` AI prompt) | `eVerifyRequired` | — | **deferred to R.16.2b** with inline comment — `jobOrderData` is a client-supplied prompt payload, not a fetched JO doc; wrap would be a no-op until either the client sends the JO shape directly or the callable re-fetches the JO server-side |
+
+### Phase 2 — Client wraps (4 wraps, 1 documented deferral)
+
+| File | Wrap | Field |
+|------|------|-------|
+| `src/components/JobOrderForm.tsx` (`hiringEntityIdForForm`) | `hiringEntityId` | top-level (write-side payload composition on line 2194 untouched per L1 — R.16.2a is read-side only) |
+| `src/components/recruiter/PlacementsTab.tsx` (entity-employment loader) | `hiringEntityId` | top-level (placement-level pin still wins absolutely; snapshot interjects between pin and live JO read) |
+| `src/components/apply/Wizard.tsx` (two read sites) | `hiringEntityId` | top-level (public apply flow + entity-name resolution for C1-Events skip path) |
+| `src/hooks/useActiveShifts.ts` (`readJoFinancials`) | `payRate`, `billRate`, `markupPercentage`, `workersCompRate` | per-position (L5 split — flat top-level reads stay unwrapped) |
+| `src/components/shifts/ShiftPlacementsDrawer.tsx:618` | — | **deferred** with inline comment — display reads `shift.markupPercent` from a `ShiftRow`; no JO doc in scope. Upstream `useActiveShifts` wrap already enforces snapshot precedence |
+
+### Phase 3 — Banner integration on `RecruiterAccountDetails.tsx`
+
+- Top-level `hiringEntityId` banner — wired in `updateAccountField`. Diff against `lastSavedHiringEntityIdRef`. Banner stack rendered above the Hiring Entity FormControl (line ~4900).
+- Per-position pricing banners — wired in `savePricing`. Diff each row's `payRate` / `billRate` / `markupPercent` / `workersCompRate` / `workersCompCode` against `lastSavedPricingPositionsRef` (a `Map<positionId, snapshot>`). Banner stack rendered inside the Pricing tab card, above the worksite-state controls + table. One banner per dirty `(positionId, fieldKey)` pair (Q1 lock — stacked, no cap).
+- Banner gate — `securityLevel === '7'` only (Q4 lock); lower-permission users still get cascade-to-draft semantics from the save itself, just no push affordance.
+- Documented deferrals (with inline comments):
+  - **`eVerifyRequired`** banner — the UI on this page renders e-verify as read-only display ("Set by Hiring Entity… Cannot be changed on the account."); `defaultEVerify` state is hydration-only with no editable surface. Defer banner until R.16.2b adds an actual edit point.
+  - **Top-level `workersCompCode`** banner — no top-level edit surface on this page (only per-position rows in the Pricing tab). Per-position `workersCompCode` IS covered by the Phase 3 banners above.
+
+### Phase 4 — Tests (38 new cases / 53 total verified)
+
+- `functions/src/__tests__/readiness/onAssignmentCreatedAutoSeed.eVerifyWrap.test.ts` — 4 cases.
+- `functions/src/__tests__/workerAiPrescreen/aiPrescreenJobSlice.snapshotWrap.test.ts` — 9 cases.
+- `functions/src/__tests__/onboarding/workerOnboardingPipeline.hiringEntityWrap.test.ts` — 4 cases.
+- `functions/src/__tests__/onboarding/loadEntityOnboardingEngineBuildContextAdmin.hiringEntityWrap.test.ts` — 4 cases.
+- `src/utils/__tests__/r16_2a_clientWraps.test.ts` — 17 jest cases covering all 4 client wraps + the L5 per-position split.
+- R.16.1 helper jest suite (18 cases) — re-run, all green (no regression from the helper refactor in Phase 5).
+
+### Files changed (10 source + 5 test + 1 doc + 1 mirror + 1 script + 1 new mirrored helper = 19 files)
+
+Source:
+- `src/shared/jobOrder/getEffectiveJobOrderField.ts` (Phase 5 refactor)
+- `functions/src/readiness/onAssignmentCreatedAutoSeed.ts` (Phase 1)
+- `functions/src/workerAiPrescreen/aiPrescreenJobSlice.ts` (Phase 1)
+- `functions/src/onboarding/workerOnboardingPipeline.ts` (Phase 1)
+- `functions/src/onboarding/loadEntityOnboardingEngineBuildContextAdmin.ts` (Phase 1)
+- `functions/src/index.ts` (Phase 1 deferral comment)
+- `src/components/JobOrderForm.tsx` (Phase 2)
+- `src/components/recruiter/PlacementsTab.tsx` (Phase 2)
+- `src/components/apply/Wizard.tsx` (Phase 2)
+- `src/hooks/useActiveShifts.ts` (Phase 2)
+- `src/components/shifts/ShiftPlacementsDrawer.tsx` (Phase 2 deferral comment)
+- `src/pages/RecruiterAccountDetails.tsx` (Phase 3)
+
+Tests: as listed above.
+
+CI:
+- `scripts/check-cascade-mirror.sh` — extended.
+- `shared/jobOrder/getEffectiveJobOrderField.ts` — new mirror.
+
+Doc:
+- `docs/CASCADE_R16.2a_HANDOFF.md` — this file.
+
+### Operational sequence after merge
+
+1. **Functions deploy** — targeted command in §"Step 1" above.
+2. **Frontend deploy** — `npm run deploy:hosting`.
+3. **Manual staging smoke** — five steps in §"Step 3" of the runbook above (pre-§16.1 JO read, §16.1 snapshotted JO without push, §16.1 snapshotted JO post-push, draft JO control, per-position pricing push). Use the same CORT National Account that R.16.1.1 was smoke-tested on.
+4. **`cascadeAuditLog` re-confirm** — pull a sample of post-push entries; verify `pushedField.fieldKey` lands inside the locked R.16.2a surface.
+5. **Greenlight CORT downstream push (#32)** — once the smoke is green, R.16.2a's verification gate is met and CORT push can run with confidence that consumers actually read the snapshotted values.
+
+R.16.2b kicks off after CORT push bakes — covers `screeningPackageId` consolidation (R.11 fold-in), `additionalScreenings`, the remaining per-position fields (`futa`/`suta`/`rateMode`/`jobTitle`/`jobDescription`), banner integration on `AccountLocationDetail.tsx`, the deferred `index.ts:793` AI-prompt wrap, the deferred posting extractor wrap, and the `markupPercent`→`markupPercentage` live-data rename (separate backfill story).
+

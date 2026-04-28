@@ -25,6 +25,10 @@ import {
   type ShiftDoc,
   type ShiftRow,
 } from '../utils/shifts/shiftRow';
+import {
+  getEffectiveJobOrderPositionField,
+  type JobOrderForEffectiveRead,
+} from '../shared/jobOrder/getEffectiveJobOrderField';
 
 interface AddressParts {
   street?: string;
@@ -52,7 +56,16 @@ const toFiniteNumber = (v: unknown): number | undefined => {
 
 /** Pull pay/bill/markup/WC/SUTA/FUTA out of a JO doc, normalizing
  *  string-vs-number storage and falling back from `positions[0]` to
- *  top-level fields where appropriate. */
+ *  top-level fields where appropriate.
+ *
+ *  R.16.2a — per-position rate reads (`p0?.payRate`, `p0?.billRate`,
+ *  `p0?.markupPercent`, `p0?.workersCompRate`) flow through the
+ *  snapshot-aware helper so the activation snapshot wins for non-draft
+ *  JOs. The flat top-level reads (`data.payRate`, `data.billRate`,
+ *  `data.workersCompRate`) stay unwrapped per L5 — flat defaults are
+ *  not a registry entry. SUTA / FUTA aren't in the R.16.2a scope
+ *  (deferred to R.16.2b per the brief's Deferred Items table).
+ */
 const readJoFinancials = (
   data: Record<string, any>,
 ): {
@@ -65,16 +78,43 @@ const readJoFinancials = (
 } => {
   const positions = Array.isArray(data.positions) ? data.positions : [];
   const p0: Record<string, any> | undefined = positions[0];
+  const positionId =
+    typeof p0?.positionId === 'string' ? (p0.positionId as string) : '';
+  const joForRead = data as JobOrderForEffectiveRead;
+
+  // Helper: the snapshot-aware read for a per-position rate. Falls back
+  // through the legacy `p0` chain when the snapshot has no entry for
+  // this `positionId` (drafts, pre-§16.1 active JOs, or positions added
+  // after activation — see helper docstring).
+  const readPositionRate = (
+    subField: 'payRate' | 'billRate' | 'workersCompRate' | 'markupPercentage',
+    legacyP0Read: number | undefined,
+  ): number | undefined => {
+    if (!positionId) return legacyP0Read;
+    const { value } = getEffectiveJobOrderPositionField<number>(
+      joForRead,
+      positionId,
+      subField,
+      { fallback: legacyP0Read },
+    );
+    const n =
+      typeof value === 'number'
+        ? value
+        : toFiniteNumber(value as unknown);
+    return Number.isFinite(n as number) ? (n as number) : undefined;
+  };
 
   const payRate =
-    toFiniteNumber(data.payRate) ?? toFiniteNumber(p0?.payRate);
+    toFiniteNumber(data.payRate) ??
+    readPositionRate('payRate', toFiniteNumber(p0?.payRate));
   const billRate =
-    toFiniteNumber(data.billRate) ?? toFiniteNumber(p0?.billRate);
+    toFiniteNumber(data.billRate) ??
+    readPositionRate('billRate', toFiniteNumber(p0?.billRate));
 
   const explicitMarkup =
     toFiniteNumber(data.markup) ??
     toFiniteNumber(data.markupPercent) ??
-    toFiniteNumber(p0?.markupPercent);
+    readPositionRate('markupPercentage', toFiniteNumber(p0?.markupPercent));
   // Derived markup when both rates are present and pay > 0.
   const derivedMarkup =
     payRate && billRate && payRate > 0
@@ -86,7 +126,8 @@ const readJoFinancials = (
     billRate,
     markupPercent: explicitMarkup ?? derivedMarkup,
     wcRate:
-      toFiniteNumber(p0?.workersCompRate) ?? toFiniteNumber(data.workersCompRate),
+      readPositionRate('workersCompRate', toFiniteNumber(p0?.workersCompRate)) ??
+      toFiniteNumber(data.workersCompRate),
     sutaRate: toFiniteNumber(p0?.sutaRate) ?? toFiniteNumber(data.sutaRate),
     futaRate: toFiniteNumber(p0?.futaRate) ?? toFiniteNumber(data.futaRate),
   };

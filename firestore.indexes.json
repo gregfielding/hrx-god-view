@@ -9,6 +9,15 @@
       ]
     },
     {
+      "collectionGroup": "cascadeAuditLog",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "accountId", "order": "ASCENDING"},
+        {"fieldPath": "action", "order": "ASCENDING"},
+        {"fieldPath": "timestamp", "order": "DESCENDING"}
+      ]
+    },
+    {
       "collectionGroup": "employeeReadinessItems",
       "queryScope": "COLLECTION",
       "fields": [

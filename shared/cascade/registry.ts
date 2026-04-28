@@ -35,10 +35,24 @@ import type { CascadeFieldSpec } from './types';
 export const CASCADE_REGISTRY = {
   // -- Single-value fields (replace) ---------------------------------
 
+  // §16.2c — promoted to snapshot-on-activation. The scheduler array
+  // is "stamped onto new orders" today (per `RECRUITING_ROLE_MODEL.md`
+  // §2.2 — the first id becomes `jobOrder.schedulerUid`). With the
+  // snapshot trigger now capturing `roles.schedulerIds`, post-edit
+  // changes at the parent require Push-to-Active to propagate to
+  // existing JOs.
+  //
+  // V1 caveat (R.16.2c L2): the snapshot captures the array; the
+  // live JO field `schedulerUid` (single-uid stamp set at JO
+  // creation by `onJobOrderWriteStampScheduler`) is NOT updated by
+  // the push. Consumer rewire to honor `snapshot.scheduler` over
+  // `jobOrder.schedulerUid` is deferred to R.16.2d if the consumer
+  // audit at impl time finds it warranted.
   scheduler: {
     strategy: 'replace',
     editableAt: ['account', 'child', 'jo', 'shift'],
     label: 'Scheduler',
+    propagation: 'snapshot-on-activation',
   },
   // Compliance anchor: changing the hiring entity on a live JO
   // changes which legal entity workers are paid by. Snapshot at
@@ -93,6 +107,65 @@ export const CASCADE_REGISTRY = {
     itemIdentity: 'string_exact',
     editableAt: ['account', 'child', 'jo'],
     label: 'Additional Screenings',
+    propagation: 'snapshot-on-activation',
+  },
+
+  // §16.2c — National-account flat markup % (`pricing.flatMarkupPercent`).
+  // Applied across all positions when `subAccountsManageOwnPricing`
+  // is false. Snapshot at activation so a CSA raising the flat rate
+  // post-activation doesn't silently re-bill every active JO under
+  // the National. Same financial-blast-radius rationale as the per-
+  // position pricing fields. Always captured per L4 — the
+  // "subAccountsManageOwnPricing" flag is a UI-mode indicator and
+  // doesn't gate snapshot capture.
+  pricingFlatMarkupPercent: {
+    strategy: 'replace',
+    editableAt: ['account', 'child'],
+    label: 'Flat Markup %',
+    propagation: 'snapshot-on-activation',
+  },
+
+  // §16.2c — Required physical capabilities (`orderDefaults.orderDetails.physicalRequirements`,
+  // string array). Consumed by worker prescreen + readiness eligibility:
+  // a worker hired against "Lifting 50 lbs" shouldn't fail readiness if
+  // the CSA later tightens the requirement to "Lifting 75 lbs". Snapshot
+  // at activation pins the bar the worker was hired under.
+  physicalRequirements: {
+    strategy: 'replace',
+    editableAt: ['account', 'child', 'jo'],
+    label: 'Physical Requirements',
+    propagation: 'snapshot-on-activation',
+  },
+
+  // §16.2c — Freeform custom uniform requirements text
+  // (`orderDefaults.orderDetails.customUniformRequirements`). Shown on
+  // JO header + worker app onboarding screens. Snapshot at activation
+  // so a CSA editing the text post-activation doesn't retroactively
+  // change what the worker agreed to.
+  customUniformRequirements: {
+    strategy: 'replace',
+    editableAt: ['account', 'child', 'jo'],
+    label: 'Custom Uniform Requirements',
+    propagation: 'snapshot-on-activation',
+  },
+
+  // §16.2c — "Other Attachments" file metadata array
+  // (`orderDefaults.staffInstructions.attachments.files`). Shape:
+  // `Array<{name?, label?, url?, uploadedAt?}>`. Snapshot at
+  // activation captures the document set the JO was activated under;
+  // post-activation file additions/removals at the parent require
+  // Push-to-Active to propagate. Storage objects themselves are
+  // unaffected (only the metadata reference list snapshots).
+  //
+  // V1 strategy: `replace` (parent value wins outright). Per L3
+  // we considered `union_with_remove` (parent + child stack) but
+  // deferred — the V1 cascade just isn't stacking attachments
+  // today, so `replace` matches current behavior + adds the
+  // snapshot freeze.
+  attachments: {
+    strategy: 'replace',
+    editableAt: ['account', 'child'],
+    label: 'Other Attachments',
     propagation: 'snapshot-on-activation',
   },
 

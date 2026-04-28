@@ -34,6 +34,10 @@ import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 
 import type { SeedAssignmentReadinessRequirementSpec } from '../shared/seedAssignmentReadinessItems';
+import {
+  getEffectiveJobOrderField,
+  type JobOrderForEffectiveRead,
+} from '../shared/jobOrder/getEffectiveJobOrderField';
 import { runAssignmentReadinessSeed } from './seedAssignmentReadinessItemsRunner';
 import {
   buildPhaseBMatchSpecs,
@@ -211,7 +215,17 @@ function buildRequirementsForJobOrder(jo: Record<string, unknown>): SeedAssignme
   if (readBool(jo.drugScreeningRequired) || readBool(jo.showDrugScreening)) {
     requirements.push({ requirementType: 'drug_screen', resolutionMethod: 'external' });
   }
-  if (readBool(jo.eVerifyRequired)) {
+  // R.16.2a — read e-verify through the snapshot-aware helper so the
+  // assignment seed honours the activation snapshot for non-draft JOs
+  // (parent-account edits don't bleed into already-active orders unless
+  // the operator explicitly Push-to-Actives them). Fallback preserves
+  // the legacy live-read shape for drafts and pre-§16.1 JOs.
+  const { value: eVerifyRequired } = getEffectiveJobOrderField<boolean>(
+    jo as JobOrderForEffectiveRead,
+    'eVerifyRequired',
+    { fallback: readBool(jo.eVerifyRequired) },
+  );
+  if (eVerifyRequired === true) {
     requirements.push({ requirementType: 'e_verify', resolutionMethod: 'external' });
   }
   if (readBool(jo.safetyBriefingRequired)) {

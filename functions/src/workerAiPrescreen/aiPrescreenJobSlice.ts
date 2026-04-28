@@ -3,6 +3,11 @@
  * Posting is first-class at apply stage; order may be absent or merged when linked.
  */
 
+import {
+  getEffectiveJobOrderField,
+  type JobOrderForEffectiveRead,
+} from '../shared/jobOrder/getEffectiveJobOrderField';
+
 export type PrescreenJobSlice = {
   title: string;
   startTime?: string;
@@ -126,18 +131,46 @@ export function extractJobSliceFromJobOrder(job: Record<string, unknown>): Presc
     ? job.requiredCertifications.map((x) => String(x).trim()).filter(Boolean)
     : [];
 
+  // R.16.2a — JO-doc reads honour the activation snapshot. Fallback
+  // preserves the legacy live read (Boolean/norm) for drafts and
+  // pre-§16.1 active JOs without a snapshot. Note `eVerifyRequired`'s
+  // sibling read in `extractJobSliceFromPosting` is intentionally NOT
+  // wrapped — that's a non-JO doc (posting) and falls under R.16.2b
+  // per the Q5 lock.
+  //
+  // R.16.2c — extends the same pattern to `physicalRequirements`. The
+  // raw JO field can be `string` or `string[]`; the snapshot value is
+  // captured as whatever the cascade resolved (typically `string[]`).
+  // `splitPhysicalList` normalizes both shapes so downstream consumers
+  // (`buildAiInterviewContext`, `buildDynamicPrescreenQuestions`)
+  // receive a uniform `string[]` either way.
+  const joDoc = job as JobOrderForEffectiveRead;
+  const { value: eVerify } = getEffectiveJobOrderField<boolean>(joDoc, 'eVerifyRequired', {
+    fallback: Boolean(job.eVerifyRequired),
+  });
+  const { value: hiringEntityId } = getEffectiveJobOrderField<string | null>(
+    joDoc,
+    'hiringEntityId',
+    { fallback: norm(job.hiringEntityId) || null },
+  );
+  const { value: physicalRaw } = getEffectiveJobOrderField<string | string[]>(
+    joDoc,
+    'physicalRequirements',
+    { fallback: job.physicalRequirements as string | string[] | undefined },
+  );
+
   return {
     title: norm(job.jobTitle) || norm(job.jobOrderName) || 'Role',
     startTime: shiftTimes[0] || undefined,
     locationLine: formatWorksiteLike(job),
     requiresDrugScreen: Boolean(job.drugScreenRequired),
     requiresBackgroundCheck: Boolean(job.backgroundCheckRequired),
-    requiresEVerify: Boolean(job.eVerifyRequired),
-    physicalRequirements: splitPhysicalList(job.physicalRequirements),
+    requiresEVerify: Boolean(eVerify ?? false),
+    physicalRequirements: splitPhysicalList(physicalRaw),
     certificationsRequired: certs,
     uniformRequirements: splitUniformList(job.uniformRequirements),
     companyName: norm(job.companyName) || undefined,
-    hiringEntityId: norm(job.hiringEntityId) || null,
+    hiringEntityId: hiringEntityId ?? null,
   };
 }
 

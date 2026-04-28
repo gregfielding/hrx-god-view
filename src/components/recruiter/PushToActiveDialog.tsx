@@ -80,9 +80,24 @@ export type PushFieldKey =
   | 'futa'
   | 'suta'
   | 'workersCompRate'
-  | 'markupPercentage';
+  | 'markupPercentage'
+  // R.16.2c additions — top-level snapshot-policy fields. Server-side
+  // gate (`PUSH_TOP_LEVEL_FIELDS` in `functions/src/jobOrders/pushToActive.ts`)
+  // mirrors this list; keep them in lockstep when adding new ones.
+  | 'scheduler'
+  | 'pricingFlatMarkupPercent'
+  | 'physicalRequirements'
+  | 'customUniformRequirements'
+  | 'attachments';
 
-type IneligibilityReason = 'status_excluded' | 'no_snapshot' | 'no_position';
+type IneligibilityReason =
+  | 'status_excluded'
+  | 'no_snapshot'
+  | 'no_position'
+  // R.16.1.1 — snapshot value didn't match the prior Account-level
+  // value, so the JO is most likely a child-level override (or
+  // already-pushed). The dialog disables the row + explains.
+  | 'previous_value_mismatch';
 
 interface AffectedJoSummary {
   jobOrderId: string;
@@ -101,6 +116,8 @@ interface PreviewPushReport {
     alreadyMatching: number;
     missingSnapshot: number;
     missingPosition: number;
+    /** R.16.1.1 — Optional on legacy server builds. */
+    previousValueMismatch?: number;
   };
 }
 
@@ -129,6 +146,13 @@ export interface PushToActiveDialogProps {
   fieldKey: PushFieldKey;
   positionId: string | null;
   newValue: unknown;
+  /**
+   * **R.16.1.1** — The Account-level value before the user's edit.
+   * When supplied, the server only treats a JO as eligible when its
+   * snapshot matches `previousValue`, so a National Account push
+   * doesn't silently overwrite child-level overrides.
+   */
+  previousValue?: unknown;
   fieldLabel: string;
 }
 
@@ -147,6 +171,8 @@ function ineligibilityCopy(reason: IneligibilityReason): string {
       return 'No snapshot — run backfill first';
     case 'no_position':
       return 'Position not on this JO';
+    case 'previous_value_mismatch':
+      return 'Child override or already changed — push manually if intended';
     case 'status_excluded':
     default:
       return 'Status not eligible';
@@ -161,6 +187,7 @@ export const PushToActiveDialog: React.FC<PushToActiveDialogProps> = ({
   fieldKey,
   positionId,
   newValue,
+  previousValue,
   fieldLabel,
 }) => {
   const [loading, setLoading] = useState(false);
@@ -191,6 +218,7 @@ export const PushToActiveDialog: React.FC<PushToActiveDialogProps> = ({
             fieldKey: PushFieldKey;
             positionId: string | null;
             newValue: unknown;
+            previousValue?: unknown;
           },
           PreviewPushReport
         >(functions, 'previewPushToActiveCallable');
@@ -200,6 +228,9 @@ export const PushToActiveDialog: React.FC<PushToActiveDialogProps> = ({
           fieldKey,
           positionId,
           newValue,
+          // R.16.1.1 — only forward when the parent supplied it,
+          // so we don't change the wire shape for legacy callers.
+          ...(previousValue !== undefined ? { previousValue } : {}),
         });
         setPreview(res.data);
         const initialSelection: Record<string, boolean> = {};
@@ -214,7 +245,7 @@ export const PushToActiveDialog: React.FC<PushToActiveDialogProps> = ({
       }
     };
     run();
-  }, [open, tenantId, accountId, fieldKey, positionId, newValue]);
+  }, [open, tenantId, accountId, fieldKey, positionId, newValue, previousValue]);
 
   const selectedIds = useMemo(
     () => Object.entries(selected).filter(([, v]) => v).map(([k]) => k),
@@ -239,6 +270,7 @@ export const PushToActiveDialog: React.FC<PushToActiveDialogProps> = ({
           fieldKey: PushFieldKey;
           positionId: string | null;
           newValue: unknown;
+          previousValue?: unknown;
           selectedJoIds: string[];
           reason: string;
         },
@@ -250,6 +282,7 @@ export const PushToActiveDialog: React.FC<PushToActiveDialogProps> = ({
         fieldKey,
         positionId,
         newValue,
+        ...(previousValue !== undefined ? { previousValue } : {}),
         selectedJoIds: selectedIds,
         reason: trimmedReason,
       });
@@ -303,6 +336,13 @@ export const PushToActiveDialog: React.FC<PushToActiveDialogProps> = ({
             <Chip
               color="warning"
               label={`${preview.totals.missingPosition} missing position`}
+              size="small"
+            />
+          )}
+          {(preview.totals.previousValueMismatch ?? 0) > 0 && (
+            <Chip
+              color="warning"
+              label={`${preview.totals.previousValueMismatch} child override / already changed`}
               size="small"
             />
           )}

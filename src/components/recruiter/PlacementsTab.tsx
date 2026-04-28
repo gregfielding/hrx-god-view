@@ -83,6 +83,10 @@ import { buildShiftPickerSecondLine } from '../../utils/shiftPickerLabel';
 import MessageDrawer, { type MessageRecipient } from '../MessageDrawer';
 import WorkforceInactiveElsewhereChip from './WorkforceInactiveElsewhereChip';
 import type { UserInactiveAtAccountEntry } from '../../shared/accountWorkforce';
+import {
+  getEffectiveJobOrderField,
+  type JobOrderForEffectiveRead,
+} from '../../shared/jobOrder/getEffectiveJobOrderField';
 import { useAuth } from '../../contexts/AuthContext';
 import { logAssignmentUpdateActivity } from '../../utils/activityLogger';
 import { JobOrder } from '../../types/recruiter/jobOrder';
@@ -893,8 +897,19 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       try {
         const ref = collection(db, 'tenants', tenantId, 'entity_employments');
         const merged = new Map<string, Record<string, unknown>>();
+        // R.16.2a — `placementHiringEntityId` (if the placement record
+        // already pinned an entity) wins absolutely. Below that, the JO
+        // doc's effective hiring entity flows through the snapshot-aware
+        // helper: snapshot wins for non-draft JOs, fallback preserves
+        // the legacy live read for drafts and pre-§16.1 active JOs.
+        const joForRead = jobOrder as unknown as JobOrderForEffectiveRead | null | undefined;
+        const { value: joHiring } = getEffectiveJobOrderField<string | null>(
+          joForRead,
+          'hiringEntityId',
+          { fallback: (jobOrder as { hiringEntityId?: string | null })?.hiringEntityId ?? null },
+        );
         const hiringEntityId = String(
-          placementHiringEntityId ?? (jobOrder as { hiringEntityId?: string | null })?.hiringEntityId ?? ''
+          placementHiringEntityId ?? joHiring ?? ''
         ).trim();
         // Fast path when the job has no hiring entity id: `${uid}__${entityKey}` batch lookup.
         if (!hiringEntityId) {

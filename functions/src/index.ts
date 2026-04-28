@@ -304,6 +304,13 @@ export {
   previewPushToActiveCallable,
   pushToActiveJobOrdersCallable,
 } from './jobOrders/pushToActive';
+// **R.16.3 (interim — "Option B" / Path 1)** — Lookup callable for the
+// manual "Sync to active" button. Returns the value pushed in the most
+// recent `push_to_active_summary` row for a (account, fieldKey,
+// positionId?) tuple so the dialog can pre-populate `previousValue`
+// and apply the R.16.1.1 child-override filter. Read-only; sec ≥ 7.
+// See docs/CASCADE_R16.3_HANDOFF.md (Path 1 notes).
+export { getLastPushedValueForFieldCallable } from './jobOrders/getLastPushedValueForField';
 export { syncC1WorkerHomeReadinessSnapshot } from './readiness/homeSnapshotTrigger';
 export { logC1WorkerReadinessDomainChanges } from './readiness/homeSnapshotTriggerStub';
 export { syncWorkerProfileReadinessV1 } from './readiness/profileReadinessTrigger';
@@ -790,6 +797,13 @@ export const generateJobDescription = onCall({
     }
 
     // E-Verify
+    // R.16.2a deferral — `jobOrderData` here is a client-supplied prompt
+    // payload (`request.data?.jobOrderData`), not a fetched JO document
+    // with `status` + `snapshot`. Wrapping through `getEffectiveJobOrderField`
+    // would be a no-op (the helper would always fall through to fallback
+    // since the payload lacks the snapshot envelope). Defer to R.16.2b
+    // pending a decision on whether the client should send the JO doc shape
+    // directly or this callable should re-fetch the JO server-side.
     if (jobOrderData.eVerifyRequired) {
       prompt += `E-Verify Required: Yes\n`;
     }

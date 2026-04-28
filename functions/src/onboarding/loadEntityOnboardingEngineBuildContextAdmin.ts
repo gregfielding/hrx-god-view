@@ -7,6 +7,10 @@
  */
 import type * as FirebaseFirestore from 'firebase-admin/firestore';
 import { computeEverifySummaryFieldsFromLatestCaseData } from './everifyHrxStatusDisplay';
+import {
+  getEffectiveJobOrderField,
+  type JobOrderForEffectiveRead,
+} from '../shared/jobOrder/getEffectiveJobOrderField';
 
 type EmploymentEntityKey = 'select' | 'workforce' | 'events';
 
@@ -252,14 +256,25 @@ export async function loadSerializedEntityOnboardingEngineBuildContextAdmin(
         }
         if (joSnap.exists) {
           const jd = joSnap.data() as Record<string, unknown>;
-          const joHiring = (jd.hiringEntityId as string | null | undefined) ?? null;
+          // R.16.2a — bulk JO load reads `hiringEntityId` through the
+          // snapshot-aware helper. Snapshot wins for non-draft JOs;
+          // fallback preserves the legacy live read for drafts and
+          // pre-§16.1 JOs without a snapshot. The downstream
+          // recruiter-account-fallback logic remains unchanged — it
+          // only fires when the wrap returns no value (live or
+          // snapshotted).
+          const { value: joHiring } = getEffectiveJobOrderField<string | null>(
+            jd as JobOrderForEffectiveRead,
+            'hiringEntityId',
+            { fallback: (jd.hiringEntityId as string | null | undefined) ?? null },
+          );
           const recAcc = String(jd.recruiterAccountId || '').trim() || null;
-          let effective = joHiring;
+          let effective: string | null = (joHiring as string | null) ?? null;
           if (!effective && recAcc) {
             effective = await hiringEntityFromRecruiterAccount(recAcc);
           }
           jobOrderById.set(jid, {
-            hiringEntityId: joHiring,
+            hiringEntityId: (joHiring as string | null) ?? null,
             effectiveHiringEntityId: effective,
             jobTitle: jd.jobTitle as string | undefined,
             jobOrderName: (jd.jobOrderName || jd.title) as string | undefined,

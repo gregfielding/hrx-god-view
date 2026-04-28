@@ -4,8 +4,12 @@
  */
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
+  Alert,
+  Box,
+  Button,
   Card,
   CardContent,
+  CircularProgress,
   Typography,
   Grid,
   TextField,
@@ -17,6 +21,8 @@ import {
   Chip,
   Divider,
 } from '@mui/material';
+import SaveIcon from '@mui/icons-material/Save';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { doc, updateDoc, serverTimestamp, deleteField } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { p } from '../../data/firestorePaths';
@@ -43,6 +49,12 @@ import { AccusourcePackageSelector } from './AccusourcePackageSelector';
 import PushToActiveBanner, {
   type PushToActiveBannerPayload,
 } from './PushToActiveBanner';
+// **R.16.3 (interim — Path 1)** — Per-field manual "Sync to active"
+// button. Lets admins re-push the current value to active JOs without
+// editing the field first (e.g. catching JOs that missed a prior
+// push). Same security gate as the banner: `securityLevel === '7'`.
+import SyncToActiveButton from './SyncToActiveButton';
+import { useAuth } from '../../contexts/AuthContext';
 
 const PHYSICAL_OPTIONS = [
   'Standing', 'Walking', 'Sitting', 'Lifting 25 lbs', 'Lifting 50 lbs', 'Lifting 75 lbs', 'Lifting 100+ lbs',
@@ -85,6 +97,13 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
   contacts,
   inheritanceParentAccount,
 }) => {
+  // R.16.3-interim — gate the per-field "Sync to active" button on
+  // `securityLevel === '7'` (same Q4 lock as the banner in
+  // RecruiterAccountDetails). Server still enforces independently.
+  // Location-level edits hide the button entirely (snapshot-policy
+  // pushes are only meaningful at the Account level — see save()).
+  const { securityLevel } = useAuth();
+  const canPushToActive = securityLevel === '7';
   const locationOrderDetails = (locationDefaults as any)?.orderDefaults?.orderDetails as OrderDetailsData | undefined;
   const accountOrderDetails = (account as any)?.orderDefaults?.orderDetails as OrderDetailsData | undefined;
   const parentOrderDetails = (inheritanceParentAccount as any)?.orderDefaults?.orderDetails as OrderDetailsData | undefined;
@@ -131,6 +150,13 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
       ? [...effective.additionalScreenings]
       : [],
   );
+  // Save status. Auto-save (on blur / scheduleSave) and the manual
+  // Save button both feed the same `save()` and surface here. Errors
+  // were previously swallowed to console only; now they render as
+  // an inline Alert at the top of the card per Greg's UX call.
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
 
   useEffect(() => {
     formRef.current = form;
@@ -156,6 +182,8 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
     const nextAdditionalScreenings = Array.isArray(data.additionalScreenings)
       ? data.additionalScreenings
       : [];
+    setIsSaving(true);
+    setSaveError(null);
     try {
       const payload: Record<string, unknown> = {
         'orderDefaults.orderDetails': data,
@@ -213,8 +241,22 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
           }
         }
       }
+      setLastSavedAt(Date.now());
     } catch (err: any) {
       console.error('Save order details error:', err);
+      // Surface to the operator. Common shapes: permission denied
+      // (rules), not-found (stale doc id), unavailable (network).
+      // Stringify defensively — Firestore errors expose `.code` and
+      // `.message`, but anything thrown from a callback chain might
+      // not.
+      const code = err && typeof err.code === 'string' ? `[${err.code}] ` : '';
+      const msg =
+        (err && typeof err.message === 'string' && err.message) ||
+        (typeof err === 'string' && err) ||
+        'Unknown error while saving order details.';
+      setSaveError(`${code}${msg}`);
+    } finally {
+      setIsSaving(false);
     }
   }, [tenantId, accountId, userId, locationKey, onRefreshLocation, screeningPackageId, screeningPackageName]);
 
@@ -253,8 +295,24 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
     <Card>
       <CardContent>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          These defaults flow to job orders. Set at account or location level; job orders can override.
+          These defaults flow to job orders. Set at account or location level; job orders can override. Edits auto-save when you click out of a field; you can also use the Save button at the bottom.
         </Typography>
+
+        {/* Save-error surface — sticky at the top of the card per
+            UX call. Prior to this the save flow only console.error'd
+            and edits silently dropped on permission / network failure. */}
+        {saveError && (
+          <Alert
+            severity="error"
+            onClose={() => setSaveError(null)}
+            sx={{ mb: 2 }}
+          >
+            <Typography variant="body2" component="span" sx={{ fontWeight: 600 }}>
+              Couldn't save order details:
+            </Typography>{' '}
+            {saveError}
+          </Alert>
+        )}
 
         {/* R.16.1 Phase 8 — Push-to-Active banner. Only renders at
             the Account level (location-level edits don't surface a
@@ -271,18 +329,37 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
         <Typography variant="subtitle1" fontWeight={600} sx={{ mt: 2, mb: 1 }}>Compliance & Requirements</Typography>
         <Grid container spacing={2}>
           <Grid item xs={12}>
-            <AccusourcePackageSelector
-              packageId={screeningPackageId}
-              packageName={screeningPackageName}
-              onChange={(next) => {
-                setScreeningPackageId(next.packageId);
-                setScreeningPackageName(next.packageName);
-                scheduleSave();
-              }}
-              showDiagnostics
-              emptyMenuLabel="None"
-              helperText="AccuSource package for order screening. Job orders can override; merges with location → account defaults."
-            />
+            {/* R.16.3-interim — manual sync button + selector in one row.
+                The selector is full-width; the button hangs to the right
+                like an inline action. Hidden at location level (no
+                snapshot semantics) and for non-admin users. */}
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+              <Box sx={{ flex: 1 }}>
+                <AccusourcePackageSelector
+                  packageId={screeningPackageId}
+                  packageName={screeningPackageName}
+                  onChange={(next) => {
+                    setScreeningPackageId(next.packageId);
+                    setScreeningPackageName(next.packageName);
+                    scheduleSave();
+                  }}
+                  showDiagnostics
+                  emptyMenuLabel="None"
+                  helperText="AccuSource package for order screening. Job orders can override; merges with location → account defaults."
+                />
+              </Box>
+              {!locationKey && canPushToActive && (
+                <Box sx={{ pt: 0.5 }}>
+                  <SyncToActiveButton
+                    tenantId={tenantId}
+                    accountId={accountId}
+                    fieldKey="screeningPackageId"
+                    getCurrentValue={() => screeningPackageId.trim() || null}
+                    fieldLabel="AccuSource Screening Package"
+                  />
+                </Box>
+              )}
+            </Box>
           </Grid>
           <Grid item xs={12}>
             <Autocomplete
@@ -302,17 +379,38 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
               AccuSource package selector above + "Additional Screenings"
               below. See docs/READINESS_R0_HANDOFF.md. */}
           <Grid item xs={12}>
-            <Autocomplete
-              multiple
-              fullWidth
-              size="small"
-              options={addlOptions.map((o) => o.label)}
-              value={form.additionalScreenings ?? []}
-              onChange={(_, v) => update({ additionalScreenings: v })}
-              onBlur={scheduleSave}
-              renderInput={(params) => <TextField {...params} label="Additional Screenings" onBlur={scheduleSave} />}
-              renderTags={(value, getTagProps) => value.map((option, index) => <Chip variant="outlined" label={option} {...getTagProps({ index })} key={option} />)}
-            />
+            {/* R.16.3-interim — same inline-action pattern as the
+                AccuSource selector above. */}
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+              <Box sx={{ flex: 1 }}>
+                <Autocomplete
+                  multiple
+                  fullWidth
+                  size="small"
+                  options={addlOptions.map((o) => o.label)}
+                  value={form.additionalScreenings ?? []}
+                  onChange={(_, v) => update({ additionalScreenings: v })}
+                  onBlur={scheduleSave}
+                  renderInput={(params) => <TextField {...params} label="Additional Screenings" onBlur={scheduleSave} />}
+                  renderTags={(value, getTagProps) => value.map((option, index) => <Chip variant="outlined" label={option} {...getTagProps({ index })} key={option} />)}
+                />
+              </Box>
+              {!locationKey && canPushToActive && (
+                <Box sx={{ pt: 0.5 }}>
+                  <SyncToActiveButton
+                    tenantId={tenantId}
+                    accountId={accountId}
+                    fieldKey="additionalScreenings"
+                    getCurrentValue={() =>
+                      Array.isArray(formRef.current.additionalScreenings)
+                        ? formRef.current.additionalScreenings
+                        : []
+                    }
+                    fieldLabel="Additional Screenings"
+                  />
+                </Box>
+              )}
+            </Box>
           </Grid>
           <Grid item xs={12} md={6}>
             <Autocomplete
@@ -376,17 +474,41 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
             />
           </Grid>
           <Grid item xs={12} md={6}>
-            <Autocomplete
-              multiple
-              fullWidth
-              size="small"
-              options={PHYSICAL_OPTIONS}
-              value={form.physicalRequirements ?? []}
-              onChange={(_, v) => update({ physicalRequirements: v })}
-              onBlur={scheduleSave}
-              renderInput={(params) => <TextField {...params} label="Physical Requirements" onBlur={scheduleSave} />}
-              renderTags={(value, getTagProps) => value.map((option, index) => <Chip variant="outlined" label={option} {...getTagProps({ index })} key={option} />)}
-            />
+            {/* R.16.2c — same inline-action pattern as the AccuSource +
+                Additional Screenings selectors above. Snapshot-policy
+                field; manual sync available for level-7 admins on the
+                top-level form (locationKey === undefined means we're
+                editing the National/Child account, not a location). */}
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+              <Box sx={{ flex: 1 }}>
+                <Autocomplete
+                  multiple
+                  fullWidth
+                  size="small"
+                  options={PHYSICAL_OPTIONS}
+                  value={form.physicalRequirements ?? []}
+                  onChange={(_, v) => update({ physicalRequirements: v })}
+                  onBlur={scheduleSave}
+                  renderInput={(params) => <TextField {...params} label="Physical Requirements" onBlur={scheduleSave} />}
+                  renderTags={(value, getTagProps) => value.map((option, index) => <Chip variant="outlined" label={option} {...getTagProps({ index })} key={option} />)}
+                />
+              </Box>
+              {!locationKey && canPushToActive && (
+                <Box sx={{ pt: 0.5 }}>
+                  <SyncToActiveButton
+                    tenantId={tenantId}
+                    accountId={accountId}
+                    fieldKey="physicalRequirements"
+                    getCurrentValue={() =>
+                      Array.isArray(formRef.current.physicalRequirements)
+                        ? formRef.current.physicalRequirements
+                        : []
+                    }
+                    fieldLabel="Physical Requirements"
+                  />
+                </Box>
+              )}
+            </Box>
           </Grid>
           <Grid item xs={12} md={6}>
             <Autocomplete
@@ -436,7 +558,38 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
             />
           </Grid>
           <Grid item xs={12}>
-            <TextField fullWidth size="small" label="Custom Uniform Requirements" multiline rows={2} value={form.customUniformRequirements ?? ''} onChange={(e) => update({ customUniformRequirements: e.target.value })} onBlur={scheduleSave} />
+            {/* R.16.2c — manual sync next to the freeform "Custom Uniform
+                Requirements" textarea. Same gating as physicalRequirements
+                above. */}
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+              <Box sx={{ flex: 1 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Custom Uniform Requirements"
+                  multiline
+                  rows={2}
+                  value={form.customUniformRequirements ?? ''}
+                  onChange={(e) => update({ customUniformRequirements: e.target.value })}
+                  onBlur={scheduleSave}
+                />
+              </Box>
+              {!locationKey && canPushToActive && (
+                <Box sx={{ pt: 0.5 }}>
+                  <SyncToActiveButton
+                    tenantId={tenantId}
+                    accountId={accountId}
+                    fieldKey="customUniformRequirements"
+                    getCurrentValue={() =>
+                      typeof formRef.current.customUniformRequirements === 'string'
+                        ? formRef.current.customUniformRequirements
+                        : ''
+                    }
+                    fieldLabel="Custom Uniform Requirements"
+                  />
+                </Box>
+              )}
+            </Box>
           </Grid>
         </Grid>
 
@@ -472,9 +625,63 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
             );
           })}
         </Grid>
+
+        {/* Save button + status row. Auto-save still fires on blur
+            via scheduleSave(); this is for discoverability + manual
+            flush after a typing burst. Mirrors the Billing & Invoicing
+            section's "Save" affordance on the same Settings page. */}
+        <Box sx={{ mt: 3, display: 'flex', alignItems: 'center', gap: 2 }}>
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={isSaving ? <CircularProgress size={18} color="inherit" /> : <SaveIcon />}
+            onClick={() => {
+              // Cancel any pending debounced auto-save and run now,
+              // so the button click and the trailing scheduleSave
+              // don't double-fire.
+              if (saveTimeoutRef.current) {
+                clearTimeout(saveTimeoutRef.current);
+                saveTimeoutRef.current = null;
+              }
+              save();
+            }}
+            disabled={isSaving}
+          >
+            {isSaving ? 'Saving…' : 'Save Order Details'}
+          </Button>
+          {!isSaving && saveError === null && lastSavedAt !== null && (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'success.main' }}>
+              <CheckCircleIcon fontSize="small" />
+              <Typography variant="body2">
+                Saved {formatRelativeTime(lastSavedAt)}
+              </Typography>
+            </Box>
+          )}
+          {!isSaving && saveError === null && lastSavedAt === null && (
+            <Typography variant="body2" color="text.secondary">
+              Edits auto-save when you click out of a field.
+            </Typography>
+          )}
+        </Box>
       </CardContent>
     </Card>
   );
 };
+
+/**
+ * Tiny relative-time formatter for the "Saved <when>" status. Avoids
+ * pulling in date-fns just for this one label.
+ */
+function formatRelativeTime(timestamp: number): string {
+  const diffMs = Date.now() - timestamp;
+  const diffSec = Math.round(diffMs / 1000);
+  if (diffSec < 5) return 'just now';
+  if (diffSec < 60) return `${diffSec}s ago`;
+  const diffMin = Math.round(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  return new Date(timestamp).toLocaleString();
+}
 
 export default AccountOrderDetailsForm;

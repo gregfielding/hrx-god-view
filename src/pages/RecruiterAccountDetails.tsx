@@ -130,6 +130,14 @@ import { getJobOrderAge } from '../utils/dateUtils';
 import { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderChecklist';
 import AccountOrderDefaultsCard from '../components/recruiter/AccountOrderDefaultsCard';
 import AccountOrderDetailsForm from '../components/recruiter/AccountOrderDetailsForm';
+import PushToActiveBanner, {
+  type PushToActiveBannerPayload,
+} from '../components/recruiter/PushToActiveBanner';
+// **R.16.3 (interim — Path 1)** — Per-field manual "Sync to active"
+// button. Mirrors the banner's `canPushToActive` gate; lets admins
+// re-push the current value without editing the field first.
+import SyncToActiveButton from '../components/recruiter/SyncToActiveButton';
+import type { PushFieldKey } from '../components/recruiter/PushToActiveDialog';
 import AccountCalendarTab from '../components/recruiter/AccountCalendarTab';
 import ActiveWorkersTable, {
   type ActiveWorkersSubAccountGrouping,
@@ -1684,6 +1692,39 @@ const RecruiterAccountDetails: React.FC = () => {
   const displayEntityId = account ? (isChildAccount && parentDefaults != null ? parentDefaults.hiringEntityId : (account.hiringEntityId ?? null)) : null;
   const { entity: displayEntity, loading: displayEntityLoading } = useEntity(tenantId, displayEntityId);
 
+  // R.16.2a Phase 3 — Push-to-Active banners. Stack of payloads (Q1
+  // lock: one banner per dirty (positionId, fieldKey) pair, no cap).
+  // Updated by `appendPushBanner` after a successful save; cleared on
+  // banner dismiss or dialog close.
+  //
+  // Top-level wraps land here for `hiringEntityId` (the only top-level
+  // snapshot-policy field with an actual edit surface on this page).
+  // `eVerifyRequired` is downstream of `hiringEntityId` (the UI shows
+  // it as read-only "Set by Hiring Entity"); top-level `workersCompCode`
+  // has no edit surface here either. Both are intentionally deferred —
+  // see the R.16.2a brief Phase 3 / Deferred-items table.
+  //
+  // Per-position wraps land here from `savePricing` covering each
+  // position's `payRate`, `billRate`, `markupPercent`, `workersCompRate`,
+  // `workersCompCode`. The diff fires per-field per-position, so editing
+  // 3 positions × 2 fields surfaces 6 banners stacked above the Pricing
+  // tab table.
+  //
+  // Banner gate (Q4 lock) — only render for `securityLevel === '7'`.
+  // Server-side callable still enforces independently.
+  const [pushBanners, setPushBanners] = useState<PushToActiveBannerPayload[]>([]);
+  const lastSavedHiringEntityIdRef = useRef<string | null>(null);
+  const lastSavedPricingPositionsRef = useRef<
+    Map<string, {
+      payRate?: number | null;
+      billRate?: number | null;
+      markupPercent?: number | null;
+      workersCompRate?: number | null;
+      workersCompCode?: string | null;
+    }>
+  >(new Map());
+  const canPushToActive = securityLevel === '7';
+
   // Pricing tab: national options + positions table
   const [pricingSubAccountsManageOwn, setPricingSubAccountsManageOwn] = useState(false);
   const [pricingFlatMarkupPercent, setPricingFlatMarkupPercent] = useState<number | ''>('');
@@ -2400,14 +2441,40 @@ const RecruiterAccountDetails: React.FC = () => {
       if (pr && typeof pr === 'object') {
         setPricingSubAccountsManageOwn(!!pr.subAccountsManageOwnPricing);
         setPricingFlatMarkupPercent(pr.flatMarkupPercent != null && pr.flatMarkupPercent !== '' ? Number(pr.flatMarkupPercent) : '');
-        setPricingPositions(Array.isArray(pr.positions) ? pr.positions.map((p: any) => ({ ...p, id: p.id || `pos-${Math.random().toString(36).slice(2)}` })) : []);
+        const positionsForState: AccountPositionPricing[] = Array.isArray(pr.positions)
+          ? pr.positions.map((p: any) => ({ ...p, id: p.id || `pos-${Math.random().toString(36).slice(2)}` }))
+          : [];
+        setPricingPositions(positionsForState);
         setPricingNotes(pr.pricingNotes ?? '');
+        // R.16.2a Phase 3 — seed the per-position diff baseline. Keyed
+        // by the position's stable `positionId` (when present), then by
+        // the synthesised local `id` as fallback for legacy rows that
+        // never had one. The diff inside `savePricing` will use the
+        // same key resolution.
+        lastSavedPricingPositionsRef.current = new Map(
+          positionsForState.map((row) => [
+            String((row as any).positionId ?? row.id),
+            {
+              payRate: (row as any).payRate ?? null,
+              billRate: (row as any).billRate ?? null,
+              markupPercent: (row as any).markupPercent ?? null,
+              workersCompRate: (row as any).workersCompRate ?? null,
+              workersCompCode: (row as any).workersCompCode ?? null,
+            },
+          ]),
+        );
       } else {
         setPricingSubAccountsManageOwn(false);
         setPricingFlatMarkupPercent('');
         setPricingPositions([]);
         setPricingNotes('');
+        lastSavedPricingPositionsRef.current = new Map();
       }
+      // R.16.2a Phase 3 — seed the top-level `hiringEntityId` baseline
+      // from the freshly loaded account doc. Subsequent edits via
+      // `updateAccountField('hiringEntityId', ...)` diff against this
+      // ref before queuing a banner.
+      lastSavedHiringEntityIdRef.current = (data?.hiringEntityId as string | null | undefined) ?? null;
     } catch (err) {
       if (!isMountedRef.current) return;
       console.error('RecruiterAccountDetails: load error', err);
@@ -3469,12 +3536,62 @@ const RecruiterAccountDetails: React.FC = () => {
         updatedBy: user?.uid ?? null,
       });
       setAccount((prev) => (prev ? { ...prev, [field]: value, updatedAt: new Date() as any } : null));
+      // R.16.2a Phase 3 — top-level snapshot-policy edits surface a
+      // Push-to-Active banner. Only `hiringEntityId` is a top-level
+      // snapshot-policy field with an edit surface on this page (see
+      // `pushBanners` state docstring). Banner appears only for users
+      // with `securityLevel === '7'` per Q4 lock; lower-permission
+      // users still get the cascade-to-draft semantics from the save
+      // itself, they just don't see the push affordance.
+      if (canPushToActive && field === 'hiringEntityId') {
+        const prevValue = lastSavedHiringEntityIdRef.current;
+        const nextValue = (value as string | null | undefined) ?? null;
+        if (prevValue !== nextValue) {
+          appendPushBanner({
+            fieldKey: 'hiringEntityId',
+            positionId: null,
+            previousValue: prevValue,
+            newValue: nextValue,
+            fieldLabel: 'Hiring Entity',
+          });
+          lastSavedHiringEntityIdRef.current = nextValue;
+        }
+      }
     } catch (err) {
       console.error('RecruiterAccountDetails: update error', err);
     } finally {
       setSaving(false);
     }
   };
+
+  /**
+   * R.16.2a Phase 3 — append a banner to the stack, replacing any
+   * existing entry with the same `(positionId, fieldKey)` so a
+   * second edit on the same field doesn't pile up duplicates.
+   * Stacking semantics per Q1 lock (no cap; one banner per dirty
+   * pair). Same banners power both top-level `hiringEntityId` and
+   * per-position pricing edits.
+   */
+  const appendPushBanner = useCallback((next: PushToActiveBannerPayload) => {
+    setPushBanners((prev) => {
+      const filtered = prev.filter(
+        (b) =>
+          b.fieldKey !== next.fieldKey ||
+          (b.positionId ?? null) !== (next.positionId ?? null),
+      );
+      return [...filtered, next];
+    });
+  }, []);
+
+  const dismissPushBanner = useCallback((target: PushToActiveBannerPayload) => {
+    setPushBanners((prev) =>
+      prev.filter(
+        (b) =>
+          b.fieldKey !== target.fieldKey ||
+          (b.positionId ?? null) !== (target.positionId ?? null),
+      ),
+    );
+  }, []);
 
   /**
    * Section-scoped saves used by the new Docs & Settings layout. Each one
@@ -3578,6 +3695,65 @@ const RecruiterAccountDetails: React.FC = () => {
             }
           : null
       );
+
+      // R.16.2a Phase 3 — per-position diff. For each row, compare the
+      // five wrapped snapshot-policy fields against the last-saved
+      // baseline; emit one banner per (positionId, fieldKey) pair that
+      // changed. Identifier resolution mirrors the load path: prefer
+      // the persisted `positionId`, fall back to the synthesised local
+      // `id` for legacy rows. After all diffs, replace the baseline
+      // wholesale so a re-save doesn't double-fire the same banners.
+      if (canPushToActive) {
+        type PerPositionField = 'payRate' | 'billRate' | 'markupPercent' | 'workersCompRate' | 'workersCompCode';
+        const PER_POSITION_FIELDS: ReadonlyArray<{
+          key: PerPositionField;
+          fieldKey: PushFieldKey;
+          label: string;
+        }> = [
+          { key: 'payRate', fieldKey: 'payRate', label: 'Pay Rate' },
+          { key: 'billRate', fieldKey: 'billRate', label: 'Bill Rate' },
+          { key: 'markupPercent', fieldKey: 'markupPercentage', label: 'Markup %' },
+          { key: 'workersCompRate', fieldKey: 'workersCompRate', label: "Workers' Comp Rate" },
+          { key: 'workersCompCode', fieldKey: 'workersCompCode', label: "Workers' Comp Code" },
+        ];
+        const baseline = lastSavedPricingPositionsRef.current;
+        const nextBaseline = new Map<string, {
+          payRate?: number | null;
+          billRate?: number | null;
+          markupPercent?: number | null;
+          workersCompRate?: number | null;
+          workersCompCode?: string | null;
+        }>();
+        for (const row of pricingPositions) {
+          const positionId = String((row as any).positionId ?? row.id);
+          const prev = baseline.get(positionId) ?? {};
+          const next = {
+            payRate: (row as any).payRate ?? null,
+            billRate: (row as any).billRate ?? null,
+            markupPercent: (row as any).markupPercent ?? null,
+            workersCompRate: (row as any).workersCompRate ?? null,
+            workersCompCode: (row as any).workersCompCode ?? null,
+          };
+          nextBaseline.set(positionId, next);
+          for (const spec of PER_POSITION_FIELDS) {
+            const oldValue = (prev as any)[spec.key];
+            const newValue = (next as any)[spec.key];
+            const changed =
+              (oldValue ?? null) !== (newValue ?? null) &&
+              !(oldValue == null && newValue == null);
+            if (changed) {
+              appendPushBanner({
+                fieldKey: spec.fieldKey,
+                positionId,
+                previousValue: oldValue ?? null,
+                newValue: newValue ?? null,
+                fieldLabel: `${spec.label} — ${(row as any).jobTitle || (row as any).title || positionId}`,
+              });
+            }
+          }
+        }
+        lastSavedPricingPositionsRef.current = nextBaseline;
+      }
 
       // WC codes and rates are managed only in Workers Comp (sidebar). No writes from here.
     } catch (err) {
@@ -4724,24 +4900,60 @@ const RecruiterAccountDetails: React.FC = () => {
                 Select a Hiring Entity to see E-Verify setting.
               </Typography>
             )}
-            <FormControl fullWidth size="small">
-              <InputLabel>Hiring Entity</InputLabel>
-              <Select
-                label="Hiring Entity"
-                value={account?.hiringEntityId ?? ''}
-                onChange={(e) => updateAccountField('hiringEntityId', e.target.value || null)}
-                disabled={saving}
-              >
-                <MenuItem value="">
-                  <em>None</em>
-                </MenuItem>
-                {entityOptions.map((ent) => (
-                  <MenuItem key={ent.id} value={ent.id}>
-                    {ent.name} {ent.entityCode ? `(${ent.entityCode} · ${ent.workerType})` : ''}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+            {/* R.16.2a Phase 3 — Push-to-Active banner stack for the
+                top-level `hiringEntityId` edit. Banner appears for
+                `securityLevel === '7'` only (Q4 lock); for other users
+                the edit still cascades to draft JOs but the push
+                affordance is hidden. */}
+            {canPushToActive && tenantId && account
+              ? pushBanners
+                  .filter((b) => b.fieldKey === 'hiringEntityId' && (b.positionId ?? null) === null)
+                  .map((payload) => (
+                    <PushToActiveBanner
+                      key={`top-${payload.fieldKey}`}
+                      tenantId={tenantId}
+                      accountId={account.id}
+                      payload={payload}
+                      onDismiss={() => dismissPushBanner(payload)}
+                    />
+                  ))
+              : null}
+            {/* R.16.3-interim — manual sync button + Hiring Entity
+                selector in one row. Same gating as the banner above
+                (`securityLevel === '7'`); server still enforces. */}
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+              <Box sx={{ flex: 1 }}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Hiring Entity</InputLabel>
+                  <Select
+                    label="Hiring Entity"
+                    value={account?.hiringEntityId ?? ''}
+                    onChange={(e) => updateAccountField('hiringEntityId', e.target.value || null)}
+                    disabled={saving}
+                  >
+                    <MenuItem value="">
+                      <em>None</em>
+                    </MenuItem>
+                    {entityOptions.map((ent) => (
+                      <MenuItem key={ent.id} value={ent.id}>
+                        {ent.name} {ent.entityCode ? `(${ent.entityCode} · ${ent.workerType})` : ''}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Box>
+              {canPushToActive && tenantId && account && (
+                <Box sx={{ pt: 0.5 }}>
+                  <SyncToActiveButton
+                    tenantId={tenantId}
+                    accountId={account.id}
+                    fieldKey="hiringEntityId"
+                    getCurrentValue={() => account?.hiringEntityId ?? null}
+                    fieldLabel="Hiring Entity"
+                  />
+                </Box>
+              )}
+            </Box>
             <FormControlLabel
               control={
                 <Switch
@@ -5954,7 +6166,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                       label="Sub-accounts manage their own pricing (e.g. Oakland Arena has specific bill rates per title; uncheck for a single flat markup across all sub-accounts)"
                     />
                     {!pricingSubAccountsManageOwn && (
-                      <Box sx={{ mt: 2 }}>
+                      <Box sx={{ mt: 2, display: 'flex', alignItems: 'flex-start', gap: 1 }}>
                         <TextField
                           size="small"
                           type="number"
@@ -5965,6 +6177,30 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                           sx={{ width: 160, ...numberInputNoSpinnerSx }}
                           helperText="Applied to all job positions across all sub-accounts (e.g. 45 = 45% over pay rate)"
                         />
+                        {/* R.16.2c — manual sync next to the flat markup
+                            field. Captured per L4 even when
+                            `subAccountsManageOwnPricing` is on (the flag
+                            controls the form's UI mode, not snapshot
+                            semantics). The button is rendered only when
+                            the flat-markup field is visible (i.e.
+                            `subAccountsManageOwnPricing` is off) — when
+                            the National turns on per-sub-account pricing,
+                            no flat markup exists to push. */}
+                        {canPushToActive && tenantId && account && (
+                          <Box sx={{ pt: 0.5 }}>
+                            <SyncToActiveButton
+                              tenantId={tenantId}
+                              accountId={account.id}
+                              fieldKey="pricingFlatMarkupPercent"
+                              getCurrentValue={() =>
+                                pricingFlatMarkupPercent === ''
+                                  ? null
+                                  : Number(pricingFlatMarkupPercent)
+                              }
+                              fieldLabel="Flat Markup %"
+                            />
+                          </Box>
+                        )}
                       </Box>
                     )}
                   </CardContent>
@@ -6020,6 +6256,25 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                   }
                 />
                 <CardContent sx={{ pt: 0 }}>
+                  {/* R.16.2a Phase 3 — per-position Push-to-Active
+                      banner stack. Only rendered for `securityLevel ===
+                      '7'`; one banner per dirty (positionId, fieldKey)
+                      pair (Q1 lock). Stacked above the pricing table so
+                      the operator can review affected JOs without
+                      scrolling past the table they just edited. */}
+                  {canPushToActive && tenantId && account
+                    ? pushBanners
+                        .filter((b) => (b.positionId ?? null) !== null)
+                        .map((payload) => (
+                          <PushToActiveBanner
+                            key={`pos-${payload.positionId}-${payload.fieldKey}`}
+                            tenantId={tenantId}
+                            accountId={account.id}
+                            payload={payload}
+                            onDismiss={() => dismissPushBanner(payload)}
+                          />
+                        ))
+                    : null}
                   {showSutaFutaOnPricingPositions && (
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 2 }}>
                       <FormControl size="small" sx={{ minWidth: 140 }}>
@@ -7229,22 +7484,48 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
             <Grid item xs={12} md={6}>
               {/* Roles & Schedulers */}
               {selectedSection === 'roles' && (
-                <AccountRecruitingRolesCard
-                  tenantId={tenantId}
-                  accountId={account.id!}
-                  initialSchedulerIds={account?.roles?.schedulerIds ?? []}
-                  recruiterOptions={recruitersOptions}
-                  onSaved={(nextSchedulerIds) => {
-                    setAccount((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            roles: { ...(prev.roles ?? {}), schedulerIds: nextSchedulerIds },
-                          }
-                        : prev,
-                    );
-                  }}
-                />
+                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                  <Box sx={{ flex: 1 }}>
+                    <AccountRecruitingRolesCard
+                      tenantId={tenantId}
+                      accountId={account.id!}
+                      initialSchedulerIds={account?.roles?.schedulerIds ?? []}
+                      recruiterOptions={recruitersOptions}
+                      onSaved={(nextSchedulerIds) => {
+                        setAccount((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                roles: { ...(prev.roles ?? {}), schedulerIds: nextSchedulerIds },
+                              }
+                            : prev,
+                        );
+                      }}
+                    />
+                  </Box>
+                  {/* R.16.2c — manual sync next to the schedulers editor.
+                      `scheduler` is captured in the snapshot envelope as
+                      `string[]` (the full `schedulerIds` array). V1
+                      caveat (per R.16.2c L2): pushing the array updates
+                      `jo.snapshot.scheduler` only — the live JO field
+                      `schedulerUid` (single-uid stamp set at JO creation)
+                      is NOT rewritten. Consumer rewire is deferred to
+                      R.16.2d if the post-CORT signal warrants it. */}
+                  {canPushToActive && tenantId && account && (
+                    <Box sx={{ pt: 1.5 }}>
+                      <SyncToActiveButton
+                        tenantId={tenantId}
+                        accountId={account.id}
+                        fieldKey="scheduler"
+                        getCurrentValue={() => {
+                          const ids = account?.roles?.schedulerIds;
+                          return Array.isArray(ids) ? ids : [];
+                        }}
+                        fieldLabel="Schedulers"
+                      />
+                    </Box>
+                  )}
+                </Box>
               )}
 
               {/* Customer Rules & Policies */}
@@ -7389,7 +7670,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                           label="Sub-accounts manage their own pricing (e.g. Oakland Arena has specific bill rates per title; uncheck for a single flat markup across all sub-accounts)"
                         />
                         {!pricingSubAccountsManageOwn && (
-                          <Box sx={{ mt: 2 }}>
+                          <Box sx={{ mt: 2, display: 'flex', alignItems: 'flex-start', gap: 1 }}>
                             <TextField
                               size="small"
                               type="number"
@@ -7400,6 +7681,24 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                               sx={{ width: 160, ...numberInputNoSpinnerSx }}
                               helperText="Applied to all job positions across all sub-accounts (e.g. 45 = 45% over pay rate)"
                             />
+                            {/* R.16.2c — second flat markup surface
+                                (alternate layout). Same wiring + gating
+                                as the primary above. */}
+                            {canPushToActive && tenantId && account && (
+                              <Box sx={{ pt: 0.5 }}>
+                                <SyncToActiveButton
+                                  tenantId={tenantId}
+                                  accountId={account.id}
+                                  fieldKey="pricingFlatMarkupPercent"
+                                  getCurrentValue={() =>
+                                    pricingFlatMarkupPercent === ''
+                                      ? null
+                                      : Number(pricingFlatMarkupPercent)
+                                  }
+                                  fieldLabel="Flat Markup %"
+                                />
+                              </Box>
+                            )}
                           </Box>
                         )}
                       </CardContent>
@@ -7975,17 +8274,43 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                       />
                     </Grid>
                     <Grid item xs={12}>
-                      <AccountOrderDefaultsCard
-                        title="Other Attachments"
-                        fieldKey="attachments"
-                        placeholder=""
-                        uploadPlaceholder="Upload any other relevant documents for job orders under this account"
-                        account={account}
-                        accountId={accountId!}
-                        tenantId={tenantId!}
-                        userId={user?.uid || ''}
-                        onRefresh={loadAccount}
-                      />
+                      {/* R.16.2c — manual sync next to "Other Attachments".
+                          The card renders its own staff instructions /
+                          file uploader UI; we float a SyncToActiveButton
+                          beside the title for level-7 admins. The card
+                          writes through `account.orderDefaults
+                          .staffInstructions.attachments.files`, which is
+                          the same path the cascade loader reads. */}
+                      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                        <Box sx={{ flex: 1 }}>
+                          <AccountOrderDefaultsCard
+                            title="Other Attachments"
+                            fieldKey="attachments"
+                            placeholder=""
+                            uploadPlaceholder="Upload any other relevant documents for job orders under this account"
+                            account={account}
+                            accountId={accountId!}
+                            tenantId={tenantId!}
+                            userId={user?.uid || ''}
+                            onRefresh={loadAccount}
+                          />
+                        </Box>
+                        {canPushToActive && tenantId && account && (
+                          <Box sx={{ pt: 1.5 }}>
+                            <SyncToActiveButton
+                              tenantId={tenantId}
+                              accountId={account.id}
+                              fieldKey="attachments"
+                              getCurrentValue={() => {
+                                const files =
+                                  account?.orderDefaults?.staffInstructions?.attachments?.files;
+                                return Array.isArray(files) ? files : [];
+                              }}
+                              fieldLabel="Other Attachments"
+                            />
+                          </Box>
+                        )}
+                      </Box>
                     </Grid>
                   </Grid>
                 </Box>

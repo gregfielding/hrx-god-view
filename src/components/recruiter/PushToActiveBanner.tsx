@@ -75,7 +75,7 @@ const PushToActiveBanner: React.FC<PushToActiveBannerProps> = ({
 
   if (!payload) return null;
 
-  const { fieldKey, positionId, fieldLabel, newValue } = payload;
+  const { fieldKey, positionId, fieldLabel, newValue, previousValue } = payload;
 
   return (
     <Box sx={{ mb: 2 }}>
@@ -114,6 +114,7 @@ const PushToActiveBanner: React.FC<PushToActiveBannerProps> = ({
         fieldKey={fieldKey}
         positionId={positionId ?? null}
         newValue={newValue}
+        previousValue={previousValue}
         fieldLabel={fieldLabel}
       />
     </Box>

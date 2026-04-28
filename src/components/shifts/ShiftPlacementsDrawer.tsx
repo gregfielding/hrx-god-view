@@ -601,7 +601,13 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
               top line is Pay/Bill/Markup, second line is the tax-rate
               triplet. Renders an em-dash when nothing is set instead
               of being hidden so the column position is stable when a
-              recruiter swaps between shifts of the same JO. */}
+              recruiter swaps between shifts of the same JO.
+              R.16.2a — `shift.markupPercent` is already produced by
+              `useActiveShifts.readJoFinancials`, which wraps the JO-doc
+              read through `getEffectiveJobOrderPositionField`. No JO
+              doc is in scope here, so no second-tier wrap is needed
+              (the upstream wrap already enforces snapshot precedence
+              for the value displayed below). */}
           <HeaderField label="Financials" sx={{ minWidth: 200 }}>
             {shift &&
             (shift.payRate != null ||

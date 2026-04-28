@@ -58,6 +58,13 @@ const FIELD_PATHS_BY_LEVEL: Record<
     // Path matches `extractAccountPricingPositions` in
     // `src/utils/accountPricingForJobOrder.ts`.
     positions: 'pricing.positions',
+    // §16.2c additions — paths match the form sources noted in the
+    // R.16.2c brief Phase 1.
+    scheduler: 'roles.schedulerIds',
+    pricingFlatMarkupPercent: 'pricing.flatMarkupPercent',
+    physicalRequirements: 'orderDefaults.orderDetails.physicalRequirements',
+    customUniformRequirements: 'orderDefaults.orderDetails.customUniformRequirements',
+    attachments: 'orderDefaults.staffInstructions.attachments.files',
   },
   // Same shape as `account` — child accounts share the recruiter
   // account doc layout. The only difference is the levelType tag,
@@ -78,6 +85,12 @@ const FIELD_PATHS_BY_LEVEL: Record<
     // Child overrides parent's positions per
     // `fetchResolvedAccountPricingPositions` precedence rule.
     positions: 'pricing.positions',
+    // §16.2c additions — same Firestore layout as account.
+    scheduler: 'roles.schedulerIds',
+    pricingFlatMarkupPercent: 'pricing.flatMarkupPercent',
+    physicalRequirements: 'orderDefaults.orderDetails.physicalRequirements',
+    customUniformRequirements: 'orderDefaults.orderDetails.customUniformRequirements',
+    attachments: 'orderDefaults.staffInstructions.attachments.files',
   },
   // Location override for standalone accounts
   // (`accounts/{rid}/location_defaults/{cid_wid}`). Same nesting as
@@ -88,6 +101,11 @@ const FIELD_PATHS_BY_LEVEL: Record<
     screeningPackageId: 'orderDefaults.screeningPackageId',
     uniformRequirements: 'orderDefaults.orderDetails.dressCode',
     customerSpecificRules: 'orderDefaults.customerSpecificRules',
+    // §16.2c — location-level overrides for the Compliance &
+    // Requirements form fields. The location form (`AccountLocationDetail`)
+    // already writes these under the same nested path.
+    physicalRequirements: 'orderDefaults.orderDetails.physicalRequirements',
+    customUniformRequirements: 'orderDefaults.orderDetails.customUniformRequirements',
   },
   // JO doc (`tenants/{tid}/job_orders/{joId}`). Fields live at the
   // top level — the JO's own form writes them flat. Note: snapshot-
@@ -105,6 +123,17 @@ const FIELD_PATHS_BY_LEVEL: Record<
     uniformRequirements: 'uniformRequirements',
     postingVisibility: 'postingVisibility',
     postingPolicy: 'postingPolicy',
+    // §16.2c — JO-level overrides where the JO doc stores its own
+    // copy of the field. Omitted intentionally:
+    //   - `scheduler` — JO has `schedulerUid` (single-uid stamp), not
+    //     a per-JO array. Cascade resolves to parent value; consumer
+    //     rewire to honor `snapshot.scheduler` is deferred (R.16.2c L2).
+    //   - `pricingFlatMarkupPercent` — JOs use per-position markups
+    //     via the `positions` blob; no JO-level flat markup field.
+    //   - `attachments` — no JO-level attachments storage at this
+    //     path. Snapshot resolves from parent only.
+    physicalRequirements: 'physicalRequirements',
+    customUniformRequirements: 'customUniformRequirements',
   },
   // Shift doc (`tenants/{tid}/job_orders/{joId}/shifts/{sid}`). Most
   // fields aren't yet stored at the shift tier — overrides land here

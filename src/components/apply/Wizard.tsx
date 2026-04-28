@@ -43,6 +43,10 @@ import { db } from '../../firebase';
 import PersonalInfoStep from './steps/PersonalInfoStep';
 import AddressStep from './steps/AddressStep';
 import EVerifyComfortStep from './steps/EVerifyComfortStep';
+import {
+  getEffectiveJobOrderField,
+  type JobOrderForEffectiveRead,
+} from '../../shared/jobOrder/getEffectiveJobOrderField';
 import WorkEligibilityStep from './steps/WorkEligibilityStep';
 import ProfilePictureStep from './steps/ProfilePictureStep';
 import ResumeStep from './steps/ResumeStep';
@@ -752,9 +756,19 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             const joSnap = await getDoc(joRef);
             if (joSnap.exists()) {
               const jo = joSnap.data() as any;
+              // R.16.2a — public apply flow honours the activation snapshot
+              // for non-draft JOs (a worker applying after the parent
+              // account changed `hiringEntityId` still lands on the
+              // entity captured at activation). Fallback preserves the
+              // legacy live read for drafts and pre-§16.1 active JOs.
+              const { value: snapHiring } = getEffectiveJobOrderField<string | null>(
+                jo as JobOrderForEffectiveRead,
+                'hiringEntityId',
+                { fallback: jo.hiringEntityId ?? null },
+              );
               data = {
                 jobOrderId: jobId,
-                hiringEntityId: jo.hiringEntityId ?? null,
+                hiringEntityId: (snapHiring as string | null) ?? null,
                 jobTitle: jo.jobTitle || jo.jobOrderName || jo.name || 'Job',
                 postTitle: jo.jobOrderName || jo.name || jo.jobTitle || 'Job',
                 jobType: jo.jobType || 'career',
@@ -829,7 +843,19 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         try {
           const joRef = doc(db, 'tenants', tenantId, 'job_orders', posting.jobOrderId || jobId);
           const joSnap = await getDoc(joRef);
-          if (joSnap.exists() && !cancelled) entityId = (joSnap.data() as any)?.hiringEntityId ?? null;
+          if (joSnap.exists() && !cancelled) {
+            // R.16.2a — second JO read in the apply wizard (entity-name
+            // resolution for the C1-Events skip path). Same precedence:
+            // snapshot wins for non-draft JOs, fallback preserves the
+            // legacy live read.
+            const jo = joSnap.data() as any;
+            const { value: snapHiring } = getEffectiveJobOrderField<string | null>(
+              jo as JobOrderForEffectiveRead,
+              'hiringEntityId',
+              { fallback: jo?.hiringEntityId ?? null },
+            );
+            entityId = (snapHiring as string | null) ?? null;
+          }
         } catch {
           if (!cancelled) setHiringEntityName(null);
           return;

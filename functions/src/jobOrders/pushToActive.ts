@@ -63,6 +63,16 @@ export const PUSH_TOP_LEVEL_FIELDS = [
   'workersCompCode',
   'screeningPackageId',
   'additionalScreenings',
+  // §16.2c — promoted to push surface in this PR. All five flow
+  // through the same preview/write/audit pipeline as the §L9 fields.
+  // Shape validation lives in `validateNewValueShape` below; the
+  // snapshot trigger + backfill auto-extend off the registry, so no
+  // engine-side changes are required to capture them at activation.
+  'scheduler',
+  'pricingFlatMarkupPercent',
+  'physicalRequirements',
+  'customUniformRequirements',
+  'attachments',
 ] as const;
 
 export const PUSH_POSITION_FIELDS = [
@@ -94,6 +104,13 @@ const ACTIVE_STATUSES = new Set([
 const MAX_SELECTED_JOS = 200;
 /** Maximum characters in `reason`. */
 const MAX_REASON_LEN = 2000;
+
+/**
+ * **R.16.1.1** — Firestore caps `where('field','in',[...])` at 30
+ * values per query. The fanout walker chunks `recruiterAccountId`
+ * lists below this limit and issues parallel queries.
+ */
+const FIRESTORE_IN_CHUNK_SIZE = 30;
 
 // ─────────────────────────────────────────────────────────────────────
 // Pure helpers — exported for tests.
@@ -139,6 +156,23 @@ export interface ValidatePushArgsInput {
   fieldKey: unknown;
   positionId: unknown;
   newValue: unknown;
+  /**
+   * **R.16.1.1** — The Account-level value that was authoritative
+   * just before the user's edit. When supplied, the preview /
+   * write paths only treat a JO as `wouldChange=true` when the
+   * snapshot value matches `previousValue` (i.e. the JO inherited
+   * from this Account at activation time and nothing has overridden
+   * it since). JOs whose snapshot diverges from `previousValue` are
+   * marked ineligible with `previous_value_mismatch` so a National
+   * push doesn't silently overwrite a child-level override.
+   *
+   * `undefined` keeps the legacy V1 behavior (any diff against
+   * `newValue` is considered a push candidate). The dialog wires
+   * this from the form's `lastSaved*Ref.current` for new pushes;
+   * we keep it optional so older client builds keep working
+   * during the rollout window.
+   */
+  previousValue?: unknown;
   selectedJoIds?: unknown;
   reason?: unknown;
   /** True for the write callable; relaxes the `selectedJoIds`/`reason` requirement when false. */
@@ -151,6 +185,23 @@ export type ValidatedPushArgs = {
   fieldKey: PushFieldKey;
   positionId: string | null;
   newValue: unknown;
+  /**
+   * `undefined` means "caller didn't supply" → legacy diff semantics.
+   * Otherwise: the source-of-truth filter for `wouldChange`. See
+   * `ValidatePushArgsInput.previousValue`.
+   *
+   * Optional on the type so legacy V1 test fixtures and any
+   * legacy callers still type-check; consumers must consult
+   * `hasPreviousValue` to disambiguate "deliberate undefined"
+   * (e.g. clearing) from "not supplied at all".
+   */
+  previousValue?: unknown;
+  /**
+   * Set to `true` when the caller explicitly supplied
+   * `previousValue` (even if that value was `undefined`/`null`).
+   * Defaults to `false` when omitted.
+   */
+  hasPreviousValue?: boolean;
   selectedJoIds: string[];
   reason: string;
 };
@@ -196,6 +247,14 @@ export function validatePushArgs(input: ValidatePushArgsInput): ValidatedPushArg
   // it would silently break downstream consumers.
   validateNewValueShape(fieldKeyRaw, input.newValue);
 
+  // R.16.1.1 — `previousValue` is optional but, when supplied,
+  // must clear the same shape gate as `newValue`. A mismatched
+  // type would silently break the diff filter.
+  const hasPreviousValue = input.previousValue !== undefined;
+  if (hasPreviousValue) {
+    validateNewValueShape(fieldKeyRaw, input.previousValue);
+  }
+
   let selectedJoIds: string[] = [];
   if (input.isWrite) {
     if (!Array.isArray(input.selectedJoIds)) {
@@ -239,6 +298,8 @@ export function validatePushArgs(input: ValidatePushArgsInput): ValidatedPushArg
     fieldKey: fieldKeyRaw as PushFieldKey,
     positionId: positionIdRaw,
     newValue: input.newValue,
+    previousValue: input.previousValue,
+    hasPreviousValue,
     selectedJoIds,
     reason,
   };
@@ -273,6 +334,60 @@ function validateNewValueShape(fieldKey: string, value: unknown): void {
         !value.every((s) => typeof s === 'string')
       ) {
         throw new Error(`newValue for "${fieldKey}" must be a string array or null.`);
+      }
+      return;
+
+    // §16.2c — `customUniformRequirements` is a freeform string.
+    case 'customUniformRequirements':
+      if (typeof value !== 'string') {
+        throw new Error(`newValue for "${fieldKey}" must be a string or null.`);
+      }
+      return;
+
+    // §16.2c — `pricingFlatMarkupPercent` is a finite number (% with
+    // up to 2 decimals; range not enforced server-side — UI handles
+    // sanity caps and the cascade engine just stores what it's given).
+    case 'pricingFlatMarkupPercent':
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        throw new Error(`newValue for "${fieldKey}" must be a finite number or null.`);
+      }
+      return;
+
+    // §16.2c — `scheduler` is a string array of recruiter UIDs (the
+    // National's `roles.schedulerIds`). Same shape rule as
+    // `additionalScreenings`. Empty array is valid (clears all
+    // scheduler stamps post-push).
+    case 'scheduler':
+      if (
+        !Array.isArray(value) ||
+        !value.every((s) => typeof s === 'string')
+      ) {
+        throw new Error(`newValue for "${fieldKey}" must be a string array or null.`);
+      }
+      return;
+
+    // §16.2c — `physicalRequirements` is a string array of selected
+    // physical capability codes (e.g. ['lifting_50_lbs', 'standing']).
+    case 'physicalRequirements':
+      if (
+        !Array.isArray(value) ||
+        !value.every((s) => typeof s === 'string')
+      ) {
+        throw new Error(`newValue for "${fieldKey}" must be a string array or null.`);
+      }
+      return;
+
+    // §16.2c — `attachments` is `Array<{name?, label?, url?, uploadedAt?}>`.
+    // The shape check is permissive: each item must be a plain object;
+    // the inner shape is enforced by the form when the user uploads.
+    // String fields are optional — allowing the caller to push minimal
+    // metadata for new attachments queued via the dialog.
+    case 'attachments':
+      if (
+        !Array.isArray(value) ||
+        !value.every((it) => it !== null && typeof it === 'object' && !Array.isArray(it))
+      ) {
+        throw new Error(`newValue for "${fieldKey}" must be an object array or null.`);
       }
       return;
 
@@ -345,6 +460,59 @@ export function readCurrentSnapshotValue(
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// **R.16.1.1** — National-Account fanout helpers.
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * **R.16.1.1** — Return `[accountId, ...childAccountIds]` for a
+ * recruiter account. National Accounts hold their direct children
+ * in `childAccountIds[]`; child accounts (or single-tier accounts)
+ * have either an empty/absent array or no doc — either way we fall
+ * back to the single id so legacy single-tier behavior keeps
+ * working.
+ *
+ * Out of scope for R.16.1.1: arbitrary-depth walks (National →
+ * MSP → Child → Location). R.16.2 broadens this when the consumer
+ * rewire lands.
+ */
+export async function resolveAccountFanoutIds(
+  fdb: admin.firestore.Firestore,
+  tenantId: string,
+  accountId: string,
+): Promise<string[]> {
+  const accSnap = await fdb
+    .doc(`tenants/${tenantId}/accounts/${accountId}`)
+    .get();
+  const data = (accSnap.exists ? accSnap.data() ?? {} : {}) as Record<
+    string,
+    unknown
+  >;
+  const raw = data.childAccountIds;
+  const childIds: string[] = Array.isArray(raw)
+    ? raw.filter((s): s is string => typeof s === 'string' && s.trim() !== '')
+    : [];
+  // De-dupe + ensure stable ordering so a National with the same
+  // child set always produces the same chunking layout (handy for
+  // log-diffing across runs).
+  const set = new Set<string>([accountId, ...childIds]);
+  return Array.from(set).sort();
+}
+
+/**
+ * **R.16.1.1** — Split a list of ids into Firestore `in`-safe chunks
+ * of `size` (default 30 — the documented cap for `where('field','in',[...])`).
+ */
+export function chunkIds<T>(ids: readonly T[], size = FIRESTORE_IN_CHUNK_SIZE): T[][] {
+  if (size <= 0) throw new Error('chunk size must be > 0');
+  if (ids.length === 0) return [];
+  const out: T[][] = [];
+  for (let i = 0; i < ids.length; i += size) {
+    out.push(ids.slice(i, i + size));
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Preview — pure-ish (does Firestore reads, no writes).
 // ─────────────────────────────────────────────────────────────────────
 
@@ -352,7 +520,8 @@ export function readCurrentSnapshotValue(
 export type IneligibilityReason =
   | 'status_excluded' // status is `draft` / `cancelled` / unknown
   | 'no_snapshot' // active JO that predates §16.1 — backfill required first
-  | 'no_position'; // per-position push, JO's snapshot doesn't include this positionId
+  | 'no_position' // per-position push, JO's snapshot doesn't include this positionId
+  | 'previous_value_mismatch'; // R.16.1.1 — snapshot doesn't match supplied `previousValue` (likely a child-level override or already-pushed)
 
 export interface AffectedJoSummary {
   jobOrderId: string;
@@ -379,6 +548,14 @@ export interface PreviewPushReport {
     alreadyMatching: number;
     missingSnapshot: number;
     missingPosition: number;
+    /**
+     * **R.16.1.1** — Active JOs whose snapshot value didn't match
+     * the supplied `previousValue` filter (likely child-level
+     * overrides or already-pushed). Always present on responses
+     * from the new server build; defaults to 0 when the caller
+     * doesn't pass `previousValue`.
+     */
+    previousValueMismatch: number;
   };
 }
 
@@ -391,25 +568,65 @@ export async function runPreviewPushToActive(
   args: RunPreviewArgs,
 ): Promise<PreviewPushReport> {
   const { validated, fdb } = args;
-  const { tenantId, accountId, fieldKey, positionId, newValue } = validated;
+  const {
+    tenantId,
+    accountId,
+    fieldKey,
+    positionId,
+    newValue,
+    previousValue,
+    hasPreviousValue = false,
+  } = validated;
 
-  const snap = await fdb
-    .collection(`tenants/${tenantId}/job_orders`)
-    .where('recruiterAccountId', '==', accountId)
-    .get();
+  // **R.16.1.1** — Walk the National Account + all of its direct
+  // children. For single-tier accounts this collapses to the
+  // single-id query path (legacy behavior). Firestore caps
+  // `where('field','in',[...])` at 30 ids, so we chunk + parallelize.
+  const accountIds = await resolveAccountFanoutIds(fdb, tenantId, accountId);
+  const chunks = chunkIds(accountIds, FIRESTORE_IN_CHUNK_SIZE);
+  const colRef = fdb.collection(`tenants/${tenantId}/job_orders`);
+
+  type RawDoc = { id: string; data: Record<string, unknown> };
+  const seen = new Map<string, RawDoc>();
+
+  // Run chunked queries in parallel (admin SDK enforces its own
+  // throttling). For Nationals with ≤30 children this is a single
+  // query; the boundary case at 31 children fires two parallel
+  // queries.
+  const snaps = await Promise.all(
+    chunks.map((chunk) =>
+      // Single-id chunk uses `==` for slightly cheaper indexing.
+      chunk.length === 1
+        ? colRef.where('recruiterAccountId', '==', chunk[0]).get()
+        : colRef.where('recruiterAccountId', 'in', chunk).get(),
+    ),
+  );
+
+  for (const snap of snaps) {
+    for (const doc of snap.docs) {
+      // De-dupe in case a JO somehow appears in multiple chunks
+      // (shouldn't with the Set-deduped accountIds, but defensive).
+      if (!seen.has(doc.id)) {
+        seen.set(doc.id, {
+          id: doc.id,
+          data: (doc.data() ?? {}) as Record<string, unknown>,
+        });
+      }
+    }
+  }
 
   const affected: AffectedJoSummary[] = [];
   const totals = {
-    totalScanned: snap.size,
+    totalScanned: seen.size,
     eligible: 0,
     wouldChange: 0,
     alreadyMatching: 0,
     missingSnapshot: 0,
     missingPosition: 0,
+    previousValueMismatch: 0,
   };
 
-  for (const doc of snap.docs) {
-    const data = (doc.data() ?? {}) as Record<string, unknown>;
+  for (const { id, data } of seen.values()) {
     const status = typeof data.status === 'string' ? data.status : '';
 
     if (!ACTIVE_STATUSES.has(status)) {
@@ -418,7 +635,7 @@ export async function runPreviewPushToActive(
     }
 
     const jo: JoLikeForPush = {
-      id: doc.id,
+      id,
       status,
       snapshot: (data.snapshot ?? null) as Record<string, unknown> | null,
     };
@@ -432,7 +649,7 @@ export async function runPreviewPushToActive(
     if (reason === 'no_snapshot') {
       totals.missingSnapshot += 1;
       affected.push({
-        jobOrderId: doc.id,
+        jobOrderId: id,
         status,
         currentValue,
         wouldChange: false,
@@ -443,7 +660,7 @@ export async function runPreviewPushToActive(
     if (reason === 'no_position') {
       totals.missingPosition += 1;
       affected.push({
-        jobOrderId: doc.id,
+        jobOrderId: id,
         status,
         currentValue,
         wouldChange: false,
@@ -453,24 +670,47 @@ export async function runPreviewPushToActive(
     }
 
     totals.eligible += 1;
-    const equal = valuesEqual(currentValue, newValue);
-    if (equal) {
+    const matchesNew = valuesEqual(currentValue, newValue);
+    if (matchesNew) {
       totals.alreadyMatching += 1;
       affected.push({
-        jobOrderId: doc.id,
+        jobOrderId: id,
         status,
         currentValue,
         wouldChange: false,
       });
-    } else {
-      totals.wouldChange += 1;
-      affected.push({
-        jobOrderId: doc.id,
-        status,
-        currentValue,
-        wouldChange: true,
-      });
+      continue;
     }
+
+    // **R.16.1.1** — When the caller supplies the prior Account-
+    // level value, only mark `wouldChange=true` when the snapshot
+    // matches it. A snapshot that diverges from `previousValue`
+    // is most likely a child-level override (or a JO that was
+    // already pushed manually) — don't silently overwrite it.
+    // Operators can still escalate via a separate per-JO push if
+    // they actually want to flatten that override.
+    if (hasPreviousValue) {
+      const matchesPrev = valuesEqual(currentValue, previousValue);
+      if (!matchesPrev) {
+        totals.previousValueMismatch += 1;
+        affected.push({
+          jobOrderId: id,
+          status,
+          currentValue,
+          wouldChange: false,
+          ineligibleReason: 'previous_value_mismatch',
+        });
+        continue;
+      }
+    }
+
+    totals.wouldChange += 1;
+    affected.push({
+      jobOrderId: id,
+      status,
+      currentValue,
+      wouldChange: true,
+    });
   }
 
   return {
@@ -494,6 +734,16 @@ export interface WritePushOneArgs {
   fieldKey: PushFieldKey;
   positionId: string | null;
   newValue: unknown;
+  /**
+   * **R.16.1.1** — Optional. When supplied, the in-transaction
+   * snapshot read must equal `previousValue` or the write is
+   * aborted with `previous_value_mismatch`. Mirrors the preview
+   * filter so a snapshot that changed between preview re-run and
+   * the transaction (e.g. a competing push) doesn't get silently
+   * overwritten.
+   */
+  previousValue?: unknown;
+  hasPreviousValue?: boolean;
   fdb: admin.firestore.Firestore;
 }
 
@@ -511,7 +761,16 @@ export type PushOneOutcome =
 export async function writePushToActiveOne(
   args: WritePushOneArgs,
 ): Promise<PushOneOutcome> {
-  const { tenantId, jobOrderId, fieldKey, positionId, newValue, fdb } = args;
+  const {
+    tenantId,
+    jobOrderId,
+    fieldKey,
+    positionId,
+    newValue,
+    previousValue,
+    hasPreviousValue = false,
+    fdb,
+  } = args;
   const joRef = fdb.doc(`tenants/${tenantId}/job_orders/${jobOrderId}`);
 
   return fdb.runTransaction<PushOneOutcome>(async (tx) => {
@@ -544,6 +803,18 @@ export async function writePushToActiveOne(
     }
     if (valuesEqual(oldValue, newValue)) {
       return { kind: 'skipped_no_change' };
+    }
+    // **R.16.1.1** — Defense in depth. If the caller supplied a
+    // `previousValue` and the in-transaction snapshot doesn't
+    // match, abort the write. The page-level preview re-run
+    // already filters most of these out; this catches the narrow
+    // race where the snapshot flipped between the preview and the
+    // transaction (e.g. a sibling push beat us to it).
+    if (hasPreviousValue && !valuesEqual(oldValue, previousValue)) {
+      return {
+        kind: 'skipped_not_eligible',
+        reason: 'previous_value_mismatch',
+      };
     }
 
     if (isPushTopLevelField(fieldKey)) {
@@ -625,8 +896,17 @@ export interface PushPageReport {
 export async function runPushToActivePage(args: RunPushArgs): Promise<PushPageReport> {
   const { validated, triggeredBy, fdb } = args;
   const start = Date.now();
-  const { tenantId, accountId, fieldKey, positionId, newValue, selectedJoIds, reason } =
-    validated;
+  const {
+    tenantId,
+    accountId,
+    fieldKey,
+    positionId,
+    newValue,
+    previousValue,
+    hasPreviousValue = false,
+    selectedJoIds,
+    reason,
+  } = validated;
 
   // Server-side preview re-run gates which `selectedJoIds` are
   // actually written. A client could submit stale or made-up IDs;
@@ -675,6 +955,8 @@ export async function runPushToActivePage(args: RunPushArgs): Promise<PushPageRe
         fieldKey,
         positionId,
         newValue,
+        previousValue,
+        hasPreviousValue,
         fdb,
       });
     } catch (err) {
@@ -786,7 +1068,10 @@ function getSecurityLevelForActiveTenant(user: Record<string, unknown>): number 
   return normalizeSecurityLevel(user.securityLevel);
 }
 
-async function gatePushCallable(
+// Exported so the R.16.3-interim "Sync to active" callable
+// (`getLastPushedValueForFieldCallable`) reuses the same auth gate
+// without duplicating the level-7 / activeTenantId check.
+export async function gatePushCallable(
   request: { auth?: { uid?: string } | null },
   tenantId: string,
 ): Promise<string> {
@@ -838,6 +1123,9 @@ export const previewPushToActiveCallable = onCall(
         fieldKey: data.fieldKey,
         positionId: data.positionId,
         newValue: data.newValue,
+        // R.16.1.1 — optional. New clients send the prior Account-
+        // level value; legacy clients omit it and get V1 semantics.
+        previousValue: 'previousValue' in data ? data.previousValue : undefined,
         isWrite: false,
       });
     } catch (e) {
@@ -884,6 +1172,8 @@ export const pushToActiveJobOrdersCallable = onCall(
         fieldKey: data.fieldKey,
         positionId: data.positionId,
         newValue: data.newValue,
+        // R.16.1.1 — see preview callable for rationale.
+        previousValue: 'previousValue' in data ? data.previousValue : undefined,
         selectedJoIds: data.selectedJoIds,
         reason: data.reason,
         isWrite: true,

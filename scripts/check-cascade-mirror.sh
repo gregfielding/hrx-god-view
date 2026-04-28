@@ -41,15 +41,20 @@ fail=0
 # --- Files that must be byte-identical across trees ----------------
 
 mirrored_files=(
-  "types.ts"
-  "registry.ts"
-  "resolveCascadedField.ts"
-  "index.ts"
+  "cascade/types.ts"
+  "cascade/registry.ts"
+  "cascade/resolveCascadedField.ts"
+  "cascade/index.ts"
+  # R.16.2a Q3 — `getEffectiveJobOrderField` is pure / SDK-agnostic /
+  # type-self-contained, so the helper byte-mirrors cleanly between
+  # the CRA and admin trees. Keep it here so any drift fails CI before
+  # consumers split.
+  "jobOrder/getEffectiveJobOrderField.ts"
 )
 
 for filename in "${mirrored_files[@]}"; do
-  cra="src/shared/cascade/${filename}"
-  root="shared/cascade/${filename}"
+  cra="src/shared/${filename}"
+  root="shared/${filename}"
 
   if ! diff -q "${cra}" "${root}" >/dev/null 2>&1; then
     echo -e "${red}✗ DRIFT:${nc} ${cra} ↔ ${root}"

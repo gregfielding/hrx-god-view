@@ -75,6 +75,10 @@ import {
 } from '../utils/accountPricingForJobOrder';
 import { fetchMergedRecruiterOrderDefaultsForJobOrder } from '../utils/recruiterAccountOrderDefaultsMerge';
 import type { AccountPositionPricing } from '../types/recruiter/account';
+import {
+  getEffectiveJobOrderField,
+  type JobOrderForEffectiveRead,
+} from '../shared/jobOrder/getEffectiveJobOrderField';
 
 /** Apply account Pricing row (exact job title match) to career job order form fields. */
 function mergeCareerFormWithPricingPreset(
@@ -313,14 +317,30 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   }, [effectiveRecruiterAccountId, recruiterAccountsForPicker, recruiterAccountsAll]);
 
   /** Hiring Entity (Employer of Record): E-Verify comes from here (read-only downstream). */
+  // R.16.2a — for an existing JO, the activation snapshot wins over the
+  // live `jobOrder.hiringEntityId` once captured. Recruiter-account /
+  // initialData / loaded-JO chain stays the fallback so drafts and
+  // pre-§16.1 active JOs without a snapshot keep their current behaviour.
   const hiringEntityIdForForm = useMemo(
-    () =>
-      recruiterAccountHiringEntityId ??
-      initialData?.hiringEntityId ??
-      jobOrder?.hiringEntityId ??
-      (loadedJobOrderData as any)?.hiringEntityId ??
-      null,
-    [recruiterAccountHiringEntityId, initialData?.hiringEntityId, jobOrder?.hiringEntityId, loadedJobOrderData]
+    () => {
+      const fallback =
+        recruiterAccountHiringEntityId ??
+        initialData?.hiringEntityId ??
+        jobOrder?.hiringEntityId ??
+        (loadedJobOrderData as any)?.hiringEntityId ??
+        null;
+      const joForRead =
+        (jobOrder as JobOrderForEffectiveRead | undefined) ??
+        (loadedJobOrderData as JobOrderForEffectiveRead | undefined) ??
+        null;
+      const { value } = getEffectiveJobOrderField<string | null>(
+        joForRead,
+        'hiringEntityId',
+        { fallback },
+      );
+      return (value as string | null) ?? null;
+    },
+    [recruiterAccountHiringEntityId, initialData?.hiringEntityId, jobOrder, loadedJobOrderData]
   );
   const { entity: formEntity } = useEntity(tenantId ?? null, hiringEntityIdForForm);
   /** Same hiring entities as Account → Pricing (SUTA/FUTA on pay for margin). */

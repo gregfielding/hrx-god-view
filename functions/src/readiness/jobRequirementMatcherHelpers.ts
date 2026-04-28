@@ -58,6 +58,15 @@ import { matchLanguageWillingness } from '../shared/jobRequirementMatchers/match
 import { matchUniformWillingness } from '../shared/jobRequirementMatchers/matchUniformWillingness';
 import type { WillingnessInput } from '../shared/jobRequirementMatchers/willingness';
 import type { MatcherResult } from '../shared/jobRequirementMatchers/types';
+// R.16.2c — snapshot precedence for `physicalRequirements` +
+// `customUniformRequirements` reads (see L5.physicalRequirements +
+// L5.customUniformRequirements decisions). Keeps the willingness gates
+// reading the value the JO was activated under, even after a CSA
+// edits the parent Account post-activation.
+import {
+  getEffectiveJobOrderField,
+  type JobOrderForEffectiveRead,
+} from '../shared/jobOrder/getEffectiveJobOrderField';
 
 import {
   isEducationLevel,
@@ -578,7 +587,19 @@ export function buildPhaseBMatchSpecs(
 
   // Physical — JO field is `physicalRequirements` (declared `string` but
   // production is `string[]`). Gate accepts both shapes.
-  if (jobHasNonEmptyText(jo.physicalRequirements)) {
+  //
+  // R.16.2c — wrap with `getEffectiveJobOrderField` so the gate reads
+  // the snapshot value (frozen at activation) rather than whatever
+  // the parent Account currently advertises. Pre-snapshot drafts +
+  // already-snapshotted JOs are both handled by the helper's
+  // precedence rule.
+  const joForRead = jo as JobOrderForEffectiveRead;
+  const { value: effectivePhysicalReqs } = getEffectiveJobOrderField<unknown>(
+    joForRead,
+    'physicalRequirements',
+    { fallback: jo.physicalRequirements },
+  );
+  if (jobHasNonEmptyText(effectivePhysicalReqs)) {
     const result = matchPhysicalWillingness({
       willingness: attestations?.physicalRequirementWillingness,
     });
@@ -642,7 +663,16 @@ export function buildPhaseBMatchSpecs(
   // based on the gate flags we pass.
   const jobHasLibraryUniform =
     jobHasNonEmptyText(jo.dressCode) || jobHasNonEmptyText(jo.uniformRequirements);
-  const jobHasCustomUniform = jobHasNonEmptyText(jo.customUniformRequirements);
+  // R.16.2c — same wrap pattern as `physicalRequirements` above.
+  // Library uniform fields (`dressCode` / `uniformRequirements`) are
+  // not yet promoted to snapshot policy and stay live; only the
+  // custom freeform field flows through the snapshot precedence.
+  const { value: effectiveCustomUniform } = getEffectiveJobOrderField<unknown>(
+    joForRead,
+    'customUniformRequirements',
+    { fallback: jo.customUniformRequirements },
+  );
+  const jobHasCustomUniform = jobHasNonEmptyText(effectiveCustomUniform);
   if (jobHasLibraryUniform || jobHasCustomUniform) {
     const result = matchUniformWillingness({
       jobHasLibraryUniform,

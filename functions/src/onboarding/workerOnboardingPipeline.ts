@@ -5,6 +5,10 @@ import {
   buildAdminEntityEmploymentLifecyclePatch,
   buildBootstrapOnboardingLifecyclePatch,
 } from "./entityEmploymentLifecycle";
+import {
+  getEffectiveJobOrderField,
+  type JobOrderForEffectiveRead,
+} from "../shared/jobOrder/getEffectiveJobOrderField";
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -168,8 +172,19 @@ async function resolveEntityContext(args: {
     const jobOrderSnap = await db.doc(`tenants/${tenantId}/job_orders/${jobOrderId}`).get();
     if (jobOrderSnap.exists) {
       const jo = jobOrderSnap.data() || {};
+      // R.16.2a — onboarding pipeline-start picks the hiring entity
+      // through the snapshot-aware helper. The activation snapshot wins
+      // for non-draft JOs (so a worker assigned before a parent-account
+      // hiring-entity edit lands on the original entity); fallback
+      // preserves the legacy live-or-cascade resolution for drafts and
+      // pre-§16.1 active JOs without a snapshot.
+      const { value: snapshotHiring } = getEffectiveJobOrderField<string | null>(
+        jo as JobOrderForEffectiveRead,
+        "hiringEntityId",
+        { fallback: (jo.hiringEntityId as string) || null },
+      );
       resolvedEntityId =
-        (jo.hiringEntityId as string) || (jo.entityId as string) || null;
+        (snapshotHiring as string | null) || (jo.entityId as string) || null;
     }
   }
 

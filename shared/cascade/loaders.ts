@@ -63,6 +63,11 @@ const FIELD_PATHS_BY_LEVEL: Record<
     postingVisibility: 'orderDefaults.postingVisibility',
     postingPolicy: 'orderDefaults.postingPolicy',
     positions: 'pricing.positions',
+    scheduler: 'roles.schedulerIds',
+    pricingFlatMarkupPercent: 'pricing.flatMarkupPercent',
+    physicalRequirements: 'orderDefaults.orderDetails.physicalRequirements',
+    customUniformRequirements: 'orderDefaults.orderDetails.customUniformRequirements',
+    attachments: 'orderDefaults.staffInstructions.attachments.files',
   },
   child: {
     staffInstructions: 'orderDefaults.staffInstructions',
@@ -76,6 +81,11 @@ const FIELD_PATHS_BY_LEVEL: Record<
     postingVisibility: 'orderDefaults.postingVisibility',
     postingPolicy: 'orderDefaults.postingPolicy',
     positions: 'pricing.positions',
+    scheduler: 'roles.schedulerIds',
+    pricingFlatMarkupPercent: 'pricing.flatMarkupPercent',
+    physicalRequirements: 'orderDefaults.orderDetails.physicalRequirements',
+    customUniformRequirements: 'orderDefaults.orderDetails.customUniformRequirements',
+    attachments: 'orderDefaults.staffInstructions.attachments.files',
   },
   location: {
     staffInstructions: 'orderDefaults.staffInstructions',
@@ -83,6 +93,8 @@ const FIELD_PATHS_BY_LEVEL: Record<
     screeningPackageId: 'orderDefaults.screeningPackageId',
     uniformRequirements: 'orderDefaults.orderDetails.dressCode',
     customerSpecificRules: 'orderDefaults.customerSpecificRules',
+    physicalRequirements: 'orderDefaults.orderDetails.physicalRequirements',
+    customUniformRequirements: 'orderDefaults.orderDetails.customUniformRequirements',
   },
   jo: {
     staffInstructions: 'staffInstructions',
@@ -94,6 +106,8 @@ const FIELD_PATHS_BY_LEVEL: Record<
     uniformRequirements: 'uniformRequirements',
     postingVisibility: 'postingVisibility',
     postingPolicy: 'postingPolicy',
+    physicalRequirements: 'physicalRequirements',
+    customUniformRequirements: 'customUniformRequirements',
   },
   shift: {
     staffInstructions: 'staffInstructions',

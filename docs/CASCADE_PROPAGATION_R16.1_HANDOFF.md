@@ -1,6 +1,6 @@
 # Cascade Propagation Policy — §16.1 Minimum Slice Handoff Spec
 
-**Status:** R.16.1 design locked, implementation complete (Phases 1–8 shipped).
+**Status:** R.16.1 design locked, implementation complete (Phases 1–8 shipped). **R.16.1.1 follow-up shipped** (National-Account fanout + previousValue filter — see "R.16.1.1" section at the bottom of this doc).
 **Predecessor:** `docs/CASCADE_IMPLEMENTATION_STATUS.md` (audit doc, §F minimum-slice section).
 **Successor:** R.16.2 — production consumer rewire (move billing / comp / hiring-entity reads to `getEffectiveJobOrderField`). Tracked separately; CORT push gate calls this out as conditional follow-up.
 
@@ -391,3 +391,96 @@ The slice as-shipped does not by itself prevent silent live propagation through 
 ---
 
 *End of R.16.1 handoff. Foundation cuts begin in this turn; subsequent phases will land as the slice progresses.*
+
+---
+
+## R.16.1.1 — National-Account fanout + previousValue filter (post-R.16.1 patch)
+
+**Status:** shipped (post-R.16.1 staging smoke).
+**Why this patch:** R.16.1 staging smoke on the CORT National Account surfaced "0 active job orders affected" in the Push-to-Active dialog whenever an admin edited a snapshot-policy field on the National. Root cause: `runPreviewPushToActive` queried `where('recruiterAccountId','==',accountId)`, which only returns JOs directly owned by the National. CORT is structured National → child accounts → JOs, so the National's own JO collection is empty.
+**Predecessor:** R.16.1 (Push-to-Active machinery + UI).
+**Successor:** R.16.2 — when the consumer rewire ships, multi-tier walks (National → MSP → Child → Location) get absorbed there.
+
+### Locked decisions
+
+#### L1.1.1. Walk one level of fanout (National + direct children)
+
+`previewPushToActiveCallable` and `pushToActiveJobOrdersCallable` resolve `accountId → [accountId, ...childAccountIds]` from the Account doc and query `recruiterAccountId in <chunk>` for each 30-id chunk (Firestore's `in` cap). Single-tier accounts collapse to the legacy single-id path.
+
+**Why one level:** R.16.1.1's job is to unblock CORT. CORT is a two-tier (National → child) topology. Multi-tier walks (National → MSP → child → location) require recursion + cycle-guards + per-tier audit; that machinery belongs in R.16.2 with the consumer rewire.
+
+#### L1.1.2. `previousValue` filter — block silent overwrites of child overrides
+
+When the dialog sends `previousValue` (the Account-level value before the user's edit), the server only marks `wouldChange=true` for JOs whose snapshot equals `previousValue`. JOs whose snapshot diverges (likely a child-level override or already-pushed) are flagged `previous_value_mismatch` — disabled in the dialog with the copy "Child override or already changed — push manually if intended."
+
+**Why a snapshot-equality test rather than a per-field child-override check:** per-field override checks would require a snapshot envelope schema change (record the source of each value at activation: parent vs. child vs. JO-level). That's R.16.1.1.b material at the earliest, and the snapshot-equality test catches the same case for ~all real-world flows. The known false-positive — a child that coincidentally overrode to the same value as the old National — gets a JO-row in the dialog that the operator can deselect.
+
+**Backwards compat:** legacy clients (and tests) that don't send `previousValue` get exact V1 semantics (`wouldChange = !valuesEqual(snapshot, newValue)`). The new field is opt-in on the wire.
+
+#### L1.1.3. Defense-in-depth gate inside `writePushToActiveOne`
+
+The transactional write also re-checks `valuesEqual(oldValue, previousValue)` before flipping the snapshot. Catches the narrow race where a sibling push lands between the page-level preview re-run and the transaction.
+
+### Implementation surface
+
+- `functions/src/jobOrders/pushToActive.ts`
+  - **+ `resolveAccountFanoutIds(fdb, tenantId, accountId)`** — reads `tenants/{tid}/accounts/{aid}.childAccountIds`, returns deduped + sorted `[accountId, ...children]`.
+  - **+ `chunkIds(ids, size = 30)`** — Firestore `in`-cap helper.
+  - **`runPreviewPushToActive`** — now resolves fanout, fires parallel chunked queries, dedupes results, applies `previousValue` filter, exposes `totals.previousValueMismatch`.
+  - **`writePushToActiveOne`** — accepts optional `previousValue` + `hasPreviousValue`; aborts the txn write with `previous_value_mismatch` if the in-transaction snapshot diverged.
+  - **`runPushToActivePage`** — threads `previousValue` through to per-JO writes.
+  - **`validatePushArgs`** — accepts optional `previousValue`; same shape gate as `newValue` when supplied.
+  - **`previewPushToActiveCallable` / `pushToActiveJobOrdersCallable`** — forward `previousValue` from the request payload (only when present, so legacy callers retain V1 behavior).
+
+- `src/components/recruiter/PushToActiveDialog.tsx`
+  - **+ `previousValue?: unknown`** prop, forwarded to both callables (only when supplied — preserves wire shape for legacy callers).
+  - **`useEffect` deps** updated to include `previousValue` (re-fetch preview if it changes mid-open, defensive).
+  - **+ `'previous_value_mismatch'`** ineligibility row state with operator-friendly copy + new totals chip ("N child override / already changed").
+
+- `src/components/recruiter/PushToActiveBanner.tsx`
+  - Unpacks `previousValue` from the existing `PushToActiveBannerPayload` and forwards to the dialog. No change to caller surfaces — `AccountOrderDetailsForm` already populates it from `lastSavedScreeningRef.current` / `lastSavedAdditionalScreeningsRef.current`.
+
+- `functions/src/__tests__/jobOrders/pushToActive.test.ts`
+  - **+ 21 new tests** (5 `chunkIds`, 4 `resolveAccountFanoutIds`, 4 fanout preview, 4 `previousValue` filter, 3 write-side `previousValue` gate, 1 fanout + previousValue end-to-end).
+  - Fake Firestore upgraded to support `where('field','in',[...])` and to return immutable query refs from `where()` (matching admin SDK semantics — caught a real mutability bug).
+
+### Verification gate (all green)
+
+| Gate | Result |
+|------|--------|
+| All 63 push-to-active tests pass (42 R.16.1 + 21 R.16.1.1) | ✓ |
+| 296 functions Mocha (cascade + jobOrders + readiness) green | ✓ |
+| `scripts/check-cascade-mirror.sh` clean | ✓ |
+| `npx tsc --noEmit` clean on R.16.1.1 surface (functions + frontend) | ✓ |
+| ReadLints clean on `pushToActive.ts`, `PushToActiveDialog.tsx`, `PushToActiveBanner.tsx`, `pushToActive.test.ts` | ✓ |
+
+### Deploy runbook
+
+1. **Functions** — only the two callables changed:
+
+   ```bash
+   firebase deploy --only \
+     functions:previewPushToActiveCallable,functions:pushToActiveJobOrdersCallable
+   ```
+
+2. **Frontend** — banner/dialog forward `previousValue`; legacy server still works without it during the deploy window:
+
+   ```bash
+   npm run deploy:hosting
+   ```
+
+3. **CORT manual smoke** — pick up from where R.16.1 staging smoke stopped:
+   - Open the CORT National Account → Order Details. Change `screeningPackageId`. Save.
+   - Banner should appear. Click "Review affected job orders…".
+   - Dialog should now show **non-zero** affected count, populated from child accounts.
+   - Confirm any child-overridden JOs appear with the `previous_value_mismatch` row state (disabled checkbox, "Child override / already changed" copy).
+   - Submit Push-to-Active. Confirm only the eligible JOs land + audit rows look correct.
+   - Re-open dialog. Confirm idempotency (those JOs now show "Already matches").
+
+4. **Greenlight R.16.2a** — once CORT smoke is green, kick off R.16.2a per `docs/CASCADE_R16.2a_HANDOFF.md`.
+
+### Deferred to R.16.2
+
+- Per-row "Source" attribution in the dialog (requires snapshot envelope schema change to record value source).
+- Per-field child-override discrimination (today an "already-pushed" JO and a "child-overridden" JO look identical — both surface as `previous_value_mismatch`).
+- Multi-tier cascade walks (National → MSP → child → location).

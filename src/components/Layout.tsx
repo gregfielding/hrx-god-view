@@ -73,8 +73,9 @@ import { Role, SecurityLevel } from '../utils/AccessRoles';
 
 import GoogleConnectionChip from './GoogleConnectionChip';
 import { GoogleStatusProvider, useGoogleStatus } from '../contexts/GoogleStatusContext';
-import MessengerIconButton from './messenger/MessengerIconButton';
-import MessengerDrawer from './messenger/MessengerDrawer';
+// Temporarily disabled — Direct Messenger UI hidden.
+// import MessengerIconButton from './messenger/MessengerIconButton';
+// import MessengerDrawer from './messenger/MessengerDrawer';
 import { useUnreadMentionsCount } from '../hooks/useUnreadMentionsCount';
 import { useEffectiveSecurityLevel, useIsAdminShell } from '../hooks/useEffectiveSecurityLevel';
 import ChatGPTDrawer from './chatgpt/ChatGPTDrawer';
@@ -1941,9 +1942,11 @@ const Layout: React.FC = function Layout() {
               )} */}
               
               {/* Direct Messenger Icon - Only for security levels 5-7 */}
+              {/* Temporarily disabled — Direct Messenger UI hidden.
               {user && hasAdminLevel && (
                 <MessengerIconButton />
               )}
+              */}
 
               
               {/* 👤 Avatar Menu */}
@@ -2088,7 +2091,9 @@ const Layout: React.FC = function Layout() {
         </TopBarTitleContext.Provider>
         
         {/* Direct Messenger Drawer */}
+        {/* Temporarily disabled — Direct Messenger UI hidden.
         <MessengerDrawer />
+        */}
         
         {/* ChatGPT Drawer */}
         <ChatGPTDrawer />
