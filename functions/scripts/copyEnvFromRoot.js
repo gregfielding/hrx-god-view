@@ -82,6 +82,19 @@ const PARAM_KEYS = [
   'SOURCEDIRECT_WEBHOOK_SECRET',
   'ACCUSOURCE_CREATE_PROFILE_PATH',
   'ACCUSOURCE_PRODUCTION_VALIDATION_HRX_ONLY',
+  // Everee payroll integration — see HRX-Everee-Master-Plan.md and
+  // functions/src/integrations/everee/. EVEREE_ENABLED is the master
+  // switch read at module-load time by evereeGate.ts; without it the
+  // gate substitutes stub callables that return failed-precondition.
+  // EVEREE_API_TOKEN_<evereeTenantId> is the per-tenant API token
+  // (one per Everee tenant the org is enrolled with). Today these are
+  // read as plain process.env via evereeSecrets.ts; when Secret Manager
+  // is wired (per the master plan §0.3) move these to defineSecret +
+  // `firebase functions:secrets:set` and remove the matching entries
+  // from this list (Firebase 400s if the same name is both env-var
+  // and secret-mount; same gotcha as the EVERIFY_WS_* pattern above).
+  'EVEREE_ENABLED',
+  'EVEREE_API_TOKEN_2320', // tenant 2320 — add new EVEREE_API_TOKEN_<tid> per onboarded Everee tenant
   // Document AI — I-9 supporting extraction (see docs/I9_SUPPORTING_DOCUMENTS_ARCHITECTURE.md)
   'DOCUMENT_AI_PROJECT_ID',
   'DOCUMENT_AI_LOCATION',
