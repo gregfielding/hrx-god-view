@@ -25,6 +25,8 @@ export interface EvereeEnsureWorkerRequest {
   firstName?: string;
   lastName?: string;
   phone?: string;
+  /** Contractor onboarding — optional; entity `evereeApprovalGroupId` is the fallback. */
+  approvalGroupId?: number;
 }
 
 export interface EvereeEnsureWorkerResult {
@@ -34,20 +36,6 @@ export interface EvereeEnsureWorkerResult {
   /** Mirrors `everee_workers/{entityId__userId}.status`. */
   status?: string | null;
   externalWorkerId?: string | null;
-  /**
-   * Temporary smoke-test surface — server echoes the exact Everee API
-   * request URL/body and response body so a recruiter can validate the
-   * sandbox contract from the browser console (no Cloud Logs access
-   * required). Strip once the integration is verified.
-   */
-  _debug?: {
-    evereeTenantId: string;
-    requestUrl: string;
-    requestBody: unknown;
-    responseBody?: unknown;
-    durationMs?: number;
-    skippedReason?: string;
-  };
 }
 
 export interface EvereeCreateOnboardingSessionRequest {
@@ -129,27 +117,6 @@ export const evereeEnsureWorker = httpsCallable<
   EvereeEnsureWorkerRequest,
   EvereeEnsureWorkerResult
 >(functions, 'evereeEnsureWorker');
-
-/**
- * TEMP — sandbox API contract validation. Hardcodes Everee tenant 2320 +
- * synthetic entity id `_temp_sandbox` server-side; bypasses
- * `requireEvereeEnabledEntity` so a recruiter can fire `POST /v2/workers`
- * before any entity doc is wired. Remove together with
- * `TempEvereeSyncButton.tsx` once the API contract is verified.
- */
-export interface EvereeTempSandboxSyncRequest {
-  tenantId: string;
-  userId: string;
-  workerType?: EvereeWorkerType;
-  email?: string;
-  firstName?: string;
-  lastName?: string;
-  phone?: string;
-}
-export const evereeTempSandboxSync = httpsCallable<
-  EvereeTempSandboxSyncRequest,
-  EvereeEnsureWorkerResult
->(functions, 'evereeTempSandboxSync');
 
 export const evereeCreateOnboardingSession = httpsCallable<
   EvereeCreateOnboardingSessionRequest,

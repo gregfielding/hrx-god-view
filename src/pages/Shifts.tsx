@@ -22,13 +22,16 @@ import {
   Button,
   Divider,
   FormControl,
+  IconButton,
   InputLabel,
   MenuItem,
   Select,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
+  Add as AddIcon,
   ViewList as ViewListIcon,
   CalendarMonth as CalendarMonthIcon,
 } from '@mui/icons-material';
@@ -348,6 +351,35 @@ const Shifts: React.FC = () => {
               showFavoritesOnly={showFavoritesOnly}
               onToggleFavorites={setShowFavoritesOnly}
             />
+            {/* Universal icon-only Add button. Mirrors the canonical pattern
+                used on /accounts (AccountsDashboard.tsx): 32×32 blue square
+                with AddIcon, click sets `?new=1` so the active child route
+                (ShiftsList / ShiftsCalendar) can listen for the param and
+                open its own creation surface.
+
+                NOTE: Shifts in this app are sourced from job orders today —
+                no standalone "create shift" surface exists yet. Until a
+                ShiftsList listener for `?new=1` is wired (likely a "Create
+                shift on existing JO" dialog or a redirect into the JO
+                wizard), this button just adds a query param that no-ops.
+                Decide the destination as part of the /shifts UI work and
+                wire it in the child page (or change the onClick here to
+                `navigate('/jobs?new=1')` if "Add shift" should hand off to
+                the job-order creation flow). */}
+            <Tooltip title="Add shift">
+              <IconButton
+                onClick={() => navigate(`${location.pathname}?new=1`)}
+                sx={{
+                  width: 32,
+                  height: 32,
+                  bgcolor: '#0057B8',
+                  color: '#fff',
+                  '&:hover': { bgcolor: '#004a9f' },
+                }}
+              >
+                <AddIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Tooltip>
           </Box>
         }
       />

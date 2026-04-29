@@ -60,10 +60,6 @@ import type { EmergencyContact } from '../../../types/UserProfile';
 import type { RecordHeaderAssignmentLine } from '../../../utils/recordHeaderAssignments';
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { db } from '../../../firebase';
-// TEMP: sandbox-validation button for the Everee integration; remove once the
-// API contract is verified and `EvereeAdminSyncCard` on the Employment tab is
-// the only entry point.
-import TempEvereeSyncButton from '../../../components/everee/TempEvereeSyncButton';
 
 type TenantUserGroupOption = { id: string; title: string };
 
@@ -422,8 +418,6 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
             </Tooltip>
           )}
         </Box>
-        {/* TEMP: Everee sandbox-validation button — remove after API contract is verified. */}
-        <TempEvereeSyncButton uid={uid} />
         </Box>
 
         <Box sx={{ flex: 1, minWidth: 0 }}>

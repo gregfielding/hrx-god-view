@@ -13,6 +13,13 @@ export interface EvereeEntityConfig {
   evereeEnvironment: EvereeEnvironment;
   evereeApiBaseUrl?: string;
   evereeEnabled: boolean;
+  /**
+   * Everee **contractor** onboarding (`POST /api/v2/onboarding/contractor`) may
+   * require routing into an approval group configured in the Everee tenant.
+   * Optional on the entity doc — thread through when C1 Events (1099) auto-
+   * provision ships (Stage 2).
+   */
+  evereeApprovalGroupId?: number;
 }
 
 // Everee uses a single API host for both environments; the sandbox-vs-prod
@@ -44,11 +51,19 @@ export async function getEvereeConfigForEntity(
   const baseUrl =
     (data?.evereeApiBaseUrl as string)?.trim() ||
     (env === 'production' ? DEFAULT_PROD_BASE : DEFAULT_SANDBOX_BASE);
+  const rawApproval = data?.evereeApprovalGroupId ?? data?.approvalGroupId;
+  let evereeApprovalGroupId: number | undefined;
+  if (typeof rawApproval === 'number' && Number.isFinite(rawApproval)) {
+    evereeApprovalGroupId = rawApproval;
+  } else if (typeof rawApproval === 'string' && /^\d+$/.test(rawApproval.trim())) {
+    evereeApprovalGroupId = parseInt(rawApproval.trim(), 10);
+  }
   return {
     evereeTenantId: evereeTenantId.trim(),
     evereeEnvironment: env,
     evereeApiBaseUrl: baseUrl,
     evereeEnabled: true,
+    ...(evereeApprovalGroupId !== undefined ? { evereeApprovalGroupId } : {}),
   };
 }
 

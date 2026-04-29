@@ -10,29 +10,67 @@
 
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions/v2';
-import { getEvereeConfigForEntity, type EvereeEntityConfig } from './evereeConfig';
+import { getEvereeConfigForEntity } from './evereeConfig';
 import { evereePaths } from './evereeConfig';
 import { evereeRequest } from './evereeHttp';
 import type { EvereePayHistoryItem, EvereePayStatementSummary } from './evereeSchemas';
+
+/**
+ * Money shape per Everee API spec — `amount` is a decimal string (e.g.
+ * "20.00"), `currency` is always "USD" today.
+ */
+export interface EvereeMoney {
+  amount: string;
+  currency: 'USD';
+}
+
+/**
+ * Address shape per Everee API spec. `line2` is optional; `state` is the
+ * two-letter ISO 3166:2 code (e.g. "CA"); `postalCode` is 5 digits.
+ */
+export interface EvereeAddress {
+  line1: string;
+  line2?: string;
+  city: string;
+  state: string;
+  postalCode: string;
+}
 
 export interface CreateWorkerInput {
   tenantId: string;
   entityId: string;
   userId: string;
   firebaseUid: string;
+  /**
+   * Routes to the corresponding embedded-onboarding endpoint:
+   *   employee   → POST /api/v2/embedded/workers/employee  (W2)
+   *   contractor → POST /api/v2/embedded/workers/contractor (1099)
+   */
   workerType: 'employee' | 'contractor';
   email?: string;
   firstName?: string;
   lastName?: string;
+  /** 10-digit phone number, no formatting (Everee strips non-digits anyway). */
   phone?: string;
   /**
-   * Optional override — when set, skip `getEvereeConfigForEntity` and use the
-   * provided config directly. Used by the temp sandbox-test callable so a
-   * recruiter can fire `POST /v2/workers` without first wiring an entity doc
-   * with `evereeTenantId` / `evereeEnabled` / `payrollProvider`. Production
-   * callable (`evereeEnsureWorker`) never sets this.
+   * The remaining fields are REQUIRED by the Everee
+   * `/api/v2/embedded/workers/employee` endpoint (W2). Callers may omit them —
+   * `createWorkerIfNeeded` injects conservative stub defaults so sandbox /
+   * exploratory sync works with identity fields only. Production callers should
+   * thread real worker address + compensation from profile / assignment data.
+   *
+   * **1099 contractors** use `POST /api/v2/onboarding/contractor` instead —
+   * minimal fields; optional `approvalGroupId` may also be set on the entity
+   * doc (`evereeApprovalGroupId`).
    */
-  _overrideConfig?: EvereeEntityConfig;
+  payType?: 'HOURLY' | 'SALARY';
+  payRate?: EvereeMoney;
+  typicalWeeklyHours?: number;
+  /** ISO 8601 date (YYYY-MM-DD); defaults to today when omitted. */
+  hireDate?: string;
+  homeAddress?: EvereeAddress;
+  /** Contractor onboarding — overrides entity `evereeApprovalGroupId` when set. */
+  approvalGroupId?: number;
 }
 
 export interface CreateOnboardingSessionInput {
@@ -66,24 +104,8 @@ export interface CreateOnboardingSessionInput {
 export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
   evereeWorkerId: string;
   created: boolean;
-  /**
-   * Debug payload — echoed back to the caller so a browser-console smoke test
-   * surface can show the exact Everee API request/response without server log
-   * access. Safe to remove once the integration is verified against the
-   * sandbox; until then this is the cheapest way for a recruiter to validate
-   * the API contract.
-   */
-  _debug?: {
-    evereeTenantId: string;
-    requestUrl: string;
-    requestBody: unknown;
-    responseBody?: unknown;
-    durationMs?: number;
-    skippedReason?: string;
-  };
 }> {
-  const config =
-    input._overrideConfig ?? (await getEvereeConfigForEntity(input.tenantId, input.entityId));
+  const config = await getEvereeConfigForEntity(input.tenantId, input.entityId);
   if (!config) {
     throw new Error('Everee not configured for this entity');
   }
@@ -115,12 +137,6 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
       return {
         evereeWorkerId: existingForTenant,
         created: false,
-        _debug: {
-          evereeTenantId: config.evereeTenantId,
-          requestUrl: '(skipped — user-map fast path)',
-          requestBody: null,
-          skippedReason: 'user-map already linked',
-        },
       };
     }
   } catch (err) {
@@ -145,30 +161,63 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
     return {
       evereeWorkerId: existing.externalWorkerId,
       created: false,
-      _debug: {
-        evereeTenantId: config.evereeTenantId,
-        requestUrl: '(skipped — linkage doc fast path)',
-        requestBody: null,
-        skippedReason: 'linkage doc already linked',
-      },
     };
   }
 
-  // Body shape best-guess: most payroll APIs accept `externalId` as the partner-side
-  // primary key. If Everee rejects this field, swap to `metadata.hrx_user_id` or
-  // `customFields.hrxUserId`; the verbose logging below surfaces the response shape
-  // so we can pivot quickly without another deploy round-trip.
-  const requestBody = {
-    tenantId: config.evereeTenantId,
-    email: input.email,
-    firstName: input.firstName,
-    lastName: input.lastName,
-    phone: input.phone,
-    workerType: input.workerType,
-    externalId: input.firebaseUid,
-  };
-  const baseUrl = config.evereeApiBaseUrl ?? 'https://api.sandbox.everee.com';
-  const fullUrl = `${baseUrl.replace(/\/$/, '')}/v2/workers`;
+  // W2 (employee): POST /api/v2/embedded/workers/employee — full compensation +
+  // address per Everee embedded onboarding spec.
+  //
+  // 1099 (contractor): POST /api/v2/onboarding/contractor — minimal payload;
+  // **not** `/embedded/workers/contractor` (that path does not exist in the
+  // published OpenAPI). See developer.everee.com "Kick off onboarding for a
+  // contractor".
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const phoneDigits = (input.phone ?? '').replace(/\D/g, '').slice(-10);
+  const baseUrl = config.evereeApiBaseUrl ?? 'https://api.everee.com';
+
+  let path: string;
+  let requestBody: Record<string, unknown>;
+
+  if (input.workerType === 'contractor') {
+    path = '/api/v2/onboarding/contractor';
+    const approvalGroupId =
+      input.approvalGroupId ?? config.evereeApprovalGroupId;
+    requestBody = {
+      firstName: input.firstName,
+      lastName: input.lastName,
+      phoneNumber: phoneDigits,
+      email: input.email,
+      hireDate: input.hireDate ?? today,
+      legalWorkAddress: { useHomeAddress: true },
+      externalWorkerId: input.firebaseUid,
+    };
+    if (approvalGroupId !== undefined && Number.isFinite(approvalGroupId)) {
+      requestBody.approvalGroupId = approvalGroupId;
+    }
+  } else {
+    path = '/api/v2/embedded/workers/employee';
+    const homeAddress = input.homeAddress ?? {
+      line1: '1 Sandbox Way',
+      city: 'San Francisco',
+      state: 'CA',
+      postalCode: '94105',
+    };
+    requestBody = {
+      firstName: input.firstName,
+      lastName: input.lastName,
+      phoneNumber: phoneDigits,
+      email: input.email,
+      payType: input.payType ?? 'HOURLY',
+      payRate: input.payRate ?? { amount: '20.00', currency: 'USD' },
+      typicalWeeklyHours: input.typicalWeeklyHours ?? 40,
+      hireDate: input.hireDate ?? today,
+      legalWorkAddress: { useHomeAddress: true },
+      homeAddress,
+      externalWorkerId: input.firebaseUid,
+    };
+  }
+
+  const fullUrl = `${baseUrl.replace(/\/$/, '')}${path}`;
 
   logger.info('[everee.createWorker] outgoing', {
     ...logCtx,
@@ -186,7 +235,7 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
   const startedAt = Date.now();
   let response: unknown;
   try {
-    response = await evereeRequest<unknown>(config, 'POST', '/v2/workers', requestBody);
+    response = await evereeRequest<unknown>(config, 'POST', path, requestBody);
   } catch (err) {
     const durationMs = Date.now() - startedAt;
     const errAny = err as { message?: string; status?: number; responseBody?: unknown };
@@ -214,7 +263,7 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
       responseBodyJson: response,
     });
     throw new Error(
-      `Everee /v2/workers POST returned no worker ID. Response: ${JSON.stringify(response)}`,
+      `Everee POST ${path} returned no worker ID. Response: ${JSON.stringify(response)}`,
     );
   }
 
@@ -244,13 +293,6 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
   return {
     evereeWorkerId,
     created: true,
-    _debug: {
-      evereeTenantId: config.evereeTenantId,
-      requestUrl: fullUrl,
-      requestBody,
-      responseBody: response,
-      durationMs,
-    },
   };
 }
 
@@ -285,9 +327,10 @@ async function mirrorEvereeWorkerIdToUser(
 }
 
 /**
- * Extract the worker id from an Everee `POST /v2/workers` response.
- * Order of preference reflects the most-likely shapes for payroll APIs; verify
- * against the verbose response log on first real call and trim once confirmed.
+ * Extract Everee's worker id from create/onboarding responses.
+ * Confirmed shapes (sandbox 2026-04): top-level `workerId` (UUID) on employee
+ * embedded worker create; same field name on contractor onboarding. Also try
+ * `id` and nested `data.*` for forward compatibility.
  */
 function extractEvereeWorkerId(response: unknown): string | null {
   if (!response || typeof response !== 'object') return null;
@@ -311,7 +354,11 @@ export async function createOnboardingSession(input: CreateOnboardingSessionInpu
 }> {
   const config = await getEvereeConfigForEntity(input.tenantId, input.entityId);
   if (!config) throw new Error('Everee not configured for this entity');
-  await evereeRequest(config, 'POST', '/v2/embed/sessions', {
+  // TODO: confirm exact Everee embed-session path against the API docs
+  // before this stub is wired to a real callable. Path mirrors the
+  // `/api/v2/...` prefix convention now confirmed for the create-worker
+  // endpoint; will likely need adjustment once we read the embed docs.
+  await evereeRequest(config, 'POST', '/api/v2/embed/sessions', {
     workerId: input.evereeWorkerId,
     experienceType: 'ONBOARDING',
     returnUrl: input.returnUrl,
@@ -354,7 +401,10 @@ export async function pushShift(
 ): Promise<{ id: string }> {
   const config = await getEvereeConfigForEntity(tenantId, entityId);
   if (!config) throw new Error('Everee not configured for this entity');
-  await evereeRequest(config, 'POST', '/v2/shifts', payload);
+  // TODO: confirm exact Everee shifts path against the API docs before this
+  // stub is wired to a real callable. `/api/v2/` prefix added preemptively;
+  // adjust once we read the docs.
+  await evereeRequest(config, 'POST', '/api/v2/shifts', payload);
   return { id: 'stub-shift-id' };
 }
 
@@ -366,7 +416,8 @@ export async function preparePayout(
 ): Promise<{ id: string }> {
   const config = await getEvereeConfigForEntity(tenantId, entityId);
   if (!config) throw new Error('Everee not configured for this entity');
-  await evereeRequest(config, 'POST', '/v2/payouts/prepare', payload);
+  // TODO: confirm exact Everee payouts path against the API docs.
+  await evereeRequest(config, 'POST', '/api/v2/payouts/prepare', payload);
   return { id: 'stub-payout-id' };
 }
 
@@ -374,6 +425,8 @@ export async function preparePayout(
 export async function ping(tenantId: string, entityId: string): Promise<{ ok: boolean; message?: string }> {
   const config = await getEvereeConfigForEntity(tenantId, entityId);
   if (!config) return { ok: false, message: 'Everee not configured for this entity' };
-  await evereeRequest(config, 'GET', '/v2/tenants/me');
+  // TODO: confirm the right Everee health/me endpoint. Once embedded
+  // worker create succeeds we can probe this.
+  await evereeRequest(config, 'GET', '/api/v2/tenants/me');
   return { ok: true };
 }

@@ -56,10 +56,6 @@ import { useUserProfileEntityEmploymentChips } from '../../../hooks/useUserProfi
 import AvatarVerificationStatus from '../../../components/avatar/AvatarVerificationStatus';
 import AvatarVerificationAdminActions from '../../../components/avatar/AvatarVerificationAdminActions';
 import { useAvatarVerification } from '../../../hooks/useAvatarVerification';
-// TEMP: sandbox-validation button for the Everee integration; remove once
-// the API contract is verified and `EvereeAdminSyncCard` on the Employment
-// tab is the only entry point.
-import TempEvereeSyncButton from '../../../components/everee/TempEvereeSyncButton';
 
 interface UserProfileHeaderProps {
   uid: string;
@@ -920,8 +916,6 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 )}
               </Box>
             )}
-            {/* TEMP: Everee sandbox-validation button — remove after API contract is verified. */}
-            <TempEvereeSyncButton uid={uid} tenantId={tenantId} />
           </Box>
 
           {/* Role Chip and Cancel Onboarding (mobile, when in progress) */}
@@ -1642,9 +1636,6 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               )}
             </Box>
           )}
-
-          {/* TEMP: Everee sandbox-validation button — remove after API contract is verified. */}
-          <TempEvereeSyncButton uid={uid} tenantId={tenantId} />
 
           {/* Status Pills - Removed duplicate Work Eligible and Active chips - they're shown in ComplianceStatusChips and Employment Row */}
         </Box>

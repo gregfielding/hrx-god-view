@@ -3,6 +3,12 @@ import { ToggleButton, ToggleButtonGroup, Box, Stack } from '@mui/material';
 import type { EmploymentEntityKey } from './employmentV2Types';
 import { EMPLOYMENT_ENTITY_KEYS, entityLabelForKey } from '../../../../utils/employmentEntityPresentation';
 
+// Temporarily hidden from the picker (entity not yet live). Underlying
+// EMPLOYMENT_ENTITY_KEYS / type unions / resolvers stay intact so any
+// pre-existing 'workforce' employment records still render correctly when
+// programmatically selected. Remove from this set to re-enable the toggle.
+const HIDDEN_ENTITY_KEYS = new Set<EmploymentEntityKey>(['workforce']);
+
 export interface EmploymentEntityTabsProps {
   value: EmploymentEntityKey;
   onChange: (key: EmploymentEntityKey) => void;
@@ -31,7 +37,7 @@ const EmploymentEntityTabs: React.FC<EmploymentEntityTabsProps> = ({ value, onCh
         aria-label="Hiring entity"
         sx={{ flexWrap: 'wrap' }}
       >
-        {EMPLOYMENT_ENTITY_KEYS.map((k) => (
+        {EMPLOYMENT_ENTITY_KEYS.filter((k) => !HIDDEN_ENTITY_KEYS.has(k)).map((k) => (
           <ToggleButton key={k} value={k} sx={{ textTransform: 'none', px: 2 }}>
             {entityLabelForKey(k)}
           </ToggleButton>

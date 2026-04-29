@@ -270,8 +270,6 @@ export {
   evereeAdminPreparePayout,
   evereeWebhook,
   onEvereeWebhookEventCreated,
-  // TEMP — sandbox API contract validation; remove with TempEvereeSyncButton.tsx.
-  evereeTempSandboxSync,
 } from './integrations/evereeGate';
 export {
   apiIntegrationsAccusourceWebhooks,

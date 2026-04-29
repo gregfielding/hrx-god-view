@@ -21,7 +21,10 @@ export async function evereeRequest<T>(
   if (decoded === STUB_TOKEN || !decoded) {
     return stubResponse(method, path) as T;
   }
-  const base = config.evereeApiBaseUrl ?? 'https://api.sandbox.everee.com';
+  // Everee uses a single API host for both sandbox + prod (env separation
+  // is enforced by the per-tenant API token, not the hostname). Keep the
+  // entity-config override as the primary; fall back to the canonical host.
+  const base = config.evereeApiBaseUrl ?? 'https://api.everee.com';
   const url = `${base.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
   const res = await fetch(url, {
     method,
@@ -37,8 +40,15 @@ export async function evereeRequest<T>(
 }
 
 function stubResponse(method: string, path: string): unknown {
-  if (path.includes('ping') || path === '/v2/tenants/me') return { ok: true };
-  if (path.includes('workers') && method === 'POST') return { id: 'stub-worker-id' };
+  if (path.includes('ping') || path.endsWith('/tenants/me')) return { ok: true };
+  if (
+    method === 'POST' &&
+    (path.includes('/embedded/workers/') ||
+      path.includes('/onboarding/contractor') ||
+      path.includes('/workers'))
+  ) {
+    return { workerId: 'stub-worker-id', id: 'stub-worker-id' };
+  }
   if (path.includes('embed') && method === 'POST') return { url: 'https://stub.everee.com/embed' };
   return {};
 }
