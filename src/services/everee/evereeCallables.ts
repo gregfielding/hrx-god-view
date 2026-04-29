@@ -34,6 +34,20 @@ export interface EvereeEnsureWorkerResult {
   /** Mirrors `everee_workers/{entityId__userId}.status`. */
   status?: string | null;
   externalWorkerId?: string | null;
+  /**
+   * Temporary smoke-test surface — server echoes the exact Everee API
+   * request URL/body and response body so a recruiter can validate the
+   * sandbox contract from the browser console (no Cloud Logs access
+   * required). Strip once the integration is verified.
+   */
+  _debug?: {
+    evereeTenantId: string;
+    requestUrl: string;
+    requestBody: unknown;
+    responseBody?: unknown;
+    durationMs?: number;
+    skippedReason?: string;
+  };
 }
 
 export interface EvereeCreateOnboardingSessionRequest {

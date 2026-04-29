@@ -58,6 +58,21 @@ export interface CreateOnboardingSessionInput {
 export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
   evereeWorkerId: string;
   created: boolean;
+  /**
+   * Debug payload — echoed back to the caller so a browser-console smoke test
+   * surface can show the exact Everee API request/response without server log
+   * access. Safe to remove once the integration is verified against the
+   * sandbox; until then this is the cheapest way for a recruiter to validate
+   * the API contract.
+   */
+  _debug?: {
+    evereeTenantId: string;
+    requestUrl: string;
+    requestBody: unknown;
+    responseBody?: unknown;
+    durationMs?: number;
+    skippedReason?: string;
+  };
 }> {
   const config = await getEvereeConfigForEntity(input.tenantId, input.entityId);
   if (!config) {
@@ -88,7 +103,16 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
         evereeWorkerId: existingForTenant,
         source: 'users.evereeWorkerIds',
       });
-      return { evereeWorkerId: existingForTenant, created: false };
+      return {
+        evereeWorkerId: existingForTenant,
+        created: false,
+        _debug: {
+          evereeTenantId: config.evereeTenantId,
+          requestUrl: '(skipped — user-map fast path)',
+          requestBody: null,
+          skippedReason: 'user-map already linked',
+        },
+      };
     }
   } catch (err) {
     // Don't block on the fast-path read — fall through to the canonical check.
@@ -109,7 +133,16 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
     });
     // Backfill the user-record map so the next call hits the fast path.
     await mirrorEvereeWorkerIdToUser(userRef, config.evereeTenantId, existing.externalWorkerId, logCtx);
-    return { evereeWorkerId: existing.externalWorkerId, created: false };
+    return {
+      evereeWorkerId: existing.externalWorkerId,
+      created: false,
+      _debug: {
+        evereeTenantId: config.evereeTenantId,
+        requestUrl: '(skipped — linkage doc fast path)',
+        requestBody: null,
+        skippedReason: 'linkage doc already linked',
+      },
+    };
   }
 
   // Body shape best-guess: most payroll APIs accept `externalId` as the partner-side
@@ -199,7 +232,17 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
   // stomping the existing ones.
   await mirrorEvereeWorkerIdToUser(userRef, config.evereeTenantId, evereeWorkerId, logCtx);
 
-  return { evereeWorkerId, created: true };
+  return {
+    evereeWorkerId,
+    created: true,
+    _debug: {
+      evereeTenantId: config.evereeTenantId,
+      requestUrl: fullUrl,
+      requestBody,
+      responseBody: response,
+      durationMs,
+    },
+  };
 }
 
 /**
