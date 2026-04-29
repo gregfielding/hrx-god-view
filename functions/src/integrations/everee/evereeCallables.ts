@@ -70,7 +70,7 @@ export const evereePing = onCall(async (request) => {
 });
 
 export const evereeEnsureWorker = onCall(async (request) => {
-  const auth = requireAuth(request);
+  requireAuth(request);
   const d = request.data as Record<string, unknown> | null;
   const tenantId = typeof d?.tenantId === 'string' ? d.tenantId : '';
   const entityId = typeof d?.entityId === 'string' ? d.entityId : '';
@@ -82,11 +82,14 @@ export const evereeEnsureWorker = onCall(async (request) => {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
   await requireEvereeEnabledEntity(tenantId, entityId);
+  // `firebaseUid` is forwarded to Everee as the partner-side external id (custom
+  // field). Use the *worker's* uid (== user doc id), not the caller's, so a
+  // recruiter-initiated sync still tags the worker correctly in Everee.
   return createWorkerIfNeeded({
     tenantId,
     entityId,
     userId,
-    firebaseUid: auth.uid,
+    firebaseUid: userId,
     workerType: (d?.workerType as 'employee' | 'contractor') || 'employee',
     email: typeof d?.email === 'string' ? d.email : undefined,
     firstName: typeof d?.firstName === 'string' ? d.firstName : undefined,

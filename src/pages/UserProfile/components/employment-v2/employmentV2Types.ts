@@ -71,6 +71,14 @@ export interface EntityEmploymentRecord {
    */
   i9SupportingDocumentsManualCompleteAt?: { toDate: () => Date } | null;
   i9SupportingDocumentsManualCompleteBy?: string | null;
+  /**
+   * Mirror of the Everee partner-side worker id (from `everee_workers`). Set
+   * by `createWorkerIfNeeded` after a successful POST /v2/workers; absent until
+   * the worker has been synced. Used for UI labelling ("Sync" vs "Re-sync") on
+   * the Everee admin sync surface.
+   */
+  evereeWorkerId?: string | null;
+  evereeWorkerLinkedAt?: { toDate: () => Date } | null;
   updatedAt?: { toDate: () => Date } | null;
 }
 

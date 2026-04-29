@@ -6,6 +6,7 @@ import type { EmploymentV2ActionResolutionContext } from '../../../../utils/empl
 import EmploymentMinimalOnboardingChecklist from './EmploymentMinimalOnboardingChecklist';
 import EmploymentEmptyStateCard from './EmploymentEmptyStateCard';
 import EmploymentWorkerEmploymentHub from './EmploymentWorkerEmploymentHub';
+import EvereeAdminSyncCard from '../../../../components/everee/EvereeAdminSyncCard';
 import { EMPLOYMENT_V2_ANCHOR_ONBOARDING } from '../../../../utils/workerReadinessBannerModel';
 import { workerEmploymentShouldShowScreeningPointerAlert } from '../../../../utils/workerEmploymentBackgroundsCrossLink';
 
@@ -88,6 +89,15 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
     overview.hasOpenOnboardingDemand &&
     workerEmploymentShouldShowScreeningPointerAlert(overview);
 
+  // Recruiter-only Everee sync surface. Server-side `requireEvereeEnabledEntity`
+  // enforces the same gates; we mirror the visibility check here so the card
+  // never appears for entities Everee isn't wired to.
+  const showEvereeAdminSync =
+    viewerKind === 'recruiter' &&
+    Boolean(overview.entityEmployment?.entityId) &&
+    overview.systems.payroll?.provider === 'everee' &&
+    overview.systems.payroll?.evereeEnabled === true;
+
   return (
     <Stack spacing={0}>
       <Box id={EMPLOYMENT_V2_ANCHOR_ONBOARDING} sx={{ scrollMarginTop: 96 }}>
@@ -142,6 +152,17 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
           defaultExpanded={false}
         />
         */}
+
+        {showEvereeAdminSync ? (
+          <EvereeAdminSyncCard
+            tenantId={tenantId}
+            entityId={overview.entityEmployment?.entityId ?? null}
+            userId={profileUserId}
+            workerType={overview.workerType === '1099' ? 'contractor' : 'employee'}
+            initialEvereeWorkerId={overview.entityEmployment?.evereeWorkerId ?? null}
+            onSynced={() => onRefresh?.()}
+          />
+        ) : null}
       </Box>
       {showEmptyExplainer && <EmploymentEmptyStateCard entityKey={entityKey} />}
     </Stack>

@@ -1,9 +1,15 @@
 /**
  * Everee service: worker, onboarding, pay history, shifts, payout (HRX Everee Master Plan §4).
- * Stub implementations; real Everee API calls in later phases.
+ *
+ * `createWorkerIfNeeded` is the first surface that makes a real outbound call to
+ * the Everee sandbox; it intentionally logs request + response payloads under
+ * structured Cloud Logging fields (`surface: 'everee.createWorker'`) while we
+ * lock in the actual API contract. Once stable, downgrade the body logs to
+ * debug or feature-flag them.
  */
 
-import { getFirestore } from 'firebase-admin/firestore';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { logger } from 'firebase-functions/v2';
 import { getEvereeConfigForEntity } from './evereeConfig';
 import { evereePaths } from './evereeConfig';
 import { evereeRequest } from './evereeHttp';
@@ -29,7 +35,18 @@ export interface CreateOnboardingSessionInput {
   returnUrl?: string;
 }
 
-/** Create worker in Everee if not already linked; create/update everee_workers doc. Stub. */
+/**
+ * Create worker in Everee if not already linked; create/update everee_workers doc.
+ *
+ * Idempotent: if `everee_workers/{entityId}__{userId}` already carries an
+ * `externalWorkerId`, the function returns immediately (no outbound POST). The
+ * "Sync to Everee" button in the recruiter UI relies on this to safely re-emit
+ * clicks without spawning duplicate Everee workers.
+ *
+ * On success, also mirrors `evereeWorkerId` onto the worker's
+ * `entity_employments` doc for this entity so the UI / readiness layers can
+ * surface the linkage without joining through `everee_workers`.
+ */
 export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
   evereeWorkerId: string;
   created: boolean;
@@ -40,20 +57,90 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
   }
   const db = getFirestore();
   const ref = db.doc(evereePaths.worker(input.tenantId, input.entityId, input.userId));
+  const logCtx = {
+    surface: 'everee.createWorker' as const,
+    tenantId: input.tenantId,
+    entityId: input.entityId,
+    userId: input.userId,
+    evereeTenantId: config.evereeTenantId,
+  };
+
   const snap = await ref.get();
   const existing = snap.data() as { externalWorkerId?: string } | undefined;
   if (existing?.externalWorkerId) {
+    logger.info('everee.createWorker — idempotent hit, returning existing worker id', {
+      ...logCtx,
+      evereeWorkerId: existing.externalWorkerId,
+    });
     return { evereeWorkerId: existing.externalWorkerId, created: false };
   }
-  await evereeRequest(config, 'POST', '/v2/workers', {
+
+  // Body shape best-guess: most payroll APIs accept `externalId` as the partner-side
+  // primary key. If Everee rejects this field, swap to `metadata.hrx_user_id` or
+  // `customFields.hrxUserId`; the verbose logging below surfaces the response shape
+  // so we can pivot quickly without another deploy round-trip.
+  const requestBody = {
     tenantId: config.evereeTenantId,
     email: input.email,
     firstName: input.firstName,
     lastName: input.lastName,
     phone: input.phone,
     workerType: input.workerType,
+    externalId: input.firebaseUid,
+  };
+  const baseUrl = config.evereeApiBaseUrl ?? 'https://api.sandbox.everee.com';
+  const fullUrl = `${baseUrl.replace(/\/$/, '')}/v2/workers`;
+
+  logger.info('everee.createWorker — request', {
+    ...logCtx,
+    method: 'POST',
+    url: fullUrl,
+    headers: {
+      authorization: 'Basic <redacted>',
+      'x-everee-tenant-id': config.evereeTenantId,
+      'content-type': 'application/json',
+    },
+    body: requestBody,
   });
-  const evereeWorkerId = 'stub-worker-id';
+
+  const startedAt = Date.now();
+  let response: unknown;
+  try {
+    response = await evereeRequest<unknown>(config, 'POST', '/v2/workers', requestBody);
+  } catch (err) {
+    const durationMs = Date.now() - startedAt;
+    logger.error('everee.createWorker — request failed', {
+      ...logCtx,
+      durationMs,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+  const durationMs = Date.now() - startedAt;
+  logger.info('everee.createWorker — response', {
+    ...logCtx,
+    durationMs,
+    status: 'ok',
+    response,
+  });
+
+  const evereeWorkerId = extractEvereeWorkerId(response);
+  if (!evereeWorkerId) {
+    const responseKeys =
+      response && typeof response === 'object'
+        ? Object.keys(response as Record<string, unknown>).join(',')
+        : typeof response;
+    logger.error('everee.createWorker — could not extract worker id from response', {
+      ...logCtx,
+      responseKeys,
+      response,
+    });
+    throw new Error(
+      `Everee did not return a recognizable worker id. Response keys: ${responseKeys}`,
+    );
+  }
+
+  const nowIso = new Date().toISOString();
   await ref.set(
     {
       tenantId: input.tenantId,
@@ -65,12 +152,64 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
       evereeWorkerId,
       workerType: input.workerType,
       status: 'created',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: nowIso,
+      updatedAt: nowIso,
     },
     { merge: true }
   );
+
+  // Mirror the linkage onto the worker's `entity_employments` doc for this entity.
+  // Doc id is the `worker_onboarding` pipelineId — opaque, so we resolve it via
+  // (userId, entityId). Best-effort: a missing employment doc must not fail the sync.
+  try {
+    const eeSnap = await db
+      .collection(`tenants/${input.tenantId}/entity_employments`)
+      .where('userId', '==', input.userId)
+      .where('entityId', '==', input.entityId)
+      .limit(1)
+      .get();
+    if (!eeSnap.empty) {
+      await eeSnap.docs[0].ref.set(
+        { evereeWorkerId, evereeWorkerLinkedAt: FieldValue.serverTimestamp() },
+        { merge: true }
+      );
+      logger.info('everee.createWorker — linked to entity_employments', {
+        ...logCtx,
+        entityEmploymentId: eeSnap.docs[0].id,
+        evereeWorkerId,
+      });
+    } else {
+      logger.warn('everee.createWorker — no entity_employments doc to link', {
+        ...logCtx,
+      });
+    }
+  } catch (err) {
+    logger.error('everee.createWorker — entity_employments mirror failed', {
+      ...logCtx,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
   return { evereeWorkerId, created: true };
+}
+
+/**
+ * Extract the worker id from an Everee `POST /v2/workers` response.
+ * Order of preference reflects the most-likely shapes for payroll APIs; verify
+ * against the verbose response log on first real call and trim once confirmed.
+ */
+function extractEvereeWorkerId(response: unknown): string | null {
+  if (!response || typeof response !== 'object') return null;
+  const r = response as Record<string, unknown>;
+  if (typeof r.id === 'string' && r.id) return r.id;
+  if (typeof r.workerId === 'string' && r.workerId) return r.workerId;
+  const data = r.data;
+  if (data && typeof data === 'object') {
+    const d = data as Record<string, unknown>;
+    if (typeof d.id === 'string' && d.id) return d.id;
+    if (typeof d.workerId === 'string' && d.workerId) return d.workerId;
+  }
+  return null;
 }
 
 /** Create onboarding embed session. Stub. */
