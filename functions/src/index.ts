@@ -293,6 +293,16 @@ export { onJobOrderStatusTransitionSnapshot } from './jobOrders/onJobOrderStatus
 // `jo.snapshot.*`. Dry-run default, security level 7 gated, --force
 // escape hatch. See docs/CASCADE_PROPAGATION_R16.1_HANDOFF.md §L7.
 export { backfillJoSnapshotFieldsCallable } from './jobOrders/backfillJoSnapshotFieldsCallable';
+// **R.4.2** — Legacy Assignment Backfill. Two-stage data-only repair
+// of pre-R.1 assignments stuck on the `'legacy_review'` chip. Stage A
+// stamps `assignment.hiringEntityId` (JO chain → worker entity_employments
+// → unresolved); Stage B re-runs the auto-seed pipeline via the shared
+// `seedReadinessForExistingAssignment` helper. Dry-run default, sec ≥ 7
+// gated. See docs/R4_2_LEGACY_BACKFILL_HANDOFF.md.
+export { backfillLegacyAssignmentsCallable } from './jobOrders/backfillLegacyAssignmentsCallable';
+// R.4.2-F3 (2026-04-29) — companion data-hygiene normalizer for the
+// `assignment.status` spelling drift surfaced during the R.4.2 backfill.
+export { normalizeAssignmentStatusSpellingCallable } from './jobOrders/normalizeAssignmentStatusSpellingCallable';
 // **R.16.1 Phase 5** — Push-to-Active. `previewPushToActiveCallable`
 // is read-only and powers the dialog's affected-JO list. The write
 // twin `pushToActiveJobOrdersCallable` re-runs the preview server-

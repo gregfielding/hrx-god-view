@@ -79,6 +79,7 @@ var EMPLOYEE_JOB_LEVEL_REQUIREMENT_TYPES = /* @__PURE__ */ new Set([
 ]);
 
 // ../src/shared/jobReadinessChip/computeJobReadinessChip.ts
+var R1_DEPLOY_DATE_ISO = "2026-04-27T05:38:46.000Z";
 var PASSING_STATUSES = /* @__PURE__ */ new Set([
   "complete_pass",
   "complete",
@@ -200,6 +201,8 @@ function buildText(state, pendingCount) {
   switch (state) {
     case "computing":
       return "Job Ready (computing\u2026)";
+    case "legacy_review":
+      return "Legacy \u2014 needs review";
     case "red":
       return "Job Not Ready";
     case "yellow":
@@ -220,6 +223,15 @@ function computeJobReadinessChip(args) {
   }
   if (contributors.length === 0) {
     if (!args.readinessSeeded) {
+      if (typeof args.assignmentCreatedAtIso === "string" && args.assignmentCreatedAtIso < R1_DEPLOY_DATE_ISO) {
+        return {
+          state: "legacy_review",
+          text: buildText("legacy_review", 0),
+          pendingCount: 0,
+          blockerCount: 0,
+          contributors: []
+        };
+      }
       return {
         state: "computing",
         text: buildText("computing", 0),
@@ -265,9 +277,11 @@ function buildAssignmentReadiness({
   certifications,
   assignmentReadinessItems,
   employeeReadinessItems,
-  readinessSeeded
+  readinessSeeded,
+  assignmentCreatedAtIso
 }) {
   const computeChip = assignmentReadinessItems !== void 0 && employeeReadinessItems !== void 0;
+  const createdAtForChip = typeof assignmentCreatedAtIso === "string" && assignmentCreatedAtIso.length > 0 ? assignmentCreatedAtIso : void 0;
   if (!assignment?.id) {
     return {
       readiness: "PENDING_INITIALIZATION",
@@ -277,7 +291,8 @@ function buildAssignmentReadiness({
         jobReadinessChip: computeJobReadinessChip({
           assignmentReadinessItems: assignmentReadinessItems ?? [],
           employeeReadinessItems: employeeReadinessItems ?? [],
-          readinessSeeded: Boolean(readinessSeeded)
+          readinessSeeded: Boolean(readinessSeeded),
+          ...createdAtForChip ? { assignmentCreatedAtIso: createdAtForChip } : {}
         })
       } : {}
     };
@@ -387,7 +402,8 @@ function buildAssignmentReadiness({
       jobReadinessChip: computeJobReadinessChip({
         assignmentReadinessItems: assignmentReadinessItems ?? [],
         employeeReadinessItems: employeeReadinessItems ?? [],
-        readinessSeeded: Boolean(readinessSeeded)
+        readinessSeeded: Boolean(readinessSeeded),
+        ...createdAtForChip ? { assignmentCreatedAtIso: createdAtForChip } : {}
       })
     } : {}
   };
@@ -413,8 +429,18 @@ function requirementToSnapshotRow(r) {
     severity: r.severity
   };
 }
+function stableKeyReplacer(_key, value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const sorted = {};
+    for (const k of Object.keys(value).sort()) {
+      sorted[k] = value[k];
+    }
+    return sorted;
+  }
+  return value;
+}
 function readinessSnapshotV1ComparableJson(c) {
-  return JSON.stringify(c);
+  return JSON.stringify(c, stableKeyReplacer);
 }
 
 // ../src/shared/readinessEntityResolve.ts
@@ -947,6 +973,35 @@ function mergeJobOrderSyntheticCertificationDemands(jobOrder, certifications) {
 }
 
 // src/readiness/hrxReadinessSnapshotLoadContext.ts
+function toIsoOrUndefined(v) {
+  if (v == null) return void 0;
+  if (typeof v === "string") {
+    const t = Date.parse(v);
+    return Number.isFinite(t) ? new Date(t).toISOString() : void 0;
+  }
+  if (typeof v === "number" && Number.isFinite(v)) {
+    return new Date(v).toISOString();
+  }
+  if (v instanceof Date) {
+    return Number.isFinite(v.getTime()) ? v.toISOString() : void 0;
+  }
+  const obj = v;
+  if (typeof obj?.toDate === "function") {
+    try {
+      const d = obj.toDate();
+      return Number.isFinite(d.getTime()) ? d.toISOString() : void 0;
+    } catch {
+    }
+  }
+  if (typeof obj?.toMillis === "function") {
+    try {
+      const ms = obj.toMillis();
+      return Number.isFinite(ms) ? new Date(ms).toISOString() : void 0;
+    } catch {
+    }
+  }
+  return void 0;
+}
 function screeningForAssignment(assignmentId, records) {
   const linked = records.filter((r) => String(r.automationAssignmentId || "") === assignmentId);
   if (!linked.length) return {};
@@ -1162,6 +1217,7 @@ async function loadHrxReadinessBuildArgsAdmin(db, params) {
   ) : [];
   const readinessSeededAt = a.readinessSeededAt;
   const readinessSeeded = Boolean(readinessSeededAt) || assignmentReadinessItems.length > 0;
+  const assignmentCreatedAtIso = toIsoOrUndefined(a.createdAt);
   return {
     user: userInput,
     employment: employmentInput,
@@ -1170,7 +1226,8 @@ async function loadHrxReadinessBuildArgsAdmin(db, params) {
     certifications,
     assignmentReadinessItems,
     employeeReadinessItems,
-    readinessSeeded
+    readinessSeeded,
+    assignmentCreatedAtIso
   };
 }
 

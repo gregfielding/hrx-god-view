@@ -17,7 +17,17 @@ function normalizeStatus(value: unknown): string {
  *
  * Note:
  * - Shift status uses "cancelled" (double-L) in UI
- * - AssignmentStatus uses "canceled" (single-L) in phase2 types
+ * - Assignment `status` field: this writer emits `'cancelled'`
+ *   (double-L) per R.4.2-F3 (2026-04-29) — that's the canonical
+ *   spelling in the dataset (see docs/R4_2_FOLLOWUPS.md §R.4.2-F3
+ *   for the audit). Downstream readers in `assignmentReadinessDerive.ts`,
+ *   `workerShiftRemindersV2.ts`, `updateNextShiftDate.ts`, and the
+ *   gig job order status sync already accept either spelling, so the
+ *   change is forward-safe. Pre-2026-04-29 assignment docs may still
+ *   carry `'canceled'` (single-L); the normalizer
+ *   (`scripts/normalizeAssignmentStatusSpelling.js`) brings them in
+ *   line. Phase2 UI dropdowns still write `'canceled'` from the
+ *   `<MenuItem>` literal — separate cleanup tracked as part of F3.
  */
 export const onJobOrderShiftCancelledCascadeAssignments = onDocumentUpdated(
   'tenants/{tenantId}/job_orders/{jobOrderId}/shifts/{shiftId}',
@@ -62,7 +72,8 @@ export const onJobOrderShiftCancelledCascadeAssignments = onDocumentUpdated(
 
         for (const docSnap of slice) {
           batch.update(docSnap.ref, {
-            status: 'canceled',
+            // R.4.2-F3 (2026-04-29) — was 'canceled'; canonical spelling is 'cancelled'.
+            status: 'cancelled',
             canceledAt: now,
             cancellationReason: 'shift_cancelled',
             updatedAt: now,
@@ -163,7 +174,8 @@ export const onApplicationWithdrawnOrDeletedCascadeAssignments = onDocumentUpdat
         const slice = candidates.slice(i, i + 450);
         for (const docSnap of slice) {
           batch.update(docSnap.ref, {
-            status: 'canceled',
+            // R.4.2-F3 (2026-04-29) — was 'canceled'; canonical spelling is 'cancelled'.
+            status: 'cancelled',
             canceledAt: now,
             cancellationReason,
             updatedAt: now,

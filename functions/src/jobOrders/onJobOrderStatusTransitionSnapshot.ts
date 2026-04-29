@@ -268,7 +268,21 @@ export type CascadeAuditAction =
   | 'snapshot_via_backfill'
   | 'push_to_active'
   | 'push_to_active_summary'
-  | 'snapshot_skipped';
+  | 'snapshot_skipped'
+  // **R.4.2 / L.4.2.5** — per-assignment row emitted by the legacy
+  // hiringEntityId + readiness-seed backfill. One row per assignment
+  // touched by `runBackfillLegacyAssignmentsPage`, regardless of
+  // outcome (success, stage-A-only-stage-B-no-op, unresolvable, error).
+  // See docs/R4_2_LEGACY_BACKFILL_HANDOFF.md §L.4.2.5.
+  | 'backfill_legacy_assignment_r4_2'
+  // **R.4.2-F3 (2026-04-29)** — per-assignment row emitted by the
+  // status-spelling normalizer (`normalizeAssignmentStatusSpellingCallable`
+  // / `scripts/normalizeAssignmentStatusSpelling.js`). One row per
+  // assignment whose `status` field was rewritten from `'canceled'` →
+  // `'cancelled'` (British spelling — the canonical form in the
+  // dataset). Out-of-scope for migration: anything other than the
+  // exact `'canceled'` literal. See docs/R4_2_FOLLOWUPS.md §R.4.2-F3.
+  | 'normalize_status_spelling';
 
 export interface CascadeAuditEntry {
   action: CascadeAuditAction;
@@ -276,9 +290,17 @@ export interface CascadeAuditEntry {
   /**
    * Set on per-JO rows. Omitted on summary rows of multi-JO actions
    * (`push_to_active_summary`) — the rolled-up list lives in
-   * `affectedJoIds` instead.
+   * `affectedJoIds` instead. Also omitted on R.4.2 per-assignment
+   * rows when the assignment doesn't carry a JO id (rare but legal).
    */
   jobOrderId?: string;
+  /**
+   * **R.4.2 / L.4.2.5** — Set on per-assignment rows
+   * (`backfill_legacy_assignment_r4_2` action). Mirror of
+   * `jobOrderId`'s collection-key narrowing — lets audit queries
+   * filter "every R.4.2 row touching assignment X".
+   */
+  assignmentId?: string;
   /** `'system'` for triggers, `uid` for callables. */
   triggeredBy: string;
   /** Free-form short context — e.g. `'draft→open'`, `'manual reorder'`. */
@@ -318,6 +340,65 @@ export interface CascadeAuditEntry {
   updatedCount?: number;
   /** Summary-only: number of selected JOs that no-op'd on re-validation. */
   skippedCount?: number;
+
+  // ── R.4.2 legacy-assignment backfill specific (L.4.2.5) ───────────
+  /**
+   * R.4.2 per-assignment outcome bucket. One of:
+   *   `'stamped_and_seeded'` — Stage A wrote hiringEntityId AND Stage B seeded.
+   *   `'stamped_only'`              — Stage A wrote, Stage B seeded zero items
+   *                                   (JO had no requirements).
+   *   `'stamped_only_seed_failed'`  — Stage A succeeded, Stage B threw.
+   *   `'stage_a_only_stage_b_no_op'` — Stage B reported zero new items.
+   *                                   Disambiguate via `stageAResolvedVia`:
+   *                                   `'already_set'` ⇒ Stage A no-op'd too
+   *                                   (true already-complete);
+   *                                   anything else ⇒ Stage A wrote and
+   *                                   Stage B found pre-existing items
+   *                                   from another code path (cadence
+   *                                   trigger, prior partial seed, etc.).
+   *                                   **R.4.2-F1 (2026-04-29):** renamed
+   *                                   from `'skipped_already_complete'`.
+   *                                   Pre-2026-04-29 audit rows may
+   *                                   carry the old label; this field
+   *                                   is `string` (not a typed union)
+   *                                   so historical rows still parse.
+   *   `'skipped_unresolvable_hiring_entity_id'` — Stage A returned `'unresolved'`.
+   *   `'skipped_already_set'`       — hiringEntityId was set; Stage B re-ran
+   *                                   (and itself produced an outcome).
+   *   `'error'`                     — any unexpected exception.
+   */
+  outcome?: string;
+  /**
+   * R.4.2 — which path Stage A's resolver used. One of:
+   *   `'jo_chain'` · `'worker_employment'` · `'unresolved'` · `'already_set'`.
+   */
+  stageAResolvedVia?: string;
+  /**
+   * R.4.2 — the value Stage A wrote into `assignment.hiringEntityId`.
+   * `null` on `'unresolved'` rows.
+   */
+  stageAStampedHiringEntityId?: string | null;
+  /** R.4.2 — number of new items the seeder wrote. */
+  stageBItemsCreated?: number;
+  /**
+   * R.4.2 — number of items the seeder skipped because they already
+   * existed (idempotent re-run signature).
+   */
+  stageBItemsSkippedExisting?: number;
+
+  // ── R.4.2-F3 status-spelling normalizer specific ──────────────────
+  /**
+   * R.4.2-F3 — value of `assignment.status` BEFORE the rewrite.
+   * Should always be `'canceled'` (the only literal the normalizer
+   * targets); recorded as a string anyway so future variants
+   * (`'cancelld'` etc.) can be added without a schema change.
+   */
+  beforeAssignmentStatus?: string;
+  /**
+   * R.4.2-F3 — value of `assignment.status` AFTER the rewrite.
+   * Should always be `'cancelled'` (British spelling, dataset canon).
+   */
+  afterAssignmentStatus?: string;
 }
 
 /**
