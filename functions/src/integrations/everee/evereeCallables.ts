@@ -224,7 +224,9 @@ export const evereeTempSandboxSync = onCall(async (request) => {
     _overrideConfig: {
       evereeTenantId: TEMP_SANDBOX_EVEREE_TENANT_ID,
       evereeEnvironment: 'sandbox',
-      evereeApiBaseUrl: 'https://api.sandbox.everee.com',
+      // Everee uses a single host for both envs — the per-tenant token
+      // (EVEREE_API_TOKEN_2320 here) enforces sandbox vs prod separation.
+      evereeApiBaseUrl: process.env.EVEREE_BASE_URL || 'https://api.everee.com',
       evereeEnabled: true,
     },
   });

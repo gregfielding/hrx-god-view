@@ -94,6 +94,11 @@ const PARAM_KEYS = [
   // from this list (Firebase 400s if the same name is both env-var
   // and secret-mount; same gotcha as the EVERIFY_WS_* pattern above).
   'EVEREE_ENABLED',
+  // Optional global base URL override (defaults to https://api.everee.com).
+  // Everee uses a single host for both sandbox + prod; the per-tenant API
+  // token enforces environment separation. Set in root .env only when you
+  // need to point at a non-default host (staging mirror, dry-run sink, …).
+  'EVEREE_BASE_URL',
   'EVEREE_API_TOKEN_2320', // tenant 2320 — add new EVEREE_API_TOKEN_<tid> per onboarded Everee tenant
   // Document AI — I-9 supporting extraction (see docs/I9_SUPPORTING_DOCUMENTS_ARCHITECTURE.md)
   'DOCUMENT_AI_PROJECT_ID',

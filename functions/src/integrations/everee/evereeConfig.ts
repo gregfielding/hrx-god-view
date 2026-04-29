@@ -15,8 +15,14 @@ export interface EvereeEntityConfig {
   evereeEnabled: boolean;
 }
 
-const DEFAULT_SANDBOX_BASE = 'https://api.sandbox.everee.com';
-const DEFAULT_PROD_BASE = 'https://api.everee.com';
+// Everee uses a single API host for both environments; the sandbox-vs-prod
+// split is enforced by the per-tenant API token (`EVEREE_API_TOKEN_<tid>`),
+// not by hostname. Set `EVEREE_BASE_URL` in env to override globally for
+// staging/dry-run; per-entity override still wins via `evereeApiBaseUrl` on
+// the entity doc.
+const DEFAULT_EVEREE_BASE = 'https://api.everee.com';
+const DEFAULT_SANDBOX_BASE = process.env.EVEREE_BASE_URL || DEFAULT_EVEREE_BASE;
+const DEFAULT_PROD_BASE = process.env.EVEREE_BASE_URL || DEFAULT_EVEREE_BASE;
 
 /**
  * Resolve Everee config for an entity. Returns null if entity has no Everee or not enabled.
