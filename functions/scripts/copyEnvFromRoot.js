@@ -95,6 +95,10 @@ const PARAM_KEYS = [
   // and secret-mount; same gotcha as the EVERIFY_WS_* pattern above).
   'EVEREE_ENABLED',
   'EVEREE_API_TOKEN_2320', // tenant 2320 — add new EVEREE_API_TOKEN_<tid> per onboarded Everee tenant
+  // Per-tenant webhook signing secret (Everee → /evereeWebhook). Same per-tenant
+  // pattern as the API token; add EVEREE_WEBHOOK_SECRET_<tid> as additional
+  // Everee tenants come online (Select, Events, …).
+  'EVEREE_WEBHOOK_SECRET_2320',
   // Document AI — I-9 supporting extraction (see docs/I9_SUPPORTING_DOCUMENTS_ARCHITECTURE.md)
   'DOCUMENT_AI_PROJECT_ID',
   'DOCUMENT_AI_LOCATION',
