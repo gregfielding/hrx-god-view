@@ -176,3 +176,56 @@ export const evereeAdminPreparePayout = onCall(async (request) => {
   const payload = (request.data as Record<string, unknown>) ?? {};
   return preparePayout(tenantId, entityId, payload as Parameters<typeof preparePayout>[2]);
 });
+
+/**
+ * TEMP — sandbox API contract validation callable.
+ *
+ * Bypasses `requireEvereeEnabledEntity` so a recruiter can fire `POST
+ * /v2/workers` against the Everee sandbox without first wiring any entity
+ * doc. Hardcodes Everee tenant 2320 (sandbox) + the synthetic entity id
+ * `_temp_sandbox` for the linkage doc id; the user-record map write
+ * (`users/{uid}.evereeWorkerIds["2320"]`) is the canonical signal that the
+ * round-trip succeeded.
+ *
+ * Remove together with `TempEvereeSyncButton.tsx` and the `_overrideConfig`
+ * branch in `createWorkerIfNeeded` once the API contract is verified and
+ * `EvereeAdminSyncCard` (per-entity, properly gated) is the only entry point.
+ */
+const TEMP_SANDBOX_EVEREE_TENANT_ID = '2320';
+const TEMP_SANDBOX_ENTITY_ID = '_temp_sandbox';
+
+export const evereeTempSandboxSync = onCall(async (request) => {
+  requireAuth(request);
+  const d = request.data as Record<string, unknown> | null;
+  const tenantId = typeof d?.tenantId === 'string' ? d.tenantId : '';
+  const userId = typeof d?.userId === 'string' ? d.userId : '';
+  if (!tenantId || !userId) {
+    throw new HttpsError('invalid-argument', 'tenantId and userId required');
+  }
+  if (!canManageEveree(request.auth as any, tenantId)) {
+    throw new HttpsError('permission-denied', 'Not allowed (recruiter/admin/hrx required)');
+  }
+  if (process.env.EVEREE_ENABLED !== 'true') {
+    throw new HttpsError(
+      'failed-precondition',
+      'Everee is disabled at the process level (EVEREE_ENABLED !== "true").',
+    );
+  }
+  return createWorkerIfNeeded({
+    tenantId,
+    entityId: TEMP_SANDBOX_ENTITY_ID,
+    userId,
+    firebaseUid: userId,
+    workerType: (d?.workerType as 'employee' | 'contractor') || 'employee',
+    email: typeof d?.email === 'string' ? d.email : undefined,
+    firstName: typeof d?.firstName === 'string' ? d.firstName : undefined,
+    lastName: typeof d?.lastName === 'string' ? d.lastName : undefined,
+    phone: typeof d?.phone === 'string' ? d.phone : undefined,
+    _overrideConfig: {
+      evereeTenantId: TEMP_SANDBOX_EVEREE_TENANT_ID,
+      evereeEnvironment: 'sandbox',
+      evereeApiBaseUrl: 'https://api.sandbox.everee.com',
+      evereeEnabled: true,
+    },
+  });
+});

@@ -10,5 +10,7 @@ export {
   evereeGetPayStatement,
   evereeAdminPushShift,
   evereeAdminPreparePayout,
+  // TEMP — sandbox API contract validation; remove together with TempEvereeSyncButton.tsx.
+  evereeTempSandboxSync,
 } from './evereeCallables';
 export { evereeWebhook, onEvereeWebhookEventCreated } from './evereeWebhook';

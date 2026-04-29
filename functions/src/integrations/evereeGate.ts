@@ -48,3 +48,5 @@ export const evereeAdminPreparePayout = everee?.evereeAdminPreparePayout ?? stub
 export const evereeWebhook = everee?.evereeWebhook ?? stubWebhook;
 export const onEvereeWebhookEventCreated =
   everee?.onEvereeWebhookEventCreated ?? stubWebhookTrigger;
+// TEMP — sandbox API contract validation; remove with TempEvereeSyncButton.tsx.
+export const evereeTempSandboxSync = everee?.evereeTempSandboxSync ?? stubCallable;

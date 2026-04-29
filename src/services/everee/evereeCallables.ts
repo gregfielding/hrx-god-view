@@ -130,6 +130,27 @@ export const evereeEnsureWorker = httpsCallable<
   EvereeEnsureWorkerResult
 >(functions, 'evereeEnsureWorker');
 
+/**
+ * TEMP — sandbox API contract validation. Hardcodes Everee tenant 2320 +
+ * synthetic entity id `_temp_sandbox` server-side; bypasses
+ * `requireEvereeEnabledEntity` so a recruiter can fire `POST /v2/workers`
+ * before any entity doc is wired. Remove together with
+ * `TempEvereeSyncButton.tsx` once the API contract is verified.
+ */
+export interface EvereeTempSandboxSyncRequest {
+  tenantId: string;
+  userId: string;
+  workerType?: EvereeWorkerType;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+}
+export const evereeTempSandboxSync = httpsCallable<
+  EvereeTempSandboxSyncRequest,
+  EvereeEnsureWorkerResult
+>(functions, 'evereeTempSandboxSync');
+
 export const evereeCreateOnboardingSession = httpsCallable<
   EvereeCreateOnboardingSessionRequest,
   EvereeCreateOnboardingSessionResult

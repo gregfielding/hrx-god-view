@@ -10,7 +10,7 @@
 
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions/v2';
-import { getEvereeConfigForEntity } from './evereeConfig';
+import { getEvereeConfigForEntity, type EvereeEntityConfig } from './evereeConfig';
 import { evereePaths } from './evereeConfig';
 import { evereeRequest } from './evereeHttp';
 import type { EvereePayHistoryItem, EvereePayStatementSummary } from './evereeSchemas';
@@ -25,6 +25,14 @@ export interface CreateWorkerInput {
   firstName?: string;
   lastName?: string;
   phone?: string;
+  /**
+   * Optional override — when set, skip `getEvereeConfigForEntity` and use the
+   * provided config directly. Used by the temp sandbox-test callable so a
+   * recruiter can fire `POST /v2/workers` without first wiring an entity doc
+   * with `evereeTenantId` / `evereeEnabled` / `payrollProvider`. Production
+   * callable (`evereeEnsureWorker`) never sets this.
+   */
+  _overrideConfig?: EvereeEntityConfig;
 }
 
 export interface CreateOnboardingSessionInput {
@@ -74,7 +82,8 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
     skippedReason?: string;
   };
 }> {
-  const config = await getEvereeConfigForEntity(input.tenantId, input.entityId);
+  const config =
+    input._overrideConfig ?? (await getEvereeConfigForEntity(input.tenantId, input.entityId));
   if (!config) {
     throw new Error('Everee not configured for this entity');
   }

@@ -1,18 +1,21 @@
 /**
  * TempEvereeSyncButton — TEMPORARY sandbox-validation button.
  *
- * Renders directly under the avatar on `UserProfileHeader` while we lock in
- * the Everee API contract. Auto-resolves the worker's first Everee-configured
- * `entity_employments` record, calls `evereeEnsureWorker`, and console-logs
- * everything (request payload sent to the callable + the full Everee API
- * request/response echoed back via the callable's `_debug` field).
+ * Always-fire mode. No client-side gating beyond the role check. Calls the
+ * server-side `evereeTempSandboxSync` callable, which hardcodes Everee
+ * tenant 2320 (sandbox) + synthetic entity id `_temp_sandbox` and bypasses
+ * `requireEvereeEnabledEntity`. The point is to fire `POST /v2/workers`
+ * against the real Everee sandbox so we can lock the API contract; once
+ * that's done, this whole component (and the temp callable) gets ripped
+ * out and `EvereeAdminSyncCard` (per-entity, properly gated) takes over.
  *
- * Remove this component (and the wiring in `UserProfileHeader.tsx`) once the
- * sandbox contract is verified and the canonical sync surface
- * (`EvereeAdminSyncCard` on the Employment tab) is the only entry point.
+ * Console output on click:
+ *   [everee.sync] → calling evereeTempSandboxSync with <input>
+ *   [everee.sync] ← callable result <result.data>
+ *   [everee.sync] ← Everee API _debug <_debug payload>
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   Alert,
   Box,
@@ -20,13 +23,13 @@ import {
   CircularProgress,
   Snackbar,
   Tooltip,
+  Typography,
 } from '@mui/material';
 import SyncIcon from '@mui/icons-material/Sync';
-import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { p } from '../../data/firestorePaths';
 import { useAuth, useActiveTenantId } from '../../contexts/AuthContext';
-import { evereeEnsureWorker } from '../../services/everee/evereeCallables';
+import { evereeTempSandboxSync } from '../../services/everee/evereeCallables';
 import { formatFirebaseHttpsError } from '../../utils/firebaseHttpsErrors';
 
 export interface TempEvereeSyncButtonProps {
@@ -35,14 +38,10 @@ export interface TempEvereeSyncButtonProps {
   tenantId?: string | null;
 }
 
-interface ResolvedTarget {
-  entityId: string;
-  entityKey?: string;
-  evereeTenantId?: string | null;
-  evereeEnabled?: boolean;
-}
-
-const TempEvereeSyncButton: React.FC<TempEvereeSyncButtonProps> = ({ uid, tenantId: tenantIdProp }) => {
+const TempEvereeSyncButton: React.FC<TempEvereeSyncButtonProps> = ({
+  uid,
+  tenantId: tenantIdProp,
+}) => {
   const { isHRX, currentClaimsRole } = useAuth();
   const activeTenantId = useActiveTenantId();
   const tenantId = tenantIdProp ?? activeTenantId ?? null;
@@ -52,74 +51,13 @@ const TempEvereeSyncButton: React.FC<TempEvereeSyncButtonProps> = ({ uid, tenant
     currentClaimsRole === 'Recruiter' ||
     currentClaimsRole === 'Manager';
 
-  const [resolving, setResolving] = useState(false);
-  const [target, setTarget] = useState<ResolvedTarget | null>(null);
-  const [resolveError, setResolveError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ severity: 'success' | 'error'; message: string } | null>(
     null,
   );
 
-  // Resolve the first Everee-configured entity employment for this worker.
-  // For the temp button we deliberately just take the first hit; the canonical
-  // surface (`EvereeAdminSyncCard`) handles per-entity selection properly.
-  useEffect(() => {
-    if (!canManage || !tenantId || !uid) {
-      setTarget(null);
-      return;
-    }
-    let cancelled = false;
-    const run = async () => {
-      setResolving(true);
-      setResolveError(null);
-      try {
-        const eeSnap = await getDocs(
-          query(collection(db, p.entityEmployments(tenantId)), where('userId', '==', uid)),
-        );
-        if (cancelled) return;
-        const firstWithEntity = eeSnap.docs
-          .map((d) => d.data() as { entityId?: string | null; entityKey?: string })
-          .find((row) => typeof row.entityId === 'string' && row.entityId);
-        if (!firstWithEntity?.entityId) {
-          setTarget(null);
-          return;
-        }
-        const entityId = firstWithEntity.entityId as string;
-        let evereeTenantId: string | null = null;
-        let evereeEnabled = false;
-        try {
-          const entitySnap = await getDoc(doc(db, p.entity(tenantId, entityId)));
-          const e = entitySnap.data() ?? {};
-          evereeTenantId =
-            typeof e.evereeTenantId === 'string' && e.evereeTenantId.trim()
-              ? e.evereeTenantId.trim()
-              : null;
-          evereeEnabled = e.evereeEnabled === true;
-        } catch {
-          // tolerate — button still renders, callable will surface the actual reason on click
-        }
-        if (!cancelled) {
-          setTarget({
-            entityId,
-            entityKey: firstWithEntity.entityKey,
-            evereeTenantId,
-            evereeEnabled,
-          });
-        }
-      } catch (err) {
-        if (!cancelled) setResolveError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (!cancelled) setResolving(false);
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [canManage, tenantId, uid]);
-
   const handleClick = useCallback(async () => {
-    if (!tenantId || !target?.entityId) return;
+    if (!tenantId) return;
     setBusy(true);
     try {
       // Pull worker contact inline so Everee gets real data on first sync.
@@ -149,27 +87,29 @@ const TempEvereeSyncButton: React.FC<TempEvereeSyncButtonProps> = ({ uid, tenant
 
       const callableInput = {
         tenantId,
-        entityId: target.entityId,
         userId: uid,
         workerType: 'employee' as const,
         ...contact,
       };
       // eslint-disable-next-line no-console
-      console.log('[everee.sync] → calling evereeEnsureWorker with', callableInput);
+      console.log('[everee.sync] → calling evereeTempSandboxSync with', callableInput);
 
-      const result = await evereeEnsureWorker(callableInput);
+      const result = await evereeTempSandboxSync(callableInput);
 
       // eslint-disable-next-line no-console
       console.log('[everee.sync] ← callable result', result.data);
       // eslint-disable-next-line no-console
-      console.log('[everee.sync] ← Everee API _debug', result.data?._debug ?? '(no debug payload)');
+      console.log(
+        '[everee.sync] ← Everee API _debug',
+        result.data?._debug ?? '(no debug payload)',
+      );
 
       const id = result.data?.evereeWorkerId?.trim();
       if (!id) throw new Error('Everee did not return a worker id (see console).');
       setToast({
         severity: 'success',
         message: result.data?.created
-          ? `Created Everee worker ${id} (see console for full request/response)`
+          ? `Created Everee worker ${id} (see console)`
           : `Already linked — Everee worker ${id} (see console)`,
       });
     } catch (err: unknown) {
@@ -181,32 +121,17 @@ const TempEvereeSyncButton: React.FC<TempEvereeSyncButtonProps> = ({ uid, tenant
     } finally {
       setBusy(false);
     }
-  }, [target, tenantId, uid]);
+  }, [tenantId, uid]);
 
   if (!canManage) return null;
 
-  // Disabled tooltips so it's obvious *why* the button can't fire — recruiters
-  // tend to assume "no button" means "broken integration".
-  const disabledReason = !tenantId
-    ? 'No active tenant context.'
-    : resolving
-      ? 'Resolving worker → entity employment…'
-      : resolveError
-        ? `Could not resolve entity employment: ${resolveError}`
-        : !target
-          ? 'Worker has no entity employment record yet.'
-          : !target.evereeTenantId
-            ? 'Worker\'s entity is not linked to an Everee tenant.'
-            : !target.evereeEnabled
-              ? 'Everee is not enabled on this entity (set evereeEnabled=true).'
-              : null;
-
+  const disabledReason = !tenantId ? 'No active tenant context.' : null;
   const tooltip = disabledReason
     ? disabledReason
-    : `Calls evereeEnsureWorker for entity ${target?.entityId} → Everee tenant ${target?.evereeTenantId}. Full request/response logged to browser console.`;
+    : 'Calls evereeTempSandboxSync → Everee sandbox tenant 2320. Full request/response logged to browser console.';
 
   return (
-    <Box sx={{ mt: 1.5, width: '100%', maxWidth: 200 }}>
+    <Box sx={{ mt: 1.5, width: '100%', maxWidth: 220 }}>
       <Tooltip title={tooltip}>
         <span>
           <Button
@@ -223,6 +148,13 @@ const TempEvereeSyncButton: React.FC<TempEvereeSyncButtonProps> = ({ uid, tenant
           </Button>
         </span>
       </Tooltip>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ display: 'block', mt: 0.5, lineHeight: 1.25, fontFamily: 'monospace' }}
+      >
+        {disabledReason ?? 'sandbox tenant 2320 → POST /v2/workers'}
+      </Typography>
       <Snackbar
         open={!!toast}
         autoHideDuration={6000}
