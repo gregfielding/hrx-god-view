@@ -25,12 +25,13 @@ import SyncIcon from '@mui/icons-material/Sync';
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { p } from '../../data/firestorePaths';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth, useActiveTenantId } from '../../contexts/AuthContext';
 import { evereeEnsureWorker } from '../../services/everee/evereeCallables';
 import { formatFirebaseHttpsError } from '../../utils/firebaseHttpsErrors';
 
 export interface TempEvereeSyncButtonProps {
   uid: string;
+  /** Optional override; falls back to `useActiveTenantId()` so this button can drop into any header without prop plumbing. */
   tenantId?: string | null;
 }
 
@@ -41,8 +42,10 @@ interface ResolvedTarget {
   evereeEnabled?: boolean;
 }
 
-const TempEvereeSyncButton: React.FC<TempEvereeSyncButtonProps> = ({ uid, tenantId }) => {
+const TempEvereeSyncButton: React.FC<TempEvereeSyncButtonProps> = ({ uid, tenantId: tenantIdProp }) => {
   const { isHRX, currentClaimsRole } = useAuth();
+  const activeTenantId = useActiveTenantId();
+  const tenantId = tenantIdProp ?? activeTenantId ?? null;
   const canManage =
     isHRX ||
     currentClaimsRole === 'Admin' ||
