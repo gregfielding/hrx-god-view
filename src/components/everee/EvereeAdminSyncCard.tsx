@@ -4,13 +4,21 @@
  * Renders on the Employment tab for an entity whose payroll provider is
  * Everee + the entity has `evereeEnabled=true`. Calls the
  * `evereeEnsureWorker` callable, which is idempotent server-side
- * (`createWorkerIfNeeded` returns the existing `evereeWorkerId` without
- * re-POSTing when one is already linked).
+ * (`createWorkerIfNeeded` returns the existing worker id without re-POSTing
+ * when one is already linked — checked first via
+ * `users/{uid}.evereeWorkerIds[evereeTenantId]`, then via the
+ * `everee_workers` linkage doc).
+ *
+ * Multi-Everee-tenant model: each C1 entity points at its own Everee tenant
+ * (Sandbox=2320, future Select=X, Events=Y). A worker accumulates one
+ * `evereeWorkerId` per Everee tenant they're provisioned in. This card
+ * displays the id for *this entity's* Everee tenant only — sourced from the
+ * user-record map keyed by `evereeTenantId` (resolved live from the entity
+ * doc).
  *
  * Out of scope for this component:
  *   - Worker-facing payroll setup embed (see `EvereePayrollSetupEmbed.tsx`)
  *   - Onboarding session creation / iframe
- *   - Cross-entity sync — a sync surface is shown per-entity tab.
  *
  * Permission gate (mirrors backend `canManageEveree`): caller must be HRX
  * or carry an Admin / Recruiter / Manager claim on this tenant. Workers
@@ -30,8 +38,9 @@ import {
   Typography,
 } from '@mui/material';
 import SyncIcon from '@mui/icons-material/Sync';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
+import { p } from '../../data/firestorePaths';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   evereeEnsureWorker,
@@ -45,8 +54,6 @@ export interface EvereeAdminSyncCardProps {
   /** Worker uid (Firebase Auth uid; same as `users/{uid}` doc id). */
   userId: string;
   workerType?: EvereeWorkerType;
-  /** Mirror of `entity_employments.evereeWorkerId` if the worker is already linked. */
-  initialEvereeWorkerId?: string | null;
   /** Optional callback so the parent can refetch overview after a successful sync. */
   onSynced?: (evereeWorkerId: string) => void;
 }
@@ -63,7 +70,6 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
   entityId,
   userId,
   workerType,
-  initialEvereeWorkerId,
   onSynced,
 }) => {
   const { isHRX, currentClaimsRole } = useAuth();
@@ -76,19 +82,50 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
     [isHRX, currentClaimsRole],
   );
 
-  const [evereeWorkerId, setEvereeWorkerId] = useState<string | null>(
-    initialEvereeWorkerId ?? null,
-  );
+  const [evereeTenantId, setEvereeTenantId] = useState<string | null>(null);
+  const [evereeWorkerIdsMap, setEvereeWorkerIdsMap] = useState<Record<string, string>>({});
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ severity: 'success' | 'error'; message: string } | null>(
     null,
   );
 
-  // Pick up a parent-provided id refresh (overview refetch / tab switch).
+  // Resolve the Everee tenant id for this entity once (entity config rarely changes;
+  // a one-shot read is enough — the live subscription is on the user doc below).
   useEffect(() => {
-    setEvereeWorkerId(initialEvereeWorkerId ?? null);
-  }, [initialEvereeWorkerId]);
+    if (!entityId) {
+      setEvereeTenantId(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const snap = await getDoc(doc(db, p.entity(tenantId, entityId)));
+        if (cancelled) return;
+        const tid = snap.data()?.evereeTenantId;
+        setEvereeTenantId(typeof tid === 'string' && tid.trim() ? tid.trim() : null);
+      } catch {
+        if (!cancelled) setEvereeTenantId(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, entityId]);
+
+  // Live subscription to the user's Everee linkage map so the chip reflects
+  // post-sync writes from this client + any other surface (Stage 2 trigger,
+  // backfill scripts) without a manual reload.
+  useEffect(() => {
+    if (!userId) return;
+    const unsub = onSnapshot(doc(db, `users/${userId}`), (snap) => {
+      const map = (snap.data()?.evereeWorkerIds ?? {}) as Record<string, string>;
+      setEvereeWorkerIdsMap(map && typeof map === 'object' ? map : {});
+    });
+    return () => unsub();
+  }, [userId]);
+
+  const evereeWorkerId = evereeTenantId ? evereeWorkerIdsMap[evereeTenantId] ?? null : null;
 
   const handleClick = useCallback(async () => {
     if (!entityId) {
@@ -131,7 +168,6 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
       if (!id) {
         throw new Error('Everee did not return a worker id.');
       }
-      setEvereeWorkerId(id);
       setToast({
         severity: 'success',
         message: result.data?.created
@@ -140,7 +176,8 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
       });
       onSynced?.(id);
     } catch (err: unknown) {
-      const msg = formatFirebaseHttpsError(err) || (err instanceof Error ? err.message : String(err));
+      const msg =
+        formatFirebaseHttpsError(err) || (err instanceof Error ? err.message : String(err));
       setError(msg);
       setToast({ severity: 'error', message: msg });
     } finally {
@@ -149,12 +186,21 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
   }, [entityId, onSynced, tenantId, userId, workerType]);
 
   if (!canManage) return null;
-  if (!entityId) return null;
+
+  // Disabled-with-tooltip path — keeps the card visible so recruiters know the
+  // surface exists, even when this entity isn't ready for Everee provisioning.
+  const disabledReason = !entityId
+    ? 'Worker must have an entity employment record first.'
+    : !evereeTenantId
+      ? 'This entity is not yet linked to an Everee tenant.'
+      : null;
 
   const buttonLabel = evereeWorkerId ? 'Re-sync to Everee' : 'Sync to Everee';
-  const buttonTooltip = evereeWorkerId
-    ? `Returns the existing Everee worker id (${evereeWorkerId}); no new worker is created.`
-    : 'Creates the worker in Everee (sandbox). Idempotent — safe to click again.';
+  const buttonTooltip = disabledReason
+    ? disabledReason
+    : evereeWorkerId
+      ? `Returns the existing Everee worker id (${evereeWorkerId}); no new worker is created.`
+      : 'Creates the worker in Everee (sandbox). Idempotent — safe to click again.';
 
   return (
     <Box
@@ -171,6 +217,14 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
         <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
           Everee
         </Typography>
+        {evereeTenantId ? (
+          <Chip
+            size="small"
+            variant="outlined"
+            label={`tenant: ${evereeTenantId}`}
+            sx={{ fontFamily: 'monospace', fontSize: '0.7rem' }}
+          />
+        ) : null}
         {evereeWorkerId ? (
           <Chip
             size="small"
@@ -190,7 +244,7 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
               variant="contained"
               startIcon={syncing ? <CircularProgress size={14} color="inherit" /> : <SyncIcon />}
               onClick={handleClick}
-              disabled={syncing}
+              disabled={syncing || Boolean(disabledReason)}
             >
               {buttonLabel}
             </Button>

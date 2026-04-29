@@ -36,16 +36,24 @@ export interface CreateOnboardingSessionInput {
 }
 
 /**
- * Create worker in Everee if not already linked; create/update everee_workers doc.
+ * Create worker in Everee if not already linked; create/update everee_workers doc
+ * AND mirror the new worker id onto `users/{firebaseUid}.evereeWorkerIds`.
  *
- * Idempotent: if `everee_workers/{entityId}__{userId}` already carries an
- * `externalWorkerId`, the function returns immediately (no outbound POST). The
- * "Sync to Everee" button in the recruiter UI relies on this to safely re-emit
- * clicks without spawning duplicate Everee workers.
+ * Multi-Everee-tenant model: every C1 entity points at its own Everee tenant
+ * (Sandbox=2320, future Select=X, Events=Y, ...). A single HRX worker can
+ * therefore accumulate multiple `evereeWorkerId`s — one per Everee tenant they
+ * are provisioned in. We model this with a map on the user record:
+ *   `users/{firebaseUid}.evereeWorkerIds = { [evereeTenantId]: workerId }`
+ * `merge: true` on this map lets new entries land without disturbing existing
+ * keys (other Everee tenants the worker is already linked to).
  *
- * On success, also mirrors `evereeWorkerId` onto the worker's
- * `entity_employments` doc for this entity so the UI / readiness layers can
- * surface the linkage without joining through `everee_workers`.
+ * Idempotency is two-layered:
+ *   (1) Fast path: read `users/{firebaseUid}.evereeWorkerIds[evereeTenantId]`.
+ *       Most repeat clicks resolve here without touching `everee_workers`.
+ *   (2) Canonical fallback: read `everee_workers/{entityId}__{userId}` —
+ *       still the source of truth, kept as belt-and-suspenders in case the
+ *       user-record map ever drifts (e.g. partial writes, manual edits).
+ * Either hit returns the existing id without re-POSTing to Everee.
  */
 export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
   evereeWorkerId: string;
@@ -56,22 +64,51 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
     throw new Error('Everee not configured for this entity');
   }
   const db = getFirestore();
-  const ref = db.doc(evereePaths.worker(input.tenantId, input.entityId, input.userId));
+  const linkRef = db.doc(evereePaths.worker(input.tenantId, input.entityId, input.userId));
+  const userRef = db.doc(`users/${input.firebaseUid}`);
   const logCtx = {
     surface: 'everee.createWorker' as const,
     tenantId: input.tenantId,
     entityId: input.entityId,
     userId: input.userId,
+    firebaseUid: input.firebaseUid,
     evereeTenantId: config.evereeTenantId,
   };
 
-  const snap = await ref.get();
-  const existing = snap.data() as { externalWorkerId?: string } | undefined;
+  // (1) Fast-path idempotency via the user-record map.
+  try {
+    const userSnap = await userRef.get();
+    const userMap = (userSnap.data()?.evereeWorkerIds ?? null) as
+      | Record<string, string>
+      | null;
+    const existingForTenant = userMap?.[config.evereeTenantId];
+    if (existingForTenant) {
+      logger.info('[everee.createWorker] skipping — user-map already linked', {
+        ...logCtx,
+        evereeWorkerId: existingForTenant,
+        source: 'users.evereeWorkerIds',
+      });
+      return { evereeWorkerId: existingForTenant, created: false };
+    }
+  } catch (err) {
+    // Don't block on the fast-path read — fall through to the canonical check.
+    logger.warn('[everee.createWorker] user-map fast-path read failed', {
+      ...logCtx,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // (2) Canonical idempotency via the linkage doc.
+  const linkSnap = await linkRef.get();
+  const existing = linkSnap.data() as { externalWorkerId?: string } | undefined;
   if (existing?.externalWorkerId) {
-    logger.info('everee.createWorker — idempotent hit, returning existing worker id', {
+    logger.info('[everee.createWorker] skipping — linkage doc already linked', {
       ...logCtx,
       evereeWorkerId: existing.externalWorkerId,
+      source: 'everee_workers',
     });
+    // Backfill the user-record map so the next call hits the fast path.
+    await mirrorEvereeWorkerIdToUser(userRef, config.evereeTenantId, existing.externalWorkerId, logCtx);
     return { evereeWorkerId: existing.externalWorkerId, created: false };
   }
 
@@ -91,7 +128,7 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
   const baseUrl = config.evereeApiBaseUrl ?? 'https://api.sandbox.everee.com';
   const fullUrl = `${baseUrl.replace(/\/$/, '')}/v2/workers`;
 
-  logger.info('everee.createWorker — request', {
+  logger.info('[everee.createWorker] outgoing', {
     ...logCtx,
     method: 'POST',
     url: fullUrl,
@@ -100,7 +137,8 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
       'x-everee-tenant-id': config.evereeTenantId,
       'content-type': 'application/json',
     },
-    body: requestBody,
+    bodyKeys: Object.keys(requestBody),
+    bodyJson: requestBody,
   });
 
   const startedAt = Date.now();
@@ -109,39 +147,37 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
     response = await evereeRequest<unknown>(config, 'POST', '/v2/workers', requestBody);
   } catch (err) {
     const durationMs = Date.now() - startedAt;
-    logger.error('everee.createWorker — request failed', {
+    const errAny = err as { message?: string; status?: number; responseBody?: unknown };
+    logger.error('[everee.createWorker] error', {
       ...logCtx,
       durationMs,
-      error: err instanceof Error ? err.message : String(err),
+      errorMessage: errAny?.message ?? String(err),
+      errorStatus: errAny?.status,
+      errorBody: errAny?.responseBody,
     });
     throw err;
   }
   const durationMs = Date.now() - startedAt;
-  logger.info('everee.createWorker — response', {
+  logger.info('[everee.createWorker] response', {
     ...logCtx,
     durationMs,
-    status: 'ok',
-    response,
+    status: 200,
+    responseBodyJson: response,
   });
 
   const evereeWorkerId = extractEvereeWorkerId(response);
   if (!evereeWorkerId) {
-    const responseKeys =
-      response && typeof response === 'object'
-        ? Object.keys(response as Record<string, unknown>).join(',')
-        : typeof response;
-    logger.error('everee.createWorker — could not extract worker id from response', {
+    logger.error('[everee.createWorker] no worker id in response', {
       ...logCtx,
-      responseKeys,
-      response,
+      responseBodyJson: response,
     });
     throw new Error(
-      `Everee did not return a recognizable worker id. Response keys: ${responseKeys}`,
+      `Everee /v2/workers POST returned no worker ID. Response: ${JSON.stringify(response)}`,
     );
   }
 
   const nowIso = new Date().toISOString();
-  await ref.set(
+  await linkRef.set(
     {
       tenantId: input.tenantId,
       entityId: input.entityId,
@@ -158,39 +194,42 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
     { merge: true }
   );
 
-  // Mirror the linkage onto the worker's `entity_employments` doc for this entity.
-  // Doc id is the `worker_onboarding` pipelineId — opaque, so we resolve it via
-  // (userId, entityId). Best-effort: a missing employment doc must not fail the sync.
+  // Mirror onto the user-record map. `merge: true` + map shape means a worker
+  // already linked to a different Everee tenant gets a new entry added without
+  // stomping the existing ones.
+  await mirrorEvereeWorkerIdToUser(userRef, config.evereeTenantId, evereeWorkerId, logCtx);
+
+  return { evereeWorkerId, created: true };
+}
+
+/**
+ * Write `users/{firebaseUid}.evereeWorkerIds[evereeTenantId] = workerId`.
+ * Best-effort: never fail the parent sync over a user-doc write.
+ */
+async function mirrorEvereeWorkerIdToUser(
+  userRef: FirebaseFirestore.DocumentReference,
+  evereeTenantId: string,
+  evereeWorkerId: string,
+  logCtx: Record<string, unknown>,
+): Promise<void> {
   try {
-    const eeSnap = await db
-      .collection(`tenants/${input.tenantId}/entity_employments`)
-      .where('userId', '==', input.userId)
-      .where('entityId', '==', input.entityId)
-      .limit(1)
-      .get();
-    if (!eeSnap.empty) {
-      await eeSnap.docs[0].ref.set(
-        { evereeWorkerId, evereeWorkerLinkedAt: FieldValue.serverTimestamp() },
-        { merge: true }
-      );
-      logger.info('everee.createWorker — linked to entity_employments', {
-        ...logCtx,
-        entityEmploymentId: eeSnap.docs[0].id,
-        evereeWorkerId,
-      });
-    } else {
-      logger.warn('everee.createWorker — no entity_employments doc to link', {
-        ...logCtx,
-      });
-    }
+    await userRef.set(
+      {
+        evereeWorkerIds: { [evereeTenantId]: evereeWorkerId },
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    logger.info('[everee.createWorker] mirrored to users.evereeWorkerIds', {
+      ...logCtx,
+      evereeWorkerId,
+    });
   } catch (err) {
-    logger.error('everee.createWorker — entity_employments mirror failed', {
+    logger.error('[everee.createWorker] users.evereeWorkerIds mirror failed', {
       ...logCtx,
       error: err instanceof Error ? err.message : String(err),
     });
   }
-
-  return { evereeWorkerId, created: true };
 }
 
 /**

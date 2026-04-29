@@ -159,7 +159,6 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
             entityId={overview.entityEmployment?.entityId ?? null}
             userId={profileUserId}
             workerType={overview.workerType === '1099' ? 'contractor' : 'employee'}
-            initialEvereeWorkerId={overview.entityEmployment?.evereeWorkerId ?? null}
             onSynced={() => onRefresh?.()}
           />
         ) : null}
