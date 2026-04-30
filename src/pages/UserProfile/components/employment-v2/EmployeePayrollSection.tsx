@@ -38,6 +38,7 @@ import {
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
+import HourglassTopIcon from '@mui/icons-material/HourglassTop';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 
 import {
@@ -723,6 +724,12 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
                       <CheckCircleIcon fontSize="small" />
                     ) : tinDisplay.color === 'error' ? (
                       <ErrorIcon fontSize="small" />
+                    ) : tinDisplay.color === 'info' ? (
+                      // E.4 — SENT_FOR_VERIFICATION ("Submitted to IRS") gets
+                      // its own animated-feeling hourglass to read as
+                      // in-progress rather than collapsing into the neutral
+                      // pre-submission state.
+                      <HourglassTopIcon fontSize="small" />
                     ) : undefined
                   }
                 />

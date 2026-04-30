@@ -71,6 +71,41 @@ export interface EntityEmploymentRecord {
    */
   i9SupportingDocumentsManualCompleteAt?: { toDate: () => Date } | null;
   i9SupportingDocumentsManualCompleteBy?: string | null;
+  /**
+   * **E.3 addendum** — I-9 Section 2 (employer portion) completion stamp.
+   *
+   * Federal compliance reality: I-9 has two halves. Section 1 is the worker
+   * portion (handled by Everee in their onboarding flow, mirrored as
+   * `everee_workers.readinessMirror.i9SignedAt`). Section 2 is the employer
+   * portion — the employer (C1 Staffing as employer of record) physically
+   * inspects the worker's identity + work-authorization documents and signs
+   * the form within 3 business days of hire. Federal law assigns this to
+   * the employer; Everee CANNOT do it for us.
+   *
+   * Only meaningful when `workerType === 'w2'`. For 1099 contractors the
+   * I-9 form is `not_applicable` (W-9 instead).
+   *
+   * Distinct from `i9SupportingDocumentsManualCompleteAt`, which tracks
+   * whether supporting documents were satisfied outside the HRX upload UI
+   * (a workflow optimization, not a compliance attestation). Section 2 is
+   * the legal completion stamp.
+   *
+   * Set by the unified /onboarding queue (E.7) when a CSA marks Section 2
+   * complete. Read by `onEntityEmploymentI9Section2WriteUpdateReadiness`
+   * (E.3 addendum) to flip the `i9_section_2` employee-readiness item.
+   */
+  i9Section2CompletedAt?: { toDate: () => Date } | null;
+  /** UID of the CSA who marked Section 2 complete — audit trail. */
+  i9Section2CompletedBy?: string | null;
+  /** Optional CSA notes captured at attestation time. */
+  i9Section2Notes?: string | null;
+  /**
+   * Which documents the CSA inspected to satisfy Section 2 (e.g. List A
+   * passport, List B+C driver's license + SSN card). Free-form so
+   * tenants can capture document-set codes that match their training
+   * material. Optional; UI may default to `null` when CSA doesn't fill in.
+   */
+  i9Section2DocumentTypes?: string[] | null;
   updatedAt?: { toDate: () => Date } | null;
 }
 

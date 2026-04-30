@@ -21,6 +21,10 @@ export type EmployeeReadinessRequirementType =
   | 'phone_verified'
   | 'emergency_contact'
   | 'address_confirmed'
+  /** C1 Events 1099 only — Independent Contractor Agreement signed. */
+  | 'ic_agreement'
+  /** **E.3** — IRS TIN / SSN verification. Mirrored from Everee snapshot. */
+  | 'tin_verification'
   | 'custom';
 
 export type EmployeeReadinessItemStatus =

@@ -71,21 +71,63 @@ export function formatBankAllocation(
   return `${n}`;
 }
 
-export type TinStatusColor = 'success' | 'warning' | 'error' | 'default';
+/**
+ * E.4 — TIN-status chip color. Adds `info` to the union so
+ * `SENT_FOR_VERIFICATION` can render its own color (blue) distinct from
+ * the never-submitted state. Pre-E.4 the union already declared `warning`
+ * but no branch returned it; we still don't (Everee's TIN state machine
+ * has no "warning" tier — only verified / submitted / not-submitted /
+ * mismatch). The `warning` member is kept on the union for forward-compat
+ * (e.g. if Everee adds an "EXPIRING" state we want to slot in without a
+ * type break).
+ */
+export type TinStatusColor = 'success' | 'warning' | 'error' | 'info' | 'default';
 
 export interface TinStatusDisplay {
   label: string;
   color: TinStatusColor;
 }
 
+/**
+ * E.4 — Map Everee's 4-state TIN-verification machine to a chip-friendly
+ * { label, color } pair. The four states mirror
+ * `EvereeTinVerificationStatus` (see
+ * `functions/src/integrations/everee/evereeReadinessMirror.ts`) and the
+ * canonical mapping in `shared/readinessStatusFromEvereeMirror.ts` (E.3):
+ *
+ *   - `VERIFIED`              → success / "IRS verified"
+ *   - `SENT_FOR_VERIFICATION` → info    / "Submitted to IRS"
+ *   - `NEEDS_VERIFICATION`    → default / "Not submitted"
+ *   - `MISMATCH`              → error   / "IRS rejected — needs correction"
+ *
+ * Aliases handled:
+ *   - `NEEDS_VERIFY`          → treated as `NEEDS_VERIFICATION`
+ *   - `INVALID`               → treated as `MISMATCH`
+ *   - `PENDING` / `SUBMITTED` → treated as `SENT_FOR_VERIFICATION`
+ *     (Everee historically used `PENDING` interchangeably with
+ *     `SENT_FOR_VERIFICATION`; collapsing them avoids the pre-E.4
+ *     bug where `PENDING` rendered identically to "never submitted".)
+ *
+ * Labels are intentionally **short** (status-only, no "SSN:" / "TIN:"
+ * prefix). The single in-app caller — `EmployeePayrollSection.tsx` — uses
+ * this inside a row labeled "TIN verification:", so a prefix would
+ * double-up. Chip-strip surfaces that lack row context (header chip,
+ * matrix cells) should source their copy from
+ * `getReadinessItemDisplay({ requirementType: 'tin_verification', … })`
+ * which returns the prefixed labels per the E.4 spec ("SSN: IRS
+ * verified" / "SSN: Submitted to IRS" / etc.).
+ */
 export function formatTinStatus(status: string | null | undefined): TinStatusDisplay {
   const s = String(status || '').trim().toUpperCase();
   if (s === 'VERIFIED') return { label: 'IRS verified', color: 'success' };
-  if (s === 'NEEDS_VERIFICATION' || s === 'NEEDS_VERIFY' || s === 'PENDING') {
-    return { label: 'IRS verification pending', color: 'default' };
+  if (s === 'SENT_FOR_VERIFICATION' || s === 'PENDING' || s === 'SUBMITTED') {
+    return { label: 'Submitted to IRS', color: 'info' };
+  }
+  if (s === 'NEEDS_VERIFICATION' || s === 'NEEDS_VERIFY') {
+    return { label: 'Not submitted', color: 'default' };
   }
   if (s === 'MISMATCH' || s === 'INVALID') {
-    return { label: 'IRS mismatch — needs correction', color: 'error' };
+    return { label: 'IRS rejected — needs correction', color: 'error' };
   }
   if (!s) return { label: 'Unknown', color: 'default' };
   return { label: titleCase(s) || 'Unknown', color: 'default' };

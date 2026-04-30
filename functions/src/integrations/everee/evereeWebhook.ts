@@ -55,6 +55,7 @@ import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { defineSecret } from 'firebase-functions/params';
 import { logger } from 'firebase-functions/v2';
 import { evereePaths } from './evereeConfig';
+import { reconcileWorkerInternal } from './evereeReconcileWorker';
 
 /**
  * Per-tenant Everee webhook secrets. Bound at deploy time so Cloud
@@ -492,10 +493,24 @@ export const onEvereeWebhookEventCreated = onDocumentCreated(
 
     try {
       const actions = await processEvent(tenantId, data);
+
+      // E.2 — refresh the readiness snapshot regardless of event type.
+      // The dedicated `processEvent` handlers cover the *known* events
+      // (`worker.onboarding-completed` etc.) but Everee fires plenty of
+      // others we don't yet have explicit handlers for (bank account
+      // changes, file signatures, W-4 updates, etc.). Reconcile after
+      // every event guarantees the snapshot is fresh whenever Everee
+      // tells us anything happened, even if we can't classify the
+      // event payload yet. Best-effort: reconcile failure must not
+      // re-mark the event as `error` (the dedicated handler already
+      // succeeded), so we swallow the error and log.
+      const reconcileActions = await reconcileWorkerFromWebhookEvent(tenantId, data);
+      const allActions = [...actions, ...reconcileActions];
+
       await ref.update({
         status: 'processed' as EvereeEventStatus,
         processedAt: admin.firestore.FieldValue.serverTimestamp(),
-        actions,
+        actions: allActions,
       });
     } catch (err) {
       const msg = (err as Error)?.message || String(err);
@@ -512,6 +527,118 @@ export const onEvereeWebhookEventCreated = onDocumentCreated(
     }
   },
 );
+
+/**
+ * E.2 — best-effort readiness-snapshot refresh after a webhook event.
+ *
+ * Resolves the affected worker tuple from the event body and calls
+ * `reconcileWorkerInternal` so the `everee_workers/{eId__uId}.readinessMirror`
+ * snapshot is fresh within seconds of any Everee event landing — not
+ * just `worker.onboarding-completed`. When the worker can't be
+ * resolved (no `workerId` in payload, no matching link doc) we return
+ * a single audit-action string so the event doc still tells the
+ * operator what happened.
+ *
+ * Never throws — the caller's `try/catch` will mark the event `error`
+ * if it does, which is the wrong signal because `processEvent` already
+ * succeeded.
+ */
+async function reconcileWorkerFromWebhookEvent(
+  tenantId: string,
+  data: StoredEvent,
+): Promise<string[]> {
+  try {
+    const payload = parsePayload(data.rawBody);
+    const evereeWorkerId =
+      (typeof payload.workerId === 'string' && payload.workerId) ||
+      (typeof payload.evereeWorkerId === 'string' && payload.evereeWorkerId) ||
+      '';
+    // The webhook envelope sometimes already carries an externalId of
+    // `${entityId}__${userId}` — prefer that (O(1) doc lookup) over the
+    // workerId scan.
+    const externalId =
+      (typeof payload.externalId === 'string' && payload.externalId) ||
+      (typeof payload.externalWorkerId === 'string' && payload.externalWorkerId) ||
+      '';
+
+    let entityId = '';
+    let userId = '';
+    let resolvedEvereeWorkerId = evereeWorkerId;
+
+    if (externalId && externalId.includes('__')) {
+      const linkSnap = await db()
+        .doc(`${evereePaths.workers(tenantId)}/${externalId}`)
+        .get();
+      if (linkSnap.exists) {
+        const linkData = linkSnap.data() as {
+          entityId?: string;
+          userId?: string;
+          evereeWorkerId?: string;
+          externalWorkerId?: string;
+        };
+        entityId = linkData.entityId ?? '';
+        userId = linkData.userId ?? '';
+        resolvedEvereeWorkerId =
+          resolvedEvereeWorkerId ||
+          linkData.evereeWorkerId ||
+          linkData.externalWorkerId ||
+          '';
+      }
+    }
+
+    if ((!entityId || !userId) && resolvedEvereeWorkerId) {
+      const q = await db()
+        .collection(evereePaths.workers(tenantId))
+        .where('evereeWorkerId', '==', resolvedEvereeWorkerId)
+        .limit(1)
+        .get();
+      if (q.empty) {
+        // Fall back to the legacy field name some pilot rows still use.
+        const q2 = await db()
+          .collection(evereePaths.workers(tenantId))
+          .where('externalWorkerId', '==', resolvedEvereeWorkerId)
+          .limit(1)
+          .get();
+        if (!q2.empty) {
+          const d = q2.docs[0].data() as { entityId?: string; userId?: string };
+          entityId = d.entityId ?? '';
+          userId = d.userId ?? '';
+        }
+      } else {
+        const d = q.docs[0].data() as { entityId?: string; userId?: string };
+        entityId = d.entityId ?? '';
+        userId = d.userId ?? '';
+      }
+    }
+
+    if (!entityId || !userId || !resolvedEvereeWorkerId) {
+      return [
+        `Reconcile skipped: could not resolve worker tuple (entityId=${entityId || '?'}, userId=${userId || '?'}, evereeWorkerId=${resolvedEvereeWorkerId || '?'}).`,
+      ];
+    }
+
+    const result = await reconcileWorkerInternal({
+      tenantId,
+      entityId,
+      userId,
+      evereeWorkerId: resolvedEvereeWorkerId,
+      syncSource: 'webhook',
+    });
+
+    if (result.ok) {
+      return ['Refreshed readinessMirror via reconcileWorkerInternal (syncSource=webhook).'];
+    }
+    return [`Reconcile reported ok=false: reason=${result.reason ?? 'unknown'}.`];
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn('everee.webhook.reconcile_failed', {
+      eventId: data.eventId,
+      type: data.type,
+      message: message.slice(0, 240),
+    });
+    return [`Reconcile failed: ${message.slice(0, 240)}`];
+  }
+}
 
 /**
  * Route a stored event to the right handler. Returns a short list of

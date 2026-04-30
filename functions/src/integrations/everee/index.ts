@@ -18,4 +18,7 @@ export {
   evereeAdminClearStaleStamps,
 } from './evereeCallables';
 export { evereeAdminRecreateWorkerOnboarding } from './evereeAdminRecreateWorkerOnboarding';
+// E.1 + E.2 — readiness snapshot reconcile (manual / admin) + cron sweep.
+export { evereeAdminReconcileWorker } from './evereeReconcileWorker';
+export { evereeReconcileCron } from './evereeReconcileCron';
 export { evereeWebhook, onEvereeWebhookEventCreated } from './evereeWebhook';

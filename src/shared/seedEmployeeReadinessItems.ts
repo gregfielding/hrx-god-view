@@ -90,6 +90,10 @@ const DEFAULT_REQUIREMENT_DEFAULTS: Record<EmployeeReadinessRequirementType, Req
   address_confirmed: { actor: 'worker', blocking: false },
   // C1 Events 1099 — Independent Contractor Agreement signed via e-sign.
   ic_agreement: { actor: 'worker', blocking: true },
+  // E.3 — IRS TIN check. Everee performs the verification; result blocks
+  // payable status when MISMATCH. Worker can't act on it directly (CSA
+  // resolves SSN mismatches), but it gates pay so we mark blocking.
+  tin_verification: { actor: 'system', blocking: true },
   // Escape hatch — caller MUST pass actor + blocking when using `custom`.
   custom: { actor: 'worker', blocking: false },
 };
@@ -178,6 +182,7 @@ export const BASELINE_SELECT_REQUIREMENTS: SeedEmployeeReadinessRequirementSpec[
   { requirementType: 'direct_deposit' },
   { requirementType: 'handbook_acknowledgement' },
   { requirementType: 'everee_profile' },
+  { requirementType: 'tin_verification' },
   { requirementType: 'policy_acknowledgement' },
   { requirementType: 'profile_photo' },
   { requirementType: 'phone_verified' },
@@ -196,6 +201,7 @@ export const BASELINE_WORKFORCE_REQUIREMENTS: SeedEmployeeReadinessRequirementSp
   { requirementType: 'direct_deposit' },
   { requirementType: 'handbook_acknowledgement' },
   { requirementType: 'everee_profile' },
+  { requirementType: 'tin_verification' },
   { requirementType: 'policy_acknowledgement' },
   { requirementType: 'profile_photo' },
   { requirementType: 'phone_verified' },
@@ -214,6 +220,7 @@ export const BASELINE_EVENTS_REQUIREMENTS: SeedEmployeeReadinessRequirementSpec[
   { requirementType: 'tax_1099_consent' },
   { requirementType: 'handbook_acknowledgement' },
   { requirementType: 'direct_deposit' },
+  { requirementType: 'tin_verification' },
   { requirementType: 'policy_acknowledgement' },
   { requirementType: 'profile_photo' },
   { requirementType: 'phone_verified' },

@@ -275,6 +275,8 @@ export {
   evereeGetMyOnboardingStatus,
   evereeAdminClearStaleStamps,
   evereeAdminRecreateWorkerOnboarding,
+  evereeAdminReconcileWorker,
+  evereeReconcileCron,
   evereeWebhook,
   onEvereeWebhookEventCreated,
 } from './integrations/evereeGate';
@@ -358,6 +360,11 @@ export { syncAssignmentReadinessV1OnBackgroundCheckWrite } from './readiness/ass
 export { onBackgroundCheckWriteUpdateReadiness } from './readiness/onBackgroundCheckWriteUpdateReadiness';
 export { onEverifyCaseWriteUpdateReadiness } from './readiness/onEverifyCaseWriteUpdateReadiness';
 export { onEvereeWorkerWriteUpdateReadiness } from './readiness/onEvereeWorkerWriteUpdateReadiness';
+// E.3 addendum — bridge entity_employments.i9Section2CompletedAt (HRX-side
+// CSA attestation) into the i9_section_2 readiness item. The Section 1
+// (worker portion) item is fed by Everee via onEvereeWorkerWriteUpdateReadiness;
+// Section 2 is federally-required employer work that Everee can't do for us.
+export { onEntityEmploymentI9Section2WriteUpdateReadiness } from './readiness/onEntityEmploymentI9Section2WriteUpdateReadiness';
 export { onOnboardingStepVerifiedUpdateReadiness } from './readiness/onOnboardingStepVerifiedUpdateReadiness';
 export { onUserFieldChangeUpdateReadiness } from './readiness/onUserFieldChangeUpdateReadiness';
 
