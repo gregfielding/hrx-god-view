@@ -83,6 +83,13 @@ export interface EvereeCreateOnboardingSessionResult {
   /** Echo of the experience that was actually requested — useful for client diagnostics. */
   experienceType?: EvereeEmbedExperienceType;
   experienceVersion?: string;
+  /**
+   * Bridge name Everee will look up on `window` when delivering UI events
+   * (V2_0 embeds). The host MUST register `window[eventHandlerName]` with a
+   * `postMessage` method *before* the iframe boots, otherwise the embed
+   * stalls on `EMB-102`. See `src/utils/everee/hostMessageBridge.ts`.
+   */
+  eventHandlerName?: string;
 }
 
 export interface EvereePayHistoryItem {

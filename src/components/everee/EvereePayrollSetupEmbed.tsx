@@ -46,6 +46,10 @@ import {
   type EvereeWorkerType,
 } from '../../services/everee/evereeCallables';
 import { formatFirebaseHttpsError } from '../../utils/firebaseHttpsErrors';
+import {
+  EVEREE_DEFAULT_HOST_HANDLER_NAME,
+  registerEvereeHostBridge,
+} from '../../utils/everee/hostMessageBridge';
 
 /** Same channel name used on the Flutter side — keeps event shape identical. */
 export const EVEREE_CHANNEL_NAME = 'evereeEmbed';
@@ -91,7 +95,13 @@ export interface EvereePayrollSetupEmbedProps {
 type Phase =
   | { state: 'idle' }
   | { state: 'creating' }
-  | { state: 'ready'; embedUrl: string; sessionId: string }
+  | {
+      state: 'ready';
+      embedUrl: string;
+      sessionId: string;
+      /** Bridge name registered on `window` for V2_0 embeds — defaults to `hrx_default`. */
+      eventHandlerName: string;
+    }
   | { state: 'completing' }
   | { state: 'error'; message: string };
 
@@ -224,10 +234,26 @@ const EvereePayrollSetupEmbed: React.FC<EvereePayrollSetupEmbedProps> = ({
     };
 
     window.addEventListener('message', onMessage);
+
+    // V2_0 (`ONBOARDING`) embeds deliver events through `window[handlerName]`
+    // (not via parent.postMessage). Register the host bridge with whatever
+    // name the server told us was sent on the session — falls back to the
+    // stable `hrx_default`. Without this, V2 embeds render an EMB-102 toast.
+    const bridgeHandlerName =
+      phase.state === 'ready' ? phase.eventHandlerName : EVEREE_DEFAULT_HOST_HANDLER_NAME;
+    const bridge = registerEvereeHostBridge({
+      handlerName: bridgeHandlerName,
+      onMessage: (msg) => {
+        const evt = parseEvereeEvent(msg);
+        if (evt) handleEvereeEvent(evt);
+      },
+    });
+
     return () => {
       window.removeEventListener('message', onMessage);
+      bridge.unregister();
     };
-  }, [open, parseEvereeEvent, handleEvereeEvent, teardownPort]);
+  }, [open, parseEvereeEvent, handleEvereeEvent, teardownPort, phase]);
 
   /**
    * On open: ensure Everee worker exists, then create a fresh ephemeral
@@ -283,7 +309,17 @@ const EvereePayrollSetupEmbed: React.FC<EvereePayrollSetupEmbedProps> = ({
           setPhase({ state: 'error', message: 'Everee did not return an embed URL.' });
           return;
         }
-        setPhase({ state: 'ready', embedUrl, sessionId });
+        const handlerNameFromServer =
+          typeof session.data?.eventHandlerName === 'string' &&
+          session.data.eventHandlerName.trim()
+            ? session.data.eventHandlerName.trim()
+            : EVEREE_DEFAULT_HOST_HANDLER_NAME;
+        setPhase({
+          state: 'ready',
+          embedUrl,
+          sessionId,
+          eventHandlerName: handlerNameFromServer,
+        });
       } catch (e: unknown) {
         if (cancelled) return;
         setPhase({

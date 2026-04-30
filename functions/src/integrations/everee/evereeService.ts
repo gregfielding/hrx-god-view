@@ -11,8 +11,11 @@
 import { randomBytes } from 'crypto';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions/v2';
-import { getEvereeConfigForEntity } from './evereeConfig';
-import { evereePaths } from './evereeConfig';
+import {
+  evereePaths,
+  getEvereeConfigForEntity,
+  sanitizeEvereeEmbedHandlerName,
+} from './evereeConfig';
 import { evereeRequest } from './evereeHttp';
 import type { EvereePayHistoryItem, EvereePayStatementSummary } from './evereeSchemas';
 
@@ -102,7 +105,13 @@ export interface CreateOnboardingSessionInput {
   userId: string;
   evereeWorkerId: string;
   returnUrl?: string;
-  /** Optional override — normally generated server-side (`hrx_everee_…`). */
+  /**
+   * Optional per-call override of the embed handler name. Validated by
+   * `sanitizeEvereeEmbedHandlerName`; invalid values are dropped (and logged)
+   * so the resolution falls through to the entity / default. Normally left
+   * unset — the entity-level `evereeEmbedEventHandlerName` (or the
+   * `hrx_default` fallback the host bridge auto-registers) is what you want.
+   */
   eventHandlerName?: string;
   /** Defaults to `ONBOARDING`. Use `WORKER_HOME` (etc.) for post-onboarding embeds. */
   experienceType?: EvereeEmbedExperienceType;
@@ -474,24 +483,46 @@ export async function createOnboardingSession(input: CreateOnboardingSessionInpu
   sessionId: string;
   experienceType: EvereeEmbedExperienceType;
   experienceVersion: string;
+  /**
+   * Echo of the bridge name we sent to Everee. The host (web/Flutter) MUST
+   * register `window[eventHandlerName].postMessage` BEFORE the embed boots —
+   * V2_0 embeds otherwise stall on `EMB-102` ("No event handler has been
+   * registered…") and never dispatch UI events.
+   */
+  eventHandlerName: string;
 }> {
   const config = await getEvereeConfigForEntity(input.tenantId, input.entityId);
   if (!config) throw new Error('Everee not configured for this entity');
-  // Everee's session-create endpoint requires `eventHandlerName` (it 422s with
-  // "Validation failed: 'eventHandlerName' must not be blank" when omitted).
-  // We use a STABLE name so an operator can register it once in the Everee
-  // dashboard and webhook events for embed flows will start firing. Until then
-  // Everee renders an EMB-102 toast inside the iframe ("No event handler has
-  // been registered with this name") but the experience itself still loads.
+  // Everee's session-create endpoint requires `eventHandlerName`; the embed's
+  // V2_0 routing layer (`EmbeddedRouter`) then attempts three transports to
+  // deliver UI events back to the host, in order:
+  //   1. `window[eventHandlerName].postMessage(envelope)`  ← web hosts
+  //   2. `window.webkit.messageHandlers[eventHandlerName].postMessage(envelope)`
+  //                                                         ← iOS WKWebView
+  //   3. a host-transferred `MessagePort`                  ← legacy V1_0 path
+  // If none succeed the iframe renders the EMB-102 toast and never starts.
+  // The HRX host registers (1) via `src/utils/everee/hostMessageBridge.ts`.
   //
-  // Resolution order (first non-empty wins):
+  // Resolution order for the name we hand Everee (first **valid** non-empty
+  // wins; invalid candidates are rejected by `sanitizeEvereeEmbedHandlerName`
+  // and logged at warn level):
   //   1. explicit per-call `input.eventHandlerName`
   //   2. entity-level `evereeEmbedEventHandlerName` from Firestore
-  //   3. env override (`EVEREE_EMBED_EVENT_HANDLER_<tid>` or `EVEREE_EMBED_EVENT_HANDLER`)
-  //   4. stable fallback: `hrx_default`
+  //      (already pre-validated inside `getEvereeConfigForEntity`)
+  //   3. stable fallback: `hrx_default` (the host bridge auto-registers this)
+  //
+  // Whatever we send is also returned in the response so the host can register
+  // the matching bridge name (entity overrides keep working end-to-end). The
+  // log line below records the final resolved value so EMB-102 regressions are
+  // diagnosable from Cloud Logging without re-deploying.
   const eventHandlerName =
-    input.eventHandlerName?.trim() ||
-    config.evereeEmbedEventHandlerName?.trim() ||
+    sanitizeEvereeEmbedHandlerName(input.eventHandlerName, {
+      source: 'createOnboardingSession.input.eventHandlerName',
+      tenantId: input.tenantId,
+      entityId: input.entityId,
+      evereeTenantId: config.evereeTenantId,
+    }) ||
+    config.evereeEmbedEventHandlerName ||
     'hrx_default';
   const experienceType: EvereeEmbedExperienceType = input.experienceType || 'ONBOARDING';
   const experienceVersion =
@@ -528,8 +559,9 @@ export async function createOnboardingSession(input: CreateOnboardingSessionInpu
     ...logCtx,
     sessionId: parsed.sessionId,
     expiresInMs: parsed.expiresInMs,
+    eventHandlerName,
   });
-  return { ...parsed, experienceType, experienceVersion };
+  return { ...parsed, experienceType, experienceVersion, eventHandlerName };
 }
 
 /** Get pay history (list). Stub. */

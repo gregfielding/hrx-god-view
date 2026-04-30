@@ -348,6 +348,51 @@ export const evereeGetMyOnboardingStatus = onCall(async (request) => {
       entityId,
       userId: targetUserId,
     });
+  } else {
+    // Inverse: Everee API authoritatively says the worker is **not** done.
+    // Clear stale UX-only completion stamps that may have been written from a
+    // false-positive iframe message — those would otherwise keep the client
+    // requesting `WORKER_HOME` (→ EMB-202 loop). We **never** touch
+    // `status` / `onboardingCompletedAt` here; those belong to the webhook
+    // and we don't want to clobber a real completion that the API momentarily
+    // failed to surface.
+    try {
+      const linkRef = admin
+        .firestore()
+        .doc(`tenants/${tenantId}/everee_workers/${entityId}__${targetUserId}`);
+      const snap = await linkRef.get();
+      const data = (snap.exists ? snap.data() : null) as
+        | { clientObservedOnboardingCompleteAt?: unknown; apiObservedOnboardingCompleteAt?: unknown }
+        | null;
+      if (
+        data &&
+        (data.clientObservedOnboardingCompleteAt || data.apiObservedOnboardingCompleteAt)
+      ) {
+        await linkRef.set(
+          {
+            clientObservedOnboardingCompleteAt: admin.firestore.FieldValue.delete(),
+            clientObservedOnboardingCompleteReason: admin.firestore.FieldValue.delete(),
+            apiObservedOnboardingCompleteAt: admin.firestore.FieldValue.delete(),
+            preflightClearedStaleStampsAt: admin.firestore.FieldValue.serverTimestamp(),
+            preflightClearedStaleStampsReason: 'everee_api_says_not_complete',
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+        logger.info('[evereeGetMyOnboardingStatus] cleared_stale_completion_stamps', {
+          tenantId,
+          entityId,
+          evereeWorkerId,
+        });
+      }
+    } catch (e: unknown) {
+      logger.warn('[evereeGetMyOnboardingStatus] stale_clear_failed', {
+        tenantId,
+        entityId,
+        evereeWorkerId,
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
 
   return {

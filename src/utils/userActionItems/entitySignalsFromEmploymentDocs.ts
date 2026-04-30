@@ -2,10 +2,12 @@
  * Derives per-entity operational signals from `entity_employments` docs + assignments bucket.
  * Uses the same query results as `useUserProfileEntityEmploymentChips` — no extra reads.
  */
-import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import type { EmploymentAssignmentSummary, EmploymentEntityKey } from '../../pages/UserProfile/components/employment-v2/employmentV2Types';
 import type { EntityOnboardingSectionStatus } from '../../pages/UserProfile/components/employment-v2/employmentV2Types';
-import { displayEntityLabelForOnboardingChip } from '../userListEntityEmploymentStatus';
+import {
+  displayEntityLabelForOnboardingChip,
+  type EntityEmploymentDocSnap,
+} from '../userListEntityEmploymentStatus';
 
 export type EntityEmploymentActionSignal = {
   dedupeKey: string;
@@ -43,7 +45,7 @@ function everifyBucketFromDoc(d: Record<string, unknown>): EntityEmploymentActio
 }
 
 export function buildEntityEmploymentActionSignals(
-  snapDocs: QueryDocumentSnapshot<DocumentData>[],
+  snapDocs: EntityEmploymentDocSnap[],
   assignmentsByKey: Record<EmploymentEntityKey, EmploymentAssignmentSummary[]>,
 ): EntityEmploymentActionSignal[] {
   const byKey = (entityKeyRaw: string): EmploymentAssignmentSummary[] => {

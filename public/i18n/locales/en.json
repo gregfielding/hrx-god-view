@@ -21,6 +21,7 @@
     "inbox": "Inbox",
     "myAssignments": "My Assignments",
     "myApplications": "My Applications",
+    "payroll": "Payroll",
     "jobsBoard": "Jobs Board",
     "jobReadiness": "Job Readiness",
     "myDocuments": "My Documents",
@@ -47,8 +48,7 @@
     "espanolEs": "Español (ES)",
     "findWork": "Find Work",
     "viewApplications": "View Applications",
-    "prescreen": "Pre-screen",
-    "payroll": "Payroll"
+    "prescreen": "Pre-screen"
   },
   "workerAccount": {
     "sectionProfile": "Profile",

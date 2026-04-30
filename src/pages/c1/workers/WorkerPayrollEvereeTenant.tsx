@@ -18,7 +18,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { deleteField, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { Alert, Box, Button, CircularProgress, Stack, Typography } from '@mui/material';
 import { db } from '../../../firebase';
@@ -32,6 +32,10 @@ import {
 } from '../../../services/everee/evereeCallables';
 import { formatFirebaseHttpsError } from '../../../utils/firebaseHttpsErrors';
 import { collection, getDocs, limit, query, where } from 'firebase/firestore';
+import {
+  EVEREE_DEFAULT_HOST_HANDLER_NAME,
+  registerEvereeHostBridge,
+} from '../../../utils/everee/hostMessageBridge';
 
 type Phase =
   | { state: 'loading' }
@@ -41,6 +45,8 @@ type Phase =
       allowedOrigin: string;
       expiresInMs: number;
       experienceType: EvereeEmbedExperienceType;
+      /** Bridge name Everee will look up on `window`; default `hrx_default`. */
+      eventHandlerName: string;
     }
   | { state: 'expired' }
   | { state: 'error'; message: string }
@@ -161,6 +167,36 @@ async function softMarkOnboardingComplete(
   }
 }
 
+/**
+ * Inverse of `softMarkOnboardingComplete`. When the server's authoritative
+ * Everee API check (or an EMB-202 from the iframe) tells us the worker isn't
+ * actually done, wipe the UX-only stamps so subsequent loads don't keep
+ * picking `WORKER_HOME`. We never touch `status` / `onboardingCompletedAt`
+ * here — those are owned by the webhook.
+ */
+async function clearStaleOnboardingCompleteStamps(
+  tenantId: string,
+  entityId: string,
+  uid: string,
+  reason: string,
+): Promise<void> {
+  try {
+    await setDoc(
+      doc(db, 'tenants', tenantId, 'everee_workers', `${entityId}__${uid}`),
+      {
+        clientObservedOnboardingCompleteAt: deleteField(),
+        clientObservedOnboardingCompleteReason: deleteField(),
+        apiObservedOnboardingCompleteAt: deleteField(),
+        clientObservedOnboardingCompleteCleared: serverTimestamp(),
+        clientObservedOnboardingCompleteClearedReason: reason,
+      },
+      { merge: true },
+    );
+  } catch {
+    /* ignore — UX-only */
+  }
+}
+
 /** Heuristic: was this an Everee `WORKER_ONBOARDING_COMPLETE`-style postMessage? */
 function looksLikeOnboardingCompleteMessage(payload: unknown): boolean {
   if (!payload) return false;
@@ -176,14 +212,17 @@ function looksLikeOnboardingCompleteMessage(payload: unknown): boolean {
   return candidates.some((c) => /WORKER_ONBOARDING_COMPLETE|ONBOARDING_COMPLETE|onboarding[._-]?complete/i.test(c));
 }
 
-/** Heuristic: is the iframe rendering the EMB-201 "already complete" page? */
-function looksLikeAlreadyCompleteError(payload: unknown): boolean {
-  if (!payload) return false;
+/** Heuristic: pull all stringy fields out of an iframe message envelope for pattern checks. */
+function flattenMessageBlobs(payload: unknown): string[] {
+  if (!payload) return [];
   const blobs: string[] = [];
-  if (typeof payload === 'string') blobs.push(payload);
-  else if (typeof payload === 'object') {
+  if (typeof payload === 'string') {
+    blobs.push(payload);
+    return blobs;
+  }
+  if (typeof payload === 'object') {
     const p = payload as Record<string, unknown>;
-    for (const k of ['code', 'errorCode', 'embErrorCode', 'message', 'error', 'reason']) {
+    for (const k of ['code', 'errorCode', 'embErrorCode', 'message', 'errorMessage', 'error', 'reason']) {
       const v = p[k];
       if (typeof v === 'string') blobs.push(v);
     }
@@ -193,7 +232,28 @@ function looksLikeAlreadyCompleteError(payload: unknown): boolean {
       }
     }
   }
-  return blobs.some((b) => /EMB-201|Onboarding\s+already\s+complete/i.test(b));
+  return blobs;
+}
+
+/** Heuristic: is the iframe rendering the EMB-201 "already complete" page? */
+function looksLikeAlreadyCompleteError(payload: unknown): boolean {
+  return flattenMessageBlobs(payload).some((b) =>
+    /EMB-201|Onboarding\s+already\s+complete/i.test(b),
+  );
+}
+
+/**
+ * Heuristic: is the iframe rendering the EMB-202 "not yet complete" page?
+ * Symmetric counterpart to EMB-201 — fires when we asked for `WORKER_HOME`
+ * (or any non-onboarding experience) on a worker that hasn't actually
+ * finished payroll setup. The server preflight should catch this before we
+ * ever ask Everee, but UX-only completion stamps in Firestore can mislead
+ * the client; this heuristic is the recovery path of last resort.
+ */
+function looksLikeNotYetCompleteError(payload: unknown): boolean {
+  return flattenMessageBlobs(payload).some((b) =>
+    /EMB-202|Onboarding\s+not\s+yet\s+complete|Only\s+the\s+ONBOARDING\s+experience/i.test(b),
+  );
 }
 
 const WorkerPayrollEvereeTenant: React.FC = () => {
@@ -246,14 +306,16 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
         resolved.entityId,
         uid,
       );
-      // Server-side preflight: ask Everee directly. Necessary because their
-      // iframe posts EMB-201 over `host MessagePort` / `webkit.messageHandlers`,
-      // neither of which exists in a browser tab — so we'd otherwise have no
-      // way of knowing the worker is done until the webhook side processes
-      // `worker.onboarding-completed`. The callable also mirrors the result
-      // back to the link doc, so subsequent loads short-circuit through the
-      // Firestore check above.
-      if (!detectedComplete && !forcedExperience) {
+      // Server-side preflight: ask Everee directly. This is the **authority**
+      // for which experience to load, and we always run it (unless the user
+      // has explicitly forced one) — historically we only ran it when the
+      // local stamps said "not complete", but a stale UX-only stamp from a
+      // false-positive iframe message could permanently mislead us into
+      // requesting `WORKER_HOME` for a worker who hadn't actually finished,
+      // producing EMB-202 with no recovery. The preflight result now wins
+      // over the local stamps in **both** directions, and we clear stale
+      // stamps when the API contradicts them.
+      if (!forcedExperience) {
         try {
           const statusRes = await evereeGetMyOnboardingStatus({
             tenantId: scopeTenantId,
@@ -263,8 +325,18 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
           const statusData = statusRes.data as
             | EvereeGetMyOnboardingStatusResult
             | undefined;
-          if (statusData?.ok && statusData.onboardingComplete) {
-            detectedComplete = true;
+          if (statusData?.ok) {
+            if (statusData.onboardingComplete === true) {
+              detectedComplete = true;
+            } else if (statusData.onboardingComplete === false && detectedComplete) {
+              detectedComplete = false;
+              await clearStaleOnboardingCompleteStamps(
+                scopeTenantId,
+                resolved.entityId,
+                uid,
+                'preflight_api_says_not_complete',
+              );
+            }
           }
         } catch (err) {
           // eslint-disable-next-line no-console
@@ -304,12 +376,17 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
           originOk = '';
         }
       }
+      const handlerNameFromServer =
+        typeof raw?.eventHandlerName === 'string' && raw.eventHandlerName.trim()
+          ? raw.eventHandlerName.trim()
+          : EVEREE_DEFAULT_HOST_HANDLER_NAME;
       setPhase({
         state: 'ready',
         embedUrl,
         allowedOrigin: originOk,
         expiresInMs,
         experienceType,
+        eventHandlerName: handlerNameFromServer,
       });
       expireTimerRef.current = setTimeout(() => {
         setPhase({ state: 'expired' });
@@ -329,6 +406,32 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
         setForcedExperience('WORKER_HOME');
         return;
       }
+      // Symmetric counterpart for EMB-202 ("Onboarding not yet complete /
+      // Only the ONBOARDING experience is available"). Clear stale UX-only
+      // completion stamps and retry with ONBOARDING.
+      if (
+        lastSwapRef.current !== 'ONBOARDING' &&
+        /EMB-202|Onboarding\s+not\s+yet\s+complete|Only\s+the\s+ONBOARDING\s+experience/i.test(
+          message,
+        )
+      ) {
+        // eslint-disable-next-line no-console
+        console.info('[everee embed] swapping to ONBOARDING after server rejection', { message });
+        const scopeTenantIdForClear = tenantId || tenantIds[0];
+        if (uid && scopeTenantIdForClear) {
+          void resolveEntityForEvereeTenant(scopeTenantIdForClear, evereeTenantId).then((resolved) => {
+            if (!resolved) return;
+            void clearStaleOnboardingCompleteStamps(
+              scopeTenantIdForClear,
+              resolved.entityId,
+              uid,
+              'server.emb_202',
+            );
+          });
+        }
+        setForcedExperience('ONBOARDING');
+        return;
+      }
       setPhase({ state: 'error', message });
     }
   }, [uid, tenantId, tenantIds, evereeTenantId, clearExpireTimer, forcedExperience]);
@@ -345,23 +448,51 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
    * renders the "already complete" error. We can't always rely on the webhook
    * (network delay or — pre-signature-fix — silent rejection), so the iframe
    * itself is the most reliable real-time signal.
+   *
+   * The Everee SDK delivers events through one of two channels depending on
+   * the experience version:
+   *   - V1_0 (`WORKER_HOME` etc.): `parent.postMessage(envelope, origin, [port])`
+   *     → caught by our `window.addEventListener('message', …)`.
+   *   - V2_0 (`ONBOARDING`): `window[eventHandlerName].postMessage(envelope)`
+   *     → caught by our host bridge registered below. Without the bridge, V2
+   *     embeds render an `EMB-102` toast and never start.
    */
   useEffect(() => {
     if (phase.state !== 'ready') return;
     const allowed = phase.allowedOrigin;
     const currentExperience = phase.experienceType;
-    const onMsg = (event: MessageEvent) => {
-      // Only honour messages from Everee's iframe origin (when known).
-      if (allowed && event.origin !== allowed) return;
-      const payload = event.data;
-      // eslint-disable-next-line no-console
-      console.log('[everee embed message]', { origin: event.origin, data: payload });
+    const handlerName = phase.eventHandlerName;
 
+    const dispatch = (payload: unknown, source: 'window.message' | 'host.bridge') => {
+      // eslint-disable-next-line no-console
+      console.log('[everee embed message]', { source, data: payload });
       const onboardingComplete = looksLikeOnboardingCompleteMessage(payload);
       const embAlreadyComplete = looksLikeAlreadyCompleteError(payload);
+      const embNotYetComplete = looksLikeNotYetCompleteError(payload);
+      const scopeTenantId = tenantId || tenantIds[0];
+
+      // EMB-202 recovery: iframe says "you asked for the wrong experience —
+      // worker hasn't finished onboarding". Clear the stale UX-only stamps
+      // that misled us, then swap back to ONBOARDING. Symmetric to the
+      // EMB-201 → WORKER_HOME path below.
+      if (embNotYetComplete && currentExperience !== 'ONBOARDING') {
+        if (uid && scopeTenantId) {
+          void resolveEntityForEvereeTenant(scopeTenantId, evereeTenantId).then((resolved) => {
+            if (!resolved) return;
+            void clearStaleOnboardingCompleteStamps(
+              scopeTenantId,
+              resolved.entityId,
+              uid,
+              'iframe.emb_202',
+            );
+          });
+        }
+        setForcedExperience('ONBOARDING');
+        return;
+      }
+
       if (!onboardingComplete && !embAlreadyComplete) return;
       if (currentExperience === 'WORKER_HOME') return;
-      const scopeTenantId = tenantId || tenantIds[0];
       if (uid && scopeTenantId) {
         // Best-effort mirror; webhook still owns canonical `status`.
         void resolveEntityForEvereeTenant(scopeTenantId, evereeTenantId).then((resolved) => {
@@ -376,8 +507,23 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
       }
       setForcedExperience('WORKER_HOME');
     };
+
+    const onMsg = (event: MessageEvent) => {
+      // Only honour messages from Everee's iframe origin (when known).
+      if (allowed && event.origin !== allowed) return;
+      dispatch(event.data, 'window.message');
+    };
     window.addEventListener('message', onMsg);
-    return () => window.removeEventListener('message', onMsg);
+
+    const bridge = registerEvereeHostBridge({
+      handlerName,
+      onMessage: (msg) => dispatch(msg, 'host.bridge'),
+    });
+
+    return () => {
+      window.removeEventListener('message', onMsg);
+      bridge.unregister();
+    };
   }, [phase, tenantId, tenantIds, uid, evereeTenantId]);
 
   const iframeOrigin = useMemo(() => {

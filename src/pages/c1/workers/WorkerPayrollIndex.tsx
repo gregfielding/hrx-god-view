@@ -29,23 +29,33 @@ import {
   buildPayrollEligibleEvereeTenantIdSet,
   filterEvereeWorkerMapByEligibleTenants,
 } from '../../../utils/workerPayrollEligibility';
+import {
+  payrollEntityDescription,
+  resolvePayrollWorkerKind,
+  type PayrollWorkerKind,
+} from '../../../utils/payrollEntityDisplay';
 
-function useEvereeEntityLabels(
+interface EvereeEntityInfo {
+  label: string;
+  kind: PayrollWorkerKind;
+}
+
+function useEvereeEntityInfos(
   tenantId: string | undefined,
   evereeTenantIds: string[],
-): { labels: Record<string, string>; loading: boolean } {
-  const [labels, setLabels] = useState<Record<string, string>>({});
+): { infos: Record<string, EvereeEntityInfo>; loading: boolean } {
+  const [infos, setInfos] = useState<Record<string, EvereeEntityInfo>>({});
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!tenantId || evereeTenantIds.length === 0) {
-      setLabels({});
+      setInfos({});
       return;
     }
     let cancelled = false;
     setLoading(true);
     void (async () => {
-      const next: Record<string, string> = {};
+      const next: Record<string, EvereeEntityInfo> = {};
       try {
         for (const tid of evereeTenantIds) {
           const q = query(
@@ -54,20 +64,26 @@ function useEvereeEntityLabels(
             limit(3),
           );
           const snap = await getDocs(q);
-          const name =
-            snap.docs[0]?.data()?.name ||
-            snap.docs[0]?.data()?.legalName ||
-            snap.docs[0]?.data()?.title ||
-            tid;
-          next[tid] = typeof name === 'string' && name.trim() ? name.trim() : `Payroll · ${tid}`;
+          const top = snap.docs[0];
+          const data = (top?.data() ?? {}) as Record<string, unknown>;
+          const rawName = (data.name ?? data.legalName ?? data.title) as unknown;
+          const label =
+            typeof rawName === 'string' && rawName.trim() ? rawName.trim() : `Payroll · ${tid}`;
+          const kind = resolvePayrollWorkerKind({
+            entityId: top?.id,
+            evereeWorkerKind: data.evereeWorkerKind,
+            payrollWorkerClassification: data.payrollWorkerClassification,
+            workerType: data.workerType,
+          });
+          next[tid] = { label, kind };
         }
       } catch {
         evereeTenantIds.forEach((tid) => {
-          next[tid] = next[tid] || `Payroll · ${tid}`;
+          if (!next[tid]) next[tid] = { label: `Payroll · ${tid}`, kind: 'employee' };
         });
       }
       if (!cancelled) {
-        setLabels(next);
+        setInfos(next);
         setLoading(false);
       }
     })();
@@ -76,7 +92,7 @@ function useEvereeEntityLabels(
     };
   }, [tenantId, evereeTenantIds.join('|')]);
 
-  return { labels, loading };
+  return { infos, loading };
 }
 
 const WorkerPayrollIndex: React.FC = () => {
@@ -210,7 +226,7 @@ const WorkerPayrollIndex: React.FC = () => {
 
   const idsForLabels =
     landing.kind === 'picker' ? landing.evereeTenantIds : landing.kind === 'redirect' ? [landing.evereeTenantId] : [];
-  const { labels, loading: labelsLoading } = useEvereeEntityLabels(scopeTenantId, idsForLabels);
+  const { infos, loading: labelsLoading } = useEvereeEntityInfos(scopeTenantId, idsForLabels);
 
   useEffect(() => {
     if (landing.kind === 'redirect') {
@@ -274,21 +290,28 @@ const WorkerPayrollIndex: React.FC = () => {
         <CircularProgress size={28} />
       ) : (
         <Stack spacing={1.5}>
-          {landing.evereeTenantIds.map((tid) => (
-            <Card key={tid} variant="outlined">
-              <CardActionArea
-                onClick={() => navigate(`/c1/workers/payroll/${encodeURIComponent(tid)}`)}
-                sx={{ p: 2, alignItems: 'flex-start' }}
-              >
-                <Typography variant="subtitle1" fontWeight={600}>
-                  {labels[tid] || `Payroll · ${tid}`}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" display="block">
-                  Everee tenant {tid}
-                </Typography>
-              </CardActionArea>
-            </Card>
-          ))}
+          {landing.evereeTenantIds.map((tid) => {
+            const info = infos[tid];
+            const label = info?.label ?? `Payroll · ${tid}`;
+            const description = info ? payrollEntityDescription(info.kind) : null;
+            return (
+              <Card key={tid} variant="outlined">
+                <CardActionArea
+                  onClick={() => navigate(`/c1/workers/payroll/${encodeURIComponent(tid)}`)}
+                  sx={{ p: 2, alignItems: 'flex-start' }}
+                >
+                  <Typography variant="subtitle1" fontWeight={600}>
+                    {label}
+                  </Typography>
+                  {description ? (
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      {description}
+                    </Typography>
+                  ) : null}
+                </CardActionArea>
+              </Card>
+            );
+          })}
         </Stack>
       )}
     </Box>
