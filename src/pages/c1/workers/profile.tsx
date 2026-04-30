@@ -34,6 +34,11 @@ import { buildWorkerMyEmploymentListRowModel } from '../../../utils/workerMyEmpl
 import { filterI9RowsForEntityEmployment } from '../../../utils/workerEmploymentWorkerSurface';
 import { C1_WORKER_SCREENING_PATH } from '../../../constants/c1WorkerRoutes';
 import { resolveWorkerPreferences } from '../../../utils/workerPreferencesCanonical';
+import { isWorkAuthCollectionDisabled } from '../../../utils/workAuthCollectionFlag';
+
+// W.3 — captured at module scope so the same constant flows through the
+// hub link visibility AND the section-completion math.
+const WORK_AUTH_HUB_DISABLED = isWorkAuthCollectionDisabled();
 
 const WorkerProfile: React.FC = () => {
   const { user, avatarUrl, logout, tenantId: authTenantId, activeTenant } = useAuth();
@@ -92,7 +97,11 @@ const WorkerProfile: React.FC = () => {
   );
   const locationComplete = Boolean(city && state);
   const workEligibilityAttestation = (userDoc?.workEligibilityAttestation || {}) as Record<string, unknown>;
-  const hasWorkAuth = Boolean(
+  // W.3 — when the worker app no longer asks for work-auth, the hub
+  // section-completion math must not gate on it (otherwise the profile
+  // never reads as "complete"). Treat it as auto-complete so the section
+  // count + percentage stay accurate.
+  const hasWorkAuth = WORK_AUTH_HUB_DISABLED || Boolean(
     (typeof workEligibilityAttestation.authorizedToWorkUS === 'boolean' ||
       typeof userDoc?.workEligibility === 'boolean') &&
       (typeof workEligibilityAttestation.requireSponsorship === 'boolean' ||
@@ -209,13 +218,17 @@ const WorkerProfile: React.FC = () => {
             <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>{t('workerAccount.sectionWorkProfile')}</Typography>
             <Divider />
             <List disablePadding>
-              <ListItemButton onClick={() => navigate('/c1/workers/profile/work-authorization')}>
-                <ListItemText primary={t('profile.sectionWorkAuthorizationTitle')} />
-                <Stack direction="row" spacing={0.5} alignItems="center">
-                  {hasWorkAuth ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
-                  <ChevronRightIcon color="action" />
-                </Stack>
-              </ListItemButton>
+              {/* W.3 — hide the work-authorization sidebar row when */}
+              {/* collection is disabled (default). Flag flip-off restores. */}
+              {!WORK_AUTH_HUB_DISABLED && (
+                <ListItemButton onClick={() => navigate('/c1/workers/profile/work-authorization')}>
+                  <ListItemText primary={t('profile.sectionWorkAuthorizationTitle')} />
+                  <Stack direction="row" spacing={0.5} alignItems="center">
+                    {hasWorkAuth ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
+                    <ChevronRightIcon color="action" />
+                  </Stack>
+                </ListItemButton>
+              )}
               <ListItemButton onClick={() => navigate('/c1/workers/profile/resume')}>
                 <ListItemText primary={t('profile.sectionResumeTitle')} />
                 <Stack direction="row" spacing={0.5} alignItems="center">

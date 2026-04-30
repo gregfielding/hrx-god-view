@@ -7,6 +7,7 @@
 
 import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 
 const DISABLED_MSG =
   'Everee is disabled. Set EVEREE_ENABLED=true and configure entity Everee settings.';
@@ -33,6 +34,17 @@ const stubWebhookTrigger = onDocumentCreated(
   },
 );
 
+/**
+ * Scheduled-function stub. The real `evereeReconcileCron` runs every 2h;
+ * when the gate is closed we still register a no-op schedule so the
+ * function name resolves at deploy time and Firebase doesn't drop the
+ * job from the catalog (which would force a re-create when the gate
+ * flips, losing the schedule history).
+ */
+const stubSchedule = onSchedule({ schedule: 'every 24 hours' }, async () => {
+  // intentional no-op; gate closed.
+});
+
 let everee: typeof import('./everee') | null = null;
 if (process.env.EVEREE_ENABLED === 'true') {
   everee = require('./everee');
@@ -45,6 +57,21 @@ export const evereeGetPayHistory = everee?.evereeGetPayHistory ?? stubCallable;
 export const evereeGetPayStatement = everee?.evereeGetPayStatement ?? stubCallable;
 export const evereeAdminPushShift = everee?.evereeAdminPushShift ?? stubCallable;
 export const evereeAdminPreparePayout = everee?.evereeAdminPreparePayout ?? stubCallable;
+export const evereeAdminGetWorker = everee?.evereeAdminGetWorker ?? stubCallable;
+export const evereeAdminGetWorkerDocuments =
+  everee?.evereeAdminGetWorkerDocuments ?? stubCallable;
+export const evereeAdminGetWorkerW9 = everee?.evereeAdminGetWorkerW9 ?? stubCallable;
+export const evereeAdminGetWorkerW4 = everee?.evereeAdminGetWorkerW4 ?? stubCallable;
+export const evereeGetMyOnboardingStatus =
+  everee?.evereeGetMyOnboardingStatus ?? stubCallable;
+export const evereeAdminClearStaleStamps =
+  everee?.evereeAdminClearStaleStamps ?? stubCallable;
+export const evereeAdminRecreateWorkerOnboarding =
+  everee?.evereeAdminRecreateWorkerOnboarding ?? stubCallable;
+// E.1 + E.2 — readiness snapshot reconcile callable + 2h cron sweep.
+export const evereeAdminReconcileWorker =
+  everee?.evereeAdminReconcileWorker ?? stubCallable;
+export const evereeReconcileCron = everee?.evereeReconcileCron ?? stubSchedule;
 export const evereeWebhook = everee?.evereeWebhook ?? stubWebhook;
 export const onEvereeWebhookEventCreated =
   everee?.onEvereeWebhookEventCreated ?? stubWebhookTrigger;

@@ -150,6 +150,8 @@ export interface UserProfile {
   transportMethod?: 'Car' | 'Public Transit' | 'Bike' | 'Walk' | 'Other';
   /** Admin: worker was added to Indeed Flex (shows badge in profile header when true). */
   addedToIndeedFlex?: boolean;
+  /** Admin: worker was added to SAP Fieldglass (shows badge alongside Indeed Flex when true). */
+  addedToFieldglass?: boolean;
 
   // 🔒 Privacy & Notifications
   notificationSettings?: NotificationSettings;
@@ -343,6 +345,7 @@ export interface UserProfileForm {
   emergencyContact?: EmergencyContact;
   transportMethod?: 'Car' | 'Public Transit' | 'Bike' | 'Walk' | 'Other';
   addedToIndeedFlex?: boolean;
+  addedToFieldglass?: boolean;
 
   // Legacy fields
   role?: string;

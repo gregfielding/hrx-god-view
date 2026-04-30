@@ -22,18 +22,22 @@ import {
   Button,
   Divider,
   FormControl,
+  IconButton,
   InputLabel,
   MenuItem,
   Select,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
+  Add as AddIcon,
   ViewList as ViewListIcon,
   CalendarMonth as CalendarMonthIcon,
 } from '@mui/icons-material';
 
 import PageHeader from '../components/PageHeader';
+import ShiftPlacementsDrawer from '../components/shifts/ShiftPlacementsDrawer';
 import UniversalSearchBar from '../components/UniversalSearchBar';
 import { useAuth } from '../contexts/AuthContext';
 import { useSetTopBarTitle } from '../contexts/TopBarTitleContext';
@@ -111,6 +115,7 @@ const Shifts: React.FC = () => {
   };
 
   const [activeTab, setActiveTab] = useState<ShiftsTab>(getActiveTab());
+  const [addShiftDrawerOpen, setAddShiftDrawerOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [accountFilter, setAccountFilter] = useState<string>('all');
@@ -348,6 +353,22 @@ const Shifts: React.FC = () => {
               showFavoritesOnly={showFavoritesOnly}
               onToggleFavorites={setShowFavoritesOnly}
             />
+            {/* Opens ShiftPlacementsDrawer: pick a job order, then manage
+                placements / create a shift on that JO (no row shift locked). */}
+            <Tooltip title="Add shift">
+              <IconButton
+                onClick={() => setAddShiftDrawerOpen(true)}
+                sx={{
+                  width: 32,
+                  height: 32,
+                  bgcolor: '#0057B8',
+                  color: '#fff',
+                  '&:hover': { bgcolor: '#004a9f' },
+                }}
+              >
+                <AddIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Tooltip>
           </Box>
         }
       />
@@ -365,6 +386,15 @@ const Shifts: React.FC = () => {
       >
         <Outlet context={outletContext} />
       </Box>
+
+      <ShiftPlacementsDrawer
+        open={addShiftDrawerOpen}
+        onClose={() => setAddShiftDrawerOpen(false)}
+        tenantId={tenantId ?? null}
+        jobOrderId={null}
+        shift={null}
+        pickJobOrderFirst
+      />
     </Box>
   );
 };

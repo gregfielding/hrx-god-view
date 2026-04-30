@@ -1,20 +1,50 @@
 /**
  * Persists Staff Onboarding hub UI (active tab, per-table page/size, worker search) in sessionStorage
  * so leaving `/staff-onboarding` and returning restores the same view.
+ *
+ * **E.7** — Tab layout collapsed from 3 → 2:
+ *   - Old tab 0 (Tax + Payroll) and tab 1 (E-Verify) both now map to
+ *     the unified "To-Do" tab (new index 0).
+ *   - Old tab 2 (Background Checks) maps to new index 1.
+ *
+ * The legacy `tax*` / `ev*` fields are kept on the state shape so a
+ * cached state object from before E.7 deserialises without throwing.
+ * They're no longer read by the page itself but staying lossless avoids
+ * a Surprise Behavior on user A coming back after the deploy.
  */
 
 const KEY_PREFIX = 'hrx:staffOnboardingUi:';
 
+/**
+ * Schema version. Bump when a stored field's *meaning* changes in a way
+ * that can't be detected from the value alone. E.7 bumped 1 → 2 because
+ * the `tab` index now spans 0–1 instead of 0–2 and we can't tell from
+ * `tab: 1` alone whether the user last had pre-E.7 E-Verify or post-E.7
+ * Background Checks open. Cached states from version 1 reset their tab
+ * to 0 on first load.
+ */
+const SCHEMA_VERSION = 2;
+
 export type StaffOnboardingUiState = {
+  /** Schema version — internal use; consumers ignore. */
+  v?: number;
+  /** 0 = To-Do (E.7), 1 = Background Checks. */
   tab: number;
+  /** @deprecated Pre-E.7 Tax+Payroll tab pagination — kept for backwards compat. */
   taxPage: number;
+  /** @deprecated */
   taxPageSize: number;
+  /** @deprecated */
   taxSearch: string;
-  /** Vertical scroll offset inside the queue table container */
+  /** @deprecated */
   taxScrollTop: number;
+  /** @deprecated Pre-E.7 E-Verify tab pagination — kept for backwards compat. */
   evPage: number;
+  /** @deprecated */
   evPageSize: number;
+  /** @deprecated */
   evSearch: string;
+  /** @deprecated */
   evScrollTop: number;
   bgPage: number;
   bgPageSize: number;
@@ -28,6 +58,7 @@ const MAX_SEARCH_LEN = 200;
 
 export function defaultStaffOnboardingUi(): StaffOnboardingUiState {
   return {
+    v: SCHEMA_VERSION,
     tab: 0,
     taxPage: 0,
     taxPageSize: 20,
@@ -54,10 +85,25 @@ function clampInt(n: unknown, fallback: number, min: number, max: number): numbe
   return Math.min(max, Math.max(min, Math.floor(n)));
 }
 
+/**
+ * E.7 migration: a cached `tab` index from the pre-E.7 3-tab layout is
+ * ambiguous when it equals `1` (could be old E-Verify or new Background).
+ * Rather than guess, reset to the default (To-Do) when the schema
+ * version is missing or stale. Less clever, more correct.
+ */
+function migrateTab(raw: unknown, fallback: number, schemaVersion: number): number {
+  if (schemaVersion < SCHEMA_VERSION) return fallback;
+  const n = typeof raw === 'number' && Number.isFinite(raw) ? Math.floor(raw) : fallback;
+  if (n < 0 || n > 1) return fallback;
+  return n;
+}
+
 function mergeSaved(o: Partial<StaffOnboardingUiState>): StaffOnboardingUiState {
   const d = defaultStaffOnboardingUi();
+  const savedVersion = typeof o.v === 'number' && Number.isFinite(o.v) ? Math.floor(o.v) : 0;
   return {
-    tab: clampInt(o.tab, d.tab, 0, 2),
+    v: SCHEMA_VERSION,
+    tab: migrateTab(o.tab, d.tab, savedVersion),
     taxPage: clampInt(o.taxPage, d.taxPage, 0, 1_000_000),
     taxPageSize: typeof o.taxPageSize === 'number' && PAGE_SIZES.has(o.taxPageSize) ? o.taxPageSize : d.taxPageSize,
     taxSearch: clampSearch(o.taxSearch, d.taxSearch),

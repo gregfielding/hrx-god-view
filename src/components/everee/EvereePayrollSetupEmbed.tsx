@@ -46,6 +46,11 @@ import {
   type EvereeWorkerType,
 } from '../../services/everee/evereeCallables';
 import { formatFirebaseHttpsError } from '../../utils/firebaseHttpsErrors';
+import {
+  attachEvereePortChannel,
+  EVEREE_DEFAULT_HOST_HANDLER_NAME,
+  registerEvereeHostBridge,
+} from '../../utils/everee/hostMessageBridge';
 
 /** Same channel name used on the Flutter side — keeps event shape identical. */
 export const EVEREE_CHANNEL_NAME = 'evereeEmbed';
@@ -91,7 +96,13 @@ export interface EvereePayrollSetupEmbedProps {
 type Phase =
   | { state: 'idle' }
   | { state: 'creating' }
-  | { state: 'ready'; embedUrl: string; sessionId: string }
+  | {
+      state: 'ready';
+      embedUrl: string;
+      sessionId: string;
+      /** Bridge name registered on `window` for V2_0 embeds — defaults to `hrx_default`. */
+      eventHandlerName: string;
+    }
   | { state: 'completing' }
   | { state: 'error'; message: string };
 
@@ -141,15 +152,34 @@ const EvereePayrollSetupEmbed: React.FC<EvereePayrollSetupEmbedProps> = ({
     }
     if (typeof data !== 'object') return null;
     const d = data as Record<string, unknown>;
-    const rawType = typeof d.type === 'string' ? d.type : null;
+    // EE.7 — Everee's documented event payload uses `eventType` as the
+    // discriminator (https://developer.everee.com/docs/handling-events).
+    // The legacy `type` alias is kept because some SDK versions / V1_0
+    // embeds emit envelopes shaped that way, and our pre-EE.7 path
+    // depended on it. Read both, prefer `eventType` when present.
+    const rawType =
+      typeof d.eventType === 'string'
+        ? d.eventType
+        : typeof d.type === 'string'
+          ? d.type
+          : null;
     if (rawType) return { type: rawType, payload: (d.payload ?? null) as Record<string, unknown> | null };
     // Some SDK versions nest the envelope under `data`.
     const inner = d.data;
-    if (inner && typeof inner === 'object' && typeof (inner as Record<string, unknown>).type === 'string') {
-      return {
-        type: (inner as Record<string, unknown>).type as string,
-        payload: ((inner as Record<string, unknown>).payload ?? null) as Record<string, unknown> | null,
-      };
+    if (inner && typeof inner === 'object') {
+      const innerObj = inner as Record<string, unknown>;
+      const innerType =
+        typeof innerObj.eventType === 'string'
+          ? innerObj.eventType
+          : typeof innerObj.type === 'string'
+            ? innerObj.type
+            : null;
+      if (innerType) {
+        return {
+          type: innerType,
+          payload: (innerObj.payload ?? null) as Record<string, unknown> | null,
+        };
+      }
     }
     return null;
   }, []);
@@ -224,10 +254,46 @@ const EvereePayrollSetupEmbed: React.FC<EvereePayrollSetupEmbedProps> = ({
     };
 
     window.addEventListener('message', onMessage);
+
+    // V2_0 (`ONBOARDING`) embeds deliver events through `window[handlerName]`
+    // (not via parent.postMessage). Register the host bridge with whatever
+    // name the server told us was sent on the session — falls back to the
+    // stable `hrx_default`. Without this, V2 embeds render an EMB-102 toast.
+    const bridgeHandlerName =
+      phase.state === 'ready' ? phase.eventHandlerName : EVEREE_DEFAULT_HOST_HANDLER_NAME;
+    const bridge = registerEvereeHostBridge({
+      handlerName: bridgeHandlerName,
+      onMessage: (msg) => {
+        const evt = parseEvereeEvent(msg);
+        if (evt) handleEvereeEvent(evt);
+      },
+    });
+
+    // EE.7 — the documented Web/React iframe transport
+    // (https://developer.everee.com/docs/web-react-iframe). Pre-EE.7 we
+    // only registered the `window[handlerName]` bridge above, which the V2
+    // SDK in browsers doesn't actually probe for (that's the WKWebView
+    // path). The result was an EMB-102 toast on every ONBOARDING mount.
+    // Additive: V1_0 port-transfer via `parent.postMessage` is still
+    // captured by the `MESSAGE_PORT_REGISTERED` branch in `onMessage`
+    // above, and the window-property bridge stays as a defensive
+    // fallback for non-browser hosts.
+    const portChannel =
+      phase.state === 'ready' && iframeRef.current
+        ? attachEvereePortChannel(iframeRef.current, {
+            onMessage: (msg) => {
+              const evt = parseEvereeEvent(msg);
+              if (evt) handleEvereeEvent(evt);
+            },
+          })
+        : null;
+
     return () => {
       window.removeEventListener('message', onMessage);
+      bridge.unregister();
+      portChannel?.unregister();
     };
-  }, [open, parseEvereeEvent, handleEvereeEvent, teardownPort]);
+  }, [open, parseEvereeEvent, handleEvereeEvent, teardownPort, phase]);
 
   /**
    * On open: ensure Everee worker exists, then create a fresh ephemeral
@@ -283,7 +349,17 @@ const EvereePayrollSetupEmbed: React.FC<EvereePayrollSetupEmbedProps> = ({
           setPhase({ state: 'error', message: 'Everee did not return an embed URL.' });
           return;
         }
-        setPhase({ state: 'ready', embedUrl, sessionId });
+        const handlerNameFromServer =
+          typeof session.data?.eventHandlerName === 'string' &&
+          session.data.eventHandlerName.trim()
+            ? session.data.eventHandlerName.trim()
+            : EVEREE_DEFAULT_HOST_HANDLER_NAME;
+        setPhase({
+          state: 'ready',
+          embedUrl,
+          sessionId,
+          eventHandlerName: handlerNameFromServer,
+        });
       } catch (e: unknown) {
         if (cancelled) return;
         setPhase({

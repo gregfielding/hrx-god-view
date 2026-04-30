@@ -94,6 +94,16 @@ export function buildWorkerAssignmentsUrl(): string {
   return `${getWorkerWebBaseUrl()}/c1/workers/assignments`;
 }
 
+/**
+ * Worker payroll hub for a given Everee tenant id (multi-entity / multi–Everee-tenant).
+ * Example: …/c1/workers/payroll/3138
+ */
+export function buildWorkerPayrollEvereeTenantUrl(evereeTenantId: string): string {
+  const id = String(evereeTenantId || '').trim();
+  if (!id) return '';
+  return `${getWorkerWebBaseUrl()}/c1/workers/payroll/${encodeURIComponent(id)}`;
+}
+
 export function buildWorkerAssignmentUrl(assignmentId?: string): string {
   if (assignmentId) {
     return `${getWorkerWebBaseUrl()}/c1/workers/assignments/${assignmentId}`;

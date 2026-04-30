@@ -19,8 +19,12 @@ import {
   CircularProgress,
   Divider,
   Drawer,
+  FormControl,
   Grid,
   IconButton,
+  InputLabel,
+  MenuItem,
+  Select,
   Stack,
   TextField,
   Tooltip,
@@ -220,14 +224,20 @@ interface ShiftPlacementsDrawerProps {
   jobOrderId: string | null;
   shift: ShiftSummary | null;
   onClose: () => void;
+  /**
+   * When true (e.g. Add shift from /shifts), show a job-order picker first;
+   * after the user continues, load placements for that JO with no shift locked.
+   */
+  pickJobOrderFirst?: boolean;
 }
 
 const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
   open,
   tenantId,
-  jobOrderId,
+  jobOrderId: propJobOrderId,
   shift,
   onClose,
+  pickJobOrderFirst = false,
 }) => {
   const [jobOrder, setJobOrder] = useState<JobOrder | null>(null);
   const [loading, setLoading] = useState(false);
@@ -260,6 +270,75 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
   const [togglingMute, setTogglingMute] = useState(false);
   const [muteError, setMuteError] = useState<string | null>(null);
 
+  const [pickedJobOrderId, setPickedJobOrderId] = useState<string | null>(null);
+  const [pickerJobOrders, setPickerJobOrders] = useState<
+    Array<{
+      id: string;
+      companyName: string;
+      jobTitle: string;
+      jobType?: 'gig' | 'career';
+      jobOrderNumber: string;
+    }>
+  >([]);
+  const [pickerLoading, setPickerLoading] = useState(false);
+  const [pickerError, setPickerError] = useState<string | null>(null);
+  const [pickerSelectValue, setPickerSelectValue] = useState('');
+
+  const resolvedJobOrderId = pickJobOrderFirst ? pickedJobOrderId : propJobOrderId;
+
+  useEffect(() => {
+    if (!open) {
+      setPickedJobOrderId(null);
+      setPickerSelectValue('');
+      setPickerError(null);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !pickJobOrderFirst || !tenantId || pickedJobOrderId) return;
+    let cancelled = false;
+    setPickerLoading(true);
+    setPickerError(null);
+    void (async () => {
+      try {
+        const q = query(
+          collection(db, p.jobOrders(tenantId)),
+          orderBy('updatedAt', 'desc'),
+          fsLimit(400),
+        );
+        const snap = await getDocs(q);
+        if (cancelled) return;
+        const rows = snap.docs
+          .map((d) => {
+            const data = d.data() as Record<string, unknown>;
+            const status = String(data.status ?? '');
+            if (status === 'cancelled' || status === 'completed') return null;
+            const jt = data.jobType;
+            const jobType: 'gig' | 'career' | undefined =
+              jt === 'gig' ? 'gig' : jt === 'career' ? 'career' : undefined;
+            return {
+              id: d.id,
+              companyName: String(data.companyName ?? '').trim() || '—',
+              jobTitle: String(data.jobTitle ?? '').trim() || '—',
+              jobType,
+              jobOrderNumber: String(data.jobOrderNumber ?? data.jobOrderSeq ?? '').trim() || '—',
+            };
+          })
+          .filter((r): r is NonNullable<typeof r> => r != null);
+        setPickerJobOrders(rows);
+      } catch (e) {
+        if (!cancelled) {
+          setPickerError(e instanceof Error ? e.message : 'Failed to load job orders');
+        }
+      } finally {
+        if (!cancelled) setPickerLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, pickJobOrderFirst, tenantId, pickedJobOrderId]);
+
   // Reset the active tab whenever the drawer opens against a new
   // shift. We key on `shift?.id` (not `open`) so toggling the same
   // shift open/closed preserves the tab the recruiter was on.
@@ -277,7 +356,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
   // load eagerly — the assignments tab is the default and doesn't
   // need the full doc.
   useEffect(() => {
-    if (!open || !tenantId || !jobOrderId || !shift?.id) return;
+    if (!open || !tenantId || !resolvedJobOrderId || !shift?.id) return;
     if (activeTab !== 'settings') return;
     if (shiftDoc && shiftDoc.id === shift.id && shiftDocReloadKey === 0) return;
     let cancelled = false;
@@ -290,7 +369,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
           'tenants',
           tenantId,
           'job_orders',
-          jobOrderId,
+          resolvedJobOrderId,
           'shifts',
           shift.id,
         );
@@ -318,7 +397,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
   }, [
     open,
     tenantId,
-    jobOrderId,
+    resolvedJobOrderId,
     shift?.id,
     activeTab,
     shiftDocReloadKey,
@@ -332,9 +411,9 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
   // mutating the JO without us having to wire a Firestore subscription
   // into the drawer.
   const refreshJobOrder = useCallback(async (): Promise<void> => {
-    if (!tenantId || !jobOrderId) return;
+    if (!tenantId || !resolvedJobOrderId) return;
     try {
-      const snap = await getDoc(doc(db, p.jobOrder(tenantId, jobOrderId)));
+      const snap = await getDoc(doc(db, p.jobOrder(tenantId, resolvedJobOrderId)));
       if (!snap.exists()) {
         setError('Job order no longer exists.');
         setJobOrder(null);
@@ -348,13 +427,13 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
       console.error('Failed to refresh job order for shift drawer:', err);
       setError(err instanceof Error ? err.message : 'Failed to refresh job order');
     }
-  }, [tenantId, jobOrderId]);
+  }, [tenantId, resolvedJobOrderId]);
 
   // Load the JO doc whenever a new (tenant, jobOrderId) pair opens.
   // PlacementsTab wants a fully populated JobOrder, not an empty shell —
   // empty would crash several `jobOrder.requiredCertifications` etc. lookups.
   useEffect(() => {
-    if (!open || !tenantId || !jobOrderId) {
+    if (!open || !tenantId || !resolvedJobOrderId) {
       setJobOrder(null);
       setError(null);
       return;
@@ -364,7 +443,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
     setError(null);
     (async () => {
       try {
-        const snap = await getDoc(doc(db, p.jobOrder(tenantId, jobOrderId)));
+        const snap = await getDoc(doc(db, p.jobOrder(tenantId, resolvedJobOrderId)));
         if (cancelled) return;
         if (!snap.exists()) {
           setError('Job order no longer exists.');
@@ -383,24 +462,24 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [open, tenantId, jobOrderId]);
+  }, [open, tenantId, resolvedJobOrderId]);
 
   const handleOpenJobOrder = () => {
-    if (!jobOrderId) return;
+    if (!resolvedJobOrderId) return;
     // Open the full JO in a new browser tab so the recruiter keeps the
     // shift drawer + Shifts table context where they were. We don't
     // close the drawer because they're explicitly going to a separate
     // tab; closing would lose their place in the table on return.
-    window.open(`/jobs/job-orders/${jobOrderId}`, '_blank', 'noopener,noreferrer');
+    window.open(`/jobs/job-orders/${resolvedJobOrderId}`, '_blank', 'noopener,noreferrer');
   };
 
   const handleToggleMute = async () => {
-    if (!tenantId || !jobOrderId) return;
+    if (!tenantId || !resolvedJobOrderId) return;
     setTogglingMute(true);
     setMuteError(null);
     try {
       const next = !placementNotificationsMuted;
-      await updateDoc(doc(db, 'tenants', tenantId, 'job_orders', jobOrderId), {
+      await updateDoc(doc(db, 'tenants', tenantId, 'job_orders', resolvedJobOrderId), {
         muted: next,
         updatedAt: serverTimestamp(),
       });
@@ -430,22 +509,90 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
         },
       }}
     >
-      {/* Header: top row holds the section overline + action buttons,
-          and the strip below mirrors the first few cells of the
-          /shifts table (company avatar, worksite, PO#, date+time, job)
-          so a recruiter never loses context of which shift they're
-          inside. Visual hierarchy: overline → strip → divider → tabs. */}
-      <Box
-        sx={{
-          px: 2.5,
-          pt: 1.5,
-          pb: 1.25,
-          display: 'flex',
-          alignItems: 'flex-start',
-          justifyContent: 'space-between',
-          gap: 2,
-        }}
-      >
+      {pickJobOrderFirst && !pickedJobOrderId ? (
+        <Box
+          sx={{
+            p: 3,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+            flex: 1,
+            minHeight: 0,
+          }}
+        >
+          <Stack direction="row" alignItems="center" justifyContent="space-between">
+            <Typography variant="h6">Add shift</Typography>
+            <IconButton onClick={onClose} size="small" title="Close">
+              <CloseIcon fontSize="small" />
+            </IconButton>
+          </Stack>
+          {pickerError && (
+            <Alert severity="error" onClose={() => setPickerError(null)}>
+              {pickerError}
+            </Alert>
+          )}
+          {pickerLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
+              <CircularProgress />
+            </Box>
+          ) : (
+            <>
+              <FormControl fullWidth>
+                <InputLabel id="add-shift-jo-label">Job order</InputLabel>
+                <Select
+                  labelId="add-shift-jo-label"
+                  label="Job order"
+                  value={pickerSelectValue}
+                  onChange={(e) => setPickerSelectValue(String(e.target.value))}
+                >
+                  {pickerJobOrders.map((jo) => (
+                    <MenuItem key={jo.id} value={jo.id}>
+                      <Box>
+                        <Typography variant="body2" component="div">
+                          {jo.companyName} ·{' '}
+                          {jo.jobType === 'gig'
+                            ? 'Gig'
+                            : jo.jobType === 'career'
+                              ? 'Career'
+                              : '—'}{' '}
+                          · {jo.jobTitle}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" component="div">
+                          JO #{jo.jobOrderNumber}
+                        </Typography>
+                      </Box>
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <Button
+                variant="contained"
+                disabled={!pickerSelectValue}
+                onClick={() => setPickedJobOrderId(pickerSelectValue)}
+              >
+                Continue
+              </Button>
+            </>
+          )}
+        </Box>
+      ) : (
+        <>
+          {/* Header: top row holds the section overline + action buttons,
+              and the strip below mirrors the first few cells of the
+              /shifts table (company avatar, worksite, PO#, date+time, job)
+              so a recruiter never loses context of which shift they're
+              inside. Visual hierarchy: overline → strip → divider → tabs. */}
+          <Box
+            sx={{
+              px: 2.5,
+              pt: 1.5,
+              pb: 1.25,
+              display: 'flex',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: 2,
+            }}
+          >
         <Stack
           direction="row"
           spacing={1.25}
@@ -484,7 +631,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
             )}
         </Stack>
         <Stack direction="row" spacing={0.5}>
-          {jobOrderId && (
+          {resolvedJobOrderId && (
             <IconButton
               onClick={handleOpenJobOrder}
               size="small"
@@ -744,7 +891,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
             {error}
           </Alert>
         )}
-        {!loading && !error && jobOrder && tenantId && jobOrderId && (
+        {!loading && !error && jobOrder && tenantId && resolvedJobOrderId && (
           <>
             {/* Assignments tab — keep PlacementsTab mounted (display:none
                 when inactive) so dragging workers between the pool and
@@ -759,7 +906,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
             >
               <PlacementsTab
                 tenantId={tenantId}
-                jobOrderId={jobOrderId}
+                jobOrderId={resolvedJobOrderId}
                 jobOrder={jobOrder}
                 connectedJobPostIds={[]}
                 hiringEntityName={null}
@@ -769,24 +916,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
             </Box>
             {activeTab === 'settings' && (
               <Box sx={{ px: 2.5, py: 2 }}>
-                {shiftDocLoading && (
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      justifyContent: 'center',
-                      alignItems: 'center',
-                      py: 6,
-                    }}
-                  >
-                    <CircularProgress />
-                  </Box>
-                )}
-                {!shiftDocLoading && shiftDocError && (
-                  <Alert severity="error" sx={{ mb: 2 }}>
-                    {shiftDocError}
-                  </Alert>
-                )}
-                {!shiftDocLoading && !shiftDocError && shiftDoc && (
+                {!shift?.id && tenantId ? (
                   <>
                     {settingsSaveMessage && (
                       <Alert
@@ -799,19 +929,63 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
                     )}
                     <EditShiftForm
                       tenantId={tenantId}
-                      jobOrderId={jobOrderId}
+                      jobOrderId={resolvedJobOrderId}
                       jobOrder={jobOrder}
-                      shift={shiftDoc}
+                      shift={null}
                       onSaved={(message) => {
                         setSettingsSaveMessage(message);
-                        // Reload the shift doc so the form re-hydrates
-                        // with whatever the server now has (including
-                        // any deleteField() pruning we just performed).
-                        setShiftDocReloadKey((n) => n + 1);
                       }}
                       onCancel={onClose}
-                      submitLabel="Update Shift"
+                      submitLabel="Add Shift"
                     />
+                  </>
+                ) : (
+                  <>
+                    {shiftDocLoading && (
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                          py: 6,
+                        }}
+                      >
+                        <CircularProgress />
+                      </Box>
+                    )}
+                    {!shiftDocLoading && shiftDocError && (
+                      <Alert severity="error" sx={{ mb: 2 }}>
+                        {shiftDocError}
+                      </Alert>
+                    )}
+                    {!shiftDocLoading && !shiftDocError && shiftDoc && (
+                      <>
+                        {settingsSaveMessage && (
+                          <Alert
+                            severity="success"
+                            sx={{ mb: 2 }}
+                            onClose={() => setSettingsSaveMessage(null)}
+                          >
+                            {settingsSaveMessage}
+                          </Alert>
+                        )}
+                        <EditShiftForm
+                          tenantId={tenantId}
+                          jobOrderId={resolvedJobOrderId}
+                          jobOrder={jobOrder}
+                          shift={shiftDoc}
+                          onSaved={(message) => {
+                            setSettingsSaveMessage(message);
+                            // Reload the shift doc so the form re-hydrates
+                            // with whatever the server now has (including
+                            // any deleteField() pruning we just performed).
+                            setShiftDocReloadKey((n) => n + 1);
+                          }}
+                          onCancel={onClose}
+                          submitLabel="Update Shift"
+                        />
+                      </>
+                    )}
                   </>
                 )}
               </Box>
@@ -836,14 +1010,14 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
             )}
             {activeTab === 'promotion' && (
               <Box sx={{ px: 2.5, py: 2.5 }}>
-                {!jobOrder || !tenantId || !jobOrderId ? (
+                {!jobOrder || !tenantId || !resolvedJobOrderId ? (
                   <Alert severity="info">Loading job order…</Alert>
                 ) : (
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                    <PostingUrlsCard tenantId={tenantId} jobOrderId={jobOrderId} />
+                    <PostingUrlsCard tenantId={tenantId} jobOrderId={resolvedJobOrderId} />
                     <JobOrderAutoMessagingTab
                       tenantId={tenantId}
-                      jobOrderId={jobOrderId}
+                      jobOrderId={resolvedJobOrderId}
                       jobOrder={jobOrder}
                       onJobOrderUpdated={() => {
                         void refreshJobOrder();
@@ -856,6 +1030,8 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
           </>
         )}
       </Box>
+        </>
+      )}
     </Drawer>
   );
 };

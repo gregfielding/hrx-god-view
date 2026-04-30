@@ -30,7 +30,14 @@ import {
   buildReadinessResponseWritePatch,
 } from '../../../utils/workerReadinessWriteModel';
 import { resolveWorkerPreferences } from '../../../utils/workerPreferencesCanonical';
+import { isWorkAuthCollectionDisabled } from '../../../utils/workAuthCollectionFlag';
 import type { HomeReadinessLaunchStep } from '../../../components/worker/home/types';
+
+// W.3 — when work-auth collection is disabled (default), the narrative
+// step is skipped entirely. We capture the flag at render time so a single
+// constant flows through every guard below; live-flipping the env in dev
+// requires a remount, which mirrors the rest of the worker app's flag UX.
+const WORK_AUTH_NARRATIVE_DISABLED = isWorkAuthCollectionDisabled();
 
 type ScheduleIntentOption = 'full_time' | 'part_time' | 'gig';
 const ALL_SCHEDULE_OPTIONS: ScheduleIntentOption[] = ['full_time', 'part_time', 'gig'];
@@ -242,10 +249,14 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
 
   const includesHospitality = targetIndustries.includes('hospitality');
   const includesIndustrial = targetIndustries.includes('industrial');
+  // W.3 — when collection is disabled, the work-auth narrative step never
+  // renders; treat it as auto-complete so `narrativeStepsAllComplete`
+  // (the unblocking gate downstream) advances regardless. Flag flip-off
+  // restores the original gate.
   const showReadinessContent = intentReady
     && profilePhotoStepCompleted
     && resumeStepCompleted
-    && workAuthorizationStepCompleted
+    && (WORK_AUTH_NARRATIVE_DISABLED || workAuthorizationStepCompleted)
     && certificationsStepCompleted
     && skillsStepCompleted;
 
@@ -315,6 +326,22 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
     }
 
     if (normalizedLaunchStep === 'work_authorization') {
+      // W.3 — when collection is disabled, a deep-link to the work-auth
+      // step is rerouted: pretend the step is complete and let the
+      // standard flow advance to the next pending step. Without this
+      // guard, the launch-step handler below would force the step open
+      // regardless of the flag.
+      if (WORK_AUTH_NARRATIVE_DISABLED) {
+        setShowProfilePhotoStep(false);
+        setProfilePhotoStepCompleted(true);
+        setShowResumeStep(false);
+        setResumeStepCompleted(true);
+        setShowEducationStep(false);
+        setEducationStepCompleted(true);
+        setShowWorkAuthorizationStep(false);
+        setWorkAuthorizationStepCompleted(true);
+        return;
+      }
       setShowProfilePhotoStep(false);
       setProfilePhotoStepCompleted(true);
       setShowResumeStep(false);
@@ -395,6 +422,15 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
   const startPostResumeSequence = useCallback(() => {
     if (postResumeToEducationTimerRef.current) window.clearTimeout(postResumeToEducationTimerRef.current);
     postResumeToEducationTimerRef.current = window.setTimeout(() => {
+      // W.3 — skip work-auth and immediately advance to the next pending
+      // step (certifications). Treating the step as completed lets the
+      // sibling effect at line ~546 hand off without flickering the
+      // work-auth card.
+      if (WORK_AUTH_NARRATIVE_DISABLED) {
+        setShowWorkAuthorizationStep(false);
+        setWorkAuthorizationStepCompleted(true);
+        return;
+      }
       setShowWorkAuthorizationStep(true);
       setWorkAuthorizationStepCompleted(false);
     }, 250);
@@ -544,6 +580,14 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
       return;
     }
     if (!workAuthorizationStepCompleted) {
+      // W.3 — flip the step to completed without rendering it. The
+      // surrounding cascade (`certificationsStepCompleted` etc.) picks
+      // up the next pending step on the next render.
+      if (WORK_AUTH_NARRATIVE_DISABLED) {
+        setShowWorkAuthorizationStep(false);
+        setWorkAuthorizationStepCompleted(true);
+        return;
+      }
       setShowResumeStep(false);
       setShowWorkAuthorizationStep(true);
       setShowCertificationsStep(false);
@@ -1205,7 +1249,10 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
           </Fade>
         )}
 
-        {showWorkAuthorizationStep && (
+        {/* W.3 — narrative work-auth step is suppressed when collection */}
+        {/* is disabled (default). The flag-off rollback path keeps the */}
+        {/* full card behavior intact. */}
+        {showWorkAuthorizationStep && !WORK_AUTH_NARRATIVE_DISABLED && (
           <Fade in timeout={280}>
             <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
               <CardContent>

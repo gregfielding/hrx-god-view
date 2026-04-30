@@ -2,10 +2,12 @@
  * Derives per-entity operational signals from `entity_employments` docs + assignments bucket.
  * Uses the same query results as `useUserProfileEntityEmploymentChips` — no extra reads.
  */
-import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import type { EmploymentAssignmentSummary, EmploymentEntityKey } from '../../pages/UserProfile/components/employment-v2/employmentV2Types';
 import type { EntityOnboardingSectionStatus } from '../../pages/UserProfile/components/employment-v2/employmentV2Types';
-import { displayEntityLabelForOnboardingChip } from '../userListEntityEmploymentStatus';
+import {
+  displayEntityLabelForOnboardingChip,
+  type EntityEmploymentDocSnap,
+} from '../userListEntityEmploymentStatus';
 
 export type EntityEmploymentActionSignal = {
   dedupeKey: string;
@@ -17,6 +19,15 @@ export type EntityEmploymentActionSignal = {
   i9Incomplete: boolean;
   everifyBucket: 'ok' | 'not_started' | 'pending' | 'action_required';
   assignments: EmploymentAssignmentSummary[];
+  /**
+   * Worker classification on this `entity_employments` row. Drives applicability
+   * gates downstream — e.g. the `i9_incomplete` Action Item is suppressed for
+   * `workerType === '1099'` because the canonical step matrix says contractors
+   * have no I-9 (`docs/CANONICAL_ONBOARDING_STEP_MATRIX.md` §5; mirrored on the
+   * server in `computeStepApplicability`). `null` when the field is absent;
+   * rules should treat null as "unknown — apply the W-2 default" to stay safe.
+   */
+  workerType: 'w2' | '1099' | null;
 };
 
 function isSectionIncomplete(s: string | null | undefined): boolean {
@@ -43,7 +54,7 @@ function everifyBucketFromDoc(d: Record<string, unknown>): EntityEmploymentActio
 }
 
 export function buildEntityEmploymentActionSignals(
-  snapDocs: QueryDocumentSnapshot<DocumentData>[],
+  snapDocs: EntityEmploymentDocSnap[],
   assignmentsByKey: Record<EmploymentEntityKey, EmploymentAssignmentSummary[]>,
 ): EntityEmploymentActionSignal[] {
   const byKey = (entityKeyRaw: string): EmploymentAssignmentSummary[] => {
@@ -70,8 +81,27 @@ export function buildEntityEmploymentActionSignals(
     const onboardingComplete = d.onboardingComplete === true;
     const manualI9 = d.i9SupportingDocumentsManualCompleteAt != null;
 
-    const i9Incomplete = !manualI9 && isSectionIncomplete(taxIdentity as string);
-    const payrollIncomplete = isSectionIncomplete(payroll as string);
+    // RA.2 — defense-in-depth fallback for the per-section status fields.
+    // The server-side mirror (`mirrorEvereeOnboardingCompleteToEmployments`)
+    // now writes `payrollStatus: 'complete'` + `taxIdentityStatus: 'complete'`
+    // on Everee onboarding completion, but legacy `entity_employments` rows
+    // (and rows where the mirror failed mid-write — webhook 401s, etc.)
+    // can still have stale `payrollStatus` while carrying the lifecycle
+    // signals that say onboarding is done. Treat those signals as
+    // authoritative when the explicit per-section status is missing or
+    // not-complete: if Everee has reported completion (either via the
+    // `evereeOnboardingStatus === 'complete'` mirror write or the
+    // `payrollOnboardingCompletedAt` timestamp), the worker has already
+    // finished payroll setup and the chip / Action Item should clear.
+    // This closes Bug #2 in the action-items-readiness audit (RA.0).
+    const evereeReportedComplete =
+      String(d.evereeOnboardingStatus || '').trim().toLowerCase() === 'complete' ||
+      d.payrollOnboardingCompletedAt != null;
+
+    const i9Incomplete =
+      !manualI9 && !evereeReportedComplete && isSectionIncomplete(taxIdentity as string);
+    const payrollIncomplete =
+      !evereeReportedComplete && isSectionIncomplete(payroll as string);
 
     const onboardingIncomplete =
       !onboardingComplete &&
@@ -82,6 +112,15 @@ export function buildEntityEmploymentActionSignals(
 
     const ev = everifyBucketFromDoc(d);
 
+    // RA.1 — surface `workerType` so downstream rules can gate entity-specific
+    // applicability (e.g. 1099 contractors have no I-9; the rule layer skips
+    // emitting `i9_incomplete` based on this field). Falls back to `null` when
+    // the field is missing on the doc — rules treat null as "unknown" and
+    // apply the W-2 default.
+    const workerTypeRaw = String(d.workerType || '').trim().toLowerCase();
+    const workerType: 'w2' | '1099' | null =
+      workerTypeRaw === '1099' ? '1099' : workerTypeRaw === 'w2' ? 'w2' : null;
+
     out.push({
       dedupeKey,
       entityKey: entityKeyRaw,
@@ -91,6 +130,7 @@ export function buildEntityEmploymentActionSignals(
       i9Incomplete,
       everifyBucket: ev,
       assignments: byKey(entityKeyRaw),
+      workerType,
     });
   });
 

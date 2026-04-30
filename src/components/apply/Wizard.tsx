@@ -48,6 +48,7 @@ import {
   type JobOrderForEffectiveRead,
 } from '../../shared/jobOrder/getEffectiveJobOrderField';
 import WorkEligibilityStep from './steps/WorkEligibilityStep';
+import { isWorkAuthCollectionDisabled } from '../../utils/workAuthCollectionFlag';
 import ProfilePictureStep from './steps/ProfilePictureStep';
 import ResumeStep from './steps/ResumeStep';
 import SkillsStep from './steps/SkillsStep';
@@ -77,6 +78,7 @@ import { computeJobScoreSummaryV1 } from '../../utils/jobScoreV1';
 import { getUserScore } from '../../utils/scoreSummary';
 import { useT } from '../../i18n';
 import { buildCanonicalWorkerProfileWritePatch } from '../../utils/workerReadinessWriteModel';
+import { buildCanonicalHomeAddressFromWizardPersonal } from '../../utils/buildCanonicalHomeAddress';
 import { autoAddUserToApplyConfiguredGroups } from '../../utils/applyWizardGroupAutoAdd';
 import { isValidUsPhone10, normalizeUsPhoneDigits } from '../../utils/usPhoneValidation';
 import { normalizeLast4SsnDigits, isEmptyOrValidLast4Ssn } from '../../utils/last4Ssn';
@@ -423,10 +425,20 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       indices = indices.filter((i) => i !== 3);
     }
 
+    // W.3 — when the work-auth collection flag is on (default), step 4
+    // is auto-skipped for every entity, every user. The data is sourced
+    // from W.1's server-side mirror (Everee I-9 for W-2, federal
+    // contractor rule for 1099) so the wizard doesn't need to ask. The
+    // pre-W.3 conditional skip (C1 Events contractor + already-authorized)
+    // is preserved for the rollback path (flag off).
+    const workAuthCollectionDisabled = isWorkAuthCollectionDisabled();
     const workAuthComplete =
+      workAuthCollectionDisabled ||
       /C1 Events LLC/i.test(String(hiringEntityName || '')) ||
       Boolean(eligibility.workAuthorized ?? profile.workEligibility);
-    if (isAuthenticated && workAuthComplete) indices = indices.filter((i) => i !== 4);
+    if ((isAuthenticated || workAuthCollectionDisabled) && workAuthComplete) {
+      indices = indices.filter((i) => i !== 4);
+    }
 
     const hasProfilePhoto = Boolean(
       profilePicture.profilePicture || profile.workerProfile?.photoUrl || profile.avatar
@@ -1854,13 +1866,21 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           const update: any = { updatedAt: serverTimestamp() };
           const authorizedToWorkUS = typeof e.workAuthorized === 'boolean' ? !!e.workAuthorized : false;
           update.workEligibility = authorizedToWorkUS;
+          // W.3 — preserve existing EEO on the nested attestation (and the
+          // top-level mirror fields). When the EEO inputs aren't rendered
+          // (default) `e.gender`/`e.veteranStatus`/`e.disabilityStatus` are
+          // undefined, and the previous logic clobbered the existing values
+          // with `null`. Spread `prevAtt` first so missing form fields keep
+          // whatever was there before. W.6 owns the eventual full removal.
+          const prevAtt = (userProfile?.workEligibilityAttestation || {}) as Record<string, unknown>;
           update.workEligibilityAttestation = {
+            ...prevAtt,
             authorizedToWorkUS,
-            requireSponsorship: typeof e.requireSponsorship === 'boolean' ? !!e.requireSponsorship : null,
+            requireSponsorship: typeof e.requireSponsorship === 'boolean' ? !!e.requireSponsorship : (prevAtt.requireSponsorship ?? null),
             attestedAt: serverTimestamp(),
-            gender: e.gender ? String(e.gender) : null,
-            veteranStatus: e.veteranStatus ? String(e.veteranStatus) : null,
-            disabilityStatus: e.disabilityStatus ? String(e.disabilityStatus) : null,
+            ...(e.gender !== undefined ? { gender: e.gender ? String(e.gender) : null } : {}),
+            ...(e.veteranStatus !== undefined ? { veteranStatus: e.veteranStatus ? String(e.veteranStatus) : null } : {}),
+            ...(e.disabilityStatus !== undefined ? { disabilityStatus: e.disabilityStatus ? String(e.disabilityStatus) : null } : {}),
           };
           if (typeof e.requireSponsorship === 'boolean') update.requireSponsorship = !!e.requireSponsorship;
           if (e.gender !== undefined) update.gender = String(e.gender || '');
@@ -2358,9 +2378,23 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             profileUpdate.homeLng = Number(personal.homeLng);
           }
 
+          // Canonical structured `homeAddress` (new). Only written when the
+          // user actually selected a Google Place (placeId present); the
+          // wizard's `addressValid` gate prevents a non-Place submit, but the
+          // builder fails closed defensively. Downstream readers (Everee
+          // address preflight in `onApplicationCreatedPush`) key off this
+          // shape, while `addressInfo` / top-level fields stay populated for
+          // legacy readers (`extractEvereeHomeAddressFromUserDoc`,
+          // `MissingHomeAddressAlert`, etc.).
+          const canonicalHomeAddress = buildCanonicalHomeAddressFromWizardPersonal(personal);
+          if (canonicalHomeAddress) {
+            profileUpdate.homeAddress = canonicalHomeAddress;
+          }
+
           console.log('✅ Address data being saved:', {
             address: profileUpdate.address,
             addressInfo: profileUpdate.addressInfo,
+            homeAddress: profileUpdate.homeAddress,
             city: profileUpdate.city,
             state: profileUpdate.state,
             zipCode: profileUpdate.zipCode,
@@ -2390,14 +2424,20 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       const authorizedToWorkUS =
         isC1EventsContractor || (typeof eligibility.workAuthorized === 'boolean' ? !!eligibility.workAuthorized : false);
       profileUpdate.workEligibility = authorizedToWorkUS;
+      // W.3 — same preservation pattern as the per-step persist above.
+      // Spread `prevAtt` so EEO collected before the W.3 hide isn't
+      // clobbered with `null` on a wizard run that no longer renders the
+      // EEO inputs. W.6 owns the eventual full removal.
+      const prevAttApply = (userProfile?.workEligibilityAttestation || {}) as Record<string, unknown>;
       profileUpdate.workEligibilityAttestation = {
+        ...prevAttApply,
         authorizedToWorkUS,
-        requireSponsorship: eligibility.requireSponsorship ?? null,
+        requireSponsorship: eligibility.requireSponsorship ?? prevAttApply.requireSponsorship ?? null,
         attestedAt: serverTimestamp(),
         sourceApplicationId: tenantId && effectiveUid && jobId ? `${effectiveUid}_${jobId}` : null,
-        gender: eligibility.gender ? String(eligibility.gender) : null,
-        veteranStatus: eligibility.veteranStatus ? String(eligibility.veteranStatus) : null,
-        disabilityStatus: eligibility.disabilityStatus ? String(eligibility.disabilityStatus) : null,
+        ...(eligibility.gender !== undefined ? { gender: eligibility.gender ? String(eligibility.gender) : null } : {}),
+        ...(eligibility.veteranStatus !== undefined ? { veteranStatus: eligibility.veteranStatus ? String(eligibility.veteranStatus) : null } : {}),
+        ...(eligibility.disabilityStatus !== undefined ? { disabilityStatus: eligibility.disabilityStatus ? String(eligibility.disabilityStatus) : null } : {}),
       };
       if (eligibility.gender) profileUpdate.gender = String(eligibility.gender);
       if (eligibility.veteranStatus)
@@ -2703,6 +2743,14 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             nowIso: new Date().toISOString(),
           });
 
+          // Mirror the canonical `homeAddress` write onto the application doc
+          // so the trigger (`onApplicationCreatedPush`) and any downstream
+          // analytics never need to load the user doc separately. Same shape
+          // as `users/{uid}.homeAddress`. Falls back to undefined (no field
+          // written) when the wizard somehow let through an incomplete
+          // address — `addressValid` should make this unreachable.
+          const applicationHomeAddress = buildCanonicalHomeAddressFromWizardPersonal(personal);
+
           await setDoc(
             tRef,
             {
@@ -2727,6 +2775,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                       ? normalizeUsPhoneDigits(String(userProfile?.phone || userProfile?.phoneE164 || ''))
                       : null,
               },
+              // Denormalized hiring-entity id so triggers don't need a JO
+              // round-trip. The hiringEntityId resolved here is the same
+              // value `onApplicationCreatedPush` would walk the JO for.
+              hiringEntityId: posting?.hiringEntityId ?? null,
+              ...(applicationHomeAddress ? { homeAddress: applicationHomeAddress } : {}),
               ...(jobScoreSummaryPayload ? { jobScoreSummary: jobScoreSummaryPayload } : {}),
               // Store shift information for gig jobs
               ...(selectedShifts.length === 1 ? { shiftId: selectedShifts[0] } : {}),
@@ -3214,7 +3267,17 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     );
   })();
 
-  // Address validation (step 1) - coordinates required and must be valid numbers (coerce to string for Chromebook/persisted state)
+  // Address validation (step 1).
+  //
+  // Hard rule: the user MUST select an address from Google Places (placeId
+  // present). Free-typed addresses are no longer accepted — `AddressStep`
+  // strips structured fields on raw typing and shows the inline "select from
+  // dropdown" error. Wizard-side gate enforces the same constraint so deep
+  // links / restored drafts can't bypass it.
+  //
+  // We deliberately keep the full structural check (street/city/state/zip +
+  // numeric lat/lng) so partial Place results (international Places without
+  // postal_code, for example) still fail closed.
   const addressValid = (() => {
     const personal = formData?.personal || {};
     const street = (
@@ -3231,19 +3294,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     ).trim();
     const homeLat = personal.homeLat;
     const homeLng = personal.homeLng;
-    const placeId = personal.placeId;
+    const placeId = (
+      typeof personal.placeId === 'string' ? personal.placeId : String(personal.placeId ?? '')
+    ).trim();
 
-    // All address fields must be present
-    if (!street || !city || !state || !zip) {
-      return false;
-    }
-
-    // Coordinates must be present and valid numbers
-    if (homeLat === undefined || homeLng === undefined) {
-      return false;
-    }
-
-    // Coordinates must be valid numbers within valid ranges
+    if (!placeId) return false;
+    if (!street || !city || !state || !zip) return false;
+    if (homeLat === undefined || homeLng === undefined) return false;
     if (
       typeof homeLat !== 'number' ||
       typeof homeLng !== 'number' ||
@@ -3256,11 +3313,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     ) {
       return false;
     }
-
-    // Address must be verified by Google (either has placeId or coordinates were successfully geocoded)
-    // If placeId exists, it means it was selected from Google Autocomplete
-    // If no placeId but coordinates exist, it means it was geocoded via the geocodeAddress function
-    // Both are acceptable verification methods
     return true;
   })();
 

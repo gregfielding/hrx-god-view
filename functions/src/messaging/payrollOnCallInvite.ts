@@ -3,6 +3,7 @@
  */
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
+import { buildWorkerPayrollEvereeTenantUrl } from '../utils/workerUrls';
 import { markLifecycleEventIfFirst } from './lifecycleDedupe';
 import { sendPayrollOnboardingInviteWithAutomationFallback } from './payrollInviteAutomation';
 import { writeOnboardingAutomationDispatchLog } from './onboardingAutomationDispatchLog';
@@ -20,6 +21,181 @@ const V = 'v1';
 
 export function payrollOnCallInviteCorrelationKey(tenantId: string, userId: string, entityKey: string): string {
   return `payroll_onboarding_invite_on_call__${V}__${tenantId}__${userId}__${entityKey}`;
+}
+
+/** Dedupe key after Everee worker provisioning — distinct from the legacy on-call invite key (often skipped when no payroll URL). */
+export function payrollEvereePostProvisionCorrelationKey(
+  tenantId: string,
+  userId: string,
+  entityKey: string,
+): string {
+  return `payroll_onboarding_invite_everee_postprovision__${V}__${tenantId}__${userId}__${entityKey}`;
+}
+
+/**
+ * Fire `payroll_onboarding_invite_needed` with HRX payroll URLs once Everee worker create succeeds.
+ * Uses {@link sendPayrollOnboardingInviteWithAutomationFallback} (same as assignment-confirmed slice).
+ */
+export async function runEvereePayrollOnboardingInviteAfterOnCallProvision(args: {
+  tenantId: string;
+  userId: string;
+  hiringEntityId: string;
+  entityName: string;
+  entityKey: string;
+  pipelineId: string;
+  evereeTenantId: string;
+  firstName: string;
+  workerType: 'w2' | '1099';
+}): Promise<void> {
+  const {
+    tenantId,
+    userId,
+    hiringEntityId,
+    entityName,
+    entityKey,
+    pipelineId,
+    evereeTenantId,
+    firstName,
+    workerType,
+  } = args;
+
+  const payrollUrl = buildWorkerPayrollEvereeTenantUrl(evereeTenantId);
+  if (!payrollUrl) {
+    logger.warn('runEvereePayrollOnboardingInviteAfterOnCallProvision: empty payroll URL', {
+      tenantId,
+      evereeTenantId,
+    });
+    return;
+  }
+
+  const ck = payrollEvereePostProvisionCorrelationKey(tenantId, userId, entityKey);
+  const first = await markLifecycleEventIfFirst({
+    tenantId,
+    dedupeKey: ck,
+    eventType: 'payroll_onboarding_invite_needed',
+    context: {
+      userId,
+      hiringEntityId,
+      source: 'on_call_everee_provisioned',
+      evereeTenantId,
+      pipelineId,
+    },
+  });
+  if (!first) {
+    logger.info('Everee post-provision payroll invite skipped: dedupe', { tenantId, userId, entityKey });
+    return;
+  }
+
+  const payrollDocId = `${userId}__${entityKey}`;
+  const payrollSnap = await db.doc(`tenants/${tenantId}/worker_payroll_accounts/${payrollDocId}`).get();
+  if (shouldSkipAutomatedPayrollInvite(payrollSnap.exists ? payrollSnap.data() : undefined)) {
+    await writeOnboardingAutomationDispatchLog({
+      tenantId,
+      eventType: 'payroll_onboarding_invite_needed',
+      correlationKey: ck,
+      assignmentId: '',
+      userId,
+      outcome: 'skipped',
+      skipReason: 'payroll_already_satisfied_or_invite_pending',
+      hiringEntityId,
+      payrollProvider: 'everee',
+      details: { source: 'on_call_everee_provisioned', workerPayrollAccountId: payrollDocId },
+    });
+    return;
+  }
+
+  const fn = String(firstName || '').trim() || 'there';
+  const contextLabel = 'your on-call employment';
+  const messageText = `Hi ${fn}, complete your payroll onboarding for ${entityName} for ${contextLabel}: ${payrollUrl}`;
+  const emailSubject = `Payroll onboarding — ${entityName}`;
+
+  try {
+    const result = await sendPayrollOnboardingInviteWithAutomationFallback({
+      tenantId,
+      userId,
+      firstName: fn,
+      hiringEntityId,
+      entityName,
+      onboardingUrl: payrollUrl,
+      signupUrl: payrollUrl,
+      portalLoginUrl: '',
+      provider: 'everee',
+      assignmentId: '',
+      jobTitle: '',
+      messageText,
+      emailSubject,
+      correlationKey: ck,
+      payrollDocId,
+      sendSource: 'on_call_everee_provisioned',
+      sendSourceId: pipelineId,
+      dispatchSource: 'on_call_everee_provisioned',
+    });
+
+    const succeededChannels = (result.deliveryResults || [])
+      .filter((r) => r.success && (r.channel === 'sms' || r.channel === 'email' || r.channel === 'push'))
+      .map((r) => r.channel) as ('sms' | 'email' | 'push')[];
+
+    const anyDelivered = succeededChannels.length > 0;
+
+    if (anyDelivered) {
+      await syncWorkerPayrollAccountAfterInviteSend({
+        tenantId,
+        payrollDocId,
+        userId,
+        hiringEntityId,
+        entityKey,
+        entityName,
+        payrollProviderRaw: 'everee',
+        payrollModeRaw: 'integrated',
+        workerType,
+        outcome: {
+          anyChannelSucceeded: true,
+          succeededChannels,
+          messageTypeId: 'payroll_onboarding_invite_needed',
+          correlationKey: ck,
+          dispatchSource: 'on_call_everee_provisioned',
+        },
+      });
+    }
+
+    await writeOnboardingAutomationDispatchLog({
+      tenantId,
+      eventType: 'payroll_onboarding_invite_needed',
+      correlationKey: ck,
+      assignmentId: '',
+      userId,
+      outcome: result.success ? 'sent' : 'failed',
+      messageTypeId: 'payroll_onboarding_invite_needed',
+      messageLogId: result.messageLogId,
+      hiringEntityId,
+      payrollProvider: 'everee',
+      skipReason: result.success ? undefined : result.routingDecision?.reason || 'sendMessage_not_successful',
+      details: {
+        source: 'on_call_everee_provisioned',
+        channels: result.routingDecision?.channels,
+        deliverySuccesses: succeededChannels,
+      },
+    });
+  } catch (e: unknown) {
+    logger.error('runEvereePayrollOnboardingInviteAfterOnCallProvision failed', {
+      tenantId,
+      userId,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    await writeOnboardingAutomationDispatchLog({
+      tenantId,
+      eventType: 'payroll_onboarding_invite_needed',
+      correlationKey: ck,
+      assignmentId: '',
+      userId,
+      outcome: 'failed',
+      messageTypeId: 'payroll_onboarding_invite_needed',
+      hiringEntityId,
+      payrollProvider: 'everee',
+      skipReason: e instanceof Error ? e.message : 'sendMessage_threw',
+      details: { source: 'on_call_everee_provisioned' },
+    });
+  }
 }
 
 export async function runPayrollOnboardingInviteForOnCallEmployment(args: {

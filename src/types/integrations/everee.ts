@@ -57,13 +57,32 @@ export type EvereeEmbedSessionStatus =
   | 'completed'
   | 'expired';
 
+/**
+ * Everee Embed Components — see developer.everee.com/docs/everee-embed.
+ * `ONBOARDING` is the new-hire flow; `WORKER_HOME` is the post-onboarding hub
+ * with sub-experiences (`PAYMENT_HISTORY`, `TAX_DOCUMENTS`, `PAYMENT_DEPOSIT`,
+ * `HOME_ADDRESS`) selectable inside that experience.
+ *
+ * The legacy `PAY_CARD` value pre-dates the public Embed Components catalogue;
+ * keep it for backward compatibility with older Firestore docs but don't pass
+ * it to new sessions.
+ */
+export type EvereeEmbedExperienceType =
+  | 'ONBOARDING'
+  | 'WORKER_HOME'
+  | 'PAYMENT_HISTORY'
+  | 'TAX_DOCUMENTS'
+  | 'PAYMENT_DEPOSIT'
+  | 'HOME_ADDRESS'
+  | 'PAY_CARD';
+
 export interface EvereeEmbedSession {
   tenantId: string;
   entityId: string;
   userId: string;
   evereeWorkerId: string;
   evereeTenantId: string;
-  experienceType: 'ONBOARDING' | 'PAY_CARD';
+  experienceType: EvereeEmbedExperienceType;
   experienceVersion?: string;
   status: EvereeEmbedSessionStatus;
   urlCreatedAt?: string;

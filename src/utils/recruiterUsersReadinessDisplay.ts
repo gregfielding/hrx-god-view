@@ -25,6 +25,15 @@ import {
 import { mapExternalOnboardingStepToPathStatus, parseExternalOnboardingSteps } from './externalOnboardingSteps';
 import type { ExternalOnboardingStepRecord } from '../types/externalOnboardingSteps';
 import { accusourceScreeningLineItems } from './accusourceScreeningLineItems';
+import {
+  mirror1099Line,
+  mirrorDirectDepositLine,
+  mirrorHandbookLine,
+  mirrorI9Line,
+  mirrorPoliciesLine,
+  mirrorTinLine,
+  mirrorW4Line,
+} from './recruiterUsersReadinessChipMirrorLines';
 export type ReadinessOperationalKind = 'ready' | 'needs_action' | 'blocked' | 'incomplete';
 
 export type RecruiterUserReadinessLike = {
@@ -375,21 +384,36 @@ function getReadinessBreakdownRowsFromEmployment(
   const overview = buildChecklistOverview(ctx);
   const raw = overview.workerOnboarding?.externalOnboardingSteps;
   const steps = parseExternalOnboardingSteps(raw) ?? {};
+  // RD.2 — Everee snapshot for this (worker × entity), populated by
+  // `useRecruiterUsersEntityEmploymentChips` from
+  // `tenants/{tid}/everee_workers/{entityId}__{userId}.readinessMirror`.
+  // When present, it wins for every Everee-owned chip line. Work auth +
+  // E-Verify stay HRX-sourced regardless.
+  const mirror = ctx.evereeReadinessMirror ?? null;
 
   const directDeposit = buildDirectDepositItem(overview);
-  const directDepositLine = checklistItemToTableLine('Direct deposit', directDeposit, steps.direct_deposit ?? null);
+  const directDepositLine = mirror
+    ? mirrorDirectDepositLine(mirror)
+    : checklistItemToTableLine('Direct deposit', directDeposit, steps.direct_deposit ?? null);
 
   const workAuthLine = formatWorkAuthTableLine(user);
 
   const { i9, w4OrW9 } = buildTaxIdentityChecklistItems(overview);
-  const i9Line = checklistItemToTableLine('I-9', i9, steps.i9_employee_section ?? null);
+  const i9Line = mirror
+    ? mirrorI9Line(mirror)
+    : checklistItemToTableLine('I-9', i9, steps.i9_employee_section ?? null);
 
   const taxKey = overview.workerType === '1099' ? 'contractor_tax_form_w9' : 'tax_withholding_forms';
   const taxRec = steps[taxKey] ?? null;
 
   let w4Line: string;
   let form1099Line: string;
-  if (overview.workerType === '1099') {
+  if (mirror) {
+    // Mirror's applicability flags are authoritative — they reflect
+    // Everee's `employmentType` rather than HRX's worker-type override.
+    w4Line = mirrorW4Line(mirror);
+    form1099Line = mirror1099Line(mirror);
+  } else if (overview.workerType === '1099') {
     w4Line = 'W-4: N/A';
     form1099Line = checklistItemToTableLine('1099', w4OrW9, taxRec);
   } else {
@@ -400,19 +424,35 @@ function getReadinessBreakdownRowsFromEmployment(
   const everifyLine = formatEverifyTableLineEmployment(ctx, user);
 
   const { handbook, policies } = buildHandbookPoliciesItems(overview);
-  const handbookLine = checklistItemToTableLine('Handbook', handbook, steps.handbook_acknowledgment ?? null);
-  const policiesLine = checklistItemToTableLine('Policies', policies, steps.policies_acknowledgment ?? null);
+  const handbookLine = mirror
+    ? mirrorHandbookLine(mirror)
+    : checklistItemToTableLine('Handbook', handbook, steps.handbook_acknowledgment ?? null);
+  const policiesLine = mirror
+    ? mirrorPoliciesLine(mirror)
+    : checklistItemToTableLine('Policies', policies, steps.policies_acknowledgment ?? null);
 
-  return [
+  const rows: ReadinessBreakdownRow[] = [
     { key: 'direct_deposit', text: directDepositLine },
     { key: 'work_auth', text: workAuthLine },
     { key: 'i9', text: i9Line },
     { key: 'w4', text: w4Line },
     { key: 'tax_1099', text: form1099Line },
+  ];
+
+  // RD.2 — TIN/SSN row inserted between W-4/1099 and E-Verify. Only
+  // shown when the Everee mirror is present; tenants without an Everee
+  // snapshot keep the legacy 8-row layout (no regression).
+  if (mirror) {
+    rows.push({ key: 'tin', text: mirrorTinLine(mirror) });
+  }
+
+  rows.push(
     { key: 'everify', text: everifyLine },
     { key: 'handbook', text: handbookLine },
     { key: 'policies', text: policiesLine },
-  ];
+  );
+
+  return rows;
 }
 
 function getReadinessBreakdownRowsLegacy(

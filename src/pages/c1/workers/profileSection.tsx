@@ -35,6 +35,7 @@ import WorkerSkillsEditor from '../../../components/worker/profile/WorkerSkillsE
 import { buildReadinessIntentWritePatch } from '../../../utils/workerReadinessWriteModel';
 import { resolveWorkerPreferences } from '../../../utils/workerPreferencesCanonical';
 import { openUserResumeInNewTab, pickResumeFromUserDoc } from '../../../utils/userResumeOpen';
+import { isWorkAuthCollectionDisabled } from '../../../utils/workAuthCollectionFlag';
 
 type SectionKey =
   | 'personal-details'
@@ -136,6 +137,16 @@ const WorkerProfileSection: React.FC = () => {
   const uid = user?.uid;
   const normalizedSection = section === 'settings' ? 'app-language' : section;
   const activeSection = (normalizedSection || 'personal-details') as SectionKey;
+  // W.3 — when collection is disabled, the work-authorization deep link
+  // is rerouted back to the profile hub instead of rendering the editor.
+  // Worker app's own routing keeps the route registered (no 404), so an
+  // old bookmark or push notification just lands on the hub.
+  const workAuthCollectionDisabled = isWorkAuthCollectionDisabled();
+  useEffect(() => {
+    if (workAuthCollectionDisabled && activeSection === 'work-authorization') {
+      navigate('/c1/workers/profile', { replace: true });
+    }
+  }, [activeSection, navigate, workAuthCollectionDisabled]);
 
   const [userDoc, setUserDoc] = useState<Record<string, unknown> | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
@@ -261,26 +272,30 @@ const WorkerProfileSection: React.FC = () => {
   const persistWorkEligibility = useCallback(
     async (value: typeof workEligibilityValue) => {
       if (!uid) return;
-      const attestation = {
+      // W.3 — preserve existing EEO on the nested attestation. The
+      // collection editor no longer renders EEO inputs (they're hidden
+      // by Greg's 2026-04-29 decision in `WorkEligibilityStep`), so a
+      // naive overwrite would null out historical values. W.6 owns
+      // the eventual full removal.
+      const prevAtt = (userDoc?.workEligibilityAttestation || {}) as Record<string, unknown>;
+      const attestation: Record<string, unknown> = {
+        ...prevAtt,
         authorizedToWorkUS: !!value.workAuthorized,
         requireSponsorship: !!value.requireSponsorship,
         attestedAt: serverTimestamp(),
-        gender: value.gender || null,
-        veteranStatus: value.veteranStatus || null,
-        disabilityStatus: value.disabilityStatus || null,
+        ...(value.gender !== undefined && value.gender !== '' ? { gender: value.gender } : {}),
+        ...(value.veteranStatus !== undefined && value.veteranStatus !== '' ? { veteranStatus: value.veteranStatus } : {}),
+        ...(value.disabilityStatus !== undefined && value.disabilityStatus !== '' ? { disabilityStatus: value.disabilityStatus } : {}),
       };
       const workEligibility = deriveWorkEligibilityFromAttestation(attestation as never);
       await updateDoc(doc(db, 'users', uid), {
         workEligibilityAttestation: attestation,
         workEligibility,
         requireSponsorship: !!value.requireSponsorship,
-        gender: value.gender || null,
-        veteranStatus: value.veteranStatus || null,
-        disabilityStatus: value.disabilityStatus || null,
         updatedAt: serverTimestamp(),
       });
     },
-    [uid]
+    [uid, userDoc]
   );
 
   const saveLanguages = async (languagesToSave = selectedLanguages) => {
@@ -484,7 +499,7 @@ const WorkerProfileSection: React.FC = () => {
           />
         )}
 
-        {activeSection === 'work-authorization' && (
+        {activeSection === 'work-authorization' && !workAuthCollectionDisabled && (
           <WorkEligibilityStep
             value={workEligibilityLocal}
             onChange={(nextValue) => {

@@ -4,6 +4,7 @@
  */
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { logger } from 'firebase-functions/v2';
 import {
   createWorkerIfNeeded,
   createOnboardingSession,
@@ -12,8 +13,42 @@ import {
   pushShift,
   preparePayout,
   ping,
+  type EvereeEmbedExperienceType,
 } from './evereeService';
+import { mirrorWorkEligibilityFromAuthoritativeSource } from '../../utils/workEligibilityMirror';
+
+const ALLOWED_EMBED_EXPERIENCE_TYPES = new Set<EvereeEmbedExperienceType>([
+  'ONBOARDING',
+  'WORKER_HOME',
+  'PAYMENT_HISTORY',
+  'TAX_DOCUMENTS',
+  'PAYMENT_DEPOSIT',
+  'HOME_ADDRESS',
+]);
+
+function coerceEmbedExperienceType(value: unknown): EvereeEmbedExperienceType | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim().toUpperCase();
+  if (!trimmed) return undefined;
+  if (ALLOWED_EMBED_EXPERIENCE_TYPES.has(trimmed as EvereeEmbedExperienceType)) {
+    return trimmed as EvereeEmbedExperienceType;
+  }
+  throw new HttpsError('invalid-argument', `Unsupported experienceType: ${value}`);
+}
+
+function coerceEmbedExperienceVersion(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  // Everee versions are short (e.g., V1_0, V2_0); reject anything obviously wrong.
+  if (!/^V\d+(_\d+)?$/i.test(trimmed)) {
+    throw new HttpsError('invalid-argument', `Unsupported experienceVersion: ${value}`);
+  }
+  return trimmed.toUpperCase();
+}
 import { requireEvereeEnabledEntity } from './evereeConfig';
+import { evereeRequest } from './evereeHttp';
+import * as admin from 'firebase-admin';
 
 function requireAuth(request: { auth?: { uid: string; token?: Record<string, unknown> } | null }) {
   if (!request.auth?.uid) {
@@ -32,7 +67,18 @@ function requireTenantEntity(data: unknown): { tenantId: string; entityId: strin
   return { tenantId, entityId };
 }
 
-function canManageEveree(auth: { token?: { roles?: Record<string, { role?: string }>; hrx?: boolean } } | null | undefined, tenantId: string): boolean {
+/**
+ * Recruiter/admin gate for Everee management surfaces.
+ *
+ * Exported so sibling Everee callables in this directory (EE.5 recovery,
+ * future admin tools) reuse the same predicate instead of duplicating
+ * the role-check logic — keeps Everee permissions centralized in one
+ * place per the Master Plan.
+ */
+export function canManageEveree(
+  auth: { token?: { roles?: Record<string, { role?: string }>; hrx?: boolean } } | null | undefined,
+  tenantId: string,
+): boolean {
   if (!auth?.token) return false;
   const roles = auth.token.roles ?? {};
   const tenantRole = roles[tenantId]?.role;
@@ -70,7 +116,7 @@ export const evereePing = onCall(async (request) => {
 });
 
 export const evereeEnsureWorker = onCall(async (request) => {
-  const auth = requireAuth(request);
+  requireAuth(request);
   const d = request.data as Record<string, unknown> | null;
   const tenantId = typeof d?.tenantId === 'string' ? d.tenantId : '';
   const entityId = typeof d?.entityId === 'string' ? d.entityId : '';
@@ -82,16 +128,28 @@ export const evereeEnsureWorker = onCall(async (request) => {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
   await requireEvereeEnabledEntity(tenantId, entityId);
+  // `firebaseUid` is forwarded to Everee as the partner-side external id (custom
+  // field). Use the *worker's* uid (== user doc id), not the caller's, so a
+  // recruiter-initiated sync still tags the worker correctly in Everee.
+  const approvalGroupRaw = d?.approvalGroupId;
+  const approvalGroupId =
+    typeof approvalGroupRaw === 'number' && Number.isFinite(approvalGroupRaw)
+      ? approvalGroupRaw
+      : typeof approvalGroupRaw === 'string' && /^\d+$/.test(approvalGroupRaw.trim())
+        ? parseInt(approvalGroupRaw.trim(), 10)
+        : undefined;
+
   return createWorkerIfNeeded({
     tenantId,
     entityId,
     userId,
-    firebaseUid: auth.uid,
+    firebaseUid: userId,
     workerType: (d?.workerType as 'employee' | 'contractor') || 'employee',
     email: typeof d?.email === 'string' ? d.email : undefined,
     firstName: typeof d?.firstName === 'string' ? d.firstName : undefined,
     lastName: typeof d?.lastName === 'string' ? d.lastName : undefined,
     phone: typeof d?.phone === 'string' ? d.phone : undefined,
+    ...(approvalGroupId !== undefined ? { approvalGroupId } : {}),
   });
 });
 
@@ -109,13 +167,35 @@ export const evereeCreateOnboardingSession = onCall(async (request) => {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
   await requireEvereeEnabledEntity(tenantId, entityId);
-  return createOnboardingSession({
-    tenantId,
-    entityId,
-    userId,
-    evereeWorkerId,
-    returnUrl: typeof d?.returnUrl === 'string' ? d.returnUrl : undefined,
-  });
+  const experienceType = coerceEmbedExperienceType(d?.experienceType);
+  const experienceVersion = coerceEmbedExperienceVersion(d?.experienceVersion);
+  try {
+    const session = await createOnboardingSession({
+      tenantId,
+      entityId,
+      userId,
+      evereeWorkerId,
+      returnUrl: typeof d?.returnUrl === 'string' ? d.returnUrl : undefined,
+      ...(experienceType ? { experienceType } : {}),
+      ...(experienceVersion ? { experienceVersion } : {}),
+    });
+    return {
+      ...session,
+      embedUrl: session.url,
+      expiresAt: new Date(Date.now() + session.expiresInMs).toISOString(),
+    };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    logger.error('[evereeCreateOnboardingSession] failed', {
+      tenantId,
+      entityId,
+      userId,
+      message: msg,
+    });
+    const safe =
+      msg.length > 480 ? `${msg.slice(0, 480)}…` : msg || 'Could not create Everee embed session';
+    throw new HttpsError('failed-precondition', safe);
+  }
 });
 
 export const evereeGetPayHistory = onCall(async (request) => {
@@ -172,4 +252,778 @@ export const evereeAdminPreparePayout = onCall(async (request) => {
   await requireEvereeEnabledEntity(tenantId, entityId);
   const payload = (request.data as Record<string, unknown>) ?? {};
   return preparePayout(tenantId, entityId, payload as Parameters<typeof preparePayout>[2]);
+});
+
+/**
+ * Admin-only "fetch the worker straight from Everee" debug helper. Wraps
+ * `GET /api/v2/workers/<id>` and returns the raw response so the operator can
+ * eyeball address / direct deposit / W-4 / tax data that lives only in Everee
+ * (we never persist that PII in Firestore by design).
+ *
+ * Failure modes are surfaced verbatim — Everee endpoint 404s ("path not
+ * found") look the same as auth errors otherwise, so we let the underlying
+ * `Error` message bubble through `failed-precondition` to make it obvious
+ * when we need to point at `/api/v2/embedded/workers/{id}` instead.
+ */
+/**
+ * Worker-callable: ask Everee whether onboarding is finished for the worker
+ * tied to the given Everee tenant. Used by `/c1/workers/payroll/{tid}` as a
+ * server-side preflight so we can request the right Embed Component
+ * (`ONBOARDING` vs `WORKER_HOME`) without depending on signals that often
+ * aren't available — webhooks may be queued behind a signature rotation, and
+ * Everee's iframe posts EMB-201 over `host MessagePort` / `webkit.messageHandlers`,
+ * neither of which exists in a browser tab.
+ *
+ * Returns ONLY status flags, never PII. The full record is exposed via
+ * `evereeAdminGetWorker` for admin debugging.
+ *
+ * On positive detection we mirror `status: 'onboarding_complete'` onto
+ * `tenants/{tid}/everee_workers/{entityId__userId}` (UX-only field) so the
+ * next page load can short-circuit without re-hitting Everee.
+ */
+export const evereeGetMyOnboardingStatus = onCall(async (request) => {
+  requireAuth(request);
+  const d = request.data as Record<string, unknown> | null;
+  const tenantId = typeof d?.tenantId === 'string' ? d.tenantId : '';
+  const entityId = typeof d?.entityId === 'string' ? d.entityId : '';
+  const evereeWorkerId = typeof d?.evereeWorkerId === 'string' ? d.evereeWorkerId : '';
+  const targetUserId = typeof d?.userId === 'string' ? d.userId : request.auth?.uid ?? '';
+  if (!tenantId || !entityId || !evereeWorkerId) {
+    throw new HttpsError('invalid-argument', 'tenantId, entityId, evereeWorkerId required');
+  }
+  if (!canSelfOrManageEveree(request.auth as any, tenantId, targetUserId)) {
+    throw new HttpsError('permission-denied', 'Not allowed');
+  }
+  const config = await requireEvereeEnabledEntity(tenantId, entityId);
+
+  let raw: Record<string, unknown> = {};
+  try {
+    raw = (await evereeRequest<Record<string, unknown>>(
+      config,
+      'GET',
+      `/api/v2/workers/${encodeURIComponent(evereeWorkerId)}`,
+    )) ?? {};
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    logger.warn('[evereeGetMyOnboardingStatus] api_call_failed', {
+      tenantId,
+      entityId,
+      evereeWorkerId,
+      message: msg,
+    });
+    // Soft-fail: caller treats `null` as "couldn't determine" and falls back
+    // to its existing client-side detection. We don't surface PII or expose
+    // raw API errors to the worker UI.
+    return {
+      ok: false as const,
+      onboardingComplete: null as boolean | null,
+      accountClaimed: null as boolean | null,
+      reason: 'everee_api_call_failed' as const,
+    };
+  }
+
+  const detail = inspectEvereeOnboardingState(raw);
+  const onboardingComplete = detail.complete;
+  const accountClaimed = pickBoolean(raw, [
+    'accountClaimed',
+    'isAccountClaimed',
+    ['account', 'claimed'],
+    ['onboarding', 'accountClaimed'],
+  ]);
+
+  if (onboardingComplete) {
+    try {
+      const linkRef = admin
+        .firestore()
+        .doc(`tenants/${tenantId}/everee_workers/${entityId}__${targetUserId}`);
+      await linkRef.set(
+        {
+          status: 'onboarding_complete',
+          // Distinct timestamp from `onboardingCompletedAt` (webhook-set) so we
+          // can tell mirrored-from-API vs canonical webhook events apart.
+          apiObservedOnboardingCompleteAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    } catch (e: unknown) {
+      logger.warn('[evereeGetMyOnboardingStatus] mirror_write_failed', {
+        tenantId,
+        entityId,
+        evereeWorkerId,
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
+    // Flip the entity_employments lifecycle so the Work Readiness chip turns
+    // green for this entity (idempotent; never reverses terminal statuses).
+    await mirrorEvereeOnboardingCompleteToEmployments({
+      tenantId,
+      entityId,
+      userId: targetUserId,
+    });
+  } else {
+    // Inverse: Everee API authoritatively says the worker is **not** done.
+    // Clear stale UX-only completion stamps that may have been written from a
+    // false-positive iframe message — those would otherwise keep the client
+    // requesting `WORKER_HOME` (→ EMB-202 loop). We **never** touch
+    // `status` / `onboardingCompletedAt` here; those belong to the webhook
+    // and we don't want to clobber a real completion that the API momentarily
+    // failed to surface.
+    try {
+      const linkRef = admin
+        .firestore()
+        .doc(`tenants/${tenantId}/everee_workers/${entityId}__${targetUserId}`);
+      const snap = await linkRef.get();
+      const data = (snap.exists ? snap.data() : null) as
+        | { clientObservedOnboardingCompleteAt?: unknown; apiObservedOnboardingCompleteAt?: unknown }
+        | null;
+      if (
+        data &&
+        (data.clientObservedOnboardingCompleteAt || data.apiObservedOnboardingCompleteAt)
+      ) {
+        await linkRef.set(
+          {
+            clientObservedOnboardingCompleteAt: admin.firestore.FieldValue.delete(),
+            clientObservedOnboardingCompleteReason: admin.firestore.FieldValue.delete(),
+            apiObservedOnboardingCompleteAt: admin.firestore.FieldValue.delete(),
+            preflightClearedStaleStampsAt: admin.firestore.FieldValue.serverTimestamp(),
+            preflightClearedStaleStampsReason: 'everee_api_says_not_complete',
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+        logger.info('[evereeGetMyOnboardingStatus] cleared_stale_completion_stamps', {
+          tenantId,
+          entityId,
+          evereeWorkerId,
+        });
+      }
+    } catch (e: unknown) {
+      logger.warn('[evereeGetMyOnboardingStatus] stale_clear_failed', {
+        tenantId,
+        entityId,
+        evereeWorkerId,
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  return {
+    ok: true as const,
+    onboardingComplete,
+    accountClaimed,
+    // EE.4 — raw Everee signals so the client can enforce the same
+    // unanimity rule (`onboardingComplete && onboardingStatus ===
+    // 'COMPLETE'`) before requesting `WORKER_HOME`. Treats the server
+    // matcher as a hint, not as the deciding factor — defense in depth.
+    onboardingStatus: detail.onboardingStatus,
+    onboardingCompleteSignal: detail.onboardingCompleteBool,
+  };
+});
+
+/**
+ * Strict detection of "is this Everee worker done with onboarding?" given
+ * the raw `GET /api/v2/workers/{id}` response.
+ *
+ * EE.4 — historically this matcher accepted `status` / `workerStatus` ∈
+ * `{ACTIVE, DONE, COMPLETE, …}` as evidence of onboarding completion.
+ * That conflated two orthogonal Everee fields:
+ *   - `lifecycleStatus` / `status` describes the **employment** (ACTIVE,
+ *     TERMINATED, INACTIVE) — workers mid-onboarding can be ACTIVE.
+ *   - `onboardingStatus` describes the **onboarding flow** (IN_PROGRESS,
+ *     COMPLETE) — this is the actual signal we need.
+ * The conflation produced false positives that:
+ *   1) Mirrored `status: 'onboarding_complete'` to the link doc
+ *      (`apiObservedOnboardingCompleteAt`) — locking in the deadlock.
+ *   2) Made the next preflight request `WORKER_HOME` from Everee, which
+ *      Everee correctly rejected with EMB-202 because onboarding wasn't
+ *      actually finished. The bridge protocol break (EMB-102) meant the
+ *      iframe's EMB-202 toast never reached our client recovery handler,
+ *      so the deadlock never self-healed.
+ *
+ * Rule now: only count Everee onboarding as complete when BOTH of these
+ * hold (when present); when only one is present, that signal must be
+ * unambiguous on its own:
+ *   - `onboardingComplete === true` (the dedicated boolean), OR
+ *   - `onboardingStatus`/`onboarding.status` ∈ `{COMPLETE, COMPLETED,
+ *     ONBOARDING_COMPLETE}` (the dedicated string).
+ *
+ * If `onboardingComplete: true` AND `onboardingStatus: 'COMPLETE'` are
+ * both present, both must agree. If they disagree, return false (safer
+ * to under-report than to over-report — over-reporting deadlocks the
+ * worker; under-reporting just costs a session retry).
+ *
+ * Lifecycle/employment status (`status`, `workerStatus`,
+ * `account.status`) is **never** accepted as evidence here.
+ */
+function isEvereeOnboardingComplete(raw: Record<string, unknown>): boolean {
+  const detail = inspectEvereeOnboardingState(raw);
+  return detail.complete;
+}
+
+/**
+ * EE.4 — surface the underlying signals so callers (the preflight
+ * callable, the client, and tests) can reason about *why* the matcher
+ * returned what it did, not just the boolean. Used by the worker-portal
+ * preflight to pass the raw `onboardingStatus` back to the client; the
+ * client uses it to enforce the same agreement rule before requesting
+ * `WORKER_HOME`.
+ */
+export function inspectEvereeOnboardingState(raw: Record<string, unknown>): {
+  complete: boolean;
+  /** Raw `onboardingStatus` as sent by Everee, uppercased; null when absent. */
+  onboardingStatus: string | null;
+  /** Raw `onboardingComplete` boolean as sent by Everee; null when absent. */
+  onboardingCompleteBool: boolean | null;
+} {
+  const onboardingCompleteBool = pickBoolean(raw, [
+    'onboardingComplete',
+    ['onboarding', 'complete'],
+    ['onboarding', 'isComplete'],
+  ]);
+  const statusRaw =
+    (typeof raw.onboardingStatus === 'string' && raw.onboardingStatus) ||
+    (typeof (raw.onboarding as Record<string, unknown> | undefined)?.status === 'string' &&
+      ((raw.onboarding as Record<string, unknown>).status as string)) ||
+    null;
+  const onboardingStatus = statusRaw ? statusRaw.trim().toUpperCase() : null;
+
+  const STATUS_COMPLETE = new Set(['COMPLETE', 'COMPLETED', 'ONBOARDING_COMPLETE']);
+  const statusSaysComplete = onboardingStatus !== null && STATUS_COMPLETE.has(onboardingStatus);
+
+  let complete: boolean;
+  if (onboardingCompleteBool !== null && onboardingStatus !== null) {
+    // Both signals present → require unanimity. Disagreement is a strong
+    // hint Everee is mid-state; safer to under-report and ask again.
+    complete = onboardingCompleteBool === true && statusSaysComplete;
+  } else if (onboardingCompleteBool !== null) {
+    complete = onboardingCompleteBool === true;
+  } else if (onboardingStatus !== null) {
+    complete = statusSaysComplete;
+  } else {
+    // Neither signal present — Everee API didn't tell us. Default to
+    // false so we ask for ONBOARDING and let the worker continue.
+    complete = false;
+  }
+
+  return { complete, onboardingStatus, onboardingCompleteBool };
+}
+
+function pickBoolean(
+  obj: Record<string, unknown>,
+  paths: Array<string | string[]>,
+): boolean | null {
+  for (const p of paths) {
+    const segments = Array.isArray(p) ? p : [p];
+    let cur: unknown = obj;
+    for (const seg of segments) {
+      if (cur && typeof cur === 'object' && seg in (cur as Record<string, unknown>)) {
+        cur = (cur as Record<string, unknown>)[seg];
+      } else {
+        cur = undefined;
+        break;
+      }
+    }
+    if (typeof cur === 'boolean') return cur;
+  }
+  return null;
+}
+
+/**
+ * Idempotently mirror Everee's "onboarding complete" signal to
+ * `tenants/{tenantId}/entity_employments` (and the related `user_employments`
+ * rows). This is what flips the Work Readiness chip for this entity from
+ * `Onboarding` (yellow) to `Active` (green) in recruiter tables and the
+ * record header.
+ *
+ * Driven from `evereeGetMyOnboardingStatus` (worker self-fetch) and
+ * `evereeAdminGetWorker` (recruiter Everee data card load) so the chip stays
+ * in sync regardless of which surface observes the completion first — this
+ * is the same end-state the `worker.onboarding-completed` webhook would
+ * reach, but Everee's webhook delivery is occasionally delayed in pilot, so
+ * we never want the UI to lag the live API.
+ *
+ * Strong terminal statuses (`terminated`, `inactive`, `blocked`) are
+ * preserved — completion never resurrects a closed employment.
+ */
+// Exported under a `__test__` prefix so the RA.2 unit tests can pin the
+// mirror's per-section status writes without forcing the helper into
+// callers' public API surface. Kept private from `index.ts` exports —
+// production code paths still call it via the file-local reference.
+export async function __test__mirrorEvereeOnboardingCompleteToEmployments(args: {
+  tenantId: string;
+  entityId: string;
+  userId: string;
+}): Promise<void> {
+  return mirrorEvereeOnboardingCompleteToEmployments(args);
+}
+
+async function mirrorEvereeOnboardingCompleteToEmployments(args: {
+  tenantId: string;
+  entityId: string;
+  userId: string;
+}): Promise<void> {
+  const { tenantId, entityId, userId } = args;
+  if (!tenantId || !entityId || !userId) return;
+
+  const db = admin.firestore();
+  const STRONG = new Set(['terminated', 'inactive', 'blocked']);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  try {
+    const entityEmpQuery = await db
+      .collection(`tenants/${tenantId}/entity_employments`)
+      .where('userId', '==', userId)
+      .where('entityId', '==', entityId)
+      .limit(2)
+      .get();
+
+    for (const docSnap of entityEmpQuery.docs) {
+      const data = docSnap.data() as Record<string, unknown>;
+      const statusNow = String(data.status || '').trim().toLowerCase();
+      // Skip mirror writes for strong/terminal lifecycle states — Everee
+      // completion can race a recruiter-driven termination; the stronger
+      // signal wins.
+      if (STRONG.has(statusNow)) continue;
+
+      const alreadyComplete =
+        data.onboardingComplete === true && data.active === true && statusNow === 'active';
+      const fragment: Record<string, unknown> = {
+        evereeOnboardingStatus: 'complete',
+        payrollOnboardingCompletedAt: data.payrollOnboardingCompletedAt ?? now,
+        updatedAt: now,
+      };
+      // RA.2 — flip the per-section status flags the client derives Action
+      // Items + Readiness chips from. Pre-RA.2 the mirror only set the
+      // lifecycle bits (`status`, `active`, `evereeOnboardingStatus`) and
+      // left `payrollStatus` / `taxIdentityStatus` at their stale wizard
+      // values, which is why workers who finished payroll onboarding in
+      // Everee kept seeing "Payroll or tax setup open — C1 Events" on the
+      // recruiter Action Items list (Bug #2 in the action-items-readiness
+      // audit). Everee's onboarding flow covers payroll setup (W-4 + bank
+      // for W-2, W-9 + bank for 1099) and tax identity (I-9 for W-2; W-9
+      // covers tax identity for 1099 — for 1099 the rule-layer suppresses
+      // `i9_incomplete` regardless via RA.1, so the title stays accurate).
+      // Idempotent: don't bump the timestamp if already `complete` so we
+      // don't fan out spurious `users.updatedAt` cascades on every preflight.
+      const payrollStatusNow = String(data.payrollStatus || '').trim().toLowerCase();
+      if (payrollStatusNow !== 'complete') {
+        fragment.payrollStatus = 'complete';
+      }
+      const taxIdentityStatusNow = String(data.taxIdentityStatus || '').trim().toLowerCase();
+      if (taxIdentityStatusNow !== 'complete') {
+        fragment.taxIdentityStatus = 'complete';
+      }
+      if (!alreadyComplete) {
+        fragment.onboardingComplete = true;
+        fragment.active = true;
+        fragment.status = 'active';
+        fragment.employmentState = 'active';
+        if (data.onboardingCompletedAt == null) fragment.onboardingCompletedAt = now;
+        if (data.hiredAt == null) fragment.hiredAt = now;
+      }
+      await docSnap.ref.set(fragment, { merge: true });
+    }
+  } catch (e: unknown) {
+    logger.warn('[mirrorEvereeOnboardingCompleteToEmployments] entity_employments_mirror_failed', {
+      tenantId,
+      entityId,
+      userId,
+      message: e instanceof Error ? e.message : String(e),
+    });
+  }
+
+  try {
+    const userEmpQuery = await db
+      .collection(`tenants/${tenantId}/user_employments`)
+      .where('userId', '==', userId)
+      .where('entityId', '==', entityId)
+      .limit(10)
+      .get();
+    for (const docSnap of userEmpQuery.docs) {
+      const data = docSnap.data() as Record<string, unknown>;
+      if (data.evereeOnboardingStatus === 'complete' && data.payrollOnboardingCompletedAt != null) {
+        continue;
+      }
+      await docSnap.ref.set(
+        {
+          payrollOnboardingCompletedAt: data.payrollOnboardingCompletedAt ?? now,
+          evereeOnboardingStatus: 'complete',
+          updatedAt: now,
+        },
+        { merge: true },
+      );
+    }
+  } catch (e: unknown) {
+    logger.warn('[mirrorEvereeOnboardingCompleteToEmployments] user_employments_mirror_failed', {
+      tenantId,
+      entityId,
+      userId,
+      message: e instanceof Error ? e.message : String(e),
+    });
+  }
+
+  // W.1 — work-eligibility mirror (W-2 / Everee I-9 path).
+  // Federal contractor rule (1099 = no I-9 required) is mirrored at on-call
+  // creation time in `runStartOnCallEmploymentFlow`, so this branch only
+  // fires for `workerType === 'employee'`. Reading the link doc is the
+  // canonical source for worker classification — the entity_employments
+  // schema uses HRX terminology (`w2`/`1099`), the Everee link doc uses
+  // Everee API terminology (`employee`/`contractor`), and we want the
+  // latter so the gate matches the I-9 collection that just succeeded.
+  // Non-blocking: helper logs internal failures and never throws.
+  try {
+    const linkSnap = await db
+      .doc(`tenants/${tenantId}/everee_workers/${entityId}__${userId}`)
+      .get();
+    const linkData = (linkSnap.exists ? linkSnap.data() : null) as
+      | { workerType?: 'employee' | 'contractor' }
+      | null;
+    const workerType = linkData?.workerType;
+    if (workerType === 'employee') {
+      await mirrorWorkEligibilityFromAuthoritativeSource({
+        userId,
+        source: 'everee_i9',
+        callerContext: 'mirrorEvereeOnboardingCompleteToEmployments',
+        tenantId,
+        entityId,
+      });
+    }
+  } catch (e: unknown) {
+    logger.warn('[mirrorEvereeOnboardingCompleteToEmployments] work_eligibility_mirror_failed', {
+      tenantId,
+      entityId,
+      userId,
+      message: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
+
+/**
+ * EE.4 — admin/CSA recovery callable. Clears the optimistic UX-only
+ * onboarding-completion stamps from `tenants/{t}/everee_workers/{eId__uId}`
+ * so a deadlocked worker can re-enter the ONBOARDING experience.
+ *
+ * What it clears (UX hints):
+ *   - `clientObservedOnboardingCompleteAt` + reason
+ *   - `apiObservedOnboardingCompleteAt`
+ *   - `status` field, only when its value is `onboarding_complete`
+ *     (set by the EE.4 server-side preflight). Canonical webhook
+ *     `status` values (e.g. `active`, `terminated`) are left alone.
+ *
+ * What it never touches (canonical):
+ *   - `onboardingCompletedAt` (webhook-owned)
+ *   - `lifecycleStatus`, `terminatedAt`, etc.
+ *
+ * Even with the EE.4 Layer 1+2 fixes, there is an existing population of
+ * mis-stamped workers (Greg's C1 Select test worker is one) — this
+ * callable is the permanent recovery tool. CSA can call it from the admin
+ * console; in the future it could be wired to a "Reset payroll session"
+ * button on the worker profile.
+ */
+export const evereeAdminClearStaleStamps = onCall(async (request) => {
+  requireAuth(request);
+  const d = request.data as Record<string, unknown> | null;
+  const tenantId = typeof d?.tenantId === 'string' ? d.tenantId : '';
+  const entityId = typeof d?.entityId === 'string' ? d.entityId : '';
+  const userId = typeof d?.userId === 'string' ? d.userId : '';
+  const reason = typeof d?.reason === 'string' && d.reason.trim() ? d.reason.trim() : 'admin_csa_clear';
+  if (!tenantId || !entityId || !userId) {
+    throw new HttpsError('invalid-argument', 'tenantId, entityId, userId required');
+  }
+  // Admin-only — the worker-self-clear path already exists implicitly
+  // via the preflight inverse-mirror (`evereeGetMyOnboardingStatus` →
+  // clears stale stamps when the API says not-complete). This callable
+  // is for cases where the preflight is unreachable or the stamp got
+  // there by some other means.
+  if (!canManageEveree(request.auth as any, tenantId)) {
+    throw new HttpsError(
+      'permission-denied',
+      'Not allowed to clear Everee onboarding stamps for this tenant',
+    );
+  }
+  const linkRef = admin
+    .firestore()
+    .doc(`tenants/${tenantId}/everee_workers/${entityId}__${userId}`);
+  let cleared: string[] = [];
+  try {
+    const snap = await linkRef.get();
+    const data = (snap.exists ? snap.data() : null) as
+      | {
+          clientObservedOnboardingCompleteAt?: unknown;
+          clientObservedOnboardingCompleteReason?: unknown;
+          apiObservedOnboardingCompleteAt?: unknown;
+          status?: unknown;
+        }
+      | null;
+    if (!data) {
+      return { ok: true as const, cleared: [], reason: 'link_doc_missing' as const };
+    }
+    const update: Record<string, unknown> = {
+      adminStampClearedAt: admin.firestore.FieldValue.serverTimestamp(),
+      adminStampClearedReason: reason,
+      adminStampClearedBy: request.auth?.uid ?? null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    if (data.clientObservedOnboardingCompleteAt) {
+      update.clientObservedOnboardingCompleteAt = admin.firestore.FieldValue.delete();
+      cleared.push('clientObservedOnboardingCompleteAt');
+    }
+    if (data.clientObservedOnboardingCompleteReason) {
+      update.clientObservedOnboardingCompleteReason = admin.firestore.FieldValue.delete();
+      cleared.push('clientObservedOnboardingCompleteReason');
+    }
+    if (data.apiObservedOnboardingCompleteAt) {
+      update.apiObservedOnboardingCompleteAt = admin.firestore.FieldValue.delete();
+      cleared.push('apiObservedOnboardingCompleteAt');
+    }
+    // Only clear `status` when it's the optimistic value we ourselves
+    // wrote in the preflight; never clobber webhook-owned values.
+    if (typeof data.status === 'string' && data.status === 'onboarding_complete') {
+      update.status = admin.firestore.FieldValue.delete();
+      cleared.push('status');
+    }
+    if (cleared.length === 0) {
+      return { ok: true as const, cleared: [], reason: 'nothing_to_clear' as const };
+    }
+    await linkRef.set(update, { merge: true });
+    logger.info('[evereeAdminClearStaleStamps] cleared', {
+      tenantId,
+      entityId,
+      userId,
+      cleared,
+      reason,
+      callerUid: request.auth?.uid ?? null,
+    });
+    return { ok: true as const, cleared, reason: reason as string };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    logger.error('[evereeAdminClearStaleStamps] failed', {
+      tenantId,
+      entityId,
+      userId,
+      message,
+    });
+    throw new HttpsError('internal', message || 'Failed to clear stamps');
+  }
+});
+
+export const evereeAdminGetWorker = onCall(async (request) => {
+  requireAuth(request);
+  const d = request.data as Record<string, unknown> | null;
+  const tenantId = typeof d?.tenantId === 'string' ? d.tenantId : '';
+  const entityId = typeof d?.entityId === 'string' ? d.entityId : '';
+  const evereeWorkerId = typeof d?.evereeWorkerId === 'string' ? d.evereeWorkerId : '';
+  // Subject-of-record. Defaults to caller (worker self-fetch); recruiters/admins
+  // may pass any uid. Keeps the gate a single comparison instead of duplicating
+  // the role check in every caller. The body of `userId` doesn't have to match
+  // the Everee worker's external_user_id — we only use it to widen the gate
+  // when the caller is the worker themselves.
+  const targetUserId = typeof d?.userId === 'string' ? d.userId : request.auth?.uid ?? '';
+  if (!tenantId || !entityId || !evereeWorkerId) {
+    throw new HttpsError('invalid-argument', 'tenantId, entityId, evereeWorkerId required');
+  }
+  if (!canSelfOrManageEveree(request.auth as any, tenantId, targetUserId)) {
+    throw new HttpsError('permission-denied', 'Not allowed');
+  }
+  const config = await requireEvereeEnabledEntity(tenantId, entityId);
+  try {
+    const response = await evereeRequest<unknown>(
+      config,
+      'GET',
+      `/api/v2/workers/${encodeURIComponent(evereeWorkerId)}`,
+    );
+    // When the live Everee record reports onboarding-complete, flip the
+    // matching `entity_employments` row so the Work Readiness chip turns
+    // green for this entity. Idempotent and best-effort; never blocks the
+    // response, never reverses terminal statuses (handled in the helper).
+    if (response && typeof response === 'object') {
+      const flat = response as Record<string, unknown>;
+      const candidate =
+        (flat.worker as Record<string, unknown> | undefined) ||
+        (flat.data as Record<string, unknown> | undefined) ||
+        flat;
+      if (isEvereeOnboardingComplete(candidate)) {
+        await mirrorEvereeOnboardingCompleteToEmployments({
+          tenantId,
+          entityId,
+          userId: targetUserId,
+        });
+      }
+    }
+    return { ok: true as const, evereeWorkerId, evereeTenantId: config.evereeTenantId, response };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    logger.error('[evereeAdminGetWorker] failed', {
+      tenantId,
+      entityId,
+      evereeWorkerId,
+      message: msg,
+    });
+    const safe =
+      msg.length > 480 ? `${msg.slice(0, 480)}…` : msg || 'Could not fetch worker from Everee';
+    throw new HttpsError('failed-precondition', safe);
+  }
+});
+
+/**
+ * Parse the HTTP status that `evereeRequest` embeds in its thrown Error
+ * message (shape: `Everee API GET /path: <status> <body>`). Used by the
+ * tax-form callables to distinguish "this worker isn't a contractor / W-2
+ * yet" (404 — render the section as not-applicable) from real upstream
+ * failures we want the panel to surface.
+ */
+function parseEvereeErrorStatus(message: string): number | null {
+  const match = /:\s*(\d{3})\b/.exec(message);
+  if (!match) return null;
+  const n = parseInt(match[1], 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Worker-signed file index (`GET /api/v2/workers/files`). Endpoint locked
+ * after pilot — single call, paginated by `size`. Default 100 covers the
+ * worst pilot scenario (full annual tax pack + onboarding + policies).
+ *
+ * Wrapper shape preserved for backward compat: callers continue to read
+ * `result.ok`. `attempts` always returns `[]` so legacy diagnostic UIs
+ * render the empty case until we delete those branches.
+ */
+export const evereeAdminGetWorkerDocuments = onCall(async (request) => {
+  requireAuth(request);
+  const d = request.data as Record<string, unknown> | null;
+  const tenantId = typeof d?.tenantId === 'string' ? d.tenantId : '';
+  const entityId = typeof d?.entityId === 'string' ? d.entityId : '';
+  const evereeWorkerId = typeof d?.evereeWorkerId === 'string' ? d.evereeWorkerId : '';
+  const targetUserId = typeof d?.userId === 'string' ? d.userId : request.auth?.uid ?? '';
+  if (!tenantId || !entityId || !evereeWorkerId) {
+    throw new HttpsError('invalid-argument', 'tenantId, entityId, evereeWorkerId required');
+  }
+  if (!canSelfOrManageEveree(request.auth as any, tenantId, targetUserId)) {
+    throw new HttpsError('permission-denied', 'Not allowed');
+  }
+  const config = await requireEvereeEnabledEntity(tenantId, entityId);
+
+  const path = `/api/v2/workers/files?worker-id=${encodeURIComponent(evereeWorkerId)}&size=100`;
+  try {
+    const response = await evereeRequest<Record<string, unknown>>(config, 'GET', path);
+    const items = Array.isArray(response?.items) ? (response.items as unknown[]) : [];
+    return {
+      ok: true as const,
+      evereeWorkerId,
+      evereeTenantId: config.evereeTenantId,
+      files: items,
+    };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    logger.warn('[evereeAdminGetWorkerDocuments] api_call_failed', {
+      tenantId,
+      entityId,
+      evereeWorkerId,
+      message: message.slice(0, 240),
+    });
+    return {
+      ok: false as const,
+      evereeWorkerId,
+      files: [] as unknown[],
+      error: message.slice(0, 240),
+    };
+  }
+});
+
+/**
+ * W-9 (contractor 1099) signed taxpayer-info pull. Returns the raw response
+ * so the panel can render whichever Everee field names happen to be
+ * authoritative this revision (we render defensively client-side). 404 ⇒
+ * worker is W-2 (no W-9 applicable) — return `{ applicable: false }` so the
+ * "Tax Forms" UI hides the W-9 card cleanly. Any other failure ⇒
+ * `{ applicable: true, error }` so the panel can surface an inline alert.
+ */
+export const evereeAdminGetWorkerW9 = onCall(async (request) => {
+  requireAuth(request);
+  const d = request.data as Record<string, unknown> | null;
+  const tenantId = typeof d?.tenantId === 'string' ? d.tenantId : '';
+  const entityId = typeof d?.entityId === 'string' ? d.entityId : '';
+  const evereeWorkerId = typeof d?.evereeWorkerId === 'string' ? d.evereeWorkerId : '';
+  const targetUserId = typeof d?.userId === 'string' ? d.userId : request.auth?.uid ?? '';
+  if (!tenantId || !entityId || !evereeWorkerId) {
+    throw new HttpsError('invalid-argument', 'tenantId, entityId, evereeWorkerId required');
+  }
+  if (!canSelfOrManageEveree(request.auth as any, tenantId, targetUserId)) {
+    throw new HttpsError('permission-denied', 'Not allowed');
+  }
+  const config = await requireEvereeEnabledEntity(tenantId, entityId);
+  try {
+    const response = await evereeRequest<unknown>(
+      config,
+      'GET',
+      `/api/v2/workers/${encodeURIComponent(evereeWorkerId)}/w9-info`,
+    );
+    return { ok: true as const, applicable: true as const, response };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    const status = parseEvereeErrorStatus(message);
+    if (status === 404) {
+      return { ok: false as const, applicable: false as const };
+    }
+    logger.warn('[evereeAdminGetWorkerW9] api_call_failed', {
+      tenantId,
+      entityId,
+      evereeWorkerId,
+      status,
+      message: message.slice(0, 240),
+    });
+    return {
+      ok: false as const,
+      applicable: true as const,
+      error: message.slice(0, 240),
+    };
+  }
+});
+
+/**
+ * W-4 (employee withholding) settings pull. Symmetric to W-9: 404 ⇒
+ * `{ applicable: false }` (worker is a contractor / W-2 not yet completed),
+ * other failures ⇒ `{ applicable: true, error }`.
+ */
+export const evereeAdminGetWorkerW4 = onCall(async (request) => {
+  requireAuth(request);
+  const d = request.data as Record<string, unknown> | null;
+  const tenantId = typeof d?.tenantId === 'string' ? d.tenantId : '';
+  const entityId = typeof d?.entityId === 'string' ? d.entityId : '';
+  const evereeWorkerId = typeof d?.evereeWorkerId === 'string' ? d.evereeWorkerId : '';
+  const targetUserId = typeof d?.userId === 'string' ? d.userId : request.auth?.uid ?? '';
+  if (!tenantId || !entityId || !evereeWorkerId) {
+    throw new HttpsError('invalid-argument', 'tenantId, entityId, evereeWorkerId required');
+  }
+  if (!canSelfOrManageEveree(request.auth as any, tenantId, targetUserId)) {
+    throw new HttpsError('permission-denied', 'Not allowed');
+  }
+  const config = await requireEvereeEnabledEntity(tenantId, entityId);
+  try {
+    const response = await evereeRequest<unknown>(
+      config,
+      'GET',
+      `/api/v2/workers/${encodeURIComponent(evereeWorkerId)}/w-4-tax-withholding-settings`,
+    );
+    return { ok: true as const, applicable: true as const, response };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    const status = parseEvereeErrorStatus(message);
+    if (status === 404) {
+      return { ok: false as const, applicable: false as const };
+    }
+    logger.warn('[evereeAdminGetWorkerW4] api_call_failed', {
+      tenantId,
+      entityId,
+      evereeWorkerId,
+      status,
+      message: message.slice(0, 240),
+    });
+    return {
+      ok: false as const,
+      applicable: true as const,
+      error: message.slice(0, 240),
+    };
+  }
 });

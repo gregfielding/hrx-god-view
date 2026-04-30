@@ -103,6 +103,7 @@ export function mapUserDataToRecruiterUser(userId: string, userData: any, tenant
     workerAttestations: userData.workerAttestations,
     resume: userData.resume ?? null,
     addedToIndeedFlex: userData.addedToIndeedFlex === true,
+    addedToFieldglass: userData.addedToFieldglass === true,
     eVerifyOrders: Array.isArray(userData.eVerifyOrders) ? userData.eVerifyOrders : undefined,
     backgroundCheckOrders: Array.isArray(userData.backgroundCheckOrders) ? userData.backgroundCheckOrders : undefined,
     riskProfile: userData.riskProfile ?? undefined,

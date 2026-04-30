@@ -3,38 +3,35 @@
  * Reads `providerServiceOrderStatus` + catalog; extended fields come from webhooks (see
  * `functions/.../accusourceWebhookServiceLine.ts`).
  */
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Box,
   Button,
   Chip,
+  Collapse,
   Dialog,
   DialogActions,
   DialogContent,
   DialogContentText,
   DialogTitle,
   Divider,
-  Drawer,
   IconButton,
   Menu,
   MenuItem,
   Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   TextField,
   Tooltip,
   Typography,
 } from '@mui/material';
-import CloseIcon from '@mui/icons-material/Close';
-import type { SystemStyleObject } from '@mui/system';
-import type { Theme } from '@mui/material/styles';
+import CancelIcon from '@mui/icons-material/Cancel';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import RestoreIcon from '@mui/icons-material/Restore';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { Timestamp } from 'firebase/firestore';
 import type {
   AccusourceLineVerdict,
@@ -43,7 +40,17 @@ import type {
 } from '../../../types/backgroundCheck';
 import type { AccusourceScreeningLineItem } from '../../../utils/accusourceScreeningLineItems';
 import { accusourceScreeningLineItems } from '../../../utils/accusourceScreeningLineItems';
-import { decisionChipColor } from '../../../utils/accusourceDecisionChip';
+import {
+  BAND_CHIP_COLOR,
+  BAND_DEFAULT_COLLAPSED,
+  BAND_LABEL,
+  BAND_ORDER,
+  cardHeaderSubBadge,
+  groupLinesByBand,
+  isAllPendingState,
+  isSyntheticOrderRow,
+  type AccusourceVerdictBand,
+} from '../../../utils/accusourceVerdictBands';
 
 function formatTs(value: unknown): string {
   if (value == null) return '—';
@@ -139,26 +146,24 @@ function statusChipColor(status: string): 'success' | 'primary' | 'warning' | 'd
   return 'default';
 }
 
-const ASSIGN_HINT =
-  'When AccuSource sends assignment / researcher name on the webhook, it appears here; otherwise manage in the vendor dashboard.';
-
-/** Keeps verdict + actions visible when the table is wider than the viewport (horizontal scroll). */
-function verdictColumnStickySx(theme: Theme): SystemStyleObject<Theme> {
-  return {
-    position: 'sticky',
-    right: 0,
-    zIndex: 3,
-    minWidth: 132,
-    bgcolor: theme.palette.background.paper,
-    boxShadow: '-8px 0 12px -8px rgba(0, 0, 0, 0.15)',
-  };
-}
-
-function verdictHeaderStickySx(theme: Theme): SystemStyleObject<Theme> {
-  return {
-    ...verdictColumnStickySx(theme),
-    zIndex: 4,
-  };
+/**
+ * AC.0a — Icon for a band header. Returns an MUI icon element with the
+ * band's color so the header reads at a glance.
+ */
+function bandHeaderIcon(band: AccusourceVerdictBand): React.ReactElement {
+  const color =
+    band === 'NEEDS_REVIEW'
+      ? 'warning'
+      : band === 'FAILED'
+        ? 'error'
+        : band === 'PASSED'
+          ? 'success'
+          : 'disabled';
+  if (band === 'NEEDS_REVIEW')
+    return <WarningAmberIcon fontSize="small" color={color} />;
+  if (band === 'FAILED') return <CancelIcon fontSize="small" color={color} />;
+  if (band === 'PASSED') return <CheckCircleIcon fontSize="small" color={color} />;
+  return <HourglassEmptyIcon fontSize="small" color={color} />;
 }
 
 export interface AccusourceOrderServiceLinesTableProps {
@@ -246,8 +251,73 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
   onSetAdjudication,
   adjudicationLoadingKey,
 }) => {
-  const lines = useMemo(() => accusourceScreeningLineItems(record), [record]);
+  // AC.0a — Optimistic local-overrides map keyed by line id. The parent
+  // (BackgroundsComplianceTab) currently does NOT re-fetch after
+  // setAccusourceLineAdjudication resolves (an aspirational comment in
+  // that file says "Firestore snapshot subscriptions keep the table in
+  // sync" but no such subscription is wired today). Without this map a
+  // CSA who clicks "Mark as Passed" sees the row stay in the Needs review
+  // band — which violates the AC.0a acceptance criterion ("row instantly
+  // moves to Passed band"). The map is purely presentation: it overrides
+  // `line.verdict` until the parent's `record` prop catches up. When the
+  // parent's data eventually carries the same verdict, we prune the
+  // override entry so we don't shadow a future legitimate revert.
+  const [localOverrides, setLocalOverrides] = useState<Record<string, AccusourceLineVerdict>>({});
+
+  const baseLines = useMemo(() => accusourceScreeningLineItems(record), [record]);
+
+  // Apply local overrides AND prune any entries the parent has now
+  // caught up to. Stable result reference unless the source data or the
+  // override map actually changes; safe to depend on in downstream memos.
+  const lines = useMemo<AccusourceScreeningLineItem[]>(() => {
+    if (Object.keys(localOverrides).length === 0) return baseLines;
+    return baseLines.map((line) => {
+      const optimistic = localOverrides[line.id];
+      if (optimistic == null) return line;
+      // If the underlying record already reflects the override, skip the
+      // local mutation — the prune effect below will clear the entry.
+      if (line.verdict === optimistic) return line;
+      return {
+        ...line,
+        verdict: optimistic,
+        verdictOverridden: true,
+      };
+    });
+  }, [baseLines, localOverrides]);
+
+  // Prune local overrides that the parent has caught up to. Runs after
+  // every render where `baseLines` changed. Out-of-band so it doesn't
+  // re-trigger the `lines` memo synchronously.
+  useEffect(() => {
+    setLocalOverrides((prev) => {
+      const keys = Object.keys(prev);
+      if (keys.length === 0) return prev;
+      let changed = false;
+      const next: Record<string, AccusourceLineVerdict> = {};
+      for (const key of keys) {
+        const line = baseLines.find((l) => l.id === key);
+        if (line && line.verdict === prev[key]) {
+          changed = true; // parent caught up — drop the local override
+          continue;
+        }
+        next[key] = prev[key];
+      }
+      return changed ? next : prev;
+    });
+  }, [baseLines]);
+
   const showCostColumn = useMemo(() => lines.some(lineHasPrice), [lines]);
+
+  // AC.0a — Group lines into the four verdict bands. Synthetic `order:*`
+  // rows that escaped the line builder's time-correlated dedup are
+  // filtered out here (presentation guard — no data writes).
+  const linesByBand = useMemo(() => groupLinesByBand(lines), [lines]);
+  const visibleLineCount = useMemo(
+    () => lines.filter((l) => !isSyntheticOrderRow(l)).length,
+    [lines],
+  );
+  const subBadge = useMemo(() => cardHeaderSubBadge(linesByBand), [linesByBand]);
+  const allPending = useMemo(() => isAllPendingState(linesByBand), [linesByBand]);
 
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [menuLineId, setMenuLineId] = useState<string | null>(null);
@@ -259,11 +329,34 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
   // also surfaces an error snackbar, but it lives inside another (often closed)
   // modal — so without this the dialog just sits there with no feedback.
   const [overrideError, setOverrideError] = useState<string | null>(null);
-  // Per-line detail drawer — opens when a line needs review but has no
-  // clickable report URL and the parent final PDF isn't ready yet. Shows
-  // every field AccuSource sent us so the recruiter has something to
-  // adjudicate against.
-  const [detailLine, setDetailLine] = useState<AccusourceScreeningLineItem | null>(null);
+
+  // AC.0a — Band collapse state + per-row inline expansion state. Bands
+  // start in their spec-mandated default (Pending + Passed collapsed,
+  // Needs review + Failed expanded) but the user can toggle either way.
+  // Row expansions are local-only — closing a band closes its rows by
+  // virtue of being unmounted (Collapse `unmountOnExit`).
+  const [collapsedBands, setCollapsedBands] = useState<Set<AccusourceVerdictBand>>(
+    () => new Set(BAND_DEFAULT_COLLAPSED),
+  );
+  const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(() => new Set());
+
+  const toggleBand = (band: AccusourceVerdictBand) => {
+    setCollapsedBands((prev) => {
+      const next = new Set(prev);
+      if (next.has(band)) next.delete(band);
+      else next.add(band);
+      return next;
+    });
+  };
+
+  const toggleRowExpansion = (lineId: string) => {
+    setExpandedRowIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(lineId)) next.delete(lineId);
+      else next.add(lineId);
+      return next;
+    });
+  };
 
   const canOverride = !!onSetAdjudication && canAccusourceAdmin !== false;
 
@@ -289,6 +382,15 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
     if (!onSetAdjudication) return;
     try {
       await onSetAdjudication(record.id, line.id, null, null);
+      // Drop any optimistic override for this line — once revert hits,
+      // the parent's autoVerdict is the source of truth and we don't
+      // want a stale local override holding the row in the wrong band.
+      setLocalOverrides((prev) => {
+        if (!(line.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[line.id];
+        return next;
+      });
     } catch {
       // Parent surfaces the error; we keep the menu closed.
     }
@@ -313,6 +415,10 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
         overrideVerdict,
         overrideReason.trim() !== '' ? overrideReason.trim() : null,
       );
+      // AC.0a optimistic update — without this the row stays in its old
+      // band until the parent re-fetches (which it doesn't today; see the
+      // localOverrides comment above for the full rationale).
+      setLocalOverrides((prev) => ({ ...prev, [overrideLine.id]: overrideVerdict }));
       setOverrideLine(null);
       setOverrideVerdict(null);
       setOverrideReason('');
@@ -353,207 +459,426 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
     );
   }
 
+  // ──────────────────────────────────────────────────────────────────
+  // AC.0a — Per-row renderer + per-row inline details panel.
+  // Defined in render scope so they can close over the menu / override
+  // dialog state without prop-drilling. Reading them in this order
+  // (header → row → details) mirrors how the chunk renders top-to-bottom.
+  // ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Render the per-band action button(s). Spec mapping:
+   *   - NEEDS_REVIEW: primary "Review" button → opens the same override
+   *     menu (Mark as Passed / Failed / Needs review). Replaces the
+   *     ⋮ kebab as the discoverable entry point.
+   *   - FAILED: primary "View report" + secondary ⋮ for downward override.
+   *   - PENDING: no button — informational.
+   *   - PASSED: text "View report" link + ⋮ surfaced on hover for power
+   *     users who need to override down.
+   */
+  const renderRowAction = (
+    line: AccusourceScreeningLineItem,
+    band: AccusourceVerdictBand,
+  ): React.ReactNode => {
+    const reportUrl =
+      line.reportUrl != null ? String(line.reportUrl).trim() : '';
+    const canFinalPdf =
+      onOpenFinalPdf != null &&
+      !!record.finalReportReady &&
+      lineStatusLooksComplete(line.status);
+    const reportButton = (variant: 'contained' | 'outlined' | 'text') =>
+      reportUrl !== '' ? (
+        <Button
+          size="small"
+          variant={variant}
+          component="a"
+          href={reportUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+        >
+          View report
+        </Button>
+      ) : canFinalPdf && onOpenFinalPdf ? (
+        <Button
+          size="small"
+          variant={variant}
+          disabled={!!pdfLoading || canAccusourceAdmin === false}
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenFinalPdf(record.id);
+          }}
+        >
+          Final PDF
+        </Button>
+      ) : null;
+
+    if (band === 'NEEDS_REVIEW') {
+      return canOverride ? (
+        <Button
+          size="small"
+          variant="contained"
+          color="warning"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleMenuOpen(e, line.id);
+          }}
+          disabled={adjudicationLoadingKey === `${record.id}::${line.id}`}
+        >
+          Review
+        </Button>
+      ) : null;
+    }
+
+    if (band === 'FAILED') {
+      return (
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          {reportButton('contained')}
+          {canOverride && (
+            <IconButton
+              size="small"
+              aria-label={`Override verdict for ${line.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleMenuOpen(e, line.id);
+              }}
+              disabled={adjudicationLoadingKey === `${record.id}::${line.id}`}
+            >
+              <MoreVertIcon fontSize="small" />
+            </IconButton>
+          )}
+        </Stack>
+      );
+    }
+
+    if (band === 'PENDING') {
+      // Informational only — a small "Awaiting vendor" caption is
+      // already implied by the band label; an action button here would
+      // just attract clicks the CSA can't act on.
+      return null;
+    }
+
+    // PASSED — link + kebab on hover.
+    return (
+      <Stack
+        direction="row"
+        spacing={0.5}
+        alignItems="center"
+        className="ac0a-passed-actions"
+        sx={{
+          '& .ac0a-passed-kebab': { opacity: 0.4, transition: 'opacity 120ms' },
+          '&:hover .ac0a-passed-kebab': { opacity: 1 },
+        }}
+      >
+        {reportButton('text')}
+        {canOverride && (
+          <IconButton
+            size="small"
+            aria-label={`Override verdict for ${line.name}`}
+            className="ac0a-passed-kebab"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleMenuOpen(e, line.id);
+            }}
+            disabled={adjudicationLoadingKey === `${record.id}::${line.id}`}
+          >
+            <MoreVertIcon fontSize="small" />
+          </IconButton>
+        )}
+      </Stack>
+    );
+  };
+
+  /**
+   * Inline details panel — replaces the pre-AC.0a right-side `Drawer`.
+   * Reveals every column the flat table used to show, plus the
+   * adjudication audit trail. Rendered inside a `<Collapse>` keyed off
+   * the row's id so unmount-on-collapse keeps the DOM small.
+   */
+  const renderDetailsPanel = (line: AccusourceScreeningLineItem): React.ReactNode => {
+    const orderId =
+      line.providerOrderId != null && String(line.providerOrderId).trim() !== ''
+        ? String(line.providerOrderId)
+        : orderRef;
+    const auto = line.adjudication?.autoVerdict;
+    const autoReason = line.adjudication?.autoVerdictReason;
+    const overrideBy = line.adjudication?.overriddenBy;
+    const overrideAtRaw = line.adjudication?.overriddenAt;
+    const overrideAt =
+      overrideAtRaw != null ? formatTimestamp(overrideAtRaw) : null;
+    return (
+      <Box sx={{ px: 2, pb: 1.5, pt: 0.5, bgcolor: 'grey.50' }}>
+        {showCostColumn && lineHasPrice(line) && (
+          <DetailRow label="Cost" value={formatPrice(line)} />
+        )}
+        <DetailRow label="Order #" value={orderId} mono />
+        <DetailRow label="Component ID" value={line.id} mono />
+        <DetailRow
+          label="Jurisdiction"
+          value={
+            line.jurisdiction != null && String(line.jurisdiction).trim() !== ''
+              ? line.jurisdiction
+              : '—'
+          }
+        />
+        <DetailRow
+          label="Scope"
+          value={scopeLabelForLine(line, clientLabel)}
+        />
+        <DetailRow label="Subject" value={subjectLabel} />
+        <DetailRow
+          label="Assignment"
+          value={
+            line.assignmentLabel != null && String(line.assignmentLabel).trim() !== ''
+              ? line.assignmentLabel
+              : '—'
+          }
+        />
+        <DetailRow label="Order placed" value={orderedAtFallback} />
+        <DetailRowNode label="Lifecycle">
+          <LifecycleTimestamps line={line} />
+        </DetailRowNode>
+        {line.decision && <DetailRow label="Vendor decision" value={String(line.decision)} />}
+        {auto && (
+          <DetailRow
+            label="Auto verdict"
+            value={
+              autoReason
+                ? `${verdictChipLabel(auto)} — ${autoReason}`
+                : verdictChipLabel(auto)
+            }
+          />
+        )}
+        {line.verdictOverridden && (
+          <DetailRow
+            label="Manual override"
+            value={[
+              overrideBy ? `by ${overrideBy}` : null,
+              overrideAt ? `at ${overrideAt}` : null,
+              line.adjudication?.overrideReason
+                ? `— ${line.adjudication.overrideReason}`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(' ') || 'Active'}
+          />
+        )}
+      </Box>
+    );
+  };
+
+  /**
+   * Per-row chunk: clickable header (toggles expansion) + chip strip +
+   * action button + collapsible details panel.
+   */
+  const renderRow = (
+    line: AccusourceScreeningLineItem,
+    band: AccusourceVerdictBand,
+  ): React.ReactNode => {
+    const expanded = expandedRowIds.has(line.id);
+    return (
+      <Box key={line.id} data-testid={`accusource-row-${line.id}`}>
+        <Box
+          role="button"
+          tabIndex={0}
+          aria-expanded={expanded}
+          aria-label={`${line.name} ${verdictChipLabel(line.verdict)}, ${
+            expanded ? 'collapse' : 'expand'
+          } details`}
+          data-testid={`accusource-row-header-${line.id}`}
+          onClick={() => toggleRowExpansion(line.id)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              toggleRowExpansion(line.id);
+            }
+          }}
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1.5,
+            px: 2,
+            py: 1.25,
+            cursor: 'pointer',
+            userSelect: 'none',
+            '&:hover': { bgcolor: 'action.hover' },
+          }}
+        >
+          <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+            <Typography variant="body2" fontWeight={600} sx={{ wordBreak: 'break-word' }}>
+              {line.name}
+            </Typography>
+            {line.type ? (
+              <Typography variant="caption" color="text.secondary" display="block">
+                {line.type}
+              </Typography>
+            ) : null}
+          </Box>
+          <Chip
+            size="small"
+            label={line.status}
+            color={statusChipColor(line.status)}
+            variant={line.status === 'Pending' ? 'outlined' : 'filled'}
+            sx={{ fontWeight: 600, flexShrink: 0 }}
+          />
+          <Tooltip
+            title={
+              line.verdictOverridden
+                ? `Manual override${
+                    line.adjudication?.overrideReason
+                      ? ` — ${line.adjudication.overrideReason}`
+                      : ''
+                  }. Auto verdict was ${line.adjudication?.autoVerdict ?? 'PENDING'}.`
+                : line.adjudication?.autoVerdictReason ||
+                  'System verdict from status + decision'
+            }
+          >
+            <Chip
+              size="small"
+              label={verdictChipLabel(line.verdict)}
+              color={verdictChipColor(line.verdict)}
+              variant={line.verdictOverridden ? 'filled' : 'outlined'}
+              sx={{ fontWeight: 600, flexShrink: 0 }}
+            />
+          </Tooltip>
+          <Box sx={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+            {renderRowAction(line, band)}
+          </Box>
+          <KeyboardArrowDownIcon
+            fontSize="small"
+            sx={{
+              flexShrink: 0,
+              color: 'text.disabled',
+              transform: expanded ? 'rotate(180deg)' : 'none',
+              transition: 'transform 150ms',
+            }}
+          />
+        </Box>
+        <Collapse in={expanded} unmountOnExit>
+          {renderDetailsPanel(line)}
+        </Collapse>
+      </Box>
+    );
+  };
+
   return (
     <Box sx={{ py: 1, px: { xs: 0, sm: 0.5 } }}>
-      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1, lineHeight: 1.45 }}>
-        AccuSource service lines — same ordered components as the vendor order. Extra columns populate when SourceDirect
-        includes them on webhooks (field names are normalized server-side).
-      </Typography>
-      <TableContainer sx={{ maxWidth: '100%', overflowX: 'auto' }}>
-        <Table size="small" sx={{ minWidth: 960 }}>
-          <TableHead>
-            <TableRow>
-              <TableCell sx={{ fontWeight: 700, whiteSpace: 'nowrap' }}>Order #</TableCell>
-              <TableCell sx={{ fontWeight: 700 }}>Service</TableCell>
-              {showCostColumn && (
-                <TableCell sx={{ fontWeight: 700, whiteSpace: 'nowrap' }}>Cost</TableCell>
-              )}
-              {/* Scope + Subject columns hidden per product feedback — they were
-                  mostly redundant (Scope repeated the hiring entity for most rows,
-                  Subject repeated the worker name shown in the page header). Both
-                  are still visible inside the per-line Details drawer when a
-                  recruiter needs them. Left the <TableCell> stubs removed so
-                  downstream row widths auto-collapse. */}
-              <TableCell sx={{ fontWeight: 700, whiteSpace: 'nowrap' }}>Order placed (HRX)</TableCell>
-              <TableCell sx={{ fontWeight: 700, minWidth: 200 }}>Lifecycle timestamps</TableCell>
-              <TableCell sx={{ fontWeight: 700 }}>Jurisdiction</TableCell>
-              <TableCell sx={{ fontWeight: 700, whiteSpace: 'nowrap' }}>Component ID</TableCell>
-              <TableCell sx={{ fontWeight: 700, whiteSpace: 'nowrap' }}>
-                <Tooltip title={ASSIGN_HINT}>
-                  <span>Assignment</span>
-                </Tooltip>
-              </TableCell>
-              <TableCell sx={{ fontWeight: 700, whiteSpace: 'nowrap' }}>Report</TableCell>
-              {/* Decision column hidden — it's the vendor's raw disposition string and is empty
-                  on the majority of screenings (SSN Locator, most county criminals, in-progress
-                  rows). The Verdict column already incorporates it as an input. Still visible
-                  in the per-line Details drawer for audit. */}
-              <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
-              <TableCell sx={(theme) => ({ fontWeight: 700, whiteSpace: 'nowrap', ...verdictHeaderStickySx(theme) })}>
-                <Tooltip title="System verdict (auto). Recruiters L5–L7 can override and revert.">
-                  <span>Verdict</span>
-                </Tooltip>
-              </TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {lines.map((line) => (
-              <TableRow key={line.id} hover>
-                <TableCell sx={{ whiteSpace: 'nowrap', verticalAlign: 'top' }}>
-                  {/* Prefer the per-line vendor order id (e.g. AU-xxxx / DR-xxxx / CR-xxxx) so
-                      each row matches what AccuSource's portal shows; fall back to the parent
-                      profile number when the webhook didn't include a per-line id. */}
-                  <Typography variant="body2" component="span">
-                    {line.providerOrderId != null &&
-                    String(line.providerOrderId).trim() !== ''
-                      ? String(line.providerOrderId)
-                      : orderRef}
-                  </Typography>
-                </TableCell>
-                <TableCell sx={{ verticalAlign: 'top', maxWidth: 220 }}>
-                  <Typography variant="body2" fontWeight={500}>
-                    {line.name}
-                  </Typography>
-                  {line.type ? (
-                    <Typography variant="caption" color="text.secondary" display="block">
-                      {line.type}
-                    </Typography>
-                  ) : null}
-                </TableCell>
-                {showCostColumn && (
-                  <TableCell sx={{ verticalAlign: 'top', whiteSpace: 'nowrap' }}>
-                    <Typography variant="body2">{formatPrice(line)}</Typography>
-                  </TableCell>
-                )}
-                {/* Scope + Subject cells removed to match the header — available in the Details drawer. */}
-                <TableCell sx={{ verticalAlign: 'top', whiteSpace: 'nowrap' }}>
-                  <Typography variant="caption" color="text.secondary">
-                    {orderedAtFallback}
-                  </Typography>
-                </TableCell>
-                <TableCell sx={{ verticalAlign: 'top' }}>
-                  <LifecycleTimestamps line={line} />
-                </TableCell>
-                <TableCell sx={{ verticalAlign: 'top', maxWidth: 200 }}>
-                  <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>
-                    {line.jurisdiction != null && String(line.jurisdiction).trim() !== '' ? line.jurisdiction : '—'}
-                  </Typography>
-                </TableCell>
-                <TableCell sx={{ verticalAlign: 'top', fontFamily: 'ui-monospace, monospace', fontSize: '0.8rem' }}>
-                  {line.id}
-                </TableCell>
-                <TableCell sx={{ verticalAlign: 'top', maxWidth: 140 }}>
-                  <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>
-                    {line.assignmentLabel != null && String(line.assignmentLabel).trim() !== ''
-                      ? line.assignmentLabel
-                      : '—'}
-                  </Typography>
-                </TableCell>
-                <TableCell sx={{ verticalAlign: 'top', whiteSpace: 'nowrap' }}>
-                  {(() => {
-                    const lineReportUrl =
-                      line.reportUrl != null ? String(line.reportUrl).trim() : '';
-                    if (lineReportUrl !== '') {
-                      return (
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          component="a"
-                          href={lineReportUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          Open report
-                        </Button>
-                      );
-                    }
-                    // Fallback: when this line is completed and the parent has a final report ready,
-                    // reuse the parent-level PDF callable so the column isn't stuck on "—".
-                    const fire = onOpenFinalPdf;
-                    const canFallback =
-                      fire != null &&
-                      !!record.finalReportReady &&
-                      lineStatusLooksComplete(line.status);
-                    if (canFallback && fire != null) {
-                      return (
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          disabled={!!pdfLoading || canAccusourceAdmin === false}
-                          onClick={() => fire(record.id)}
-                        >
-                          Final PDF
-                        </Button>
-                      );
-                    }
-                    // No per-line reportUrl AND no final PDF — still give recruiters
-                    // SOMETHING to look at when a verdict of "Needs review" lands. The
-                    // drawer surfaces every field we persisted from the vendor so they
-                    // can adjudicate without blind-guessing Pass / Fail.
-                    const needsReview = line.verdict === 'NEEDS_REVIEW' || lineStatusLooksComplete(line.status);
-                    if (needsReview) {
-                      return (
-                        <Button size="small" variant="text" onClick={() => setDetailLine(line)}>
-                          Details
-                        </Button>
-                      );
-                    }
-                    return (
-                      <Typography variant="body2" color="text.disabled">
-                        —
-                      </Typography>
-                    );
-                  })()}
-                </TableCell>
-                {/* Decision cell removed to match header — value still shown in Details drawer. */}
-                <TableCell sx={{ verticalAlign: 'top' }}>
-                  <Chip
-                    size="small"
-                    label={line.status}
-                    color={statusChipColor(line.status)}
-                    variant={line.status === 'Pending' ? 'outlined' : 'filled'}
-                    sx={{ fontWeight: 600 }}
-                  />
-                </TableCell>
-                <TableCell sx={(theme) => ({ verticalAlign: 'top', whiteSpace: 'nowrap', ...verdictColumnStickySx(theme) })}>
-                  <Stack direction="row" spacing={0.5} alignItems="center" sx={{ flexWrap: 'nowrap' }}>
-                    <Tooltip
-                      title={
-                        line.verdictOverridden
-                          ? `Manual override${
-                              line.adjudication?.overrideReason
-                                ? ` — ${line.adjudication.overrideReason}`
-                                : ''
-                            }. Auto verdict was ${line.adjudication?.autoVerdict ?? 'PENDING'}.`
-                          : line.adjudication?.autoVerdictReason || 'System verdict from status + decision'
-                      }
-                    >
-                      <Chip
-                        size="small"
-                        label={verdictChipLabel(line.verdict)}
-                        color={verdictChipColor(line.verdict)}
-                        variant={line.verdictOverridden ? 'filled' : 'outlined'}
-                        sx={{ fontWeight: 600, flexShrink: 0 }}
-                      />
-                    </Tooltip>
-                    {canOverride && (
-                      <IconButton
-                        size="small"
-                        aria-label={`Override verdict for ${line.name}`}
-                        onClick={(e) => handleMenuOpen(e, line.id)}
-                        disabled={adjudicationLoadingKey === `${record.id}::${line.id}`}
-                        sx={{ flexShrink: 0 }}
-                      >
-                        <MoreVertIcon fontSize="small" />
-                      </IconButton>
-                    )}
+      {/*
+        AC.0a — Card header: title with total visible count + an optional
+        sub-badge highlighting actionable items ("1 needs review" /
+        "1 failed"). The dev-facing copy ("same ordered components as the
+        vendor order …") moved into a tooltip so the header isn't cluttered
+        for CSAs.
+      */}
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.25 }}>
+        <Typography variant="subtitle2" fontWeight={700}>
+          AccuSource service lines ({visibleLineCount})
+        </Typography>
+        {subBadge && (
+          <Chip
+            size="small"
+            color={subBadge.severity}
+            label={subBadge.label}
+            sx={{ fontWeight: 600 }}
+          />
+        )}
+        <Tooltip title="Same ordered components as the vendor order. Extra columns populate when SourceDirect includes them on webhooks (field names are normalized server-side). Recruiters L5–L7 can override or revert system verdicts.">
+          <IconButton size="small" sx={{ ml: 'auto', opacity: 0.6 }} aria-label="About this section">
+            <InfoOutlinedIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+      </Stack>
+
+      {/*
+        Special "all pending" state — when every line is still in PENDING
+        and no actionable bands exist, render only the Pending band with
+        an explanatory caption so the CSA isn't left wondering whether
+        the empty Needs review / Failed / Passed bands mean the data is
+        broken. (They're just genuinely not there yet.)
+      */}
+      {allPending && (
+        <Alert severity="info" variant="outlined" sx={{ mb: 1 }}>
+          All checks are still in progress with the vendor.
+        </Alert>
+      )}
+
+      <Stack spacing={1}>
+        {BAND_ORDER.map((band) => {
+          const items = linesByBand[band];
+          if (items.length === 0) return null;
+          const collapsed = collapsedBands.has(band);
+          return (
+            <Box
+              key={band}
+              sx={{
+                border: 1,
+                borderColor: 'divider',
+                borderRadius: 1,
+                overflow: 'hidden',
+              }}
+            >
+              <Box
+                role="button"
+                tabIndex={0}
+                aria-expanded={!collapsed}
+                aria-controls={`accusource-band-${band.toLowerCase()}`}
+                aria-label={`${BAND_LABEL[band]} band, ${items.length} ${
+                  items.length === 1 ? 'item' : 'items'
+                }`}
+                data-testid={`accusource-band-header-${band.toLowerCase()}`}
+                onClick={() => toggleBand(band)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    toggleBand(band);
+                  }
+                }}
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                  px: 2,
+                  py: 1,
+                  bgcolor: 'background.default',
+                  cursor: 'pointer',
+                  userSelect: 'none',
+                  borderBottom: collapsed ? 0 : 1,
+                  borderColor: 'divider',
+                  '&:hover': { bgcolor: 'action.hover' },
+                }}
+              >
+                {bandHeaderIcon(band)}
+                <Typography variant="subtitle2" fontWeight={700}>
+                  {BAND_LABEL[band]}
+                </Typography>
+                <Chip
+                  size="small"
+                  label={items.length}
+                  color={BAND_CHIP_COLOR[band]}
+                  variant="outlined"
+                  sx={{ fontWeight: 600, height: 22 }}
+                />
+                <KeyboardArrowDownIcon
+                  fontSize="small"
+                  sx={{
+                    ml: 'auto',
+                    color: 'text.secondary',
+                    transform: collapsed ? 'rotate(-90deg)' : 'none',
+                    transition: 'transform 150ms',
+                  }}
+                />
+              </Box>
+              <Collapse in={!collapsed} unmountOnExit>
+                <Box id={`accusource-band-${band.toLowerCase()}`}>
+                  <Stack divider={<Divider />}>
+                    {items.map((line) => renderRow(line, band))}
                   </Stack>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
+                </Box>
+              </Collapse>
+            </Box>
+          );
+        })}
+      </Stack>
 
       <Menu
         anchorEl={menuAnchor}
@@ -651,136 +976,82 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
         </DialogActions>
       </Dialog>
 
-      {/*
-        Per-line detail drawer. Dumb, thorough view of every field we persisted
-        from the vendor webhook so a recruiter with "Needs review" has something
-        to adjudicate against. Not an attempt to replace the final report PDF —
-        just an always-available fallback.
-      */}
-      <Drawer
-        anchor="right"
-        open={!!detailLine}
-        onClose={() => setDetailLine(null)}
-        PaperProps={{ sx: { width: { xs: '100%', sm: 520 } } }}
-      >
-        {detailLine && (
-          <Box sx={{ p: 3 }}>
-            <Stack direction="row" alignItems="center" justifyContent="space-between" mb={2}>
-              <Typography variant="h6" fontWeight={700}>
-                Line detail
-              </Typography>
-              <IconButton size="small" onClick={() => setDetailLine(null)} aria-label="Close">
-                <CloseIcon fontSize="small" />
-              </IconButton>
-            </Stack>
-            <Typography variant="subtitle1" fontWeight={600}>
-              {detailLine.name}
-            </Typography>
-            {detailLine.type && (
-              <Typography variant="caption" color="text.secondary" display="block">
-                {detailLine.type}
-              </Typography>
-            )}
-            <Divider sx={{ my: 2 }} />
-            <Stack spacing={1.25}>
-              {renderDetailField('Order line id', detailLine.id)}
-              {renderDetailField('Provider order id', detailLine.providerOrderId)}
-              {renderDetailField('Status', detailLine.status)}
-              {renderDetailField('Verdict', verdictChipLabel(detailLine.verdict))}
-              {renderDetailField('Decision', detailLine.decision)}
-              {renderDetailField('Scope', scopeLabelForLine(detailLine, clientLabel))}
-              {renderDetailField('Jurisdiction', detailLine.jurisdiction)}
-              {renderDetailField('Lab name', detailLine.labName)}
-              {renderDetailField(
-                'Lab code',
-                detailLine.labCode != null ? String(detailLine.labCode) : null,
-              )}
-              {renderDetailField('Subject', subjectLabel)}
-              {renderDetailField('Assignment label', detailLine.assignmentLabel)}
-              {renderDetailField(
-                'Ordered at',
-                detailLine.orderedAt ? formatTimestamp(detailLine.orderedAt) : null,
-              )}
-              {renderDetailField(
-                'Updated at',
-                detailLine.updatedAt ? formatTimestamp(detailLine.updatedAt) : null,
-              )}
-              {renderDetailField(
-                'Completed at',
-                detailLine.completedAt ? formatTimestamp(detailLine.completedAt) : null,
-              )}
-              {renderDetailField(
-                'Provider reported at',
-                detailLine.providerReportedAt ? formatTimestamp(detailLine.providerReportedAt) : null,
-              )}
-              {renderDetailField(
-                'Report URL',
-                detailLine.reportUrl ? String(detailLine.reportUrl) : null,
-                { isLink: true },
-              )}
-              {detailLine.adjudication?.autoVerdictReason && (
-                <>
-                  <Divider sx={{ my: 0.5 }} />
-                  {renderDetailField(
-                    'Auto verdict reason',
-                    detailLine.adjudication.autoVerdictReason,
-                  )}
-                </>
-              )}
-              {detailLine.adjudication?.overrideReason && (
-                renderDetailField(
-                  'Override reason',
-                  detailLine.adjudication.overrideReason,
-                )
-              )}
-            </Stack>
-            <Divider sx={{ my: 2 }} />
-            <Typography variant="caption" color="text.secondary">
-              If the vendor's final report PDF is required to adjudicate, it becomes available once
-              every line on this order is complete. Until then, adjudicate from the fields above or
-              request the vendor push the per-line report URL.
-            </Typography>
-          </Box>
-        )}
-      </Drawer>
     </Box>
   );
 };
 
-/** Small key-value renderer for the detail drawer. Optionally renders value as a link. */
-function renderDetailField(
-  label: string,
-  value: string | number | null | undefined,
-  opts?: { isLink?: boolean },
-): React.ReactNode {
-  const v = value != null && String(value).trim() !== '' ? String(value).trim() : null;
+/**
+ * AC.0a — One row in the inline details panel. Two-column layout
+ * (label | value) so multiple rows align vertically. `mono` forces
+ * `ui-monospace` for values like Order # / Component ID where character
+ * alignment matters more than visual flow.
+ */
+function DetailRow({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: string | number | null | undefined;
+  mono?: boolean;
+}): React.ReactElement {
+  const v = value != null && String(value).trim() !== '' ? String(value).trim() : '—';
   return (
-    <Box key={label}>
-      <Typography variant="caption" color="text.secondary" display="block">
+    <Stack
+      direction={{ xs: 'column', sm: 'row' }}
+      spacing={{ xs: 0.25, sm: 1.5 }}
+      sx={{ py: 0.5, alignItems: { sm: 'baseline' } }}
+    >
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ minWidth: { sm: 130 }, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4 }}
+      >
         {label}
       </Typography>
-      {v == null ? (
-        <Typography variant="body2" color="text.disabled">
-          —
-        </Typography>
-      ) : opts?.isLink ? (
-        <Button
-          size="small"
-          variant="text"
-          component="a"
-          href={v}
-          target="_blank"
-          rel="noopener noreferrer"
-          sx={{ textTransform: 'none', p: 0, minWidth: 'auto', justifyContent: 'flex-start' }}
-        >
-          {v.length > 64 ? `${v.slice(0, 64)}…` : v}
-        </Button>
-      ) : (
-        <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>
-          {v}
-        </Typography>
-      )}
-    </Box>
+      <Typography
+        variant="body2"
+        sx={{
+          wordBreak: 'break-word',
+          fontFamily: mono ? 'ui-monospace, monospace' : undefined,
+          fontSize: mono ? '0.8125rem' : undefined,
+          color: v === '—' ? 'text.disabled' : undefined,
+          flexGrow: 1,
+        }}
+      >
+        {v}
+      </Typography>
+    </Stack>
+  );
+}
+
+/**
+ * AC.0a — Same shape as `DetailRow` but renders an arbitrary node
+ * (e.g. `<LifecycleTimestamps>`) on the right. Reused so the value
+ * column inherits the same alignment / typography baseline.
+ */
+function DetailRowNode({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <Stack
+      direction={{ xs: 'column', sm: 'row' }}
+      spacing={{ xs: 0.25, sm: 1.5 }}
+      sx={{ py: 0.5, alignItems: { sm: 'baseline' } }}
+    >
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ minWidth: { sm: 130 }, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4 }}
+      >
+        {label}
+      </Typography>
+      <Box sx={{ flexGrow: 1 }}>{children}</Box>
+    </Stack>
   );
 }
 

@@ -1,5 +1,7 @@
 import Papa from 'papaparse';
 
+import { isWorkAuthCollectionDisabled } from './workAuthCollectionFlag';
+
 export interface CSVWorkerData {
   firstName: string;
   lastName: string;
@@ -19,7 +21,13 @@ export interface CSVWorkerData {
   workStatus: string;
   workerId?: string;
   union?: string;
-  workEligibility?: string;
+  /**
+   * W.3 — dropped from the export template + sample CSV when
+   * `WORK_AUTH_COLLECTION_DISABLED` is on (default). The parser still
+   * accepts the column for legacy CSVs uploaded before the rollout, so
+   * existing pipelines keep working.
+   */
+  workEligibility?: string | boolean;
   languages?: string;
   emergencyContactName?: string;
   emergencyContactRelationship?: string;
@@ -34,6 +42,14 @@ export interface CSVValidationResult {
   data: CSVWorkerData[];
 }
 
+/**
+ * Canonical column ordering for the importer. Used by both the export
+ * template (the user-facing CSV they download) and the parser
+ * (column-by-column documentation). The W.3 work-auth column is filtered
+ * out of the user-facing template via `getExportableCsvColumns()`; the
+ * full list still names it so the parser knows it's a recognized field
+ * if a legacy CSV still includes it.
+ */
 export const CSV_COLUMNS = [
   'firstName',
   'lastName', 
@@ -61,6 +77,22 @@ export const CSV_COLUMNS = [
   'transportMethod'
 ] as const;
 
+/**
+ * W.3 — fields the export template should EMIT. When work-auth collection
+ * is disabled (default), `workEligibility` is dropped so HRX staff aren't
+ * prompted to fill in a column that downstream code now sources from
+ * `users.workEligibility` (mirrored by W.1's server-side writer).
+ *
+ * The parser deliberately stays tolerant of legacy CSVs that still carry
+ * the column — see `validateCSVData` below.
+ */
+export function getExportableCsvColumns(): ReadonlyArray<typeof CSV_COLUMNS[number]> {
+  if (isWorkAuthCollectionDisabled()) {
+    return CSV_COLUMNS.filter((col) => col !== 'workEligibility');
+  }
+  return CSV_COLUMNS;
+}
+
 export const REQUIRED_FIELDS = ['firstName', 'lastName', 'email', 'phone', 'securityLevel', 'employmentType', 'workStatus'];
 
 export const VALID_SECURITY_LEVELS = ['Applicant', 'Worker', 'Flex'];
@@ -69,8 +101,13 @@ export const VALID_WORK_STATUSES = ['Active', 'On Leave', 'Terminated', 'Suspend
 export const VALID_GENDERS = ['Male', 'Female', 'Nonbinary', 'Other', 'Prefer not to say'];
 export const VALID_TRANSPORT_METHODS = ['Car', 'Public Transit', 'Bike', 'Walk', 'Other'];
 
-export function generateSampleCSV(): string {
-  const sampleData = [
+/**
+ * Internal — full sample row. `generateSampleCSV` strips the W.3 column
+ * before serializing, but keeping the raw data here lets us add new
+ * columns without re-doing the row authoring.
+ */
+function buildSampleRows(): Array<Record<string, string>> {
+  return [
     {
       firstName: 'John',
       lastName: 'Doe',
@@ -124,8 +161,20 @@ export function generateSampleCSV(): string {
       transportMethod: 'Public Transit'
     }
   ];
+}
 
-  return Papa.unparse(sampleData);
+export function generateSampleCSV(): string {
+  // W.3 — strip the work-auth column from the user-facing template when
+  // collection is disabled. Use Papa's `columns` option so the header
+  // row is honored (otherwise Papa derives columns from the first row's
+  // keys, which would still include `workEligibility`).
+  const columns = getExportableCsvColumns();
+  const sampleData = buildSampleRows().map((row) => {
+    const trimmed: Record<string, string> = {};
+    for (const col of columns) trimmed[col] = row[col] ?? '';
+    return trimmed;
+  });
+  return Papa.unparse(sampleData, { columns: columns as unknown as string[] });
 }
 
 export function validateCSVData(data: any[]): CSVValidationResult {

@@ -3,9 +3,23 @@
  *
  * Pipeline:
  *   1. Public POST endpoint `evereeWebhook` receives events from Everee.
- *   2. Verifies `X-Everee-Signature` HMAC-SHA256 of the raw body against a shared
- *      secret (`EVEREE_WEBHOOK_SECRET` env var, or `EVEREE_WEBHOOK_SECRET_<evereeTenantId>`
- *      for per-tenant secrets during pilot). Returns 401 on failure.
+ *   2. Verifies the signature per Everee's documented spec
+ *      (https://developer.everee.com/docs/authenticating-events):
+ *        - Header `x-everee-webhook-signature` carries one or more
+ *          comma-separated values of the form `v1=<hex>`. Each value is an
+ *          HMAC-SHA256 hex digest of the message
+ *          `${x-everee-webhook-timestamp}.${rawBody}`. Multiple signatures
+ *          may be present when more than one signing key is active for a
+ *          company (e.g. mid-rotation). Any single matching signature
+ *          authenticates the event.
+ *        - Algorithm: **HMAC-SHA256**, **hex-encoded**.
+ *        - Replay protection: timestamp must be within
+ *          `EVEREE_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS` (default 120) of
+ *          the current server clock per Everee's "Securing your handler"
+ *          guide.
+ *      Secrets are resolved tenant-first: `EVEREE_WEBHOOK_SECRET_<companyId>`
+ *      env var, with `EVEREE_WEBHOOK_SECRET` as a global fallback. Returns
+ *      401 on signature failure, 408-style 401 on timestamp drift.
  *   3. Dedups by `eventId` into `tenants/{tid}/everee_webhook_events/{eventId}`
  *      using a transactional create-or-skip. Repeat deliveries are ack'd 200
  *      without reprocessing.
@@ -22,14 +36,45 @@
  *   - `worker.onboarding-completed` → everee_workers.status = 'onboarding_complete'
  *     plus onboardingCompletedAt timestamps on user_employments /
  *     onboarding_instances when the worker can be resolved.
+ *
+ * Envelope shape (per https://developer.everee.com/docs/events-overview):
+ *   {
+ *     version: "1",
+ *     id: "<event uuid>",
+ *     companyId: 10011,             // ← Everee tenant id (numeric); we coerce to string
+ *     type: "worker.onboarding-completed",
+ *     timestamp: 1720011002,        // epoch seconds (in-body; signature uses header timestamp)
+ *     data: { object: { ... } }     // event-specific payload nested under `data.object`
+ *   }
  */
 
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
 import { onRequest } from 'firebase-functions/v2/https';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { defineSecret } from 'firebase-functions/params';
 import { logger } from 'firebase-functions/v2';
 import { evereePaths } from './evereeConfig';
+import { reconcileWorkerInternal } from './evereeReconcileWorker';
+
+/**
+ * Per-tenant Everee webhook secrets. Bound at deploy time so Cloud
+ * Functions Gen2 mounts them into `process.env` for the function
+ * runtime — without this binding the env vars are empty even when
+ * `firebase functions:secrets:set` has been run, which is exactly the
+ * "secretSource: none" failure mode WH.1 was tracking.
+ *
+ * Rotation: add a new `defineSecret('EVEREE_WEBHOOK_SECRET_<companyId>')`
+ * line and append it to the `secrets:` array on `evereeWebhook` below,
+ * then redeploy. The verifier already accepts multiple `v1=` signatures
+ * per request so a key swap can land without a flap.
+ *
+ * The global fallback (`EVEREE_WEBHOOK_SECRET`) stays unbound here
+ * because it ships through standard env vars / functions config and is
+ * only ever a back-stop; tenant-scoped secrets are the production path.
+ */
+const EVEREE_WEBHOOK_SECRET_3133 = defineSecret('EVEREE_WEBHOOK_SECRET_3133');
+const EVEREE_WEBHOOK_SECRET_3138 = defineSecret('EVEREE_WEBHOOK_SECRET_3138');
 
 const db = () => admin.firestore();
 
@@ -42,11 +87,18 @@ interface EvereeEventEnvelope {
   /** Event type, e.g. `worker.onboarding-completed`. */
   type?: string;
   event?: string;
-  /** Everee tenant that produced the event — maps to our entity.evereeTenantId. */
+  /**
+   * Everee company / tenant id. Per Everee's events-overview spec the
+   * canonical field is `companyId` (numeric). Some legacy / pilot
+   * envelopes used `tenantId` instead — both are accepted.
+   */
+  companyId?: string | number;
   tenantId?: string;
-  /** ISO8601 publish time. */
+  /** ISO8601 publish time (rare). */
   occurredAt?: string;
-  /** Event payload — shape varies per event type. */
+  /** In-body epoch seconds — distinct from `x-everee-webhook-timestamp` (header) used for signing. */
+  timestamp?: number | string;
+  /** Event payload — shape varies per event type, nested under `data.object`. */
   data?: Record<string, unknown>;
   payload?: Record<string, unknown>;
 }
@@ -72,36 +124,153 @@ interface StoredEvent {
 }
 
 /**
- * Constant-time HMAC-SHA256 check of the raw request body against an optional
- * tenant-scoped secret, falling back to a global secret. Returning false when
- * no secret is configured keeps accidental prod traffic from slipping through
- * a misconfigured deploy.
+ * Verify Everee webhook signature per the canonical spec at
+ * https://developer.everee.com/docs/authenticating-events.
+ *
+ *   Headers (both required):
+ *     x-everee-webhook-signature: "v1=<sig1>,v1=<sig2>,..."
+ *     x-everee-webhook-timestamp: "<unix-seconds>"
+ *
+ *   Multiple comma-separated signatures support concurrent signing keys
+ *   for an account (e.g. mid-rotation). Each is `v1=<hex>` per Everee's
+ *   spec; the only currently-valid version is `v1`. Any single matching
+ *   signature authenticates the request.
+ *
+ *   Signed message: `<timestamp>.<rawBody>` — the literal bytes Everee
+ *   signed. Algorithm: HMAC-SHA256, hex-encoded.
+ *
+ *   We resolve the secret tenant-first (`EVEREE_WEBHOOK_SECRET_<companyId>`)
+ *   with a global `EVEREE_WEBHOOK_SECRET` fallback. Returning `false`
+ *   when no secret is configured prevents a misconfigured deploy from
+ *   silently accepting unauthenticated traffic.
+ *
+ *   Replay protection (timestamp-window check) is enforced separately at
+ *   the call site so a signature failure and a timestamp drift produce
+ *   distinct log lines.
  */
-function verifySignature(
+export function verifySignature(
   rawBody: string,
   signatureHeader: string | null,
+  webhookTimestamp: string | null,
   evereeTenantId: string | null,
 ): boolean {
-  if (!signatureHeader) return false;
-  // Support both `sha256=<hex>` and bare hex forms.
-  const providedHex = signatureHeader.startsWith('sha256=')
-    ? signatureHeader.slice('sha256='.length)
-    : signatureHeader;
+  if (!signatureHeader || !webhookTimestamp) return false;
+
   const tenantScopedSecret =
     evereeTenantId && process.env[`EVEREE_WEBHOOK_SECRET_${evereeTenantId}`];
   const globalSecret = process.env.EVEREE_WEBHOOK_SECRET;
   const secret = tenantScopedSecret || globalSecret;
   if (!secret) return false;
-  const expectedHex = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
-  // timingSafeEqual requires equal-length buffers.
-  const a = Buffer.from(providedHex, 'hex');
-  const b = Buffer.from(expectedHex, 'hex');
-  if (a.length !== b.length) return false;
-  try {
-    return crypto.timingSafeEqual(a, b);
-  } catch {
-    return false;
+
+  const message = `${webhookTimestamp}.${rawBody}`;
+  const expectedHex = crypto.createHmac('sha256', secret).update(message).digest('hex');
+  const expectedBuf = Buffer.from(expectedHex, 'hex');
+
+  // Per spec, the header is a comma-separated list of `<version>=<sig>`
+  // entries. Discard any entry whose version is not `v1` (Everee may add
+  // a `v2` later, but until they do we must not silently accept it).
+  const candidates: string[] = [];
+  for (const entry of signatureHeader.split(',')) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx <= 0) continue;
+    const version = trimmed.slice(0, eqIdx);
+    const sig = trimmed.slice(eqIdx + 1);
+    if (version !== 'v1' || !sig) continue;
+    candidates.push(sig);
   }
+
+  for (const candidate of candidates) {
+    // Reject obviously-invalid hex up front so `Buffer.from('zz', 'hex')`
+    // doesn't silently produce a length-1 buffer that happens to match
+    // by accident on a degenerate secret.
+    if (!/^[0-9a-fA-F]+$/.test(candidate) || candidate.length % 2 !== 0) continue;
+    let candidateBuf: Buffer;
+    try {
+      candidateBuf = Buffer.from(candidate, 'hex');
+    } catch {
+      continue;
+    }
+    if (candidateBuf.length !== expectedBuf.length) continue;
+    try {
+      if (crypto.timingSafeEqual(candidateBuf, expectedBuf)) return true;
+    } catch {
+      /* try the next candidate */
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Replay-protection window for `x-everee-webhook-timestamp` (epoch
+ * seconds). Per Everee's "Securing your handler" guide, 2 minutes is the
+ * recommended ceiling. Override via env for backfill / replay tooling.
+ */
+const EVEREE_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS = (() => {
+  const raw = process.env.EVEREE_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS;
+  const n = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 120;
+})();
+
+/**
+ * Returns true when `webhookTimestamp` (epoch seconds, as a string) is
+ * within the configured tolerance of `nowSeconds`. Exposed for the unit
+ * tests so they can pin "expired" / "future-skew" branches without
+ * mocking Date.now everywhere.
+ */
+export function isWebhookTimestampWithinTolerance(
+  webhookTimestamp: string | null,
+  nowSeconds: number,
+  toleranceSeconds: number = EVEREE_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS,
+): boolean {
+  if (!webhookTimestamp) return false;
+  const ts = Number(webhookTimestamp);
+  if (!Number.isFinite(ts)) return false;
+  return Math.abs(nowSeconds - ts) <= toleranceSeconds;
+}
+
+/**
+ * Pull the Everee tenant id from an event envelope. Per Everee's
+ * events-overview spec the canonical field is `companyId` at the root of
+ * the body (numeric); we coerce to a string so it lines up with our
+ * `EVEREE_WEBHOOK_SECRET_<companyId>` env-var lookup. We also accept a
+ * handful of legacy shapes (`tenantId`, `accountId`, nested under `data`
+ * / `payload`) so pilot envelopes Everee may have sent during private
+ * preview don't silently fail.
+ *
+ * Exported for unit testing — the envelope-shape variability is the
+ * main source of historical bugs (most recently the `tenantId`-vs-
+ * `companyId` mismatch that produced the WH.1 401 storm).
+ */
+export function pickEvereeTenantIdFromEnvelope(
+  envelope: EvereeEventEnvelope,
+): string | null {
+  const candidates: unknown[] = [
+    // Everee canonical (root). Numeric in practice.
+    envelope.companyId,
+    // Legacy / pilot shapes — kept defensive so a back-fill of older
+    // events still routes correctly during replay.
+    envelope.tenantId,
+    (envelope as Record<string, unknown>).evereeTenantId,
+    (envelope as Record<string, unknown>).accountId,
+    envelope.data?.companyId,
+    envelope.data?.tenantId,
+    envelope.data?.evereeTenantId,
+    envelope.data?.accountId,
+    envelope.payload?.companyId,
+    envelope.payload?.tenantId,
+    envelope.payload?.evereeTenantId,
+    envelope.payload?.accountId,
+    (envelope as Record<string, unknown>).tenant &&
+      ((envelope as Record<string, unknown>).tenant as Record<string, unknown>)?.id,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim()) return c.trim();
+    if (typeof c === 'number' && Number.isFinite(c)) return String(c);
+  }
+  return null;
 }
 
 /**
@@ -140,7 +309,18 @@ async function resolveTenantEntityFromEvereeTenant(
  * if the shared secret is ever rotated mid-flight.
  */
 export const evereeWebhook = onRequest(
-  { cors: false, invoker: 'public', timeoutSeconds: 30, memory: '256MiB' },
+  {
+    cors: false,
+    invoker: 'public',
+    timeoutSeconds: 30,
+    memory: '512MiB',
+    // Bind the per-tenant secrets so Cloud Functions Gen2 mounts them
+    // into the runtime's `process.env`. Without this list the
+    // `EVEREE_WEBHOOK_SECRET_*` lookups in `verifySignature` resolve to
+    // empty strings even after `firebase functions:secrets:set` — the
+    // exact failure mode WH.1 was tracking.
+    secrets: [EVEREE_WEBHOOK_SECRET_3133, EVEREE_WEBHOOK_SECRET_3138],
+  },
   async (req, res) => {
     // Everee will POST JSON. Anything else is noise.
     if (req.method !== 'POST') {
@@ -165,12 +345,19 @@ export const evereeWebhook = onRequest(
 
     const eventId = String(envelope.eventId || envelope.id || '').trim();
     const type = String(envelope.type || envelope.event || '').trim();
-    const evereeTenantId = String(envelope.tenantId || '').trim() || null;
+    // Some integrations URL-route the webhook with `?tenantId=3138`; honour
+    // that as a last-resort hint so per-tenant secrets work even when the body
+    // shape changes.
+    const tenantQueryParam =
+      typeof req.query?.tenantId === 'string' ? (req.query.tenantId as string).trim() : '';
+    const evereeTenantId =
+      pickEvereeTenantIdFromEnvelope(envelope) || tenantQueryParam || null;
     const occurredAt = typeof envelope.occurredAt === 'string' ? envelope.occurredAt : null;
+    // Canonical Everee headers per https://developer.everee.com/docs/authenticating-events.
     const signatureHeader =
-      (req.header('x-everee-signature') as string | null) ||
-      (req.header('x-hub-signature-256') as string | null) ||
-      null;
+      (req.header('x-everee-webhook-signature') as string | null) || null;
+    const webhookTimestamp =
+      (req.header('x-everee-webhook-timestamp') as string | null) || null;
 
     if (!eventId || !type) {
       logger.warn('everee.webhook.missing_fields', { eventId, type });
@@ -178,12 +365,39 @@ export const evereeWebhook = onRequest(
       return;
     }
 
-    if (!verifySignature(rawBody, signatureHeader, evereeTenantId)) {
+    // Replay protection: per Everee's "Securing your handler" guide, reject
+    // if the timestamp is outside the configured tolerance window. This is
+    // enforced before the signature check so a clock-skew failure produces
+    // a distinct log line.
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    if (
+      !isWebhookTimestampWithinTolerance(webhookTimestamp, nowSeconds)
+    ) {
+      logger.warn('everee.webhook.timestamp_out_of_window', {
+        eventId,
+        type,
+        evereeTenantId,
+        hasSignature: !!signatureHeader,
+        hasTimestamp: !!webhookTimestamp,
+        toleranceSeconds: EVEREE_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS,
+      });
+      res.status(401).send('Timestamp out of tolerance window');
+      return;
+    }
+
+    if (!verifySignature(rawBody, signatureHeader, webhookTimestamp, evereeTenantId)) {
+      // WH.1 trim: the verbose discovery diagnostics
+      // (sigPrefix/sigLen/expectedHexPrefix/etc.) lived here previously
+      // and were the entire reason we figured out the canonical spec.
+      // They're intentionally gone now — production-level fields only.
+      // Restore the verbose block from git history (commit prior to WH.1)
+      // if a fresh signature failure surfaces and we need to re-discover.
       logger.warn('everee.webhook.bad_signature', {
         eventId,
         type,
         evereeTenantId,
         hasSignature: !!signatureHeader,
+        hasTimestamp: !!webhookTimestamp,
       });
       // 401 discourages replay; Everee treats it as a permanent failure per webhook best practice.
       res.status(401).send('Bad signature');
@@ -279,10 +493,24 @@ export const onEvereeWebhookEventCreated = onDocumentCreated(
 
     try {
       const actions = await processEvent(tenantId, data);
+
+      // E.2 — refresh the readiness snapshot regardless of event type.
+      // The dedicated `processEvent` handlers cover the *known* events
+      // (`worker.onboarding-completed` etc.) but Everee fires plenty of
+      // others we don't yet have explicit handlers for (bank account
+      // changes, file signatures, W-4 updates, etc.). Reconcile after
+      // every event guarantees the snapshot is fresh whenever Everee
+      // tells us anything happened, even if we can't classify the
+      // event payload yet. Best-effort: reconcile failure must not
+      // re-mark the event as `error` (the dedicated handler already
+      // succeeded), so we swallow the error and log.
+      const reconcileActions = await reconcileWorkerFromWebhookEvent(tenantId, data);
+      const allActions = [...actions, ...reconcileActions];
+
       await ref.update({
         status: 'processed' as EvereeEventStatus,
         processedAt: admin.firestore.FieldValue.serverTimestamp(),
-        actions,
+        actions: allActions,
       });
     } catch (err) {
       const msg = (err as Error)?.message || String(err);
@@ -299,6 +527,118 @@ export const onEvereeWebhookEventCreated = onDocumentCreated(
     }
   },
 );
+
+/**
+ * E.2 — best-effort readiness-snapshot refresh after a webhook event.
+ *
+ * Resolves the affected worker tuple from the event body and calls
+ * `reconcileWorkerInternal` so the `everee_workers/{eId__uId}.readinessMirror`
+ * snapshot is fresh within seconds of any Everee event landing — not
+ * just `worker.onboarding-completed`. When the worker can't be
+ * resolved (no `workerId` in payload, no matching link doc) we return
+ * a single audit-action string so the event doc still tells the
+ * operator what happened.
+ *
+ * Never throws — the caller's `try/catch` will mark the event `error`
+ * if it does, which is the wrong signal because `processEvent` already
+ * succeeded.
+ */
+async function reconcileWorkerFromWebhookEvent(
+  tenantId: string,
+  data: StoredEvent,
+): Promise<string[]> {
+  try {
+    const payload = parsePayload(data.rawBody);
+    const evereeWorkerId =
+      (typeof payload.workerId === 'string' && payload.workerId) ||
+      (typeof payload.evereeWorkerId === 'string' && payload.evereeWorkerId) ||
+      '';
+    // The webhook envelope sometimes already carries an externalId of
+    // `${entityId}__${userId}` — prefer that (O(1) doc lookup) over the
+    // workerId scan.
+    const externalId =
+      (typeof payload.externalId === 'string' && payload.externalId) ||
+      (typeof payload.externalWorkerId === 'string' && payload.externalWorkerId) ||
+      '';
+
+    let entityId = '';
+    let userId = '';
+    let resolvedEvereeWorkerId = evereeWorkerId;
+
+    if (externalId && externalId.includes('__')) {
+      const linkSnap = await db()
+        .doc(`${evereePaths.workers(tenantId)}/${externalId}`)
+        .get();
+      if (linkSnap.exists) {
+        const linkData = linkSnap.data() as {
+          entityId?: string;
+          userId?: string;
+          evereeWorkerId?: string;
+          externalWorkerId?: string;
+        };
+        entityId = linkData.entityId ?? '';
+        userId = linkData.userId ?? '';
+        resolvedEvereeWorkerId =
+          resolvedEvereeWorkerId ||
+          linkData.evereeWorkerId ||
+          linkData.externalWorkerId ||
+          '';
+      }
+    }
+
+    if ((!entityId || !userId) && resolvedEvereeWorkerId) {
+      const q = await db()
+        .collection(evereePaths.workers(tenantId))
+        .where('evereeWorkerId', '==', resolvedEvereeWorkerId)
+        .limit(1)
+        .get();
+      if (q.empty) {
+        // Fall back to the legacy field name some pilot rows still use.
+        const q2 = await db()
+          .collection(evereePaths.workers(tenantId))
+          .where('externalWorkerId', '==', resolvedEvereeWorkerId)
+          .limit(1)
+          .get();
+        if (!q2.empty) {
+          const d = q2.docs[0].data() as { entityId?: string; userId?: string };
+          entityId = d.entityId ?? '';
+          userId = d.userId ?? '';
+        }
+      } else {
+        const d = q.docs[0].data() as { entityId?: string; userId?: string };
+        entityId = d.entityId ?? '';
+        userId = d.userId ?? '';
+      }
+    }
+
+    if (!entityId || !userId || !resolvedEvereeWorkerId) {
+      return [
+        `Reconcile skipped: could not resolve worker tuple (entityId=${entityId || '?'}, userId=${userId || '?'}, evereeWorkerId=${resolvedEvereeWorkerId || '?'}).`,
+      ];
+    }
+
+    const result = await reconcileWorkerInternal({
+      tenantId,
+      entityId,
+      userId,
+      evereeWorkerId: resolvedEvereeWorkerId,
+      syncSource: 'webhook',
+    });
+
+    if (result.ok) {
+      return ['Refreshed readinessMirror via reconcileWorkerInternal (syncSource=webhook).'];
+    }
+    return [`Reconcile reported ok=false: reason=${result.reason ?? 'unknown'}.`];
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn('everee.webhook.reconcile_failed', {
+      eventId: data.eventId,
+      type: data.type,
+      message: message.slice(0, 240),
+    });
+    return [`Reconcile failed: ${message.slice(0, 240)}`];
+  }
+}
 
 /**
  * Route a stored event to the right handler. Returns a short list of

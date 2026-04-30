@@ -34,6 +34,7 @@ export interface RecruiterUser {
   /** Firestore `resume` map — used for inline resume link in Person column */
   resume?: Record<string, unknown> | null;
   addedToIndeedFlex?: boolean;
+  addedToFieldglass?: boolean;
   /** Screening / payroll — readiness breakdown (same shape as profile credentials) */
   eVerifyOrders?: Array<{
     status?: string;

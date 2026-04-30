@@ -41,6 +41,16 @@ export type EmployeeReadinessRequirementType =
   | 'address_confirmed'
   /** C1 Events 1099 only — Independent Contractor Agreement signed. */
   | 'ic_agreement'
+  /**
+   * **E.3** — IRS TIN / SSN verification. Owned by Everee for any worker
+   * provisioned in Everee (W-2 + 1099 alike). Status mirrors
+   * `everee_workers.readinessMirror.tinVerificationStatus`:
+   *   - `NEEDS_VERIFICATION` → `incomplete`
+   *   - `SENT_FOR_VERIFICATION` → `in_progress`
+   *   - `VERIFIED` → `complete_pass`
+   *   - `MISMATCH` → `blocked` (IRS rejected; CSA must intervene)
+   */
+  | 'tin_verification'
   /** Escape hatch for tenant-custom requirements not in the canonical list. */
   | 'custom';
 

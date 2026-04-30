@@ -94,10 +94,26 @@ const PARAM_KEYS = [
   // from this list (Firebase 400s if the same name is both env-var
   // and secret-mount; same gotcha as the EVERIFY_WS_* pattern above).
   'EVEREE_ENABLED',
-  'EVEREE_API_TOKEN_2320', // tenant 2320 — add new EVEREE_API_TOKEN_<tid> per onboarded Everee tenant
-  // Per-tenant webhook signing secret (Everee → /evereeWebhook). Same per-tenant
-  // pattern as the API token; add EVEREE_WEBHOOK_SECRET_<tid> as additional
-  // Everee tenants come online (Select, Events, …).
+  // Optional global base URL override (defaults to https://api.everee.com).
+  // Everee uses a single host for both sandbox + prod; the per-tenant API
+  // token enforces environment separation. Set in root .env only when you
+  // need to point at a non-default host (staging mirror, dry-run sink, …).
+  'EVEREE_BASE_URL',
+  // Per-tenant Everee API tokens (read as plain process.env via evereeSecrets.ts).
+  // Add EVEREE_API_TOKEN_<tid> whenever a new Everee tenant is onboarded.
+  'EVEREE_API_TOKEN_2320',
+  'EVEREE_API_TOKEN_3138',
+  'EVEREE_API_TOKEN_3133',
+  // Per-tenant webhook HMAC secrets — INTENTIONALLY OMITTED from PARAM_KEYS for tids 3133 + 3138.
+  // These are bound via `defineSecret('EVEREE_WEBHOOK_SECRET_<tid>')` in
+  // functions/src/integrations/everee/evereeWebhook.ts (WH.1). Cloud Run
+  // 400s on deploy if the same name is both an env-var AND a secret mount
+  // ("Secret environment variable overlaps non secret environment variable").
+  // Same gotcha as the EVERIFY_WS_* pattern documented above.
+  // Set them with: `firebase functions:secrets:set EVEREE_WEBHOOK_SECRET_<tid> --data-file=-`.
+  // EVEREE_WEBHOOK_SECRET_2320 is still safe in PARAM_KEYS because tid 2320
+  // does not yet have a defineSecret() binding in code — when it does, drop
+  // it from this list and `firebase functions:secrets:set` it instead.
   'EVEREE_WEBHOOK_SECRET_2320',
   // Document AI — I-9 supporting extraction (see docs/I9_SUPPORTING_DOCUMENTS_ARCHITECTURE.md)
   'DOCUMENT_AI_PROJECT_ID',

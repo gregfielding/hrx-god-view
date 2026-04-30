@@ -25,6 +25,8 @@ export interface EvereeEnsureWorkerRequest {
   firstName?: string;
   lastName?: string;
   phone?: string;
+  /** Contractor onboarding — optional; entity `evereeApprovalGroupId` is the fallback. */
+  approvalGroupId?: number;
 }
 
 export interface EvereeEnsureWorkerResult {
@@ -36,6 +38,20 @@ export interface EvereeEnsureWorkerResult {
   externalWorkerId?: string | null;
 }
 
+/**
+ * Everee Embed Components (developer.everee.com/docs/everee-embed). Defaults to
+ * `ONBOARDING` (V2_0) when omitted; once the worker has finished onboarding,
+ * the worker-facing payroll page should switch to `WORKER_HOME` (V1_0) so the
+ * worker stays inside HRX instead of being redirected to account.everee.com.
+ */
+export type EvereeEmbedExperienceType =
+  | 'ONBOARDING'
+  | 'WORKER_HOME'
+  | 'PAYMENT_HISTORY'
+  | 'TAX_DOCUMENTS'
+  | 'PAYMENT_DEPOSIT'
+  | 'HOME_ADDRESS';
+
 export interface EvereeCreateOnboardingSessionRequest {
   tenantId: string;
   entityId: string;
@@ -43,6 +59,10 @@ export interface EvereeCreateOnboardingSessionRequest {
   evereeWorkerId: string;
   /** Where to return the worker after the Everee experience completes. */
   returnUrl?: string;
+  /** Defaults to `ONBOARDING` when omitted. */
+  experienceType?: EvereeEmbedExperienceType;
+  /** Defaults per Everee's published table (`V2_0` for ONBOARDING, `V1_0` for the rest). */
+  experienceVersion?: string;
 }
 
 export interface EvereeCreateOnboardingSessionResult {
@@ -50,10 +70,26 @@ export interface EvereeCreateOnboardingSessionResult {
   sessionId: string;
   /** Iframe / WebView src. One-time use; create fresh on each open. */
   embedUrl: string;
+  /** Same as `embedUrl` — server mirrors Everee `url`. */
+  url?: string;
+  /** Allowed parent origin for `postMessage` checks (from Everee or derived from `url`). */
+  origin?: string;
+  /** Session TTL hint (milliseconds). */
+  expiresInMs?: number;
   /** Optional expiration hint from Everee; client should treat the URL as ephemeral. */
   expiresAt?: string | null;
   /** Worker-facing completion return URL surfaced back from Everee (may differ from request). */
   returnUrl?: string | null;
+  /** Echo of the experience that was actually requested — useful for client diagnostics. */
+  experienceType?: EvereeEmbedExperienceType;
+  experienceVersion?: string;
+  /**
+   * Bridge name Everee will look up on `window` when delivering UI events
+   * (V2_0 embeds). The host MUST register `window[eventHandlerName]` with a
+   * `postMessage` method *before* the iframe boots, otherwise the embed
+   * stalls on `EMB-102`. See `src/utils/everee/hostMessageBridge.ts`.
+   */
+  eventHandlerName?: string;
 }
 
 export interface EvereePayHistoryItem {
@@ -130,3 +166,237 @@ export const evereeGetPayStatement = httpsCallable<
   EvereeGetPayStatementRequest,
   EvereePayStatement | null
 >(functions, 'evereeGetPayStatement');
+
+export interface EvereeGetMyOnboardingStatusRequest {
+  tenantId: string;
+  entityId: string;
+  evereeWorkerId: string;
+  /** Defaults to caller's UID server-side; admins may pass another worker. */
+  userId?: string;
+}
+
+export type EvereeGetMyOnboardingStatusResult =
+  | {
+      ok: true;
+      onboardingComplete: boolean;
+      accountClaimed: boolean | null;
+      /**
+       * EE.4 — raw `onboardingStatus` from `GET /api/v2/workers/{id}` (uppercased).
+       * Surfaces alongside `onboardingComplete` so the client can enforce
+       * the unanimity rule before requesting `WORKER_HOME` (only when both
+       * `onboardingComplete: true` AND `onboardingStatus: 'COMPLETE'`).
+       * Null when Everee didn't return a status string.
+       */
+      onboardingStatus: string | null;
+      /**
+       * EE.4 — raw `onboardingComplete` boolean as Everee sent it.
+       * Differs from the top-level `onboardingComplete` when the server-side
+       * matcher applied unanimity logic (e.g. boolean said true but
+       * `onboardingStatus` disagreed). Mostly useful for diagnostics.
+       */
+      onboardingCompleteSignal: boolean | null;
+    }
+  | {
+      ok: false;
+      onboardingComplete: null;
+      accountClaimed: null;
+      reason: 'everee_api_call_failed';
+    };
+
+/**
+ * Worker-callable preflight: ask Everee whether the worker has finished
+ * onboarding before deciding which Embed Component to request. Status flags
+ * only — no PII.
+ */
+export const evereeGetMyOnboardingStatus = httpsCallable<
+  EvereeGetMyOnboardingStatusRequest,
+  EvereeGetMyOnboardingStatusResult
+>(functions, 'evereeGetMyOnboardingStatus');
+
+export interface EvereeAdminGetWorkerRequest {
+  tenantId: string;
+  entityId: string;
+  evereeWorkerId: string;
+  /**
+   * Subject of the fetch. When the caller is a worker fetching their own
+   * record, this should match the auth uid (server defaults to the caller).
+   * Recruiters/admins may pass another worker's uid.
+   */
+  userId?: string;
+}
+
+export interface EvereeAdminGetWorkerResult {
+  ok: true;
+  evereeWorkerId: string;
+  evereeTenantId: string;
+  /** Raw `GET /api/v2/workers/{id}` response — PII-bearing. Display, don't store. */
+  response: unknown;
+}
+
+/**
+ * Live "fetch the worker straight from Everee" callable. Used by both the
+ * admin debug button on User Profile and the worker-facing Employment &
+ * Payroll panel — gate is `canSelfOrManageEveree`, so workers can pull
+ * their own record while recruiters can pull anyone's. Response is PII;
+ * render it to the screen and never persist it to Firestore.
+ */
+export const evereeAdminGetWorker = httpsCallable<
+  EvereeAdminGetWorkerRequest,
+  EvereeAdminGetWorkerResult
+>(functions, 'evereeAdminGetWorker');
+
+export interface EvereeAdminClearStaleStampsRequest {
+  tenantId: string;
+  entityId: string;
+  /** Worker's HRX uid (subject of the clear). */
+  userId: string;
+  /** Free-form audit reason; defaults server-side to `admin_csa_clear`. */
+  reason?: string;
+}
+
+export interface EvereeAdminClearStaleStampsResult {
+  ok: true;
+  /** Field names actually deleted from the link doc this call. Empty when no-op. */
+  cleared: string[];
+  reason: 'link_doc_missing' | 'nothing_to_clear' | string;
+}
+
+/**
+ * EE.4 — admin/CSA recovery: clears optimistic onboarding-completion
+ * stamps that left a worker stuck requesting `WORKER_HOME` (Everee
+ * responds EMB-202 because onboarding isn't actually finished).
+ *
+ * Gated to `canManageEveree` server-side. Worker self-clear is implicit
+ * via the preflight inverse-mirror; this callable exists for cases where
+ * the preflight is unreachable or the worker can't refresh themselves.
+ */
+export const evereeAdminClearStaleStamps = httpsCallable<
+  EvereeAdminClearStaleStampsRequest,
+  EvereeAdminClearStaleStampsResult
+>(functions, 'evereeAdminClearStaleStamps');
+
+export interface EvereeAdminRecreateWorkerOnboardingRequest {
+  tenantId: string;
+  entityId: string;
+  /** Worker's HRX uid — the doc subject. */
+  userId: string;
+}
+
+export interface EvereeAdminRecreateWorkerOnboardingResult {
+  ok: true;
+  /** `${userId}__${entityKey}` — the worker_onboarding doc id we wrote (or found). */
+  pipelineId: string;
+  /** `${entityId}__${userId}` — the everee_workers linkage doc id. */
+  linkageDocId: string;
+  /** True iff the worker_onboarding doc was actually written this call. */
+  workerOnboardingRecreated: boolean;
+  /** True iff the everee_workers linkage doc was actually written this call. */
+  evereeWorkersLinkageRecreated: boolean;
+  /** Resolved entity context (for the toast copy). */
+  entityKey: 'workforce' | 'select' | 'events';
+  entityName: string;
+  /** Worker id from `users.evereeWorkerIds[evereeTenantId]`, when available. */
+  evereeWorkerId: string | null;
+  evereeTenantId: string | null;
+}
+
+/**
+ * EE.5 — admin/CSA recovery for accidental Firestore deletions of the
+ * Everee worker setup. Recreates the canonical worker_onboarding doc
+ * AND the everee_workers linkage doc when missing, idempotently and
+ * without re-triggering messaging or touching entity_employments.
+ *
+ * Refuses when there is no `entity_employments/{userId}__{entityKey}`
+ * doc — recovery should never invent an employment that didn't exist.
+ *
+ * Gated to `canManageEveree` server-side.
+ */
+export const evereeAdminRecreateWorkerOnboarding = httpsCallable<
+  EvereeAdminRecreateWorkerOnboardingRequest,
+  EvereeAdminRecreateWorkerOnboardingResult
+>(functions, 'evereeAdminRecreateWorkerOnboarding');
+
+export interface EvereeAdminGetWorkerDocumentsRequest {
+  tenantId: string;
+  entityId: string;
+  evereeWorkerId: string;
+  userId?: string;
+}
+
+/** Item shape returned by Everee `GET /api/v2/workers/files` (locked endpoint). */
+export interface EvereeWorkerFile {
+  documentType: 'TAXES' | 'ONBOARDING' | 'POLICY';
+  fileName: string;
+  taxYear?: string;
+  mimeType: string;
+  publishedAt: string;
+  downloadUrl: string;
+}
+
+export interface EvereeAdminGetWorkerDocumentsResult {
+  ok: boolean;
+  evereeWorkerId: string;
+  evereeTenantId?: string;
+  files: EvereeWorkerFile[];
+  /** Populated only when `ok === false` — raw error message from `evereeRequest`. */
+  error?: string;
+}
+
+/**
+ * Worker-signed file index (`GET /api/v2/workers/files`). Endpoint is locked
+ * post-pilot; the wrapper response shape no longer carries `attempts` /
+ * discovery noise.
+ */
+export const evereeAdminGetWorkerDocuments = httpsCallable<
+  EvereeAdminGetWorkerDocumentsRequest,
+  EvereeAdminGetWorkerDocumentsResult
+>(functions, 'evereeAdminGetWorkerDocuments');
+
+export interface EvereeAdminGetWorkerTaxFormRequest {
+  tenantId: string;
+  entityId: string;
+  evereeWorkerId: string;
+  /** Subject; defaults to caller's UID server-side. */
+  userId?: string;
+}
+
+/**
+ * `applicable: false` ⇒ Everee returned 404 because this worker doesn't have
+ * a form of this kind on file (e.g. asking a W-2 worker for their W-9).
+ * `applicable: true` + `error` ⇒ a real upstream failure the panel should
+ * surface inline.
+ */
+export type EvereeAdminGetWorkerTaxFormResult =
+  | {
+      ok: true;
+      applicable: true;
+      /** Raw Everee response — render defensively, schemas drift across pilot revisions. */
+      response: unknown;
+    }
+  | {
+      ok: false;
+      applicable: false;
+    }
+  | {
+      ok: false;
+      applicable: true;
+      error: string;
+    };
+
+/**
+ * `GET /api/v2/workers/{id}/w9-info` — contractor (1099) signed W-9 details.
+ * 404 ⇒ worker is W-2 (panel hides the W-9 card cleanly).
+ */
+export const evereeAdminGetWorkerW9 = httpsCallable<
+  EvereeAdminGetWorkerTaxFormRequest,
+  EvereeAdminGetWorkerTaxFormResult
+>(functions, 'evereeAdminGetWorkerW9');
+
+/**
+ * `GET /api/v2/workers/{id}/w-4-tax-withholding-settings` — employee (W-2)
+ * withholding settings. 404 ⇒ worker is a contractor (panel hides W-4 card).
+ */
+export const evereeAdminGetWorkerW4 = httpsCallable<
+  EvereeAdminGetWorkerTaxFormRequest,
+  EvereeAdminGetWorkerTaxFormResult
+>(functions, 'evereeAdminGetWorkerW4');

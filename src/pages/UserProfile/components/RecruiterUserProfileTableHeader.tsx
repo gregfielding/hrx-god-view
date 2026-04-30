@@ -39,6 +39,7 @@ import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import FavoriteButton from '../../../components/FavoriteButton';
 import { PhoneVerifiedInlineCheck } from '../../../components/PhoneVerifiedInlineCheck';
 import UserTableIndeedFlexBadge from '../../../components/tables/UserTableIndeedFlexBadge';
+import UserTableFieldglassBadge from '../../../components/tables/UserTableFieldglassBadge';
 import { pickResumeFromUserDoc } from '../../../utils/userResumeOpen';
 import { formatPhoneNumber } from '../../../utils/formatPhone';
 import type { ReadinessBreakdownRow } from '../../../utils/recruiterUsersReadinessDisplay';
@@ -133,6 +134,11 @@ export type RecruiterUserProfileTableHeaderProps = {
   onIndeedFlexChange?: (checked: boolean) => void;
   /** Managers+ (security ≥ 4) can toggle */
   canEditIndeedFlex?: boolean;
+  /** SAP Fieldglass flag (`users.addedToFieldglass`) — sister checkbox to Indeed Flex. */
+  addedToFieldglass?: boolean;
+  onFieldglassChange?: (checked: boolean) => void;
+  /** Managers+ (security ≥ 4) can toggle */
+  canEditFieldglass?: boolean;
   /** From Quick profile; shown above Created when present */
   emergencyContact?: EmergencyContact | null;
   /** Opens quick profile modal (parent passes when viewer can edit) */
@@ -199,6 +205,9 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
   addedToIndeedFlex = false,
   onIndeedFlexChange,
   canEditIndeedFlex = false,
+  addedToFieldglass = false,
+  onFieldglassChange,
+  canEditFieldglass = false,
   emergencyContact,
   onContactEditClick,
   assignmentLines = [],
@@ -362,11 +371,11 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
           width: '100%',
         }}
       >
+        <Box sx={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
         <Box
           position="relative"
           onMouseEnter={() => setRecordHeaderAvatarHover(true)}
           onMouseLeave={() => setRecordHeaderAvatarHover(false)}
-          sx={{ flexShrink: 0 }}
         >
           <Avatar
             src={avatarUrl || undefined}
@@ -417,6 +426,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
               </IconButton>
             </Tooltip>
           )}
+        </Box>
         </Box>
 
         <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -474,13 +484,15 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
               }}
             >
               {contactActionIcons}
-              <Box sx={{ display: 'inline-flex', alignItems: 'center', ml: 0.25 }}>
+              <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, ml: 0.25 }}>
                 <UserTableIndeedFlexBadge user={userDocForTableIcons} compact />
+                <UserTableFieldglassBadge user={userDocForTableIcons} compact />
               </Box>
             </Box>
           ) : (
-            <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5, pb: '8px' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5, pb: '8px' }}>
               <UserTableIndeedFlexBadge user={userDocForTableIcons} compact />
+              <UserTableFieldglassBadge user={userDocForTableIcons} compact />
             </Box>
           )}
 
@@ -719,6 +731,11 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
               )}
               <FormControlLabel
                 sx={{
+                  // FormControlLabel defaults to inline-flex; forcing flex
+                  // here (and on the Fieldglass row below) makes the two
+                  // checkboxes stack vertically instead of wrapping side by
+                  // side as the Readiness column narrows.
+                  display: 'flex',
                   mt:
                     readinessRows.length > 0 || (!canViewAdminContent && interviewSummaryLine)
                       ? 0.35
@@ -748,6 +765,36 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                   />
                 }
                 label="Indeed Flex"
+              />
+              <FormControlLabel
+                sx={{
+                  display: 'flex',
+                  mt: 0,
+                  mr: 0,
+                  ml: -0.75,
+                  alignItems: 'center',
+                  '& .MuiFormControlLabel-label': {
+                    fontSize: '0.74rem',
+                    fontWeight: 400,
+                    lineHeight: 1.45,
+                    color: (theme) => (theme.palette.mode === 'dark' ? theme.palette.text.secondary : '#5A6372'),
+                  },
+                }}
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={!!addedToFieldglass}
+                    disabled={!canEditFieldglass}
+                    onChange={(e) => onFieldglassChange?.(e.target.checked)}
+                    sx={{
+                      py: 0,
+                      pl: 0,
+                      pr: 0.5,
+                      '& .MuiSvgIcon-root': { fontSize: 18 },
+                    }}
+                  />
+                }
+                label="Fieldglass"
               />
             </Grid>
 
