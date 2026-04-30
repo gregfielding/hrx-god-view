@@ -6,15 +6,65 @@
  *   - `WORKER_HOME` (V1_0) once they're done — keeps them inside HRX instead
  *     of bouncing them to account.everee.com.
  *
- * "Done" is signalled by any of:
- *   - `tenants/{tid}/everee_workers/{entityId__uid}.status === 'onboarding_complete'`
- *     (set by the `worker.onboarding-completed` webhook → authoritative)
- *   - The Everee iframe posts a completion event (UX-only optimistic swap).
- *   - The Everee iframe renders `EMB-201` ("Onboarding already complete") —
- *     auto-retry with `WORKER_HOME` instead of leaving the worker stuck.
+ * Canonical "done" signal (post-EE.4):
+ *   - `evereeGetMyOnboardingStatus` callable → Everee `GET /api/v2/workers/{id}`
+ *     → `inspectEvereeOnboardingState` (Layer 2 unanimity rule:
+ *     `onboardingComplete: true` AND `onboardingStatus: 'COMPLETE'`).
+ *   - That callable also writes the canonical
+ *     `everee_workers.apiObservedOnboardingCompleteAt` and clears stale
+ *     stamps when Everee says the worker isn't done.
+ *   - The webhook (`worker.onboarding-completed` → `evereeReconcileWorker`)
+ *     writes the same canonical stamp end-to-end within seconds.
+ *
+ * Iframe events are advisory UX hints only — they drive optimistic
+ * `setForcedExperience` swaps (sub-second perceived responsiveness) but
+ * never write to Firestore. EMB-201 → swap to `WORKER_HOME`; EMB-202 →
+ * swap back to `ONBOARDING`.
  *
  * Sessions are short-lived; we always create a fresh one on mount / swap /
  * "Try again" and never cache the URL in component state across reloads.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * EE.4 simplification audit (Phase 1 → Phase 2 changes applied here)
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * Pre-EE.4 the bridge (EMB-102) AND webhooks (WH.1) were both broken,
+ * so we trusted iframe events as canonical and stamped Firestore from
+ * them via `softMarkOnboardingComplete()` / `clearStaleOnboardingCompleteStamps()`.
+ * That trust pattern caused the EMB-202 deadlock: a false-positive
+ * iframe message stamped the link doc, the next page load re-read the
+ * stamp and asked for `WORKER_HOME`, Everee correctly rejected with
+ * EMB-202, the broken bridge swallowed the recovery toast, and the
+ * worker was stuck. Now (EE.7 + WH.1 + E.1–E.4 all landed):
+ *
+ *   load-bearing │ kept                 (server preflight + reconcile)
+ *   vestigial    │ removed write calls  (softMark/clearStale invocations)
+ *   risky        │ removed local-stamp  (replaced with API-canonical decision)
+ *
+ * Specifically removed:
+ *   • Iframe terminal event → `softMarkOnboardingComplete` Firestore write.
+ *     The webhook + reconcile path now writes `apiObservedOnboardingCompleteAt`
+ *     end-to-end within seconds; the optimistic stamp was duplicate work.
+ *   • EMB-202 dispatch + EMB-202 server-rejection → `clearStaleOnboardingCompleteStamps`.
+ *     The server preflight (`evereeGetMyOnboardingStatus`) clears stale
+ *     stamps inversely whenever Everee API says onboarding isn't done,
+ *     so the client-side delete was duplicate work too.
+ *   • `localHintSaysComplete` from the experience decision matrix.
+ *     `decideExperienceType` now defaults to `ONBOARDING` when the
+ *     server preflight fails — at worst one extra session swap, at best
+ *     no permanent lockout.
+ *
+ * Specifically kept (load-bearing defense):
+ *   • EMB-201 / EMB-202 `setForcedExperience` swap paths (UI optimism only).
+ *   • `forcedExperience` user-driven retry button.
+ *   • EMB-201 server-rejection → swap to `WORKER_HOME`.
+ *   • Iframe terminal event matcher (`looksLikeOnboardingCompleteMessage`).
+ *
+ * Phase 4 follow-up PR will delete the now-unused helper functions
+ * (`softMarkOnboardingComplete`, `clearStaleOnboardingCompleteStamps`,
+ * `detectOnboardingComplete`) and mark the related fields deprecated
+ * on the `everee_workers` schema. Kept unused-but-defined here so this
+ * PR stays single-file-revertable.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -39,8 +89,9 @@ import {
   registerEvereeHostBridge,
 } from '../../../utils/everee/hostMessageBridge';
 import {
+  decideExperienceType,
+  dispatchEvereeIframeMessage,
   isStampWithinTtl,
-  looksLikeOnboardingCompleteMessage,
   ONBOARDING_COMPLETE_STAMP_TTL_MS,
 } from './workerPayrollEvereeMatchers';
 
@@ -98,6 +149,16 @@ function pickEvereeWorkerIdFromUserMap(
   return '';
 }
 
+/**
+ * EE.4 Phase 2 — kept for diagnostic logging only. Pre-EE.4 this fed
+ * `localHintSaysComplete` into the experience-type decision matrix; that
+ * fallback is gone (see `decideExperienceType` — API truth wins, API
+ * failure defaults to `ONBOARDING`). The function is preserved so the
+ * `console.debug('[everee.session] experience decision', ...)` payload
+ * still records whether local stamps disagreed with the API truth — useful
+ * for ops triage when an EMB-202 escapes the preflight. Phase 4 will
+ * delete it once we're confident the simplified flow is stable.
+ */
 /** Has this worker already finished onboarding for this entity (per Firestore mirrors)? */
 async function detectOnboardingComplete(
   tenantId: string,
@@ -165,7 +226,23 @@ async function detectOnboardingComplete(
   return false;
 }
 
-/** Best-effort UX mirror: stamp the link doc so subsequent loads pick WORKER_HOME immediately. */
+/**
+ * EE.4 Phase 2 — UNUSED. Kept here unreferenced through Phase 3 so this
+ * PR stays single-file-revertable; Phase 4 follow-up PR will delete the
+ * function plus its `firebase/firestore` imports (`setDoc`,
+ * `serverTimestamp`).
+ *
+ * Pre-EE.4 the dispatch handler called this on every iframe terminal
+ * event (`WORKER_ONBOARDING_COMPLETE`) and EMB-201 toast to optimistically
+ * stamp `clientObservedOnboardingCompleteAt` so the next session create
+ * would pick `WORKER_HOME`. With the bridge (EE.7) and webhooks (WH.1)
+ * both working, the canonical webhook → reconcile path writes
+ * `apiObservedOnboardingCompleteAt` end-to-end within seconds, so the
+ * optimistic stamp was duplicate work — and it caused the EMB-202
+ * deadlock when an intermediate-step iframe message slipped past the
+ * matcher (now hardened in `looksLikeOnboardingCompleteMessage`).
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function softMarkOnboardingComplete(
   tenantId: string,
   entityId: string,
@@ -189,12 +266,19 @@ async function softMarkOnboardingComplete(
 }
 
 /**
- * Inverse of `softMarkOnboardingComplete`. When the server's authoritative
- * Everee API check (or an EMB-202 from the iframe) tells us the worker isn't
- * actually done, wipe the UX-only stamps so subsequent loads don't keep
- * picking `WORKER_HOME`. We never touch `status` / `onboardingCompletedAt`
- * here — those are owned by the webhook.
+ * EE.4 Phase 2 — UNUSED. Kept here unreferenced through Phase 3 so this
+ * PR stays single-file-revertable; Phase 4 follow-up PR will delete the
+ * function plus its `firebase/firestore` imports (`deleteField`).
+ *
+ * Pre-EE.4 the dispatch handler and the preflight-inverse branch called
+ * this to wipe stale `clientObservedOnboardingCompleteAt` /
+ * `apiObservedOnboardingCompleteAt` stamps after EMB-202 errors. The
+ * server preflight (`evereeGetMyOnboardingStatus`) now does this clear
+ * itself when Everee API authoritatively says the worker isn't done
+ * (see `functions/src/integrations/everee/evereeCallables.ts:380-400`),
+ * so the client-side delete was duplicate work.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function clearStaleOnboardingCompleteStamps(
   tenantId: string,
   entityId: string,
@@ -216,50 +300,6 @@ async function clearStaleOnboardingCompleteStamps(
   } catch {
     /* ignore — UX-only */
   }
-}
-
-/** Heuristic: pull all stringy fields out of an iframe message envelope for pattern checks. */
-function flattenMessageBlobs(payload: unknown): string[] {
-  if (!payload) return [];
-  const blobs: string[] = [];
-  if (typeof payload === 'string') {
-    blobs.push(payload);
-    return blobs;
-  }
-  if (typeof payload === 'object') {
-    const p = payload as Record<string, unknown>;
-    for (const k of ['code', 'errorCode', 'embErrorCode', 'message', 'errorMessage', 'error', 'reason']) {
-      const v = p[k];
-      if (typeof v === 'string') blobs.push(v);
-    }
-    if (typeof p.error === 'object' && p.error) {
-      for (const v of Object.values(p.error as Record<string, unknown>)) {
-        if (typeof v === 'string') blobs.push(v);
-      }
-    }
-  }
-  return blobs;
-}
-
-/** Heuristic: is the iframe rendering the EMB-201 "already complete" page? */
-function looksLikeAlreadyCompleteError(payload: unknown): boolean {
-  return flattenMessageBlobs(payload).some((b) =>
-    /EMB-201|Onboarding\s+already\s+complete/i.test(b),
-  );
-}
-
-/**
- * Heuristic: is the iframe rendering the EMB-202 "not yet complete" page?
- * Symmetric counterpart to EMB-201 — fires when we asked for `WORKER_HOME`
- * (or any non-onboarding experience) on a worker that hasn't actually
- * finished payroll setup. The server preflight should catch this before we
- * ever ask Everee, but UX-only completion stamps in Firestore can mislead
- * the client; this heuristic is the recovery path of last resort.
- */
-function looksLikeNotYetCompleteError(payload: unknown): boolean {
-  return flattenMessageBlobs(payload).some((b) =>
-    /EMB-202|Onboarding\s+not\s+yet\s+complete|Only\s+the\s+ONBOARDING\s+experience/i.test(b),
-  );
 }
 
 const WorkerPayrollEvereeTenant: React.FC = () => {
@@ -366,33 +406,32 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
         });
         return;
       }
-      // Hint only — local Firestore stamps that summarize prior iframe /
-      // webhook signals. Used as a UX shortcut, **never** as the deciding
-      // factor for which embed experience to request. EE.4 promoted the
-      // Everee API preflight below to canonical authority.
+      // EE.4 Phase 2 — diagnostic-only read of the local Firestore
+      // stamps. Used to log when local state disagreed with the API
+      // truth (helpful for ops triage when an EMB-202 escapes the
+      // preflight) but **never** fed into the experience-type decision.
+      // See the audit comment block at the top of this file.
       const localHintSaysComplete = await detectOnboardingComplete(
         scopeTenantId,
         resolved.entityId,
         uid,
       );
       if (isStale()) return;
-      // EE.4 — Server-side preflight is **canonical** for the experience
-      // pick. The historical bug was the inverse: we trusted the local UX
-      // stamps and only ran the preflight as a tie-breaker. A stale stamp
-      // from a false-positive iframe message (Layer 1 below) plus the
-      // bridge protocol break (EMB-102) made the deadlock unrecoverable —
-      // the iframe screamed EMB-202, our parent never heard it, the next
-      // page load re-read the stamp and asked for `WORKER_HOME` again.
+      // EE.4 — Server-side preflight is the **only** authority for the
+      // experience pick. `evereeGetMyOnboardingStatus` wraps Everee's
+      // `GET /api/v2/workers/{id}` and applies the Layer 2 unanimity
+      // rule (`onboardingComplete: true` AND `onboardingStatus:
+      // 'COMPLETE'`); when Everee says the worker isn't done it also
+      // clears any stale `clientObservedOnboardingCompleteAt` /
+      // `apiObservedOnboardingCompleteAt` stamps server-side, so the
+      // client doesn't need a parallel cleanup path.
       //
-      // New rule (Layer 2): default to `ONBOARDING` for everything we
-      // can't unambiguously prove is complete. Only flip to `WORKER_HOME`
-      // when BOTH `onboardingComplete: true` AND
-      // `onboardingStatus: 'COMPLETE'` come back from the API (or one of
-      // them is unambiguously true and the other is absent — see
-      // `inspectEvereeOnboardingState` server-side). API failures default
-      // to `ONBOARDING` so the worker can still progress; the worst case
-      // is one extra session swap when we recover, vs. a permanent
-      // deadlock when we wrongly request `WORKER_HOME`.
+      // API failure → `decideExperienceType` returns `ONBOARDING` (safe
+      // default). Pre-EE.4 we used to fall back to the local Firestore
+      // stamps in this branch; that was the deadlock fuel — a single
+      // false-positive iframe message would persist as a stale stamp
+      // and the next preflight outage would lock the worker out of
+      // onboarding by misrouting them to `WORKER_HOME`.
       let apiSaysComplete = false;
       let apiPreflightOk = false;
       let preflightDiagnostic: {
@@ -417,15 +456,6 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
               onboardingStatus: statusData.onboardingStatus ?? null,
               onboardingCompleteSignal: statusData.onboardingCompleteSignal ?? null,
             };
-            if (!apiSaysComplete && localHintSaysComplete) {
-              await clearStaleOnboardingCompleteStamps(
-                scopeTenantId,
-                resolved.entityId,
-                uid,
-                'preflight_api_says_not_complete',
-              );
-              if (isStale()) return;
-            }
           }
         } catch (err) {
           // eslint-disable-next-line no-console
@@ -433,30 +463,23 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
         }
       }
 
-      // Decision matrix (forcedExperience > API > safe default ONBOARDING):
-      //   forcedExperience set         → use it (user-driven retry)
-      //   API ok && complete           → WORKER_HOME
-      //   API ok && !complete          → ONBOARDING
-      //   API failed && local hint     → WORKER_HOME (legacy fallback —
-      //                                  triggers EMB-201/202 recovery if
-      //                                  the hint was stale)
-      //   API failed && no local hint  → ONBOARDING (default)
-      const experienceType: EvereeEmbedExperienceType =
-        forcedExperience ??
-        (apiPreflightOk
-          ? apiSaysComplete
-            ? 'WORKER_HOME'
-            : 'ONBOARDING'
-          : localHintSaysComplete
-          ? 'WORKER_HOME'
-          : 'ONBOARDING');
+      const experienceType = decideExperienceType({
+        forcedExperience,
+        apiPreflightOk,
+        apiSaysComplete,
+      });
       // eslint-disable-next-line no-console
       console.debug('[everee.session] experience decision', {
         requestId,
         forcedExperience,
         apiPreflightOk,
         apiSaysComplete,
+        // EE.4 diagnostic — surfaces local-stamp drift without using it
+        // for decisions. Should converge to false in steady state.
         localHintSaysComplete,
+        localHintMatchesApi: apiPreflightOk
+          ? localHintSaysComplete === apiSaysComplete
+          : null,
         experienceType,
         ...preflightDiagnostic,
       });
@@ -526,8 +549,12 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
         return;
       }
       // Symmetric counterpart for EMB-202 ("Onboarding not yet complete /
-      // Only the ONBOARDING experience is available"). Clear stale UX-only
-      // completion stamps and retry with ONBOARDING.
+      // Only the ONBOARDING experience is available"). EE.4 Phase 2 — UI
+      // swap only; the server preflight (`evereeGetMyOnboardingStatus`)
+      // already clears any stale `apiObservedOnboardingCompleteAt` /
+      // `clientObservedOnboardingCompleteAt` stamps server-side when
+      // Everee API says the worker isn't done, so this client-side
+      // recovery just needs to flip the requested experience.
       if (
         lastSwapRef.current !== 'ONBOARDING' &&
         /EMB-202|Onboarding\s+not\s+yet\s+complete|Only\s+the\s+ONBOARDING\s+experience/i.test(
@@ -536,17 +563,6 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
       ) {
         // eslint-disable-next-line no-console
         console.info('[everee embed] swapping to ONBOARDING after server rejection', { message });
-        if (uid && scopeTenantId) {
-          void resolveEntityForEvereeTenant(scopeTenantId, evereeTenantId).then((resolved) => {
-            if (!resolved) return;
-            void clearStaleOnboardingCompleteStamps(
-              scopeTenantId,
-              resolved.entityId,
-              uid,
-              'server.emb_202',
-            );
-          });
-        }
         setForcedExperience('ONBOARDING');
         return;
       }
@@ -618,45 +634,17 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
     ) => {
       // eslint-disable-next-line no-console
       console.log('[everee embed message]', { source, data: payload });
-      const onboardingComplete = looksLikeOnboardingCompleteMessage(payload);
-      const embAlreadyComplete = looksLikeAlreadyCompleteError(payload);
-      const embNotYetComplete = looksLikeNotYetCompleteError(payload);
-
-      // EMB-202 recovery: iframe says "you asked for the wrong experience —
-      // worker hasn't finished onboarding". Clear the stale UX-only stamps
-      // that misled us, then swap back to ONBOARDING. Symmetric to the
-      // EMB-201 → WORKER_HOME path below.
-      if (embNotYetComplete && currentExperience !== 'ONBOARDING') {
-        if (uid && scopeTenantId) {
-          void resolveEntityForEvereeTenant(scopeTenantId, evereeTenantId).then((resolved) => {
-            if (!resolved) return;
-            void clearStaleOnboardingCompleteStamps(
-              scopeTenantId,
-              resolved.entityId,
-              uid,
-              'iframe.emb_202',
-            );
-          });
-        }
-        setForcedExperience('ONBOARDING');
-        return;
-      }
-
-      if (!onboardingComplete && !embAlreadyComplete) return;
-      if (currentExperience === 'WORKER_HOME') return;
-      if (uid && scopeTenantId) {
-        // Best-effort mirror; webhook still owns canonical `status`.
-        void resolveEntityForEvereeTenant(scopeTenantId, evereeTenantId).then((resolved) => {
-          if (!resolved) return;
-          void softMarkOnboardingComplete(
-            scopeTenantId,
-            resolved.entityId,
-            uid,
-            onboardingComplete ? 'iframe.onboarding_complete' : 'iframe.emb_201',
-          );
-        });
-      }
-      setForcedExperience('WORKER_HOME');
+      // EE.4 Phase 2 Change 1 — iframe events are advisory UI hints
+      // only. NO Firestore writes here. The webhook + reconcile path
+      // owns canonical `apiObservedOnboardingCompleteAt`/`status`; this
+      // dispatcher exists purely to swap which Embed Component is
+      // mounted in the parent shell for sub-second perceived
+      // responsiveness.
+      dispatchEvereeIframeMessage(payload, {
+        currentExperience,
+        onComplete: () => setForcedExperience('WORKER_HOME'),
+        onNotYetComplete: () => setForcedExperience('ONBOARDING'),
+      });
     };
 
     const onMsg = (event: MessageEvent) => {

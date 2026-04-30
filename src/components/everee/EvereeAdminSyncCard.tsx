@@ -283,6 +283,12 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
           <Chip size="small" variant="outlined" label="Not linked" />
         )}
         <Box sx={{ flex: 1 }} />
+        {/*
+          EE.5 "Recreate worker onboarding" button — temporarily hidden by
+          request. Backend callable (`evereeAdminRecreateWorkerOnboarding`)
+          and the `handleRecreate` handler stay wired so we can restore the
+          button by removing this comment when the recovery surface is
+          needed again.
         <Tooltip title={recreateTooltip}>
           <span>
             <Button
@@ -298,6 +304,7 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
             </Button>
           </span>
         </Tooltip>
+        */}
         <Tooltip title={buttonTooltip}>
           <span>
             <Button

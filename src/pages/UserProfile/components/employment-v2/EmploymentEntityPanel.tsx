@@ -92,16 +92,24 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
     overview.hasOpenOnboardingDemand &&
     workerEmploymentShouldShowScreeningPointerAlert(overview);
 
-  // Everee-driven entities (C1 Events today) get their full onboarding picture
-  // from the `EvereeAdminSyncCard` (resync bar) + `EmployeePayrollSection`
-  // ("Everee data" card with the green Complete chip). The legacy
-  // `EmploymentMinimalOnboardingChecklist` card is redundant noise in that
-  // surface — when Everee owns onboarding, we hide our checklist entirely.
-  // Non-Everee entities (C1 Select, C1 Workforce) keep the checklist as the
-  // primary onboarding driver.
-  const onboardingHandledByEveree =
-    overview.systems.payroll?.provider === 'everee' &&
-    overview.systems.payroll?.evereeEnabled === true;
+  // **Migration-period UX (temporary).** While we migrate workers to
+  // Everee, the legacy `EmploymentMinimalOnboardingChecklist` is the
+  // only surface that exposes HRX-side onboarding state for workers
+  // who haven't been mirrored to Everee yet (or whose entity record
+  // hasn't been linked — see "Not linked" state on `EvereeAdminSyncCard`).
+  //
+  // Pre-migration intent was to hide the checklist on Everee-enabled
+  // entities to avoid duplication with the "Everee data" card, but that
+  // left CSAs blind to per-worker onboarding details for unmigrated
+  // workers. So we now render both:
+  //   - Legacy checklist (HRX onboarding signals)
+  //   - `EvereeAdminSyncCard` (link / resync controls)
+  //   - `EmployeePayrollSection` (Everee data, only when worker IS linked)
+  //
+  // Once every worker is on Everee and the legacy fields are deprecated,
+  // this can be re-gated to hide the checklist on Everee-enabled entities.
+  // Track migration status via the count of unmigrated workers per tenant
+  // before flipping that gate back on.
 
   // Recruiter-only Everee sync surface. Server-side `requireEvereeEnabledEntity`
   // enforces the same gates; we mirror the visibility check here so the card
@@ -147,7 +155,7 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
   return (
     <Stack spacing={0}>
       <Box id={EMPLOYMENT_V2_ANCHOR_ONBOARDING} sx={{ scrollMarginTop: 96 }}>
-        {showChecklist && !onboardingHandledByEveree ? (
+        {showChecklist ? (
           showWorkerPostOnboardingHub ? (
             <Box sx={{ mb: 2 }}>
               <EmploymentWorkerEmploymentHub
@@ -188,18 +196,6 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
             </Card>
           )
         ) : null}
-        {/*
-          C1 Events (Everee) replaces the legacy onboarding checklist with the
-          Everee resync bar + "Everee data" card below. Kept intentionally so
-          we can revert quickly if Everee onboarding signal regresses:
-
-          <Card variant="outlined" sx={{ mb: 2 }}>
-            <CardHeader title="Onboarding checklist" />
-            <CardContent>
-              <EmploymentMinimalOnboardingChecklist {...props} />
-            </CardContent>
-          </Card>
-        */}
 
         {/*
         <EmploymentSystemsSummaryCard

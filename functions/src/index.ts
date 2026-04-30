@@ -442,6 +442,7 @@ export {
 } from './onboarding/workerOnboardingPipeline';
 export { syncEntityEmploymentOnboardingFromWorkerOnboarding } from './onboarding/entityEmploymentOnboardingSync';
 export { startOnCallEmployment, startOnCallOnboarding } from './onboarding/startOnCallEmployment';
+export { csaMarkI9Section2Complete } from './onboarding/csaMarkI9Section2Complete';
 export { resendPayrollOnboardingInvite } from './onboarding/resendPayrollOnboardingInvite';
 export { getI9SupportingDocumentSignedUrl } from './onboarding/i9SupportingDocumentSignedUrl';
 export {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { p } from '../data/firestorePaths';
 import type { UserListEntityOnboardingItem } from '../utils/userListEntityEmploymentStatus';
@@ -8,6 +8,7 @@ import { getWorkerPayrollAccount } from '../utils/workerPayrollAccount';
 import type { WorkerOnboardingPipeline } from '../pages/UserProfile/components/employment-v2/employmentV2Types';
 import type { RecruiterUserEmploymentBreakdownContext } from '../types/recruiterEmploymentBreakdownContext';
 import type { WorkerPayrollAccount } from '../types/payroll';
+import type { EvereeReadinessMirrorLike } from '../shared/readinessStatusFromEvereeMirror';
 import {
   entityEmploymentRecordFromRaw,
   findWorkerOnboardingForEntityEmployment,
@@ -25,6 +26,38 @@ function chunkIds<T>(arr: T[], size: number): T[][] {
     out.push(arr.slice(i, i + size));
   }
   return out;
+}
+
+/**
+ * RD.2 — Fetch the Everee readiness snapshot for a single
+ * (worker × entity) pair from `everee_workers/{entityId}__{userId}`.
+ *
+ * Returns `null` (not throws) for every "no mirror" case:
+ *   - `entityId` is null (entity not in entities collection),
+ *   - the doc doesn't exist (worker hasn't been mirrored to Everee yet,
+ *     or the entity isn't Everee-connected),
+ *   - the doc exists but has no `readinessMirror` field (older docs
+ *     written before E.1+E.2),
+ *   - the fetch errored transiently.
+ *
+ * The chip-strip render path falls back to the legacy compute when this
+ * returns null, so a missing mirror is invisible to the user.
+ */
+async function fetchEvereeReadinessMirror(
+  tenantId: string,
+  entityId: string | null,
+  userId: string,
+): Promise<EvereeReadinessMirrorLike | null> {
+  if (!entityId) return null;
+  try {
+    const ref = doc(db, p.evereeWorker(tenantId, entityId, userId));
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return null;
+    const data = snap.data() as { readinessMirror?: EvereeReadinessMirrorLike | null } | undefined;
+    return data?.readinessMirror ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export type { RecruiterUserEmploymentBreakdownContext } from '../types/recruiterEmploymentBreakdownContext';
@@ -111,13 +144,21 @@ export function useRecruiterUsersEntityEmploymentChips(
             const pipes = woByUser.get(uid) || [];
             const wo = findWorkerOnboardingForEntityEmployment(uid, primary.data, pipes);
             const ek = normalizeEntityKeyForPayroll(String(ee.entityKey || ''));
-            let payroll: (WorkerPayrollAccount & { id: string }) | null = null;
-            try {
-              payroll = await getWorkerPayrollAccount(tenantId, uid, ek);
-            } catch {
-              payroll = null;
-            }
-            breakdownOut.set(uid, { entityEmployment: ee, workerOnboarding: wo, workerPayrollAccount: payroll });
+            // Fetch payroll + Everee mirror in parallel — both are
+            // per-(worker × primary entity) and the chip-strip render
+            // path needs both. RD.2: mirror is optional; missing
+            // (entity not Everee-connected, doc not yet written, fetch
+            // failed) means the chip strip falls back to legacy compute.
+            const [payroll, evereeReadinessMirror] = await Promise.all([
+              getWorkerPayrollAccount(tenantId, uid, ek).catch(() => null),
+              fetchEvereeReadinessMirror(tenantId, ee.entityId, uid),
+            ]);
+            breakdownOut.set(uid, {
+              entityEmployment: ee,
+              workerOnboarding: wo,
+              workerPayrollAccount: payroll,
+              evereeReadinessMirror,
+            });
           }),
         );
 
