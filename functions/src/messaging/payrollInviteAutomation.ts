@@ -27,7 +27,10 @@ export interface PayrollOnboardingInviteAutomationParams {
   /** `source` / `sourceId` on the final sendMessage (metadata + envelope). */
   sendSource: string;
   sendSourceId: string;
-  dispatchSource: 'on_call_employment' | 'assignment_confirmed_onboarding';
+  dispatchSource:
+    | 'on_call_employment'
+    | 'assignment_confirmed_onboarding'
+    | 'on_call_everee_provisioned';
 }
 
 export async function sendPayrollOnboardingInviteWithAutomationFallback(

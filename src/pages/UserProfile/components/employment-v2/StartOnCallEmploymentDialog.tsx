@@ -53,7 +53,14 @@ const startOnCallFn = httpsCallable<
     screeningRequestedServiceIds?: string[] | null;
     note?: string | null;
   },
-  { pipelineId: string; created: boolean; entityKey: string; hiringEntityId: string; entityName: string }
+  {
+    pipelineId: string;
+    created: boolean;
+    entityKey: string;
+    hiringEntityId: string;
+    entityName: string;
+    evereeProvisionWarning?: string | null;
+  }
 >(functions, 'startOnCallOnboarding');
 
 const syncAccusourcePackageCatalog = httpsCallable(functions, 'syncAccusourcePackageCatalog');
@@ -77,6 +84,8 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Set after a successful start when Everee auto-provision was skipped or failed (non-blocking). */
+  const [completionWarning, setCompletionWarning] = useState<string | null>(null);
   const [catalogSyncing, setCatalogSyncing] = useState(false);
   const [catalogSyncMessage, setCatalogSyncMessage] = useState<string | null>(null);
   const { catalog: accusourceCatalog, loading: catalogLoading, refetch: refetchAccusourceCatalog } =
@@ -130,6 +139,7 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
     if (!open) {
       submitInFlightRef.current = false;
       setSubmitting(false);
+      setCompletionWarning(null);
     }
   }, [open]);
 
@@ -185,7 +195,7 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
     submitInFlightRef.current = true;
     setSubmitting(true);
     try {
-      await startOnCallFn({
+      const result = await startOnCallFn({
         tenantId,
         userId: profileUserId,
         entityId: entityId.trim(),
@@ -194,8 +204,15 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
         screeningRequestedServiceIds: selectedServiceIds.length > 0 ? selectedServiceIds : null,
         note: note.trim() || null,
       });
+      void onSuccess();
+      const warn = result.data?.evereeProvisionWarning?.trim();
+      if (warn) {
+        setCompletionWarning(warn);
+        return;
+      }
       onClose();
     } catch (e: unknown) {
+      void onSuccess();
       const fe = e as { message?: string; code?: string };
       const raw = typeof fe?.message === 'string' ? fe.message.trim() : '';
       const msg =
@@ -207,9 +224,6 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
       setError(msg);
     } finally {
       submitInFlightRef.current = false;
-      // Always reload employment overview after a round-trip: server may have written (messages sent) even if
-      // the client sees an error (timeout / flaky HTTPS). Also heals teammates blocked on a single restricted read during refetch.
-      void onSuccess();
       setSubmitting(false);
     }
   };
@@ -219,6 +233,17 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
       <DialogTitle>Start on-call employment</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
+          {completionWarning ? (
+            <>
+              <Alert severity="warning">{completionWarning}</Alert>
+              <Typography variant="body2" color="text.secondary">
+                On-call employment was started. Address the note above if you want Everee payroll provisioning on this
+                entity.
+              </Typography>
+            </>
+          ) : null}
+          {!completionWarning ? (
+            <>
           <Typography variant="body2" color="text.secondary">
             Opens entity employment and the standard onboarding pipeline for this worker <strong>without</strong> an
             assignment — for labor pool / pre-placement hiring. Configure automation for trigger{' '}
@@ -293,27 +318,37 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
             Entity tabs: {EMPLOYMENT_ENTITY_KEYS.join(', ')} — pick the legal entity that matches this worker&apos;s
             hiring path.
           </Typography>
+            </>
+          ) : null}
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose} disabled={submitting}>
-          Cancel
-        </Button>
-        <Button
-          variant="contained"
-          onClick={() => void handleSubmit()}
-          disabled={submitting || catalogSyncing || !entityId}
-          aria-busy={submitting}
-        >
-          {submitting ? (
-            <>
-              <CircularProgress size={20} sx={{ mr: 1 }} color="inherit" />
-              Starting…
-            </>
-          ) : (
-            'Start on-call employment'
-          )}
-        </Button>
+        {completionWarning ? (
+          <Button variant="contained" onClick={() => { setCompletionWarning(null); onClose(); }}>
+            OK
+          </Button>
+        ) : (
+          <>
+            <Button onClick={onClose} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              onClick={() => void handleSubmit()}
+              disabled={submitting || catalogSyncing || !entityId}
+              aria-busy={submitting}
+            >
+              {submitting ? (
+                <>
+                  <CircularProgress size={20} sx={{ mr: 1 }} color="inherit" />
+                  Starting…
+                </>
+              ) : (
+                'Start on-call employment'
+              )}
+            </Button>
+          </>
+        )}
       </DialogActions>
     </Dialog>
   );

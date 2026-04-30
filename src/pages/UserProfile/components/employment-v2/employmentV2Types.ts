@@ -206,6 +206,12 @@ export interface EmploymentPayrollSummary {
   provider?: string | null;
   /** AND of env-level flag visibility and per-entity `evereeEnabled`. */
   evereeEnabled?: boolean;
+  /**
+   * Per-entity Everee tenant id from `tenants/{tid}/entities/{id}.evereeTenantId`
+   * (normalized to a string). Lets the Employment & Payroll panel look up
+   * `users/{uid}.evereeWorkerIds[evereeTenantId]` without re-reading the entity doc.
+   */
+  evereeTenantId?: string | null;
 }
 
 export interface EmploymentScreeningSummary {
@@ -273,6 +279,11 @@ export interface EntityTabSettingsSnapshot {
   payrollProvider?: string | null;
   /** Per-entity Everee toggle (AND'd with the EVEREE_ENABLED env flag). */
   evereeEnabled?: boolean;
+  /**
+   * Per-entity Everee tenant id (e.g. "3138") — normalized to string from the
+   * raw entity doc which may store it as a number.
+   */
+  evereeTenantId?: string | null;
 }
 
 /**

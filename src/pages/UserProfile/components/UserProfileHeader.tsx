@@ -155,6 +155,8 @@ interface UserProfileHeaderProps {
   headerUserGroups?: Array<{ id: string; title: string }>;
   /** When true, show Indeed Flex logo beside name (user doc `addedToIndeedFlex`). */
   showIndeedFlexBadge?: boolean;
+  /** When true, show SAP Fieldglass logo beside Indeed Flex (user doc `addedToFieldglass`). */
+  showFieldglassBadge?: boolean;
   /**
    * Per-service AccuSource adjudication verdict summary.
    * Shape: "Social Security Locator: Passed, CrimNet: Passed, 4-Panel Urine: Waiting".
@@ -243,6 +245,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   onOnboardingStarted,
   headerUserGroups = [],
   showIndeedFlexBadge = false,
+  showFieldglassBadge = false,
   screeningVerdictSummary = null,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1033,7 +1036,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
           </Box>
 
           {/* Mobile: Contact Icons Row — directly under name */}
-          {canShowContactIconsRow && (phone || email || resume || showIndeedFlexBadge) && (
+          {canShowContactIconsRow && (phone || email || resume || showIndeedFlexBadge || showFieldglassBadge) && (
             <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" sx={{ mb: 0.75 }}>
               {phone && (
                 <>
@@ -1180,6 +1183,25 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                       display: 'block',
                       flexShrink: 0,
                       alignSelf: 'center',
+                    }}
+                  />
+                </Tooltip>
+              )}
+              {showFieldglassBadge && (
+                <Tooltip title="Added to SAP Fieldglass">
+                  <Box
+                    component="img"
+                    src="/img/fieldglass.png"
+                    alt="SAP Fieldglass"
+                    sx={{
+                      height: 36,
+                      width: 'auto',
+                      maxWidth: 120,
+                      objectFit: 'contain',
+                      display: 'block',
+                      flexShrink: 0,
+                      alignSelf: 'center',
+                      ml: 1,
                     }}
                   />
                 </Tooltip>
@@ -1737,7 +1759,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
           </Box>
 
           {/* Contact action icons */}
-          {canShowContactIconsRow && (phone || email || resume || showIndeedFlexBadge) && (
+          {canShowContactIconsRow && (phone || email || resume || showIndeedFlexBadge || showFieldglassBadge) && (
             <Stack direction="row" spacing={0.25} alignItems="center" flexWrap="wrap" sx={{ gap: 0.25, mb: 0.75 }}>
               {phone && (
                 <>
@@ -1815,6 +1837,25 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                       flexShrink: 0,
                       alignSelf: 'center',
                       ml: 0.25,
+                    }}
+                  />
+                </Tooltip>
+              )}
+              {showFieldglassBadge && (
+                <Tooltip title="Added to SAP Fieldglass" componentsProps={recordHeaderTooltipComponentsProps}>
+                  <Box
+                    component="img"
+                    src="/img/fieldglass.png"
+                    alt="SAP Fieldglass"
+                    sx={{
+                      height: 28,
+                      width: 'auto',
+                      maxWidth: 110,
+                      objectFit: 'contain',
+                      display: 'block',
+                      flexShrink: 0,
+                      alignSelf: 'center',
+                      ml: 1,
                     }}
                   />
                 </Tooltip>

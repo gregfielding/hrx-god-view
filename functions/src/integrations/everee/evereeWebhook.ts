@@ -76,6 +76,14 @@ interface StoredEvent {
  * tenant-scoped secret, falling back to a global secret. Returning false when
  * no secret is configured keeps accidental prod traffic from slipping through
  * a misconfigured deploy.
+ *
+ * Everee's published header is `x-everee-webhook-signature`. We accept the
+ * legacy `x-everee-signature` and the `x-hub-signature-256` forms so a future
+ * provider rotation doesn't silently start dropping events.
+ *
+ * Format: bare lowercase hex. We also accept `sha256=<hex>` (GitHub-style) and
+ * pure base64 just in case Everee changes encoding mid-rotation — both forms
+ * are normalized into a hex buffer before the constant-time compare.
  */
 function verifySignature(
   rawBody: string,
@@ -83,25 +91,70 @@ function verifySignature(
   evereeTenantId: string | null,
 ): boolean {
   if (!signatureHeader) return false;
-  // Support both `sha256=<hex>` and bare hex forms.
-  const providedHex = signatureHeader.startsWith('sha256=')
-    ? signatureHeader.slice('sha256='.length)
-    : signatureHeader;
   const tenantScopedSecret =
     evereeTenantId && process.env[`EVEREE_WEBHOOK_SECRET_${evereeTenantId}`];
   const globalSecret = process.env.EVEREE_WEBHOOK_SECRET;
   const secret = tenantScopedSecret || globalSecret;
   if (!secret) return false;
+
+  // Strip optional `sha256=` prefix.
+  const stripped = signatureHeader.startsWith('sha256=')
+    ? signatureHeader.slice('sha256='.length)
+    : signatureHeader;
+
   const expectedHex = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
-  // timingSafeEqual requires equal-length buffers.
-  const a = Buffer.from(providedHex, 'hex');
-  const b = Buffer.from(expectedHex, 'hex');
-  if (a.length !== b.length) return false;
-  try {
-    return crypto.timingSafeEqual(a, b);
-  } catch {
-    return false;
+
+  const candidates: Buffer[] = [];
+  // Hex form (Everee's documented default).
+  if (/^[0-9a-fA-F]+$/.test(stripped) && stripped.length % 2 === 0) {
+    try {
+      candidates.push(Buffer.from(stripped, 'hex'));
+    } catch {
+      /* ignore */
+    }
   }
+  // Base64 fallback in case Everee rotates encoding.
+  if (/^[A-Za-z0-9+/=_-]+$/.test(stripped)) {
+    try {
+      const normalized = stripped.replace(/-/g, '+').replace(/_/g, '/');
+      candidates.push(Buffer.from(normalized, 'base64'));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const expectedBuf = Buffer.from(expectedHex, 'hex');
+  for (const c of candidates) {
+    if (c.length !== expectedBuf.length) continue;
+    try {
+      if (crypto.timingSafeEqual(c, expectedBuf)) return true;
+    } catch {
+      /* try next encoding */
+    }
+  }
+  return false;
+}
+
+/** Pull Everee tenant id from common envelope shapes (root, nested data, payload). */
+function pickEvereeTenantIdFromEnvelope(envelope: EvereeEventEnvelope): string | null {
+  const candidates: unknown[] = [
+    envelope.tenantId,
+    (envelope as Record<string, unknown>).evereeTenantId,
+    (envelope as Record<string, unknown>).accountId,
+    envelope.data?.tenantId,
+    envelope.data?.evereeTenantId,
+    envelope.data?.accountId,
+    envelope.payload?.tenantId,
+    envelope.payload?.evereeTenantId,
+    envelope.payload?.accountId,
+    (envelope as Record<string, unknown>).tenant &&
+      ((envelope as Record<string, unknown>).tenant as Record<string, unknown>)?.id,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim()) return c.trim();
+    if (typeof c === 'number' && Number.isFinite(c)) return String(c);
+  }
+  return null;
 }
 
 /**
@@ -140,7 +193,7 @@ async function resolveTenantEntityFromEvereeTenant(
  * if the shared secret is ever rotated mid-flight.
  */
 export const evereeWebhook = onRequest(
-  { cors: false, invoker: 'public', timeoutSeconds: 30, memory: '256MiB' },
+  { cors: false, invoker: 'public', timeoutSeconds: 30, memory: '512MiB' },
   async (req, res) => {
     // Everee will POST JSON. Anything else is noise.
     if (req.method !== 'POST') {
@@ -165,10 +218,21 @@ export const evereeWebhook = onRequest(
 
     const eventId = String(envelope.eventId || envelope.id || '').trim();
     const type = String(envelope.type || envelope.event || '').trim();
-    const evereeTenantId = String(envelope.tenantId || '').trim() || null;
+    // Some integrations URL-route the webhook with `?tenantId=3138`; honour
+    // that as a last-resort hint so per-tenant secrets work even when the body
+    // shape changes.
+    const tenantQueryParam =
+      typeof req.query?.tenantId === 'string' ? (req.query.tenantId as string).trim() : '';
+    const evereeTenantId =
+      pickEvereeTenantIdFromEnvelope(envelope) || tenantQueryParam || null;
     const occurredAt = typeof envelope.occurredAt === 'string' ? envelope.occurredAt : null;
+    // Everee's documented header is `x-everee-webhook-signature`; we accept the
+    // legacy `x-everee-signature` and the GitHub-style `x-hub-signature-256`
+    // for resilience against provider rotation.
     const signatureHeader =
+      (req.header('x-everee-webhook-signature') as string | null) ||
       (req.header('x-everee-signature') as string | null) ||
+      (req.header('x-everee-signature-256') as string | null) ||
       (req.header('x-hub-signature-256') as string | null) ||
       null;
 
@@ -179,11 +243,54 @@ export const evereeWebhook = onRequest(
     }
 
     if (!verifySignature(rawBody, signatureHeader, evereeTenantId)) {
+      // DIAGNOSTIC — temporary: surface enough detail to figure out why
+      // signature checks are failing in pilot, without leaking the secret
+      // itself. Remove once the format is locked in.
+      const tenantSecret =
+        evereeTenantId && process.env[`EVEREE_WEBHOOK_SECRET_${evereeTenantId}`];
+      const globalSecret = process.env.EVEREE_WEBHOOK_SECRET;
+      const secret = tenantSecret || globalSecret || '';
+      const provided = signatureHeader
+        ? signatureHeader.startsWith('sha256=')
+          ? signatureHeader.slice('sha256='.length)
+          : signatureHeader
+        : '';
+      const expectedHex = secret
+        ? crypto.createHmac('sha256', secret).update(rawBody).digest('hex')
+        : '';
+      const expectedB64 = secret
+        ? crypto.createHmac('sha256', secret).update(rawBody).digest('base64')
+        : '';
       logger.warn('everee.webhook.bad_signature', {
         eventId,
         type,
         evereeTenantId,
         hasSignature: !!signatureHeader,
+        // Which header(s) Everee actually sent.
+        headerNames: Object.keys(req.headers).filter(
+          (h) =>
+            h.toLowerCase().includes('signature') ||
+            h.toLowerCase().includes('hub') ||
+            h.toLowerCase().startsWith('x-everee'),
+        ),
+        rawBodyLen: rawBody.length,
+        // First 240 chars of body so we can see shape (and locate tenantId)
+        // without dumping PII. Shapes are documented in the Everee dashboard
+        // event reference, but their pilot envelopes have varied historically.
+        bodyPreview: rawBody.slice(0, 240),
+        secretSource: tenantSecret ? 'tenant' : globalSecret ? 'global' : 'none',
+        secretLen: secret.length,
+        // First/last 6 chars of header + format diagnostics — safe to log.
+        sigPrefix: provided.slice(0, 6),
+        sigSuffix: provided.slice(-6),
+        sigLen: provided.length,
+        sigLooksHex: /^[0-9a-f]+$/i.test(provided),
+        sigLooksBase64: /^[A-Za-z0-9+/=_-]+$/.test(provided),
+        // First/last 6 of computed values so we can eyeball matches.
+        expectedHexPrefix: expectedHex.slice(0, 6),
+        expectedHexSuffix: expectedHex.slice(-6),
+        expectedB64Prefix: expectedB64.slice(0, 6),
+        expectedB64Suffix: expectedB64.slice(-6),
       });
       // 401 discourages replay; Everee treats it as a permanent failure per webhook best practice.
       res.status(401).send('Bad signature');

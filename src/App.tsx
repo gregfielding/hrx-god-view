@@ -117,6 +117,8 @@ import C1WorkerMyEmploymentDetail from './pages/c1/workers/myEmploymentDetail';
 import C1WorkerScreening from './pages/c1/workers/screening';
 import C1WorkerSupport from './pages/c1/workers/support';
 import C1WorkerNotifications from './pages/c1/workers/notifications';
+import WorkerPayrollIndex from './pages/c1/workers/WorkerPayrollIndex';
+import WorkerPayrollEvereeTenant from './pages/c1/workers/WorkerPayrollEvereeTenant';
 import WorkerAiPrescreenPage from './pages/c1/workers/WorkerAiPrescreenPage';
 import OnboardingProfileForm from './components/OnboardingProfileForm';
 import OnboardingCompleteScreen from './components/OnboardingCompleteScreen';
@@ -519,6 +521,8 @@ function App() {
             <Route path="support" element={<WorkerSupport />} />
             <Route path="settings" element={<Navigate to="/c1/workers/profile/app-language" replace />} />
             <Route path="notifications" element={<C1WorkerNotifications />} />
+            <Route path="payroll" element={<WorkerPayrollIndex />} />
+            <Route path="payroll/:evereeTenantId" element={<WorkerPayrollEvereeTenant />} />
             <Route path="inbox" element={<Navigate to="/c1/workers/notifications" replace />} />
             <Route path="inbox/:conversationId" element={<Navigate to="/c1/workers/notifications" replace />} />
           </Route>

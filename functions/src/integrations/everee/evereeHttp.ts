@@ -49,6 +49,12 @@ function stubResponse(method: string, path: string): unknown {
   ) {
     return { workerId: 'stub-worker-id', id: 'stub-worker-id' };
   }
-  if (path.includes('embed') && method === 'POST') return { url: 'https://stub.everee.com/embed' };
+  if (path.includes('embed') && method === 'POST')
+    return {
+      url: 'https://stub.everee.com/embed/onboarding',
+      origin: 'https://stub.everee.com',
+      expiresInMs: 3600000,
+      sessionId: 'stub-session-id',
+    };
   return {};
 }

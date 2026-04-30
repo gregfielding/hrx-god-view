@@ -77,6 +77,7 @@ import { computeJobScoreSummaryV1 } from '../../utils/jobScoreV1';
 import { getUserScore } from '../../utils/scoreSummary';
 import { useT } from '../../i18n';
 import { buildCanonicalWorkerProfileWritePatch } from '../../utils/workerReadinessWriteModel';
+import { buildCanonicalHomeAddressFromWizardPersonal } from '../../utils/buildCanonicalHomeAddress';
 import { autoAddUserToApplyConfiguredGroups } from '../../utils/applyWizardGroupAutoAdd';
 import { isValidUsPhone10, normalizeUsPhoneDigits } from '../../utils/usPhoneValidation';
 import { normalizeLast4SsnDigits, isEmptyOrValidLast4Ssn } from '../../utils/last4Ssn';
@@ -2358,9 +2359,23 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             profileUpdate.homeLng = Number(personal.homeLng);
           }
 
+          // Canonical structured `homeAddress` (new). Only written when the
+          // user actually selected a Google Place (placeId present); the
+          // wizard's `addressValid` gate prevents a non-Place submit, but the
+          // builder fails closed defensively. Downstream readers (Everee
+          // address preflight in `onApplicationCreatedPush`) key off this
+          // shape, while `addressInfo` / top-level fields stay populated for
+          // legacy readers (`extractEvereeHomeAddressFromUserDoc`,
+          // `MissingHomeAddressAlert`, etc.).
+          const canonicalHomeAddress = buildCanonicalHomeAddressFromWizardPersonal(personal);
+          if (canonicalHomeAddress) {
+            profileUpdate.homeAddress = canonicalHomeAddress;
+          }
+
           console.log('✅ Address data being saved:', {
             address: profileUpdate.address,
             addressInfo: profileUpdate.addressInfo,
+            homeAddress: profileUpdate.homeAddress,
             city: profileUpdate.city,
             state: profileUpdate.state,
             zipCode: profileUpdate.zipCode,
@@ -2703,6 +2718,14 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             nowIso: new Date().toISOString(),
           });
 
+          // Mirror the canonical `homeAddress` write onto the application doc
+          // so the trigger (`onApplicationCreatedPush`) and any downstream
+          // analytics never need to load the user doc separately. Same shape
+          // as `users/{uid}.homeAddress`. Falls back to undefined (no field
+          // written) when the wizard somehow let through an incomplete
+          // address — `addressValid` should make this unreachable.
+          const applicationHomeAddress = buildCanonicalHomeAddressFromWizardPersonal(personal);
+
           await setDoc(
             tRef,
             {
@@ -2727,6 +2750,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                       ? normalizeUsPhoneDigits(String(userProfile?.phone || userProfile?.phoneE164 || ''))
                       : null,
               },
+              // Denormalized hiring-entity id so triggers don't need a JO
+              // round-trip. The hiringEntityId resolved here is the same
+              // value `onApplicationCreatedPush` would walk the JO for.
+              hiringEntityId: posting?.hiringEntityId ?? null,
+              ...(applicationHomeAddress ? { homeAddress: applicationHomeAddress } : {}),
               ...(jobScoreSummaryPayload ? { jobScoreSummary: jobScoreSummaryPayload } : {}),
               // Store shift information for gig jobs
               ...(selectedShifts.length === 1 ? { shiftId: selectedShifts[0] } : {}),
@@ -3214,7 +3242,17 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     );
   })();
 
-  // Address validation (step 1) - coordinates required and must be valid numbers (coerce to string for Chromebook/persisted state)
+  // Address validation (step 1).
+  //
+  // Hard rule: the user MUST select an address from Google Places (placeId
+  // present). Free-typed addresses are no longer accepted — `AddressStep`
+  // strips structured fields on raw typing and shows the inline "select from
+  // dropdown" error. Wizard-side gate enforces the same constraint so deep
+  // links / restored drafts can't bypass it.
+  //
+  // We deliberately keep the full structural check (street/city/state/zip +
+  // numeric lat/lng) so partial Place results (international Places without
+  // postal_code, for example) still fail closed.
   const addressValid = (() => {
     const personal = formData?.personal || {};
     const street = (
@@ -3231,19 +3269,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     ).trim();
     const homeLat = personal.homeLat;
     const homeLng = personal.homeLng;
-    const placeId = personal.placeId;
+    const placeId = (
+      typeof personal.placeId === 'string' ? personal.placeId : String(personal.placeId ?? '')
+    ).trim();
 
-    // All address fields must be present
-    if (!street || !city || !state || !zip) {
-      return false;
-    }
-
-    // Coordinates must be present and valid numbers
-    if (homeLat === undefined || homeLng === undefined) {
-      return false;
-    }
-
-    // Coordinates must be valid numbers within valid ranges
+    if (!placeId) return false;
+    if (!street || !city || !state || !zip) return false;
+    if (homeLat === undefined || homeLng === undefined) return false;
     if (
       typeof homeLat !== 'number' ||
       typeof homeLng !== 'number' ||
@@ -3256,11 +3288,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     ) {
       return false;
     }
-
-    // Address must be verified by Google (either has placeId or coordinates were successfully geocoded)
-    // If placeId exists, it means it was selected from Google Autocomplete
-    // If no placeId but coordinates exist, it means it was geocoded via the geocodeAddress function
-    // Both are acceptable verification methods
     return true;
   })();
 

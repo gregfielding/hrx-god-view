@@ -20,6 +20,18 @@ export interface EvereeEntityConfig {
    * provision ships (Stage 2).
    */
   evereeApprovalGroupId?: number;
+  /**
+   * Name of the Embed event handler **already registered in the Everee dashboard**
+   * for this tenant. Sending an unregistered name causes EMB-102 inside the
+   * iframe, so we treat this as strictly opt-in: omit it entirely unless an
+   * operator has wired up the handler on Everee's side.
+   *
+   * Resolution order (first non-empty wins):
+   *   1. `entity.evereeEmbedEventHandlerName`
+   *   2. `EVEREE_EMBED_EVENT_HANDLER_<evereeTenantId>` env var
+   *   3. `EVEREE_EMBED_EVENT_HANDLER` env var (global default)
+   */
+  evereeEmbedEventHandlerName?: string;
 }
 
 // Everee uses a single API host for both environments; the sandbox-vs-prod
@@ -58,12 +70,23 @@ export async function getEvereeConfigForEntity(
   } else if (typeof rawApproval === 'string' && /^\d+$/.test(rawApproval.trim())) {
     evereeApprovalGroupId = parseInt(rawApproval.trim(), 10);
   }
+  const handlerFromEntity =
+    typeof data?.evereeEmbedEventHandlerName === 'string'
+      ? data.evereeEmbedEventHandlerName.trim()
+      : '';
+  const handlerEnvSpecific =
+    process.env[`EVEREE_EMBED_EVENT_HANDLER_${evereeTenantId.trim()}`]?.trim() || '';
+  const handlerEnvGlobal = process.env.EVEREE_EMBED_EVENT_HANDLER?.trim() || '';
+  const evereeEmbedEventHandlerName =
+    handlerFromEntity || handlerEnvSpecific || handlerEnvGlobal || undefined;
+
   return {
     evereeTenantId: evereeTenantId.trim(),
     evereeEnvironment: env,
     evereeApiBaseUrl: baseUrl,
     evereeEnabled: true,
     ...(evereeApprovalGroupId !== undefined ? { evereeApprovalGroupId } : {}),
+    ...(evereeEmbedEventHandlerName ? { evereeEmbedEventHandlerName } : {}),
   };
 }
 

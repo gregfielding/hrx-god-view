@@ -19,19 +19,31 @@ export async function hasExistingApplicationData(userId: string): Promise<boolea
     const userData = userSnap.data();
     // Check if user has basic required fields filled out
     const hasPersonalInfo = !!(userData.firstName && userData.lastName && userData.email && userData.phone);
-    
-    // Check address - support multiple address formats
-    const address = userData.address || userData.addressInfo || {};
-    const hasAddress = !!(address.street || address.streetAddress) && 
-                       !!(address.city) && 
-                       !!(address.state) && 
-                       !!(address.zip || address.zipCode);
-    
-    // Check coordinates - support multiple coordinate formats
-    const hasCoordinates = !!(userData.homeLat && userData.homeLng) || 
-                          !!(address.coordinates?.lat && address.coordinates?.lng) ||
-                          !!(address.homeLat && address.homeLng);
-    
+
+    // Prefer the canonical `homeAddress` shape (written by the wizard /
+    // quick-apply Phase 2 update). Fall back to legacy `address` /
+    // `addressInfo` so workers who applied before the canonical write landed
+    // still pass the "has applied before" check and don't get pushed into a
+    // re-collection flow on every visit.
+    const canonicalHome =
+      userData.homeAddress && typeof userData.homeAddress === 'object'
+        ? (userData.homeAddress as any)
+        : null;
+    const legacyAddress = userData.address || userData.addressInfo || {};
+    const hasAddress = canonicalHome
+      ? !!(canonicalHome.street && canonicalHome.city && canonicalHome.state && canonicalHome.postalCode)
+      : !!(legacyAddress.street || legacyAddress.streetAddress) &&
+        !!legacyAddress.city &&
+        !!legacyAddress.state &&
+        !!(legacyAddress.zip || legacyAddress.zipCode);
+
+    const hasCoordinates = canonicalHome
+      ? Number.isFinite(Number(canonicalHome?.coordinates?.lat)) &&
+        Number.isFinite(Number(canonicalHome?.coordinates?.lng))
+      : !!(userData.homeLat && userData.homeLng) ||
+        !!(legacyAddress.coordinates?.lat && legacyAddress.coordinates?.lng) ||
+        !!(legacyAddress.homeLat && legacyAddress.homeLng);
+
     return hasPersonalInfo && hasAddress && hasCoordinates;
   } catch (error) {
     console.error('Error checking existing application data:', error);
@@ -147,22 +159,43 @@ export async function submitQuickApplication(
       return { success: false, error: 'Missing required personal information' };
     }
     
-    // Support multiple address formats
-    const address = userData.address || userData.addressInfo || {};
-    const street = address.street || address.streetAddress || '';
-    const city = address.city || '';
-    const state = address.state || '';
-    const zip = address.zip || address.zipCode || '';
-    
+    // Address resolution. The new canonical shape (`users/{uid}.homeAddress`)
+    // is preferred; we fall back to legacy `address` / `addressInfo` /
+    // top-level fields so workers who applied before the canonical write
+    // landed (and whose profile still only has the legacy structures) can
+    // still quick-apply. New applicants always go through the wizard, which
+    // populates `homeAddress` from a verified Google Place.
+    const canonicalHome =
+      userData.homeAddress && typeof userData.homeAddress === 'object'
+        ? (userData.homeAddress as any)
+        : null;
+    const legacyAddress = userData.address || userData.addressInfo || {};
+    const street =
+      canonicalHome?.street ||
+      legacyAddress.street ||
+      legacyAddress.streetAddress ||
+      '';
+    const city = canonicalHome?.city || legacyAddress.city || '';
+    const state = canonicalHome?.state || legacyAddress.state || '';
+    const zip =
+      canonicalHome?.postalCode || legacyAddress.zip || legacyAddress.zipCode || '';
+
     if (!street || !city || !state || !zip) {
       return { success: false, error: 'Missing required address information' };
     }
-    
-    // Support multiple coordinate formats
-    const lat = userData.homeLat || address.coordinates?.lat || address.homeLat;
-    const lng = userData.homeLng || address.coordinates?.lng || address.homeLng;
-    
-    if (!lat || !lng) {
+
+    const lat =
+      Number(canonicalHome?.coordinates?.lat) ||
+      Number(userData.homeLat) ||
+      Number(legacyAddress.coordinates?.lat) ||
+      Number(legacyAddress.homeLat);
+    const lng =
+      Number(canonicalHome?.coordinates?.lng) ||
+      Number(userData.homeLng) ||
+      Number(legacyAddress.coordinates?.lng) ||
+      Number(legacyAddress.homeLng);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat === 0 || lng === 0) {
       return { success: false, error: 'Missing address coordinates' };
     }
     
@@ -289,16 +322,33 @@ export async function submitQuickApplication(
       }
     }
 
+    // Mirror the canonical `homeAddress` onto the application doc when the
+    // user profile already has the new shape. Quick-apply doesn't ask for a
+    // fresh address (returning applicants), so the field is best-effort —
+    // `onApplicationCreatedPush` will still re-load the user doc for its
+    // address preflight if this is missing.
+    const applicationHomeAddress =
+      canonicalHome &&
+      typeof canonicalHome.formattedAddress === 'string' &&
+      canonicalHome.coordinates &&
+      Number.isFinite(Number(canonicalHome.coordinates?.lat)) &&
+      Number.isFinite(Number(canonicalHome.coordinates?.lng))
+        ? canonicalHome
+        : null;
+
     // Create application document
     await setDoc(tRef, {
       userId,
       tenantId,
       jobId,
       jobOrderId: jobPosting?.jobOrderId || null,
+      // Denormalized hiringEntityId so triggers can branch without a JO read.
+      hiringEntityId: jobPosting?.hiringEntityId ?? null,
       status: 'submitted',
       appliedAt: serverTimestamp(),
       submittedAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
+      ...(applicationHomeAddress ? { homeAddress: applicationHomeAddress } : {}),
       ...(jobScoreSummaryPayload ? { jobScoreSummary: jobScoreSummaryPayload } : {}),
       data: {
         personal: {

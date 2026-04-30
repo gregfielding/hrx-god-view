@@ -46,6 +46,7 @@ import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 import UserTableResumeIcon from '../components/tables/UserTableResumeIcon';
 import UserTableIndeedFlexBadge from '../components/tables/UserTableIndeedFlexBadge';
+import UserTableFieldglassBadge from '../components/tables/UserTableFieldglassBadge';
 import { pickResumeFromUserDoc } from '../utils/userResumeOpen';
 
 // Security levels for filtering
@@ -90,6 +91,7 @@ interface CandidateWithDetails {
   workerAttestations?: { eVerifyWillingness?: string };
   resume?: Record<string, unknown> | null;
   addedToIndeedFlex?: boolean;
+  addedToFieldglass?: boolean;
 }
 
 const RecruiterApplicants: React.FC = () => {
@@ -222,6 +224,7 @@ const RecruiterApplicants: React.FC = () => {
           workerAttestations: userData.workerAttestations,
           resume: userData.resume ?? null,
           addedToIndeedFlex: userData.addedToIndeedFlex === true,
+          addedToFieldglass: userData.addedToFieldglass === true,
         };
       });
       
@@ -682,6 +685,7 @@ const RecruiterApplicants: React.FC = () => {
                           </Box>
                         )}
                         <UserTableIndeedFlexBadge user={candidate as unknown as Record<string, unknown>} />
+                        <UserTableFieldglassBadge user={candidate as unknown as Record<string, unknown>} />
                       </Box>
                     </Box>
                   </TableCell>

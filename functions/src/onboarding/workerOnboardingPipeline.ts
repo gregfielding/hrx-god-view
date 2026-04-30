@@ -339,7 +339,14 @@ export type WorkerOnboardingPipelineTriggerSource =
   | "manual"
   /** Recruiter-initiated hire without an assignment yet (on-call / bench). */
   | "on_call"
-  | "assignment_confirmed";
+  | "assignment_confirmed"
+  /**
+   * Public/authenticated apply trigger pre-creates on-call employment for
+   * C1 Events so the gig-style applicant flow auto-mirrors to Everee
+   * (tenant 3138) without recruiter intervention. Filterable analytics
+   * tag — same wiring as `on_call` otherwise.
+   */
+  | "auto_application_c1_events";
 
 export async function ensureWorkerOnboardingPipeline(args: {
   tenantId: string;

@@ -11,6 +11,7 @@ import StickyNote2OutlinedIcon from '@mui/icons-material/StickyNote2Outlined';
 import GroupsOutlinedIcon from '@mui/icons-material/GroupsOutlined';
 import UserTableResumeIcon from './UserTableResumeIcon';
 import UserTableIndeedFlexBadge from './UserTableIndeedFlexBadge';
+import UserTableFieldglassBadge from './UserTableFieldglassBadge';
 import { pickResumeFromUserDoc } from '../../utils/userResumeOpen';
 import { formatPhoneNumber } from '../../utils/formatPhone';
 import RecordHeaderLanguagePreferenceBadge from '../../pages/UserProfile/components/RecordHeaderLanguagePreferenceBadge';
@@ -327,9 +328,10 @@ const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockPro
       <Box
         component="span"
         {...stopRowEvents}
-        sx={{ display: 'block' }}
+        sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}
       >
         <UserTableIndeedFlexBadge user={user as Record<string, unknown>} compact />
+        <UserTableFieldglassBadge user={user as Record<string, unknown>} compact />
       </Box>
     </Stack>
   );

@@ -45,6 +45,7 @@ import StandardTablePagination from '../../components/StandardTablePagination';
 import { TABLE_AVATAR_SIZE } from '../../utils/uiConstants';
 import UserTableResumeIcon from '../../components/tables/UserTableResumeIcon';
 import UserTableIndeedFlexBadge from '../../components/tables/UserTableIndeedFlexBadge';
+import UserTableFieldglassBadge from '../../components/tables/UserTableFieldglassBadge';
 import { pickResumeFromUserDoc } from '../../utils/userResumeOpen';
 import { hasJobBoardSyndicationUrl } from '../../utils/jobBoardSyndicationUrls';
 import JobBoardSyndicationIconRow from '../../components/JobBoardSyndicationIconRow';
@@ -363,6 +364,7 @@ const EditJobPost: React.FC = () => {
             workerAttestations: user.workerAttestations,
             resume: user.resume,
             addedToIndeedFlex: user.addedToIndeedFlex === true,
+            addedToFieldglass: user.addedToFieldglass === true,
           };
         });
 
@@ -986,6 +988,7 @@ const EditJobPost: React.FC = () => {
                                     </Box>
                                   )}
                                   <UserTableIndeedFlexBadge user={user as Record<string, unknown>} />
+                                  <UserTableFieldglassBadge user={user as Record<string, unknown>} />
                                 </Box>
                               </Box>
                             </TableCell>

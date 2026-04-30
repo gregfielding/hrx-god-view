@@ -99,7 +99,14 @@ const PARAM_KEYS = [
   // token enforces environment separation. Set in root .env only when you
   // need to point at a non-default host (staging mirror, dry-run sink, …).
   'EVEREE_BASE_URL',
-  'EVEREE_API_TOKEN_2320', // tenant 2320 — add new EVEREE_API_TOKEN_<tid> per onboarded Everee tenant
+  // Per-tenant API tokens + webhook HMAC secrets (see evereeSecrets.ts / evereeWebhook.ts).
+  // Add EVEREE_API_TOKEN_<tid> + EVEREE_WEBHOOK_SECRET_<tid> whenever a new Everee tenant is onboarded.
+  'EVEREE_API_TOKEN_2320',
+  'EVEREE_WEBHOOK_SECRET_2320',
+  'EVEREE_API_TOKEN_3138',
+  'EVEREE_WEBHOOK_SECRET_3138',
+  'EVEREE_API_TOKEN_3133',
+  'EVEREE_WEBHOOK_SECRET_3133',
   // Document AI — I-9 supporting extraction (see docs/I9_SUPPORTING_DOCUMENTS_ARCHITECTURE.md)
   'DOCUMENT_AI_PROJECT_ID',
   'DOCUMENT_AI_LOCATION',

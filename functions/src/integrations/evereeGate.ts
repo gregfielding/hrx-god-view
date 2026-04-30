@@ -45,6 +45,13 @@ export const evereeGetPayHistory = everee?.evereeGetPayHistory ?? stubCallable;
 export const evereeGetPayStatement = everee?.evereeGetPayStatement ?? stubCallable;
 export const evereeAdminPushShift = everee?.evereeAdminPushShift ?? stubCallable;
 export const evereeAdminPreparePayout = everee?.evereeAdminPreparePayout ?? stubCallable;
+export const evereeAdminGetWorker = everee?.evereeAdminGetWorker ?? stubCallable;
+export const evereeAdminGetWorkerDocuments =
+  everee?.evereeAdminGetWorkerDocuments ?? stubCallable;
+export const evereeAdminGetWorkerW9 = everee?.evereeAdminGetWorkerW9 ?? stubCallable;
+export const evereeAdminGetWorkerW4 = everee?.evereeAdminGetWorkerW4 ?? stubCallable;
+export const evereeGetMyOnboardingStatus =
+  everee?.evereeGetMyOnboardingStatus ?? stubCallable;
 export const evereeWebhook = everee?.evereeWebhook ?? stubWebhook;
 export const onEvereeWebhookEventCreated =
   everee?.onEvereeWebhookEventCreated ?? stubWebhookTrigger;

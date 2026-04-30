@@ -24,6 +24,7 @@ import ListAltIcon from '@mui/icons-material/ListAlt';
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
 import PersonIcon from '@mui/icons-material/Person';
 import QuizOutlinedIcon from '@mui/icons-material/QuizOutlined';
+import PaymentsIcon from '@mui/icons-material/Payments';
 
 const drawerWidth = 240;
 
@@ -42,6 +43,7 @@ const baseNavConfig = [
   { key: 'nav.prescreen', path: C1_WORKER_AI_PRESCREEN_PATH, icon: <QuizOutlinedIcon /> },
   { key: 'nav.myAssignments', path: '/c1/workers/assignments', icon: <AssignmentIcon /> },
   { key: 'nav.myApplications', path: '/c1/workers/applications', icon: <ListAltIcon /> },
+  { key: 'nav.payroll', path: '/c1/workers/payroll', icon: <PaymentsIcon /> },
   { key: 'nav.notifications', path: '/c1/workers/notifications', icon: <NotificationsNoneIcon /> },
   /* Help & Support hidden: import HelpOutlineIcon, append nav.helpSupport -> /c1/workers/support */
 ];

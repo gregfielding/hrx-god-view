@@ -5,9 +5,16 @@ import * as admin from 'firebase-admin';
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions/v2";
 
-import { canManageOnboarding, ensureWorkerOnboardingPipeline } from "./workerOnboardingPipeline";
+import {
+  canManageOnboarding,
+  ensureWorkerOnboardingPipeline,
+  type WorkerOnboardingPipelineTriggerSource,
+} from "./workerOnboardingPipeline";
 import { dispatchOnCallEmploymentStarted } from "../messaging/onCallEmploymentDispatch";
-import { runPayrollOnboardingInviteForOnCallEmployment } from "../messaging/payrollOnCallInvite";
+import {
+  runEvereePayrollOnboardingInviteAfterOnCallProvision,
+  runPayrollOnboardingInviteForOnCallEmployment,
+} from "../messaging/payrollOnCallInvite";
 import { writeOnboardingAutomationDispatchLog } from "../messaging/onboardingAutomationDispatchLog";
 import {
   assertEntityAllowsOnCallPool,
@@ -20,6 +27,10 @@ import {
   TWILIO_A2P_CAMPAIGN,
 } from "../messaging/twilioSecrets";
 import { sendGridFromEmail, sendGridFromName } from "../messaging/emailProviderFactory";
+import { getEvereeConfigForEntity } from "../integrations/everee/evereeConfig";
+import { createWorkerIfNeeded } from "../integrations/everee/evereeService";
+import { extractEvereeHomeAddressFromUserDoc } from "../integrations/everee/evereeUserAddress";
+import { resolveEvereeWorkerTypeForOnCall } from "../integrations/everee/evereeEntityWorkerType";
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -56,6 +67,20 @@ export interface StartOnCallEmploymentPayload {
    */
   screeningRequestedServiceIds?: string[] | null;
   note?: string | null;
+  /**
+   * Override for `worker_onboarding.triggeredBy.source`. Defaults to `"on_call"`
+   * for the recruiter-initiated callable surfaces. Auto-onboarding triggers
+   * (e.g. C1 Events public-apply auto-on-call) pass their own source value so
+   * we can filter analytics on origin without rewriting the rest of the flow.
+   */
+  triggerSource?: WorkerOnboardingPipelineTriggerSource;
+  /**
+   * Source application id (`tenants/{tid}/applications/{id}`) when the on-call
+   * employment was created by an application trigger. Stored on the audit
+   * dispatch log + `entity_employments` row for traceability. Optional; only
+   * set by `onApplicationCreatedPush`-style callers today.
+   */
+  applicationId?: string | null;
 }
 
 type AuthForAccusource = { token?: Record<string, unknown> };
@@ -76,6 +101,11 @@ export async function runStartOnCallEmploymentFlow(
   entityKey: string;
   hiringEntityId: string;
   entityName: string;
+  /**
+   * Non-blocking hint when Everee auto-provision was skipped or failed.
+   * On-call employment still succeeds; recruiter can sync from Employment later.
+   */
+  evereeProvisionWarning?: string | null;
 }> {
   const {
     tenantId,
@@ -89,7 +119,13 @@ export async function runStartOnCallEmploymentFlow(
     initiatedByUid,
     authForAccusource,
     enforceOnCallOnboardingPolicy,
+    triggerSource: triggerSourceOverride,
+    applicationId,
   } = args;
+  const effectiveTriggerSource: WorkerOnboardingPipelineTriggerSource =
+    triggerSourceOverride ?? "on_call";
+  const trimmedApplicationId =
+    typeof applicationId === "string" && applicationId.trim() ? applicationId.trim() : null;
 
   const trimmedUser = String(userId || "").trim();
   const trimmedEntity = String(entityId || "").trim();
@@ -119,7 +155,7 @@ export async function runStartOnCallEmploymentFlow(
     assignmentId: null,
     jobOrderId: null,
     triggeredByUid: initiatedByUid,
-    triggerSource: "on_call",
+    triggerSource: effectiveTriggerSource,
     employmentEntryMode: "on_call_pool",
     onCallNote: note ?? null,
     onCallScreeningPackageId: screeningPackageId ?? null,
@@ -138,6 +174,14 @@ export async function runStartOnCallEmploymentFlow(
     {
       onboardingPhase: "in_progress",
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      // Source attribution. We don't overwrite if the row was created via a
+      // different path earlier; the field doc carries the original source.
+      ...(trimmedApplicationId
+        ? { sourceApplicationId: trimmedApplicationId }
+        : {}),
+      ...(triggerSourceOverride
+        ? { onboardingTriggerSource: triggerSourceOverride }
+        : {}),
     },
     { merge: true }
   );
@@ -157,6 +201,8 @@ export async function runStartOnCallEmploymentFlow(
       entityKey,
       note: note ?? null,
       screeningPackageId: screeningPackageId ?? null,
+      triggerSource: effectiveTriggerSource,
+      ...(trimmedApplicationId ? { applicationId: trimmedApplicationId } : {}),
     },
   });
 
@@ -285,12 +331,86 @@ export async function runStartOnCallEmploymentFlow(
     }
   }
 
+  let evereeProvisionWarning: string | null = null;
+  let evereePostProvisionInvite: {
+    evereeTenantId: string;
+    firstName: string;
+    workerPayrollType: "w2" | "1099";
+  } | null = null;
+
+  try {
+    const evereeCfg = await getEvereeConfigForEntity(tenantId, trimmedEntity);
+    if (evereeCfg && process.env.EVEREE_ENABLED === "true") {
+      const userSnap = await db.doc(`users/${trimmedUser}`).get();
+      const u = (userSnap.exists ? userSnap.data() : {}) as Record<string, unknown>;
+      const workerEvereeType = resolveEvereeWorkerTypeForOnCall(trimmedEntity, entityDoc as Record<string, unknown>);
+      const home = extractEvereeHomeAddressFromUserDoc(u);
+      // Same surface as `evereeEnsureWorker` (EvereeAdminSyncCard): provision whenever
+      // entity + EVEREE_ENABLED allow it — no address gate (W2 uses server stubs when
+      // homeAddress omitted; contractor does not require address on user doc).
+      const phone =
+        String(u.phoneE164 ?? "").trim() ||
+        String(u.phone ?? "").trim() ||
+        String(u.phoneNumber ?? "").trim();
+      await createWorkerIfNeeded({
+        tenantId,
+        entityId: trimmedEntity,
+        userId: trimmedUser,
+        firebaseUid: trimmedUser,
+        workerType: workerEvereeType,
+        email: String(u.email ?? ""),
+        firstName: String(u.firstName ?? ""),
+        lastName: String(u.lastName ?? ""),
+        phone,
+        ...(home ? { homeAddress: home } : {}),
+        hireDate: new Date().toISOString().slice(0, 10),
+      });
+      evereePostProvisionInvite = {
+        evereeTenantId: evereeCfg.evereeTenantId,
+        firstName: String(u.firstName ?? ""),
+        workerPayrollType: workerEvereeType === "contractor" ? "1099" : "w2",
+      };
+    }
+  } catch (e: unknown) {
+    logger.warn("[on_call] Everee provision failed (non-blocking)", {
+      tenantId,
+      hiringEntityId: trimmedEntity,
+      userId: trimmedUser,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    evereeProvisionWarning =
+      "Everee payroll setup did not complete automatically. Use Employment → payroll sync when the worker profile is ready.";
+  }
+
+  if (!evereeProvisionWarning && evereePostProvisionInvite) {
+    try {
+      await runEvereePayrollOnboardingInviteAfterOnCallProvision({
+        tenantId,
+        userId: trimmedUser,
+        hiringEntityId: trimmedEntity,
+        entityName,
+        entityKey,
+        pipelineId,
+        evereeTenantId: evereePostProvisionInvite.evereeTenantId,
+        firstName: evereePostProvisionInvite.firstName,
+        workerType: evereePostProvisionInvite.workerPayrollType,
+      });
+    } catch (e: unknown) {
+      logger.warn("runEvereePayrollOnboardingInviteAfterOnCallProvision failed", {
+        tenantId,
+        pipelineId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
   return {
     pipelineId,
     created,
     entityKey,
     hiringEntityId: trimmedEntity,
     entityName,
+    evereeProvisionWarning,
   };
 }
 

@@ -268,6 +268,11 @@ export {
   evereeGetPayStatement,
   evereeAdminPushShift,
   evereeAdminPreparePayout,
+  evereeAdminGetWorker,
+  evereeAdminGetWorkerDocuments,
+  evereeAdminGetWorkerW9,
+  evereeAdminGetWorkerW4,
+  evereeGetMyOnboardingStatus,
   evereeWebhook,
   onEvereeWebhookEventCreated,
 } from './integrations/evereeGate';

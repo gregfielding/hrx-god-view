@@ -37,6 +37,7 @@ import {
 } from '@mui/icons-material';
 
 import PageHeader from '../components/PageHeader';
+import ShiftPlacementsDrawer from '../components/shifts/ShiftPlacementsDrawer';
 import UniversalSearchBar from '../components/UniversalSearchBar';
 import { useAuth } from '../contexts/AuthContext';
 import { useSetTopBarTitle } from '../contexts/TopBarTitleContext';
@@ -114,6 +115,7 @@ const Shifts: React.FC = () => {
   };
 
   const [activeTab, setActiveTab] = useState<ShiftsTab>(getActiveTab());
+  const [addShiftDrawerOpen, setAddShiftDrawerOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [accountFilter, setAccountFilter] = useState<string>('all');
@@ -351,24 +353,11 @@ const Shifts: React.FC = () => {
               showFavoritesOnly={showFavoritesOnly}
               onToggleFavorites={setShowFavoritesOnly}
             />
-            {/* Universal icon-only Add button. Mirrors the canonical pattern
-                used on /accounts (AccountsDashboard.tsx): 32×32 blue square
-                with AddIcon, click sets `?new=1` so the active child route
-                (ShiftsList / ShiftsCalendar) can listen for the param and
-                open its own creation surface.
-
-                NOTE: Shifts in this app are sourced from job orders today —
-                no standalone "create shift" surface exists yet. Until a
-                ShiftsList listener for `?new=1` is wired (likely a "Create
-                shift on existing JO" dialog or a redirect into the JO
-                wizard), this button just adds a query param that no-ops.
-                Decide the destination as part of the /shifts UI work and
-                wire it in the child page (or change the onClick here to
-                `navigate('/jobs?new=1')` if "Add shift" should hand off to
-                the job-order creation flow). */}
+            {/* Opens ShiftPlacementsDrawer: pick a job order, then manage
+                placements / create a shift on that JO (no row shift locked). */}
             <Tooltip title="Add shift">
               <IconButton
-                onClick={() => navigate(`${location.pathname}?new=1`)}
+                onClick={() => setAddShiftDrawerOpen(true)}
                 sx={{
                   width: 32,
                   height: 32,
@@ -397,6 +386,15 @@ const Shifts: React.FC = () => {
       >
         <Outlet context={outletContext} />
       </Box>
+
+      <ShiftPlacementsDrawer
+        open={addShiftDrawerOpen}
+        onClose={() => setAddShiftDrawerOpen(false)}
+        tenantId={tenantId ?? null}
+        jobOrderId={null}
+        shift={null}
+        pickJobOrderFirst
+      />
     </Box>
   );
 };

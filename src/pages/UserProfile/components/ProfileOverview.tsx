@@ -283,6 +283,7 @@ const ProfileOverview: React.FC<Props> = ({
     emergencyContact: undefined,
     transportMethod: undefined,
     addedToIndeedFlex: false,
+    addedToFieldglass: false,
     role: 'Worker',
     jobTitle: '',
     department: '',
@@ -667,6 +668,7 @@ const transportOptions: Array<{
               emergencyContact: data.emergencyContact || undefined,
               transportMethod: data.transportMethod || null,
               addedToIndeedFlex: data.addedToIndeedFlex === true,
+              addedToFieldglass: data.addedToFieldglass === true,
               role: data.role || 'Worker',
               jobTitle: data.jobTitle || '',
               department: data.department || '',
@@ -1892,6 +1894,25 @@ const transportOptions: Array<{
                           />
                           <Typography variant="body2" sx={overviewProfileFieldValueSx}>
                             Added to Indeed Flex
+                          </Typography>
+                        </Box>
+                      </Box>
+                    )}
+
+                    {!hideNonQuickSections && form.addedToFieldglass && (
+                      <Box sx={{ mb: 0, mt: form.addedToIndeedFlex ? 1.5 : 0 }}>
+                        <Typography {...overviewSubsectionHeadingTypographyProps} sx={{ ...overviewSubsectionHeadingTypographyProps.sx, mb: 1.5 }}>
+                          SAP Fieldglass
+                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                          <Box
+                            component="img"
+                            src="/img/fieldglass.png"
+                            alt="SAP Fieldglass"
+                            sx={{ height: 28, width: 'auto', objectFit: 'contain' }}
+                          />
+                          <Typography variant="body2" sx={overviewProfileFieldValueSx}>
+                            Added to SAP Fieldglass
                           </Typography>
                         </Box>
                       </Box>

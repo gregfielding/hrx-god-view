@@ -34,6 +34,9 @@ import NoteIcon from '@mui/icons-material/Note';
 import LinkedInIcon from '@mui/icons-material/LinkedIn';
 import AddTaskIcon from '@mui/icons-material/AddTask';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import BugReportIcon from '@mui/icons-material/BugReport';
+import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
+import { evereeAdminGetWorker } from '../../services/everee/evereeCallables';
 import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import UniversalBackButton from '../../components/common/UniversalBackButton';
@@ -48,6 +51,7 @@ import {
   query,
   where,
   orderBy,
+  limit as fsLimit,
   getDocs,
   getCountFromServer,
   type DocumentData,
@@ -194,6 +198,7 @@ const UserProfilePage = () => {
   const [targetUserSecurityLevel, setTargetUserSecurityLevel] = useState<string>('');
   const [accessDenied, setAccessDenied] = useState(false);
   const [addedToIndeedFlex, setAddedToIndeedFlex] = useState(false);
+  const [addedToFieldglass, setAddedToFieldglass] = useState(false);
   const [profileScore, setProfileScore] = useState<number | undefined>(undefined);
   const [profileCompletenessScore, setProfileCompletenessScore] = useState<number | undefined>(undefined);
   const [scoreSummary, setScoreSummary] = useState<ScoreSummary | undefined>(undefined);
@@ -318,6 +323,236 @@ const UserProfilePage = () => {
     }
   }, [uid]);
 
+  /**
+   * Admin-only debug: dump everything Everee-related for the currently-viewed user
+   * to console. Each section is wrapped in try/catch so a single permissions error
+   * doesn't sink the whole report.
+   */
+  const handleDumpEvereeData = useCallback(async () => {
+    if (!uid) return;
+    const tid = effectiveTenantId || '';
+    const evereeFieldsFromUser = (data: Record<string, unknown>) => ({
+      evereeWorkerIds: data.evereeWorkerIds ?? null,
+      evereeOnboarding: data.evereeOnboarding ?? null,
+      homeAddress: data.homeAddress ?? null,
+      email: data.email ?? null,
+      firstName: data.firstName ?? null,
+      lastName: data.lastName ?? null,
+      phone: data.phone ?? data.phoneE164 ?? data.phoneNumber ?? null,
+      entityEmployments: data.entityEmployments ?? null,
+      activeTenantId: data.activeTenantId ?? null,
+      tenantId: data.tenantId ?? null,
+    });
+    const evereeFromUserEmployment = (d: Record<string, unknown>) => ({
+      entityId: d.entityId ?? null,
+      payrollProvider: d.payrollProvider ?? null,
+      evereeOnboardingStatus: d.evereeOnboardingStatus ?? null,
+      payrollOnboardingStartedAt: d.payrollOnboardingStartedAt ?? null,
+      payrollOnboardingCompletedAt: d.payrollOnboardingCompletedAt ?? null,
+      evereeProvisionWarning: d.evereeProvisionWarning ?? null,
+    });
+    const evereeFromOnboardingInstance = (d: Record<string, unknown>) => ({
+      entityId: d.entityId ?? null,
+      payrollProvider: d.payrollProvider ?? null,
+      evereeOnboardingStatus: d.evereeOnboardingStatus ?? null,
+      payrollOnboardingStartedAt: d.payrollOnboardingStartedAt ?? null,
+      payrollOnboardingCompletedAt: d.payrollOnboardingCompletedAt ?? null,
+      evereeProvisionWarning: d.evereeProvisionWarning ?? null,
+    });
+
+    /* eslint-disable no-console */
+    console.group(`Everee data — userId=${uid} tenantId=${tid || '(none)'}`);
+
+    try {
+      const userSnap = await getDoc(doc(db, 'users', uid));
+      console.log('user doc (everee fields)', userSnap.exists() ? evereeFieldsFromUser(userSnap.data() as Record<string, unknown>) : '[not found]');
+    } catch (err) {
+      console.log('user doc (everee fields)', '[error]', err);
+    }
+
+    if (!tid) {
+      console.warn('No tenantId in viewer context — skipping tenant-scoped lookups.');
+      console.groupEnd();
+      return;
+    }
+
+    try {
+      const ewSnap = await getDocs(
+        query(collection(db, 'tenants', tid, 'everee_workers'), where('firebaseUid', '==', uid)),
+      );
+      console.log(
+        'everee_workers links',
+        ewSnap.docs.map((d) => ({ path: d.ref.path, data: d.data() })),
+      );
+    } catch (err) {
+      console.log('everee_workers links', '[error]', err);
+    }
+
+    try {
+      const ueSnap = await getDocs(
+        query(collection(db, 'tenants', tid, 'user_employments'), where('userId', '==', uid)),
+      );
+      console.log(
+        'user_employments (everee fields)',
+        ueSnap.docs.map((d) => ({ docId: d.id, ...evereeFromUserEmployment(d.data() as Record<string, unknown>) })),
+      );
+    } catch (err) {
+      console.log('user_employments (everee fields)', '[error]', err);
+    }
+
+    try {
+      const oiSnap = await getDocs(
+        query(collection(db, 'tenants', tid, 'onboarding_instances'), where('userId', '==', uid)),
+      );
+      console.log(
+        'onboarding_instances (everee fields)',
+        oiSnap.docs.map((d) => ({ docId: d.id, ...evereeFromOnboardingInstance(d.data() as Record<string, unknown>) })),
+      );
+    } catch (err) {
+      console.log('onboarding_instances (everee fields)', '[error]', err);
+    }
+
+    try {
+      const wsRef = collection(db, 'tenants', tid, 'everee_webhook_events');
+      let wsSnap;
+      try {
+        wsSnap = await getDocs(query(wsRef, orderBy('receivedAt', 'desc'), fsLimit(25)));
+      } catch {
+        // Index missing — fall back to unordered fetch (may need filtering).
+        wsSnap = await getDocs(query(wsRef, fsLimit(25)));
+      }
+      console.log(
+        'webhook events (latest 25)',
+        wsSnap.docs.map((d) => {
+          const x = d.data() as Record<string, unknown>;
+          return {
+            docPath: d.ref.path,
+            eventId: x.eventId ?? null,
+            type: x.type ?? null,
+            status: x.status ?? null,
+            occurredAt: x.occurredAt ?? null,
+            actions: x.actions ?? null,
+          };
+        }),
+      );
+    } catch (err) {
+      console.log('webhook events (latest 25)', '[error]', err);
+    }
+
+    console.groupEnd();
+    /* eslint-enable no-console */
+  }, [uid, effectiveTenantId]);
+
+  /**
+   * Admin-only debug: hit `GET /api/v2/workers/<id>` on Everee for every Everee
+   * tenant the user is provisioned in, and dump the raw response. The data —
+   * name / SSN / address / direct deposit / W-4 / tax forms — only lives in
+   * Everee (we never persist it to Firestore by design), so this is the only
+   * way to verify what Everee actually has on file. PII bearing: display only.
+   */
+  const handleFetchEvereeApiData = useCallback(async () => {
+    if (!uid) return;
+    const tid = effectiveTenantId || '';
+    /* eslint-disable no-console */
+    console.group(`Everee API — userId=${uid} tenantId=${tid || '(none)'}`);
+
+    if (!tid) {
+      console.warn('No tenantId in viewer context — cannot resolve entityId for Everee call.');
+      console.groupEnd();
+      /* eslint-enable no-console */
+      return;
+    }
+
+    let evereeWorkerIds: Record<string, unknown> = {};
+    try {
+      const userSnap = await getDoc(doc(db, 'users', uid));
+      evereeWorkerIds =
+        ((userSnap.data() as Record<string, unknown> | undefined)?.evereeWorkerIds as Record<
+          string,
+          unknown
+        >) ?? {};
+    } catch (err) {
+      console.log('user doc lookup failed', '[error]', err);
+      console.groupEnd();
+      /* eslint-enable no-console */
+      return;
+    }
+
+    const pairs = Object.entries(evereeWorkerIds)
+      .map(([evereeTenantId, evereeWorkerIdRaw]) => ({
+        evereeTenantId: String(evereeTenantId).trim(),
+        evereeWorkerId: typeof evereeWorkerIdRaw === 'string' ? evereeWorkerIdRaw.trim() : '',
+      }))
+      .filter((p) => p.evereeTenantId && p.evereeWorkerId);
+
+    if (pairs.length === 0) {
+      console.warn('user.evereeWorkerIds is empty — nothing to fetch.');
+      console.groupEnd();
+      /* eslint-enable no-console */
+      return;
+    }
+
+    /**
+     * `evereeAdminGetWorker` is keyed by HRX `(tenantId, entityId)`; each
+     * Everee tenant id maps to one of our `entities/*` docs. We resolve via
+     * the link doc rather than the entity doc itself because workers usually
+     * lack `entities/*` read perms.
+     */
+    for (const { evereeTenantId, evereeWorkerId } of pairs) {
+      let entityId = '';
+      try {
+        const linkSnap = await getDocs(
+          query(
+            collection(db, 'tenants', tid, 'everee_workers'),
+            where('firebaseUid', '==', uid),
+            where('evereeWorkerId', '==', evereeWorkerId),
+          ),
+        );
+        const linkDoc = linkSnap.docs[0];
+        if (linkDoc) {
+          const data = linkDoc.data() as { entityId?: string };
+          if (typeof data.entityId === 'string') entityId = data.entityId.trim();
+        }
+      } catch (err) {
+        console.log(
+          `everee tenant ${evereeTenantId} — link lookup failed`,
+          '[error]',
+          err,
+        );
+      }
+
+      if (!entityId) {
+        console.warn(
+          `everee tenant ${evereeTenantId} — no everee_workers link doc; skipping (cannot resolve entityId).`,
+          { evereeWorkerId },
+        );
+        continue;
+      }
+
+      console.group(
+        `Everee tenant ${evereeTenantId} · entity ${entityId} · workerId ${evereeWorkerId}`,
+      );
+      try {
+        const res = await evereeAdminGetWorker({
+          tenantId: tid,
+          entityId,
+          evereeWorkerId,
+        });
+        const data = res.data as { response?: unknown } | undefined;
+        console.log('GET /api/v2/workers/{id} response', data?.response ?? data);
+      } catch (err) {
+        // Includes verbatim Everee error text — useful for "wrong path" issues
+        // (e.g. EMB-404, "Resource not found") that need a different endpoint.
+        console.log('Everee API call failed', '[error]', err);
+      } finally {
+        console.groupEnd();
+      }
+    }
+
+    console.groupEnd();
+    /* eslint-enable no-console */
+  }, [uid, effectiveTenantId]);
+
   const handleIndeedFlexToggle = useCallback(async (checked: boolean) => {
     if (!uid) return;
     try {
@@ -326,6 +561,17 @@ const UserProfilePage = () => {
       setSkillsData((prev: any) => (prev ? { ...prev, addedToIndeedFlex: checked } : prev));
     } catch (err) {
       console.error('Failed to update Indeed Flex flag:', err);
+    }
+  }, [uid]);
+
+  const handleFieldglassToggle = useCallback(async (checked: boolean) => {
+    if (!uid) return;
+    try {
+      await updateDoc(doc(db, 'users', uid), { addedToFieldglass: checked, updatedAt: new Date() });
+      setAddedToFieldglass(checked);
+      setSkillsData((prev: any) => (prev ? { ...prev, addedToFieldglass: checked } : prev));
+    } catch (err) {
+      console.error('Failed to update Fieldglass flag:', err);
     }
   }, [uid]);
 
@@ -950,6 +1196,7 @@ const UserProfilePage = () => {
           emergencyContact: data.emergencyContact || null,
           transportMethod: data.transportMethod || null,
           addedToIndeedFlex: data.addedToIndeedFlex === true,
+          addedToFieldglass: data.addedToFieldglass === true,
           riskProfile: data.riskProfile ?? null,
           preferredLanguage:
             String(data.preferredLanguage || '').toLowerCase() === 'es' ? 'es' : 'en',
@@ -990,14 +1237,17 @@ const UserProfilePage = () => {
   useEffect(() => {
     if (!uid || !canAccessProfile()) {
       setAddedToIndeedFlex(false);
+      setAddedToFieldglass(false);
       return;
     }
     const userRef = doc(db, 'users', uid);
     const unsub = onSnapshot(userRef, (snap) => {
       if (snap.exists()) {
         setAddedToIndeedFlex(snap.data()?.addedToIndeedFlex === true);
+        setAddedToFieldglass(snap.data()?.addedToFieldglass === true);
       } else {
         setAddedToIndeedFlex(false);
+        setAddedToFieldglass(false);
       }
     });
     return () => unsub();
@@ -1166,7 +1416,11 @@ const UserProfilePage = () => {
       { label: 'Readiness', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: undefined },
       { label: 'User Groups', available: false, count: undefined },
       { label: 'Onboarding', available: onboardingInProgress && canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
-      { label: 'Employment', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
+      // `label` is the route key referenced by `setTabValue('Employment')`,
+      // deep links (`?tab=employment`), and the `case 'Employment':` switch
+      // below. Keep it stable. `displayLabel` is what the chip / tab strip
+      // actually shows so we can rename without breaking links.
+      { label: 'Employment', displayLabel: 'Employment & Payroll', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Certifications', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Backgrounds', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Notes', available: canViewAdminContent && !isWorkforceInternalTeamView, count: notesCount },
@@ -1537,8 +1791,9 @@ const UserProfilePage = () => {
         resume: skillsData?.resume,
         skills: skillsData?.skills,
         addedToIndeedFlex,
+        addedToFieldglass,
       }) as Record<string, unknown>,
-    [skillsData?.resume, skillsData?.skills, addedToIndeedFlex],
+    [skillsData?.resume, skillsData?.skills, addedToIndeedFlex, addedToFieldglass],
   );
 
   const viewerIsAdminContent = parseInt(String(securityLevel || '0'), 10) >= 5;
@@ -1940,6 +2195,7 @@ const UserProfilePage = () => {
           onAvatarUpdated={setAvatarUrl}
           headerUserGroups={headerUserGroups}
           showIndeedFlexBadge={addedToIndeedFlex}
+          showFieldglassBadge={addedToFieldglass}
           showBackButton={(isRecruiterRoute || user?.uid !== uid) && !isWorkforceRoute}
           onBack={() => {
             if (isRecruiterRoute) {
@@ -2185,6 +2441,9 @@ const UserProfilePage = () => {
                   addedToIndeedFlex={addedToIndeedFlex}
                   onIndeedFlexChange={handleIndeedFlexToggle}
                   canEditIndeedFlex={viewerSecurityLevel >= 4}
+                  addedToFieldglass={addedToFieldglass}
+                  onFieldglassChange={handleFieldglassToggle}
+                  canEditFieldglass={viewerSecurityLevel >= 4}
                   recordHeaderFileInputRef={recordHeaderFileInputRef}
                   handleRecordHeaderAvatarFileChange={handleRecordHeaderAvatarFileChange}
                   canEditRecordAvatar={canEditRecordAvatar}
@@ -2308,6 +2567,19 @@ const UserProfilePage = () => {
                       {isAdminView && (
                         <RecordHeaderActionIcon tooltip="Log Activity" onClick={() => setShowLogActivityDialog(true)}>
                           <CheckCircleIcon />
+                        </RecordHeaderActionIcon>
+                      )}
+                      {isAdminView && (
+                        <RecordHeaderActionIcon tooltip="Log Everee data to console" onClick={() => void handleDumpEvereeData()}>
+                          <BugReportIcon />
+                        </RecordHeaderActionIcon>
+                      )}
+                      {isAdminView && (
+                        <RecordHeaderActionIcon
+                          tooltip="Fetch full record from Everee API"
+                          onClick={() => void handleFetchEvereeApiData()}
+                        >
+                          <CloudDownloadIcon />
                         </RecordHeaderActionIcon>
                       )}
                       <RecordHeaderLanguagePreferenceBadge
@@ -2538,6 +2810,19 @@ const UserProfilePage = () => {
                       <CheckCircleIcon />
                     </RecordHeaderActionIcon>
                   )}
+                  {isAdminView && (
+                    <RecordHeaderActionIcon tooltip="Log Everee data to console" onClick={() => void handleDumpEvereeData()}>
+                      <BugReportIcon />
+                    </RecordHeaderActionIcon>
+                  )}
+                  {isAdminView && (
+                    <RecordHeaderActionIcon
+                      tooltip="Fetch full record from Everee API"
+                      onClick={() => void handleFetchEvereeApiData()}
+                    >
+                      <CloudDownloadIcon />
+                    </RecordHeaderActionIcon>
+                  )}
                   <RecordHeaderLanguagePreferenceBadge
                     language={skillsData?.preferredLanguage === 'es' ? 'es' : 'en'}
                   />
@@ -2557,6 +2842,25 @@ const UserProfilePage = () => {
                             flexShrink: 0,
                             alignSelf: 'center',
                             ml: 0.25,
+                          }}
+                        />
+                      </Tooltip>
+                    ) : null}
+                    {addedToFieldglass ? (
+                      <Tooltip title="Added to SAP Fieldglass" componentsProps={recordHeaderTooltipComponentsProps}>
+                        <Box
+                          component="img"
+                          src="/img/fieldglass.png"
+                          alt="SAP Fieldglass"
+                          sx={{
+                            height: 28,
+                            width: 'auto',
+                            maxWidth: 110,
+                            objectFit: 'contain',
+                            display: 'block',
+                            flexShrink: 0,
+                            alignSelf: 'center',
+                            ml: 1,
                           }}
                         />
                       </Tooltip>
@@ -2820,6 +3124,8 @@ const UserProfilePage = () => {
                   {availableTabs.map((tab, i) => {
                     const isActive = tabValue === tab.label;
                     const hasCount = tab.count !== undefined && tab.count > 0;
+                    const displayLabel =
+                      ('displayLabel' in tab && tab.displayLabel) || tab.label;
                     return (
                       <Button
                         key={`${tab.label}-${i}`}
@@ -2843,7 +3149,7 @@ const UserProfilePage = () => {
                         }}
                       >
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                          {tab.label}
+                          {displayLabel}
                           {hasCount && <Badge badgeContent={tab.count} color="primary" />}
                         </Box>
                       </Button>
@@ -2957,12 +3263,14 @@ const UserProfilePage = () => {
           >
             {availableTabs.map((tab, i) => {
               const hasCount = tab.count !== undefined && tab.count > 0;
+              const displayLabel =
+                ('displayLabel' in tab && tab.displayLabel) || tab.label;
               return (
                 <Tab
                   key={i}
                   label={
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      {tab.label}
+                      {displayLabel}
                       {hasCount && (
                         <Badge badgeContent={tab.count} color="primary" />
                       )}
