@@ -52,6 +52,10 @@ export const evereeAdminGetWorkerW9 = everee?.evereeAdminGetWorkerW9 ?? stubCall
 export const evereeAdminGetWorkerW4 = everee?.evereeAdminGetWorkerW4 ?? stubCallable;
 export const evereeGetMyOnboardingStatus =
   everee?.evereeGetMyOnboardingStatus ?? stubCallable;
+export const evereeAdminClearStaleStamps =
+  everee?.evereeAdminClearStaleStamps ?? stubCallable;
+export const evereeAdminRecreateWorkerOnboarding =
+  everee?.evereeAdminRecreateWorkerOnboarding ?? stubCallable;
 export const evereeWebhook = everee?.evereeWebhook ?? stubWebhook;
 export const onEvereeWebhookEventCreated =
   everee?.onEvereeWebhookEventCreated ?? stubWebhookTrigger;

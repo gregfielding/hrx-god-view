@@ -15,5 +15,7 @@ export {
   evereeAdminGetWorkerW9,
   evereeAdminGetWorkerW4,
   evereeGetMyOnboardingStatus,
+  evereeAdminClearStaleStamps,
 } from './evereeCallables';
+export { evereeAdminRecreateWorkerOnboarding } from './evereeAdminRecreateWorkerOnboarding';
 export { evereeWebhook, onEvereeWebhookEventCreated } from './evereeWebhook';

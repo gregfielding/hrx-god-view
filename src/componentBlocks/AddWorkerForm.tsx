@@ -19,6 +19,7 @@ import {
   FormControlLabel,
   Divider
 } from '@mui/material';
+import { isWorkAuthCollectionDisabled } from '../utils/workAuthCollectionFlag';
 
 // Define the prop types for the AddWorkerForm
 export interface AddWorkerFormProps {
@@ -392,18 +393,23 @@ const AddWorkerForm: React.FC<AddWorkerFormProps> = ({
                   helperText="Optional union name or boolean flag"
                 />
               </Grid>
-              <Grid item xs={12} sm={6}>
-                <FormControlLabel
-                  control={
-                    <Checkbox
-                      checked={form.workEligibility || false}
-                      onChange={(e) => handleBooleanChange('workEligibility', e.target.checked)}
-                    />
-                  }
-                  label="Work Eligibility"
-                />
-                <FormHelperText>Eligibility for employment in the region</FormHelperText>
-              </Grid>
+              {/* W.3 — Work Eligibility checkbox hidden when collection is */}
+              {/* disabled (default). The data is sourced from W.1's mirror */}
+              {/* (Everee I-9 / federal contractor rule). Flag flip restores. */}
+              {!isWorkAuthCollectionDisabled() && (
+                <Grid item xs={12} sm={6}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={form.workEligibility || false}
+                        onChange={(e) => handleBooleanChange('workEligibility', e.target.checked)}
+                      />
+                    }
+                    label="Work Eligibility"
+                  />
+                  <FormHelperText>Eligibility for employment in the region</FormHelperText>
+                </Grid>
+              )}
               <Grid item xs={12} sm={6}>
                 <Autocomplete
                   multiple

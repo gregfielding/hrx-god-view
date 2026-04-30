@@ -31,6 +31,7 @@ import { getEvereeConfigForEntity } from "../integrations/everee/evereeConfig";
 import { createWorkerIfNeeded } from "../integrations/everee/evereeService";
 import { extractEvereeHomeAddressFromUserDoc } from "../integrations/everee/evereeUserAddress";
 import { resolveEvereeWorkerTypeForOnCall } from "../integrations/everee/evereeEntityWorkerType";
+import { mirrorWorkEligibilityFromAuthoritativeSource } from "../utils/workEligibilityMirror";
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -185,6 +186,41 @@ export async function runStartOnCallEmploymentFlow(
     },
     { merge: true }
   );
+
+  // W.1 — work-eligibility mirror (1099 contractor / federal contractor rule).
+  // Federal labor law: 1099 contractors do not require an I-9, so we can
+  // assert work-authorization at on-call employment creation without any
+  // worker-side attestation step. W-2 employees are mirrored later when
+  // their Everee I-9 onboarding completes (see
+  // `mirrorEvereeOnboardingCompleteToEmployments`).
+  //
+  // Runs regardless of `EVEREE_ENABLED`: the rule is about classification,
+  // not about whether we've actually provisioned the worker in Everee yet.
+  // `resolveEvereeWorkerTypeForOnCall` is a pure function on the entity doc.
+  //
+  // Non-blocking: helper logs internal failures and never throws.
+  try {
+    const eligibilityWorkerType = resolveEvereeWorkerTypeForOnCall(
+      trimmedEntity,
+      entityDoc as Record<string, unknown>,
+    );
+    if (eligibilityWorkerType === "contractor") {
+      await mirrorWorkEligibilityFromAuthoritativeSource({
+        userId: trimmedUser,
+        source: "contractor_no_i9_required",
+        callerContext: "runStartOnCallEmploymentFlow",
+        tenantId,
+        entityId: trimmedEntity,
+      });
+    }
+  } catch (e: unknown) {
+    logger.warn("[on_call] work_eligibility_mirror_failed", {
+      tenantId,
+      userId: trimmedUser,
+      entityId: trimmedEntity,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
 
   const auditKey = `on_call_employment_flow__${ON_CALL_AUDIT_V}__${tenantId}__${pipelineId}__${created ? "create" : "merge"}`;
   await writeOnboardingAutomationDispatchLog({

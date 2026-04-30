@@ -180,6 +180,21 @@ export type EvereeGetMyOnboardingStatusResult =
       ok: true;
       onboardingComplete: boolean;
       accountClaimed: boolean | null;
+      /**
+       * EE.4 — raw `onboardingStatus` from `GET /api/v2/workers/{id}` (uppercased).
+       * Surfaces alongside `onboardingComplete` so the client can enforce
+       * the unanimity rule before requesting `WORKER_HOME` (only when both
+       * `onboardingComplete: true` AND `onboardingStatus: 'COMPLETE'`).
+       * Null when Everee didn't return a status string.
+       */
+      onboardingStatus: string | null;
+      /**
+       * EE.4 — raw `onboardingComplete` boolean as Everee sent it.
+       * Differs from the top-level `onboardingComplete` when the server-side
+       * matcher applied unanimity logic (e.g. boolean said true but
+       * `onboardingStatus` disagreed). Mostly useful for diagnostics.
+       */
+      onboardingCompleteSignal: boolean | null;
     }
   | {
       ok: false;
@@ -229,6 +244,77 @@ export const evereeAdminGetWorker = httpsCallable<
   EvereeAdminGetWorkerRequest,
   EvereeAdminGetWorkerResult
 >(functions, 'evereeAdminGetWorker');
+
+export interface EvereeAdminClearStaleStampsRequest {
+  tenantId: string;
+  entityId: string;
+  /** Worker's HRX uid (subject of the clear). */
+  userId: string;
+  /** Free-form audit reason; defaults server-side to `admin_csa_clear`. */
+  reason?: string;
+}
+
+export interface EvereeAdminClearStaleStampsResult {
+  ok: true;
+  /** Field names actually deleted from the link doc this call. Empty when no-op. */
+  cleared: string[];
+  reason: 'link_doc_missing' | 'nothing_to_clear' | string;
+}
+
+/**
+ * EE.4 — admin/CSA recovery: clears optimistic onboarding-completion
+ * stamps that left a worker stuck requesting `WORKER_HOME` (Everee
+ * responds EMB-202 because onboarding isn't actually finished).
+ *
+ * Gated to `canManageEveree` server-side. Worker self-clear is implicit
+ * via the preflight inverse-mirror; this callable exists for cases where
+ * the preflight is unreachable or the worker can't refresh themselves.
+ */
+export const evereeAdminClearStaleStamps = httpsCallable<
+  EvereeAdminClearStaleStampsRequest,
+  EvereeAdminClearStaleStampsResult
+>(functions, 'evereeAdminClearStaleStamps');
+
+export interface EvereeAdminRecreateWorkerOnboardingRequest {
+  tenantId: string;
+  entityId: string;
+  /** Worker's HRX uid — the doc subject. */
+  userId: string;
+}
+
+export interface EvereeAdminRecreateWorkerOnboardingResult {
+  ok: true;
+  /** `${userId}__${entityKey}` — the worker_onboarding doc id we wrote (or found). */
+  pipelineId: string;
+  /** `${entityId}__${userId}` — the everee_workers linkage doc id. */
+  linkageDocId: string;
+  /** True iff the worker_onboarding doc was actually written this call. */
+  workerOnboardingRecreated: boolean;
+  /** True iff the everee_workers linkage doc was actually written this call. */
+  evereeWorkersLinkageRecreated: boolean;
+  /** Resolved entity context (for the toast copy). */
+  entityKey: 'workforce' | 'select' | 'events';
+  entityName: string;
+  /** Worker id from `users.evereeWorkerIds[evereeTenantId]`, when available. */
+  evereeWorkerId: string | null;
+  evereeTenantId: string | null;
+}
+
+/**
+ * EE.5 — admin/CSA recovery for accidental Firestore deletions of the
+ * Everee worker setup. Recreates the canonical worker_onboarding doc
+ * AND the everee_workers linkage doc when missing, idempotently and
+ * without re-triggering messaging or touching entity_employments.
+ *
+ * Refuses when there is no `entity_employments/{userId}__{entityKey}`
+ * doc — recovery should never invent an employment that didn't exist.
+ *
+ * Gated to `canManageEveree` server-side.
+ */
+export const evereeAdminRecreateWorkerOnboarding = httpsCallable<
+  EvereeAdminRecreateWorkerOnboardingRequest,
+  EvereeAdminRecreateWorkerOnboardingResult
+>(functions, 'evereeAdminRecreateWorkerOnboarding');
 
 export interface EvereeAdminGetWorkerDocumentsRequest {
   tenantId: string;

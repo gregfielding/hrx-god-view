@@ -37,6 +37,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import BugReportIcon from '@mui/icons-material/BugReport';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
 import { evereeAdminGetWorker } from '../../services/everee/evereeCallables';
+import { assertEvereeWorkerIdMatch } from '../../utils/everee/assertEvereeWorkerIdMatch';
 import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import UniversalBackButton from '../../components/common/UniversalBackButton';
@@ -497,21 +498,35 @@ const UserProfilePage = () => {
      * Everee tenant id maps to one of our `entities/*` docs. We resolve via
      * the link doc rather than the entity doc itself because workers usually
      * lack `entities/*` read perms.
+     *
+     * Filter on `evereeTenantId` (the iteration key) — NOT on `evereeWorkerId`
+     * (the value). Filtering on the value can return the wrong link doc when
+     * `users.evereeWorkerIds` and the link docs disagree (stale data,
+     * mid-provision races, dual-key collisions). The tenant id is the
+     * authoritative foreign key for what we're iterating over and is what
+     * gets wired into the link-doc id pattern (`${entityId}__${uid}`); using
+     * it as the query filter eliminates the entire class of mismatch that
+     * caused EE.1.
      */
     for (const { evereeTenantId, evereeWorkerId } of pairs) {
       let entityId = '';
+      let linkEvereeWorkerId = '';
       try {
         const linkSnap = await getDocs(
           query(
             collection(db, 'tenants', tid, 'everee_workers'),
             where('firebaseUid', '==', uid),
-            where('evereeWorkerId', '==', evereeWorkerId),
+            where('evereeTenantId', '==', evereeTenantId),
           ),
         );
         const linkDoc = linkSnap.docs[0];
         if (linkDoc) {
-          const data = linkDoc.data() as { entityId?: string };
+          const data = linkDoc.data() as {
+            entityId?: string;
+            evereeWorkerId?: string;
+          };
           if (typeof data.entityId === 'string') entityId = data.entityId.trim();
+          if (typeof data.evereeWorkerId === 'string') linkEvereeWorkerId = data.evereeWorkerId.trim();
         }
       } catch (err) {
         console.log(
@@ -529,16 +544,55 @@ const UserProfilePage = () => {
         continue;
       }
 
+      if (linkEvereeWorkerId && linkEvereeWorkerId !== evereeWorkerId) {
+        // The user-doc map says one workerId for this tenant, but the link
+        // doc has a different one. This is exactly the data-skew case that
+        // produces mislabeled output — surface it loudly so the operator
+        // can decide which is authoritative before we render anything.
+        console.error(
+          '[everee] user.evereeWorkerIds disagrees with everee_workers link doc',
+          {
+            evereeTenantId,
+            entityId,
+            userMapEvereeWorkerId: evereeWorkerId,
+            linkDocEvereeWorkerId: linkEvereeWorkerId,
+          },
+        );
+      }
+
       console.group(
         `Everee tenant ${evereeTenantId} · entity ${entityId} · workerId ${evereeWorkerId}`,
       );
+      // Always log the args alongside the header — when the same console
+      // block prints later in DevTools (collapsed groups can cluster), the
+      // args block is still attached to its own iteration's local scope
+      // and proves which (tenantId, entityId, evereeWorkerId) tuple this
+      // call was made with.
+      console.log('args', { tenantId: tid, entityId, evereeTenantId, evereeWorkerId });
       try {
         const res = await evereeAdminGetWorker({
           tenantId: tid,
           entityId,
           evereeWorkerId,
         });
-        const data = res.data as { response?: unknown } | undefined;
+        const data = res.data as
+          | { evereeWorkerId?: string; evereeTenantId?: string; response?: unknown }
+          | undefined;
+        // Defense-in-depth: confirm the response we're about to log
+        // corresponds to the worker we asked for. Logs to console.error
+        // with full context on mismatch, which is enough to spot a future
+        // closure-in-loop regression by stack trace.
+        assertEvereeWorkerIdMatch({
+          expectedEvereeWorkerId: evereeWorkerId,
+          serverEchoEvereeWorkerId: data?.evereeWorkerId,
+          responseBody: data?.response ?? data,
+          context: {
+            site: 'UserProfile.handleFetchEvereeApiData',
+            tenantId: tid,
+            entityId,
+            evereeTenantId,
+          },
+        });
         console.log('GET /api/v2/workers/{id} response', data?.response ?? data);
       } catch (err) {
         // Includes verbatim Everee error text — useful for "wrong path" issues

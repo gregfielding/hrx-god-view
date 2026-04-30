@@ -59,7 +59,16 @@ export function runEntityOnboardingRules(input: ActionItemsV1Input): ActionItem[
       );
     }
 
-    if (s.i9Incomplete) {
+    // RA.1 — I-9 is N/A for 1099 contractors (the canonical onboarding step
+    // matrix treats `i9_supporting_documents` as `not_required` when
+    // `workerType === '1099'`, mirroring the server-side
+    // `computeStepApplicability` in `functions/src/onboarding/workerOnboardingPipeline.ts`).
+    // `workerType === null` means the field was missing on the
+    // `entity_employments` doc — treat that as the W-2 default to stay
+    // safe with legacy data, otherwise we'd silently suppress real I-9
+    // gaps on rows that pre-date the field. The 1099 suppression here
+    // closes Bug #1 from the action-items-readiness audit (RA.0).
+    if (s.i9Incomplete && s.workerType !== '1099') {
       out.push(
         makeActionItem({
           dedupeKey: `${dedupe}:i9`,

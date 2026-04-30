@@ -273,6 +273,8 @@ export {
   evereeAdminGetWorkerW9,
   evereeAdminGetWorkerW4,
   evereeGetMyOnboardingStatus,
+  evereeAdminClearStaleStamps,
+  evereeAdminRecreateWorkerOnboarding,
   evereeWebhook,
   onEvereeWebhookEventCreated,
 } from './integrations/evereeGate';

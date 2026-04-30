@@ -47,6 +47,7 @@ import {
 } from '../../services/everee/evereeCallables';
 import { formatFirebaseHttpsError } from '../../utils/firebaseHttpsErrors';
 import {
+  attachEvereePortChannel,
   EVEREE_DEFAULT_HOST_HANDLER_NAME,
   registerEvereeHostBridge,
 } from '../../utils/everee/hostMessageBridge';
@@ -151,15 +152,34 @@ const EvereePayrollSetupEmbed: React.FC<EvereePayrollSetupEmbedProps> = ({
     }
     if (typeof data !== 'object') return null;
     const d = data as Record<string, unknown>;
-    const rawType = typeof d.type === 'string' ? d.type : null;
+    // EE.7 — Everee's documented event payload uses `eventType` as the
+    // discriminator (https://developer.everee.com/docs/handling-events).
+    // The legacy `type` alias is kept because some SDK versions / V1_0
+    // embeds emit envelopes shaped that way, and our pre-EE.7 path
+    // depended on it. Read both, prefer `eventType` when present.
+    const rawType =
+      typeof d.eventType === 'string'
+        ? d.eventType
+        : typeof d.type === 'string'
+          ? d.type
+          : null;
     if (rawType) return { type: rawType, payload: (d.payload ?? null) as Record<string, unknown> | null };
     // Some SDK versions nest the envelope under `data`.
     const inner = d.data;
-    if (inner && typeof inner === 'object' && typeof (inner as Record<string, unknown>).type === 'string') {
-      return {
-        type: (inner as Record<string, unknown>).type as string,
-        payload: ((inner as Record<string, unknown>).payload ?? null) as Record<string, unknown> | null,
-      };
+    if (inner && typeof inner === 'object') {
+      const innerObj = inner as Record<string, unknown>;
+      const innerType =
+        typeof innerObj.eventType === 'string'
+          ? innerObj.eventType
+          : typeof innerObj.type === 'string'
+            ? innerObj.type
+            : null;
+      if (innerType) {
+        return {
+          type: innerType,
+          payload: (innerObj.payload ?? null) as Record<string, unknown> | null,
+        };
+      }
     }
     return null;
   }, []);
@@ -249,9 +269,29 @@ const EvereePayrollSetupEmbed: React.FC<EvereePayrollSetupEmbedProps> = ({
       },
     });
 
+    // EE.7 — the documented Web/React iframe transport
+    // (https://developer.everee.com/docs/web-react-iframe). Pre-EE.7 we
+    // only registered the `window[handlerName]` bridge above, which the V2
+    // SDK in browsers doesn't actually probe for (that's the WKWebView
+    // path). The result was an EMB-102 toast on every ONBOARDING mount.
+    // Additive: V1_0 port-transfer via `parent.postMessage` is still
+    // captured by the `MESSAGE_PORT_REGISTERED` branch in `onMessage`
+    // above, and the window-property bridge stays as a defensive
+    // fallback for non-browser hosts.
+    const portChannel =
+      phase.state === 'ready' && iframeRef.current
+        ? attachEvereePortChannel(iframeRef.current, {
+            onMessage: (msg) => {
+              const evt = parseEvereeEvent(msg);
+              if (evt) handleEvereeEvent(evt);
+            },
+          })
+        : null;
+
     return () => {
       window.removeEventListener('message', onMessage);
       bridge.unregister();
+      portChannel?.unregister();
     };
   }, [open, parseEvereeEvent, handleEvereeEvent, teardownPort, phase]);
 

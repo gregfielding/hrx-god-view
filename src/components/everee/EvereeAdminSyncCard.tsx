@@ -38,11 +38,13 @@ import {
   Typography,
 } from '@mui/material';
 import SyncIcon from '@mui/icons-material/Sync';
+import RestoreIcon from '@mui/icons-material/Restore';
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { p } from '../../data/firestorePaths';
 import { useAuth } from '../../contexts/AuthContext';
 import {
+  evereeAdminRecreateWorkerOnboarding,
   evereeEnsureWorker,
   type EvereeWorkerType,
 } from '../../services/everee/evereeCallables';
@@ -85,6 +87,7 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
   const [evereeTenantId, setEvereeTenantId] = useState<string | null>(null);
   const [evereeWorkerIdsMap, setEvereeWorkerIdsMap] = useState<Record<string, string>>({});
   const [syncing, setSyncing] = useState(false);
+  const [recovering, setRecovering] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ severity: 'success' | 'error'; message: string } | null>(
     null,
@@ -185,6 +188,46 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
     }
   }, [entityId, onSynced, tenantId, userId, workerType]);
 
+  // EE.5 — admin/CSA recovery surface for Firestore deletions of either
+  // `worker_onboarding/{userId}__{entityKey}` or
+  // `everee_workers/{entityId}__{userId}`. Idempotent server-side.
+  const handleRecreate = useCallback(async () => {
+    if (!entityId) {
+      setError('This entity is not yet linked to Everee.');
+      return;
+    }
+    setRecovering(true);
+    setError(null);
+    try {
+      const result = await evereeAdminRecreateWorkerOnboarding({
+        tenantId,
+        entityId,
+        userId,
+      });
+      const data = result.data;
+      const parts: string[] = [];
+      if (data.workerOnboardingRecreated) {
+        parts.push(`Recreated worker_onboarding/${data.pipelineId}`);
+      }
+      if (data.evereeWorkersLinkageRecreated) {
+        parts.push(`Restored everee_workers/${data.linkageDocId}`);
+      }
+      const message =
+        parts.length > 0
+          ? parts.join(' · ')
+          : `Both docs already present for ${data.entityName} — no recovery needed.`;
+      setToast({ severity: 'success', message });
+      onSynced?.(data.evereeWorkerId ?? '');
+    } catch (err: unknown) {
+      const msg =
+        formatFirebaseHttpsError(err) || (err instanceof Error ? err.message : String(err));
+      setError(msg);
+      setToast({ severity: 'error', message: msg });
+    } finally {
+      setRecovering(false);
+    }
+  }, [entityId, onSynced, tenantId, userId]);
+
   if (!canManage) return null;
 
   // Disabled-with-tooltip path — keeps the card visible so recruiters know the
@@ -201,6 +244,9 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
     : evereeWorkerId
       ? `Returns the existing Everee worker id (${evereeWorkerId}); no new worker is created.`
       : 'Creates the worker in Everee (sandbox). Idempotent — safe to click again.';
+  const recreateTooltip = disabledReason
+    ? disabledReason
+    : 'Recreates the worker_onboarding doc and the everee_workers linkage doc when either has been deleted from Firestore. Does not change employment state, does not re-fire onboarding messaging.';
 
   return (
     <Box
@@ -237,6 +283,21 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
           <Chip size="small" variant="outlined" label="Not linked" />
         )}
         <Box sx={{ flex: 1 }} />
+        <Tooltip title={recreateTooltip}>
+          <span>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={
+                recovering ? <CircularProgress size={14} color="inherit" /> : <RestoreIcon />
+              }
+              onClick={handleRecreate}
+              disabled={recovering || syncing || Boolean(disabledReason)}
+            >
+              Recreate worker onboarding
+            </Button>
+          </span>
+        </Tooltip>
         <Tooltip title={buttonTooltip}>
           <span>
             <Button
@@ -244,7 +305,7 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
               variant="contained"
               startIcon={syncing ? <CircularProgress size={14} color="inherit" /> : <SyncIcon />}
               onClick={handleClick}
-              disabled={syncing || Boolean(disabledReason)}
+              disabled={syncing || recovering || Boolean(disabledReason)}
             >
               {buttonLabel}
             </Button>

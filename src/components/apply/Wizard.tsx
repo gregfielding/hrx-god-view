@@ -48,6 +48,7 @@ import {
   type JobOrderForEffectiveRead,
 } from '../../shared/jobOrder/getEffectiveJobOrderField';
 import WorkEligibilityStep from './steps/WorkEligibilityStep';
+import { isWorkAuthCollectionDisabled } from '../../utils/workAuthCollectionFlag';
 import ProfilePictureStep from './steps/ProfilePictureStep';
 import ResumeStep from './steps/ResumeStep';
 import SkillsStep from './steps/SkillsStep';
@@ -424,10 +425,20 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       indices = indices.filter((i) => i !== 3);
     }
 
+    // W.3 — when the work-auth collection flag is on (default), step 4
+    // is auto-skipped for every entity, every user. The data is sourced
+    // from W.1's server-side mirror (Everee I-9 for W-2, federal
+    // contractor rule for 1099) so the wizard doesn't need to ask. The
+    // pre-W.3 conditional skip (C1 Events contractor + already-authorized)
+    // is preserved for the rollback path (flag off).
+    const workAuthCollectionDisabled = isWorkAuthCollectionDisabled();
     const workAuthComplete =
+      workAuthCollectionDisabled ||
       /C1 Events LLC/i.test(String(hiringEntityName || '')) ||
       Boolean(eligibility.workAuthorized ?? profile.workEligibility);
-    if (isAuthenticated && workAuthComplete) indices = indices.filter((i) => i !== 4);
+    if ((isAuthenticated || workAuthCollectionDisabled) && workAuthComplete) {
+      indices = indices.filter((i) => i !== 4);
+    }
 
     const hasProfilePhoto = Boolean(
       profilePicture.profilePicture || profile.workerProfile?.photoUrl || profile.avatar
@@ -1855,13 +1866,21 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           const update: any = { updatedAt: serverTimestamp() };
           const authorizedToWorkUS = typeof e.workAuthorized === 'boolean' ? !!e.workAuthorized : false;
           update.workEligibility = authorizedToWorkUS;
+          // W.3 — preserve existing EEO on the nested attestation (and the
+          // top-level mirror fields). When the EEO inputs aren't rendered
+          // (default) `e.gender`/`e.veteranStatus`/`e.disabilityStatus` are
+          // undefined, and the previous logic clobbered the existing values
+          // with `null`. Spread `prevAtt` first so missing form fields keep
+          // whatever was there before. W.6 owns the eventual full removal.
+          const prevAtt = (userProfile?.workEligibilityAttestation || {}) as Record<string, unknown>;
           update.workEligibilityAttestation = {
+            ...prevAtt,
             authorizedToWorkUS,
-            requireSponsorship: typeof e.requireSponsorship === 'boolean' ? !!e.requireSponsorship : null,
+            requireSponsorship: typeof e.requireSponsorship === 'boolean' ? !!e.requireSponsorship : (prevAtt.requireSponsorship ?? null),
             attestedAt: serverTimestamp(),
-            gender: e.gender ? String(e.gender) : null,
-            veteranStatus: e.veteranStatus ? String(e.veteranStatus) : null,
-            disabilityStatus: e.disabilityStatus ? String(e.disabilityStatus) : null,
+            ...(e.gender !== undefined ? { gender: e.gender ? String(e.gender) : null } : {}),
+            ...(e.veteranStatus !== undefined ? { veteranStatus: e.veteranStatus ? String(e.veteranStatus) : null } : {}),
+            ...(e.disabilityStatus !== undefined ? { disabilityStatus: e.disabilityStatus ? String(e.disabilityStatus) : null } : {}),
           };
           if (typeof e.requireSponsorship === 'boolean') update.requireSponsorship = !!e.requireSponsorship;
           if (e.gender !== undefined) update.gender = String(e.gender || '');
@@ -2405,14 +2424,20 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       const authorizedToWorkUS =
         isC1EventsContractor || (typeof eligibility.workAuthorized === 'boolean' ? !!eligibility.workAuthorized : false);
       profileUpdate.workEligibility = authorizedToWorkUS;
+      // W.3 — same preservation pattern as the per-step persist above.
+      // Spread `prevAtt` so EEO collected before the W.3 hide isn't
+      // clobbered with `null` on a wizard run that no longer renders the
+      // EEO inputs. W.6 owns the eventual full removal.
+      const prevAttApply = (userProfile?.workEligibilityAttestation || {}) as Record<string, unknown>;
       profileUpdate.workEligibilityAttestation = {
+        ...prevAttApply,
         authorizedToWorkUS,
-        requireSponsorship: eligibility.requireSponsorship ?? null,
+        requireSponsorship: eligibility.requireSponsorship ?? prevAttApply.requireSponsorship ?? null,
         attestedAt: serverTimestamp(),
         sourceApplicationId: tenantId && effectiveUid && jobId ? `${effectiveUid}_${jobId}` : null,
-        gender: eligibility.gender ? String(eligibility.gender) : null,
-        veteranStatus: eligibility.veteranStatus ? String(eligibility.veteranStatus) : null,
-        disabilityStatus: eligibility.disabilityStatus ? String(eligibility.disabilityStatus) : null,
+        ...(eligibility.gender !== undefined ? { gender: eligibility.gender ? String(eligibility.gender) : null } : {}),
+        ...(eligibility.veteranStatus !== undefined ? { veteranStatus: eligibility.veteranStatus ? String(eligibility.veteranStatus) : null } : {}),
+        ...(eligibility.disabilityStatus !== undefined ? { disabilityStatus: eligibility.disabilityStatus ? String(eligibility.disabilityStatus) : null } : {}),
       };
       if (eligibility.gender) profileUpdate.gender = String(eligibility.gender);
       if (eligibility.veteranStatus)

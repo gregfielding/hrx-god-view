@@ -3,9 +3,23 @@
  *
  * Pipeline:
  *   1. Public POST endpoint `evereeWebhook` receives events from Everee.
- *   2. Verifies `X-Everee-Signature` HMAC-SHA256 of the raw body against a shared
- *      secret (`EVEREE_WEBHOOK_SECRET` env var, or `EVEREE_WEBHOOK_SECRET_<evereeTenantId>`
- *      for per-tenant secrets during pilot). Returns 401 on failure.
+ *   2. Verifies the signature per Everee's documented spec
+ *      (https://developer.everee.com/docs/authenticating-events):
+ *        - Header `x-everee-webhook-signature` carries one or more
+ *          comma-separated values of the form `v1=<hex>`. Each value is an
+ *          HMAC-SHA256 hex digest of the message
+ *          `${x-everee-webhook-timestamp}.${rawBody}`. Multiple signatures
+ *          may be present when more than one signing key is active for a
+ *          company (e.g. mid-rotation). Any single matching signature
+ *          authenticates the event.
+ *        - Algorithm: **HMAC-SHA256**, **hex-encoded**.
+ *        - Replay protection: timestamp must be within
+ *          `EVEREE_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS` (default 120) of
+ *          the current server clock per Everee's "Securing your handler"
+ *          guide.
+ *      Secrets are resolved tenant-first: `EVEREE_WEBHOOK_SECRET_<companyId>`
+ *      env var, with `EVEREE_WEBHOOK_SECRET` as a global fallback. Returns
+ *      401 on signature failure, 408-style 401 on timestamp drift.
  *   3. Dedups by `eventId` into `tenants/{tid}/everee_webhook_events/{eventId}`
  *      using a transactional create-or-skip. Repeat deliveries are ack'd 200
  *      without reprocessing.
@@ -22,14 +36,44 @@
  *   - `worker.onboarding-completed` → everee_workers.status = 'onboarding_complete'
  *     plus onboardingCompletedAt timestamps on user_employments /
  *     onboarding_instances when the worker can be resolved.
+ *
+ * Envelope shape (per https://developer.everee.com/docs/events-overview):
+ *   {
+ *     version: "1",
+ *     id: "<event uuid>",
+ *     companyId: 10011,             // ← Everee tenant id (numeric); we coerce to string
+ *     type: "worker.onboarding-completed",
+ *     timestamp: 1720011002,        // epoch seconds (in-body; signature uses header timestamp)
+ *     data: { object: { ... } }     // event-specific payload nested under `data.object`
+ *   }
  */
 
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
 import { onRequest } from 'firebase-functions/v2/https';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { defineSecret } from 'firebase-functions/params';
 import { logger } from 'firebase-functions/v2';
 import { evereePaths } from './evereeConfig';
+
+/**
+ * Per-tenant Everee webhook secrets. Bound at deploy time so Cloud
+ * Functions Gen2 mounts them into `process.env` for the function
+ * runtime — without this binding the env vars are empty even when
+ * `firebase functions:secrets:set` has been run, which is exactly the
+ * "secretSource: none" failure mode WH.1 was tracking.
+ *
+ * Rotation: add a new `defineSecret('EVEREE_WEBHOOK_SECRET_<companyId>')`
+ * line and append it to the `secrets:` array on `evereeWebhook` below,
+ * then redeploy. The verifier already accepts multiple `v1=` signatures
+ * per request so a key swap can land without a flap.
+ *
+ * The global fallback (`EVEREE_WEBHOOK_SECRET`) stays unbound here
+ * because it ships through standard env vars / functions config and is
+ * only ever a back-stop; tenant-scoped secrets are the production path.
+ */
+const EVEREE_WEBHOOK_SECRET_3133 = defineSecret('EVEREE_WEBHOOK_SECRET_3133');
+const EVEREE_WEBHOOK_SECRET_3138 = defineSecret('EVEREE_WEBHOOK_SECRET_3138');
 
 const db = () => admin.firestore();
 
@@ -42,11 +86,18 @@ interface EvereeEventEnvelope {
   /** Event type, e.g. `worker.onboarding-completed`. */
   type?: string;
   event?: string;
-  /** Everee tenant that produced the event — maps to our entity.evereeTenantId. */
+  /**
+   * Everee company / tenant id. Per Everee's events-overview spec the
+   * canonical field is `companyId` (numeric). Some legacy / pilot
+   * envelopes used `tenantId` instead — both are accepted.
+   */
+  companyId?: string | number;
   tenantId?: string;
-  /** ISO8601 publish time. */
+  /** ISO8601 publish time (rare). */
   occurredAt?: string;
-  /** Event payload — shape varies per event type. */
+  /** In-body epoch seconds — distinct from `x-everee-webhook-timestamp` (header) used for signing. */
+  timestamp?: number | string;
+  /** Event payload — shape varies per event type, nested under `data.object`. */
   data?: Record<string, unknown>;
   payload?: Record<string, unknown>;
 }
@@ -72,78 +123,142 @@ interface StoredEvent {
 }
 
 /**
- * Constant-time HMAC-SHA256 check of the raw request body against an optional
- * tenant-scoped secret, falling back to a global secret. Returning false when
- * no secret is configured keeps accidental prod traffic from slipping through
- * a misconfigured deploy.
+ * Verify Everee webhook signature per the canonical spec at
+ * https://developer.everee.com/docs/authenticating-events.
  *
- * Everee's published header is `x-everee-webhook-signature`. We accept the
- * legacy `x-everee-signature` and the `x-hub-signature-256` forms so a future
- * provider rotation doesn't silently start dropping events.
+ *   Headers (both required):
+ *     x-everee-webhook-signature: "v1=<sig1>,v1=<sig2>,..."
+ *     x-everee-webhook-timestamp: "<unix-seconds>"
  *
- * Format: bare lowercase hex. We also accept `sha256=<hex>` (GitHub-style) and
- * pure base64 just in case Everee changes encoding mid-rotation — both forms
- * are normalized into a hex buffer before the constant-time compare.
+ *   Multiple comma-separated signatures support concurrent signing keys
+ *   for an account (e.g. mid-rotation). Each is `v1=<hex>` per Everee's
+ *   spec; the only currently-valid version is `v1`. Any single matching
+ *   signature authenticates the request.
+ *
+ *   Signed message: `<timestamp>.<rawBody>` — the literal bytes Everee
+ *   signed. Algorithm: HMAC-SHA256, hex-encoded.
+ *
+ *   We resolve the secret tenant-first (`EVEREE_WEBHOOK_SECRET_<companyId>`)
+ *   with a global `EVEREE_WEBHOOK_SECRET` fallback. Returning `false`
+ *   when no secret is configured prevents a misconfigured deploy from
+ *   silently accepting unauthenticated traffic.
+ *
+ *   Replay protection (timestamp-window check) is enforced separately at
+ *   the call site so a signature failure and a timestamp drift produce
+ *   distinct log lines.
  */
-function verifySignature(
+export function verifySignature(
   rawBody: string,
   signatureHeader: string | null,
+  webhookTimestamp: string | null,
   evereeTenantId: string | null,
 ): boolean {
-  if (!signatureHeader) return false;
+  if (!signatureHeader || !webhookTimestamp) return false;
+
   const tenantScopedSecret =
     evereeTenantId && process.env[`EVEREE_WEBHOOK_SECRET_${evereeTenantId}`];
   const globalSecret = process.env.EVEREE_WEBHOOK_SECRET;
   const secret = tenantScopedSecret || globalSecret;
   if (!secret) return false;
 
-  // Strip optional `sha256=` prefix.
-  const stripped = signatureHeader.startsWith('sha256=')
-    ? signatureHeader.slice('sha256='.length)
-    : signatureHeader;
-
-  const expectedHex = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
-
-  const candidates: Buffer[] = [];
-  // Hex form (Everee's documented default).
-  if (/^[0-9a-fA-F]+$/.test(stripped) && stripped.length % 2 === 0) {
-    try {
-      candidates.push(Buffer.from(stripped, 'hex'));
-    } catch {
-      /* ignore */
-    }
-  }
-  // Base64 fallback in case Everee rotates encoding.
-  if (/^[A-Za-z0-9+/=_-]+$/.test(stripped)) {
-    try {
-      const normalized = stripped.replace(/-/g, '+').replace(/_/g, '/');
-      candidates.push(Buffer.from(normalized, 'base64'));
-    } catch {
-      /* ignore */
-    }
-  }
-
+  const message = `${webhookTimestamp}.${rawBody}`;
+  const expectedHex = crypto.createHmac('sha256', secret).update(message).digest('hex');
   const expectedBuf = Buffer.from(expectedHex, 'hex');
-  for (const c of candidates) {
-    if (c.length !== expectedBuf.length) continue;
+
+  // Per spec, the header is a comma-separated list of `<version>=<sig>`
+  // entries. Discard any entry whose version is not `v1` (Everee may add
+  // a `v2` later, but until they do we must not silently accept it).
+  const candidates: string[] = [];
+  for (const entry of signatureHeader.split(',')) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx <= 0) continue;
+    const version = trimmed.slice(0, eqIdx);
+    const sig = trimmed.slice(eqIdx + 1);
+    if (version !== 'v1' || !sig) continue;
+    candidates.push(sig);
+  }
+
+  for (const candidate of candidates) {
+    // Reject obviously-invalid hex up front so `Buffer.from('zz', 'hex')`
+    // doesn't silently produce a length-1 buffer that happens to match
+    // by accident on a degenerate secret.
+    if (!/^[0-9a-fA-F]+$/.test(candidate) || candidate.length % 2 !== 0) continue;
+    let candidateBuf: Buffer;
     try {
-      if (crypto.timingSafeEqual(c, expectedBuf)) return true;
+      candidateBuf = Buffer.from(candidate, 'hex');
     } catch {
-      /* try next encoding */
+      continue;
+    }
+    if (candidateBuf.length !== expectedBuf.length) continue;
+    try {
+      if (crypto.timingSafeEqual(candidateBuf, expectedBuf)) return true;
+    } catch {
+      /* try the next candidate */
     }
   }
+
   return false;
 }
 
-/** Pull Everee tenant id from common envelope shapes (root, nested data, payload). */
-function pickEvereeTenantIdFromEnvelope(envelope: EvereeEventEnvelope): string | null {
+/**
+ * Replay-protection window for `x-everee-webhook-timestamp` (epoch
+ * seconds). Per Everee's "Securing your handler" guide, 2 minutes is the
+ * recommended ceiling. Override via env for backfill / replay tooling.
+ */
+const EVEREE_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS = (() => {
+  const raw = process.env.EVEREE_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS;
+  const n = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 120;
+})();
+
+/**
+ * Returns true when `webhookTimestamp` (epoch seconds, as a string) is
+ * within the configured tolerance of `nowSeconds`. Exposed for the unit
+ * tests so they can pin "expired" / "future-skew" branches without
+ * mocking Date.now everywhere.
+ */
+export function isWebhookTimestampWithinTolerance(
+  webhookTimestamp: string | null,
+  nowSeconds: number,
+  toleranceSeconds: number = EVEREE_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS,
+): boolean {
+  if (!webhookTimestamp) return false;
+  const ts = Number(webhookTimestamp);
+  if (!Number.isFinite(ts)) return false;
+  return Math.abs(nowSeconds - ts) <= toleranceSeconds;
+}
+
+/**
+ * Pull the Everee tenant id from an event envelope. Per Everee's
+ * events-overview spec the canonical field is `companyId` at the root of
+ * the body (numeric); we coerce to a string so it lines up with our
+ * `EVEREE_WEBHOOK_SECRET_<companyId>` env-var lookup. We also accept a
+ * handful of legacy shapes (`tenantId`, `accountId`, nested under `data`
+ * / `payload`) so pilot envelopes Everee may have sent during private
+ * preview don't silently fail.
+ *
+ * Exported for unit testing — the envelope-shape variability is the
+ * main source of historical bugs (most recently the `tenantId`-vs-
+ * `companyId` mismatch that produced the WH.1 401 storm).
+ */
+export function pickEvereeTenantIdFromEnvelope(
+  envelope: EvereeEventEnvelope,
+): string | null {
   const candidates: unknown[] = [
+    // Everee canonical (root). Numeric in practice.
+    envelope.companyId,
+    // Legacy / pilot shapes — kept defensive so a back-fill of older
+    // events still routes correctly during replay.
     envelope.tenantId,
     (envelope as Record<string, unknown>).evereeTenantId,
     (envelope as Record<string, unknown>).accountId,
+    envelope.data?.companyId,
     envelope.data?.tenantId,
     envelope.data?.evereeTenantId,
     envelope.data?.accountId,
+    envelope.payload?.companyId,
     envelope.payload?.tenantId,
     envelope.payload?.evereeTenantId,
     envelope.payload?.accountId,
@@ -193,7 +308,18 @@ async function resolveTenantEntityFromEvereeTenant(
  * if the shared secret is ever rotated mid-flight.
  */
 export const evereeWebhook = onRequest(
-  { cors: false, invoker: 'public', timeoutSeconds: 30, memory: '512MiB' },
+  {
+    cors: false,
+    invoker: 'public',
+    timeoutSeconds: 30,
+    memory: '512MiB',
+    // Bind the per-tenant secrets so Cloud Functions Gen2 mounts them
+    // into the runtime's `process.env`. Without this list the
+    // `EVEREE_WEBHOOK_SECRET_*` lookups in `verifySignature` resolve to
+    // empty strings even after `firebase functions:secrets:set` — the
+    // exact failure mode WH.1 was tracking.
+    secrets: [EVEREE_WEBHOOK_SECRET_3133, EVEREE_WEBHOOK_SECRET_3138],
+  },
   async (req, res) => {
     // Everee will POST JSON. Anything else is noise.
     if (req.method !== 'POST') {
@@ -226,15 +352,11 @@ export const evereeWebhook = onRequest(
     const evereeTenantId =
       pickEvereeTenantIdFromEnvelope(envelope) || tenantQueryParam || null;
     const occurredAt = typeof envelope.occurredAt === 'string' ? envelope.occurredAt : null;
-    // Everee's documented header is `x-everee-webhook-signature`; we accept the
-    // legacy `x-everee-signature` and the GitHub-style `x-hub-signature-256`
-    // for resilience against provider rotation.
+    // Canonical Everee headers per https://developer.everee.com/docs/authenticating-events.
     const signatureHeader =
-      (req.header('x-everee-webhook-signature') as string | null) ||
-      (req.header('x-everee-signature') as string | null) ||
-      (req.header('x-everee-signature-256') as string | null) ||
-      (req.header('x-hub-signature-256') as string | null) ||
-      null;
+      (req.header('x-everee-webhook-signature') as string | null) || null;
+    const webhookTimestamp =
+      (req.header('x-everee-webhook-timestamp') as string | null) || null;
 
     if (!eventId || !type) {
       logger.warn('everee.webhook.missing_fields', { eventId, type });
@@ -242,55 +364,39 @@ export const evereeWebhook = onRequest(
       return;
     }
 
-    if (!verifySignature(rawBody, signatureHeader, evereeTenantId)) {
-      // DIAGNOSTIC — temporary: surface enough detail to figure out why
-      // signature checks are failing in pilot, without leaking the secret
-      // itself. Remove once the format is locked in.
-      const tenantSecret =
-        evereeTenantId && process.env[`EVEREE_WEBHOOK_SECRET_${evereeTenantId}`];
-      const globalSecret = process.env.EVEREE_WEBHOOK_SECRET;
-      const secret = tenantSecret || globalSecret || '';
-      const provided = signatureHeader
-        ? signatureHeader.startsWith('sha256=')
-          ? signatureHeader.slice('sha256='.length)
-          : signatureHeader
-        : '';
-      const expectedHex = secret
-        ? crypto.createHmac('sha256', secret).update(rawBody).digest('hex')
-        : '';
-      const expectedB64 = secret
-        ? crypto.createHmac('sha256', secret).update(rawBody).digest('base64')
-        : '';
+    // Replay protection: per Everee's "Securing your handler" guide, reject
+    // if the timestamp is outside the configured tolerance window. This is
+    // enforced before the signature check so a clock-skew failure produces
+    // a distinct log line.
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    if (
+      !isWebhookTimestampWithinTolerance(webhookTimestamp, nowSeconds)
+    ) {
+      logger.warn('everee.webhook.timestamp_out_of_window', {
+        eventId,
+        type,
+        evereeTenantId,
+        hasSignature: !!signatureHeader,
+        hasTimestamp: !!webhookTimestamp,
+        toleranceSeconds: EVEREE_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS,
+      });
+      res.status(401).send('Timestamp out of tolerance window');
+      return;
+    }
+
+    if (!verifySignature(rawBody, signatureHeader, webhookTimestamp, evereeTenantId)) {
+      // WH.1 trim: the verbose discovery diagnostics
+      // (sigPrefix/sigLen/expectedHexPrefix/etc.) lived here previously
+      // and were the entire reason we figured out the canonical spec.
+      // They're intentionally gone now — production-level fields only.
+      // Restore the verbose block from git history (commit prior to WH.1)
+      // if a fresh signature failure surfaces and we need to re-discover.
       logger.warn('everee.webhook.bad_signature', {
         eventId,
         type,
         evereeTenantId,
         hasSignature: !!signatureHeader,
-        // Which header(s) Everee actually sent.
-        headerNames: Object.keys(req.headers).filter(
-          (h) =>
-            h.toLowerCase().includes('signature') ||
-            h.toLowerCase().includes('hub') ||
-            h.toLowerCase().startsWith('x-everee'),
-        ),
-        rawBodyLen: rawBody.length,
-        // First 240 chars of body so we can see shape (and locate tenantId)
-        // without dumping PII. Shapes are documented in the Everee dashboard
-        // event reference, but their pilot envelopes have varied historically.
-        bodyPreview: rawBody.slice(0, 240),
-        secretSource: tenantSecret ? 'tenant' : globalSecret ? 'global' : 'none',
-        secretLen: secret.length,
-        // First/last 6 chars of header + format diagnostics — safe to log.
-        sigPrefix: provided.slice(0, 6),
-        sigSuffix: provided.slice(-6),
-        sigLen: provided.length,
-        sigLooksHex: /^[0-9a-f]+$/i.test(provided),
-        sigLooksBase64: /^[A-Za-z0-9+/=_-]+$/.test(provided),
-        // First/last 6 of computed values so we can eyeball matches.
-        expectedHexPrefix: expectedHex.slice(0, 6),
-        expectedHexSuffix: expectedHex.slice(-6),
-        expectedB64Prefix: expectedB64.slice(0, 6),
-        expectedB64Suffix: expectedB64.slice(-6),
+        hasTimestamp: !!webhookTimestamp,
       });
       // 401 discourages replay; Everee treats it as a permanent failure per webhook best practice.
       res.status(401).send('Bad signature');

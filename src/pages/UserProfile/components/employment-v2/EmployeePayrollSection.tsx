@@ -50,6 +50,7 @@ import {
   type EvereeAdminGetWorkerTaxFormResult,
   type EvereeWorkerFile,
 } from '../../../../services/everee/evereeCallables';
+import { assertEvereeWorkerIdMatch } from '../../../../utils/everee/assertEvereeWorkerIdMatch';
 import { formatFirebaseHttpsError } from '../../../../utils/firebaseHttpsErrors';
 import {
   formatBankAllocation,
@@ -415,16 +416,38 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
     setW4Result(null);
     setW4Loading(true);
 
+    // Snapshot the (entity × worker) pair this render cycle is fetching for.
+    // Every async IIFE below captures *these locals* — not the props directly
+    // — so a mid-flight prop change (panel switches between C1 Select and
+    // C1 Events) can't have one of the four fetches resolve into the wrong
+    // tab. The `cancelled` flag still drops the result, but the assertion
+    // also runs first to surface anything weird in the console.
+    const requestEvereeWorkerId = evereeWorkerId;
+    const requestEntityId = entityId;
+    const requestEvereeTenantId = evereeTenantId;
+    const requestTenantId = tenantId;
+
     void (async () => {
       try {
         const res = await evereeAdminGetWorker({
-          tenantId,
-          entityId,
-          evereeWorkerId,
+          tenantId: requestTenantId,
+          entityId: requestEntityId,
+          evereeWorkerId: requestEvereeWorkerId,
           userId,
         });
         if (cancelled) return;
         const data = res.data as EvereeAdminGetWorkerResult;
+        assertEvereeWorkerIdMatch({
+          expectedEvereeWorkerId: requestEvereeWorkerId,
+          serverEchoEvereeWorkerId: data?.evereeWorkerId,
+          responseBody: data?.response,
+          context: {
+            site: 'EmployeePayrollSection.evereeAdminGetWorker',
+            tenantId: requestTenantId,
+            entityId: requestEntityId,
+            evereeTenantId: requestEvereeTenantId,
+          },
+        });
         setWorker(pickWorker(data?.response));
       } catch (err: unknown) {
         if (cancelled) return;
@@ -440,13 +463,25 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
     void (async () => {
       try {
         const res = await evereeAdminGetWorkerDocuments({
-          tenantId,
-          entityId,
-          evereeWorkerId,
+          tenantId: requestTenantId,
+          entityId: requestEntityId,
+          evereeWorkerId: requestEvereeWorkerId,
           userId,
         });
         if (cancelled) return;
         const data = res.data as EvereeAdminGetWorkerDocumentsResult;
+        assertEvereeWorkerIdMatch({
+          expectedEvereeWorkerId: requestEvereeWorkerId,
+          serverEchoEvereeWorkerId: data?.evereeWorkerId,
+          // Documents endpoint doesn't echo a worker shape — the server-echo
+          // check is the meaningful one here. `responseBody` left undefined.
+          context: {
+            site: 'EmployeePayrollSection.evereeAdminGetWorkerDocuments',
+            tenantId: requestTenantId,
+            entityId: requestEntityId,
+            evereeTenantId: requestEvereeTenantId,
+          },
+        });
         setDocumentsResult(data);
         if (data?.ok === false && data?.error) {
           setDocumentsError(data.error);
@@ -465,13 +500,30 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
     void (async () => {
       try {
         const res = await evereeAdminGetWorkerW9({
-          tenantId,
-          entityId,
-          evereeWorkerId,
+          tenantId: requestTenantId,
+          entityId: requestEntityId,
+          evereeWorkerId: requestEvereeWorkerId,
           userId,
         });
         if (cancelled) return;
-        setW9Result(res.data as EvereeAdminGetWorkerTaxFormResult);
+        const data = res.data as EvereeAdminGetWorkerTaxFormResult;
+        // Tax-form callables don't echo `evereeWorkerId` — only the
+        // raw response (when `ok === true && applicable === true`)
+        // contains anything we can compare. Skip the assertion in the
+        // `ok: false` / not-applicable cases.
+        if (data && data.ok === true && data.applicable === true) {
+          assertEvereeWorkerIdMatch({
+            expectedEvereeWorkerId: requestEvereeWorkerId,
+            responseBody: data.response,
+            context: {
+              site: 'EmployeePayrollSection.evereeAdminGetWorkerW9',
+              tenantId: requestTenantId,
+              entityId: requestEntityId,
+              evereeTenantId: requestEvereeTenantId,
+            },
+          });
+        }
+        setW9Result(data);
       } catch (err: unknown) {
         if (cancelled) return;
         const msg =
@@ -486,13 +538,26 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
     void (async () => {
       try {
         const res = await evereeAdminGetWorkerW4({
-          tenantId,
-          entityId,
-          evereeWorkerId,
+          tenantId: requestTenantId,
+          entityId: requestEntityId,
+          evereeWorkerId: requestEvereeWorkerId,
           userId,
         });
         if (cancelled) return;
-        setW4Result(res.data as EvereeAdminGetWorkerTaxFormResult);
+        const data = res.data as EvereeAdminGetWorkerTaxFormResult;
+        if (data && data.ok === true && data.applicable === true) {
+          assertEvereeWorkerIdMatch({
+            expectedEvereeWorkerId: requestEvereeWorkerId,
+            responseBody: data.response,
+            context: {
+              site: 'EmployeePayrollSection.evereeAdminGetWorkerW4',
+              tenantId: requestTenantId,
+              entityId: requestEntityId,
+              evereeTenantId: requestEvereeTenantId,
+            },
+          });
+        }
+        setW4Result(data);
       } catch (err: unknown) {
         if (cancelled) return;
         const msg =

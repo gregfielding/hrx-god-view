@@ -1,33 +1,32 @@
 import React from 'react';
 import {
   Box,
-  Button,
   Checkbox,
   FormControlLabel,
   Grid,
-  MenuItem,
-  TextField,
   Typography,
   Card,
   CardHeader,
   CardContent,
   useTheme,
   useMediaQuery,
-  Stack,
 } from '@mui/material';
 import { useT } from '../../../i18n';
 
 type Props = {
   value: any;
   onChange: (v: any) => void;
+  /**
+   * Legacy prop — historically rendered a "Skip optional EEO" button.
+   * Per W.3 the EEO collection (gender / veteranStatus / disabilityStatus)
+   * is removed entirely (Greg's 2026-04-29 decision); the prop is kept
+   * for source-compat with callers that still pass it (Wizard.tsx) but
+   * is now a no-op. Safe to drop in W.6.
+   */
   onSkipOptionalEeo?: () => void | Promise<void>;
 };
 
-const genderLabels: Record<string, string> = { '': 'profile.preferNotToSay', 'Male': 'profile.male', 'Female': 'profile.female', 'Nonbinary': 'profile.nonbinary', 'Other': 'profile.other' };
-const veteranLabels: Record<string, string> = { '': 'profile.preferNotToSay', 'Not a veteran': 'profile.notAVeteran', 'Protected veteran': 'profile.protectedVeteran' };
-const disabilityLabels: Record<string, string> = { '': 'profile.preferNotToSay', 'No disability': 'profile.noDisability', 'Has disability': 'profile.hasDisability' };
-
-const WorkEligibilityStep: React.FC<Props> = ({ value, onChange, onSkipOptionalEeo }) => {
+const WorkEligibilityStep: React.FC<Props> = ({ value, onChange }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const t = useT();
@@ -55,90 +54,13 @@ const WorkEligibilityStep: React.FC<Props> = ({ value, onChange, onSkipOptionalE
             </Typography>
           </Grid>
         )}
-        <Grid item xs={12}>
-          <Stack
-            direction={{ xs: 'column', sm: 'row' }}
-            alignItems={{ xs: 'stretch', sm: 'center' }}
-            justifyContent="space-between"
-            spacing={1}
-          >
-            <Box>
-              <Typography variant="subtitle2" component="h3" sx={{ fontWeight: 600 }}>
-                {t('apply.optionalEeoTitle')}
-              </Typography>
-              <Typography variant="caption" color="text.secondary" display="block">
-                {t('apply.optionalEeoHint')}
-              </Typography>
-            </Box>
-            {onSkipOptionalEeo ? (
-              <Button
-                variant="outlined"
-                size="small"
-                onClick={() => void onSkipOptionalEeo()}
-                sx={{ alignSelf: { xs: 'flex-start', sm: 'center' }, flexShrink: 0 }}
-              >
-                {t('apply.skipOptionalEeo')}
-              </Button>
-            ) : null}
-          </Stack>
-        </Grid>
-        {/* Optional EEO self-identification (always visible) */}
-        <Grid item xs={12} md={4}>
-          <TextField
-            select
-            fullWidth
-            label={t('profile.genderOptional')}
-            value={value.gender || ''}
-            onChange={(e) => handle('gender', e.target.value)}
-            SelectProps={{
-              displayEmpty: true,
-              renderValue: (selected: any) => t(selected === '' ? 'profile.preferNotToSay' : (genderLabels[selected] || selected)),
-            }}
-            InputLabelProps={{ shrink: true }}
-          >
-            <MenuItem value="">{t('profile.preferNotToSay')}</MenuItem>
-            <MenuItem value="Male">{t('profile.male')}</MenuItem>
-            <MenuItem value="Female">{t('profile.female')}</MenuItem>
-            <MenuItem value="Nonbinary">{t('profile.nonbinary')}</MenuItem>
-            <MenuItem value="Other">{t('profile.other')}</MenuItem>
-          </TextField>
-        </Grid>
-        <Grid item xs={12} md={4}>
-          <TextField
-            select
-            fullWidth
-            label={t('profile.veteranOptional')}
-            value={value.veteranStatus || ''}
-            onChange={(e) => handle('veteranStatus', e.target.value)}
-            SelectProps={{
-              displayEmpty: true,
-              renderValue: (selected: any) => t(selected === '' ? 'profile.preferNotToSay' : (veteranLabels[selected] || selected)),
-            }}
-            InputLabelProps={{ shrink: true }}
-          >
-            <MenuItem value="">{t('profile.preferNotToSay')}</MenuItem>
-            <MenuItem value="Not a veteran">{t('profile.notAVeteran')}</MenuItem>
-            <MenuItem value="Protected veteran">{t('profile.protectedVeteran')}</MenuItem>
-          </TextField>
-        </Grid>
-        <Grid item xs={12} md={4}>
-          <TextField
-            select
-            fullWidth
-            label={t('profile.disabilityOptional')}
-            value={value.disabilityStatus || ''}
-            onChange={(e) => handle('disabilityStatus', e.target.value)}
-            SelectProps={{
-              displayEmpty: true,
-              renderValue: (selected: any) => t(selected === '' ? 'profile.preferNotToSay' : (disabilityLabels[selected] || selected)),
-            }}
-            InputLabelProps={{ shrink: true }}
-          >
-            <MenuItem value="">{t('profile.preferNotToSay')}</MenuItem>
-            <MenuItem value="No disability">{t('profile.noDisability')}</MenuItem>
-            <MenuItem value="Has disability">{t('profile.hasDisability')}</MenuItem>
-          </TextField>
-        </Grid>
+        {/*
+          Optional EEO self-identification (gender / veteranStatus /
+          disabilityStatus) was previously collected here. Removed per
+          W.3 / Greg's 2026-04-29 decision: HRX is no longer collecting
+          EEO data at all. Existing values on user docs are preserved
+          server-side and will be cleaned up in W.6.
+        */}
     </Grid>
   );
 

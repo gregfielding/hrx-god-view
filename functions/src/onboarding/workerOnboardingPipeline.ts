@@ -22,11 +22,11 @@ try {
 }
 
 /** Firestore rejects FieldValue.serverTimestamp() inside array elements (e.g. steps[].updatedAt). */
-function timestampForNestedDoc(): admin.firestore.Timestamp {
+export function timestampForNestedDoc(): admin.firestore.Timestamp {
   return admin.firestore.Timestamp.now();
 }
 
-type PipelineStepId =
+export type PipelineStepId =
   | "i9"
   | "onboarding_forms"
   | "everee"
@@ -34,7 +34,7 @@ type PipelineStepId =
   | "background_check"
   | "drug_screen";
 
-type StepStatus = "not_started" | "in_progress" | "complete" | "blocked";
+export type StepStatus = "not_started" | "in_progress" | "complete" | "blocked";
 type StepWorkflowStatus =
   | "not_started"
   | "pending_package"
@@ -48,11 +48,11 @@ type StepWorkflowStatus =
   | "skipped"
   | "failed"
   | "canceled";
-type StepApplicability = "required" | "not_required" | "pending";
+export type StepApplicability = "required" | "not_required" | "pending";
 type TaskOwner = "worker" | "recruiter";
 type TaskStatus = "pending" | "in_progress" | "complete";
 
-interface StepMilestone {
+export interface StepMilestone {
   id: string;
   label: string;
   completed: boolean;
@@ -60,7 +60,7 @@ interface StepMilestone {
   completedBy?: string;
 }
 
-interface PipelineStep {
+export interface PipelineStep {
   id: PipelineStepId;
   title: string;
   status: StepStatus;
@@ -78,7 +78,7 @@ interface PipelineStep {
   updatedBy: string;
 }
 
-interface PipelineTask {
+export interface PipelineTask {
   id: string;
   stepId: PipelineStepId;
   owner: TaskOwner;
@@ -109,7 +109,7 @@ export async function canManageOnboarding(auth: any, tenantId: string, uid: stri
 }
 
 /** Onboarding pipeline: compliance-only. Steps = required to legally employ or pay a worker. No emergency contact (profile) or benefits (separate module). */
-const PIPELINE_STEPS: Array<{ id: PipelineStepId; title: string }> = [
+export const PIPELINE_STEPS: Array<{ id: PipelineStepId; title: string }> = [
   { id: "i9", title: "I-9" },
   { id: "onboarding_forms", title: "Onboarding forms (TempWorks)" },
   { id: "everee", title: "Payroll Setup" },
@@ -119,7 +119,7 @@ const PIPELINE_STEPS: Array<{ id: PipelineStepId; title: string }> = [
 ];
 
 /** Default admin checklist milestones per step (compliance-only; includes payroll/direct deposit, not emergency contact or benefits). */
-const STEP_MILESTONES: Partial<Record<PipelineStepId, Array<{ id: string; label: string }>>> = {
+export const STEP_MILESTONES: Partial<Record<PipelineStepId, Array<{ id: string; label: string }>>> = {
   i9: [{ id: "i9_sent", label: "I-9 sent" }, { id: "i9_completed", label: "I-9 completed" }],
   onboarding_forms: [
     { id: "handbook_sent", label: "Handbook / manual sent" },
@@ -137,7 +137,7 @@ const STEP_MILESTONES: Partial<Record<PipelineStepId, Array<{ id: string; label:
   ],
 };
 
-function buildInitialTasks(): PipelineTask[] {
+export function buildInitialTasks(): PipelineTask[] {
   return [
     { id: "worker_i9", stepId: "i9", owner: "worker", title: "Complete I-9 information", status: "pending" },
     { id: "worker_forms", stepId: "onboarding_forms", owner: "worker", title: "Complete TempWorks onboarding forms", status: "pending" },
@@ -148,14 +148,14 @@ function buildInitialTasks(): PipelineTask[] {
   ];
 }
 
-function deriveEntityKeyFromName(rawName: string): "workforce" | "select" | "events" {
+export function deriveEntityKeyFromName(rawName: string): "workforce" | "select" | "events" {
   const v = String(rawName || "").toLowerCase();
   if (v.includes("select")) return "select";
   if (v.includes("event")) return "events";
   return "workforce";
 }
 
-async function resolveEntityContext(args: {
+export async function resolveEntityContext(args: {
   tenantId: string;
   entityId?: string | null;
   jobOrderId?: string | null;
@@ -212,7 +212,7 @@ async function resolveEntityContext(args: {
 }
 
 /** Map entity onboardingWorkflowSteps + workerType + everifyRequired to applicability for each canonical step. */
-function computeStepApplicability(
+export function computeStepApplicability(
   entityData: { onboardingWorkflowSteps?: Record<string, boolean>; workerType?: string; everifyRequired?: boolean } | undefined,
   stepId: PipelineStepId
 ): StepApplicability {

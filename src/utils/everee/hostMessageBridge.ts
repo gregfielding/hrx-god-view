@@ -1,29 +1,33 @@
 /**
- * Everee Embedded SDK V2_0 — host-side message bridge.
+ * Everee Embedded SDK — host-side message bridges.
  *
- * Why this file exists
- * --------------------
- * Everee's V2 embed (`EmbeddedRouter` / `routing-*.js`) tries to send the
- * initial `MESSAGE_PORT_REGISTERED` envelope (and every subsequent UI event)
- * to the host using THREE transports, in order, with the configured
- * `eventHandlerName` (default `hrx_default`):
+ * Two transports live here, both required to cover Everee's full Embed
+ * Component matrix:
  *
- *   1. **lib window property** — `window[eventHandlerName].postMessage(payload)`
- *      (the same iOS-style "JS bridge object" convention).
- *   2. **`window.webkit.messageHandlers[eventHandlerName].postMessage(payload)`**
- *      — iOS WKWebView native bridge. n/a in browsers.
- *   3. **host MessagePort** — a `MessagePort` the host transferred to the iframe
- *      *before* the SDK boots.
+ *   1. **`attachEvereePortChannel`** — the documented Web/React iframe
+ *      handshake (https://developer.everee.com/docs/web-react-iframe).
+ *      Host creates a `MessageChannel`, transfers `port2` into the iframe
+ *      on its `load` event, and listens on `port1` for events. This is the
+ *      transport V2_0 (`ONBOARDING`) embeds use in browsers — without it
+ *      they render the EMB-102 ("No event handler has been registered")
+ *      toast and never dispatch any UI events.
  *
- * V1_0 embeds (`WORKER_HOME` etc.) used `parent.postMessage(envelope, origin, [port])`
- * directly, which is what our `'message'` listeners catch. V2_0 (`ONBOARDING`)
- * does NOT do that — it requires (1) or (3). When all three transports fail,
- * the embed renders an `EMB-102` toast ("No event handler has been registered
- * with the embedded experience") and never dispatches any UI events, so the
- * iframe is stuck on its boot spinner.
+ *   2. **`registerEvereeHostBridge`** — the iOS-style `window[handlerName]`
+ *      convention. Used by V2_0 embeds inside WKWebView (and as a defensive
+ *      fallback in browsers, since the SDK probes for it before falling
+ *      back to the MessagePort path).
  *
- * This module exposes the lib-window-property bridge for any host surface
- * that mounts an Everee embed.
+ * V1_0 embeds (`WORKER_HOME` etc.) deliver events via
+ * `parent.postMessage(envelope, origin, [port])` — caught by callers'
+ * `window.addEventListener('message')` listeners. Neither helper here is
+ * involved in V1_0; they're additive.
+ *
+ * History note: pre-EE.7 we believed the V2 SDK in browsers used the
+ * window-property transport (transport (1) above). It does not — that's
+ * the WKWebView path. The browser path is the documented `MessageChannel`
+ * handshake. EE.7 added `attachEvereePortChannel` as the canonical
+ * browser fix; the window-property bridge stays for the WKWebView /
+ * Flutter `webview_flutter` mounts and as a defensive secondary.
  *
  * Single instance assumption
  * --------------------------
@@ -175,6 +179,115 @@ export function registerEvereeHostBridge(
           w[handlerName] = previous;
         }
         registry.delete(handlerName);
+      }
+    },
+  };
+}
+
+export interface EvereePortChannelOptions {
+  /**
+   * Same payload-shape contract as `registerEvereeHostBridge.onMessage`.
+   * Caller dispatches by inspecting `eventType` / `type` on the payload.
+   * The raw `MessageEvent.data` is forwarded after `normalizeEvereeBridgeMessage`,
+   * so string payloads are JSON-parsed when possible.
+   */
+  onMessage: (message: unknown) => void;
+}
+
+export interface EvereePortChannelHandle {
+  /** Tear down the channel + listener — safe to call multiple times. */
+  unregister: () => void;
+}
+
+/**
+ * Attach the documented Web/React iframe host bridge to a mounted iframe.
+ *
+ * Per https://developer.everee.com/docs/web-react-iframe, the V2_0
+ * (`ONBOARDING`) embed expects the host to:
+ *   1. Create a `MessageChannel`.
+ *   2. On the iframe's `load` event, transfer `port2` into the iframe via
+ *      `iframe.contentWindow.postMessage("", "*", [channel.port2])`.
+ *      The body is intentionally an empty string and the target origin is
+ *      `"*"` per Everee's example — the SDK only reads the transferable
+ *      list. We can't safely tighten the target origin because the iframe
+ *      may redirect its document origin during the embed lifecycle.
+ *   3. Listen on `port1.onmessage` for events from the embedded UX.
+ *
+ * Without this attachment Everee surfaces an `EMB-102` ("No event handler
+ * has been registered") toast inside the iframe and never dispatches any
+ * UI events back to the host — which (pre-EE.7) was the unrecoverable
+ * deadlock at the heart of `EMB-202` and the worker-onboarding stuck
+ * states. Recovery handlers in `WorkerPayrollEvereeTenant.tsx` (e.g. the
+ * EMB-202 → ONBOARDING auto-swap) only fire when this bridge is in place.
+ *
+ * Failure modes
+ * -------------
+ * - Runs without `MessageChannel` (very old engines / SSR): returns a
+ *   no-op handle. Other transports — V1's `window.message` and the
+ *   `window[handlerName]` bridge — still apply.
+ * - Iframe `load` already fired before attach: the listener still wins
+ *   on the *next* `load` (e.g. session refresh). For the very first
+ *   mount, attach during the same render cycle that mounts the iframe;
+ *   React commits the ref before the browser fires `load` on the new
+ *   element, so the order is reliable in practice.
+ * - `contentWindow.postMessage` throws (cross-origin readiness, GC'd
+ *   iframe): swallowed + warned. The iframe will re-render on the next
+ *   session and we'll re-attach.
+ */
+export function attachEvereePortChannel(
+  iframe: HTMLIFrameElement,
+  options: EvereePortChannelOptions,
+): EvereePortChannelHandle {
+  if (typeof MessageChannel === 'undefined') {
+    return { unregister: () => undefined };
+  }
+
+  const channel = new MessageChannel();
+  let disposed = false;
+
+  channel.port1.onmessage = (event: MessageEvent) => {
+    if (disposed) return;
+    try {
+      options.onMessage(normalizeEvereeBridgeMessage(event.data));
+    } catch (err) {
+      // Same containment rationale as the window-property bridge — host
+      // bugs must never propagate back into the iframe.
+      // eslint-disable-next-line no-console
+      console.warn('[everee port channel] handler threw', err);
+    }
+  };
+
+  const onLoad = () => {
+    if (disposed) return;
+    const target = iframe.contentWindow;
+    if (!target) return;
+    try {
+      // Empty body, wildcard origin, transfer list = [port2] — exactly
+      // the shape Everee documents. The SDK installs port2 inside the
+      // iframe and starts emitting events back through it.
+      target.postMessage('', '*', [channel.port2]);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[everee port channel] port transfer failed', err);
+    }
+  };
+
+  iframe.addEventListener('load', onLoad);
+
+  return {
+    unregister: () => {
+      if (disposed) return;
+      disposed = true;
+      try {
+        iframe.removeEventListener('load', onLoad);
+      } catch {
+        // Iframe may already be detached — listener is gone with it.
+      }
+      try {
+        channel.port1.onmessage = null;
+        channel.port1.close();
+      } catch {
+        // Port may already be closed (e.g. iframe navigated cross-origin).
       }
     },
   };
