@@ -39,6 +39,42 @@ const HOST_BRIDGE_GLOBAL_FLAG = '__hrx_everee_host_bridge_keys__';
 export const EVEREE_DEFAULT_HOST_HANDLER_NAME = 'hrx_default';
 
 /**
+ * Canonicalize an Everee origin string (typically the `origin` field on the
+ * session-create response) so it can be `===`-compared against the
+ * `event.origin` of `window.postMessage` events from the embedded iframe.
+ *
+ * Why this exists
+ * ---------------
+ * Everee's session-create API has been observed to return values like
+ * `'https://app.everee.com/'` (with a trailing slash) for some tenants, while
+ * the same tenant's iframe sends `event.origin === 'https://app.everee.com'`
+ * (no slash, per RFC 6454 / HTML §7.2 — `MessageEvent.origin` is always a
+ * serialized origin without trailing path). A naive `event.origin === apiOrigin`
+ * comparison rejects every message → the embed sits at the loading spinner
+ * because the host never acknowledges the iframe's `MESSAGE_PORT_REGISTERED`
+ * handshake.
+ *
+ * Passing both sides through `URL(...).origin` makes them agree:
+ *   - `'https://app.everee.com/'`           → `'https://app.everee.com'`
+ *   - `'https://app.everee.com'`            → `'https://app.everee.com'`
+ *   - `'https://app.everee.com/embedded'`   → `'https://app.everee.com'`
+ *   - `'https://app.everee.com:443/'`       → `'https://app.everee.com'` (port stripped per spec)
+ *
+ * Returns the canonical origin string, or empty string if the input cannot be
+ * parsed. Whitespace-only / null / undefined inputs return empty string.
+ */
+export function canonicalEvereeOrigin(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  try {
+    return new URL(trimmed).origin;
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Loose envelope as it arrives from the SDK. The SDK sometimes stringifies and
  * sometimes hands us the parsed object — callers shouldn't care.
  */

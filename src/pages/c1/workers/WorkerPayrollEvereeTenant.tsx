@@ -33,6 +33,7 @@ import {
 import { formatFirebaseHttpsError } from '../../../utils/firebaseHttpsErrors';
 import { collection, getDocs, limit, query, where } from 'firebase/firestore';
 import {
+  canonicalEvereeOrigin,
   EVEREE_DEFAULT_HOST_HANDLER_NAME,
   registerEvereeHostBridge,
 } from '../../../utils/everee/hostMessageBridge';
@@ -359,7 +360,6 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
       });
       const raw = sessionRes.data as EvereeCreateOnboardingSessionResult | undefined;
       const embedUrl = String(raw?.embedUrl ?? raw?.url ?? '').trim();
-      const allowedOrigin = String(raw?.origin ?? '').trim();
       const expiresInMs =
         typeof raw?.expiresInMs === 'number' && Number.isFinite(raw.expiresInMs)
           ? raw.expiresInMs
@@ -368,14 +368,15 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
         setPhase({ state: 'error', message: 'Payroll service did not return an embed URL.' });
         return;
       }
-      let originOk = allowedOrigin;
-      if (!originOk) {
-        try {
-          originOk = new URL(embedUrl).origin;
-        } catch {
-          originOk = '';
-        }
-      }
+      // Canonicalize via `new URL(...).origin` so a server-supplied value with
+      // a trailing slash (`https://app.everee.com/`) survives the strict
+      // equality check against `MessageEvent.origin` (`https://app.everee.com`,
+      // never trailing-slashed per RFC 6454). Without this, every postMessage
+      // from the iframe is rejected and the embed stalls on the loading
+      // spinner. Falls through to the embed URL's origin if the server didn't
+      // return one (or returned something unparseable).
+      const originOk =
+        canonicalEvereeOrigin(raw?.origin) || canonicalEvereeOrigin(embedUrl);
       const handlerNameFromServer =
         typeof raw?.eventHandlerName === 'string' && raw.eventHandlerName.trim()
           ? raw.eventHandlerName.trim()

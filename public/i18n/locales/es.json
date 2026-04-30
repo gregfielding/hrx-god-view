@@ -21,7 +21,6 @@
     "inbox": "Bandeja de entrada",
     "myAssignments": "Mis asignaciones",
     "myApplications": "Mis solicitudes",
-    "payroll": "Nómina",
     "jobsBoard": "Bolsa de trabajo",
     "jobReadiness": "Preparación laboral",
     "myDocuments": "Mis documentos",
@@ -48,7 +47,8 @@
     "espanolEs": "Español (ES)",
     "findWork": "Buscar trabajo",
     "viewApplications": "Ver solicitudes",
-    "prescreen": "Preselección"
+    "prescreen": "Preselección",
+    "payroll": "Nómina"
   },
   "workerAccount": {
     "sectionProfile": "Perfil",
