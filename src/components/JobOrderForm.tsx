@@ -1026,6 +1026,73 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     wcModifierAccountId,
   ]);
 
+  /**
+   * Auto-apply SUTA / FUTA from worksite state — gig positions only.
+   *
+   * Default policy (Greg, 2026-04-30): for hiring entities that pay
+   * unemployment tax on payroll (today: C1 Workforce / C1 Select LLC,
+   * gated by `showSutaFutaOnGigPositions`), once a gig position has
+   * BOTH pay rate AND bill rate AND a worksite location with a
+   * resolvable state code, the new-employer SUTA + state-effective
+   * FUTA should propagate without the recruiter having to click the
+   * explicit "Apply SUTA/FUTA from worksite state" button.
+   *
+   * **Fill-only-when-empty semantics** — if a recruiter has manually
+   * typed a custom SUTA rate (e.g. an experience-rated value that
+   * differs from the new-employer estimate), we leave it alone. The
+   * explicit Apply button still serves as the "force overwrite" path
+   * for resetting a row back to state defaults. Same for FUTA.
+   *
+   * Mirrors the WC-rate auto-apply effect above so the codebase has
+   * a consistent pattern for "tax-rate auto-fill from registry data".
+   */
+  useEffect(() => {
+    if (formData.jobType !== 'gig') return;
+    if (!showSutaFutaOnGigPositions) return;
+    if (!worksiteStateCodeForPricing) return;
+
+    const sutaForState = getSutaRateByState(worksiteStateCodeForPricing);
+    const futaForState = getFutaRateByState(worksiteStateCodeForPricing);
+    // SUTA can return null for an unrecognised state code (defensive —
+    // the registry covers 50+DC, but the lookup tolerates user-entered
+    // garbage). FUTA always returns a value (0.6% standard).
+    if (sutaForState == null && futaForState == null) return;
+
+    let updated = false;
+    const next = gigPositions.map((pos) => {
+      // Pre-conditions per Greg's spec: position has both pay AND bill
+      // (a "real" pricing row, not just a placeholder), and the SUTA
+      // or FUTA cell is currently empty.
+      const pay = parseFloat(String((pos as { payRate?: string }).payRate ?? ''));
+      const bill = parseFloat(String((pos as { billRate?: string }).billRate ?? ''));
+      if (!Number.isFinite(pay) || pay <= 0) return pos;
+      if (!Number.isFinite(bill) || bill <= 0) return pos;
+
+      const sutaEmpty =
+        pos.sutaRate == null || String(pos.sutaRate).trim() === '';
+      const futaEmpty =
+        pos.futaRate == null || String(pos.futaRate).trim() === '';
+      if (!sutaEmpty && !futaEmpty) return pos;
+
+      const patch: { sutaRate?: string; futaRate?: string } = {};
+      if (sutaEmpty && sutaForState != null) {
+        patch.sutaRate = String(sutaForState);
+      }
+      if (futaEmpty) {
+        patch.futaRate = String(futaForState);
+      }
+      if (Object.keys(patch).length === 0) return pos;
+      updated = true;
+      return { ...pos, ...patch };
+    });
+    if (updated) setGigPositions(next);
+  }, [
+    formData.jobType,
+    showSutaFutaOnGigPositions,
+    worksiteStateCodeForPricing,
+    gigPositions,
+  ]);
+
   const loadCompanies = async () => {
     try {
       const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');

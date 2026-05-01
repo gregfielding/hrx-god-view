@@ -289,6 +289,7 @@ const WorkerProfile: React.FC = () => {
           </CardContent>
         </Card>
 
+        {/* Employment block temporarily hidden while we clean up the worker view.
         <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
           <CardContent sx={{ p: 0 }}>
             <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>{t('workerAccount.sectionEmployment')}</Typography>
@@ -380,7 +381,9 @@ const WorkerProfile: React.FC = () => {
             )}
           </CardContent>
         </Card>
+        */}
 
+        {/* Pre-employment checks block temporarily hidden while we clean up the worker view.
         {tenantId ? (
           <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
             <CardContent sx={{ p: 0 }}>
@@ -403,6 +406,7 @@ const WorkerProfile: React.FC = () => {
             </CardContent>
           </Card>
         ) : null}
+        */}
 
         <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
           <CardContent sx={{ p: 0 }}>

@@ -298,6 +298,17 @@ export { onJobOrderWriteDetectScreeningPackageDrift } from './readiness/onJobOrd
 // out of `draft` (excluding `cancelled`). See
 // docs/CASCADE_PROPAGATION_R16.1_HANDOFF.md §L1, §L6, §L7, §L10.
 export { onJobOrderStatusTransitionSnapshot } from './jobOrders/onJobOrderStatusTransitionSnapshot';
+// §14 / #45 — Auto-Create Gig Job Orders. Fires on child account
+// create; if the parent national has both `autoCreateChildAccountsForLocations`
+// AND `autoCreateGigJobOrders` ON (and the child was auto-created from
+// a company location), spawns a draft Gig JO with cascade-resolved
+// hiring entity / E-Verify / screening / pay defaults. JO is a passive
+// consumer of the cascade — recruiter activates manually. See the
+// trigger file's docstring for design notes.
+export { onChildAccountCreatedAutoCreateGigJobOrder } from './jobOrders/onChildAccountCreatedAutoCreateGigJobOrder';
+export { backfillGigJobOrdersForNationalAccount } from './jobOrders/backfillGigJobOrdersForNationalAccount';
+export { gigJobOrderStatusCron } from './jobOrders/gigJobOrderStatusCron';
+export { syncHiringEntityFromNationalAccount } from './jobOrders/syncHiringEntityFromNationalAccount';
 // **R.16.1 Phase 4** — Admin backfill for pre-§16.1 active JOs missing
 // `jo.snapshot.*`. Dry-run default, security level 7 gated, --force
 // escape hatch. See docs/CASCADE_PROPAGATION_R16.1_HANDOFF.md §L7.

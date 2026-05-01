@@ -1572,6 +1572,46 @@ const RecruiterAccountDetails: React.FC = () => {
     skipped_duplicate: number;
     skipped_idempotent: number;
   } | null>(null);
+  // §14b — backfill gig job orders for existing child accounts.
+  // Mirror the locations-backfill state shape so the dialog UX matches
+  // the existing pattern (confirm step → loading → result step). The
+  // callable returns `summary + audit`; we only render the summary
+  // numbers in the dialog and surface the full audit in console for
+  // forensic debugging.
+  const [gigBackfillOpen, setGigBackfillOpen] = useState(false);
+  const [gigBackfillStep, setGigBackfillStep] =
+    useState<'confirm' | 'result'>('confirm');
+  const [gigBackfillLoading, setGigBackfillLoading] = useState(false);
+  const [gigBackfillError, setGigBackfillError] = useState<string | null>(null);
+  const [gigBackfillSummary, setGigBackfillSummary] = useState<{
+    created: number;
+    alreadyHad: number;
+    skipped: number;
+    totalChildAccounts: number;
+  } | null>(null);
+
+  // Hiring Entity downstream sync — National Account header button
+  // (Greg, 2026-04-30). Pushes the parent's `hiringEntityId` to every
+  // child + JO that doesn't have one set. Fill-empty semantics — never
+  // overwrites a manually-entered custom hiring entity. Mirrors the
+  // gig backfill dialog state shape so the result modal can re-use the
+  // same UX patterns.
+  const [hiringEntitySyncOpen, setHiringEntitySyncOpen] = useState(false);
+  const [hiringEntitySyncStep, setHiringEntitySyncStep] =
+    useState<'confirm' | 'result'>('confirm');
+  const [hiringEntitySyncLoading, setHiringEntitySyncLoading] = useState(false);
+  const [hiringEntitySyncError, setHiringEntitySyncError] = useState<string | null>(null);
+  const [hiringEntitySyncSummary, setHiringEntitySyncSummary] = useState<{
+    nationalHiringEntityId: string;
+    childAccountsScanned: number;
+    childAccountsUpdated: number;
+    childAccountsSkipped: number;
+    childAccountsFailed: number;
+    jobOrdersScanned: number;
+    jobOrdersUpdated: number;
+    jobOrdersSkipped: number;
+    jobOrdersFailed: number;
+  } | null>(null);
   const [parentCompanyIds, setParentCompanyIds] = useState<string[]>([]);
   const addLocationTargetCompanyIds = useMemo(
     () => (isChildAccount ? parentCompanyIds : (account?.associations?.companyIds ?? [])),
@@ -2382,6 +2422,7 @@ const RecruiterAccountDetails: React.FC = () => {
           : undefined,
         integrations: qb != null ? { quickbooks: qb } : undefined,
         autoCreateChildAccountsForLocations: data?.autoCreateChildAccountsForLocations === true,
+        autoCreateGigJobOrders: data?.autoCreateGigJobOrders === true,
         autoCreatedFromCompanyLocation: data?.autoCreatedFromCompanyLocation === true,
         companyId: data?.companyId ?? undefined,
         companyLocationId: data?.companyLocationId ?? undefined,
@@ -2991,6 +3032,101 @@ const RecruiterAccountDetails: React.FC = () => {
       setNationalBackfillLoading(false);
     }
   }, [tenantId, account?.id, fetchChildAccounts]);
+
+  // §14b — one-shot retroactive scan: spawn a draft gig JO for any
+  // existing child account that doesn't already have one. Idempotent —
+  // re-running counts already-spawned JOs as `alreadyHad`.
+  const runGigJobOrdersBackfill = useCallback(async () => {
+    if (!tenantId || !account?.id) return;
+    setGigBackfillLoading(true);
+    setGigBackfillError(null);
+    try {
+      const fn = httpsCallable(functions, 'backfillGigJobOrdersForNationalAccount');
+      const res = await fn({ tenantId, nationalAccountId: account.id });
+      const d = res.data as {
+        summary?: {
+          created?: number;
+          alreadyHad?: number;
+          skipped?: number;
+          totalChildAccounts?: number;
+        };
+        audit?: unknown[];
+      };
+      const summary = d?.summary || {};
+      setGigBackfillSummary({
+        created: Number(summary.created) || 0,
+        alreadyHad: Number(summary.alreadyHad) || 0,
+        skipped: Number(summary.skipped) || 0,
+        totalChildAccounts: Number(summary.totalChildAccounts) || 0,
+      });
+      setGigBackfillStep('result');
+      // Audit list is too large for the dialog — log it to console so
+      // a recruiter or staff can copy/paste into a ticket if a row
+      // unexpectedly fails. We deliberately skip surfacing per-row
+      // failures inline because the summary already exposes the count.
+      if (Array.isArray(d?.audit) && d.audit.length > 0) {
+        // eslint-disable-next-line no-console
+        console.info('[gig backfill audit]', d.audit);
+      }
+    } catch (e: unknown) {
+      const msg =
+        e && typeof e === 'object' && 'message' in e
+          ? String((e as { message?: string }).message)
+          : 'Request failed';
+      setGigBackfillError(msg);
+    } finally {
+      setGigBackfillLoading(false);
+    }
+  }, [tenantId, account?.id]);
+
+  // Hiring Entity downstream sync — fan-out the National's
+  // `hiringEntityId` to children + their JOs (fill-empty only). Server
+  // does the validation (must be `accountType === 'national'`, must
+  // have an entity set), so the button only needs to surface the
+  // result.
+  const runHiringEntitySync = useCallback(async () => {
+    if (!tenantId || !account?.id) return;
+    setHiringEntitySyncLoading(true);
+    setHiringEntitySyncError(null);
+    try {
+      const fn = httpsCallable(functions, 'syncHiringEntityFromNationalAccount');
+      const res = await fn({ tenantId, nationalAccountId: account.id });
+      const d = res.data as {
+        summary?: Partial<NonNullable<typeof hiringEntitySyncSummary>>;
+        audit?: unknown[];
+      };
+      const s = d?.summary || {};
+      setHiringEntitySyncSummary({
+        nationalHiringEntityId:
+          typeof s.nationalHiringEntityId === 'string'
+            ? s.nationalHiringEntityId
+            : '',
+        childAccountsScanned: Number(s.childAccountsScanned) || 0,
+        childAccountsUpdated: Number(s.childAccountsUpdated) || 0,
+        childAccountsSkipped: Number(s.childAccountsSkipped) || 0,
+        childAccountsFailed: Number(s.childAccountsFailed) || 0,
+        jobOrdersScanned: Number(s.jobOrdersScanned) || 0,
+        jobOrdersUpdated: Number(s.jobOrdersUpdated) || 0,
+        jobOrdersSkipped: Number(s.jobOrdersSkipped) || 0,
+        jobOrdersFailed: Number(s.jobOrdersFailed) || 0,
+      });
+      setHiringEntitySyncStep('result');
+      // Mirror the gig backfill pattern — full audit goes to console
+      // for forensic copy/paste; the dialog only shows summary counts.
+      if (Array.isArray(d?.audit) && d.audit.length > 0) {
+        // eslint-disable-next-line no-console
+        console.info('[hiring entity sync audit]', d.audit);
+      }
+    } catch (e: unknown) {
+      const msg =
+        e && typeof e === 'object' && 'message' in e
+          ? String((e as { message?: string }).message)
+          : 'Request failed';
+      setHiringEntitySyncError(msg);
+    } finally {
+      setHiringEntitySyncLoading(false);
+    }
+  }, [tenantId, account?.id]);
 
   useEffect(() => {
     if (((tabValue === 3 && isNationalAccount) || tabValue === 5) && account?.id) {
@@ -4226,11 +4362,50 @@ const RecruiterAccountDetails: React.FC = () => {
                         : 'Standalone'}
                   </Box>
                 </Typography>
-                <Typography component="div" sx={recordHeaderBodyTextSx}>
-                  Hiring Entity:{' '}
+                <Typography
+                  component="div"
+                  sx={{
+                    ...recordHeaderBodyTextSx,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 0.5,
+                  }}
+                >
+                  <Box component="span">Hiring Entity:&nbsp;</Box>
                   <Box component="span" sx={{ color: 'text.primary' }}>
                     {displayHiringEntityName}
                   </Box>
+                  {/*
+                   * Greg, 2026-04-30 — surface a "sync downstream"
+                   * affordance only on National Accounts. Disabled when
+                   * the parent itself has no hiring entity to fan out
+                   * (server would reject anyway, but this is friendlier).
+                   */}
+                  {account.accountType === 'national' && (
+                    <Tooltip
+                      title={
+                        account.hiringEntityId
+                          ? 'Sync this hiring entity to all child accounts and their job orders. Only fills empty fields — manual overrides on individual records are preserved.'
+                          : 'Set a Hiring Entity on this National Account first, then sync it downstream.'
+                      }
+                    >
+                      <Box component="span" sx={{ display: 'inline-flex', ml: 0.5 }}>
+                        <IconButton
+                          size="small"
+                          aria-label="Sync hiring entity to child accounts and job orders"
+                          disabled={!account.hiringEntityId || hiringEntitySyncLoading}
+                          onClick={() => {
+                            setHiringEntitySyncStep('confirm');
+                            setHiringEntitySyncSummary(null);
+                            setHiringEntitySyncError(null);
+                            setHiringEntitySyncOpen(true);
+                          }}
+                        >
+                          <SyncIcon fontSize="small" />
+                        </IconButton>
+                      </Box>
+                    </Tooltip>
+                  )}
                 </Typography>
                 {account.accountType === 'national' && (
                   <Tooltip title="When enabled, each new location added to this account's connected company will automatically create a child account linked to that location. Future locations only.">
@@ -4269,6 +4444,109 @@ const RecruiterAccountDetails: React.FC = () => {
                       <Box component="span" sx={{ color: 'text.primary', fontWeight: 500 }}>
                         {account.autoCreateChildAccountsForLocations === true ? 'On' : 'Off'}
                       </Box>
+                    </Box>
+                  </Tooltip>
+                )}
+                {account.accountType === 'national' && (
+                  <Tooltip
+                    title={
+                      account.autoCreateChildAccountsForLocations === true
+                        ? "When a child account is auto-created under this national, a draft Gig job order is also auto-created. Pay, hiring entity, E-Verify, and screening flow down via cascade — recruiter reviews and activates manually."
+                        : 'Enable Auto-Create Child Accounts first — gig job orders only auto-spawn alongside an auto-created child account.'
+                    }
+                  >
+                    <Box
+                      sx={{
+                        ...recordHeaderBodyTextSx,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 0.5,
+                      }}
+                    >
+                      <Box component="span">Auto-Create Gig Job Orders:</Box>
+                      {/**
+                       * §14/#45 — companion to the Auto-Create Child Accounts
+                       * toggle. When ON, the cloud trigger
+                       * `onChildAccountCreatedAutoCreateGigJobOrder` spawns a
+                       * draft Gig JO each time a child account is auto-created
+                       * under this national. The JO is a passive consumer of
+                       * cascade values (hiring entity, E-Verify, screening,
+                       * pay) — no policy decisions live in the trigger.
+                       *
+                       * Disabled when the child-account toggle is OFF: the
+                       * trigger only fires from the auto-create child path,
+                       * so the toggle is meaningless on its own.
+                       */}
+                      <Switch
+                        size="small"
+                        checked={account.autoCreateGigJobOrders === true}
+                        disabled={
+                          saving || account.autoCreateChildAccountsForLocations !== true
+                        }
+                        onChange={(e) =>
+                          updateAccountField(
+                            'autoCreateGigJobOrders',
+                            e.target.checked,
+                          )
+                        }
+                        inputProps={{
+                          'aria-label':
+                            'Toggle auto-create gig job orders for new child accounts',
+                        }}
+                        sx={{ ml: 0.25 }}
+                      />
+                      <Box component="span" sx={{ color: 'text.primary', fontWeight: 500 }}>
+                        {account.autoCreateGigJobOrders === true ? 'On' : 'Off'}
+                      </Box>
+                    </Box>
+                  </Tooltip>
+                )}
+                {/**
+                 * §14b — backfill button. Sits next to the toggle so a
+                 * recruiter who just turned the toggle ON can run the
+                 * one-shot scan immediately to "catch up" any existing
+                 * children. Disabled when the toggle is OFF (the
+                 * tooltip explains why) and while a run is in flight.
+                 */}
+                {account.accountType === 'national' && (
+                  <Tooltip
+                    title={
+                      account.autoCreateGigJobOrders === true
+                        ? 'Scan all existing child accounts and create a draft gig JO for any that don\'t have one. Idempotent — safe to re-run.'
+                        : 'Enable Auto-Create Gig Job Orders first.'
+                    }
+                  >
+                    <Box component="span" sx={{ display: 'inline-flex' }}>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        disabled={
+                          saving ||
+                          account.autoCreateGigJobOrders !== true ||
+                          gigBackfillLoading
+                        }
+                        onClick={() => {
+                          setGigBackfillStep('confirm');
+                          setGigBackfillSummary(null);
+                          setGigBackfillError(null);
+                          setGigBackfillOpen(true);
+                        }}
+                        startIcon={
+                          gigBackfillLoading ? (
+                            <CircularProgress size={14} />
+                          ) : undefined
+                        }
+                        sx={{
+                          textTransform: 'none',
+                          ml: 1,
+                          py: 0.25,
+                          px: 1.25,
+                          fontSize: '0.75rem',
+                          minHeight: '24px',
+                        }}
+                      >
+                        {gigBackfillLoading ? 'Running…' : 'Backfill missing'}
+                      </Button>
                     </Box>
                   </Tooltip>
                 )}
@@ -4984,6 +5262,35 @@ const RecruiterAccountDetails: React.FC = () => {
                 </Typography>
               </Box>
             ) : null}
+            {account.accountType === 'national' ? (
+              <Box>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={account.autoCreateGigJobOrders === true}
+                      onChange={(e) =>
+                        updateAccountField('autoCreateGigJobOrders', e.target.checked)
+                      }
+                      disabled={
+                        saving || account.autoCreateChildAccountsForLocations !== true
+                      }
+                    />
+                  }
+                  label="Auto-create gig job orders for new child accounts"
+                />
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  display="block"
+                  sx={{ pl: 4.5, maxWidth: 520 }}
+                >
+                  When a child account is auto-created under this national, also create a
+                  draft Gig job order for it. Hiring entity, E-Verify, screening package,
+                  and pay defaults flow down via cascade — recruiters review and activate
+                  the draft manually. Requires the toggle above to be enabled.
+                </Typography>
+              </Box>
+            ) : null}
           </Box>
         </DialogContent>
         <DialogActions>
@@ -5061,6 +5368,245 @@ const RecruiterAccountDetails: React.FC = () => {
                 setNationalBackfillOpen(false);
                 setNationalBackfillStep('confirm');
                 setNationalBackfillSummary(null);
+              }}
+            >
+              Done
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
+
+      {/**
+       * §14b — Backfill missing gig job orders dialog.
+       *
+       * Confirm step describes the impact + idempotency. Result step
+       * shows the per-bucket counts (created / already had / skipped
+       * with errors). Audit detail is logged to console — too noisy
+       * to inline.
+       */}
+      <Dialog
+        open={gigBackfillOpen}
+        onClose={() => {
+          if (gigBackfillLoading) return;
+          setGigBackfillOpen(false);
+          setGigBackfillStep('confirm');
+          setGigBackfillError(null);
+        }}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Backfill missing gig job orders</DialogTitle>
+        <DialogContent>
+          {gigBackfillStep === 'confirm' ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              <Typography variant="body2" color="text.secondary">
+                Scan all child accounts under{' '}
+                <Box component="span" sx={{ fontWeight: 500 }}>
+                  {account?.name || 'this national account'}
+                </Box>{' '}
+                and create a draft gig job order for any that don&apos;t
+                have one.
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                This is one-time — future child accounts will get gig
+                job orders automatically. Each new JO is created as{' '}
+                <Box component="span" sx={{ fontWeight: 500 }}>
+                  on hold
+                </Box>{' '}
+                and managed daily by the auto-status job.
+              </Typography>
+              {gigBackfillError ? (
+                <Alert
+                  severity="error"
+                  onClose={() => setGigBackfillError(null)}
+                >
+                  {gigBackfillError}
+                </Alert>
+              ) : null}
+            </Box>
+          ) : gigBackfillSummary ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <Typography variant="body2">
+                Scanned {gigBackfillSummary.totalChildAccounts} child
+                account(s).
+              </Typography>
+              <Typography variant="body2">
+                Created {gigBackfillSummary.created} new gig job order(s).
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {gigBackfillSummary.alreadyHad} already had a gig job order.
+              </Typography>
+              {gigBackfillSummary.skipped > 0 ? (
+                <Typography variant="body2" color="warning.main">
+                  {gigBackfillSummary.skipped} skipped due to errors —
+                  see browser console for the per-row audit log.
+                </Typography>
+              ) : null}
+            </Box>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          {gigBackfillStep === 'confirm' ? (
+            <>
+              <Button
+                onClick={() => {
+                  setGigBackfillOpen(false);
+                  setGigBackfillError(null);
+                }}
+                disabled={gigBackfillLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="contained"
+                onClick={() => void runGigJobOrdersBackfill()}
+                disabled={gigBackfillLoading}
+                startIcon={
+                  gigBackfillLoading ? (
+                    <CircularProgress size={16} />
+                  ) : undefined
+                }
+              >
+                {gigBackfillLoading ? 'Running…' : 'Run'}
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="contained"
+              onClick={() => {
+                setGigBackfillOpen(false);
+                setGigBackfillStep('confirm');
+                setGigBackfillSummary(null);
+              }}
+            >
+              Done
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
+
+      {/**
+       * Hiring Entity downstream sync dialog (Greg, 2026-04-30).
+       *
+       * Confirm step makes the impact + fill-empty policy explicit so a
+       * recruiter knows existing custom selections won't be clobbered.
+       * Result step shows a 2-section summary (children + JOs) with the
+       * "scanned / updated / skipped / failed" buckets the server returns.
+       */}
+      <Dialog
+        open={hiringEntitySyncOpen}
+        onClose={() => {
+          if (hiringEntitySyncLoading) return;
+          setHiringEntitySyncOpen(false);
+          setHiringEntitySyncStep('confirm');
+          setHiringEntitySyncError(null);
+        }}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Sync Hiring Entity downstream</DialogTitle>
+        <DialogContent>
+          {hiringEntitySyncStep === 'confirm' ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              <Typography variant="body2" color="text.secondary">
+                Push{' '}
+                <Box component="span" sx={{ fontWeight: 500 }}>
+                  {displayHiringEntityName || 'this hiring entity'}
+                </Box>{' '}
+                to every child account under{' '}
+                <Box component="span" sx={{ fontWeight: 500 }}>
+                  {account?.name || 'this national account'}
+                </Box>{' '}
+                and to every job order owned by those children.
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Only fills records that don&apos;t have a hiring entity
+                set yet — anything with a manual override stays untouched.
+              </Typography>
+              {hiringEntitySyncError ? (
+                <Alert
+                  severity="error"
+                  onClose={() => setHiringEntitySyncError(null)}
+                >
+                  {hiringEntitySyncError}
+                </Alert>
+              ) : null}
+            </Box>
+          ) : hiringEntitySyncSummary ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+              <Box>
+                <Typography variant="subtitle2" gutterBottom>
+                  Child accounts
+                </Typography>
+                <Typography variant="body2">
+                  Scanned {hiringEntitySyncSummary.childAccountsScanned} •
+                  Updated {hiringEntitySyncSummary.childAccountsUpdated} •
+                  Skipped {hiringEntitySyncSummary.childAccountsSkipped}
+                  {hiringEntitySyncSummary.childAccountsFailed > 0
+                    ? ` • Failed ${hiringEntitySyncSummary.childAccountsFailed}`
+                    : ''}
+                </Typography>
+              </Box>
+              <Box>
+                <Typography variant="subtitle2" gutterBottom>
+                  Job orders
+                </Typography>
+                <Typography variant="body2">
+                  Scanned {hiringEntitySyncSummary.jobOrdersScanned} •
+                  Updated {hiringEntitySyncSummary.jobOrdersUpdated} •
+                  Skipped {hiringEntitySyncSummary.jobOrdersSkipped}
+                  {hiringEntitySyncSummary.jobOrdersFailed > 0
+                    ? ` • Failed ${hiringEntitySyncSummary.jobOrdersFailed}`
+                    : ''}
+                </Typography>
+              </Box>
+              {hiringEntitySyncSummary.childAccountsFailed +
+                hiringEntitySyncSummary.jobOrdersFailed >
+              0 ? (
+                <Typography variant="body2" color="warning.main">
+                  Some records failed — see browser console for the
+                  per-row audit log.
+                </Typography>
+              ) : null}
+              <Typography variant="caption" color="text.secondary">
+                &ldquo;Skipped&rdquo; covers records that already match
+                or have a custom hiring entity set.
+              </Typography>
+            </Box>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          {hiringEntitySyncStep === 'confirm' ? (
+            <>
+              <Button
+                onClick={() => {
+                  setHiringEntitySyncOpen(false);
+                  setHiringEntitySyncError(null);
+                }}
+                disabled={hiringEntitySyncLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="contained"
+                onClick={() => void runHiringEntitySync()}
+                disabled={hiringEntitySyncLoading || !account?.hiringEntityId}
+                startIcon={
+                  hiringEntitySyncLoading ? (
+                    <CircularProgress size={16} />
+                  ) : undefined
+                }
+              >
+                {hiringEntitySyncLoading ? 'Syncing…' : 'Sync'}
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="contained"
+              onClick={() => {
+                setHiringEntitySyncOpen(false);
+                setHiringEntitySyncStep('confirm');
+                setHiringEntitySyncSummary(null);
               }}
             >
               Done
@@ -7406,17 +7952,21 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
           </Grid>
         </TabPanel>
         <TabPanel value={tabValue} index={10}>
-          {/*
+          {          /*
             Docs & Settings tab — consolidates the old top-level Settings,
             Pricing, and Order Defaults tabs into one surface with a left
             vertical nav (per ./config/accountSettingsNavigation.ts), mirroring
             the pattern used by the global /settings page.
 
-            Layout: 3-column Grid — left nav (md=3) | section content (md=6)
-            | AccountSidebar (md=3). Each section is gated by `selectedSection`
-            and inlines its own content; legacy ?tab=pricing and
-            ?tab=order-defaults URLs are normalized into ?tab=settings&section=…
-            in the URL-redirect effect near the top of the component.
+            Layout: 2-column Grid — left nav (md=3) | section content (md=9).
+            The right-rail AccountSidebar was previously rendered here with
+            `visibleSections={[]}` (i.e. invisible) — it just stole 25% of
+            the row from the form panels for no UI value, so the column was
+            removed (Greg, 2026-04-30) and the content widened to md=9.
+            Each section is gated by `selectedSection` and inlines its own
+            content; legacy ?tab=pricing and ?tab=order-defaults URLs are
+            normalized into ?tab=settings&section=… in the URL-redirect
+            effect near the top of the component.
           */}
           <Grid container spacing={3}>
             <Grid item xs={12} md={3}>
@@ -7481,7 +8031,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
               </Card>
             </Grid>
 
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} md={9}>
               {/* Roles & Schedulers */}
               {selectedSection === 'roles' && (
                 <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
@@ -8402,32 +8952,9 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
               )}
             </Grid>
 
-            <Grid item xs={12} md={3}>
-              <AccountSidebar
-                account={account}
-                tenantId={tenantId!}
-                navigate={navigate}
-                updateAccountAssociations={updateAccountAssociations}
-                companies={companies}
-                locationsByCompany={locationsByCompany}
-                contacts={contacts}
-                jobOrders={jobOrders}
-                deals={deals}
-                laborPoolOptions={laborPoolOptions}
-                salespeopleOptions={salespeopleOptions}
-                recruitersOptions={recruitersOptions}
-                accountOptions={accountOptions.filter((a) => a.id !== account.id && a.id !== account.parentAccountId && !(account.childAccountIds || []).includes(a.id))}
-                parentAccount={parentAccount}
-                childAccounts={childAccounts}
-                mspAccounts={mspAccounts}
-                onParentAccountChange={updateParentAccountRelationship}
-                onChildAccountsChange={updateChildAccountRelationships}
-                onMspAccountsChange={updateMspAccountIds}
-                optionsLoading={optionsLoading}
-                saving={saving}
-                visibleSections={[]}
-              />
-            </Grid>
+            {/* Empty AccountSidebar (visibleSections={[]}) was removed
+                from this tab on 2026-04-30 — it occupied 25% of the row
+                without rendering any UI. */}
           </Grid>
         </TabPanel>
         <TabPanel value={tabValue} index={11}>

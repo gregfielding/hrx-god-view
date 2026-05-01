@@ -39,6 +39,7 @@ import {
 } from '@mui/material';
 import SyncIcon from '@mui/icons-material/Sync';
 import RestoreIcon from '@mui/icons-material/Restore';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { p } from '../../data/firestorePaths';
@@ -318,6 +319,32 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
             </Button>
           </span>
         </Tooltip>
+        {/*
+          "Open in Everee" — deep-link to the worker's record in the
+          Everee admin console. Only meaningful once we have a workerId;
+          rendered conditionally so we don't show a useless button
+          before the first sync. `noopener,noreferrer` on the popup
+          guards against window.opener leaks even though Everee is a
+          trusted origin.
+        */}
+        {evereeWorkerId ? (
+          <Tooltip title="Open this worker in Everee (new tab)">
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<OpenInNewIcon />}
+              onClick={() => {
+                window.open(
+                  `https://app.everee.com/workers/details/${evereeWorkerId}`,
+                  '_blank',
+                  'noopener,noreferrer',
+                );
+              }}
+            >
+              Open in Everee
+            </Button>
+          </Tooltip>
+        ) : null}
       </Stack>
       {error ? (
         <Alert severity="error" sx={{ mt: 1.5 }}>

@@ -223,13 +223,13 @@ export function getBaseTheme() {
       },
       MuiTableCell: {
         styleOverrides: {
-          // App-wide table density: body cells render at 12px (down from
-          // the MUI body2 default of 14px). Head cells set their own 12px
+          // App-wide table density: body cells render at 13px (down from
+          // the MUI body2 default of 14px). Head cells set their own
           // weight in MuiTableHead below; this override is the single
           // source of truth for body cell sizing across every table in
           // the admin app.
           root: {
-            fontSize: 12,
+            fontSize: 13,
           },
         },
       },
@@ -242,7 +242,7 @@ export function getBaseTheme() {
               letterSpacing: '0.5px',
               color: '#5A6372',
               borderBottom: '1px solid rgba(0,0,0,0.08)',
-              padding: '4px 12px',
+              padding: '6px 12px',
             },
           },
         },
@@ -256,7 +256,7 @@ export function getBaseTheme() {
             '& .MuiTableCell-root': {
               borderBottom: '1px solid rgba(0,0,0,0.06)',
               color: '#0B0D12',
-              padding: '4px 12px',
+              padding: '6px 12px',
             },
           },
         },

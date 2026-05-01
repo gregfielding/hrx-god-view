@@ -33,15 +33,22 @@ import {
   FormControl,
   FormControlLabel,
   Grid,
+  IconButton,
+  InputAdornment,
   InputLabel,
   MenuItem,
   Select,
   Stack,
   Switch,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
-import { Clear as ClearIcon } from '@mui/icons-material';
+import {
+  Check as CheckIcon,
+  Clear as ClearIcon,
+  ContentCopy as ContentCopyIcon,
+} from '@mui/icons-material';
 import {
   addDoc,
   collection,
@@ -61,8 +68,14 @@ import { db, functions } from '../../firebase';
 import { p } from '../../data/firestorePaths';
 import { JobsBoardService } from '../../services/recruiter/jobsBoardService';
 import { useAuth } from '../../contexts/AuthContext';
+import { useEntity } from '../../hooks/useEntity';
 import { getDateRange, formatDayAndDate, dateHasHours } from '../../utils/dateSchedule';
 import { formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
+import {
+  getFutaRateByState,
+  getSutaRateByState,
+  normalizeStateCode,
+} from '../../utils/unemploymentRates';
 import {
   buildScheduleNotifyText,
   computeShiftNotifyDiff,
@@ -110,6 +123,15 @@ interface Position {
   jobTitle: string;
   payRate: string;
   workersNeeded?: number;
+  /** Pricing fields hydrated from JO `positions[]` / `gigPositions[]` / legacy top-level
+   *  fields. Shown read-only beneath the picker so the recruiter can see what rates the
+   *  shift will inherit before saving. */
+  billRate?: string;
+  markupPercent?: string;
+  workersCompCode?: string;
+  workersCompRate?: string;
+  sutaRate?: string;
+  futaRate?: string;
 }
 
 /* -------------------------------------------------------------------------
@@ -306,26 +328,150 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
   }, [tenantId, jobOrder]);
 
   /* --- Available positions (derived from JO) ------------------------ */
+  /**
+   * Hiring entity for this JO (drives the SUTA/FUTA display gate). Same
+   * entity check the JO form uses — `useEntity` resolves the entity name
+   * so we can apply the C1 Workforce / C1 Select policy without
+   * hardcoding entity ids.
+   */
+  const { entity: jobOrderEntity } = useEntity(
+    tenantId ?? null,
+    typeof jobOrder?.hiringEntityId === 'string' ? jobOrder.hiringEntityId : null,
+  );
+  const showSutaFutaForJo = useMemo(
+    () => /C1 Workforce|C1 Select/i.test(jobOrderEntity?.name || ''),
+    [jobOrderEntity?.name],
+  );
+
+  /**
+   * Worksite 2-letter state code derived from the JO doc. Tolerates the
+   * canonical `worksiteAddress.state` shape (set by `JobOrderForm` and
+   * the auto-spawn helper) plus a couple of legacy/fallback paths used
+   * by older job orders. Empty when the JO has no resolvable state.
+   */
+  const worksiteStateForJo = useMemo<string>(() => {
+    if (!jobOrder) return '';
+    const candidates: Array<unknown> = [
+      jobOrder.worksiteAddress?.state,
+      jobOrder.worksiteState,
+      jobOrder.locationState,
+      jobOrder.address?.state,
+    ];
+    for (const c of candidates) {
+      const code = normalizeStateCode(typeof c === 'string' ? c : '')
+        .trim()
+        .toUpperCase();
+      if (code) return code;
+    }
+    return '';
+  }, [jobOrder]);
+
   const availablePositions = useMemo<Position[]>(() => {
     if (!jobOrder) return [];
-    if (jobOrder.jobType === 'gig' && Array.isArray(jobOrder.gigPositions)) {
-      return jobOrder.gigPositions.map((pos: any) => ({
+
+    // Coerce a stored value (number | string | null) into a stable string the form can
+    // hand to read-only TextFields. Null/undefined/empty stay empty so the disabled
+    // input renders as blank rather than "0" or "null".
+    const toStr = (value: unknown): string => {
+      if (value == null) return '';
+      if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
+      const trimmed = String(value).trim();
+      return trimmed;
+    };
+
+    /**
+     * Default-policy SUTA/FUTA display fallback (Greg, 2026-04-30).
+     *
+     * The shift form is read-only for these cells — the canonical write
+     * path is the JO form. But for JOs that pre-date the JO-form
+     * auto-fill (or where the cascade skipped them), the position rows
+     * surface here as blanks. Since the worksite + entity are known at
+     * the JO level, we can compute the state-derived rate and show it
+     * when:
+     *
+     *   - Hiring entity uses unemployment tax (C1 Workforce / C1 Select)
+     *   - Position has both pay > 0 AND bill > 0 (a "real" pricing row)
+     *   - Worksite state is resolvable
+     *   - The position itself has no stored SUTA/FUTA value
+     *
+     * Display-only: we don't write the derived value back to the JO.
+     * The recruiter sees the actual rate the shift would price at, the
+     * helper text below the field flags it as estimated.
+     */
+    const deriveDisplayRates = (
+      pos: any,
+    ): { sutaRate: string; futaRate: string } => {
+      const stored = {
+        sutaRate: toStr(pos.sutaRate ?? pos.suta),
+        futaRate: toStr(pos.futaRate ?? pos.futa),
+      };
+      if (!showSutaFutaForJo || !worksiteStateForJo) return stored;
+
+      const pay = parseFloat(toStr(pos.payRate));
+      const bill = parseFloat(toStr(pos.billRate));
+      if (!Number.isFinite(pay) || pay <= 0) return stored;
+      if (!Number.isFinite(bill) || bill <= 0) return stored;
+
+      const sutaForState = getSutaRateByState(worksiteStateForJo);
+      const futaForState = getFutaRateByState(worksiteStateForJo);
+      return {
+        sutaRate:
+          stored.sutaRate ||
+          (sutaForState != null ? String(sutaForState) : ''),
+        futaRate: stored.futaRate || String(futaForState),
+      };
+    };
+
+    const mapPos = (pos: any): Position => {
+      const { sutaRate, futaRate } = deriveDisplayRates(pos);
+      return {
         jobTitle: pos.jobTitle || '',
-        payRate: pos.payRate || '',
+        payRate: toStr(pos.payRate),
         workersNeeded: pos.workersNeeded,
-      }));
+        billRate: toStr(pos.billRate),
+        // Storage shape uses `markupPercent` (matches AccountPositionPricing). Some legacy
+        // docs may have written `markupPercentage`; accept either.
+        markupPercent: toStr(pos.markupPercent ?? pos.markupPercentage),
+        workersCompCode: toStr(pos.workersCompCode),
+        workersCompRate: toStr(pos.workersCompRate),
+        sutaRate,
+        futaRate,
+      };
+    };
+
+    // Preferred: JO `positions[]` (canonical, used for both gig and career going forward).
+    if (Array.isArray(jobOrder.positions) && jobOrder.positions.length > 0) {
+      return jobOrder.positions
+        .filter((pos: any) => pos && String(pos.jobTitle || '').trim())
+        .map(mapPos);
     }
+
+    // Legacy gig JOs persisted positions on `gigPositions[]`.
+    if (jobOrder.jobType === 'gig' && Array.isArray(jobOrder.gigPositions)) {
+      return jobOrder.gigPositions
+        .filter((pos: any) => pos && String(pos.jobTitle || '').trim())
+        .map(mapPos);
+    }
+
+    // Legacy career JOs: a single position derived from top-level fields.
     if (jobOrder.jobTitle) {
       return [
-        {
+        mapPos({
           jobTitle: jobOrder.jobTitle,
-          payRate: String(jobOrder.payRate || ''),
+          payRate: jobOrder.payRate,
+          billRate: jobOrder.billRate,
+          markupPercent: jobOrder.markupPercent ?? jobOrder.markupPercentage,
+          workersCompCode: jobOrder.workersCompCode,
+          workersCompRate: jobOrder.workersCompRate,
+          sutaRate: jobOrder.sutaRate ?? jobOrder.suta,
+          futaRate: jobOrder.futaRate ?? jobOrder.futa,
           workersNeeded: jobOrder.workersNeeded,
-        },
+        }),
       ];
     }
     return [];
-  }, [jobOrder]);
+  }, [jobOrder, showSutaFutaForJo, worksiteStateForJo]);
+
 
   /* --- Form state --------------------------------------------------- */
   type FormData = {
@@ -450,6 +596,10 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
   const [formData, setFormData] = useState<FormData>(buildInitial);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // Transient "copied" feedback for the Clock-In URL field. When set,
+  // the end-adornment swaps the copy icon for a checkmark + tooltip
+  // for ~1.5s. Reverts on its own; no snackbar.
+  const [clockInUrlCopied, setClockInUrlCopied] = useState(false);
 
   // Worker-notify follow-up state (only used when editing a shift whose
   // schedule or instructions changed and at least one worker is on it).
@@ -470,6 +620,89 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
     setPendingWorkerSave(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingShift?.id, jobOrderId]);
+
+  /** Position that matches the currently selected job title. Drives the read-only
+   *  pricing card under the picker so recruiters can preview rates the shift inherits. */
+  const selectedPosition = useMemo<Position | null>(() => {
+    const title = String(formData?.defaultJobTitle ?? '').trim();
+    if (!title) return null;
+    return (
+      availablePositions.find(
+        (pos) => pos.jobTitle.trim().toLowerCase() === title.toLowerCase(),
+      ) ?? null
+    );
+  }, [availablePositions, formData?.defaultJobTitle]);
+
+  /** Truthy if the selected position carries any pricing data worth surfacing. */
+  const hasPositionPricing = useMemo(() => {
+    if (!selectedPosition) return false;
+    return Boolean(
+      selectedPosition.payRate ||
+        selectedPosition.billRate ||
+        selectedPosition.markupPercent ||
+        selectedPosition.workersCompCode ||
+        selectedPosition.workersCompRate ||
+        selectedPosition.sutaRate ||
+        selectedPosition.futaRate,
+    );
+  }, [selectedPosition]);
+
+  /**
+   * Whether the displayed SUTA / FUTA values for the currently-selected
+   * position were derived from worksite state (vs read directly off the
+   * JO position). Drives the helper-text suffix below the read-only
+   * SUTA / FUTA fields so a recruiter can tell "saved on the JO" apart
+   * from "estimated for shift display".
+   *
+   * We recompute by re-reading the **raw** JO position by job title —
+   * `selectedPosition.sutaRate` already includes the fallback, so we
+   * can't infer the source from it alone.
+   */
+  const sutaFutaSource = useMemo<{
+    suta: 'position' | 'estimated' | 'none';
+    futa: 'position' | 'estimated' | 'none';
+  }>(() => {
+    const titleNorm = String(formData?.defaultJobTitle ?? '')
+      .trim()
+      .toLowerCase();
+    if (!jobOrder || !titleNorm || !selectedPosition) {
+      return { suta: 'none', futa: 'none' };
+    }
+
+    const pickRaw = (
+      arr: unknown,
+    ): Record<string, unknown> | null => {
+      if (!Array.isArray(arr)) return null;
+      const hit = (arr as Array<Record<string, unknown>>).find(
+        (p) => String(p?.jobTitle ?? '').trim().toLowerCase() === titleNorm,
+      );
+      return hit ?? null;
+    };
+    const raw =
+      pickRaw(jobOrder.positions) ||
+      pickRaw(jobOrder.gigPositions) ||
+      (String(jobOrder.jobTitle ?? '').trim().toLowerCase() === titleNorm
+        ? (jobOrder as Record<string, unknown>)
+        : null);
+
+    const rawSuta = raw ? (raw.sutaRate ?? raw.suta) : null;
+    const rawFuta = raw ? (raw.futaRate ?? raw.futa) : null;
+    const hasRaw = (v: unknown): boolean =>
+      v != null && String(v).trim() !== '';
+
+    return {
+      suta: hasRaw(rawSuta)
+        ? 'position'
+        : selectedPosition.sutaRate
+          ? 'estimated'
+          : 'none',
+      futa: hasRaw(rawFuta)
+        ? 'position'
+        : selectedPosition.futaRate
+          ? 'estimated'
+          : 'none',
+    };
+  }, [jobOrder, formData?.defaultJobTitle, selectedPosition]);
 
   /* --- Save flow ---------------------------------------------------- */
 
@@ -900,6 +1133,117 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
           )}
           disabled={availablePositions.length === 0}
         />
+
+        {/* Position pricing — read-only preview of the rates the shift will inherit
+            from the selected position on the JO. Mirrors the Pricing card on the
+            JO Overview tab so recruiters see Pay/Bill/Markup, WC code/rate, and
+            SUTA/FUTA at a glance before saving. */}
+        {selectedPosition && hasPositionPricing && (
+          <Box
+            sx={{
+              border: '1px solid',
+              borderColor: 'divider',
+              borderRadius: 1,
+              p: 2,
+              bgcolor: 'background.paper',
+            }}
+          >
+            <Stack spacing={1.5}>
+              <Stack
+                direction="row"
+                justifyContent="space-between"
+                alignItems="center"
+                spacing={1}
+              >
+                <Typography variant="subtitle2">
+                  Pricing for {selectedPosition.jobTitle}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Inherited from job order — edit on the Overview tab to change.
+                </Typography>
+              </Stack>
+
+              <Grid container spacing={2}>
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    fullWidth
+                    label="Pay Rate"
+                    value={selectedPosition.payRate || ''}
+                    InputProps={{ readOnly: true, startAdornment: <span>$</span> }}
+                    variant="outlined"
+                  />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    fullWidth
+                    label="Markup (%)"
+                    value={selectedPosition.markupPercent || ''}
+                    InputProps={{ readOnly: true }}
+                    variant="outlined"
+                  />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    fullWidth
+                    label="Bill Rate"
+                    value={selectedPosition.billRate || ''}
+                    InputProps={{ readOnly: true, startAdornment: <span>$</span> }}
+                    variant="outlined"
+                  />
+                </Grid>
+
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Workers Comp Class Code"
+                    value={selectedPosition.workersCompCode || ''}
+                    InputProps={{ readOnly: true }}
+                    variant="outlined"
+                    helperText="From Settings > Onboarding Library > WC Class Codes"
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Workers Comp Rate"
+                    value={selectedPosition.workersCompRate || ''}
+                    InputProps={{ readOnly: true }}
+                    variant="outlined"
+                  />
+                </Grid>
+
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="SUTA %"
+                    value={selectedPosition.sutaRate || ''}
+                    InputProps={{ readOnly: true }}
+                    variant="outlined"
+                    helperText={
+                      sutaFutaSource.suta === 'estimated' && worksiteStateForJo
+                        ? `Estimated from ${worksiteStateForJo} (new-employer rate; not yet saved on the job order)`
+                        : 'State unemployment on pay (C1 Workforce / C1 Select)'
+                    }
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="FUTA %"
+                    value={selectedPosition.futaRate || ''}
+                    InputProps={{ readOnly: true }}
+                    variant="outlined"
+                    helperText={
+                      sutaFutaSource.futa === 'estimated' && worksiteStateForJo
+                        ? `Estimated from ${worksiteStateForJo} (state-effective rate; not yet saved on the job order)`
+                        : 'Federal unemployment on pay'
+                    }
+                  />
+                </Grid>
+              </Grid>
+            </Stack>
+          </Box>
+        )}
 
         {/* Career-only: Total/Over/Toggle row */}
         {!isGigJob && (
@@ -1448,6 +1792,70 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
           value={formData.clockInUrl}
           onChange={(e) => setFormData({ ...formData, clockInUrl: e.target.value })}
           helperText="Workers see this on their assignment below shift hours. Use a full URL (https://…)."
+          InputProps={{
+            // Right-aligned copy icon. Disabled when the field is
+            // empty/whitespace (nothing to copy) and on browsers
+            // without the async clipboard API (rare — only matters
+            // for non-https local dev).
+            endAdornment: (() => {
+              const value = formData.clockInUrl?.trim() ?? '';
+              const canCopy =
+                value.length > 0 &&
+                typeof navigator !== 'undefined' &&
+                !!navigator.clipboard;
+              return (
+                <InputAdornment position="end">
+                  <Tooltip
+                    title={
+                      clockInUrlCopied
+                        ? 'Copied'
+                        : canCopy
+                          ? 'Copy URL'
+                          : value.length === 0
+                            ? 'Nothing to copy yet'
+                            : 'Clipboard unavailable'
+                    }
+                  >
+                    <Box component="span">
+                      <IconButton
+                        size="small"
+                        edge="end"
+                        aria-label="Copy clock-in URL to clipboard"
+                        disabled={!canCopy}
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(value);
+                            setClockInUrlCopied(true);
+                            window.setTimeout(
+                              () => setClockInUrlCopied(false),
+                              1500,
+                            );
+                          } catch (err) {
+                            // Swallow — the disabled-state guard
+                            // covers the "no clipboard API" case;
+                            // a permission denial here is rare and
+                            // not worth a banner. Surface in console
+                            // for debugging.
+                            // eslint-disable-next-line no-console
+                            console.warn('clock-in URL copy failed', err);
+                          }
+                        }}
+                      >
+                        {clockInUrlCopied ? (
+                          <CheckIcon
+                            fontSize="small"
+                            color="success"
+                          />
+                        ) : (
+                          <ContentCopyIcon fontSize="small" />
+                        )}
+                      </IconButton>
+                    </Box>
+                  </Tooltip>
+                </InputAdornment>
+              );
+            })(),
+          }}
         />
 
         <TextField

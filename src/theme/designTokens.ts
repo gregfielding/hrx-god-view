@@ -76,7 +76,7 @@ export const designTokens = {
     subtitle2: { fontSize: 14, fontWeight: 600, lineHeight: 1.5, color: '#5A6372' },
     body1: { fontSize: 14, fontWeight: 400, lineHeight: 1.6 },
     body2: { fontSize: 12, fontWeight: 400, lineHeight: 1.5 },
-    caption: { fontSize: '0.6rem', fontWeight: 500, lineHeight: 1.4, color: '#8B94A3' },
+    caption: { fontSize: '0.6875rem', fontWeight: 500, lineHeight: 1.4, color: '#8B94A3' },
     button: { textTransform: 'none' as const, fontWeight: 600, letterSpacing: 0 },
   },
 };

@@ -172,6 +172,25 @@ const fmtPct = (n: number | undefined): string => {
   return `${trimmed}%`;
 };
 
+// Renders a tax-rate value (FUTA / SUTA / WC) with a soft red highlight when
+// the rate is missing on the JO. Recruiters use this column to spot JOs that
+// were created before tax rates were captured — the tint makes the gap
+// scannable without adding a separate badge column.
+const RATE_MISSING_SX = {
+  backgroundColor: 'rgba(231, 76, 60, 0.16)',
+  color: '#B71C1C',
+  borderRadius: 0.5,
+  px: 0.5,
+} as const;
+const renderRateValue = (n: number | null | undefined): React.ReactNode => {
+  const isMissing = n == null || !Number.isFinite(n);
+  return (
+    <Box component="span" sx={isMissing ? RATE_MISSING_SX : undefined}>
+      {fmtPct(n ?? undefined)}
+    </Box>
+  );
+};
+
 /**
  * Inline-editable PO# cell.
  *
@@ -295,6 +314,7 @@ const PoNumberCell: React.FC<PoNumberCellProps> = ({
     );
   }
 
+  const isMissing = !shiftPoNumber && !jobOrderPoNumber;
   const display = shiftPoNumber || jobOrderPoNumber || '—';
   return (
     <Tooltip title="Click to edit PO#" arrow disableInteractive>
@@ -315,9 +335,17 @@ const PoNumberCell: React.FC<PoNumberCellProps> = ({
           py: 0.25,
           borderRadius: 0.5,
           cursor: tenantId ? 'text' : 'default',
-          color: shiftPoNumber || jobOrderPoNumber ? 'text.primary' : 'text.disabled',
+          color: isMissing ? '#7A5C00' : 'text.primary',
+          // Soft yellow tint when PO is missing on both the shift and the
+          // parent JO — same scannable pattern we use for missing tax
+          // rates in the Financials column.
+          bgcolor: isMissing ? 'rgba(244, 180, 0, 0.20)' : undefined,
           '&:hover': tenantId
-            ? { bgcolor: 'rgba(0, 87, 184, 0.08)' }
+            ? {
+                bgcolor: isMissing
+                  ? 'rgba(244, 180, 0, 0.32)'
+                  : 'rgba(0, 87, 184, 0.08)',
+              }
             : undefined,
         }}
       >
@@ -589,7 +617,9 @@ const ShiftsList: React.FC = () => {
                 <TableCell sx={{ fontWeight: 600 }}>Job</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Requirements</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Financials</TableCell>
+                {/* Instructions column temporarily hidden while we clean up the shifts list view.
                 <TableCell sx={{ fontWeight: 600, width: 220 }}>Instructions</TableCell>
+                */}
                 <TableCell sx={{ fontWeight: 600 }} align="right">
                   Staff
                 </TableCell>
@@ -599,7 +629,7 @@ const ShiftsList: React.FC = () => {
             <TableBody>
               {pagedRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={11} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={10} align="center" sx={{ py: 6 }}>
                     <Typography variant="body2" color="text.secondary">
                       {rows.length === 0
                         ? 'No active shifts. New or upcoming shifts will appear here.'
@@ -689,7 +719,7 @@ const ShiftsList: React.FC = () => {
                       <TableCell>
                         {jobOrder.worksiteName || street || cityStateZip ? (
                           <Stack spacing={0.25}>
-                            <Typography variant="body2">
+                            <Typography variant="body2" sx={{ fontWeight: 600 }}>
                               {jobOrder.worksiteName || '—'}
                             </Typography>
                             {street && (
@@ -860,15 +890,16 @@ const ShiftsList: React.FC = () => {
                               color="text.secondary"
                               sx={{ whiteSpace: 'nowrap' }}
                             >
-                              FUTA: {fmtPct(jobOrder.futaRate)} · SUTA:{' '}
-                              {fmtPct(jobOrder.sutaRate)} · WC:{' '}
-                              {fmtPct(jobOrder.wcRate)}
+                              FUTA: {renderRateValue(jobOrder.futaRate)} · SUTA:{' '}
+                              {renderRateValue(jobOrder.sutaRate)} · WC:{' '}
+                              {renderRateValue(jobOrder.wcRate)}
                             </Typography>
                           </Stack>
                         ) : (
                           '—'
                         )}
                       </TableCell>
+                      {/* Instructions column temporarily hidden while we clean up the shifts list view.
                       <TableCell sx={{ maxWidth: 240 }}>
                         {(() => {
                           const url = shift.clockInUrl?.trim() || '';
@@ -942,6 +973,7 @@ const ShiftsList: React.FC = () => {
                           );
                         })()}
                       </TableCell>
+                      */}
                       <TableCell align="right">
                         <Stack
                           spacing={0.25}

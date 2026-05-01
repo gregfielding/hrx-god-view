@@ -9,9 +9,10 @@
  * shift always shows fresh data.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  Autocomplete,
   Avatar,
   Box,
   Button,
@@ -29,6 +30,7 @@ import {
   TextField,
   Tooltip,
   Typography,
+  createFilterOptions,
 } from '@mui/material';
 import {
   Close as CloseIcon,
@@ -143,6 +145,24 @@ const fmtPct = (n: number | null | undefined): string => {
   return `${trimmed}%`;
 };
 
+// Renders a FUTA/SUTA/WC value with a soft red highlight when the rate is
+// missing on the shift/JO. Mirrors the helper of the same name in
+// `ShiftsList.tsx` so the drawer header reads identically to the table.
+const RATE_MISSING_SX = {
+  backgroundColor: 'rgba(231, 76, 60, 0.16)',
+  color: '#B71C1C',
+  borderRadius: 0.5,
+  px: 0.5,
+} as const;
+const renderRateValue = (n: number | null | undefined): React.ReactNode => {
+  const isMissing = n == null || !Number.isFinite(n);
+  return (
+    <Box component="span" sx={isMissing ? RATE_MISSING_SX : undefined}>
+      {fmtPct(n)}
+    </Box>
+  );
+};
+
 // Small column inside the drawer's header strip. Renders a tiny
 // uppercase label on top (mirrors the field-label treatment used in
 // the rest of the recruiter UI) and stacks its children beneath.
@@ -225,10 +245,18 @@ interface ShiftPlacementsDrawerProps {
   shift: ShiftSummary | null;
   onClose: () => void;
   /**
-   * When true (e.g. Add shift from /shifts), show a job-order picker first;
-   * after the user continues, load placements for that JO with no shift locked.
+   * When true (e.g. Add shift from /shifts), the drawer renders the
+   * Account → Job order → shift form cascade instead of the placements
+   * view. Closing or saving returns control to the caller.
    */
   pickJobOrderFirst?: boolean;
+  /**
+   * Optional callback invoked after a successful shift create from the
+   * `pickJobOrderFirst` flow. The /shifts page wires this to its
+   * `useActiveShifts` refetch so the newly created shift appears in
+   * the table without requiring a manual reload.
+   */
+  onShiftAdded?: () => void | Promise<void>;
 }
 
 const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
@@ -238,6 +266,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
   shift,
   onClose,
   pickJobOrderFirst = false,
+  onShiftAdded,
 }) => {
   const [jobOrder, setJobOrder] = useState<JobOrder | null>(null);
   const [loading, setLoading] = useState(false);
@@ -274,22 +303,89 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
   const [pickerJobOrders, setPickerJobOrders] = useState<
     Array<{
       id: string;
+      // `recruiterAccountId` is the canonical account key — used to
+      // group JOs by Account in the Add-shift form. Falls back to the
+      // companyName when an older JO doc doesn't have it persisted.
+      recruiterAccountId: string;
+      // `accountName` is the linked recruiter-account doc's `name` —
+      // e.g. "CORT Baltimore Warehouse" rather than the parent
+      // company "CORT". Hydrated by a follow-up batch fetch after the
+      // initial JO query (the JO doc itself doesn't denormalize it).
+      // Falls back to `companyName` when the account doc is missing
+      // or its name is empty.
+      accountName: string;
       companyName: string;
+      parentAccountName: string;
       jobTitle: string;
       jobType?: 'gig' | 'career';
       jobOrderNumber: string;
+      // Status + worksite are shown on each option so a recruiter can
+      // tell apart multiple JOs for the same company at a glance
+      // (matches the columns shown in the JO list table).
+      status: 'draft' | 'open' | 'on_hold' | 'filled';
+      worksiteName: string;
+      worksiteCityState: string;
     }>
   >([]);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerError, setPickerError] = useState<string | null>(null);
-  const [pickerSelectValue, setPickerSelectValue] = useState('');
+  // The Add-shift drawer has two cascading pickers: account first, then
+  // job order. `selectedAccountId` is the autocomplete value; the JO
+  // dropdown filters by it.
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
 
   const resolvedJobOrderId = pickJobOrderFirst ? pickedJobOrderId : propJobOrderId;
+
+  // Distinct accounts derived from the loaded JO set. We group by
+  // `recruiterAccountId` so two JOs that share the same id collapse
+  // into one option (and we keep the first names we see). The display
+  // label uses the recruiter-account `name` (e.g. "CORT Baltimore
+  // Warehouse"), with the parent company shown as a caption — that's
+  // the disambiguator the recruiter actually needs when one parent
+  // company has many child accounts.
+  const accountOptions = useMemo(() => {
+    const seen = new Map<
+      string,
+      {
+        id: string;
+        accountName: string;
+        companyName: string;
+        parentAccountName: string;
+      }
+    >();
+    for (const jo of pickerJobOrders) {
+      if (seen.has(jo.recruiterAccountId)) continue;
+      seen.set(jo.recruiterAccountId, {
+        id: jo.recruiterAccountId,
+        accountName: jo.accountName || jo.companyName,
+        companyName: jo.companyName,
+        parentAccountName: jo.parentAccountName,
+      });
+    }
+    return Array.from(seen.values()).sort((a, b) =>
+      a.accountName.localeCompare(b.accountName),
+    );
+  }, [pickerJobOrders]);
+
+  // JO options filtered to the selected account. Sorted by JO# desc
+  // so the most recently created JOs surface first (matches the JO
+  // list page default ordering).
+  const jobOrdersForAccount = useMemo(() => {
+    if (!selectedAccountId) return [];
+    return pickerJobOrders
+      .filter((jo) => jo.recruiterAccountId === selectedAccountId)
+      .slice()
+      .sort((a, b) => {
+        const numA = Number(a.jobOrderNumber) || 0;
+        const numB = Number(b.jobOrderNumber) || 0;
+        return numB - numA;
+      });
+  }, [pickerJobOrders, selectedAccountId]);
 
   useEffect(() => {
     if (!open) {
       setPickedJobOrderId(null);
-      setPickerSelectValue('');
+      setSelectedAccountId(null);
       setPickerError(null);
     }
   }, [open]);
@@ -313,19 +409,86 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
             const data = d.data() as Record<string, unknown>;
             const status = String(data.status ?? '');
             if (status === 'cancelled' || status === 'completed') return null;
+            // Drop JOs that aren't tied to an account/company yet —
+            // recruiters can't usefully add a shift against a JO that
+            // hasn't been linked to a customer, and the picker reads
+            // confusingly with a row of em-dashes.
+            const companyName = String(data.companyName ?? '').trim();
+            if (!companyName) return null;
             const jt = data.jobType;
             const jobType: 'gig' | 'career' | undefined =
               jt === 'gig' ? 'gig' : jt === 'career' ? 'career' : undefined;
+            const normalizedStatus: 'draft' | 'open' | 'on_hold' | 'filled' =
+              status === 'draft' || status === 'on_hold' || status === 'filled'
+                ? status
+                : 'open';
+            const addr = (data.worksiteAddress as Record<string, unknown> | undefined) ?? {};
+            const city = String(addr.city ?? '').trim();
+            const state = String(addr.state ?? '').trim();
+            const worksiteCityState = [city, state].filter(Boolean).join(', ');
+            const recruiterAccountId =
+              String(data.recruiterAccountId ?? '').trim() || `name:${companyName}`;
             return {
               id: d.id,
-              companyName: String(data.companyName ?? '').trim() || '—',
+              recruiterAccountId,
+              // Seed with companyName so the autocomplete renders
+              // immediately; the follow-up account fetch below
+              // upgrades this to the recruiter-account `name`.
+              accountName: companyName,
+              companyName,
+              parentAccountName: String(data.parentAccountName ?? '').trim(),
               jobTitle: String(data.jobTitle ?? '').trim() || '—',
               jobType,
               jobOrderNumber: String(data.jobOrderNumber ?? data.jobOrderSeq ?? '').trim() || '—',
+              status: normalizedStatus,
+              worksiteName: String(data.worksiteName ?? '').trim(),
+              worksiteCityState,
             };
           })
           .filter((r): r is NonNullable<typeof r> => r != null);
         setPickerJobOrders(rows);
+
+        // Hydrate `accountName` from the linked recruiter-account
+        // docs so the dropdown can show "CORT Baltimore Warehouse"
+        // rather than the shared parent "CORT". JO docs don't
+        // denormalize the account name, so we batch-read each
+        // unique recruiterAccountId. Synthetic ids (`name:...`)
+        // from the fallback above are skipped — there's no doc to
+        // fetch and `accountName` already equals `companyName`.
+        const uniqueRealAccountIds = Array.from(
+          new Set(
+            rows
+              .map((r) => r.recruiterAccountId)
+              .filter((id) => id && !id.startsWith('name:')),
+          ),
+        );
+        if (uniqueRealAccountIds.length > 0) {
+          const nameById = new Map<string, string>();
+          await Promise.all(
+            uniqueRealAccountIds.map(async (accountId) => {
+              try {
+                const accSnap = await getDoc(
+                  doc(db, p.recruiterAccount(tenantId, accountId)),
+                );
+                if (!accSnap.exists()) return;
+                const accData = accSnap.data() as Record<string, unknown>;
+                const name = String(accData.name ?? '').trim();
+                if (name) nameById.set(accountId, name);
+              } catch {
+                // Soft-fail — the row keeps its `companyName` fallback.
+              }
+            }),
+          );
+          if (cancelled) return;
+          if (nameById.size > 0) {
+            setPickerJobOrders((prev) =>
+              prev.map((r) => {
+                const name = nameById.get(r.recruiterAccountId);
+                return name ? { ...r, accountName: name } : r;
+              }),
+            );
+          }
+        }
       } catch (e) {
         if (!cancelled) {
           setPickerError(e instanceof Error ? e.message : 'Failed to load job orders');
@@ -509,7 +672,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
         },
       }}
     >
-      {pickJobOrderFirst && !pickedJobOrderId ? (
+      {pickJobOrderFirst ? (
         <Box
           sx={{
             p: 3,
@@ -518,6 +681,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
             gap: 2,
             flex: 1,
             minHeight: 0,
+            overflow: 'auto',
           }}
         >
           <Stack direction="row" alignItems="center" justifyContent="space-between">
@@ -537,41 +701,209 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
             </Box>
           ) : (
             <>
-              <FormControl fullWidth>
+              {/* Step 1 — Account autocomplete. Options derive from the
+                  in-memory JO list so we never offer an account the user
+                  can't actually start a shift against. */}
+              <Autocomplete
+                fullWidth
+                options={accountOptions}
+                value={
+                  accountOptions.find((a) => a.id === selectedAccountId) ?? null
+                }
+                onChange={(_, next) => {
+                  setSelectedAccountId(next?.id ?? null);
+                  // Reset the JO + form whenever the recruiter pivots
+                  // accounts so we never carry a stale JO id forward.
+                  setPickedJobOrderId(null);
+                }}
+                isOptionEqualToValue={(a, b) => a.id === b.id}
+                getOptionLabel={(option) => option.accountName}
+                filterOptions={createFilterOptions<(typeof accountOptions)[number]>({
+                  // Match against every name surface the recruiter
+                  // might think to type — the linked account, the
+                  // parent company, and (where set) the explicit
+                  // parent-account label.
+                  stringify: (o) =>
+                    `${o.accountName} ${o.companyName} ${o.parentAccountName}`,
+                })}
+                renderOption={(props, option) => {
+                  // Surface the parent company as a caption when it
+                  // differs from the account name. This is what
+                  // disambiguates multiple "CORT *" accounts from
+                  // each other in the list.
+                  const showCaption =
+                    option.companyName &&
+                    option.companyName.toLowerCase() !==
+                      option.accountName.toLowerCase();
+                  return (
+                    <li {...props} key={option.id}>
+                      <Stack spacing={0.25}>
+                        <Typography variant="body2">
+                          {option.accountName}
+                        </Typography>
+                        {showCaption && (
+                          <Typography variant="caption" color="text.secondary">
+                            {option.companyName}
+                            {option.parentAccountName
+                              ? ` · ${option.parentAccountName}`
+                              : ''}
+                          </Typography>
+                        )}
+                      </Stack>
+                    </li>
+                  );
+                }}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Account"
+                    placeholder="Search by account or company name"
+                  />
+                )}
+                noOptionsText="No matching accounts"
+              />
+
+              {/* Step 2 — Job order dropdown, scoped to the chosen
+                  account. Disabled until an account is selected so the
+                  cascade reads correctly. */}
+              <FormControl fullWidth disabled={!selectedAccountId}>
                 <InputLabel id="add-shift-jo-label">Job order</InputLabel>
                 <Select
                   labelId="add-shift-jo-label"
                   label="Job order"
-                  value={pickerSelectValue}
-                  onChange={(e) => setPickerSelectValue(String(e.target.value))}
+                  value={pickedJobOrderId ?? ''}
+                  onChange={(e) =>
+                    setPickedJobOrderId(String(e.target.value) || null)
+                  }
+                  renderValue={(value) => {
+                    const jo = jobOrdersForAccount.find((row) => row.id === value);
+                    if (!jo) return '';
+                    const jobTypeLabel =
+                      jo.jobType === 'gig'
+                        ? 'Gig'
+                        : jo.jobType === 'career'
+                          ? 'Career'
+                          : '—';
+                    return `JO #${jo.jobOrderNumber} · ${jobTypeLabel} · ${jo.jobTitle}`;
+                  }}
                 >
-                  {pickerJobOrders.map((jo) => (
-                    <MenuItem key={jo.id} value={jo.id}>
-                      <Box>
-                        <Typography variant="body2" component="div">
-                          {jo.companyName} ·{' '}
-                          {jo.jobType === 'gig'
-                            ? 'Gig'
-                            : jo.jobType === 'career'
-                              ? 'Career'
-                              : '—'}{' '}
-                          · {jo.jobTitle}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary" component="div">
-                          JO #{jo.jobOrderNumber}
-                        </Typography>
-                      </Box>
+                  {jobOrdersForAccount.length === 0 ? (
+                    <MenuItem value="" disabled>
+                      <Typography variant="body2" color="text.secondary">
+                        No job orders for this account.
+                      </Typography>
                     </MenuItem>
-                  ))}
+                  ) : (
+                    jobOrdersForAccount.map((jo) => {
+                      const jobTypeLabel =
+                        jo.jobType === 'gig'
+                          ? 'Gig'
+                          : jo.jobType === 'career'
+                            ? 'Career'
+                            : '—';
+                      const statusLabel =
+                        jo.status === 'on_hold'
+                          ? 'On hold'
+                          : jo.status.charAt(0).toUpperCase() + jo.status.slice(1);
+                      const statusColor: 'success' | 'warning' | 'info' | 'default' =
+                        jo.status === 'open'
+                          ? 'success'
+                          : jo.status === 'on_hold'
+                            ? 'warning'
+                            : jo.status === 'filled'
+                              ? 'info'
+                              : 'default';
+                      const metaParts = [
+                        jo.worksiteName,
+                        jo.worksiteCityState,
+                      ].filter(Boolean);
+                      return (
+                        <MenuItem
+                          key={jo.id}
+                          value={jo.id}
+                          sx={{ alignItems: 'flex-start' }}
+                        >
+                          <Box
+                            sx={{
+                              display: 'flex',
+                              alignItems: 'flex-start',
+                              justifyContent: 'space-between',
+                              gap: 1.5,
+                              width: '100%',
+                              minWidth: 0,
+                            }}
+                          >
+                            <Box sx={{ minWidth: 0, flex: 1 }}>
+                              <Typography
+                                variant="body2"
+                                component="div"
+                                sx={{ fontWeight: 500 }}
+                              >
+                                JO #{jo.jobOrderNumber} · {jobTypeLabel} · {jo.jobTitle}
+                              </Typography>
+                              {metaParts.length > 0 && (
+                                <Typography
+                                  variant="caption"
+                                  color="text.secondary"
+                                  component="div"
+                                  sx={{
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                  }}
+                                >
+                                  {metaParts.join(' · ')}
+                                </Typography>
+                              )}
+                            </Box>
+                            <Chip
+                              label={statusLabel}
+                              size="small"
+                              color={statusColor}
+                              variant="outlined"
+                              sx={{ flexShrink: 0, mt: 0.25 }}
+                            />
+                          </Box>
+                        </MenuItem>
+                      );
+                    })
+                  )}
                 </Select>
               </FormControl>
-              <Button
-                variant="contained"
-                disabled={!pickerSelectValue}
-                onClick={() => setPickedJobOrderId(pickerSelectValue)}
-              >
-                Continue
-              </Button>
+
+              {/* Step 3 — The actual shift form (matches the modal at
+                  /jobs/job-orders/{id} > Shifts). Renders inline once a
+                  JO doc has been hydrated. EditShiftForm owns its own
+                  Cancel/Save buttons; both close the drawer. */}
+              {pickedJobOrderId &&
+                (loading ? (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                    <CircularProgress />
+                  </Box>
+                ) : error ? (
+                  <Alert severity="error">{error}</Alert>
+                ) : tenantId && jobOrder ? (
+                  <Box sx={{ pt: 1 }}>
+                    <EditShiftForm
+                      tenantId={tenantId}
+                      jobOrderId={pickedJobOrderId}
+                      jobOrder={jobOrder}
+                      shift={null}
+                      onSaved={() => {
+                        // Best-effort refetch of the parent table; we
+                        // still close the drawer either way so the
+                        // recruiter isn't stranded on a stale form.
+                        try {
+                          void onShiftAdded?.();
+                        } catch {
+                          // The parent's refetch shouldn't block close.
+                        }
+                        onClose();
+                      }}
+                      onCancel={onClose}
+                    />
+                  </Box>
+                ) : null)}
             </>
           )}
         </Box>
@@ -696,7 +1028,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
         >
           <HeaderField label="Worksite" sx={{ minWidth: 200, flex: '1 1 220px' }}>
             {shift?.worksiteName ? (
-              <Typography variant="body2" sx={{ fontWeight: 500, lineHeight: 1.35 }}>
+              <Typography variant="body2" sx={{ fontWeight: 600, lineHeight: 1.35 }}>
                 {shift.worksiteName}
               </Typography>
             ) : (
@@ -717,9 +1049,34 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
           </HeaderField>
 
           <HeaderField label="PO#" sx={{ minWidth: 80 }}>
-            <Typography variant="body2" sx={{ fontWeight: 500 }}>
-              {shift?.poNumber?.trim() || '—'}
-            </Typography>
+            {(() => {
+              const po = shift?.poNumber?.trim() || '';
+              if (po) {
+                return (
+                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                    {po}
+                  </Typography>
+                );
+              }
+              // Soft yellow pill on the em-dash so a missing PO is
+              // scannable in the drawer header — mirrors the Shifts
+              // table column treatment.
+              return (
+                <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                  <Box
+                    component="span"
+                    sx={{
+                      backgroundColor: 'rgba(244, 180, 0, 0.20)',
+                      color: '#7A5C00',
+                      borderRadius: 0.5,
+                      px: 0.5,
+                    }}
+                  >
+                    —
+                  </Box>
+                </Typography>
+              );
+            })()}
           </HeaderField>
 
           <HeaderField label="Date" sx={{ minWidth: 150 }}>
@@ -778,8 +1135,9 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
                   color="text.secondary"
                   sx={{ whiteSpace: 'nowrap' }}
                 >
-                  FUTA: {fmtPct(shift.futaRate)} · SUTA: {fmtPct(shift.sutaRate)} · WC:{' '}
-                  {fmtPct(shift.wcRate)}
+                  FUTA: {renderRateValue(shift.futaRate)} · SUTA:{' '}
+                  {renderRateValue(shift.sutaRate)} · WC:{' '}
+                  {renderRateValue(shift.wcRate)}
                 </Typography>
               </>
             ) : (

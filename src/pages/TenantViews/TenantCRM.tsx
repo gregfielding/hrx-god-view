@@ -5469,7 +5469,7 @@ const CompaniesTab: React.FC<{
   };
 
   const dealHeaderCellSx = {
-    padding: '4px 12px',
+    padding: '6px 12px',
     fontSize: '11px',
     fontWeight: 500,
     textTransform: 'uppercase' as const,

@@ -132,7 +132,7 @@ const ContactTable: React.FC<ContactTableProps> = ({
           top: stickyHeaderOffset,
           zIndex: 12,
           // Inbox-standard table header styling
-          padding: '4px 12px',
+          padding: '6px 12px',
           fontSize: '11px',
           fontWeight: 500,
           textTransform: 'uppercase',
@@ -144,7 +144,7 @@ const ContactTable: React.FC<ContactTableProps> = ({
             width: '56px',
             minWidth: '56px',
             maxWidth: '56px',
-            padding: '4px 12px',
+            padding: '6px 12px',
             position: 'sticky',
             top: stickyHeaderOffset,
             left: 0,

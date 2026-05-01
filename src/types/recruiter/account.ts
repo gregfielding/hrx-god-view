@@ -196,6 +196,19 @@ export interface RecruiterAccount {
    * National accounts only: when true, new locations added under a linked CRM company auto-create a child account (backend trigger).
    */
   autoCreateChildAccountsForLocations?: boolean;
+  /**
+   * National accounts only: when true, every newly-created child account under
+   * this national auto-spawns a draft Gig job order (event-based scheduling
+   * pattern; not a tax classification). The JO inherits hiring entity,
+   * E-Verify, screening, and pay defaults from the cascade — see
+   * `onChildAccountCreatedAutoCreateGigJobOrder` in `functions/src/`.
+   *
+   * Disabled effect on its own: only fires when the child account is created
+   * via the auto-create flow (i.e. when `autoCreateChildAccountsForLocations`
+   * is also true) — manual child-account creation is the recruiter's path
+   * and should not auto-spawn JOs.
+   */
+  autoCreateGigJobOrders?: boolean;
   /** Set by automation when this child account was created from a company location. */
   autoCreatedFromCompanyLocation?: boolean;
   /** Location display name at auto-create time (nickname else name); used for safe rename matching. */

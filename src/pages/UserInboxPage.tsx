@@ -2689,7 +2689,7 @@ const UserInboxPage: React.FC = () => {
                         padding="checkbox" 
                         width="32px" 
                         sx={{ 
-                          padding: '4px 12px', 
+                          padding: '6px 12px', 
                           width: '32px', 
                           minWidth: '32px', 
                           maxWidth: '32px', 
@@ -2727,14 +2727,14 @@ const UserInboxPage: React.FC = () => {
                       <TableCell 
                         width="56px" 
                         sx={{ 
-                          padding: '4px 12px', 
+                          padding: '6px 12px', 
                           height: '32px',
                           backgroundColor: 'background.paper',
                         }}
                       ></TableCell>
                       <TableCell 
                         sx={{ 
-                          padding: '4px 12px', 
+                          padding: '6px 12px', 
                           fontSize: '11px', 
                           fontWeight: 500, 
                           textTransform: 'uppercase', 
@@ -2752,7 +2752,7 @@ const UserInboxPage: React.FC = () => {
                       </TableCell>
                       <TableCell 
                         sx={{ 
-                          padding: '4px 12px', 
+                          padding: '6px 12px', 
                           fontSize: '11px', 
                           fontWeight: 500, 
                           textTransform: 'uppercase', 
@@ -2771,7 +2771,7 @@ const UserInboxPage: React.FC = () => {
                       <TableCell 
                         width="140px" 
                         sx={{ 
-                          padding: '4px 12px', 
+                          padding: '6px 12px', 
                           fontSize: '11px', 
                           fontWeight: 500, 
                           textTransform: 'uppercase', 
@@ -2788,7 +2788,7 @@ const UserInboxPage: React.FC = () => {
                       <TableCell 
                         width="160px" 
                         sx={{ 
-                          padding: '4px 12px', 
+                          padding: '6px 12px', 
                           height: '32px',
                           backgroundColor: 'background.paper',
                           borderRadius: 0,

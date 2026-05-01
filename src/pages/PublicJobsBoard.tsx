@@ -14,7 +14,6 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Autocomplete,
   Alert,
   CircularProgress,
   Container,
@@ -199,7 +198,6 @@ const PublicJobsBoard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [locationFilter, setLocationFilter] = useState('all');
   const [jobTypeFilter, setJobTypeFilter] = useState('all');
   const [selectedJob, setSelectedJob] = useState<PublicJobPosting | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -1136,17 +1134,6 @@ const PublicJobsBoard: React.FC = () => {
       );
     }
 
-    if (locationFilter !== 'all') {
-      filtered = filtered.filter((job) => {
-        // Match against city, state format
-        if (job.worksiteAddress && job.worksiteAddress.city && job.worksiteAddress.state) {
-          return `${job.worksiteAddress.city}, ${job.worksiteAddress.state}` === locationFilter;
-        }
-        // Or match against worksiteName
-        return job.worksiteName === locationFilter;
-      });
-    }
-
     if (jobTypeFilter !== 'all') {
       filtered = filtered.filter((job) => job.jobType === jobTypeFilter);
     }
@@ -1237,20 +1224,7 @@ const PublicJobsBoard: React.FC = () => {
     }
 
     setFilteredJobs(filtered);
-  }, [jobs, searchTerm, locationFilter, jobTypeFilter, showFavoritesOnly, favorites, sortBy, userLocation, userGroupIds, user?.uid]);
-
-  const getUniqueLocations = () => {
-    const locations = new Set<string>();
-    jobs.forEach(job => {
-      // Always prefer city, state format for dropdown
-      if (job.worksiteAddress?.city && job.worksiteAddress?.state &&
-          job.worksiteAddress.city.trim() && job.worksiteAddress.state.trim()) {
-        locations.add(`${job.worksiteAddress.city}, ${job.worksiteAddress.state}`);
-      }
-      // Skip jobs without proper city/state (they won't be filterable by location)
-    });
-    return Array.from(locations).sort();
-  };
+  }, [jobs, searchTerm, jobTypeFilter, showFavoritesOnly, favorites, sortBy, userLocation, userGroupIds, user?.uid]);
 
 
   const handleApply = async (job: PublicJobPosting) => {
@@ -1686,22 +1660,10 @@ const PublicJobsBoard: React.FC = () => {
               }}
             />
           </Grid>
-          {/* Desktop filters - hidden on mobile; Location is autocomplete for long lists */}
-          <Grid item xs={12} md={2} sx={{ display: { xs: 'none', md: 'block' } }}>
-            <Autocomplete
-              fullWidth
-              size="small"
-              options={['all', ...getUniqueLocations()]}
-              getOptionLabel={(option) => (option === 'all' ? t('jobs.allLocations') : option)}
-              value={locationFilter}
-              onChange={(_, newValue) => setLocationFilter(newValue ?? 'all')}
-              renderInput={(params) => (
-                <TextField {...params} label={t('jobs.location')} placeholder={t('jobs.allLocations')} />
-              )}
-              isOptionEqualToValue={(option, value) => option === value}
-            />
-          </Grid>
-          <Grid item xs={12} md={2} sx={{ display: { xs: 'none', md: 'block' } }}>
+          {/* Desktop filters — hidden on mobile. Location filter was
+              removed (Greg, 2026-04-30); the two remaining filters
+              widen from md={2} to md={3} to use the freed column. */}
+          <Grid item xs={12} md={3} sx={{ display: { xs: 'none', md: 'block' } }}>
             <FormControl fullWidth>
               <InputLabel>{t('jobs.jobType')}</InputLabel>
               <Select
@@ -1715,7 +1677,7 @@ const PublicJobsBoard: React.FC = () => {
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} md={2} sx={{ display: { xs: 'none', md: 'block' } }}>
+          <Grid item xs={12} md={3} sx={{ display: { xs: 'none', md: 'block' } }}>
             <FormControl fullWidth>
               <InputLabel>{t('jobs.sortBy')}</InputLabel>
               <Select
@@ -1743,20 +1705,6 @@ const PublicJobsBoard: React.FC = () => {
         {isMobile && mobileFiltersOpen && (
           <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
             <Grid container spacing={2}>
-              <Grid item xs={12}>
-                <Autocomplete
-                  fullWidth
-                  size="small"
-                  options={['all', ...getUniqueLocations()]}
-                  getOptionLabel={(option) => (option === 'all' ? t('jobs.allLocations') : option)}
-                  value={locationFilter}
-                  onChange={(_, newValue) => setLocationFilter(newValue ?? 'all')}
-                  renderInput={(params) => (
-                    <TextField {...params} label={t('jobs.location')} placeholder={t('jobs.allLocations')} />
-                  )}
-                  isOptionEqualToValue={(option, value) => option === value}
-                />
-              </Grid>
               <Grid item xs={12}>
                 <FormControl fullWidth>
                   <InputLabel>{t('jobs.jobType')}</InputLabel>
@@ -1798,13 +1746,12 @@ const PublicJobsBoard: React.FC = () => {
         )}
 
         <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
-          {(searchTerm || locationFilter !== 'all' || jobTypeFilter !== 'all' || showFavoritesOnly || sortBy !== 'newest') && (
+          {(searchTerm || jobTypeFilter !== 'all' || showFavoritesOnly || sortBy !== 'newest') && (
             <Button
               variant="text"
               size="small"
               onClick={() => {
                 setSearchTerm('');
-                setLocationFilter('all');
                 setJobTypeFilter('all');
                 setShowFavoritesOnly(false);
                 setSortBy('newest');

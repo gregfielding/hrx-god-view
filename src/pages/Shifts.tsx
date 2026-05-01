@@ -394,6 +394,9 @@ const Shifts: React.FC = () => {
         jobOrderId={null}
         shift={null}
         pickJobOrderFirst
+        onShiftAdded={() => {
+          void refetch();
+        }}
       />
     </Box>
   );
