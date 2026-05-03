@@ -167,6 +167,8 @@ describe('buildGigJobOrderFromChildAccount — happy path', () => {
     );
     expect(childAccountName).to.equal('CORT Baltimore Warehouse');
     expect(jobOrderData.jobTitle).to.equal('Event Worker');
+    // F.4 chain: no National defaults → cascaded position description.
+    expect(jobOrderData.jobDescription).to.equal('Furniture handling at events');
 
     // Status / type / marker
     expect(jobOrderData.status).to.equal('on_hold');
@@ -249,6 +251,54 @@ describe('buildGigJobOrderFromChildAccount — happy path', () => {
     expect(jobOrderData.jobTitle).to.equal('CORT Crew Member');
   });
 
+  it('F.4 — parent.defaultGigJobDescription wins over position text', () => {
+    const input = makeInput({
+      parentAccount: {
+        ...fullCascadeParent(),
+        defaultGigJobTitle: 'Warehouse Associate',
+        defaultGigJobDescription: 'Greg seed copy for CORT gig JOs.',
+      },
+    });
+    const { jobOrderData } = buildGigJobOrderFromChildAccount(input);
+    expect(jobOrderData.jobTitle).to.equal('Warehouse Associate');
+    expect(jobOrderData.jobDescription).to.equal('Greg seed copy for CORT gig JOs.');
+  });
+
+  it('F.4 — only National title set: description falls back to position', () => {
+    const input = makeInput({
+      parentAccount: {
+        ...fullCascadeParent(),
+        defaultGigJobTitle: 'Warehouse Associate',
+      },
+    });
+    const { jobOrderData } = buildGigJobOrderFromChildAccount(input);
+    expect(jobOrderData.jobTitle).to.equal('Warehouse Associate');
+    expect(jobOrderData.jobDescription).to.equal('Furniture handling at events');
+  });
+
+  it('F.4 — neither National default nor usable position description → empty string', () => {
+    const input = makeInput({
+      cascade: {
+        ...w2Cascade(),
+        positions: [
+          {
+            positionId: 'p_event',
+            jobTitle: 'Event Worker',
+            // Intentionally omit jobDescription — builder should land on ''.
+            payRate: 18,
+            billRate: 24.84,
+            markupPercentage: 38,
+            workersCompCode: '8015',
+            workersCompRate: 9.15,
+          },
+        ],
+      },
+    });
+    const { jobOrderData } = buildGigJobOrderFromChildAccount(input);
+    expect(jobOrderData.jobTitle).to.equal('Event Worker');
+    expect(jobOrderData.jobDescription).to.equal('');
+  });
+
   it('source field tracks which path produced the JO', () => {
     const trig = buildGigJobOrderFromChildAccount(makeInput()).jobOrderData;
     expect(trig.autoCreatedSource).to.equal('auto_create_trigger');
@@ -291,6 +341,7 @@ describe('buildGigJobOrderFromChildAccount — edge cases', () => {
     });
     const { jobOrderData } = buildGigJobOrderFromChildAccount(input);
     expect(jobOrderData.jobTitle).to.equal(DEFAULT_GIG_JOB_TITLE);
+    expect(jobOrderData.jobDescription).to.equal('');
     expect(jobOrderData.payRate).to.equal(0);
     // No explicit bill rate, no markup, no pay → bill rate falls to 0.
     expect(jobOrderData.billRate).to.equal(0);

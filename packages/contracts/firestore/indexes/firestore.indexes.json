@@ -123,6 +123,14 @@
         {"fieldPath": "status", "order": "ASCENDING"},
         {"fieldPath": "createdAt", "order": "DESCENDING"}
       ]
+    },
+    {
+      "collectionGroup": "job_orders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "recruiterAccountId", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"}
+      ]
     }
   ],
   "fieldOverrides": []

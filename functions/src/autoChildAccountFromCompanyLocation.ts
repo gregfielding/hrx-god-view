@@ -19,12 +19,58 @@ const LOG = {
   skippedIdempotent: 'autoChildAccount: skipped_idempotent_doc_exists',
   skippedToggleOff: 'autoChildAccount: skipped_toggle_off',
   skippedNonNational: 'autoChildAccount: skipped_non_national',
+  skippedAmbiguousMultiNational: 'autoChildAccount.skipped_ambiguous_multi_national',
   renameApplied: 'autoChildAccount: rename_applied',
   renameSkippedManual: 'autoChildAccount: rename_skipped_manual_edit',
 } as const;
 
 function logEvent(msg: string, fields: Record<string, unknown>): void {
   console.log(JSON.stringify({ msg, ...fields }));
+}
+
+function logWarn(msg: string, fields: Record<string, unknown>): void {
+  console.warn(JSON.stringify({ msg, level: 'warn', ...fields }));
+}
+
+/**
+ * **F.10 (CC.A audit, locked 2026-04-30)** — pure decision helper for the
+ * "how many National Accounts is this CRM company linked to?" question
+ * driving auto-child creation.
+ *
+ * Behavior:
+ *   - 0 parents → `none` (silent no-op; the CRM company has no
+ *     auto-creating National linked to it).
+ *   - 1 parent  → `proceed` with that parent's id (the only safe case).
+ *   - >1 parents → `skip_ambiguous` (we refuse to silently create N
+ *     duplicate child accounts for the same location, one per linked
+ *     National). Operator must disambiguate manually.
+ *
+ * Pure function so the multi-national branch is unit-testable without
+ * spinning up firestore. The `maybeAutoCreateChildAccountForNewLocation`
+ * orchestrator below feeds it the result of the
+ * `associations.companyIds array-contains <companyId>` query.
+ */
+export type AutoChildAccountParentDecision =
+  | { kind: 'none' }
+  | { kind: 'proceed'; parentId: string }
+  | {
+      kind: 'skip_ambiguous';
+      candidateNationalIds: string[];
+      candidateNationalNames: Array<string | null>;
+    };
+
+export function decideAutoChildAccountFromCandidates(
+  candidates: ReadonlyArray<{ id: string; name?: string | null }>,
+): AutoChildAccountParentDecision {
+  if (candidates.length === 0) return { kind: 'none' };
+  if (candidates.length === 1) {
+    return { kind: 'proceed', parentId: candidates[0].id };
+  }
+  return {
+    kind: 'skip_ambiguous',
+    candidateNationalIds: candidates.map((c) => c.id),
+    candidateNationalNames: candidates.map((c) => c.name ?? null),
+  };
 }
 
 export function locationDisplayName(loc: Record<string, unknown> | undefined | null): string {
@@ -183,6 +229,22 @@ export async function tryCreateChildAccountForNationalParent(params: {
       const cids = Array.isArray(assoc?.companyIds) ? assoc!.companyIds! : [];
       if (!cids.includes(companyId)) return;
 
+      // **F.5 (CC.A audit, locked 2026-04-30)** — inherit recruiterIds
+      // (and salespeopleIds, while we're here) from the parent National
+      // Account so the auto-created child shows up in recruiters' "my
+      // children" filters and notification routing without an extra
+      // backfill step. The Gig JO builder used to compensate for this
+      // gap with a parent-fallback (per A.4 in the audit); that
+      // fallback is now redundant for *new* auto-children but stays in
+      // place to handle children that pre-date this fix.
+      const parentAssoc = pd.associations as
+        | { recruiterIds?: unknown; salespeopleIds?: unknown }
+        | undefined;
+      const inheritArrayOfStrings = (v: unknown): string[] => {
+        if (!Array.isArray(v)) return [];
+        return v.filter((s): s is string => typeof s === 'string' && s.trim() !== '');
+      };
+
       const childPayload: AccountDoc = {
         name: childName,
         active: pd.active !== false,
@@ -198,6 +260,8 @@ export async function tryCreateChildAccountForNationalParent(params: {
         associations: {
           companyIds: [companyId],
           locations: [{ companyId, locationId }],
+          recruiterIds: inheritArrayOfStrings(parentAssoc?.recruiterIds),
+          salespeopleIds: inheritArrayOfStrings(parentAssoc?.salespeopleIds),
         },
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
@@ -256,6 +320,11 @@ export async function tryCreateChildAccountForNationalParent(params: {
 
 /**
  * Called from onCompanyLocationCreated (must run even when state/mirror logic is skipped).
+ *
+ * **F.10 contract** — when a CRM company is linked to >1 National Account,
+ * we refuse to create per-parent duplicates and emit a structured warn
+ * log. Operator disambiguates manually. See
+ * `decideAutoChildAccountFromCandidates` above.
  */
 export async function maybeAutoCreateChildAccountForNewLocation(params: {
   tenantId: string;
@@ -267,20 +336,49 @@ export async function maybeAutoCreateChildAccountForNewLocation(params: {
   const db = admin.firestore();
 
   const accountsCol = db.collection(`tenants/${tenantId}/accounts`);
-  const linkedParents = await accountsCol.where('associations.companyIds', 'array-contains', companyId).get();
+  const linkedParents = await accountsCol
+    .where('associations.companyIds', 'array-contains', companyId)
+    .get();
 
-  for (const docSnap of linkedParents.docs) {
-    const parentId = docSnap.id;
-    await tryCreateChildAccountForNationalParent({
-      db,
+  // We only consider National Accounts as auto-create parents. Filter
+  // before deciding ambiguity so a company linked to one National + one
+  // standalone account still proceeds normally.
+  const nationalCandidates = linkedParents.docs
+    .map((d) => ({
+      id: d.id,
+      data: d.data() as AccountDoc,
+    }))
+    .filter((c) => c.data.accountType === 'national')
+    .map((c) => ({ id: c.id, name: (c.data.name as string | undefined) ?? null }));
+
+  const decision = decideAutoChildAccountFromCandidates(nationalCandidates);
+
+  if (decision.kind === 'none') return;
+
+  if (decision.kind === 'skip_ambiguous') {
+    // Greg, 2026-04-30: structured warn so the recruiter can find this
+    // in Cloud Functions logs and disambiguate. The candidate list is
+    // bounded (would have to be a CRM mis-config for it to grow large)
+    // so logging the full ids + names is practical.
+    logWarn(LOG.skippedAmbiguousMultiNational, {
       tenantId,
-      parentAccountId: parentId,
       companyId,
       locationId,
-      locationData,
-      requireAutoCreateToggle: true,
+      candidateNationalIds: decision.candidateNationalIds,
+      candidateNationalNames: decision.candidateNationalNames,
     });
+    return;
   }
+
+  await tryCreateChildAccountForNationalParent({
+    db,
+    tenantId,
+    parentAccountId: decision.parentId,
+    companyId,
+    locationId,
+    locationData,
+    requireAutoCreateToggle: true,
+  });
 }
 
 /**

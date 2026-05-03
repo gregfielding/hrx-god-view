@@ -55,6 +55,7 @@ import {
   Badge,
   Tooltip,
 } from '@mui/material';
+import type { SxProps, Theme } from '@mui/material/styles';
 import {
   Business as BusinessIcon,
   Edit as EditIcon,
@@ -76,13 +77,14 @@ import {
   AccountTree as AccountTreeIcon,
   Settings as SettingsIcon,
   Save as SaveIcon,
-  CalendarMonth as CalendarIcon,
   Receipt as ReceiptIcon,
   LinkedIn as LinkedInIcon,
   Assessment as ReportsIcon,
   Note as NoteIcon,
   Notes as NotesIcon,
   Sync as SyncIcon,
+  ViewList as ViewListIcon,
+  Layers as LayersIcon,
 } from '@mui/icons-material';
 import {
   doc,
@@ -138,6 +140,7 @@ import PushToActiveBanner, {
 // re-push the current value without editing the field first.
 import SyncToActiveButton from '../components/recruiter/SyncToActiveButton';
 import type { PushFieldKey } from '../components/recruiter/PushToActiveDialog';
+import AccountShiftsTab from '../components/recruiter/AccountShiftsTab';
 import AccountCalendarTab from '../components/recruiter/AccountCalendarTab';
 import ActiveWorkersTable, {
   type ActiveWorkersSubAccountGrouping,
@@ -471,10 +474,16 @@ interface TabPanelProps {
   children?: React.ReactNode;
   index: number;
   value: number;
+  /**
+   * Merged onto the default tab-panel wrapper (`px: 2`, `pb: 2`).
+   * Use `{ px: 0 }` on Shifts so `ShiftsTable` / `ShiftsCalendarView` supply the
+   * same horizontal inset as `/shifts` (single `px: 2`), not double padding.
+   */
+  contentSx?: SxProps<Theme>;
 }
 
 function TabPanel(props: TabPanelProps) {
-  const { children, value, index, ...other } = props;
+  const { children, value, index, contentSx, ...other } = props;
   return (
     <div
       role="tabpanel"
@@ -483,7 +492,18 @@ function TabPanel(props: TabPanelProps) {
       aria-labelledby={`account-tab-${index}`}
       {...other}
     >
-      {value === index && <Box sx={{ px: 2, pb: 2 }}>{children}</Box>}
+      {value === index && (
+        <Box
+          sx={
+            [
+              { px: 2, pb: 2 },
+              ...(contentSx != null ? [contentSx] : []),
+            ] as SxProps<Theme>
+          }
+        >
+          {children}
+        </Box>
+      )}
     </div>
   );
 }
@@ -1368,7 +1388,26 @@ type PersonOption = { id: string; label: string };
 type AccountOption = { id: string; label: string };
 type EntityOption = { id: string; name: string; entityCode: string; workerType: string; everifyRequired?: boolean };
 
-const ACCOUNT_TAB_SLUGS = ['overview', 'calendar', 'active-workers', 'locations', 'contacts', 'children', 'pricing', 'job-orders', 'jobs-board', 'labor-pool', 'settings', 'invoicing', 'order-defaults', 'reports', 'activity', 'notes'] as const;
+const ACCOUNT_TAB_SLUGS = [
+  'shifts',
+  'overview',
+  'calendar',
+  'cascading-data',
+  'active-workers',
+  'locations',
+  'contacts',
+  'children',
+  'pricing',
+  'job-orders',
+  'jobs-board',
+  'labor-pool',
+  'settings',
+  'invoicing',
+  'order-defaults',
+  'reports',
+  'activity',
+  'notes',
+] as const;
 
 const RecruiterAccountDetails: React.FC = () => {
   const { accountId } = useParams<{ accountId: string }>();
@@ -1387,13 +1426,13 @@ const RecruiterAccountDetails: React.FC = () => {
     if (tab && LEGACY_ACCOUNT_TAB_REDIRECTS[tab]) {
       return ACCOUNT_TAB_SLUGS.indexOf('settings');
     }
-    // Overview was retired — both legacy `?tab=overview` and bare URLs with
-    // no `?tab=` land on Calendar now. URL gets normalized below.
+    // Legacy `?tab=overview`, bare URLs with no `?tab=`, and unknown slugs
+    // land on Shifts (account-scoped shift list). URL gets normalized below.
     if (tab === 'overview' || !tab) {
-      return ACCOUNT_TAB_SLUGS.indexOf('calendar');
+      return ACCOUNT_TAB_SLUGS.indexOf('shifts');
     }
     const idx = ACCOUNT_TAB_SLUGS.indexOf(tab as any);
-    return idx >= 0 ? idx : ACCOUNT_TAB_SLUGS.indexOf('calendar');
+    return idx >= 0 ? idx : ACCOUNT_TAB_SLUGS.indexOf('shifts');
   }, [searchParams]);
 
   const sectionFromUrl = useMemo<AccountSettingsSection>(() => {
@@ -1831,7 +1870,7 @@ const RecruiterAccountDetails: React.FC = () => {
   // canonical form so subsequent back-button / share-link behavior matches
   // the current IA. `replace` keeps legacy URLs out of history.
   // - ?tab=pricing / ?tab=order-defaults → ?tab=settings&section=…
-  // - ?tab=overview or bare URL (no ?tab=) → ?tab=calendar
+  // - ?tab=overview or bare URL (no ?tab=) → ?tab=shifts
   useEffect(() => {
     const tab = searchParams.get('tab');
     if (tab && LEGACY_ACCOUNT_TAB_REDIRECTS[tab]) {
@@ -1842,7 +1881,7 @@ const RecruiterAccountDetails: React.FC = () => {
       return;
     }
     if (tab === 'overview' || !tab) {
-      setSearchParams({ tab: 'calendar' }, { replace: true });
+      setSearchParams({ tab: 'shifts' }, { replace: true });
     }
     // We only care about the very first arrival of a legacy / empty slug;
     // once rewritten the branches above never fire again on a fresh mount.
@@ -1850,9 +1889,8 @@ const RecruiterAccountDetails: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Compact tab-pill styling that matches the /users layout tabs
-  // (UsersLayout.tsx). Lifts the visual sizing of every Account Details
-  // tab onto the same scale as the global Users hub navigation.
+  // Same pill treatment as `UserProfile` recruiter tabs (`variant="text"` +
+  // bg via `sx`) — keep in sync when adjusting record-header navigation.
   const tabPillSx = useCallback(
     (isActive: boolean) =>
       ({
@@ -1865,7 +1903,6 @@ const RecruiterAccountDetails: React.FC = () => {
         px: 1.25,
         py: 0.5,
         minHeight: 30,
-        height: 30,
         minWidth: 'auto',
         whiteSpace: 'nowrap' as const,
         '& .MuiButton-startIcon': {
@@ -2670,10 +2707,10 @@ const RecruiterAccountDetails: React.FC = () => {
 
   const jobOrdersTabCompanyIds = isChildAccount ? parentCompanyIds : (account?.associations?.companyIds ?? []);
   useEffect(() => {
-    const needsJobOrders = tabValue === 1 || tabValue === 2 || tabValue === 7 || tabValue === 9;
+    const needsJobOrders = tabValue === 2 || tabValue === 4 || tabValue === 9 || tabValue === 11;
     if (needsJobOrders && jobOrdersTabCompanyIds.length) {
       fetchAccountJobOrders();
-    } else if ((tabValue === 2 || tabValue === 7) && !jobOrdersTabCompanyIds.length) {
+    } else if ((tabValue === 4 || tabValue === 9) && !jobOrdersTabCompanyIds.length) {
       setAccountJobOrders([]);
       setAccountJobOrdersError(null);
     }
@@ -2705,9 +2742,9 @@ const RecruiterAccountDetails: React.FC = () => {
 
   useEffect(() => {
     const companyIdsToUse = isChildAccount ? parentCompanyIds : (account?.associations?.companyIds ?? []);
-    if (tabValue === 7 && companyIdsToUse.length) {
+    if (tabValue === 9 && companyIdsToUse.length) {
       fetchAccountJobPosts();
-    } else if (tabValue === 7 && !companyIdsToUse.length) {
+    } else if (tabValue === 9 && !companyIdsToUse.length) {
       setAccountJobPosts([]);
     }
   }, [tabValue, isChildAccount, parentCompanyIds, account?.associations?.companyIds, fetchAccountJobPosts]);
@@ -2843,11 +2880,11 @@ const RecruiterAccountDetails: React.FC = () => {
 
   // Only fetch full company locations for national/standalone accounts; child accounts show only their worksites
   useEffect(() => {
-    if (tabValue === 3 && !isNationalAccount && account?.associations?.companyIds?.length) {
+    if (tabValue === 5 && !isNationalAccount && account?.associations?.companyIds?.length) {
       fetchAccountLocations();
-    } else if (tabValue === 4 && !isChildAccount && account?.associations?.companyIds?.length) {
+    } else if (tabValue === 6 && !isChildAccount && account?.associations?.companyIds?.length) {
       fetchAccountLocations();
-    } else if (tabValue === 3 && (isNationalAccount || !account?.associations?.companyIds?.length)) {
+    } else if (tabValue === 5 && (isNationalAccount || !account?.associations?.companyIds?.length)) {
       setAccountLocationsList([]);
     }
   }, [tabValue, isNationalAccount, isChildAccount, account?.associations?.companyIds, fetchAccountLocations]);
@@ -2959,15 +2996,15 @@ const RecruiterAccountDetails: React.FC = () => {
 
   // Invoicing tab is available to security levels 5, 6, 7; redirect others to Overview
   useEffect(() => {
-    if (tabValue === 11 && !canAccessInvoicing) {
-      setAccountTab(0);
+    if (tabValue === 13 && !canAccessInvoicing) {
+      setAccountTab(1);
     }
   }, [tabValue, canAccessInvoicing, setAccountTab]);
 
   // Child accounts don't have a Locations tab; switch to Overview if that tab is selected
   useEffect(() => {
-    if (isChildAccount && tabValue === 3) {
-      setAccountTab(0);
+    if (isChildAccount && tabValue === 5) {
+      setAccountTab(1);
     }
   }, [isChildAccount, tabValue, setAccountTab]);
 
@@ -3129,9 +3166,9 @@ const RecruiterAccountDetails: React.FC = () => {
   }, [tenantId, account?.id]);
 
   useEffect(() => {
-    if (((tabValue === 3 && isNationalAccount) || tabValue === 5) && account?.id) {
+    if (((tabValue === 5 && isNationalAccount) || tabValue === 7) && account?.id) {
       fetchChildAccounts();
-    } else if (tabValue === 3 && !account?.id) {
+    } else if (tabValue === 5 && !account?.id) {
       setChildAccountsList([]);
     }
   }, [tabValue, account?.id, isNationalAccount, fetchChildAccounts]);
@@ -3186,9 +3223,9 @@ const RecruiterAccountDetails: React.FC = () => {
   }, [tenantId, account?.associations?.companyIds]);
 
   useEffect(() => {
-    if (tabValue === 4 && contactTabCompanyIds.length) {
+    if (tabValue === 6 && contactTabCompanyIds.length) {
       fetchAccountContacts(contactTabCompanyIds);
-    } else if (tabValue === 4) {
+    } else if (tabValue === 6) {
       setAccountContactsList([]);
     }
   }, [tabValue, contactTabCompanyIds, fetchAccountContacts]);
@@ -4240,6 +4277,7 @@ const RecruiterAccountDetails: React.FC = () => {
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
       <PageHeader
+        toolbarDividerSpacing={0}
         title={
           <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
             <Avatar
@@ -4556,7 +4594,7 @@ const RecruiterAccountDetails: React.FC = () => {
         }
         titleRightActions={
           <>
-            {tabValue === 7 && (
+            {tabValue === 9 && (
               <Button
                 variant="contained"
                 startIcon={<AddIcon />}
@@ -4630,13 +4668,11 @@ const RecruiterAccountDetails: React.FC = () => {
         filters={
           <Box
             sx={{
-              px: 1.5,
-              py: 1.25,
-              backgroundColor: '#F9FAFB',
-              borderRadius: 2,
-              border: '1px solid #EAEEF4',
+              width: '100%',
+              minWidth: 0,
               overflowX: 'auto',
               overflowY: 'hidden',
+              WebkitOverflowScrolling: 'touch',
               '&::-webkit-scrollbar': { height: '6px' },
               '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)', borderRadius: '4px' },
               '&::-webkit-scrollbar-thumb': {
@@ -4648,136 +4684,151 @@ const RecruiterAccountDetails: React.FC = () => {
               scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
             }}
           >
-            <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
-              {/* Overview tab retired — Calendar is now the default landing
-                  tab for an account. The TabPanel index={0} body is left
-                  dormant; legacy `?tab=overview` (and bare account URLs with
-                  no `?tab=`) are redirected to `?tab=calendar` in the
-                  tabFromUrl resolver / URL-normalization effect. */}
+            <Box sx={{ display: 'flex', gap: 0.35, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
               <Button
-                variant={tabValue === 1 ? 'contained' : 'text'}
-                onClick={() => setAccountTab(1)}
+                variant="text"
+                onClick={() => setAccountTab(0)}
+                startIcon={<ViewListIcon fontSize="small" />}
+                sx={tabPillSx(tabValue === 0)}
+              >
+                Shifts
+              </Button>
+              {/* Overview tab retired — legacy `?tab=overview` (and bare
+                  account URLs with no `?tab=`) normalize to `?tab=shifts`. */}
+              {/* Calendar tab hidden — account calendar lives under Shifts → Calendar view.
+              <Button
+                variant="text"
+                onClick={() => setAccountTab(2)}
                 startIcon={<CalendarIcon fontSize="small" />}
-                sx={tabPillSx(tabValue === 1)}
+                sx={tabPillSx(tabValue === 2)}
               >
                 Calendar
               </Button>
+              */}
               <Button
-                variant={tabValue === 2 ? 'contained' : 'text'}
-                onClick={() => setAccountTab(2)}
-                startIcon={<GroupWorkIcon fontSize="small" />}
-                sx={tabPillSx(tabValue === 2)}
+                variant="text"
+                onClick={() => setAccountTab(9)}
+                startIcon={<WorkIcon fontSize="small" />}
+                sx={tabPillSx(tabValue === 9)}
               >
-                Workforce
+                Job Orders
               </Button>
               {!isChildAccount && (
                 <Button
-                  variant={tabValue === 3 ? 'contained' : 'text'}
-                  onClick={() => setAccountTab(3)}
+                  variant="text"
+                  onClick={() => setAccountTab(5)}
                   startIcon={isNationalAccount ? <AccountTreeIcon fontSize="small" /> : <LocationOnIcon fontSize="small" />}
-                  sx={tabPillSx(tabValue === 3)}
+                  sx={tabPillSx(tabValue === 5)}
                 >
-                  {isNationalAccount ? 'Sub Accounts' : 'Locations'}
+                  {isNationalAccount ? 'Child Accounts' : 'Locations'}
                 </Button>
               )}
               <Button
-                variant={tabValue === 4 ? 'contained' : 'text'}
+                variant="text"
+                onClick={() => setAccountTab(3)}
+                startIcon={<LayersIcon fontSize="small" />}
+                sx={tabPillSx(tabValue === 3)}
+              >
+                Cascading Data
+              </Button>
+              <Button
+                variant="text"
                 onClick={() => setAccountTab(4)}
-                startIcon={<PersonIcon fontSize="small" />}
+                startIcon={<GroupWorkIcon fontSize="small" />}
                 sx={tabPillSx(tabValue === 4)}
+              >
+                Workforce
+              </Button>
+              <Button
+                variant="text"
+                onClick={() => setAccountTab(6)}
+                startIcon={<PersonIcon fontSize="small" />}
+                sx={tabPillSx(tabValue === 6)}
               >
                 Contacts
               </Button>
               {showChildrenTab && !isNationalAccount && (
                 <Button
-                  variant={tabValue === 5 ? 'contained' : 'text'}
-                  onClick={() => setAccountTab(5)}
+                  variant="text"
+                  onClick={() => setAccountTab(7)}
                   startIcon={<AccountTreeIcon fontSize="small" />}
-                  sx={tabPillSx(tabValue === 5)}
+                  sx={tabPillSx(tabValue === 7)}
                 >
                   Children
                 </Button>
               )}
               {/* Pricing is now a section inside the Docs & Settings tab
-                  (Settings → Billing → Pricing). The TabPanel index={6}
+                  (Settings → Billing → Pricing). The TabPanel index={8}
                   body is left dormant for safety; legacy `?tab=pricing`
                   URLs are redirected to `?tab=settings&section=pricing`
                   in the URL-normalization effect above. */}
-              <Button
-                variant={tabValue === 7 ? 'contained' : 'text'}
-                onClick={() => setAccountTab(7)}
-                startIcon={<WorkIcon fontSize="small" />}
-                sx={tabPillSx(tabValue === 7)}
-              >
-                Job Orders
-              </Button>
               {/* Jobs Board + Labor Pool tabs hidden per UI cleanup pass —
                   surfaces deemed not yet ready for production. Re-enable by
                   uncommenting both Buttons below.
               <Button
-                variant={tabValue === 8 ? 'contained' : 'text'}
-                onClick={() => setAccountTab(8)}
+                variant="text"
+                onClick={() => setAccountTab(10)}
                 startIcon={<BadgeIcon fontSize="small" />}
-                sx={tabPillSx(tabValue === 8)}
+                sx={tabPillSx(tabValue === 10)}
               >
                 Jobs Board
               </Button>
               <Button
-                variant={tabValue === 9 ? 'contained' : 'text'}
-                onClick={() => setAccountTab(9)}
+                variant="text"
+                onClick={() => setAccountTab(11)}
                 startIcon={<GroupWorkIcon fontSize="small" />}
-                sx={tabPillSx(tabValue === 9)}
+                sx={tabPillSx(tabValue === 11)}
               >
                 Labor Pool
               </Button>
               */}
               <Button
-                variant={tabValue === 10 ? 'contained' : 'text'}
-                onClick={() => setAccountTab(10)}
+                variant="text"
+                onClick={() => setAccountTab(12)}
                 startIcon={<SettingsIcon fontSize="small" />}
-                sx={tabPillSx(tabValue === 10)}
+                sx={tabPillSx(tabValue === 12)}
               >
                 Docs &amp; Settings
               </Button>
               {canAccessInvoicing && (
                 <Button
-                  variant={tabValue === 11 ? 'contained' : 'text'}
-                  onClick={() => setAccountTab(11)}
+                  variant="text"
+                  onClick={() => setAccountTab(13)}
                   startIcon={<ReceiptIcon fontSize="small" />}
-                  sx={tabPillSx(tabValue === 11)}
+                  sx={tabPillSx(tabValue === 13)}
                 >
                   Invoicing
                 </Button>
               )}
               {/* Order Defaults is now two sections inside the Docs &
                   Settings tab (Settings → Order Defaults → Order Details
-                  / Staff Instructions). TabPanel index={12} is left
+                  / Staff Instructions). TabPanel index={14} is left
                   dormant for safety; legacy `?tab=order-defaults` URLs
                   are redirected to `?tab=settings&section=order-details`. */}
               <Button
-                variant={tabValue === 13 ? 'contained' : 'text'}
-                onClick={() => setAccountTab(13)}
+                variant="text"
+                onClick={() => setAccountTab(15)}
                 startIcon={<ReportsIcon fontSize="small" />}
-                sx={tabPillSx(tabValue === 13)}
+                sx={tabPillSx(tabValue === 15)}
               >
                 Reports
               </Button>
               {/* Activity tab hidden per UI cleanup pass — re-enable by
                   uncommenting the Button below.
               <Button
-                variant={tabValue === 14 ? 'contained' : 'text'}
-                onClick={() => setAccountTab(14)}
+                variant="text"
+                onClick={() => setAccountTab(16)}
                 startIcon={<DashboardIcon fontSize="small" />}
-                sx={tabPillSx(tabValue === 14)}
+                sx={tabPillSx(tabValue === 16)}
               >
                 Activity
               </Button>
               */}
               <Button
-                variant={tabValue === 15 ? 'contained' : 'text'}
-                onClick={() => setAccountTab(15)}
+                variant="text"
+                onClick={() => setAccountTab(17)}
                 startIcon={<NotesIcon fontSize="small" />}
-                sx={tabPillSx(tabValue === 15)}
+                sx={tabPillSx(tabValue === 17)}
               >
                 Notes {notesCount > 0 ? `(${notesCount})` : ''}
               </Button>
@@ -4785,14 +4836,14 @@ const RecruiterAccountDetails: React.FC = () => {
           </Box>
         }
         rightActions={
-          tabValue === 3 ? (
+          tabValue === 5 ? (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'nowrap', minWidth: 0 }}>
               <Box sx={{ minWidth: 0, flex: '1 1 200px', maxWidth: 420 }}>
                 <InboxSearchBar
                   value={isNationalAccount ? childrenSearchQuery : locationsSearchQuery}
                   onChange={isNationalAccount ? setChildrenSearchQuery : setLocationsSearchQuery}
                   onSearch={isNationalAccount ? setChildrenSearchQuery : setLocationsSearchQuery}
-                  placeholder={isNationalAccount ? 'Search sub accounts…' : 'Search by name, code, city, or state...'}
+                  placeholder={isNationalAccount ? 'Search child accounts…' : 'Search by name, code, city, or state...'}
                 />
               </Box>
               {isNationalAccount ? (
@@ -4817,7 +4868,7 @@ const RecruiterAccountDetails: React.FC = () => {
                 </Button>
               ) : null}
             </Box>
-          ) : tabValue === 7 ? (
+          ) : tabValue === 9 ? (
             <Stack direction="row" alignItems="center" spacing={1.5} flexWrap="nowrap" sx={{ minWidth: 0 }}>
               <FavoritesFilter
                 favoriteType="jobOrders"
@@ -4838,7 +4889,6 @@ const RecruiterAccountDetails: React.FC = () => {
             </Stack>
           ) : undefined
         }
-        showDivider={false}
       />
 
       {/* Add Location Dialog (same as Company – Locations tab; adds to selected company) */}
@@ -5641,8 +5691,22 @@ const RecruiterAccountDetails: React.FC = () => {
         requireAccountSelection
       />
 
-      <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', pt: 2, pb: 2 }}>
-        <TabPanel value={tabValue} index={0}>
+      <Box
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          pt: tabValue === 0 ? 0 : 2,
+          pb: 2,
+        }}
+      >
+        <TabPanel value={tabValue} index={0} contentSx={{ px: 0 }}>
+          <Box sx={{ flex: 1, minHeight: 0, height: '100%', display: 'flex', flexDirection: 'column' }}>
+            <AccountShiftsTab tenantId={tenantId} account={account} accountLoading={loading} />
+          </Box>
+        </TabPanel>
+        <TabPanel value={tabValue} index={1}>
           <Grid container spacing={3}>
             <Grid item xs={12} md={9}>
               {/* Account Details card removed — the read-only summary lives
@@ -5765,7 +5829,7 @@ const RecruiterAccountDetails: React.FC = () => {
             </Grid>
           </Grid>
         </TabPanel>
-        <TabPanel value={tabValue} index={1}>
+        <TabPanel value={tabValue} index={2}>
           <Grid container spacing={3}>
             <Grid item xs={12} md={9}>
               <AccountCalendarTab tenantId={tenantId!} account={account} scopedJobOrderIds={isChildAccount ? accountJobOrders.map((j) => j.id) : undefined} />
@@ -5798,7 +5862,17 @@ const RecruiterAccountDetails: React.FC = () => {
             </Grid>
           </Grid>
         </TabPanel>
-        <TabPanel value={tabValue} index={2}>
+        <TabPanel value={tabValue} index={3}>
+          <Box sx={{ p: 2 }}>
+            <Typography variant="h6" sx={{ fontWeight: 600, mb: 1 }}>
+              Cascading Data
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Fields and values that cascade from this account to child accounts and job orders can be managed here.
+            </Typography>
+          </Box>
+        </TabPanel>
+        <TabPanel value={tabValue} index={4}>
           {/* Workforce tab — rebuilt as three sub-tabs (Scheduled / Active /
               Inactive) per docs/WORKFORCE_DOMAIN_MODEL.md Phase 3. The
               legacy ActiveWorkersTable is still used on location-scoped
@@ -5821,7 +5895,7 @@ const RecruiterAccountDetails: React.FC = () => {
             }
           />
         </TabPanel>
-        <TabPanel value={tabValue} index={3}>
+        <TabPanel value={tabValue} index={5}>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0 }}>
             {isNationalAccount ? (
               <>
@@ -6079,7 +6153,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
             )}
           </Box>
         </TabPanel>
-        <TabPanel value={tabValue} index={4}>
+        <TabPanel value={tabValue} index={6}>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
               <Typography variant="h6" fontWeight={700}>
@@ -6414,7 +6488,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
             </DialogActions>
           </Dialog>
         </TabPanel>
-        <TabPanel value={tabValue} index={5}>
+        <TabPanel value={tabValue} index={7}>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0 }}>
             <TextField
               size="small"
@@ -6692,7 +6766,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
             )}
           </Box>
         </TabPanel>
-        <TabPanel value={tabValue} index={6}>
+        <TabPanel value={tabValue} index={8}>
           <Grid container spacing={3}>
             <Grid item xs={12} md={9}>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -7162,7 +7236,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
             </Grid>
           </Grid>
         </TabPanel>
-        <TabPanel value={tabValue} index={7}>
+        <TabPanel value={tabValue} index={9}>
           <Grid container spacing={3}>
             <Grid item xs={12}>
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0 }}>
@@ -7723,7 +7797,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
             </Grid>
           </Grid>
         </TabPanel>
-        <TabPanel value={tabValue} index={8}>
+        <TabPanel value={tabValue} index={10}>
           <Grid container spacing={3}>
             <Grid item xs={12}>
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0 }}>
@@ -7868,7 +7942,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
             </Grid>
           </Grid>
         </TabPanel>
-        <TabPanel value={tabValue} index={9}>
+        <TabPanel value={tabValue} index={11}>
           <Grid container spacing={3}>
             <Grid item xs={12} md={9}>
               <Card>
@@ -7951,7 +8025,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
             </Grid>
           </Grid>
         </TabPanel>
-        <TabPanel value={tabValue} index={10}>
+        <TabPanel value={tabValue} index={12}>
           {          /*
             Docs & Settings tab — consolidates the old top-level Settings,
             Pricing, and Order Defaults tabs into one surface with a left
@@ -8957,7 +9031,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                 without rendering any UI. */}
           </Grid>
         </TabPanel>
-        <TabPanel value={tabValue} index={11}>
+        <TabPanel value={tabValue} index={13}>
           <Grid container spacing={3}>
             <Grid item xs={12} md={9}>
               {!canAccessInvoicing ? (
@@ -9188,7 +9262,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
             </Grid>
           </Grid>
         </TabPanel>
-        <TabPanel value={tabValue} index={12}>
+        <TabPanel value={tabValue} index={14}>
           <Grid container spacing={3}>
             <Grid item xs={12} md={9}>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -9334,7 +9408,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
             </Grid>
           </Grid>
         </TabPanel>
-        <TabPanel value={tabValue} index={13}>
+        <TabPanel value={tabValue} index={15}>
           <Grid container spacing={3}>
             <Grid item xs={12} md={9}>
               <Card>
@@ -9374,7 +9448,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
             </Grid>
           </Grid>
         </TabPanel>
-        <TabPanel value={tabValue} index={14}>
+        <TabPanel value={tabValue} index={16}>
           <Grid container spacing={3}>
             <Grid item xs={12} md={9}>
               <Card>
@@ -9414,7 +9488,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
             </Grid>
           </Grid>
         </TabPanel>
-        <TabPanel value={tabValue} index={15}>
+        <TabPanel value={tabValue} index={17}>
           <Box sx={{ py: 1 }}>
             <CRMNotesTab
               entityId={account.id}

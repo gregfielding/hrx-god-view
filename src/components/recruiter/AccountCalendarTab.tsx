@@ -15,6 +15,12 @@ import {
   CircularProgress,
   Paper,
   Tooltip,
+  Divider,
+  FormControl,
+  InputLabel,
+  MenuItem,
+  Select,
+  TextField,
 } from '@mui/material';
 import {
   ChevronLeft as ChevronLeftIcon,
@@ -26,6 +32,10 @@ import { collection, query, where, getDocs, documentId } from 'firebase/firestor
 import { db } from '../../firebase';
 import { p } from '../../data/firestorePaths';
 import { useGigJobOrdersCalendar, getColorForJobOrderId } from '../../hooks/useGigJobOrdersCalendar';
+import useActiveShifts from '../../hooks/useActiveShifts';
+import ShiftsTable from '../shifts/ShiftsTable';
+import type { ShiftsJobTypeFilter, ShiftsStatusFilter } from '../../pages/Shifts';
+import { SHIFT_STATUS_FILTER_ENTRIES } from '../../utils/shifts/shiftRow';
 import type { CalendarEvent, CalendarView } from '../../types/calendar';
 import type { RecruiterAccount } from '../../types/recruiter/account';
 import { renderShiftTooltip } from '../../utils/calendarShiftTooltip';
@@ -75,12 +85,53 @@ export interface AccountCalendarTabProps {
   scopedJobOrderIds?: string[];
 }
 
+const ACCOUNT_SHIFT_TABLE_STATUS: Array<{ value: ShiftsStatusFilter; label: string }> = [
+  { value: 'all', label: 'All Statuses' },
+  ...SHIFT_STATUS_FILTER_ENTRIES,
+];
+
+const ACCOUNT_SHIFT_JOB_TYPE: Array<{ value: ShiftsJobTypeFilter; label: string }> = [
+  { value: 'all', label: 'All Types' },
+  { value: 'gig', label: 'Gig' },
+  { value: 'career', label: 'Career' },
+];
+
+const filterSelectSx = {
+  height: 36,
+  borderRadius: '6px',
+  backgroundColor: 'white',
+  fontSize: '0.875rem',
+  '& .MuiOutlinedInput-notchedOutline': { borderColor: '#E5E7EB' },
+  '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#D1D5DB' },
+} as const;
+
 const AccountCalendarTab: React.FC<AccountCalendarTabProps> = ({ tenantId, account, locationFilter, scopedJobOrderIds }) => {
   const navigate = useNavigate();
   const [view, setView] = useState<CalendarView>('month');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [accountJobOrderIds, setAccountJobOrderIds] = useState<string[]>([]);
   const [filteredJobOrderIds, setFilteredJobOrderIds] = useState<string[] | null>(null);
+
+  const [shiftTableSearch, setShiftTableSearch] = useState('');
+  const [shiftTableStatus, setShiftTableStatus] = useState<ShiftsStatusFilter>('all');
+  const [shiftTableJobType, setShiftTableJobType] = useState<ShiftsJobTypeFilter>('all');
+
+  const activeShiftsHookOptions = useMemo(() => {
+    if (!account?.id) {
+      return { recruiterAccountIds: [] as string[] };
+    }
+    const ids = new Set<string>([account.id.trim()]);
+    (account.childAccountIds ?? []).forEach((id) => {
+      if (typeof id === 'string' && id.trim()) ids.add(id.trim());
+    });
+    return { recruiterAccountIds: Array.from(ids) };
+  }, [account?.id, account?.childAccountIds]);
+
+  const {
+    rows: accountShiftRows,
+    loading: accountShiftsLoading,
+    error: accountShiftsError,
+  } = useActiveShifts(tenantId, activeShiftsHookOptions);
 
   const baseIds = useMemo(() => account?.associations?.jobOrderIds ?? [], [account?.associations?.jobOrderIds]);
   const companyScopeIds = useMemo(() => {
@@ -256,6 +307,72 @@ const AccountCalendarTab: React.FC<AccountCalendarTabProps> = ({ tenantId, accou
           Week and day views: switch to Month or open the full calendar for detailed views.
         </Typography>
       )}
+
+      <Divider sx={{ my: 3 }} />
+
+      <Typography variant="subtitle2" sx={{ mb: 0.5, fontWeight: 600 }}>
+        Shift list
+      </Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+        Same shifts table as Shifts → List, scoped to job orders for this account
+        {account.childAccountIds?.length ? ' (includes child accounts).' : '.'}
+      </Typography>
+
+      <Box sx={{ display: 'flex', gap: 1.25, flexWrap: 'wrap', alignItems: 'center', mb: 2 }}>
+        <TextField
+          size="small"
+          placeholder="Search shifts…"
+          value={shiftTableSearch}
+          onChange={(e) => setShiftTableSearch(e.target.value)}
+          sx={{ minWidth: 200, flex: '1 1 200px', maxWidth: 420 }}
+          InputProps={{ sx: { borderRadius: '6px', bgcolor: 'white' } }}
+        />
+        <FormControl size="small" sx={{ minWidth: 150, height: 36 }}>
+          <InputLabel sx={{ fontSize: '0.875rem' }}>Status</InputLabel>
+          <Select
+            value={shiftTableStatus}
+            label="Status"
+            onChange={(e) => setShiftTableStatus(e.target.value as ShiftsStatusFilter)}
+            sx={filterSelectSx}
+          >
+            {ACCOUNT_SHIFT_TABLE_STATUS.map((opt) => (
+              <MenuItem key={opt.value} value={opt.value}>
+                {opt.label}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        <FormControl size="small" sx={{ minWidth: 140, height: 36 }}>
+          <InputLabel sx={{ fontSize: '0.875rem' }}>Job type</InputLabel>
+          <Select
+            value={shiftTableJobType}
+            label="Job type"
+            onChange={(e) => setShiftTableJobType(e.target.value as ShiftsJobTypeFilter)}
+            sx={filterSelectSx}
+          >
+            {ACCOUNT_SHIFT_JOB_TYPE.map((opt) => (
+              <MenuItem key={opt.value} value={opt.value}>
+                {opt.label}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+      </Box>
+
+      <ShiftsTable
+        tenantId={tenantId}
+        rows={accountShiftRows}
+        loading={accountShiftsLoading}
+        error={accountShiftsError}
+        search={shiftTableSearch}
+        showFavoritesOnly={false}
+        accountFilter="all"
+        statusFilter={shiftTableStatus}
+        jobTypeFilter={shiftTableJobType}
+        accountFilterDisabled
+        containerSx={{ px: 0, pt: 0 }}
+        emptyStateNoDataMessage="No shifts for job orders linked to this account."
+      />
     </Box>
   );
 };

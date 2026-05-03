@@ -1,20 +1,29 @@
 /**
- * useActiveShifts — fan-out fetch of every shift across the tenant that is
- * "active right now" (today/future single-day, in-window multi-day, or
- * recurring career shifts).
+ * useActiveShifts — fan-out fetch of shifts across the tenant (all job order
+ * statuses). Row inclusion for dated gigs uses toolbar date range and
+ * buildActiveRowMeta (past dated gigs remain in the dataset for filtering).
  *
  * Lives at the parent (`Shifts.tsx`) level so List and Calendar tabs share
  * the same dataset — switching tabs doesn't refetch.
  *
- * Fetch strategy: pull non-terminal JOs once, then load each JO's `shifts`
- * subcollection in parallel. There's no `collectionGroup('shifts')` index
- * in the project today, and going through the JO list lets us keep JO
- * context (jobTitle, company, location, jobType) on every row without a
- * second join.
+ * Fetch strategy: pull job orders (no status filter — shifts must appear
+ * for every JO state including on_hold / cancelled), then load each JO's
+ * `shifts` subcollection in parallel. There's no `collectionGroup('shifts')`
+ * index in the project today, and going through the JO list keeps JO context
+ * (jobTitle, company, location, jobType) on every row without a second join.
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  where,
+  type DocumentData,
+  type QueryDocumentSnapshot,
+} from 'firebase/firestore';
 
 import { db } from '../firebase';
 import { p } from '../data/firestorePaths';
@@ -29,6 +38,7 @@ import {
   getEffectiveJobOrderPositionField,
   type JobOrderForEffectiveRead,
 } from '../shared/jobOrder/getEffectiveJobOrderField';
+import { isExcludedFromPlacementsApplicantPool } from '../utils/applicationStatusNormalize';
 
 interface AddressParts {
   street?: string;
@@ -76,7 +86,17 @@ const readJoFinancials = (
   sutaRate?: number;
   futaRate?: number;
 } => {
-  const positions = Array.isArray(data.positions) ? data.positions : [];
+  // Prefer `positions[]` (canonical, snapshot-aware) and fall back to
+  // `gigPositions[]` for gig JOs which historically use that field
+  // exclusively. Going forward, `EditShiftForm` snapshots the chosen
+  // position's rates onto the shift doc itself, so this per-JO fallback
+  // exists primarily for the JO-level table summary and for legacy
+  // shifts that pre-date the snapshot fix.
+  const positions = Array.isArray(data.positions) && data.positions.length > 0
+    ? data.positions
+    : Array.isArray(data.gigPositions)
+      ? data.gigPositions
+      : [];
   const p0: Record<string, any> | undefined = positions[0];
   const positionId =
     typeof p0?.positionId === 'string' ? (p0.positionId as string) : '';
@@ -111,10 +131,19 @@ const readJoFinancials = (
     toFiniteNumber(data.billRate) ??
     readPositionRate('billRate', toFiniteNumber(p0?.billRate));
 
+  // Markup is persisted under three different names in the wild:
+  //   - `data.markup` / `data.markupPercent`            top-level (older flow)
+  //   - `gigPositions[].markup`                         JO form's gig-position UI write key
+  //   - `positions[].markupPercent`                     position-array convention
+  //   - `positions[].markupPercentage`                  cascade-engine canonical
+  // Read all of them, snapshot-aware first, then per-position, then top-level.
   const explicitMarkup =
     toFiniteNumber(data.markup) ??
     toFiniteNumber(data.markupPercent) ??
-    readPositionRate('markupPercentage', toFiniteNumber(p0?.markupPercent));
+    readPositionRate(
+      'markupPercentage',
+      toFiniteNumber(p0?.markupPercent ?? p0?.markup ?? p0?.markupPercentage),
+    );
   // Derived markup when both rates are present and pay > 0.
   const derivedMarkup =
     payRate && billRate && payRate > 0
@@ -165,12 +194,26 @@ export interface UseActiveShiftsResult {
   refetch: () => Promise<void>;
 }
 
-const NON_TERMINAL_JO_STATUSES = ['open', 'on-hold', 'on_hold', 'filled'] as const;
+export interface UseActiveShiftsOptions {
+  /**
+   * When set, only job orders whose `recruiterAccountId` matches one of these
+   * ids are loaded (parallel equality queries — supports national + children).
+   * Omit for tenant-wide active shifts (same as legacy behavior).
+   */
+  recruiterAccountIds?: string[] | null;
+}
 
-const useActiveShifts = (tenantId: string | null | undefined): UseActiveShiftsResult => {
+const useActiveShifts = (
+  tenantId: string | null | undefined,
+  options?: UseActiveShiftsOptions | null,
+): UseActiveShiftsResult => {
   const [rows, setRows] = useState<ShiftRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const scopeKey =
+    options?.recruiterAccountIds?.map((id) => String(id || '').trim()).filter(Boolean).join('|') ??
+    '';
 
   const fetchActiveShifts = useCallback(async () => {
     if (!tenantId) {
@@ -178,14 +221,43 @@ const useActiveShifts = (tenantId: string | null | undefined): UseActiveShiftsRe
       setLoading(false);
       return;
     }
+    const scopedIds =
+      options?.recruiterAccountIds?.map((id) => String(id || '').trim()).filter(Boolean) ?? [];
+    const useAccountScope = options?.recruiterAccountIds != null;
+    if (useAccountScope && scopedIds.length === 0) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError(null);
     const todayIso = todayIsoLocal();
     try {
       const jobOrdersRef = collection(db, p.jobOrders(tenantId));
-      const joSnap = await getDocs(
-        query(jobOrdersRef, where('status', 'in', [...NON_TERMINAL_JO_STATUSES])),
-      );
+      let joDocs: QueryDocumentSnapshot<DocumentData>[];
+
+      if (useAccountScope) {
+        const byId = new Map<string, QueryDocumentSnapshot<DocumentData>>();
+        await Promise.all(
+          scopedIds.map(async (accId) => {
+            try {
+              const q = query(jobOrdersRef, where('recruiterAccountId', '==', accId));
+              const snap = await getDocs(q);
+              snap.docs.forEach((d) => byId.set(d.id, d));
+            } catch (err) {
+              console.warn(
+                `useActiveShifts: failed account-scoped job order query for ${accId}:`,
+                err,
+              );
+            }
+          }),
+        );
+        joDocs = Array.from(byId.values());
+      } else {
+        const joSnap = await getDocs(query(jobOrdersRef));
+        joDocs = joSnap.docs;
+      }
 
       // Each entry pairs the public JobOrderLite the rest of the app sees
       // with the private companyId/worksiteId we need to hydrate the
@@ -194,7 +266,7 @@ const useActiveShifts = (tenantId: string | null | undefined): UseActiveShiftsRe
         jo: JobOrderLite;
         companyId: string | null;
         worksiteId: string | null;
-      }> = joSnap.docs.map((d) => {
+      }> = joDocs.map((d) => {
         const data = d.data() as Record<string, any>;
         const derivedJobTitle =
           data.jobTitle ||
@@ -244,8 +316,18 @@ const useActiveShifts = (tenantId: string | null | undefined): UseActiveShiftsRe
             companyLogoUrl: trimOrUndef(
               data.companyLogo ?? data.companyLogoUrl,
             ),
+            accountName: trimOrUndef(data.accountName),
+            recruiterAccountId: trimOrUndef(
+              typeof data.recruiterAccountId === 'string'
+                ? data.recruiterAccountId
+                : typeof data.accountId === 'string'
+                  ? data.accountId
+                  : undefined,
+            ),
             worksiteName: data.worksiteName,
             worksiteAddress: readJoAddress(data),
+            startDate: trimOrUndef(data.startDate),
+            endDate: trimOrUndef(data.endDate),
             ...financials,
           },
           companyId,
@@ -314,6 +396,35 @@ const useActiveShifts = (tenantId: string | null | undefined): UseActiveShiftsRe
             }
           })();
           entityNameCache.set(entityId, pending);
+        }
+        return pending;
+      };
+
+      // Child / standalone recruiter account display name (`accounts/{id}.name`).
+      // JO denormalized `accountName` is often the parent national label;
+      // prefer the linked account doc so Shifts shows e.g. "CORT Baltimore
+      // Warehouse" instead of "CORT".
+      const recruiterAccountNameCache = new Map<string, Promise<string | undefined>>();
+      const fetchRecruiterAccountName = (accountId: string) => {
+        let pending = recruiterAccountNameCache.get(accountId);
+        if (!pending) {
+          pending = (async (): Promise<string | undefined> => {
+            try {
+              const accSnap = await getDoc(
+                doc(db, p.recruiterAccount(tenantId, accountId)),
+              );
+              if (!accSnap.exists()) return undefined;
+              const ad = accSnap.data() as Record<string, any>;
+              return trimOrUndef(ad?.name);
+            } catch (err) {
+              console.warn(
+                `Failed to hydrate recruiter account name ${accountId}:`,
+                err,
+              );
+              return undefined;
+            }
+          })();
+          recruiterAccountNameCache.set(accountId, pending);
         }
         return pending;
       };
@@ -388,17 +499,17 @@ const useActiveShifts = (tenantId: string | null | undefined): UseActiveShiftsRe
         return pending;
       };
 
-      // Per-shift applicant tallies. Built by the 5th fan-out batch
+      // Per-shift applicant tallies. Built by the applications fan-out batch
       // below from `tenants/{tid}/applications`, then merged onto each
       // `ShiftRow` during assembly. Deduped by userId/candidateId so a
       // worker applying to several shifts in the same JO is counted
       // once per shift.
-      type ShiftApplicantTally = {
+      type ApplicantTally = {
         confirmed: Set<string>;
         total: Set<string>;
       };
-      const tallyByShift = new Map<string, ShiftApplicantTally>();
-      const ensureTally = (shiftId: string): ShiftApplicantTally => {
+      const tallyByShift = new Map<string, ApplicantTally>();
+      const ensureShiftTally = (shiftId: string): ApplicantTally => {
         let t = tallyByShift.get(shiftId);
         if (!t) {
           t = { confirmed: new Set(), total: new Set() };
@@ -406,15 +517,32 @@ const useActiveShifts = (tenantId: string | null | undefined): UseActiveShiftsRe
         }
         return t;
       };
+      // Parallel JO-level tally for **career** rows. Career applications
+      // are job-level (no shiftId), so the per-shift bucketing above
+      // would only count the rare app that happened to write a shiftId
+      // back — that's why the table used to show e.g. `Total Applicants: 2`
+      // while the drawer's `Applicants` filter showed 67. The drawer
+      // returns the full JO pool for career, so the row should too.
+      // (Greg, 2026-04-30)
+      const tallyByJo = new Map<string, ApplicantTally>();
+      const ensureJoTally = (jobOrderId: string): ApplicantTally => {
+        let t = tallyByJo.get(jobOrderId);
+        if (!t) {
+          t = { confirmed: new Set(), total: new Set() };
+          tallyByJo.set(jobOrderId, t);
+        }
+        return t;
+      };
 
-      // Fan-out five independent batches in parallel:
+      // Fan-out six independent batches in parallel:
       //  1. Address hydration       (mutates entries[i].jo.worksiteAddress)
       //  2. Company-logo hydration  (mutates entries[i].jo.companyLogoUrl)
       //  3. Hiring-entity name      (mutates entries[i].jo.hiringEntityName)
-      //  4. Applicant tallies       (populates `tallyByShift` above)
-      //  5. The per-JO shifts subcollection load.
+      //  4. Recruiter account name   (mutates entries[i].jo.accountName from accounts/{id})
+      //  5. Applicant tallies       (populates `tallyByShift` above)
+      //  6. The per-JO shifts subcollection load.
       // Then assemble the final rows.
-      const [, , , , shiftLists] = await Promise.all([
+      const [, , , , , shiftLists] = await Promise.all([
         Promise.all(
           entries.map(async (entry) => {
             const wa = entry.jo.worksiteAddress ?? {};
@@ -446,13 +574,35 @@ const useActiveShifts = (tenantId: string | null | undefined): UseActiveShiftsRe
             if (name) entry.jo.hiringEntityName = name;
           }),
         ),
-        // Per-shift applicant counts. Queried by `jobOrderId in [...]`
-        // chunks (Firestore `in` cap = 30) over the visible JO set,
-        // then bucketed by `shiftId` / `shiftIds`. We deliberately
-        // ignore applications that have a `jobOrderId` but no
-        // shift reference — those are JO-level applicants, not
-        // shift-level. Status `'confirmed'` (worker accepted) feeds
-        // the confirmed count; everything counts toward total.
+        Promise.all(
+          entries.map(async (entry) => {
+            const aid = entry.jo.recruiterAccountId;
+            if (!aid) return;
+            const name = await fetchRecruiterAccountName(aid);
+            if (name) entry.jo.accountName = name;
+          }),
+        ),
+        // Applicant counts. Queried by `jobOrderId in [...]` chunks
+        // (Firestore `in` cap = 30) over the visible JO set.
+        //
+        // Two parallel tallies:
+        //   - tallyByShift  → for **gig** rows. Buckets by an app's
+        //                     `shiftId` / `shiftIds`; apps without
+        //                     shift metadata are NOT counted here
+        //                     because gig applicants pick shifts.
+        //   - tallyByJo     → for **career** rows. Career apps are
+        //                     job-level, so we count every non-excluded
+        //                     applicant against the JO and apply that
+        //                     count to all of the JO's shifts when we
+        //                     build the row below.
+        //
+        // Both tallies apply parity with the Placements drawer's
+        // `Applicants` filter: skip `candidate === true` (those are
+        // candidates, not applicants) and skip statuses the drawer
+        // already drops (withdrawn / rejected / waitlisted / deleted),
+        // so the table number now matches the drawer number for the
+        // same row. Status `'confirmed'` (worker accepted) feeds the
+        // confirmed count.
         (async () => {
           const joIds = entries.map((e) => e.jo.id);
           if (joIds.length === 0) return;
@@ -481,14 +631,34 @@ const useActiveShifts = (tenantId: string | null | undefined): UseActiveShiftsRe
               );
               snap.docs.forEach((d) => {
                 const data = d.data() as {
+                  jobOrderId?: unknown;
                   shiftId?: unknown;
                   shiftIds?: unknown;
                   status?: unknown;
                   userId?: unknown;
                   candidateId?: unknown;
+                  candidate?: unknown;
                 };
+                if (data.candidate === true) return;
+                if (
+                  typeof data.status === 'string' &&
+                  isExcludedFromPlacementsApplicantPool(data.status)
+                ) {
+                  return;
+                }
                 const isConfirmed = data.status === 'confirmed';
                 const key = dedupKey(data, d.id);
+
+                // JO-level tally — feeds the row count for career JOs.
+                const joId =
+                  typeof data.jobOrderId === 'string' ? data.jobOrderId.trim() : '';
+                if (joId) {
+                  const jt = ensureJoTally(joId);
+                  jt.total.add(key);
+                  if (isConfirmed) jt.confirmed.add(key);
+                }
+
+                // Per-shift tally — feeds the row count for gig JOs.
                 const ids = new Set<string>();
                 if (typeof data.shiftId === 'string' && data.shiftId.trim()) {
                   ids.add(data.shiftId.trim());
@@ -499,13 +669,13 @@ const useActiveShifts = (tenantId: string | null | undefined): UseActiveShiftsRe
                   }
                 }
                 ids.forEach((sid) => {
-                  const t = ensureTally(sid);
+                  const t = ensureShiftTally(sid);
                   t.total.add(key);
                   if (isConfirmed) t.confirmed.add(key);
                 });
               });
             } catch (err) {
-              console.warn('Failed to load shift applicant counts:', err);
+              console.warn('Failed to load applicant counts:', err);
             }
           }
         })(),
@@ -529,10 +699,19 @@ const useActiveShifts = (tenantId: string | null | undefined): UseActiveShiftsRe
       const built: ShiftRow[] = [];
       entries.forEach((entry, idx) => {
         const list = shiftLists[idx];
+        // Career applications are job-level — see the tally fan-out
+        // above. Gig applications carry an explicit shiftId. So:
+        //   career → use tallyByJo[jobOrderId] for every shift row
+        //   gig    → use tallyByShift[shiftId] (shift-specific)
+        const isCareerJo =
+          String((entry.jo as { jobType?: unknown }).jobType ?? '')
+            .trim()
+            .toLowerCase() === 'career';
+        const joTally = isCareerJo ? tallyByJo.get(entry.jo.id) : null;
         for (const shift of list) {
           const meta = buildActiveRowMeta(shift, entry.jo, todayIso);
           if (!meta) continue;
-          const tally = tallyByShift.get(shift.id);
+          const tally = isCareerJo ? joTally : tallyByShift.get(shift.id);
           built.push({
             shift,
             jobOrder: entry.jo,
@@ -551,7 +730,7 @@ const useActiveShifts = (tenantId: string | null | undefined): UseActiveShiftsRe
     } finally {
       setLoading(false);
     }
-  }, [tenantId]);
+  }, [tenantId, scopeKey]);
 
   useEffect(() => {
     void fetchActiveShifts();

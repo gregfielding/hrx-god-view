@@ -24,6 +24,7 @@ import {
   Link,
   TextField,
   Checkbox,
+  Autocomplete,
 } from '@mui/material';
 import {
   Description as ResumeIcon,
@@ -1352,26 +1353,38 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
         const jobOrderSnap = await getDoc(jobOrderRef);
         const jobOrderData = jobOrderSnap.exists() ? jobOrderSnap.data() : null;
-        const gigPositions = (jobOrderData as any)?.gigPositions as Array<{jobTitle: string; payRate: string | number}> | undefined;
+        // Accept both `positions[]` (career / canonical) AND `gigPositions[]`
+        // (gig JOs' historical write target). Greg, 2026-04-30 cascade audit.
+        const positionsForLookup = (() => {
+          const p = (jobOrderData as any)?.positions;
+          if (Array.isArray(p) && p.length > 0) return p as Array<{ jobTitle: string; payRate: string | number }>;
+          const g = (jobOrderData as any)?.gigPositions;
+          return Array.isArray(g) ? (g as Array<{ jobTitle: string; payRate: string | number }>) : undefined;
+        })();
         const defaultPayRate = jobOrderData?.payRate as number | undefined;
-        
+
         // Helper to get pay rate for a shift
         const getPayRateForShift = (shift: any): number | undefined => {
-          // First, check if shift already has payRate
+          // First, check if shift already has payRate (snapshot at save
+          // time by EditShiftForm — every new shift carries this).
           if (shift.payRate !== undefined && shift.payRate !== null) {
             const rate = typeof shift.payRate === 'number' ? shift.payRate : parseFloat(String(shift.payRate));
             return isNaN(rate) ? undefined : rate;
           }
-          
-          // If shift has defaultJobTitle, look it up in gigPositions
-          if (shift.defaultJobTitle && gigPositions) {
-            const position = gigPositions.find(p => p.jobTitle === shift.defaultJobTitle);
+
+          // Legacy fallback: case-insensitive title match across
+          // `positions[]` / `gigPositions[]`.
+          const title = String(shift.defaultJobTitle ?? '').trim().toLowerCase();
+          if (title && positionsForLookup) {
+            const position = positionsForLookup.find(
+              (p) => String(p?.jobTitle ?? '').trim().toLowerCase() === title,
+            );
             if (position && position.payRate) {
               const rate = typeof position.payRate === 'number' ? position.payRate : parseFloat(String(position.payRate));
               return isNaN(rate) ? undefined : rate;
             }
           }
-          
+
           // Fall back to job order's default pay rate
           return defaultPayRate;
         };
@@ -3196,7 +3209,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                             // border can't win the cascade against
                             // our sx override.
                             variant={lockedShiftId ? undefined : 'outlined'}
-                            elevation={lockedShiftId ? 0 : 1}
+                            // MUI: `variant="outlined"` ignores elevation; combining
+                            // with elevation>0 warns. Outlined tiles use border only.
+                            elevation={0}
                             draggable={canDragBackToPool}
                             onDragStart={(event) => handleWorkerDragStart(event, worker.id)}
                             sx={{
@@ -3479,24 +3494,48 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                     )}
                   </Box>
                   {safeSelectedWorkforce === 'choose_group' && (
-                    <FormControl fullWidth size="small" sx={{ mb: 1 }}>
-                      <InputLabel id="placements-group-select-label" shrink>Group</InputLabel>
-                      <Select
-                        labelId="placements-group-select-label"
-                        value=""
-                        label="Group"
-                        displayEmpty
-                        renderValue={(v) => (v === '' ? 'Select a group' : userGroups.find((g) => g.id === v)?.groupName ?? v)}
-                        onChange={async (e) => {
-                          const groupId = e.target.value as string;
-                          if (!groupId) return;
-                          const group = userGroups.find((g) => g.id === groupId);
+                    /*
+                     * Group picker — Autocomplete (Greg, 2026-04-30).
+                     *
+                     * Switched from a simple Select to a searchable
+                     * Autocomplete because the userGroups list grew long
+                     * enough (20+ entries: "Sodexo Dallas", "Phoenix
+                     * Cleaners", "CORT Orange County" …) that hunting
+                     * for a specific group in the dropdown was painful.
+                     * Sorted alphabetically here so the rendered list
+                     * has a stable, predictable order regardless of how
+                     * Firestore returned them in `setUserGroups`. The
+                     * persist-on-pick behavior is unchanged from the
+                     * Select — same `placementsLastGroup` Firestore
+                     * write, same `setSelectedWorkforce('group_<id>')`.
+                     */
+                    <Box sx={{ mb: 1 }}>
+                      <Autocomplete
+                        size="small"
+                        fullWidth
+                        autoHighlight
+                        openOnFocus
+                        options={[...userGroups].sort((a, b) =>
+                          (a.groupName || '').localeCompare(b.groupName || '', undefined, {
+                            sensitivity: 'base',
+                          }),
+                        )}
+                        getOptionLabel={(option) => option?.groupName ?? ''}
+                        isOptionEqualToValue={(option, value) => option.id === value.id}
+                        value={null}
+                        // Always reset visible value back to null after a pick
+                        // — the *active* selection is reflected in the
+                        // outer Workforce dropdown ('group_<id>') via
+                        // `setSelectedWorkforce`, so this input acts as
+                        // a one-shot "switch to this group" search box.
+                        blurOnSelect
+                        onChange={async (_e, group) => {
                           if (!group) return;
-                          setSelectedWorkforce(`group_${groupId}`);
+                          setSelectedWorkforce(`group_${group.id}`);
                           try {
                             const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
                             await updateDoc(jobOrderRef, {
-                              placementsLastGroup: { id: groupId, groupName: group.groupName },
+                              placementsLastGroup: { id: group.id, groupName: group.groupName },
                               updatedAt: serverTimestamp(),
                             });
                             onJobOrderUpdated?.();
@@ -3504,17 +3543,16 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                             console.error('Error saving placements last group:', err);
                           }
                         }}
-                      >
-                        <MenuItem value="">
-                          <em>Select a group</em>
-                        </MenuItem>
-                        {userGroups.map((g) => (
-                          <MenuItem key={g.id} value={g.id}>
-                            {g.groupName}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
+                        renderInput={(params) => (
+                          <TextField
+                            {...params}
+                            label="Group"
+                            placeholder="Search groups…"
+                            InputLabelProps={{ shrink: true }}
+                          />
+                        )}
+                      />
+                    </Box>
                   )}
                   <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
                     Drag into Assignments to place. Drop Placed workers here to unplace.
@@ -3591,7 +3629,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                           <Paper
                             key={worker.id}
                             variant={lockedShiftId ? undefined : 'outlined'}
-                            elevation={lockedShiftId ? 0 : 1}
+                            elevation={0}
                             draggable
                             onDragStart={(event) => handleWorkerDragStart(event, worker.id)}
                             sx={{

@@ -21,6 +21,12 @@ interface PageHeaderProps {
   showDivider?: boolean;          // Default: true
   /** Tighter padding and toolbar height (e.g. user record header + tab strip). */
   dense?: boolean;
+  /**
+   * When set (with `showDivider`), vertical gap between the toolbar row and the
+   * divider uses this single margin on the divider only (`theme.spacing` units).
+   * Omit to keep the default `dense`/non-`dense` toolbar `mb` + divider `mt`.
+   */
+  toolbarDividerSpacing?: number;
   /** Merged onto the root container (after defaults; can override `pt`, etc.). */
   sx?: SxProps<Theme>;
 }
@@ -34,6 +40,7 @@ const PageHeader: React.FC<PageHeaderProps> = ({
   rightActions,
   showDivider = true,
   dense = false,
+  toolbarDividerSpacing,
   sx,
 }) => {
   const theme = useTheme();
@@ -136,7 +143,12 @@ const PageHeader: React.FC<PageHeaderProps> = ({
             alignItems: isStackedToolbar ? 'stretch' : 'center',
             gap: isStackedToolbar ? (dense ? 1 : 1.25) : dense ? 1 : 2,
             minHeight: dense ? 36 : 48,
-            mb: showDivider ? (dense ? 0.65 : 1.5) : 0, // space to divider when present; none when no divider
+            mb:
+              showDivider && toolbarDividerSpacing === undefined
+                ? dense
+                  ? 0.65
+                  : 1.5
+                : 0,
             width: '100%',
             overflow: 'visible',
           }}
@@ -199,7 +211,12 @@ const PageHeader: React.FC<PageHeaderProps> = ({
       {showDivider && (
         <Divider
           sx={{
-            mt: dense ? 0.65 : 1.5,
+            mt:
+              toolbarDividerSpacing !== undefined
+                ? toolbarDividerSpacing
+                : dense
+                  ? 0.65
+                  : 1.5,
             height: '1px',
             backgroundColor: 'rgba(0, 0, 0, 0.08)',
           }}

@@ -9,7 +9,7 @@
  * shift always shows fresh data.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Autocomplete,
@@ -60,7 +60,11 @@ import JobOrderAutoMessagingTab from '../recruiter/JobOrderAutoMessagingTab';
 import { experienceOptions, educationOptions } from '../../data/experienceOptions';
 import { JOB_REQUIREMENT_PACKS } from '../../data/jobRequirementPacks';
 import type { JobOrder } from '../../types/recruiter/jobOrder';
+import type { ShiftPlacementsDrawerSummary } from '../../utils/shifts/shiftRow';
 import EditShiftForm, { type ShiftFormShift } from './EditShiftForm';
+import { useAuth } from '../../contexts/AuthContext';
+import { useEntity } from '../../hooks/useEntity';
+import { persistMissingSutaFutaForJobOrderAndAccount } from '../../utils/shifts/sutaFutaAccountHydration';
 
 // Instructions tab section config. Mirrors the JO Detail page's
 // "Staff Instructions" tab (`RecruiterJobOrderDetail.tsx`) so the
@@ -191,58 +195,11 @@ const HeaderField: React.FC<{
   </Box>
 );
 
-interface ShiftSummary {
-  id: string;
-  /** Shift title (e.g. "Loader / Crew"). Used for the main header line. */
-  shiftTitle?: string;
-  /** JO-level job title (e.g. "Warehouse Associate"). Rendered below
-   *  the shift title in the Job column of the header strip — mirrors
-   *  the Job cell in the /shifts table. */
-  jobTitle?: string;
-  /** Pretty date display (e.g. "Sun, Apr 26, 2026", "Career"). */
-  dateLabel: string;
-  /** Pretty time display (e.g. "8:00 AM – 4:00 PM"). */
-  timeLabel: string;
-  /** Resolved shift- or JO-level PO number. Empty / undefined renders
-   *  as an em-dash so the column stays a constant width. */
-  poNumber?: string;
-  /** Worksite (location) name — first line of the Worksite column. */
-  worksiteName?: string;
-  /** Street address line of the worksite. Optional — older tenants
-   *  may have JOs with no street persisted. */
-  worksiteStreet?: string;
-  /** "City, ST zip" line. Composed by the caller; the drawer just
-   *  renders it as a single string so callers control format. */
-  worksiteCityStateZip?: string;
-  /** Account / company display name. Shown via the avatar tooltip;
-   *  not rendered as text in the header so the strip stays compact. */
-  companyName?: string;
-  /** Resolved company logo URL (hydrated upstream by useActiveShifts).
-   *  Falls back to the first letter of `companyName` when missing. */
-  companyLogoUrl?: string;
-  /* --- Financials (mirrors the table's Financials column) -----------
-   * All five values are optional because old JOs may have been imported
-   * without them. The header field renders an em-dash when nothing is
-   * set so layout doesn't shift. */
-  payRate?: number | null;
-  billRate?: number | null;
-  markupPercent?: number | null;
-  wcRate?: number | null;
-  sutaRate?: number | null;
-  futaRate?: number | null;
-  /** Total workers requested for this shift (top-line denominator in
-   *  the "Placements" header summary and the table's Staff column). */
-  totalStaffRequested?: number;
-  /** Number of applications attached to this shift with status
-   *  `confirmed` (top-line numerator). Hydrated by useActiveShifts. */
-  confirmedCount?: number;
-}
-
 interface ShiftPlacementsDrawerProps {
   open: boolean;
   tenantId: string | null;
   jobOrderId: string | null;
-  shift: ShiftSummary | null;
+  shift: ShiftPlacementsDrawerSummary | null;
   onClose: () => void;
   /**
    * When true (e.g. Add shift from /shifts), the drawer renders the
@@ -335,6 +292,21 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
 
   const resolvedJobOrderId = pickJobOrderFirst ? pickedJobOrderId : propJobOrderId;
+
+  const { user } = useAuth();
+  const hiringEntityId =
+    typeof jobOrder?.hiringEntityId === 'string' && jobOrder.hiringEntityId.trim()
+      ? jobOrder.hiringEntityId.trim()
+      : null;
+  const { entity: hiringEntity, loading: hiringEntityLoading } = useEntity(
+    tenantId,
+    open && resolvedJobOrderId ? hiringEntityId : null,
+  );
+  const sutaFutaHydrateAttemptedRef = useRef<string>('');
+
+  useEffect(() => {
+    sutaFutaHydrateAttemptedRef.current = '';
+  }, [open, tenantId, resolvedJobOrderId]);
 
   // Distinct accounts derived from the loaded JO set. We group by
   // `recruiterAccountId` so two JOs that share the same id collapse
@@ -627,6 +599,46 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
     };
   }, [open, tenantId, resolvedJobOrderId]);
 
+  // When SUTA/FUTA are missing, persist estimated rates on the JO and account
+  // pricing table (C1 Workforce / C1 Select + worksite state), then refresh.
+  useEffect(() => {
+    if (!open || !tenantId || !resolvedJobOrderId || !jobOrder) return;
+    if (hiringEntityId && hiringEntityLoading) return;
+
+    const key = `${tenantId}:${resolvedJobOrderId}`;
+    if (sutaFutaHydrateAttemptedRef.current === key) return;
+    sutaFutaHydrateAttemptedRef.current = key;
+
+    const jo = jobOrder as unknown as Record<string, unknown>;
+    void (async () => {
+      try {
+        const { wroteJobOrder, wroteAccount } = await persistMissingSutaFutaForJobOrderAndAccount({
+          tenantId,
+          jobOrderId: resolvedJobOrderId,
+          jobOrder: jo,
+          hiringEntityName: hiringEntity?.name,
+          userId: user?.uid ?? null,
+        });
+        if (wroteJobOrder || wroteAccount) {
+          await refreshJobOrder();
+        }
+      } catch (err) {
+        console.error('Shift drawer: SUTA/FUTA hydration failed', err);
+        sutaFutaHydrateAttemptedRef.current = '';
+      }
+    })();
+  }, [
+    open,
+    tenantId,
+    resolvedJobOrderId,
+    jobOrder,
+    hiringEntityId,
+    hiringEntityLoading,
+    hiringEntity?.name,
+    user?.uid,
+    refreshJobOrder,
+  ]);
+
   const handleOpenJobOrder = () => {
     if (!resolvedJobOrderId) return;
     // Open the full JO in a new browser tab so the recruiter keeps the
@@ -634,6 +646,12 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
     // close the drawer because they're explicitly going to a separate
     // tab; closing would lose their place in the table on return.
     window.open(`/jobs/job-orders/${resolvedJobOrderId}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleOpenRecruiterAccount = () => {
+    const id = shift?.recruiterAccountId?.trim();
+    if (!id) return;
+    window.open(`/accounts/${id}`, '_blank', 'noopener,noreferrer');
   };
 
   const handleToggleMute = async () => {
@@ -962,15 +980,29 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
               </Typography>
             )}
         </Stack>
-        <Stack direction="row" spacing={0.5}>
+        <Stack direction="row" spacing={0.5} alignItems="center">
           {resolvedJobOrderId && (
-            <IconButton
-              onClick={handleOpenJobOrder}
-              size="small"
-              title="Open full job order in new tab"
-            >
-              <OpenInNewIcon fontSize="small" />
-            </IconButton>
+            <Tooltip title="Open full job order in new tab">
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={handleOpenJobOrder}
+                sx={{
+                  minWidth: 0,
+                  py: 0.125,
+                  px: 0.75,
+                  minHeight: 24,
+                  lineHeight: 1.2,
+                  fontSize: '0.7rem',
+                  fontWeight: 600,
+                  textTransform: 'none',
+                  whiteSpace: 'nowrap',
+                  borderRadius: '20px',
+                }}
+              >
+                Open Job Order
+              </Button>
+            </Tooltip>
           )}
           <IconButton onClick={onClose} size="small" title="Close">
             <CloseIcon fontSize="small" />
@@ -991,10 +1023,21 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
         {/* Company avatar — same 36px size and rounded-square shape
             as the company column in the table. Tooltip carries the
             company name so the strip itself stays compact. */}
-        <Tooltip title={shift?.companyName || ''} arrow>
+        <Tooltip
+          title={
+            shift?.accountName?.trim() ||
+            shift?.companyName ||
+            ''
+          }
+          arrow
+        >
           <Avatar
             src={shift?.companyLogoUrl || undefined}
-            alt={shift?.companyName || 'Company'}
+            alt={
+              shift?.accountName?.trim() ||
+              shift?.companyName ||
+              'Company'
+            }
             variant="rounded"
             sx={{
               width: 40,
@@ -1007,7 +1050,11 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
               flexShrink: 0,
             }}
           >
-            {(shift?.companyName || '?').charAt(0).toUpperCase()}
+            {(
+              shift?.accountName?.trim() ||
+              shift?.companyName ||
+              '?'
+            ).charAt(0).toUpperCase()}
           </Avatar>
         </Tooltip>
 
@@ -1026,16 +1073,49 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
             minWidth: 0,
           }}
         >
-          <HeaderField label="Worksite" sx={{ minWidth: 200, flex: '1 1 220px' }}>
-            {shift?.worksiteName ? (
-              <Typography variant="body2" sx={{ fontWeight: 600, lineHeight: 1.35 }}>
-                {shift.worksiteName}
-              </Typography>
-            ) : (
-              <Typography variant="body2" color="text.secondary">
-                —
-              </Typography>
-            )}
+          <HeaderField label="Account" sx={{ minWidth: 200, flex: '1 1 220px' }}>
+            {(() => {
+              const accountLabel =
+                shift?.accountName?.trim() || shift?.worksiteName?.trim() || '';
+              if (!accountLabel) {
+                return (
+                  <Typography variant="body2" color="text.secondary">
+                    —
+                  </Typography>
+                );
+              }
+              return (
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 0.25,
+                    minWidth: 0,
+                  }}
+                >
+                  <Typography
+                    variant="body2"
+                    sx={{ fontWeight: 600, lineHeight: 1.35, minWidth: 0 }}
+                    noWrap
+                    title={accountLabel}
+                  >
+                    {accountLabel}
+                  </Typography>
+                  {shift?.recruiterAccountId?.trim() ? (
+                    <Tooltip title="Open account in new tab">
+                      <IconButton
+                        size="small"
+                        onClick={handleOpenRecruiterAccount}
+                        aria-label="Open account in new tab"
+                        sx={{ p: 0.25, color: 'primary.main', flexShrink: 0 }}
+                      >
+                        <OpenInNewIcon sx={{ fontSize: 16 }} />
+                      </IconButton>
+                    </Tooltip>
+                  ) : null}
+                </Box>
+              );
+            })()}
             {shift?.worksiteStreet && (
               <Typography variant="caption" color="text.secondary">
                 {shift.worksiteStreet}

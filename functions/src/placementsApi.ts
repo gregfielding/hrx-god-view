@@ -380,6 +380,53 @@ export const placementsCreateAssignments = onCall(
   const skipPlacementWorkerNotifications = Boolean(jobOrder.muted);
   const shift = shiftSnap.data() || {};
   const isGigJob = String(jobOrder.jobType || '').toLowerCase() === 'gig';
+
+  // Position-aware rate resolution (Greg, 2026-04-30 cascade audit).
+  // Priority order for assignment payRate / billRate:
+  //   1. `shift.payRate` / `shift.billRate` — snapshot stamped by
+  //      `EditShiftForm` at save time (every new shift carries this).
+  //   2. The position on the JO matching `shift.defaultJobTitle`
+  //      (case-insensitive). Catches legacy shifts that pre-date the
+  //      shift-form snapshot fix and JOs with multi-position pricing
+  //      where each position has a different rate.
+  //   3. JO top-level `payRate` / `billRate`.
+  // Without this lookup, a multi-position JO would always assign at
+  // position[0]'s rate regardless of which position the shift was for.
+  const findShiftPosition = (): Record<string, unknown> | null => {
+    const title = String(shift.defaultJobTitle ?? '').trim().toLowerCase();
+    if (!title) return null;
+    const candidates = Array.isArray(jobOrder.positions) && jobOrder.positions.length > 0
+      ? jobOrder.positions
+      : Array.isArray(jobOrder.gigPositions)
+        ? jobOrder.gigPositions
+        : [];
+    return (
+      (candidates as Array<Record<string, unknown>>).find(
+        (p) => String((p?.jobTitle as string | undefined) ?? '').trim().toLowerCase() === title,
+      ) ?? null
+    );
+  };
+  const positionForShift = findShiftPosition();
+  const positionPayRate = safeFiniteNumber(
+    (positionForShift?.payRate as number | string | undefined) ?? undefined,
+    NaN,
+  );
+  const positionBillRate = safeFiniteNumber(
+    (positionForShift?.billRate as number | string | undefined) ?? undefined,
+    NaN,
+  );
+  const resolvedPayRate = (() => {
+    const fromShift = safeFiniteNumber(shift.payRate, NaN);
+    if (Number.isFinite(fromShift) && fromShift > 0) return fromShift;
+    if (Number.isFinite(positionPayRate) && positionPayRate > 0) return positionPayRate;
+    return safeFiniteNumber(jobOrder.payRate, 0);
+  })();
+  const resolvedBillRate = (() => {
+    const fromShift = safeFiniteNumber(shift.billRate, NaN);
+    if (Number.isFinite(fromShift) && fromShift > 0) return fromShift;
+    if (Number.isFinite(positionBillRate) && positionBillRate > 0) return positionBillRate;
+    return safeFiniteNumber(jobOrder.billRate, 0);
+  })();
   const onboardingConfig = await resolveOnboardingConfigForJobOrder({
     tenantId,
     jobOrderId,
@@ -486,8 +533,8 @@ export const placementsCreateAssignments = onCall(
             endDate: singleDate,
             startTime: shift.startTime || shift.defaultStartTime || '',
             endTime: shift.endTime || shift.defaultEndTime || '',
-            payRate: safeFiniteNumber(shift.payRate ?? jobOrder.payRate, 0),
-            billRate: safeFiniteNumber(shift.billRate ?? jobOrder.billRate, 0),
+            payRate: resolvedPayRate,
+            billRate: resolvedBillRate,
             timesheetMode: jobOrder.timesheetMode || 'mobile',
             firstName,
             lastName,
@@ -768,8 +815,8 @@ export const placementsCreateAssignments = onCall(
           endDate: effectiveEndDate || effectiveStartDate || '',
           startTime: shift.startTime || shift.defaultStartTime || '',
           endTime: shift.endTime || shift.defaultEndTime || '',
-          payRate: safeFiniteNumber(shift.payRate ?? jobOrder.payRate, 0),
-          billRate: safeFiniteNumber(shift.billRate ?? jobOrder.billRate, 0),
+          payRate: resolvedPayRate,
+          billRate: resolvedBillRate,
           timesheetMode: jobOrder.timesheetMode || 'mobile',
           firstName,
           lastName,

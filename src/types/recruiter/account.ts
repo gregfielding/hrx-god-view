@@ -209,6 +209,25 @@ export interface RecruiterAccount {
    * and should not auto-spawn JOs.
    */
   autoCreateGigJobOrders?: boolean;
+  /**
+   * National accounts only (F.4 — CC.A audit, locked 2026-04-30): default
+   * job title used when this national's auto-create-gig-JO trigger spawns
+   * a draft JO. The JO builder (`gigJobOrderFromChildAccount.ts`) reads
+   * this first, then falls back to the cascaded default position's title,
+   * then to the global `'Event Worker'` literal.
+   *
+   * Recruiters override per-JO on activation; this is just the seed value
+   * so a CORT or Sodexo Gig JO doesn't land with the generic placeholder.
+   * Should match an entry in the tenant's job-title catalog when possible.
+   */
+  defaultGigJobTitle?: string | null;
+  /**
+   * National accounts only (F.4 — CC.A audit). Default job description
+   * for the same auto-spawn flow. Free-form text. Empty/null falls
+   * through to the cascaded position's description, then to an empty
+   * string (recruiter fills in on activation).
+   */
+  defaultGigJobDescription?: string | null;
   /** Set by automation when this child account was created from a company location. */
   autoCreatedFromCompanyLocation?: boolean;
   /** Location display name at auto-create time (nickname else name); used for safe rename matching. */

@@ -81,12 +81,16 @@ import {
   computeShiftNotifyDiff,
   shouldPromptShiftWorkerNotify,
 } from '../../utils/shiftWorkerNotifyDiff';
+import {
+  SHIFT_STATUS_FILTER_ENTRIES,
+  type ShiftStatus,
+} from '../../utils/shifts/shiftRow';
+
+export type { ShiftStatus };
 
 /* -------------------------------------------------------------------------
  * Types
  * ------------------------------------------------------------------------- */
-
-export type ShiftStatus = 'open' | 'closed' | 'filled' | 'cancelled';
 
 export interface ShiftFormShift {
   id: string;
@@ -424,15 +428,55 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
 
     const mapPos = (pos: any): Position => {
       const { sutaRate, futaRate } = deriveDisplayRates(pos);
+
+      // Field-name reconciliation across writers (Greg, 2026-04-30 bugfix).
+      //
+      // The JO form's gig-position UI (`JobOrderForm.tsx`) actually
+      // persists these names:
+      //   - `pos.markup`               (NOT `markupPercent`)
+      //   - `pos.workersCompClassCode` (NOT `workersCompCode`)
+      // Older account/cascade docs use the canonical
+      // `markupPercent` / `workersCompCode`, and a few legacy rows wrote
+      // `markupPercentage`. Read all of them, JO-form write key first.
+      //
+      // Bill rate is also fragile: when a recruiter sets markup>0 the JO
+      // form's bill-rate input goes read-only and shows a *computed*
+      // value (`pay × (1 + markup/100)`) without persisting it — so the
+      // stored doc has `billRate: ''` despite the JO UI displaying
+      // 24.84. We mirror that compute here so the shift form shows the
+      // same number the JO form does.
+      const payNum = parseFloat(toStr(pos.payRate));
+      const rawMarkup = toStr(pos.markup ?? pos.markupPercent ?? pos.markupPercentage);
+      const markupNum = parseFloat(rawMarkup);
+      const rawBill = toStr(pos.billRate);
+      const billNum = parseFloat(rawBill);
+
+      let resolvedBill = rawBill;
+      if (
+        (!Number.isFinite(billNum) || billNum <= 0) &&
+        Number.isFinite(payNum) && payNum > 0 &&
+        Number.isFinite(markupNum) && markupNum > 0
+      ) {
+        resolvedBill = String(Number((payNum * (1 + markupNum / 100)).toFixed(2)));
+      }
+
+      let resolvedMarkup = rawMarkup;
+      if (
+        !resolvedMarkup &&
+        Number.isFinite(payNum) && payNum > 0 &&
+        Number.isFinite(billNum) && billNum > 0 &&
+        billNum > payNum
+      ) {
+        resolvedMarkup = String(Number(((billNum / payNum - 1) * 100).toFixed(2)));
+      }
+
       return {
         jobTitle: pos.jobTitle || '',
         payRate: toStr(pos.payRate),
         workersNeeded: pos.workersNeeded,
-        billRate: toStr(pos.billRate),
-        // Storage shape uses `markupPercent` (matches AccountPositionPricing). Some legacy
-        // docs may have written `markupPercentage`; accept either.
-        markupPercent: toStr(pos.markupPercent ?? pos.markupPercentage),
-        workersCompCode: toStr(pos.workersCompCode),
+        billRate: resolvedBill,
+        markupPercent: resolvedMarkup,
+        workersCompCode: toStr(pos.workersCompClassCode ?? pos.workersCompCode),
         workersCompRate: toStr(pos.workersCompRate),
         sutaRate,
         futaRate,
@@ -454,13 +498,17 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
     }
 
     // Legacy career JOs: a single position derived from top-level fields.
+    // Pass the raw keys through — `mapPos` already reconciles
+    // `markup`/`markupPercent` and `workersCompClassCode`/`workersCompCode`.
     if (jobOrder.jobTitle) {
       return [
         mapPos({
           jobTitle: jobOrder.jobTitle,
           payRate: jobOrder.payRate,
           billRate: jobOrder.billRate,
+          markup: jobOrder.markup,
           markupPercent: jobOrder.markupPercent ?? jobOrder.markupPercentage,
+          workersCompClassCode: jobOrder.workersCompClassCode,
           workersCompCode: jobOrder.workersCompCode,
           workersCompRate: jobOrder.workersCompRate,
           sutaRate: jobOrder.sutaRate ?? jobOrder.suta,
@@ -875,6 +923,70 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
         }
       }
 
+      // Snapshot the chosen position's pricing onto the shift doc
+      // (Greg, 2026-04-30 cascade audit). Downstream consumers
+      // (`useActiveShifts`, `PlacementsTab`, `placementsApi`) historically
+      // had to re-resolve rates by walking JO `positions[]` /
+      // `gigPositions[]` and then matching by `defaultJobTitle` — which
+      // each consumer did slightly differently and most got wrong for
+      // multi-position JOs. By stamping `payRate` / `billRate` /
+      // `markupPercent` / `workersComp{Code,Rate}` / `sutaRate` /
+      // `futaRate` here at save time, every reader gets the right value
+      // straight off the shift doc with the existing
+      // `shift.X ?? jobOrder.X` fallback (placementsApi:489-490 etc.).
+      //
+      // Drift policy: a recruiter editing a shift refreshes the
+      // snapshot; a JO position rate change post-shift-create does NOT
+      // retroactively update the shift. This matches the §16.1
+      // snapshot-at-activation pattern.
+      const optNum = (v: string | undefined): number | undefined => {
+        if (v == null || String(v).trim() === '') return undefined;
+        const n = parseFloat(String(v));
+        return Number.isFinite(n) ? n : undefined;
+      };
+      const optStr = (v: string | undefined): string | undefined => {
+        const s = (v ?? '').toString().trim();
+        return s || undefined;
+      };
+      // Always write every snapshot field (use `deleteField()` in edit
+      // mode for missing values). Otherwise switching the shift's
+      // position from one with markup -> one without would silently
+      // retain the old markup on the shift doc.
+      const snapshotKeys = [
+        'payRate',
+        'billRate',
+        'markupPercent',
+        'workersCompCode',
+        'workersCompRate',
+        'sutaRate',
+        'futaRate',
+      ] as const;
+      const positionSnapshot: Record<string, unknown> = {};
+      const resolved: Partial<Record<typeof snapshotKeys[number], number | string>> = {};
+      if (selectedPosition) {
+        const payN = optNum(selectedPosition.payRate);
+        const billN = optNum(selectedPosition.billRate);
+        const markupN = optNum(selectedPosition.markupPercent);
+        const wcCode = optStr(selectedPosition.workersCompCode);
+        const wcRateN = optNum(selectedPosition.workersCompRate);
+        const sutaN = optNum(selectedPosition.sutaRate);
+        const futaN = optNum(selectedPosition.futaRate);
+        if (payN !== undefined) resolved.payRate = payN;
+        if (billN !== undefined) resolved.billRate = billN;
+        if (markupN !== undefined) resolved.markupPercent = markupN;
+        if (wcCode !== undefined) resolved.workersCompCode = wcCode;
+        if (wcRateN !== undefined) resolved.workersCompRate = wcRateN;
+        if (sutaN !== undefined) resolved.sutaRate = sutaN;
+        if (futaN !== undefined) resolved.futaRate = futaN;
+      }
+      for (const k of snapshotKeys) {
+        if (resolved[k] !== undefined) {
+          positionSnapshot[k] = resolved[k];
+        } else if (editingShift) {
+          positionSnapshot[k] = deleteField();
+        }
+      }
+
       const baseShiftData: any = {
         shiftTitle: formData.shiftTitle,
         status: formData.status,
@@ -892,6 +1004,7 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
         sendNotification: formData.sendNotification,
         tenantId,
         jobOrderId,
+        ...positionSnapshot,
         updatedAt: serverTimestamp(),
         ...(editingShift
           ? {}
@@ -1078,10 +1191,11 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
                   setFormData({ ...formData, status: e.target.value as ShiftStatus })
                 }
               >
-                <MenuItem value="open">Open</MenuItem>
-                <MenuItem value="closed">Closed</MenuItem>
-                <MenuItem value="filled">Filled</MenuItem>
-                <MenuItem value="cancelled">Cancelled</MenuItem>
+                {SHIFT_STATUS_FILTER_ENTRIES.map(({ value, label }) => (
+                  <MenuItem key={value} value={value}>
+                    {label}
+                  </MenuItem>
+                ))}
               </Select>
             </FormControl>
           </Grid>
@@ -1134,115 +1248,103 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
           disabled={availablePositions.length === 0}
         />
 
-        {/* Position pricing — read-only preview of the rates the shift will inherit
-            from the selected position on the JO. Mirrors the Pricing card on the
-            JO Overview tab so recruiters see Pay/Bill/Markup, WC code/rate, and
-            SUTA/FUTA at a glance before saving. */}
+        {/* Position pricing — read-only preview (same column flow as the rest
+            of the form; no extra card chrome). */}
         {selectedPosition && hasPositionPricing && (
-          <Box
-            sx={{
-              border: '1px solid',
-              borderColor: 'divider',
-              borderRadius: 1,
-              p: 2,
-              bgcolor: 'background.paper',
-            }}
-          >
-            <Stack spacing={1.5}>
-              <Stack
-                direction="row"
-                justifyContent="space-between"
-                alignItems="center"
-                spacing={1}
-              >
-                <Typography variant="subtitle2">
-                  Pricing for {selectedPosition.jobTitle}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Inherited from job order — edit on the Overview tab to change.
-                </Typography>
-              </Stack>
-
-              <Grid container spacing={2}>
-                <Grid item xs={12} md={4}>
-                  <TextField
-                    fullWidth
-                    label="Pay Rate"
-                    value={selectedPosition.payRate || ''}
-                    InputProps={{ readOnly: true, startAdornment: <span>$</span> }}
-                    variant="outlined"
-                  />
-                </Grid>
-                <Grid item xs={12} md={4}>
-                  <TextField
-                    fullWidth
-                    label="Markup (%)"
-                    value={selectedPosition.markupPercent || ''}
-                    InputProps={{ readOnly: true }}
-                    variant="outlined"
-                  />
-                </Grid>
-                <Grid item xs={12} md={4}>
-                  <TextField
-                    fullWidth
-                    label="Bill Rate"
-                    value={selectedPosition.billRate || ''}
-                    InputProps={{ readOnly: true, startAdornment: <span>$</span> }}
-                    variant="outlined"
-                  />
-                </Grid>
-
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    label="Workers Comp Class Code"
-                    value={selectedPosition.workersCompCode || ''}
-                    InputProps={{ readOnly: true }}
-                    variant="outlined"
-                    helperText="From Settings > Onboarding Library > WC Class Codes"
-                  />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    label="Workers Comp Rate"
-                    value={selectedPosition.workersCompRate || ''}
-                    InputProps={{ readOnly: true }}
-                    variant="outlined"
-                  />
-                </Grid>
-
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    label="SUTA %"
-                    value={selectedPosition.sutaRate || ''}
-                    InputProps={{ readOnly: true }}
-                    variant="outlined"
-                    helperText={
-                      sutaFutaSource.suta === 'estimated' && worksiteStateForJo
-                        ? `Estimated from ${worksiteStateForJo} (new-employer rate; not yet saved on the job order)`
-                        : 'State unemployment on pay (C1 Workforce / C1 Select)'
-                    }
-                  />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    label="FUTA %"
-                    value={selectedPosition.futaRate || ''}
-                    InputProps={{ readOnly: true }}
-                    variant="outlined"
-                    helperText={
-                      sutaFutaSource.futa === 'estimated' && worksiteStateForJo
-                        ? `Estimated from ${worksiteStateForJo} (state-effective rate; not yet saved on the job order)`
-                        : 'Federal unemployment on pay'
-                    }
-                  />
-                </Grid>
-              </Grid>
+          <Stack spacing={1.5}>
+            <Stack
+              direction="row"
+              justifyContent="space-between"
+              alignItems="center"
+              spacing={1}
+            >
+              <Typography variant="subtitle2">
+                Pricing for {selectedPosition.jobTitle}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Inherited from job order — edit on the Overview tab to change.
+              </Typography>
             </Stack>
-          </Box>
+
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={4}>
+                <TextField
+                  fullWidth
+                  label="Pay Rate"
+                  value={selectedPosition.payRate || ''}
+                  InputProps={{ readOnly: true, startAdornment: <span>$</span> }}
+                  variant="outlined"
+                />
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <TextField
+                  fullWidth
+                  label="Markup (%)"
+                  value={selectedPosition.markupPercent || ''}
+                  InputProps={{ readOnly: true }}
+                  variant="outlined"
+                />
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <TextField
+                  fullWidth
+                  label="Bill Rate"
+                  value={selectedPosition.billRate || ''}
+                  InputProps={{ readOnly: true, startAdornment: <span>$</span> }}
+                  variant="outlined"
+                />
+              </Grid>
+
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="Workers Comp Class Code"
+                  value={selectedPosition.workersCompCode || ''}
+                  InputProps={{ readOnly: true }}
+                  variant="outlined"
+                  helperText="From Settings > Onboarding Library > WC Class Codes"
+                />
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="Workers Comp Rate"
+                  value={selectedPosition.workersCompRate || ''}
+                  InputProps={{ readOnly: true }}
+                  variant="outlined"
+                />
+              </Grid>
+
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="SUTA %"
+                  value={selectedPosition.sutaRate || ''}
+                  InputProps={{ readOnly: true }}
+                  variant="outlined"
+                  helperText={
+                    sutaFutaSource.suta === 'estimated' && worksiteStateForJo
+                      ? `Estimated from ${worksiteStateForJo} (new-employer rate; not yet saved on the job order)`
+                      : 'State unemployment on pay (C1 Workforce / C1 Select)'
+                  }
+                />
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="FUTA %"
+                  value={selectedPosition.futaRate || ''}
+                  InputProps={{ readOnly: true }}
+                  variant="outlined"
+                  helperText={
+                    sutaFutaSource.futa === 'estimated' && worksiteStateForJo
+                      ? `Estimated from ${worksiteStateForJo} (state-effective rate; not yet saved on the job order)`
+                      : 'Federal unemployment on pay'
+                  }
+                />
+              </Grid>
+            </Grid>
+          </Stack>
         )}
 
         {/* Career-only: Total/Over/Toggle row */}

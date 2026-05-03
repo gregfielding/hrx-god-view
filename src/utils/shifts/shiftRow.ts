@@ -12,6 +12,17 @@
 export type ShiftStatus = 'open' | 'closed' | 'filled' | 'cancelled';
 export type ShiftMode = 'single' | 'multi';
 
+/** Canonical shift statuses for filters and editor menus — keep in sync across `/shifts`, account tabs, and tables. */
+export const SHIFT_STATUS_FILTER_ENTRIES: ReadonlyArray<{
+  value: ShiftStatus;
+  label: string;
+}> = [
+  { value: 'open', label: 'Open' },
+  { value: 'filled', label: 'Filled' },
+  { value: 'closed', label: 'Closed' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+
 export interface ShiftDoc {
   id: string;
   shiftTitle?: string;
@@ -111,6 +122,14 @@ export interface JobOrderLite {
   sutaRate?: number;
   /** FUTA rate as a percentage. Sourced from `positions[0].futaRate`. */
   futaRate?: number;
+  /** Recruiter account doc id (`tenants/{tid}/accounts/{id}`). */
+  recruiterAccountId?: string;
+  /** Denormalized display name for that account (JO snapshot). */
+  accountName?: string;
+  /** Basic Information — schedule start `YYYY-MM-DD` (career + gig). */
+  startDate?: string;
+  /** Basic Information — schedule end `YYYY-MM-DD`; unset = no fixed end on the JO. */
+  endDate?: string;
 }
 
 export interface ShiftRow {
@@ -132,6 +151,73 @@ export interface ShiftRow {
   applicantsCount?: number;
 }
 
+/**
+ * `shift` prop for `ShiftPlacementsDrawer` — built from a list/calendar
+ * `ShiftRow` so every entry point stays consistent.
+ */
+export interface ShiftPlacementsDrawerSummary {
+  id: string;
+  shiftTitle?: string;
+  jobTitle?: string;
+  dateLabel: string;
+  timeLabel: string;
+  poNumber?: string;
+  worksiteName?: string;
+  worksiteStreet?: string;
+  worksiteCityStateZip?: string;
+  companyName?: string;
+  companyLogoUrl?: string;
+  payRate?: number | null;
+  billRate?: number | null;
+  markupPercent?: number | null;
+  wcRate?: number | null;
+  sutaRate?: number | null;
+  futaRate?: number | null;
+  totalStaffRequested?: number;
+  confirmedCount?: number;
+  /** Opens `/accounts/{id}` in a new tab from the drawer header. */
+  recruiterAccountId?: string;
+  /** Primary label for the Account column when present (JO denorm). */
+  accountName?: string;
+}
+
+export function toShiftPlacementsDrawerSummary(
+  row: ShiftRow,
+): ShiftPlacementsDrawerSummary {
+  const jo = row.jobOrder;
+  const sh = row.shift;
+  const street = jo.worksiteAddress?.street?.trim() || '';
+  const city = jo.worksiteAddress?.city?.trim() || '';
+  const state = jo.worksiteAddress?.state?.trim() || '';
+  const zip = jo.worksiteAddress?.zipCode?.trim() || '';
+  const cityStateZip = [[city, state].filter(Boolean).join(', '), zip]
+    .filter(Boolean)
+    .join(' ');
+  return {
+    id: sh.id,
+    shiftTitle: sh.shiftTitle,
+    jobTitle: sh.defaultJobTitle?.trim() || jo.jobTitle,
+    dateLabel: row.dateLabel,
+    timeLabel: row.timeLabel,
+    poNumber: sh.poNumber || jo.poNumber,
+    worksiteName: jo.worksiteName,
+    worksiteStreet: street || undefined,
+    worksiteCityStateZip: cityStateZip || undefined,
+    companyName: jo.companyName,
+    companyLogoUrl: jo.companyLogoUrl,
+    payRate: jo.payRate ?? null,
+    billRate: jo.billRate ?? null,
+    markupPercent: jo.markupPercent ?? null,
+    wcRate: jo.wcRate ?? null,
+    sutaRate: jo.sutaRate ?? null,
+    futaRate: jo.futaRate ?? null,
+    totalStaffRequested: sh.totalStaffRequested,
+    confirmedCount: row.confirmedCount,
+    recruiterAccountId: jo.recruiterAccountId,
+    accountName: jo.accountName,
+  };
+}
+
 /* -------------------------------------------------------------------------
  * Date utilities — local-time YYYY-MM-DD parsing. We deliberately avoid
  * `new Date('2026-01-15')` because that's interpreted as UTC and can shift
@@ -143,11 +229,137 @@ export function todayIsoLocal(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/** Local midnight `Date` for today — default Shifts toolbar “start date” filter. */
+export function startOfTodayLocal(): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
 export function parseYyyyMmDdLocal(s: string | undefined | null): Date | null {
   if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
   const [y, m, d] = s.split('-').map(Number);
   const dt = new Date(y, m - 1, d);
   return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+/** Local calendar date → `YYYY-MM-DD` (for toolbar date filters). */
+export function dateToLocalYyyyMmDd(d: Date | null): string | null {
+  if (!d || !(d instanceof Date) || Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function trimYyyyMmDd(iso: string | undefined | null): string | undefined {
+  const t = typeof iso === 'string' ? iso.trim() : '';
+  if (!t || !/^\d{4}-\d{2}-\d{2}$/.test(t)) return undefined;
+  return t;
+}
+
+/**
+ * True when the shift’s scheduled window matches the filter range.
+ *
+ * - **Neither bound**: no date restriction (`true`). Main Shifts UI defaults to
+ *   start=today via parent state instead of relying on this.
+ * - **Start only** (`[fs, ∞)`): gig/multi-day uses last day `wEnd >= fs`; bounded
+ *   career uses `wEndCap >= fs`; open-ended career matches any `fs` on or before
+ *   the ongoing schedule.
+ * - **End only** (historical): gig rows where window **ends** `<= fe`; single-day
+ *   gigs use `shiftDate <= fe`. Career needs an explicit **shift or JO end date**;
+ *   **open-ended careers are excluded** until an end is stored.
+ * - **Both bounds**: inclusive overlap `[fs, fe]`; open-ended career uses
+ *   `fe >= max(fs, scheduleStart)`.
+ *
+ * Career recurring = `jobType === career`, multi shift, `sortKey === Infinity`.
+ * `_todayIso` is kept for call-site compatibility.
+ */
+export function shiftRowOverlapsDateRange(
+  row: ShiftRow,
+  filterStartIso: string | null | undefined,
+  filterEndIso: string | null | undefined,
+  _todayIso: string,
+): boolean {
+  const rawS = filterStartIso?.trim();
+  const rawE = filterEndIso?.trim();
+  const hasS = Boolean(rawS);
+  const hasE = Boolean(rawE);
+  if (!hasS && !hasE) return true;
+
+  const sh = row.shift;
+  const jo = row.jobOrder;
+
+  const isCareerRecurring =
+    jo.jobType === 'career' &&
+    sh.shiftMode === 'multi' &&
+    row.sortKey === Number.POSITIVE_INFINITY;
+
+  const careerWStart =
+    trimYyyyMmDd(sh.shiftDate) ||
+    trimYyyyMmDd(jo.startDate) ||
+    '';
+  const careerWEndCap =
+    trimYyyyMmDd(sh.endDate) ||
+    trimYyyyMmDd(jo.endDate) ||
+    null;
+
+  // --- End date only: ended on/before fe; open-ended careers out ---
+  if (!hasS && hasE) {
+    const fe = rawE!;
+    if (isCareerRecurring) {
+      if (!careerWEndCap) return false;
+      return careerWEndCap <= fe;
+    }
+    const wStart = trimYyyyMmDd(sh.shiftDate);
+    if (!wStart) return false;
+    const wEnd =
+      sh.shiftMode === 'multi' && trimYyyyMmDd(sh.endDate)
+        ? trimYyyyMmDd(sh.endDate)!
+        : wStart;
+    return wEnd <= fe;
+  }
+
+  // --- Start only: overlap [fs, ∞) ---
+  if (hasS && !hasE) {
+    const fs = rawS!;
+    if (isCareerRecurring) {
+      if (!careerWStart) return false;
+      if (careerWEndCap) {
+        return careerWEndCap >= fs;
+      }
+      return true;
+    }
+    const wStart = trimYyyyMmDd(sh.shiftDate);
+    if (!wStart) return false;
+    const wEnd =
+      sh.shiftMode === 'multi' && trimYyyyMmDd(sh.endDate)
+        ? trimYyyyMmDd(sh.endDate)!
+        : wStart;
+    return wEnd >= fs;
+  }
+
+  // --- Both bounds: inclusive overlap ---
+  let fs = rawS!;
+  let fe = rawE!;
+  if (fs > fe) {
+    const t = fs;
+    fs = fe;
+    fe = t;
+  }
+
+  if (isCareerRecurring) {
+    if (!careerWStart) return false;
+    if (careerWEndCap) {
+      return careerWStart <= fe && careerWEndCap >= fs;
+    }
+    return fe >= fs && fe >= careerWStart;
+  }
+
+  const wStart = trimYyyyMmDd(sh.shiftDate);
+  if (!wStart) return false;
+  const wEnd =
+    sh.shiftMode === 'multi' && trimYyyyMmDd(sh.endDate)
+      ? trimYyyyMmDd(sh.endDate)!
+      : wStart;
+  return wStart <= fe && wEnd >= fs;
 }
 
 export function formatDateLabel(iso: string | undefined | null): string {
@@ -263,8 +475,10 @@ export function statusChipColor(
 }
 
 /**
- * Decide if a shift should appear in the Active dataset and, if so, return
- * the sort key + display labels. Returns `null` to drop the shift.
+ * Build row metadata for the shifts list/calendar dataset. Every shift status
+ * (`open` | `filled` | `closed` | `cancelled`) is included so filters can slice
+ * the full set. Dated gigs include past windows so rows stay available when the
+ * JO is on_hold or when filtering by date range.
  *
  * Used by both views — the List sorts/paginates by `sortKey`, the Calendar
  * uses the date strings to bucket by day.
@@ -274,9 +488,6 @@ export function buildActiveRowMeta(
   jobOrder: JobOrderLite,
   todayIso: string,
 ): Pick<ShiftRow, 'sortKey' | 'dateLabel' | 'timeLabel'> | null {
-  const status = shift.status;
-  if (status === 'cancelled' || status === 'closed') return null;
-
   const isMulti = shift.shiftMode === 'multi';
   const isCareer = jobOrder.jobType === 'career';
   const startIso = shift.shiftDate;
@@ -293,17 +504,23 @@ export function buildActiveRowMeta(
     };
   }
 
-  // Otherwise: needs a concrete date in the future or today.
-  // Multi-gig: window is shiftDate..endDate; active if endDate >= today.
-  // Single: active if shiftDate >= today.
+  // Otherwise: dated gig shift — needs shiftDate (single or multi window).
+  // Include past windows too so gigs remain visible when the JO is on_hold
+  // (often auto-set after dates pass) and when recruiters filter by date range.
   const compareEnd = isMulti ? endIso || startIso : startIso;
-  if (!compareEnd || compareEnd < todayIso) return null;
+  if (!compareEnd) return null;
 
-  // For sort, prefer the earliest in-window date that's still upcoming:
-  // if startIso is in the future, sort by startIso; if multi-window already
-  // started (startIso < today <= endIso), sort by today so it floats up to
-  // "happening now".
-  const sortIso = startIso && startIso >= todayIso ? startIso : todayIso;
+  const windowEnded = compareEnd < todayIso;
+
+  // Sort: upcoming windows float near "today"; ended windows sort by end date.
+  let sortIso: string;
+  if (windowEnded) {
+    sortIso = compareEnd;
+  } else if (startIso && startIso >= todayIso) {
+    sortIso = startIso;
+  } else {
+    sortIso = todayIso;
+  }
   const sortDt = parseYyyyMmDdLocal(sortIso);
   return {
     sortKey: sortDt ? sortDt.getTime() : 0,

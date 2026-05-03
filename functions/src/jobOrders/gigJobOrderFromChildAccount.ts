@@ -101,7 +101,10 @@ export type AccountDoc = Record<string, unknown> & {
   companyId?: string | null;
   companyLocationId?: string | null;
   name?: string;
-  defaultGigJobTitle?: string;
+  /** F.4 (CC.A audit) — National-only seed for auto-spawned Gig JOs. */
+  defaultGigJobTitle?: string | null;
+  /** F.4 (CC.A audit) — National-only seed for auto-spawned Gig JOs. */
+  defaultGigJobDescription?: string | null;
 };
 
 /**
@@ -315,6 +318,14 @@ export function buildGigJobOrderFromChildAccount(
     trim(defaultPosition?.jobTitle) ||
     DEFAULT_GIG_JOB_TITLE;
 
+  // F.4 (CC.A audit): description follows the same cascade order as the
+  // title — National-account seed wins, then the cascaded position's
+  // description, then empty string (recruiter fills in on activation).
+  const fallbackJobDescription =
+    trim(parentAccount.defaultGigJobDescription) ||
+    trim(defaultPosition?.jobDescription) ||
+    '';
+
   const positionPayRate = defaultPosition
     ? asFiniteNumber(defaultPosition.payRate)
     : undefined;
@@ -415,7 +426,7 @@ export function buildGigJobOrderFromChildAccount(
 
     // Job details
     jobTitle: fallbackJobTitle,
-    jobDescription: trim(defaultPosition?.jobDescription) || '',
+    jobDescription: fallbackJobDescription,
     assignedRecruiters,
     payRate: positionPayRate ?? 0,
     billRate: computedBillRate,
