@@ -482,7 +482,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     skillsRequired: [],
     physicalRequirements: [],
     ppeRequirements: [],
-    ppeProvidedBy: 'company',
+    ppeProvidedBy: '',
     requirementPackId: '',
     workersCompClassCode: '',
     workersCompRate: '',
@@ -810,10 +810,15 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     let cancelled = false;
     (async () => {
       try {
+        const jobTitleForCompliance =
+          formData.jobType === 'gig'
+            ? String(gigPositions[0]?.jobTitle ?? '').trim()
+            : String(formData.jobTitle ?? '').trim();
         const merged = await fetchMergedRecruiterOrderDefaultsForJobOrder(tenantId, {
           recruiterAccountId: rid,
           companyId: formData.companyId || null,
           worksiteId: formData.worksiteId || null,
+          jobTitle: jobTitleForCompliance || null,
         });
         if (cancelled || !merged || mergeSeq !== orderDefaultsMergeSeqRef.current) return;
         const od = merged.orderDetails;
@@ -844,7 +849,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           skillsRequired: od.skillsRequired ?? [],
           physicalRequirements: od.physicalRequirements ?? [],
           ppeRequirements: od.ppeRequirements ?? [],
-          ppeProvidedBy: od.ppeProvidedBy ?? 'company',
+          ppeProvidedBy:
+            (od.ppeRequirements?.length ?? 0) > 0 ? (od.ppeProvidedBy ?? 'company') : '',
           requirementPackId: od.requirementPackId ?? '',
           dressCode: od.dressCode ?? [],
           customUniformRequirements: od.customUniformRequirements ?? '',
@@ -865,11 +871,25 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [tenantId, isEditing, effectiveRecruiterAccountId, formData.companyId, formData.worksiteId]);
+  }, [
+    tenantId,
+    isEditing,
+    effectiveRecruiterAccountId,
+    formData.companyId,
+    formData.worksiteId,
+    formData.jobType,
+    formData.jobTitle,
+    gigPositions[0]?.jobTitle,
+  ]);
 
   const gigGrossProfitDisplay = useMemo(
     () => formatGigGrossProfit(formData.gigEstimatedValue, formData.gigAverageMarkup),
     [formData.gigEstimatedValue, formData.gigAverageMarkup]
+  );
+
+  const hasPpeRequirementsForJo = useMemo(
+    () => Array.isArray(formData.ppeRequirements) && formData.ppeRequirements.length > 0,
+    [formData.ppeRequirements],
   );
 
   // When opening New Job Order from an account/location, pre-fill Company and Worksite
@@ -1563,10 +1583,21 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             : (stageData.scoping?.compliance?.skills || []),
           // R.16.2c — snapshot precedence (see `physicalRequirementsResolved` above).
           physicalRequirements: physicalRequirementsResolved,
-          ppeRequirements: Array.isArray((data as any).ppeRequirements)
-            ? (data as any).ppeRequirements
-            : (stageData.scoping?.compliance?.ppe || []),
-          ppeProvidedBy: stageData.scoping?.compliance?.ppeProvidedBy || 'company',
+          ppeRequirements: (() => {
+            const r = Array.isArray((data as any).ppeRequirements)
+              ? (data as any).ppeRequirements
+              : (stageData.scoping?.compliance?.ppe || []);
+            return Array.isArray(r) ? r : [];
+          })(),
+          ppeProvidedBy: (() => {
+            const r = Array.isArray((data as any).ppeRequirements)
+              ? (data as any).ppeRequirements
+              : (stageData.scoping?.compliance?.ppe || []);
+            const list = Array.isArray(r) ? r : [];
+            return list.length > 0
+              ? stageData.scoping?.compliance?.ppeProvidedBy || (data as any).ppeProvidedBy || 'company'
+              : '';
+          })(),
           requirementPackId: (data as any).requirementPackId || '',
           workersCompClassCode: (data as any).workersCompClassCode || '',
           workersCompRate: (data as any).workersCompRate != null ? String((data as any).workersCompRate) : '',
@@ -1676,6 +1707,23 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       ...formData,
       [field]: value
     };
+
+    if (field === 'ppeRequirements') {
+      const arr = Array.isArray(value) ? value : [];
+      const nextHad = arr.length > 0;
+      const prevHad = Array.isArray(formData.ppeRequirements) && formData.ppeRequirements.length > 0;
+      const curBy = String(formData.ppeProvidedBy ?? '').trim();
+      const validBy = curBy === 'company' || curBy === 'worker' || curBy === 'both';
+      let nextProvidedBy = '';
+      if (nextHad) {
+        nextProvidedBy = prevHad && validBy ? curBy : 'company';
+      }
+      updatedFormData = {
+        ...updatedFormData,
+        ppeRequirements: arr,
+        ppeProvidedBy: nextProvidedBy,
+      };
+    }
 
     // Auto-calculate calculatedBillRate when markup or payRate changes
     if (field === 'markup' || field === 'payRate') {
@@ -2330,7 +2378,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         workersCompRate: formData.jobType === 'gig'
           ? (gigPositions[0]?.workersCompRate ? parseFloat(gigPositions[0].workersCompRate) : undefined)
           : (formData.workersCompRate ? parseFloat(formData.workersCompRate) : undefined),
-        ppeProvidedBy: formData.ppeProvidedBy || 'company',
+        ppeProvidedBy: (() => {
+          const reqs = formData.ppeRequirements || [];
+          if (!Array.isArray(reqs) || reqs.length === 0) return undefined;
+          return formData.ppeProvidedBy || 'company';
+        })(),
         customUniformRequirements:
           typeof formData.customUniformRequirements === 'string' && formData.customUniformRequirements.trim()
             ? formData.customUniformRequirements.trim()
@@ -3739,19 +3791,28 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                   />
                 </Grid>
                 <Grid item xs={12} md={6}>
-                  <FormControl fullWidth>
+                  <FormControl fullWidth disabled={!hasPpeRequirementsForJo}>
                     <InputLabel>{getFieldDef('ppeProvidedBy')?.label || 'PPE Provided By'}</InputLabel>
                     <Select
-                      value={formData.ppeProvidedBy}
+                      displayEmpty
+                      value={hasPpeRequirementsForJo ? formData.ppeProvidedBy || 'company' : ''}
                       onChange={(e) => handleInputChange('ppeProvidedBy', e.target.value)}
                       label={getFieldDef('ppeProvidedBy')?.label || 'PPE Provided By'}
                     >
+                      {!hasPpeRequirementsForJo && (
+                        <MenuItem value="">
+                          <em>Add PPE requirements first</em>
+                        </MenuItem>
+                      )}
                       <MenuItem value="company">Company</MenuItem>
                       <MenuItem value="worker">Worker</MenuItem>
                       <MenuItem value="both">Both</MenuItem>
                     </Select>
                   </FormControl>
                 </Grid>
+                {/* Job Score pack + uniform fields — hidden (remove `false &&` to restore). */}
+                {false && (
+                  <>
                 <Grid item xs={12} md={6}>
                   <FormControl fullWidth>
                     <InputLabel>Job Score requirement pack</InputLabel>
@@ -3769,8 +3830,12 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                     </Select>
                   </FormControl>
                 </Grid>
+                  </>
+                )}
             </Grid>
 
+            {/* Uniform Requirements — hidden (remove `false &&` to restore). */}
+            {false && (
             <Grid container spacing={2} sx={{ mb: 3 }}>
                 <Grid item xs={12}>
                   <Autocomplete
@@ -3872,8 +3937,10 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                   />
                 </Grid>
             </Grid>
+            )}
 
-            {/* Custom Uniform Requirements Section */}
+            {/* Custom Uniform Requirements — hidden (remove `false &&` to restore). */}
+            {false && (
             <Grid container spacing={2} sx={{ mb: 3 }}>
               <Grid item xs={12}>
                 <TextField
@@ -3888,6 +3955,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 />
               </Grid>
             </Grid>
+            )}
 
             <Grid item xs={12} md={6}>
               <Typography variant="h6" gutterBottom sx={{ mt: 2, mb: 3, color: 'primary.main' }}>

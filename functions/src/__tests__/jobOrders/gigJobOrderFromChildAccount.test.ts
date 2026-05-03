@@ -21,6 +21,7 @@ import {
   buildGigJobOrderFromChildAccount,
   DEFAULT_GIG_JOB_TITLE,
   pickDefaultPosition,
+  resolveCompanyLocationFromChildAccount,
   type AccountDoc,
   type BuildGigJobOrderInput,
   type ResolvedCascadeValues,
@@ -65,6 +66,7 @@ function w2Cascade(): ResolvedCascadeValues {
     hiringEntityId: 'entity_select',
     eVerifyRequired: true,
     screeningPackageId: 'PKG_CORT_BASIC',
+    screeningPackageName: 'CORT Basic',
     additionalScreenings: ['mvr_check', 'drug_panel'],
     selectedPositionIds: ['p_event'],
     positions: [
@@ -201,6 +203,7 @@ describe('buildGigJobOrderFromChildAccount — happy path', () => {
     expect(jobOrderData.hiringEntityId).to.equal('entity_select');
     expect(jobOrderData.eVerifyRequired).to.equal(true);
     expect(jobOrderData.screeningPackageId).to.equal('PKG_CORT_BASIC');
+    expect(jobOrderData.screeningPackageName).to.equal('CORT Basic');
     expect(jobOrderData.additionalScreenings).to.deep.equal([
       'mvr_check',
       'drug_panel',
@@ -222,6 +225,40 @@ describe('buildGigJobOrderFromChildAccount — happy path', () => {
     expect(jobOrderData.requiredCertifications).to.deep.equal([]);
     expect(jobOrderData.skillsRequired).to.deep.equal([]);
     expect(jobOrderData.dressCode).to.deep.equal([]);
+  });
+
+  it('overlays position orderDetails + screening package onto cascade defaults', () => {
+    const { jobOrderData } = buildGigJobOrderFromChildAccount(
+      makeInput({
+        cascade: {
+          ...w2Cascade(),
+          positions: [
+            {
+              positionId: 'p_event',
+              jobTitle: 'Event Worker',
+              jobDescription: 'Furniture handling at events',
+              payRate: 18,
+              billRate: 24.84,
+              markupPercentage: 38,
+              workersCompCode: '8015',
+              workersCompRate: 9.15,
+              orderDetails: {
+                additionalScreenings: ['extra_screen'],
+                licensesCerts: ['CDL'],
+                skillsRequired: ['Lift 50 lbs'],
+              },
+              screeningPackageId: 'PKG_POSITION',
+              screeningPackageName: 'Position Package',
+            },
+          ],
+        },
+      }),
+    );
+    expect(jobOrderData.screeningPackageId).to.equal('PKG_POSITION');
+    expect(jobOrderData.screeningPackageName).to.equal('Position Package');
+    expect(jobOrderData.additionalScreenings).to.deep.equal(['extra_screen']);
+    expect(jobOrderData.licensesCerts).to.deep.equal(['CDL']);
+    expect(jobOrderData.skillsRequired).to.deep.equal(['Lift 50 lbs']);
   });
 
   it('inherits parent recruiters when child has none of its own', () => {
@@ -426,7 +463,9 @@ describe('buildGigJobOrderFromChildAccount — edge cases', () => {
     expect(withPkg.backgroundCheckRequired).to.equal(true);
 
     const noPkg = buildGigJobOrderFromChildAccount(
-      makeInput({ cascade: { ...w2Cascade(), screeningPackageId: null } }),
+      makeInput({
+        cascade: { ...w2Cascade(), screeningPackageId: null, screeningPackageName: null },
+      }),
     ).jobOrderData;
     expect(noPkg.backgroundCheckRequired).to.equal(false);
   });
@@ -463,6 +502,30 @@ describe('buildGigJobOrderFromChildAccount — edge cases', () => {
     });
     const { jobOrderData } = buildGigJobOrderFromChildAccount(input);
     expect(jobOrderData.workersCompCode).to.equal('POSITION_WIN');
+  });
+});
+
+describe('resolveCompanyLocationFromChildAccount', () => {
+  it('prefers top-level companyId + companyLocationId when both set', () => {
+    const r = resolveCompanyLocationFromChildAccount({
+      companyId: 'c_top',
+      companyLocationId: 'loc_top',
+      associations: { locations: [{ companyId: 'c_other', locationId: 'loc_other' }] },
+    });
+    expect(r).to.deep.equal({ companyId: 'c_top', locationId: 'loc_top' });
+  });
+
+  it('falls back to associations.locations[0] when top-level pair incomplete', () => {
+    const r = resolveCompanyLocationFromChildAccount({
+      associations: {
+        locations: [{ companyId: 'crm_co', locationId: 'loc_from_assoc' }],
+      },
+    });
+    expect(r).to.deep.equal({ companyId: 'crm_co', locationId: 'loc_from_assoc' });
+  });
+
+  it('returns null when no company/location refs exist', () => {
+    expect(resolveCompanyLocationFromChildAccount({ name: 'orphan' })).to.equal(null);
   });
 });
 

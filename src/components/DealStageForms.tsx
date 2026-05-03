@@ -1873,9 +1873,25 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               value={Array.isArray(data.compliance?.ppe) ? data.compliance.ppe : (data.compliance?.ppe ? [data.compliance.ppe] : [])}
               isOptionEqualToValue={(option, value) => normalizeAutocompleteKey(option) === normalizeAutocompleteKey(value)}
               onChange={(event, newValue) => {
+                const arr = newValue ?? [];
+                const prevList = Array.isArray(data.compliance?.ppe)
+                  ? data.compliance.ppe
+                  : data.compliance?.ppe
+                    ? [data.compliance.ppe]
+                    : [];
+                const prevHad = prevList.length > 0;
+                const curBy = String(data.compliance?.ppeProvidedBy ?? '').trim();
+                const validBy = curBy === 'company' || curBy === 'worker' || curBy === 'both';
+                const nextProvidedBy =
+                  arr.length > 0
+                    ? prevHad && validBy
+                      ? curBy
+                      : 'company'
+                    : '';
                 handleStageDataChange('scoping', 'compliance', {
                   ...data.compliance,
-                  ppe: newValue
+                  ppe: arr,
+                  ppeProvidedBy: nextProvidedBy,
                 });
               }}
               renderInput={(params) => (
@@ -1899,16 +1915,42 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
             />
           </Grid>
           <Grid item xs={12} md={6}>
-            <FormControl fullWidth size="small">
+            <FormControl
+              fullWidth
+              size="small"
+              disabled={
+                (Array.isArray(data.compliance?.ppe)
+                  ? data.compliance.ppe.length
+                  : data.compliance?.ppe
+                    ? 1
+                    : 0) === 0
+              }
+            >
               <InputLabel>{getFieldDef('ppeProvidedBy')?.label || 'PPE Provided By'}</InputLabel>
               <Select
-                value={data.compliance?.ppeProvidedBy || 'company'}
+                displayEmpty
+                value={
+                  (Array.isArray(data.compliance?.ppe)
+                    ? data.compliance.ppe.length > 0
+                    : Boolean(data.compliance?.ppe))
+                    ? data.compliance?.ppeProvidedBy || 'company'
+                    : ''
+                }
                 onChange={(e) => handleStageDataChange('scoping', 'compliance', {
                   ...data.compliance,
                   ppeProvidedBy: e.target.value
                 })}
                 label={getFieldDef('ppeProvidedBy')?.label || 'PPE Provided By'}
               >
+                {!(
+                  Array.isArray(data.compliance?.ppe)
+                    ? data.compliance.ppe.length > 0
+                    : data.compliance?.ppe
+                ) && (
+                  <MenuItem value="">
+                    <em>Add PPE requirements first</em>
+                  </MenuItem>
+                )}
                 <MenuItem value="company">Company</MenuItem>
                 <MenuItem value="worker">Worker</MenuItem>
                 <MenuItem value="both">Both</MenuItem>

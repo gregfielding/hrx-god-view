@@ -362,6 +362,25 @@ export const CASCADE_REGISTRY = {
         label: "Workers' Comp",
         propagation: 'snapshot-on-activation',
       },
+      /** Compliance / requirements overlay for this title — merges atop account orderDefaults when the position is selected. */
+      orderDetails: {
+        strategy: 'replace',
+        editableAt: ['account', 'child'],
+        label: 'Position compliance',
+        propagation: 'live',
+      },
+      screeningPackageId: {
+        strategy: 'replace',
+        editableAt: ['account', 'child'],
+        label: 'Screening package id',
+        propagation: 'live',
+      },
+      screeningPackageName: {
+        strategy: 'replace',
+        editableAt: ['account', 'child'],
+        label: 'Screening package name',
+        propagation: 'live',
+      },
     },
   },
 

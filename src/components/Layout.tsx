@@ -352,6 +352,12 @@ const Layout: React.FC = function Layout() {
     if (pathname.includes('/crm')) {
       return 'CRM';
     }
+
+    // Job order record (detail) — before generic /jobs recruiter branch
+    const jobOrderDetailMatch = pathname.match(/^\/jobs\/job-orders\/([^/]+)/);
+    if (jobOrderDetailMatch?.[1] && jobOrderDetailMatch[1] !== 'new') {
+      return 'Job Order Details';
+    }
     
     // Recruiter routes
     if (pathname.includes('/jobs') || pathname.includes('/recruiter')) {

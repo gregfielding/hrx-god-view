@@ -1,141 +1,28 @@
 /**
  * Merge recruiter account order defaults: national (parent) → child account → optional location_defaults.
  * Same rules as Account Order Details UI so job orders inherit unless overridden locally.
+ *
+ * Per-position rows (`pricing.positions[].orderDetails`) overlay after account + location merge when
+ * `jobTitle` is passed (new job orders — matches selected title).
  */
 
 import { doc, getDoc } from 'firebase/firestore';
 
 import { db } from '../firebase';
 import { p } from '../data/firestorePaths';
+import type { AccountPositionPricing } from '../types/recruiter/account';
 import type { RecruiterAccount } from '../types/recruiter/account';
+import {
+  extractAccountPricingPositions,
+  mergeParentAndChildPricingPositions,
+} from './accountPricingForJobOrder';
+import {
+  mergeRecruiterOrderDetails,
+  type RecruiterOrderDetailsData,
+} from './recruiterOrderDetailsMergePure';
 
-export interface RecruiterOrderDetailsData {
-  backgroundCheckPackages?: string[];
-  drugScreeningPanels?: string[];
-  additionalScreenings?: string[];
-  licensesCerts?: string[];
-  experienceRequired?: string;
-  educationRequired?: string;
-  languagesRequired?: string[];
-  skillsRequired?: string[];
-  physicalRequirements?: string[];
-  ppeRequirements?: string[];
-  ppeProvidedBy?: string;
-  requirementPackId?: string;
-  dressCode?: string[];
-  customUniformRequirements?: string;
-  decisionMaker?: string;
-  hrContactId?: string;
-  operationsContactId?: string;
-  procurementContactId?: string;
-  billingContactId?: string;
-  safetyContactId?: string;
-  invoiceContactId?: string;
-}
-
-export const EMPTY_RECRUITER_ORDER_DETAILS: RecruiterOrderDetailsData = {
-  backgroundCheckPackages: [],
-  drugScreeningPanels: [],
-  additionalScreenings: [],
-  licensesCerts: [],
-  experienceRequired: '',
-  educationRequired: '',
-  languagesRequired: [],
-  skillsRequired: [],
-  physicalRequirements: [],
-  ppeRequirements: [],
-  ppeProvidedBy: 'company',
-  requirementPackId: '',
-  dressCode: [],
-  customUniformRequirements: '',
-  decisionMaker: '',
-  hrContactId: '',
-  operationsContactId: '',
-  procurementContactId: '',
-  billingContactId: '',
-  safetyContactId: '',
-  invoiceContactId: '',
-};
-
-function isNonEmptyStringArray(v: unknown): v is string[] {
-  return Array.isArray(v) && v.length > 0;
-}
-
-function isNonEmptyTrimmedString(v: unknown): v is string {
-  return typeof v === 'string' && v.trim() !== '';
-}
-
-/**
- * Empty-array / empty-string fallthrough — R.16.2c hotfix.
- *
- * Why this exists:
- *   The original merge used `??`, which only treats `null` /
- *   `undefined` as "no override". An explicit `[]` or `''` on the
- *   child account therefore *suppressed* the parent's value, leaving
- *   child-account forms blank even when the parent had real data.
- *   The auto-save path on `AccountOrderDetailsForm` has been known to
- *   persist `physicalRequirements: []` on a child whenever the user
- *   touched any other field — instantly cutting that child off from
- *   the parent's chips.
- *
- *   Concretely, that broke two things:
- *     1. Display — the child-account multi-selects rendered empty
- *        even though the JO snapshots (and the parent doc) had the
- *        right values.
- *     2. R.16.3-interim Sync — the sync button reads
- *        `formRef.current.<field>`, so it would happily push the
- *        empty array out to active job orders, blanking their
- *        snapshots in one click.
- *
- *   Treating empty as "no override" closes both holes for the multi-
- *   select array fields and the one snapshot-policy text field
- *   (`customUniformRequirements`).
- *
- * Trade-off:
- *   A child account can no longer express "explicitly override the
- *   parent's list to nothing" via these fields. In practice that's
- *   an extremely rare semantic and the UX (auto-save instantly
- *   reverting any clear) is worse than the lost capability. Other
- *   string fields (`experienceRequired`, `educationRequired`,
- *   `ppeProvidedBy`, contact IDs, etc.) keep their existing spread
- *   semantics — they're not snapshot-policy and the "clear to blank"
- *   semantic still has legitimate use cases there.
- *
- * @param overrideLayer — wins when set (e.g. child account or location_defaults)
- * @param baseLayer — fallback (e.g. parent national account)
- */
-export function mergeRecruiterOrderDetails(
-  overrideLayer: RecruiterOrderDetailsData | undefined,
-  baseLayer: RecruiterOrderDetailsData | undefined
-): RecruiterOrderDetailsData {
-  const arrayPick = (
-    overrideValue: string[] | undefined,
-    baseValue: string[] | undefined
-  ): string[] => {
-    if (isNonEmptyStringArray(overrideValue)) return overrideValue;
-    if (isNonEmptyStringArray(baseValue)) return baseValue;
-    return [];
-  };
-  return {
-    ...EMPTY_RECRUITER_ORDER_DETAILS,
-    ...baseLayer,
-    ...overrideLayer,
-    backgroundCheckPackages: arrayPick(overrideLayer?.backgroundCheckPackages, baseLayer?.backgroundCheckPackages),
-    drugScreeningPanels: arrayPick(overrideLayer?.drugScreeningPanels, baseLayer?.drugScreeningPanels),
-    additionalScreenings: arrayPick(overrideLayer?.additionalScreenings, baseLayer?.additionalScreenings),
-    licensesCerts: arrayPick(overrideLayer?.licensesCerts, baseLayer?.licensesCerts),
-    languagesRequired: arrayPick(overrideLayer?.languagesRequired, baseLayer?.languagesRequired),
-    skillsRequired: arrayPick(overrideLayer?.skillsRequired, baseLayer?.skillsRequired),
-    physicalRequirements: arrayPick(overrideLayer?.physicalRequirements, baseLayer?.physicalRequirements),
-    ppeRequirements: arrayPick(overrideLayer?.ppeRequirements, baseLayer?.ppeRequirements),
-    dressCode: arrayPick(overrideLayer?.dressCode, baseLayer?.dressCode),
-    customUniformRequirements: isNonEmptyTrimmedString(overrideLayer?.customUniformRequirements)
-      ? overrideLayer!.customUniformRequirements
-      : isNonEmptyTrimmedString(baseLayer?.customUniformRequirements)
-        ? baseLayer!.customUniformRequirements
-        : '',
-  };
-}
+export type { RecruiterOrderDetailsData };
+export { mergeRecruiterOrderDetails, EMPTY_RECRUITER_ORDER_DETAILS } from './recruiterOrderDetailsMergePure';
 
 function trimStr(v: unknown): string {
   return String(v ?? '').trim();
@@ -155,7 +42,7 @@ function readOrderDefaultsBlock(src: unknown): Record<string, unknown> | undefin
 export function mergeScreeningPackageFromOrderDefaultLayers(
   locationOd: Record<string, unknown> | undefined,
   childOd: Record<string, unknown> | undefined,
-  parentOd: Record<string, unknown> | undefined
+  parentOd: Record<string, unknown> | undefined,
 ): { id: string; name: string } {
   const childId = trimStr(childOd?.screeningPackageId);
   const parentId = trimStr(parentOd?.screeningPackageId);
@@ -200,6 +87,22 @@ function inferParentId(accountData: unknown): string | null {
   return null;
 }
 
+/** Resolved pricing positions (national + child venue merge when applicable). Same rules as job-order title picker. */
+function mergedPricingPositionsForAccount(
+  raw: Record<string, unknown>,
+  parent: RecruiterAccount | null,
+): AccountPositionPricing[] {
+  const localPos = extractAccountPricingPositions(raw);
+  if (!parent) return localPos;
+
+  const parentPos = extractAccountPricingPositions(parent);
+  if (parentPos.length > 0 && localPos.length > 0) {
+    return mergeParentAndChildPricingPositions(parentPos, localPos);
+  }
+  if (parentPos.length > 0) return parentPos;
+  return localPos;
+}
+
 export interface MergedRecruiterOrderDefaultsForJobOrder {
   orderDetails: RecruiterOrderDetailsData;
   screeningPackageId: string;
@@ -209,10 +112,19 @@ export interface MergedRecruiterOrderDefaultsForJobOrder {
 
 /**
  * Loads child (selected) recruiter account, optional national parent, optional location_defaults doc.
+ *
+ * @param opts.jobTitle When set (e.g. career `jobTitle` or gig primary position title), overlays
+ *          matching `pricing.positions[]` row `orderDetails` / screening package on top of merged account defaults.
  */
 export async function fetchMergedRecruiterOrderDefaultsForJobOrder(
   tenantId: string,
-  opts: { recruiterAccountId: string; companyId?: string | null; worksiteId?: string | null }
+  opts: {
+    recruiterAccountId: string;
+    companyId?: string | null;
+    worksiteId?: string | null;
+    /** Match `pricing.positions[].jobTitle` (case-insensitive trim) for per-position compliance. */
+    jobTitle?: string | null;
+  },
 ): Promise<MergedRecruiterOrderDefaultsForJobOrder | null> {
   const rid = String(opts.recruiterAccountId || '').trim();
   if (!tenantId || !rid) return null;
@@ -221,14 +133,14 @@ export async function fetchMergedRecruiterOrderDefaultsForJobOrder(
   const accSnap = await getDoc(accRef);
   if (!accSnap.exists()) return null;
 
-  const raw = accSnap.data();
-  const child = raw as RecruiterAccount;
+  const raw = accSnap.data() as Record<string, unknown>;
+  const child = raw as unknown as RecruiterAccount;
   const parentId = inferParentId(raw);
 
   let parent: RecruiterAccount | null = null;
   if (parentId) {
     const pSnap = await getDoc(doc(db, p.recruiterAccounts(tenantId), parentId));
-    if (pSnap.exists()) parent = pSnap.data() as RecruiterAccount;
+    if (pSnap.exists()) parent = pSnap.data() as unknown as RecruiterAccount;
   }
 
   const childDetails = readOrderDefaultsBlock(raw)?.orderDetails as RecruiterOrderDetailsData | undefined;
@@ -251,20 +163,36 @@ export async function fetchMergedRecruiterOrderDefaultsForJobOrder(
   }
 
   const locDetails = locationOd?.orderDetails as RecruiterOrderDetailsData | undefined;
-  const orderDetails = mergeRecruiterOrderDetails(locDetails, nationalPlusChild);
+  let orderDetails = mergeRecruiterOrderDetails(locDetails, nationalPlusChild);
 
   const childOd = readOrderDefaultsBlock(raw);
   const parentOd = parent ? readOrderDefaultsBlock(parent) : undefined;
-  const { id: screeningPackageId, name: screeningPackageName } = mergeScreeningPackageFromOrderDefaultLayers(
-    locationOd,
-    childOd,
-    parentOd
-  );
+  let screeningPkg = mergeScreeningPackageFromOrderDefaultLayers(locationOd, childOd, parentOd);
+
+  const jt = String(opts.jobTitle || '').trim();
+  if (jt) {
+    const mergedPositions = mergedPricingPositionsForAccount(raw, parent);
+    const norm = (t: string) => t.trim().toLowerCase();
+    const pos = mergedPositions.find((p) => norm(p.jobTitle) === norm(jt));
+    if (pos?.orderDetails && typeof pos.orderDetails === 'object') {
+      orderDetails = mergeRecruiterOrderDetails(
+        pos.orderDetails as RecruiterOrderDetailsData,
+        orderDetails,
+      );
+    }
+    const pid = trimStr(pos?.screeningPackageId);
+    if (pid) {
+      screeningPkg = {
+        id: pid,
+        name: trimStr(pos?.screeningPackageName),
+      };
+    }
+  }
 
   return {
     orderDetails,
-    screeningPackageId,
-    screeningPackageName,
+    screeningPackageId: screeningPkg.id,
+    screeningPackageName: screeningPkg.name,
     eVerifyRequired: resolveEverifyRequired(child, parent),
   };
 }

@@ -5,6 +5,7 @@
 export const JOB_ORDER_DETAIL_TAB_KEYS = [
   'overview',
   'checklist',
+  'cascading_data',
   'hiring',
   'defaults',
   'staff_instructions',
@@ -38,6 +39,7 @@ export const DEFAULT_JOB_ORDER_DETAIL_TAB: JobOrderDetailTabKey = 'checklist';
 export const JOB_ORDER_DETAIL_TAB_STRIP: ReadonlyArray<{ key: JobOrderDetailTabKey; label: string }> = [
   { key: 'overview', label: 'Overview' },
   { key: 'checklist', label: 'Checklist' },
+  { key: 'cascading_data', label: 'Cascading Data' },
   { key: 'hiring', label: 'Hiring' },
   { key: 'defaults', label: 'Defaults' },
   { key: 'staff_instructions', label: 'Staff Instructions' },

@@ -304,7 +304,13 @@ describe('CASCADE_REGISTRY shape lock', () => {
       'workersCompRate',
       'markupPercentage',
     ] as const;
-    const POSITION_LIVE_FIELDS = ['jobTitle', 'jobDescription'] as const;
+    const POSITION_LIVE_FIELDS = [
+      'jobTitle',
+      'jobDescription',
+      'orderDetails',
+      'screeningPackageId',
+      'screeningPackageName',
+    ] as const;
 
     it('every entry has a recognised propagation policy (or omits it = live default)', () => {
       // The `as const satisfies` narrowing in registry.ts strips

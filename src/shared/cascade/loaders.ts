@@ -82,8 +82,8 @@ const FIELD_PATHS_BY_LEVEL: Record<
     postingVisibility: 'orderDefaults.postingVisibility',
     postingPolicy: 'orderDefaults.postingPolicy',
     // Pricing tab positions (handoff §5 + §16.1 snapshot envelope).
-    // Child overrides parent's positions per
-    // `fetchResolvedAccountPricingPositions` precedence rule.
+    // Job-order resolution merges parent + child by title — see
+    // `mergeParentAndChildPricingPositions` in `accountPricingForJobOrder.ts`.
     positions: 'pricing.positions',
     // §16.2c additions — same Firestore layout as account.
     scheduler: 'roles.schedulerIds',

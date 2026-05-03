@@ -57,6 +57,30 @@ describe('RecruiterAccountDetails — default gig settings (F.4 UI)', () => {
     expect(screen.queryByTestId('default-gig-title-not-in-catalog')).not.toBeInTheDocument();
   });
 
+  it('Select path: changing title saves JD from position map on the same event', () => {
+    const onSaveTitle = jest.fn();
+    const onSaveDescription = jest.fn();
+    render(
+      <DefaultGigSettings
+        title=""
+        description=""
+        saving={false}
+        gigJobTitleOptions={['Warehouse Associate', 'Forklift Operator']}
+        positionJobDescriptionByTitle={{
+          'warehouse associate': 'Load trucks and stage product.',
+        }}
+        onSaveTitle={onSaveTitle}
+        onSaveDescription={onSaveDescription}
+      />,
+    );
+    const select = screen.getByLabelText(/Default gig job title/i);
+    fireEvent.mouseDown(select);
+    const option = screen.getByRole('option', { name: 'Warehouse Associate' });
+    fireEvent.click(option);
+    expect(onSaveTitle).toHaveBeenCalledWith('Warehouse Associate');
+    expect(onSaveDescription).toHaveBeenCalledWith('Load trucks and stage product.');
+  });
+
   it('calls onSaveDescription when description blurs with a changed value', () => {
     const onSaveDescription = jest.fn();
     render(

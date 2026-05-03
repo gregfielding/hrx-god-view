@@ -59,6 +59,11 @@
 import * as admin from 'firebase-admin';
 
 import {
+  EMPTY_RECRUITER_ORDER_DETAILS,
+  mergeRecruiterOrderDetails,
+  type RecruiterOrderDetailsData,
+} from '../utils/recruiterOrderDetailsMergePure';
+import {
   createLoaderContext,
   loadCascadeChain,
 } from '../shared/cascade/loaders';
@@ -132,6 +137,10 @@ export interface ResolvedPosition {
   futaRate?: number;
   suta?: number;
   sutaRate?: number;
+  /** Per-position compliance overlay (from account pricing row); merged atop cascade account-level screening lists. */
+  orderDetails?: Record<string, unknown>;
+  screeningPackageId?: string;
+  screeningPackageName?: string;
 }
 
 /**
@@ -147,6 +156,8 @@ export interface ResolvedCascadeValues {
   hiringEntityId: string | null;
   eVerifyRequired: boolean;
   screeningPackageId: string | null;
+  /** Catalog display name aligned with `screeningPackageId` (account orderDefaults + default position). */
+  screeningPackageName: string | null;
   additionalScreenings: string[];
   selectedPositionIds: string[];
   positions: ResolvedPosition[];
@@ -205,6 +216,26 @@ export interface CreateGigJobOrderResult {
 
 export function trim(value: unknown): string {
   return value == null ? '' : String(value).trim();
+}
+
+/**
+ * Child → parent merge for `orderDefaults.screeningPackageId` / `screeningPackageName`,
+ * matching client `mergeScreeningPackageFromOrderDefaultLayers` (account layers only).
+ */
+export function mergeOrderDefaultsScreeningPackage(
+  child: AccountDoc,
+  parent: AccountDoc,
+): { id: string; name: string } {
+  const c = child.orderDefaults as Record<string, unknown> | undefined;
+  const p = parent.orderDefaults as Record<string, unknown> | undefined;
+  const childId = trim(c?.screeningPackageId);
+  const parentId = trim(p?.screeningPackageId);
+  const childName = trim(c?.screeningPackageName);
+  const parentName = trim(p?.screeningPackageName);
+  return {
+    id: childId || parentId,
+    name: childId ? childName : parentName,
+  };
 }
 
 export function asFiniteNumber(value: unknown): number | undefined {
@@ -346,6 +377,28 @@ export function buildGigJobOrderFromChildAccount(
     ? asFiniteNumber(defaultPosition.workersCompRate)
     : undefined;
 
+  const dp = defaultPosition as ResolvedPosition | undefined;
+  const posOdRaw = dp?.orderDetails;
+  const posOd: RecruiterOrderDetailsData | undefined =
+    posOdRaw && typeof posOdRaw === 'object'
+      ? (posOdRaw as RecruiterOrderDetailsData)
+      : undefined;
+  const baseComplianceOd: RecruiterOrderDetailsData = {
+    ...EMPTY_RECRUITER_ORDER_DETAILS,
+    additionalScreenings: cascade.additionalScreenings,
+  };
+  const mergedComplianceOd = mergeRecruiterOrderDetails(posOd, baseComplianceOd);
+
+  const posScreeningId = trim(dp?.screeningPackageId);
+  const cascadeScreeningId = cascade.screeningPackageId ? trim(cascade.screeningPackageId) : '';
+  const effectiveScreeningPackageId = posScreeningId || cascadeScreeningId || '';
+  const posScreeningName = trim(dp?.screeningPackageName);
+  const cascadeScreeningName = cascade.screeningPackageName ? trim(cascade.screeningPackageName) : '';
+  const effectiveScreeningPackageName = posScreeningId
+    ? posScreeningName || cascadeScreeningName
+    : cascadeScreeningName;
+  const hasPpeRows = (mergedComplianceOd.ppeRequirements?.length ?? 0) > 0;
+
   // Bill-rate fallback: payRate * (1 + markup/100) when the position
   // didn't carry an explicit bill rate. Use the National's flat markup
   // when subAccountsManageOwnPricing is false (cascade resolves it on
@@ -445,24 +498,26 @@ export function buildGigJobOrderFromChildAccount(
     showStartDate: false,
     showShiftTimes: false,
 
-    // Compliance — cascade-resolved (not hardcoded).
+    // Compliance — cascade + optional per-position row overlay (`orderDetails`, screening on `ResolvedPosition`).
     hiringEntityId: cascade.hiringEntityId,
     eVerifyRequired: cascade.eVerifyRequired,
-    screeningPackageId: cascade.screeningPackageId,
-    additionalScreenings: cascade.additionalScreenings,
-    backgroundCheckRequired: Boolean(cascade.screeningPackageId),
+    screeningPackageId: effectiveScreeningPackageId || cascade.screeningPackageId,
+    ...(effectiveScreeningPackageName ? { screeningPackageName: effectiveScreeningPackageName } : {}),
+    additionalScreenings: mergedComplianceOd.additionalScreenings,
+    backgroundCheckRequired: Boolean(effectiveScreeningPackageId || cascade.screeningPackageId),
     drugScreenRequired: false,
     backgroundCheckPackages: [],
 
-    // Empty defaults (recruiter fills in).
+    // Empty defaults unless position `orderDetails` supplies values.
     requiredLicenses: [],
     requiredCertifications: [],
-    languagesRequired: [],
-    skillsRequired: [],
-    physicalRequirements: [],
-    ppeRequirements: [],
-    ppeProvidedBy: 'company' as const,
-    dressCode: [],
+    licensesCerts: mergedComplianceOd.licensesCerts ?? [],
+    languagesRequired: mergedComplianceOd.languagesRequired ?? [],
+    skillsRequired: mergedComplianceOd.skillsRequired ?? [],
+    physicalRequirements: mergedComplianceOd.physicalRequirements ?? [],
+    ppeRequirements: mergedComplianceOd.ppeRequirements ?? [],
+    ppeProvidedBy: hasPpeRows ? mergedComplianceOd.ppeProvidedBy ?? 'company' : 'company',
+    dressCode: mergedComplianceOd.dressCode ?? [],
     contactRoles: [],
     companyContacts: [],
 
@@ -545,9 +600,34 @@ export async function getNextJobOrderSeq(
 }
 
 /**
+ * Prefer top-level `companyId` + `companyLocationId` (auto-child pattern).
+ * Fall back to the first `associations.locations[]` entry — manual child
+ * accounts often only store the worksite ref there.
+ */
+export function resolveCompanyLocationFromChildAccount(
+  child: AccountDoc,
+): { companyId: string; locationId: string } | null {
+  const topC = trim(child.companyId);
+  const topL = trim(child.companyLocationId);
+  if (topC && topL) return { companyId: topC, locationId: topL };
+
+  const locs = child.associations?.locations;
+  if (!Array.isArray(locs) || locs.length === 0) return null;
+  const first = locs[0] as Record<string, unknown> | undefined;
+  if (!first || typeof first !== 'object') return null;
+  const c = trim(first.companyId);
+  const l = trim(first.locationId);
+  if (c && l) return { companyId: c, locationId: l };
+  return null;
+}
+
+/**
  * Hydrate a worksite Address from the CRM company location doc. Returns
- * `null` when the child has no `companyLocationId` (placeholder JO
+ * `null` when the child has no resolvable company/location refs (placeholder JO
  * without worksite — recruiter fills in when they activate).
+ *
+ * Reads **`tenants/{tenantId}/crm_companies/.../locations/...`** (canonical).
+ * Falls back to legacy root `crm_companies/...` if the tenant-scoped doc is missing.
  *
  * Tolerates the legacy nested + flat address variants on the location
  * doc: `address.street/city/...` and bare `street/city/...` fields are
@@ -555,15 +635,19 @@ export async function getNextJobOrderSeq(
  */
 export async function loadWorksiteFromChildLocation(
   db: admin.firestore.Firestore,
+  tenantId: string,
   child: AccountDoc,
 ): Promise<WorksiteHydration | null> {
-  const companyId = trim(child.companyId);
-  const locationId = trim(child.companyLocationId);
-  if (!companyId || !locationId) return null;
+  const refs = resolveCompanyLocationFromChildAccount(child);
+  if (!refs) return null;
+  const { companyId, locationId } = refs;
 
-  const locSnap = await db
-    .doc(`crm_companies/${companyId}/locations/${locationId}`)
-    .get();
+  const tenantScopedPath = `tenants/${tenantId}/crm_companies/${companyId}/locations/${locationId}`;
+  let locSnap = await db.doc(tenantScopedPath).get();
+  if (!locSnap.exists) {
+    const legacyPath = `crm_companies/${companyId}/locations/${locationId}`;
+    locSnap = await db.doc(legacyPath).get();
+  }
   if (!locSnap.exists) return null;
 
   const loc = locSnap.data() ?? {};
@@ -610,10 +694,11 @@ export async function resolveGigJobOrderCascade(args: {
   const { db, tenantId, childAccountId, childAccount, parentAccount } = args;
 
   const ctx = createLoaderContext({ db });
+  const locRefs = resolveCompanyLocationFromChildAccount(childAccount);
   const preloadedJoData = {
     recruiterAccountId: childAccountId,
-    companyId: trim(childAccount.companyId) || undefined,
-    worksiteId: trim(childAccount.companyLocationId) || undefined,
+    companyId: locRefs?.companyId || trim(childAccount.companyId) || undefined,
+    worksiteId: locRefs?.locationId || trim(childAccount.companyLocationId) || undefined,
   };
   const chain = await loadCascadeChain(ctx, {
     tenantId,
@@ -691,10 +776,24 @@ export async function resolveGigJobOrderCascade(args: {
       ? (workersCompCodeRes.value as string).trim()
       : '';
 
+  const odPkg = mergeOrderDefaultsScreeningPackage(childAccount, parentAccount);
+  const dpForName = pickDefaultPosition(selectedPositionIds, positions);
+  const posIdForName = trim(dpForName?.screeningPackageId);
+  const posNameForName = trim(dpForName?.screeningPackageName);
+  const cascadeSidStr = screeningPackageId ?? '';
+  let screeningPackageName: string | null = null;
+  if (posIdForName) {
+    screeningPackageName =
+      (posNameForName || (odPkg.id === posIdForName ? odPkg.name : '')).trim() || null;
+  } else {
+    screeningPackageName = (odPkg.id === cascadeSidStr ? odPkg.name : '').trim() || null;
+  }
+
   return {
     hiringEntityId,
     eVerifyRequired,
     screeningPackageId,
+    screeningPackageName,
     additionalScreenings,
     selectedPositionIds,
     positions,
@@ -759,7 +858,7 @@ export async function createGigJobOrderForChildAccount(args: {
   });
 
   // ── Hydrate worksite ──────────────────────────────────────────────
-  const worksite = await loadWorksiteFromChildLocation(db, childAccount);
+  const worksite = await loadWorksiteFromChildLocation(db, tenantId, childAccount);
 
   // ── Allocate JO seq# transactionally ──────────────────────────────
   const { seq: jobOrderSeq, formatted: jobOrderNumber } =

@@ -5,7 +5,7 @@ const mockCollection = jest.fn(() => ({}));
 
 jest.mock('firebase/firestore', () => ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  collection: (...args: any[]) => mockCollection(...args),
+  collection: (...args: any[]) => mockCollection.apply(null, args),
   doc: (...args: any[]) => mockDoc(...args),
   serverTimestamp: () => ({ __ts: 'serverTimestamp' }),
   setDoc: (...args: unknown[]) => mockSetDoc(...args),

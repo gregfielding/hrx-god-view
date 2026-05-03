@@ -113,6 +113,8 @@ export interface SyncToActiveButtonProps {
   tooltipText?: string;
   /** Optional sx override (e.g. for tighter padding inside dense rows). */
   sxOverride?: React.CSSProperties;
+  /** `icon` (default) — compact circular button beside fields. `text` — labeled outlined button for section footers. */
+  triggerVariant?: 'icon' | 'text';
 }
 
 const SyncToActiveButton: React.FC<SyncToActiveButtonProps> = ({
@@ -125,6 +127,7 @@ const SyncToActiveButton: React.FC<SyncToActiveButtonProps> = ({
   enabled = true,
   tooltipText,
   sxOverride,
+  triggerVariant = 'icon',
 }) => {
   const [loading, setLoading] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -198,8 +201,24 @@ const SyncToActiveButton: React.FC<SyncToActiveButtonProps> = ({
 
   const tooltip = tooltipText ?? `Sync ${fieldLabel} to active job orders`;
 
-  return (
-    <>
+  const trigger =
+    triggerVariant === 'text' ? (
+      <Tooltip title={tooltip}>
+        <span style={sxOverride}>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={handleClick}
+            disabled={loading}
+            aria-label={tooltip}
+            startIcon={loading ? <CircularProgress size={14} /> : <SyncIcon fontSize="small" />}
+            sx={{ textTransform: 'none' }}
+          >
+            {fieldLabel}
+          </Button>
+        </span>
+      </Tooltip>
+    ) : (
       <Tooltip title={tooltip}>
         {/* span wrapper so Tooltip works while IconButton is disabled */}
         <span style={sxOverride}>
@@ -213,6 +232,11 @@ const SyncToActiveButton: React.FC<SyncToActiveButtonProps> = ({
           </IconButton>
         </span>
       </Tooltip>
+    );
+
+  return (
+    <>
+      {trigger}
 
       <Dialog open={confirmEmptyOpen} onClose={handleCancelEmpty} maxWidth="xs" fullWidth>
         <DialogTitle>Push empty value?</DialogTitle>

@@ -1,3 +1,4 @@
+import type { RequirementEvaluationRow } from '../../certifications/evaluateCertificationsForRequirements';
 import { deriveActionItemsV1 } from '../deriveActionItemsV1';
 
 const baseInput = {
@@ -25,13 +26,13 @@ const baseInput = {
 const requirement = {
   requirementId: 'forklift',
   catalogEntryId: 'forklift-certification',
-  scope: 'required',
-  evidencePolicy: 'upload_required',
-  reviewPolicy: 'must_be_approved',
-  expirationPolicy: 'must_be_valid',
+  scope: 'required' as const,
+  evidencePolicy: 'upload_required' as const,
+  reviewPolicy: 'must_be_approved' as const,
+  expirationPolicy: 'must_be_valid' as const,
 };
 
-const evalRow = {
+const evalRow: RequirementEvaluationRow = {
   requirement,
   result: {
     status: 'missing',

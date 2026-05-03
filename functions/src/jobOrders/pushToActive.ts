@@ -1068,12 +1068,15 @@ function getSecurityLevelForActiveTenant(user: Record<string, unknown>): number 
   return normalizeSecurityLevel(user.securityLevel);
 }
 
-// Exported so the R.16.3-interim "Sync to active" callable
-// (`getLastPushedValueForFieldCallable`) reuses the same auth gate
-// without duplicating the level-7 / activeTenantId check.
-export async function gatePushCallable(
+/**
+ * Tenant staff with `activeTenantId` matching the requested tenant and at
+ * least `minLevel` (1–7). Used by Push-to-Active (7), national cascade sync (5), etc.
+ */
+export async function gateTenantStaffMinLevel(
   request: { auth?: { uid?: string } | null },
   tenantId: string,
+  minLevel: number,
+  permissionDeniedDetail?: string,
 ): Promise<string> {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'You must be signed in.');
@@ -1086,13 +1089,29 @@ export async function gatePushCallable(
   const callerLevel = getSecurityLevelForActiveTenant(callerUser);
   const callerActiveTenantId =
     typeof callerUser.activeTenantId === 'string' ? callerUser.activeTenantId : null;
-  if (callerActiveTenantId !== tenantId || callerLevel < 7) {
+  if (callerActiveTenantId !== tenantId || callerLevel < minLevel) {
     throw new HttpsError(
       'permission-denied',
-      'Insufficient permissions. Push-to-Active requires security level 7 on the requested tenant.',
+      permissionDeniedDetail ??
+        `Insufficient permissions. Requires security level ${minLevel}+ on the requested tenant.`,
     );
   }
   return uid;
+}
+
+// Exported so the R.16.3-interim "Sync to active" callable
+// (`getLastPushedValueForFieldCallable`) reuses the same auth gate
+// without duplicating the level-7 / activeTenantId check.
+export async function gatePushCallable(
+  request: { auth?: { uid?: string } | null },
+  tenantId: string,
+): Promise<string> {
+  return gateTenantStaffMinLevel(
+    request,
+    tenantId,
+    7,
+    'Insufficient permissions. Push-to-Active requires security level 7 on the requested tenant.',
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────

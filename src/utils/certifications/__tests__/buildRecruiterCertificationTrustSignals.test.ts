@@ -2,9 +2,10 @@ import {
   buildRecruiterCertificationTrustSignals,
   certificationOperationalSummaryCounts,
 } from '../buildRecruiterCertificationTrustSignals';
+import type { CertificationCatalogManifestV1 } from '../../../shared/certifications/certificationCatalogManifest';
 import certificationCatalogManifest from '../../../shared/data/certificationCatalogManifest.v1.json';
 
-const manifest = certificationCatalogManifest;
+const manifest = certificationCatalogManifest as CertificationCatalogManifestV1;
 
 function r(req, result) {
   return { requirement: req, result };

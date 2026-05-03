@@ -2,7 +2,15 @@
  * Order Details defaults (Compliance & Requirements + Company Contacts).
  * Used on Account and Location Order Defaults tab. Data flows: National → Child → Job Order or Standalone → Location → Job Order.
  */
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useMemo,
+  forwardRef,
+  useImperativeHandle,
+} from 'react';
 import {
   Alert,
   Box,
@@ -70,6 +78,11 @@ const DRESS_CODE_OPTIONS = [
 /** @deprecated Use RecruiterOrderDetailsData from utils — kept for external imports of this type */
 export type OrderDetailsData = RecruiterOrderDetailsData;
 
+export type AccountOrderDetailsFormHandle = {
+  /** Clears pending debounced save and persists current form state to Firestore. */
+  flushSave: () => Promise<void>;
+};
+
 export interface AccountOrderDetailsFormProps {
   account: RecruiterAccount | null;
   accountId: string;
@@ -84,19 +97,46 @@ export interface AccountOrderDetailsFormProps {
    * National / parent account doc — when set (child account UI), order details and screening merge parent → child → location.
    */
   inheritanceParentAccount?: RecruiterAccount | null;
+  /** When true, render fields only (no outer Card). Parent typically wraps in a Card. */
+  embedded?: boolean;
+  /** `full` includes Company Contacts; `compliance` is screening + requirements only (no contact-role dropdowns). */
+  sections?: 'full' | 'compliance';
+  /** Intro copy. Default becomes cascade hint when `embedded` is true. */
+  introMode?: 'default' | 'none' | 'cascade';
+  /** Omit the inline "Compliance & Requirements" heading (e.g. parent uses CardHeader). */
+  hideComplianceHeading?: boolean;
+  /** Hide specific compliance rows (settings tab shows full set). */
+  omitComplianceRows?: ReadonlyArray<'backgroundCheckPackages' | 'additionalScreenings'>;
+  /**
+   * `inline` — small sync icon beside each pushable field (default).
+   * `footer` — hide inline icons; show labeled sync buttons under the compliance grid (Cascading Data tab).
+   */
+  syncLayout?: 'inline' | 'footer';
 }
 
-const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
-  account,
-  accountId,
-  tenantId,
-  userId,
-  locationKey,
-  locationDefaults,
-  onRefreshLocation,
-  contacts,
-  inheritanceParentAccount,
-}) => {
+const AccountOrderDetailsForm = forwardRef<
+  AccountOrderDetailsFormHandle,
+  AccountOrderDetailsFormProps
+>(function AccountOrderDetailsForm(
+  {
+    account,
+    accountId,
+    tenantId,
+    userId,
+    locationKey,
+    locationDefaults,
+    onRefreshLocation,
+    contacts,
+    inheritanceParentAccount,
+    embedded = false,
+    sections = 'full',
+    introMode = 'default',
+    hideComplianceHeading = false,
+    omitComplianceRows = [],
+    syncLayout = 'inline',
+  },
+  ref,
+) {
   // R.16.3-interim — gate the per-field "Sync to active" button on
   // `securityLevel === '7'` (same Q4 lock as the banner in
   // RecruiterAccountDetails). Server still enforces independently.
@@ -260,6 +300,20 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
     }
   }, [tenantId, accountId, userId, locationKey, onRefreshLocation, screeningPackageId, screeningPackageName]);
 
+  useImperativeHandle(
+    ref,
+    () => ({
+      flushSave: async () => {
+        if (saveTimeoutRef.current) {
+          clearTimeout(saveTimeoutRef.current);
+          saveTimeoutRef.current = null;
+        }
+        await save();
+      },
+    }),
+    [save],
+  );
+
   const scheduleSave = useCallback(() => {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => {
@@ -291,12 +345,28 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
   const languageOptions = (getOptionsForField('languages', emptyOpts) as { value: string; label: string }[])?.map((o) => o.value) || [];
   const skillOptions = getOptionsForField('skills', emptyOpts) as { value: string; label: string }[];
 
-  return (
-    <Card>
-      <CardContent>
+  const hasPpeRequirements =
+    Array.isArray(form.ppeRequirements) && form.ppeRequirements.length > 0;
+
+  const effectiveIntro: 'none' | 'default' | 'cascade' =
+    introMode === 'none'
+      ? 'none'
+      : introMode === 'cascade' || (embedded && introMode === 'default')
+        ? 'cascade'
+        : 'default';
+
+  const inner = (
+    <>
+      {effectiveIntro === 'default' && (
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           These defaults flow to job orders. Set at account or location level; job orders can override. Edits auto-save when you click out of a field; you can also use the Save button at the bottom.
         </Typography>
+      )}
+      {effectiveIntro === 'cascade' && (
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Same fields as Docs & Settings → Order Details. Values cascade to child accounts and job orders; edits stay in sync with that section.
+        </Typography>
+      )}
 
         {/* Save-error surface — sticky at the top of the card per
             UX call. Prior to this the save flow only console.error'd
@@ -326,7 +396,11 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
           />
         )}
 
-        <Typography variant="subtitle1" fontWeight={600} sx={{ mt: 2, mb: 1 }}>Compliance & Requirements</Typography>
+        {!hideComplianceHeading && (
+          <Typography variant="subtitle1" fontWeight={600} sx={{ mt: 2, mb: 1 }}>
+            Compliance & Requirements
+          </Typography>
+        )}
         <Grid container spacing={2}>
           <Grid item xs={12}>
             {/* R.16.3-interim — manual sync button + selector in one row.
@@ -348,7 +422,7 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
                   helperText="AccuSource package for order screening. Job orders can override; merges with location → account defaults."
                 />
               </Box>
-              {!locationKey && canPushToActive && (
+              {syncLayout === 'inline' && !locationKey && canPushToActive && (
                 <Box sx={{ pt: 0.5 }}>
                   <SyncToActiveButton
                     tenantId={tenantId}
@@ -361,57 +435,61 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
               )}
             </Box>
           </Grid>
-          <Grid item xs={12}>
-            <Autocomplete
-              multiple
-              fullWidth
-              size="small"
-              options={bgOptions.map((o) => o.label)}
-              value={form.backgroundCheckPackages ?? []}
-              onChange={(_, v) => update({ backgroundCheckPackages: v })}
-              onBlur={scheduleSave}
-              renderInput={(params) => <TextField {...params} label="Background Check Packages" onBlur={scheduleSave} />}
-              renderTags={(value, getTagProps) => value.map((option, index) => <Chip variant="outlined" label={option} {...getTagProps({ index })} key={option} />)}
-            />
-          </Grid>
+          {!omitComplianceRows.includes('backgroundCheckPackages') && (
+            <Grid item xs={12}>
+              <Autocomplete
+                multiple
+                fullWidth
+                size="small"
+                options={bgOptions.map((o) => o.label)}
+                value={form.backgroundCheckPackages ?? []}
+                onChange={(_, v) => update({ backgroundCheckPackages: v })}
+                onBlur={scheduleSave}
+                renderInput={(params) => <TextField {...params} label="Background Check Packages" onBlur={scheduleSave} />}
+                renderTags={(value, getTagProps) => value.map((option, index) => <Chip variant="outlined" label={option} {...getTagProps({ index })} key={option} />)}
+              />
+            </Grid>
+          )}
           {/* R.0d (Apr 2026): "Drug Screening Panels" Autocomplete removed —
               soft-deprecated by the Readiness Rebuild; subsumed by the
               AccuSource package selector above + "Additional Screenings"
               below. See docs/READINESS_R0_HANDOFF.md. */}
-          <Grid item xs={12}>
-            {/* R.16.3-interim — same inline-action pattern as the
-                AccuSource selector above. */}
-            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-              <Box sx={{ flex: 1 }}>
-                <Autocomplete
-                  multiple
-                  fullWidth
-                  size="small"
-                  options={addlOptions.map((o) => o.label)}
-                  value={form.additionalScreenings ?? []}
-                  onChange={(_, v) => update({ additionalScreenings: v })}
-                  onBlur={scheduleSave}
-                  renderInput={(params) => <TextField {...params} label="Additional Screenings" onBlur={scheduleSave} />}
-                  renderTags={(value, getTagProps) => value.map((option, index) => <Chip variant="outlined" label={option} {...getTagProps({ index })} key={option} />)}
-                />
-              </Box>
-              {!locationKey && canPushToActive && (
-                <Box sx={{ pt: 0.5 }}>
-                  <SyncToActiveButton
-                    tenantId={tenantId}
-                    accountId={accountId}
-                    fieldKey="additionalScreenings"
-                    getCurrentValue={() =>
-                      Array.isArray(formRef.current.additionalScreenings)
-                        ? formRef.current.additionalScreenings
-                        : []
-                    }
-                    fieldLabel="Additional Screenings"
+          {!omitComplianceRows.includes('additionalScreenings') && (
+            <Grid item xs={12}>
+              {/* R.16.3-interim — same inline-action pattern as the
+                  AccuSource selector above. */}
+              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                <Box sx={{ flex: 1 }}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    size="small"
+                    options={addlOptions.map((o) => o.label)}
+                    value={form.additionalScreenings ?? []}
+                    onChange={(_, v) => update({ additionalScreenings: v })}
+                    onBlur={scheduleSave}
+                    renderInput={(params) => <TextField {...params} label="Additional Screenings" onBlur={scheduleSave} />}
+                    renderTags={(value, getTagProps) => value.map((option, index) => <Chip variant="outlined" label={option} {...getTagProps({ index })} key={option} />)}
                   />
                 </Box>
-              )}
-            </Box>
-          </Grid>
+                {syncLayout === 'inline' && !locationKey && canPushToActive && (
+                  <Box sx={{ pt: 0.5 }}>
+                    <SyncToActiveButton
+                      tenantId={tenantId}
+                      accountId={accountId}
+                      fieldKey="additionalScreenings"
+                      getCurrentValue={() =>
+                        Array.isArray(formRef.current.additionalScreenings)
+                          ? formRef.current.additionalScreenings
+                          : []
+                      }
+                      fieldLabel="Additional Screenings"
+                    />
+                  </Box>
+                )}
+              </Box>
+            </Grid>
+          )}
           <Grid item xs={12} md={6}>
             <Autocomplete
               multiple
@@ -493,7 +571,7 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
                   renderTags={(value, getTagProps) => value.map((option, index) => <Chip variant="outlined" label={option} {...getTagProps({ index })} key={option} />)}
                 />
               </Box>
-              {!locationKey && canPushToActive && (
+              {syncLayout === 'inline' && !locationKey && canPushToActive && (
                 <Box sx={{ pt: 0.5 }}>
                   <SyncToActiveButton
                     tenantId={tenantId}
@@ -517,16 +595,46 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
               size="small"
               options={PPE_OPTIONS}
               value={form.ppeRequirements ?? []}
-              onChange={(_, v) => update({ ppeRequirements: v })}
+              onChange={(_, v) => {
+                const nextReq = v ?? [];
+                const nextHad = nextReq.length > 0;
+                const prevHad = Array.isArray(form.ppeRequirements) && form.ppeRequirements.length > 0;
+                const curBy = String(form.ppeProvidedBy ?? '').trim();
+                const validBy = curBy === 'company' || curBy === 'worker' || curBy === 'both';
+                let nextProvidedBy = '';
+                if (nextHad) {
+                  nextProvidedBy =
+                    prevHad && validBy ? curBy : 'company';
+                }
+                update({
+                  ppeRequirements: nextReq,
+                  ppeProvidedBy: nextProvidedBy,
+                });
+                scheduleSave();
+              }}
               onBlur={scheduleSave}
               renderInput={(params) => <TextField {...params} label="PPE Requirements" onBlur={scheduleSave} />}
               renderTags={(value, getTagProps) => value.map((option, index) => <Chip variant="outlined" label={option} {...getTagProps({ index })} key={option} />)}
             />
           </Grid>
           <Grid item xs={12} md={6}>
-            <FormControl fullWidth size="small">
+            <FormControl fullWidth size="small" disabled={!hasPpeRequirements}>
               <InputLabel>PPE Provided By</InputLabel>
-              <Select value={form.ppeProvidedBy ?? 'company'} onChange={(e) => { update({ ppeProvidedBy: e.target.value }); scheduleSave(); }} onClose={scheduleSave} label="PPE Provided By">
+              <Select
+                displayEmpty
+                value={hasPpeRequirements ? String(form.ppeProvidedBy || 'company') : ''}
+                onChange={(e) => {
+                  update({ ppeProvidedBy: e.target.value });
+                  scheduleSave();
+                }}
+                onClose={scheduleSave}
+                label="PPE Provided By"
+              >
+                {!hasPpeRequirements && (
+                  <MenuItem value="">
+                    <em>Add PPE requirements first</em>
+                  </MenuItem>
+                )}
                 <MenuItem value="company">Company</MenuItem>
                 <MenuItem value="worker">Worker</MenuItem>
                 <MenuItem value="both">Both</MenuItem>
@@ -574,7 +682,7 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
                   onBlur={scheduleSave}
                 />
               </Box>
-              {!locationKey && canPushToActive && (
+              {syncLayout === 'inline' && !locationKey && canPushToActive && (
                 <Box sx={{ pt: 0.5 }}>
                   <SyncToActiveButton
                     tenantId={tenantId}
@@ -593,38 +701,46 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
           </Grid>
         </Grid>
 
-        <Divider sx={{ my: 3 }} />
-        <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 1 }}>Company Contacts</Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Default contact roles for job orders at this account/location.</Typography>
-        <Grid container spacing={2}>
-          {(['decisionMaker', 'hrContactId', 'operationsContactId', 'procurementContactId', 'billingContactId', 'safetyContactId', 'invoiceContactId'] as const).map((key) => {
-            const labels: Record<string, string> = {
-              decisionMaker: 'Decision Maker',
-              hrContactId: 'HR Contact',
-              operationsContactId: 'Operations Contact',
-              procurementContactId: 'Procurement Contact',
-              billingContactId: 'Billing Contact',
-              safetyContactId: 'Safety Contact',
-              invoiceContactId: 'Invoice Contact',
-            };
-            const value = form[key] ?? '';
-            return (
-              <Grid item xs={12} md={6} key={key}>
-                <Autocomplete
-                  fullWidth
-                  size="small"
-                  options={contactOptions}
-                  value={getContactById(value)}
-                  onChange={(_, v) => update({ [key]: v?.id ?? '' })}
-                  onBlur={scheduleSave}
-                  getOptionLabel={(o) => o.label}
-                  isOptionEqualToValue={(o, v) => o.id === v?.id}
-                  renderInput={(params) => <TextField {...params} label={labels[key]} placeholder="Select contact..." onBlur={scheduleSave} />}
-                />
-              </Grid>
-            );
-          })}
-        </Grid>
+        {sections === 'full' && (
+          <>
+            <Divider sx={{ my: 3 }} />
+            <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 1 }}>
+              Company Contacts
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Default contact roles for job orders at this account/location.
+            </Typography>
+            <Grid container spacing={2}>
+              {(['decisionMaker', 'hrContactId', 'operationsContactId', 'procurementContactId', 'billingContactId', 'safetyContactId', 'invoiceContactId'] as const).map((key) => {
+                const labels: Record<string, string> = {
+                  decisionMaker: 'Decision Maker',
+                  hrContactId: 'HR Contact',
+                  operationsContactId: 'Operations Contact',
+                  procurementContactId: 'Procurement Contact',
+                  billingContactId: 'Billing Contact',
+                  safetyContactId: 'Safety Contact',
+                  invoiceContactId: 'Invoice Contact',
+                };
+                const value = form[key] ?? '';
+                return (
+                  <Grid item xs={12} md={6} key={key}>
+                    <Autocomplete
+                      fullWidth
+                      size="small"
+                      options={contactOptions}
+                      value={getContactById(value)}
+                      onChange={(_, v) => update({ [key]: v?.id ?? '' })}
+                      onBlur={scheduleSave}
+                      getOptionLabel={(o) => o.label}
+                      isOptionEqualToValue={(o, v) => o.id === v?.id}
+                      renderInput={(params) => <TextField {...params} label={labels[key]} placeholder="Select contact..." onBlur={scheduleSave} />}
+                    />
+                  </Grid>
+                );
+              })}
+            </Grid>
+          </>
+        )}
 
         {/* Save button + status row. Auto-save still fires on blur
             via scheduleSave(); this is for discoverability + manual
@@ -663,10 +779,19 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
             </Typography>
           )}
         </Box>
-      </CardContent>
+    </>
+  );
+
+  if (embedded) {
+    return inner;
+  }
+
+  return (
+    <Card>
+      <CardContent>{inner}</CardContent>
     </Card>
   );
-};
+});
 
 /**
  * Tiny relative-time formatter for the "Saved <when>" status. Avoids
@@ -683,5 +808,7 @@ function formatRelativeTime(timestamp: number): string {
   if (diffHr < 24) return `${diffHr}h ago`;
   return new Date(timestamp).toLocaleString();
 }
+
+AccountOrderDetailsForm.displayName = 'AccountOrderDetailsForm';
 
 export default AccountOrderDetailsForm;

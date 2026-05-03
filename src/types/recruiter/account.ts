@@ -3,6 +3,8 @@
  * Bridge between opportunity, contact, company, job order, user groups, etc.
  */
 
+import type { RecruiterOrderDetailsData } from '../../utils/recruiterOrderDetailsMergePure';
+
 /** Worksite/location is scoped to a company */
 export interface AccountLocationRef {
   companyId: string;
@@ -47,13 +49,28 @@ export interface AccountPositionPricing {
    * When this position is chosen on a job order, flows to job order `jobDescriptionFromClient` for AI / postings.
    */
   jobDescriptionFromClient?: string | null;
+  /** Default uniform / dress expectations for this title when seeded onto job orders. */
+  uniformRequirements?: string | null;
+  /**
+   * Optional compliance & requirements overlay for this title (screening lists, PPE, contacts, etc.).
+   * Merged on top of account `orderDefaults.orderDetails` when this position is selected on a job order.
+   */
+  orderDetails?: Partial<RecruiterOrderDetailsData>;
+  /** Per-position AccuSource package override when set (non-empty id wins over account-level screening package). */
+  screeningPackageId?: string | null;
+  screeningPackageName?: string | null;
 }
 
 /** Pricing config stored on the account. */
 export interface AccountPricing {
   /** National only: when false, a single flat markup % applies to all sub-accounts and positions. */
   subAccountsManageOwnPricing?: boolean;
-  /** National only: flat markup % when subAccountsManageOwnPricing is false (e.g. 45). */
+  /**
+   * Default flat markup % on the account doc.
+   * National: national default (especially when sub-accounts share one markup).
+   * Child: **local** default markup for this sub-account (national’s value lives on the parent).
+   * Standalone: same as national for a single account.
+   */
   flatMarkupPercent?: number | null;
   /** Positions table: job titles and rates. At national level trickles to children; at child/standalone defines local rates and WC/SUTA/FUTA. */
   positions?: AccountPositionPricing[];

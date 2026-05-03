@@ -107,10 +107,6 @@ const AccountShiftsTab: React.FC<AccountShiftsTabProps> = ({
   const dateFilterStartIso = useMemo(() => dateToLocalYyyyMmDd(dateFilterStart), [dateFilterStart]);
   const dateFilterEndIso = useMemo(() => dateToLocalYyyyMmDd(dateFilterEnd), [dateFilterEnd]);
 
-  const todayIso = todayIsoLocal();
-  const dateFiltersDifferFromDefault =
-    Boolean(dateFilterEndIso) || dateFilterStartIso !== todayIso;
-
   const scopeOpts = useMemo(() => {
     if (!account?.id) {
       return { recruiterAccountIds: [] as string[] };
@@ -124,10 +120,12 @@ const AccountShiftsTab: React.FC<AccountShiftsTabProps> = ({
 
   const { rows, loading, error, refetch } = useActiveShifts(tenantId, scopeOpts);
 
+  /** Any constrained filter — including default "today" start date — enables Clear (clears dates to show all time; full reload restores defaults). */
   const hasActiveFilters =
     statusFilter !== 'all' ||
     jobTypeFilter !== 'all' ||
-    dateFiltersDifferFromDefault;
+    dateFilterStart != null ||
+    dateFilterEnd != null;
 
   if (!account) {
     return (
@@ -330,7 +328,7 @@ const AccountShiftsTab: React.FC<AccountShiftsTabProps> = ({
                     onClick={() => {
                       setStatusFilter('all');
                       setJobTypeFilter('all');
-                      setDateFilterStart(startOfTodayLocal());
+                      setDateFilterStart(null);
                       setDateFilterEnd(null);
                     }}
                     sx={{

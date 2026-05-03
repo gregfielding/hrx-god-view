@@ -184,6 +184,7 @@ import {
 import type { AccountPositionPricing } from '../types/recruiter/account';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
 import JobOrderChecklist, { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderChecklist';
+import JobOrderCascadingDataTab from '../components/recruiter/JobOrderCascadingDataTab';
 import JobOrderAutoMessagingTab from '../components/recruiter/JobOrderAutoMessagingTab';
 import CreateTaskDialog from '../components/CreateTaskDialog';
 import LogActivityDialog from '../components/LogActivityDialog';
@@ -3170,6 +3171,12 @@ const RecruiterJobOrderDetail: React.FC = () => {
     }
     return { indeedUrl, craigslistUrl };
   }, [connectedJobPosts]);
+
+  const jobOrderHeaderSyndicationVisible = hasJobBoardSyndicationUrl(
+    connectedPostSyndicationUrls.indeedUrl,
+    connectedPostSyndicationUrls.craigslistUrl,
+  );
+
   const [manageContactsOpen, setManageContactsOpen] = useState(false);
   const [showManageSalespeopleDialog, setShowManageSalespeopleDialog] = useState(false);
   const [manageRecruitersOpen, setManageRecruitersOpen] = useState(false);
@@ -3898,16 +3905,14 @@ const RecruiterJobOrderDetail: React.FC = () => {
     }
   }, [jobOrder, jobOrder?.deal?.associations, jobOrder?.dealId]);
 
-  // Load location data if worksiteId exists but worksiteName is missing
+  // Load CRM location whenever linked — used for header worksite name + full address (same pattern as child Account Details).
   useEffect(() => {
-    const hasWorksiteId = jobOrder?.worksiteId;
-    const hasWorksiteName = jobOrder?.worksiteName;
-    const hasCompanyId = jobOrder?.companyId || company?.id;
-    
-    if (hasWorksiteId && !hasWorksiteName && hasCompanyId) {
-      loadLocationData(hasCompanyId, jobOrder!.worksiteId!);
+    const wid = jobOrder?.worksiteId;
+    const cid = jobOrder?.companyId || company?.id;
+    if (wid && cid) {
+      loadLocationData(cid, wid);
     }
-  }, [jobOrder?.worksiteId, jobOrder?.worksiteName, jobOrder?.companyId, company?.id]);
+  }, [jobOrder?.worksiteId, jobOrder?.companyId, company?.id, loadLocationData]);
 
   // Load deal data if dealId exists but no embedded deal data
   useEffect(() => {
@@ -4198,6 +4203,53 @@ const RecruiterJobOrderDetail: React.FC = () => {
     dealLocationName ||
     ([worksiteCity, worksiteState].filter(Boolean).join(', ') || '');
 
+  /** Bold worksite line — mirrors child account header (`worksiteDetails.name || nickname`). */
+  const jobOrderWorksiteHeaderTitle =
+    (typeof worksiteName === 'string' && worksiteName.trim()) ||
+    (typeof loadedLocationName === 'string' && loadedLocationName.trim()) ||
+    (typeof dealLocationName === 'string' && dealLocationName.trim()) ||
+    (typeof (location as any)?.nickname === 'string' && (location as any).nickname.trim()) ||
+    (typeof (location as any)?.name === 'string' && (location as any).name.trim()) ||
+    '';
+
+  /** Gray address line — same comma-joined shape as Account Details worksite block. */
+  const jobOrderWorksiteHeaderAddress = (() => {
+    const loc = location as Record<string, unknown> | null | undefined;
+    if (loc && typeof loc === 'object') {
+      const street =
+        (typeof loc.address === 'string' && loc.address.trim()) ||
+        (typeof loc.street === 'string' && loc.street.trim()) ||
+        (typeof loc.addressLine1 === 'string' && loc.addressLine1.trim()) ||
+        '';
+      const city = typeof loc.city === 'string' ? loc.city.trim() : '';
+      const state =
+        (typeof loc.state === 'string' && loc.state.trim()) ||
+        (typeof loc.stateCode === 'string' && loc.stateCode.trim()) ||
+        '';
+      const zip =
+        (typeof loc.zipCode === 'string' && loc.zipCode.trim()) ||
+        (typeof loc.zipcode === 'string' && loc.zipcode.trim()) ||
+        (typeof loc.zip === 'string' && loc.zip.trim()) ||
+        '';
+      const parts = [street || undefined, city || undefined, state || undefined, zip || undefined].filter(Boolean);
+      if (parts.length) return parts.join(', ');
+    }
+    const wa = (jobOrder as any)?.worksiteAddress;
+    if (wa && typeof wa === 'object') {
+      const parts = [
+        wa.street || wa.addressLine1 || wa.address,
+        wa.city,
+        wa.state,
+        wa.zipCode || wa.zip,
+      ]
+        .map((x: unknown) => (typeof x === 'string' ? x.trim() : ''))
+        .filter(Boolean);
+      if (parts.length) return parts.join(', ');
+    }
+    if (typeof wa === 'string' && wa.trim()) return wa.trim();
+    return '';
+  })();
+
   const startDate = safeToDate((jobOrder as any).startDate);
   const createdAt = safeToDate((jobOrder as any).createdAt);
 
@@ -4234,23 +4286,25 @@ const RecruiterJobOrderDetail: React.FC = () => {
     <Box sx={{ p: 0 }}>
       <PageHeader
         dense
+        titleRightActions={<UniversalBackButton to="/jobs/job-orders" />}
         title={
           <Box
             sx={{
               display: 'flex',
               alignItems: 'flex-start',
-              gap: { xs: 1.5, md: 2 },
+              gap: 2.5,
               width: '100%',
+              pt: 1,
             }}
           >
             <Avatar
               src={company?.logo}
               alt={displayCompanyName}
               sx={{
-                width: { xs: 64, md: 72 },
-                height: { xs: 64, md: 72 },
-                bgcolor: 'primary.main',
-                fontSize: { xs: '1.5rem', md: '1.75rem' },
+                width: 108,
+                height: 108,
+                bgcolor: company?.logo ? 'transparent' : 'primary.main',
+                fontSize: '40px',
                 fontWeight: 700,
                 flexShrink: 0,
               }}
@@ -4259,18 +4313,19 @@ const RecruiterJobOrderDetail: React.FC = () => {
             </Avatar>
 
             <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0, width: '100%' }}>
+              {/* Title line matches Account Details: name + star inline (no flex-grow on title — avoids pushing star to the far right). */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0, mb: 0.25 }}>
                 <Typography
-                  variant="h5"
+                  component="h1"
                   sx={{
                     fontWeight: 700,
                     fontSize: { xs: '1.25rem', md: '1.5rem' },
                     lineHeight: 1.2,
-                    flex: 1,
-                    minWidth: 0,
+                    color: 'text.primary',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
+                    maxWidth: { xs: 220, sm: 360, md: 520 },
                   }}
                 >
                   {jobOrder.jobOrderName || 'Job Order'}
@@ -4283,16 +4338,89 @@ const RecruiterJobOrderDetail: React.FC = () => {
                     toggleFavorite={toggleJobOrderFavorite}
                     size="small"
                     tooltipText={{ favorited: 'Remove from favorites', notFavorited: 'Add to favorites' }}
-                    sx={{ p: 0.2, flexShrink: 0 }}
+                    sx={{
+                      p: 0.25,
+                      flexShrink: 0,
+                      '& .MuiSvgIcon-root': { fontSize: 20 },
+                    }}
                   />
                 )}
               </Box>
 
+              {/* Indeed/Craigslist + quick actions — same band as Account Details icon row */}
+              <Stack
+                direction="row"
+                alignItems="center"
+                flexWrap="wrap"
+                sx={{ gap: 0.5, mt: 0.35, width: '100%' }}
+              >
+                {jobOrderHeaderSyndicationVisible ? (
+                  <JobBoardSyndicationIconRow
+                    indeedUrl={connectedPostSyndicationUrls.indeedUrl}
+                    craigslistUrl={connectedPostSyndicationUrls.craigslistUrl}
+                    inline
+                    sx={{ mt: 0, flexShrink: 0 }}
+                  />
+                ) : null}
+                <Stack
+                  direction="row"
+                  spacing={0.5}
+                  sx={{
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: 0.5,
+                    pl: jobOrderHeaderSyndicationVisible ? { xs: 0, sm: 0.75 } : 0,
+                    ml: jobOrderHeaderSyndicationVisible ? { xs: 0, sm: 0.25 } : 0,
+                    borderLeft: jobOrderHeaderSyndicationVisible
+                      ? { xs: 'none', sm: '1px solid' }
+                      : 'none',
+                    borderColor: 'divider',
+                  }}
+                >
+                  {linkedRecruiterAccountId ? (
+                    <RecordHeaderActionIcon
+                      tooltip="Open linked account"
+                      onClick={() => navigate(`/accounts/${linkedRecruiterAccountId}`)}
+                      aria-label="Open linked account"
+                    >
+                      <AccountBalanceIcon />
+                    </RecordHeaderActionIcon>
+                  ) : (
+                    <Tooltip
+                      title="No recruiter account linked to this job’s company yet"
+                      arrow
+                      componentsProps={recordHeaderTooltipComponentsProps}
+                    >
+                      <span>
+                        <IconButton
+                          size="small"
+                          disabled
+                          aria-label="Open linked account"
+                          sx={recordHeaderActionIconButtonSx}
+                        >
+                          <AccountBalanceIcon />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  )}
+                  <RecordHeaderActionIcon tooltip="Add Note" onClick={() => setShowAddNoteDialog(true)} aria-label="Add Note">
+                    <NoteIcon />
+                  </RecordHeaderActionIcon>
+                  <RecordHeaderActionIcon tooltip="Add Task" onClick={() => setShowCreateTaskDialog(true)} aria-label="Add Task">
+                    <AddTaskIcon />
+                  </RecordHeaderActionIcon>
+                  <RecordHeaderActionIcon
+                    tooltip="Log Activity"
+                    onClick={() => setShowLogActivityDialog(true)}
+                    aria-label="Log Activity"
+                  >
+                    <CheckCircleIcon />
+                  </RecordHeaderActionIcon>
+                </Stack>
+              </Stack>
+
               <Stack spacing={1.15} sx={{ width: '100%', alignItems: 'flex-start', mt: 0.35 }}>
                 <Box sx={{ width: '100%' }}>
-                  <Typography component="span" sx={recordHeaderColumnTitleSx}>
-                    Order
-                  </Typography>
                   <Box
                     sx={{
                       display: 'flex',
@@ -4327,9 +4455,40 @@ const RecruiterJobOrderDetail: React.FC = () => {
                 </Box>
 
                 <Box sx={{ width: '100%' }}>
-                  <Typography component="span" sx={recordHeaderColumnTitleSx}>
-                    Worksite
-                  </Typography>
+                  {(jobOrderWorksiteHeaderTitle || jobOrderWorksiteHeaderAddress) && (
+                    <Box
+                      sx={{
+                        mt: 0.35,
+                        mb: 0.5,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 0.25,
+                        minWidth: 0,
+                        maxWidth: '100%',
+                      }}
+                    >
+                      {jobOrderWorksiteHeaderTitle ? (
+                        <Typography
+                          component="div"
+                          sx={{
+                            fontSize: '0.74rem',
+                            fontWeight: 600,
+                            color: 'text.primary',
+                            lineHeight: 1.35,
+                          }}
+                        >
+                          {jobOrderWorksiteHeaderTitle}
+                        </Typography>
+                      ) : null}
+                      {jobOrderWorksiteHeaderAddress ? (
+                        <Typography component="div" sx={{ ...recordHeaderBodyTextSx, lineHeight: 1.35 }}>
+                          {jobOrderWorksiteHeaderAddress}
+                        </Typography>
+                      ) : null}
+                    </Box>
+                  )}
+                  {/* Inline strip: account · location · start date · scheduler · auto-messaging — hidden (worksite name/address block above). Remove `false &&` to restore. */}
+                  {false && (
                   <Stack
                     direction="row"
                     flexWrap="wrap"
@@ -4508,12 +4667,10 @@ const RecruiterJobOrderDetail: React.FC = () => {
                       </>
                     )}
                   </Stack>
+                  )}
                 </Box>
 
                 <Box sx={{ width: '100%' }}>
-                  <Typography component="span" sx={recordHeaderColumnTitleSx}>
-                    Setup & actions
-                  </Typography>
                   <Stack
                     direction="row"
                     flexWrap="wrap"
@@ -4525,16 +4682,6 @@ const RecruiterJobOrderDetail: React.FC = () => {
                       rowGap: 0.65,
                     }}
                   >
-                    {hasJobBoardSyndicationUrl(
-                      connectedPostSyndicationUrls.indeedUrl,
-                      connectedPostSyndicationUrls.craigslistUrl
-                    ) && (
-                      <JobBoardSyndicationIconRow
-                        indeedUrl={connectedPostSyndicationUrls.indeedUrl}
-                        craigslistUrl={connectedPostSyndicationUrls.craigslistUrl}
-                        sx={{ mr: 0.25 }}
-                      />
-                    )}
                     <Box
                       sx={{
                         display: 'inline-flex',
@@ -4571,59 +4718,6 @@ const RecruiterJobOrderDetail: React.FC = () => {
                         </Tooltip>
                       ))}
                     </Box>
-                    <Stack
-                      direction="row"
-                      spacing={0.5}
-                      sx={{
-                        alignItems: 'center',
-                        flexWrap: 'wrap',
-                        gap: 0.5,
-                        pl: { xs: 0, sm: 0.75 },
-                        ml: { xs: 0, sm: 0.25 },
-                        borderLeft: { xs: 'none', sm: '1px solid' },
-                        borderColor: 'divider',
-                      }}
-                    >
-                      {linkedRecruiterAccountId ? (
-                        <RecordHeaderActionIcon
-                          tooltip="Open linked account"
-                          onClick={() => navigate(`/accounts/${linkedRecruiterAccountId}`)}
-                          aria-label="Open linked account"
-                        >
-                          <AccountBalanceIcon />
-                        </RecordHeaderActionIcon>
-                      ) : (
-                        <Tooltip
-                          title="No recruiter account linked to this job’s company yet"
-                          arrow
-                          componentsProps={recordHeaderTooltipComponentsProps}
-                        >
-                          <span>
-                            <IconButton
-                              size="small"
-                              disabled
-                              aria-label="Open linked account"
-                              sx={recordHeaderActionIconButtonSx}
-                            >
-                              <AccountBalanceIcon />
-                            </IconButton>
-                          </span>
-                        </Tooltip>
-                      )}
-                      <RecordHeaderActionIcon tooltip="Add Note" onClick={() => setShowAddNoteDialog(true)} aria-label="Add Note">
-                        <NoteIcon />
-                      </RecordHeaderActionIcon>
-                      <RecordHeaderActionIcon tooltip="Add Task" onClick={() => setShowCreateTaskDialog(true)} aria-label="Add Task">
-                        <AddTaskIcon />
-                      </RecordHeaderActionIcon>
-                      <RecordHeaderActionIcon
-                        tooltip="Log Activity"
-                        onClick={() => setShowLogActivityDialog(true)}
-                        aria-label="Log Activity"
-                      >
-                        <CheckCircleIcon />
-                      </RecordHeaderActionIcon>
-                    </Stack>
                   </Stack>
                 </Box>
               </Stack>
@@ -4682,7 +4776,6 @@ const RecruiterJobOrderDetail: React.FC = () => {
             >
               Delete
             </Button>
-            <UniversalBackButton to="/jobs/job-orders" />
           </Box>
         }
       />
@@ -5417,6 +5510,15 @@ const RecruiterJobOrderDetail: React.FC = () => {
           onJobOrderUpdated={(updates) =>
             setJobOrder((prev) => (prev ? { ...prev, ...updates } : prev))
           }
+        />
+      </TabPanel>
+
+      <TabPanel value={activeTab} index="cascading_data">
+        <JobOrderCascadingDataTab
+          tenantId={tenantId || ''}
+          jobOrder={jobOrder}
+          recruiterAccountId={linkedRecruiterAccountId}
+          schedulerName={schedulerName}
         />
       </TabPanel>
 

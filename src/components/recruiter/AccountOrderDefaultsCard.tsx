@@ -45,6 +45,11 @@ export interface AccountOrderDefaultsCardProps {
   locationKey?: string;
   locationDefaults?: Record<string, unknown>;
   onRefreshLocation?: () => void | Promise<void>;
+  /**
+   * `flat` removes the outer Card (use inside another card/panel — e.g. Cascading Data → Staff Instructions).
+   * Upload/table chrome is lighter (no dashed nest, minimal table frame).
+   */
+  variant?: 'card' | 'flat';
 }
 
 function formatFileSize(bytes: number | undefined): string {
@@ -83,7 +88,10 @@ const AccountOrderDefaultsCard: React.FC<AccountOrderDefaultsCardProps> = ({
   locationKey,
   locationDefaults,
   onRefreshLocation,
+  variant = 'card',
 }) => {
+  const isFlat = variant === 'flat';
+  const sectionGap = isFlat ? 2 : 3;
   const locationStaff = (locationDefaults as any)?.orderDefaults?.staffInstructions;
   const accountStaff = account?.orderDefaults?.staffInstructions;
   const instructionData = locationStaff?.[fieldKey] ?? accountStaff?.[fieldKey];
@@ -161,42 +169,63 @@ const AccountOrderDefaultsCard: React.FC<AccountOrderDefaultsCardProps> = ({
     saveTextToFirestore(textToSave);
   };
 
-  return (
-    <Card>
-      <CardHeader title={title} titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }} />
-      <CardContent>
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {placeholder && (
-            <TextField
-              fullWidth
-              multiline
-              rows={4}
-              label="Instructions"
-              placeholder={placeholder}
-              value={localText}
-              onChange={(e) => handleTextChange(e.target.value)}
-              onBlur={handleBlur}
-            />
-          )}
+  const tableContainerSx = isFlat
+    ? {
+        mb: 2,
+        maxWidth: '100%',
+        overflowX: 'auto' as const,
+      }
+    : {
+        mb: 2,
+        border: '1px solid',
+        borderColor: 'divider',
+        borderRadius: 1,
+        maxWidth: '100%',
+        overflowX: 'auto' as const,
+      };
 
-          <Box>
-            <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 600 }}>
-              Uploaded files
-            </Typography>
+  const uploadRegionSx = isFlat
+    ? {
+        pt: 2,
+        mt: 0.5,
+        borderTop: '1px solid',
+        borderColor: 'divider',
+      }
+    : {
+        p: 2,
+        border: '2px dashed',
+        borderColor: 'divider',
+        borderRadius: 1,
+      };
 
-            <TableContainer
-              sx={{
-                mb: 2,
-                border: '1px solid',
-                borderColor: 'divider',
-                borderRadius: 1,
-                maxWidth: '100%',
-                overflowX: 'auto',
-              }}
-            >
-              <Table size="small" stickyHeader>
-                <TableHead>
-                  <TableRow sx={{ bgcolor: 'grey.100' }}>
+  const mainBody = (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: sectionGap }}>
+      {placeholder && (
+        <TextField
+          fullWidth
+          multiline
+          rows={isFlat ? 3 : 4}
+          label="Instructions"
+          placeholder={placeholder}
+          value={localText}
+          onChange={(e) => handleTextChange(e.target.value)}
+          onBlur={handleBlur}
+        />
+      )}
+
+      <Box>
+        <Typography
+          variant={isFlat ? 'caption' : 'subtitle2'}
+          gutterBottom
+          sx={{ fontWeight: 600, display: 'block', color: isFlat ? 'text.secondary' : undefined }}
+        >
+          Uploaded files
+        </Typography>
+
+        <TableContainer sx={tableContainerSx}>
+          <Table size="small" stickyHeader>
+            <TableHead>
+              <TableRow sx={{ bgcolor: isFlat ? 'action.hover' : 'grey.100' }}>
                     <TableCell sx={{ fontWeight: 700 }}>Label</TableCell>
                     <TableCell sx={{ fontWeight: 700 }}>File name</TableCell>
                     <TableCell sx={{ fontWeight: 700 }}>Uploaded</TableCell>
@@ -279,7 +308,7 @@ const AccountOrderDefaultsCard: React.FC<AccountOrderDefaultsCardProps> = ({
               </Table>
             </TableContainer>
 
-            <Box sx={{ p: 2, border: '2px dashed', borderColor: 'divider', borderRadius: 1 }}>
+            <Box sx={uploadRegionSx}>
               <Typography variant="body2" color="text.secondary" gutterBottom>
                 {uploadPlaceholder}
               </Typography>
@@ -375,17 +404,38 @@ const AccountOrderDefaultsCard: React.FC<AccountOrderDefaultsCardProps> = ({
             </Box>
           </Box>
         </Box>
-      </CardContent>
-      <Snackbar
-        open={!!toast?.open}
-        autoHideDuration={toast?.severity === 'error' ? 6000 : 3000}
-        onClose={() => setToast(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert severity={toast?.severity || 'info'} onClose={() => setToast(null)} sx={{ width: '100%' }}>
-          {toast?.message}
-        </Alert>
-      </Snackbar>
+  );
+
+  const snackbar = (
+    <Snackbar
+      open={!!toast?.open}
+      autoHideDuration={toast?.severity === 'error' ? 6000 : 3000}
+      onClose={() => setToast(null)}
+      anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+    >
+      <Alert severity={toast?.severity || 'info'} onClose={() => setToast(null)} sx={{ width: '100%' }}>
+        {toast?.message}
+      </Alert>
+    </Snackbar>
+  );
+
+  if (isFlat) {
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pb: 3 }}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+          {title}
+        </Typography>
+        {mainBody}
+        {snackbar}
+      </Box>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader title={title} titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }} />
+      <CardContent>{mainBody}</CardContent>
+      {snackbar}
     </Card>
   );
 };

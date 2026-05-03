@@ -9,6 +9,7 @@ import {
   Box,
   Typography,
   Card,
+  CardActions,
   CardContent,
   CardHeader,
   Button,
@@ -57,6 +58,7 @@ import {
 } from '@mui/material';
 import type { SxProps, Theme } from '@mui/material/styles';
 import {
+  AccountBalance as AccountBalanceIcon,
   Business as BusinessIcon,
   Edit as EditIcon,
   Dashboard as DashboardIcon,
@@ -77,6 +79,7 @@ import {
   AccountTree as AccountTreeIcon,
   Settings as SettingsIcon,
   Save as SaveIcon,
+  Refresh as RefreshIcon,
   Receipt as ReceiptIcon,
   LinkedIn as LinkedInIcon,
   Assessment as ReportsIcon,
@@ -85,6 +88,7 @@ import {
   Sync as SyncIcon,
   ViewList as ViewListIcon,
   Layers as LayersIcon,
+  FactCheckOutlined as FactCheckOutlinedIcon,
 } from '@mui/icons-material';
 import {
   doc,
@@ -131,7 +135,9 @@ import { useEntity } from '../hooks/useEntity';
 import { getJobOrderAge } from '../utils/dateUtils';
 import { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderChecklist';
 import AccountOrderDefaultsCard from '../components/recruiter/AccountOrderDefaultsCard';
-import AccountOrderDetailsForm from '../components/recruiter/AccountOrderDetailsForm';
+import AccountOrderDetailsForm, {
+  type AccountOrderDetailsFormHandle,
+} from '../components/recruiter/AccountOrderDetailsForm';
 import PushToActiveBanner, {
   type PushToActiveBannerPayload,
 } from '../components/recruiter/PushToActiveBanner';
@@ -153,6 +159,8 @@ import RecruiterMultiSelect, {
 } from '../components/recruiter/RecruiterMultiSelect';
 import AddJobOrderModal from '../components/recruiter/AddJobOrderModal';
 import AddAccountModal from '../components/recruiter/AddAccountModal';
+import DefaultGigSettings from '../components/recruiter/DefaultGigSettings';
+import { PositionComplianceOverridesDialog } from '../components/recruiter/PositionComplianceOverridesDialog';
 import type { JobOrder } from '../types/Phase1Types';
 import jobTitlesData from '../data/onetJobTitles.json';
 import { JobsBoardService, type JobsBoardPost } from '../services/recruiter/jobsBoardService';
@@ -166,11 +174,19 @@ import { canAccessAccountInvoicingTab } from '../utils/invoicingAccessControl';
 import { numberInputNoSpinnerSx } from '../utils/numberInputNoSpinner';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import { ensureCityInSmartGroups } from '../services/smartGroupMetroSync';
+import {
+  extractAccountPricingPositions,
+  mergeNationalTemplateWithChildVenueRow,
+} from '../utils/accountPricingForJobOrder';
 import AddNoteDialog from '../components/AddNoteDialog';
 import CRMNotesTab from '../components/CRMNotesTab';
-import { recordHeaderBodyTextSx } from './UserProfile/components/recordHeaderStyles';
 import {
-  ACCOUNT_SETTINGS_NAV_GROUPS,
+  recordHeaderActionIconButtonSx,
+  recordHeaderBodyTextSx,
+  recordHeaderTooltipComponentsProps,
+} from './UserProfile/components/recordHeaderStyles';
+import RecordHeaderActionIcon from './UserProfile/components/RecordHeaderActionIcon';
+import {
   DEFAULT_ACCOUNT_SETTINGS_SECTION,
   LEGACY_ACCOUNT_TAB_REDIRECTS,
   isAccountSettingsSection,
@@ -1419,12 +1435,12 @@ const RecruiterAccountDetails: React.FC = () => {
 
   const tabFromUrl = useMemo(() => {
     const tab = searchParams.get('tab');
-    // Legacy redirect: ?tab=pricing and ?tab=order-defaults now live as
-    // sections inside the unified Docs & Settings tab. Resolve them to the
-    // settings tab index here so deep links keep working; the URL itself
-    // gets normalized below in the redirect effect.
+    // Legacy redirect: ?tab=pricing / ?tab=order-defaults now live on the
+    // Cascading Data tab (the Settings tab was reduced to File Uploads only
+    // on 2026-05-03). Resolve here so the initial render shows the right
+    // panel; the URL itself gets normalized in the redirect effect below.
     if (tab && LEGACY_ACCOUNT_TAB_REDIRECTS[tab]) {
-      return ACCOUNT_TAB_SLUGS.indexOf('settings');
+      return ACCOUNT_TAB_SLUGS.indexOf('cascading-data');
     }
     // Legacy `?tab=overview`, bare URLs with no `?tab=`, and unknown slugs
     // land on Shifts (account-scoped shift list). URL gets normalized below.
@@ -1629,28 +1645,6 @@ const RecruiterAccountDetails: React.FC = () => {
     totalChildAccounts: number;
   } | null>(null);
 
-  // Hiring Entity downstream sync — National Account header button
-  // (Greg, 2026-04-30). Pushes the parent's `hiringEntityId` to every
-  // child + JO that doesn't have one set. Fill-empty semantics — never
-  // overwrites a manually-entered custom hiring entity. Mirrors the
-  // gig backfill dialog state shape so the result modal can re-use the
-  // same UX patterns.
-  const [hiringEntitySyncOpen, setHiringEntitySyncOpen] = useState(false);
-  const [hiringEntitySyncStep, setHiringEntitySyncStep] =
-    useState<'confirm' | 'result'>('confirm');
-  const [hiringEntitySyncLoading, setHiringEntitySyncLoading] = useState(false);
-  const [hiringEntitySyncError, setHiringEntitySyncError] = useState<string | null>(null);
-  const [hiringEntitySyncSummary, setHiringEntitySyncSummary] = useState<{
-    nationalHiringEntityId: string;
-    childAccountsScanned: number;
-    childAccountsUpdated: number;
-    childAccountsSkipped: number;
-    childAccountsFailed: number;
-    jobOrdersScanned: number;
-    jobOrdersUpdated: number;
-    jobOrdersSkipped: number;
-    jobOrdersFailed: number;
-  } | null>(null);
   const [parentCompanyIds, setParentCompanyIds] = useState<string[]>([]);
   const addLocationTargetCompanyIds = useMemo(
     () => (isChildAccount ? parentCompanyIds : (account?.associations?.companyIds ?? [])),
@@ -1762,6 +1756,11 @@ const RecruiterAccountDetails: React.FC = () => {
   const [defaultBilling, setDefaultBilling] = useState(defaultBillingInitial);
   const [defaultEVerify, setDefaultEVerify] = useState(defaultEVerifyInitial);
   const [defaultsSaving, setDefaultsSaving] = useState(false);
+  // Mirror of `defaultsSaving` for use inside long-lived listeners (effect closures cannot read
+  // the latest state). Used by the account-doc onSnapshot listener to skip applying snapshot
+  // payloads while the user is mid-save (which would briefly clobber pending state with the
+  // pre-save Firestore value).
+  const defaultsSavingRef = useRef(false);
   /** When this account is a child, parent's E-Verify and Hiring Entity for display on Account Details card */
   const [parentDefaults, setParentDefaults] = useState<{ eVerifyRequired: boolean; hiringEntityId: string | null } | null>(null);
   /** Full parent account doc for Order Defaults → Order Details inheritance (national → child). */
@@ -1803,6 +1802,8 @@ const RecruiterAccountDetails: React.FC = () => {
     }>
   >(new Map());
   const canPushToActive = securityLevel === '7';
+  /** National → child cascade sync callable (fill-empty); allowed for tenant managers (5+), not only HRX level 7. */
+  const canSyncCascadeDefaultsToChildren = Number(securityLevel) >= 5;
 
   // Pricing tab: national options + positions table
   const [pricingSubAccountsManageOwn, setPricingSubAccountsManageOwn] = useState(false);
@@ -1811,6 +1812,19 @@ const RecruiterAccountDetails: React.FC = () => {
   const [pricingNotes, setPricingNotes] = useState('');
   const [pricingNotesSaving, setPricingNotesSaving] = useState(false);
   const [pricingSaving, setPricingSaving] = useState(false);
+  /** Parent national `pricing.flatMarkupPercent` — read-only context on child accounts (Cascading Data). */
+  const [parentNationalFlatMarkupPercent, setParentNationalFlatMarkupPercent] = useState<number | null>(null);
+  const [parentNationalMarkupLoading, setParentNationalMarkupLoading] = useState(false);
+  /** Live parent `roles.schedulerIds` — merged into header + scheduling UX on child accounts. */
+  const [parentNationalSchedulerIds, setParentNationalSchedulerIds] = useState<string[]>([]);
+  /** Live parent `pricing.positions` — templates for Cascading Data Default Positions on children. */
+  const [parentNationalPositions, setParentNationalPositions] = useState<AccountPositionPricing[]>([]);
+  const [cascadeMarkupSaving, setCascadeMarkupSaving] = useState(false);
+  /** Cascading Data → Default Positions: per-row compliance / screening overrides editor. */
+  const [positionComplianceDialog, setPositionComplianceDialog] = useState<{
+    titleKey: string;
+    pricingPositionsIndex: number | null;
+  } | null>(null);
   const [pricingSutaFutaState, setPricingSutaFutaState] = useState('');
   /** WC rate by "STATE_CODE" from tenants/workers_comp_rates (single source of truth; used for display and so master updates apply everywhere). */
   const [wcRatesByKey, setWcRatesByKey] = useState<Record<string, number>>({});
@@ -1824,10 +1838,135 @@ const RecruiterAccountDetails: React.FC = () => {
     [account],
   );
 
+  /** Re-run WC auto-fill when titles or stored WC codes change — not on every pay-rate keystroke. */
+  const pricingPositionsWcHydrationKey = useMemo(
+    () =>
+      pricingPositions
+        .map(
+          (r) =>
+            `${String(r.jobTitle || '').trim().toLowerCase()}|${String(r.workersCompCode ?? '').trim()}`,
+        )
+        .join('\u001f'),
+    [pricingPositions],
+  );
+
+  /** When worksite state + Workers Comp maps are available, fill missing WC code/rate from job-title rules (Settings → Workers Comp). Keeps child venue rows populated after national JD/template updates. */
+  useEffect(() => {
+    if (!tenantId || !account?.id) return;
+    const stateCode = (pricingSutaFutaState || normalizeStateCode(worksiteDetails?.state) || '')
+      .trim()
+      .toUpperCase();
+    if (!stateCode) return;
+
+    setPricingPositions((prev) => {
+      let changed = false;
+      const next = prev.map((row) => {
+        const title = String(row.jobTitle || '').trim();
+        if (!title) return row;
+        if (String(row.workersCompCode || '').trim() !== '') return row;
+        const lookup = pickWorkersCompJobTitleLookup(
+          wcJobTitleMaps,
+          stateCode,
+          title,
+          wcModifierAccountIdForPricing,
+        );
+        if (!lookup) return row;
+        changed = true;
+        return {
+          ...row,
+          workersCompCode: lookup.code,
+          workersCompRate: lookup.rate,
+        };
+      });
+      return changed ? next : prev;
+    });
+  }, [
+    tenantId,
+    account?.id,
+    pricingSutaFutaState,
+    worksiteDetails?.state,
+    wcJobTitleMaps,
+    wcModifierAccountIdForPricing,
+    pricingPositionsWcHydrationKey,
+  ]);
+
+  /**
+   * Accounts with a parent: single live snapshot for downhill cascade —
+   * markup, hiring/E-Verify defaults, schedulers, default positions (national templates on children).
+   */
+  useEffect(() => {
+    const parentId = account?.parentAccountId?.trim();
+    if (!tenantId || !parentId) {
+      setParentNationalFlatMarkupPercent(null);
+      setParentNationalMarkupLoading(false);
+      setParentDefaults(null);
+      setOrderDefaultsInheritanceParent(null);
+      setParentNationalSchedulerIds([]);
+      setParentNationalPositions([]);
+      return;
+    }
+
+    setParentNationalMarkupLoading(true);
+    const parentRef = doc(db, p.recruiterAccount(tenantId, parentId));
+    const unsub = onSnapshot(
+      parentRef,
+      (snap) => {
+        if (!snap.exists()) {
+          setParentNationalFlatMarkupPercent(null);
+          setParentDefaults(null);
+          setOrderDefaultsInheritanceParent(null);
+          setParentNationalSchedulerIds([]);
+          setParentNationalPositions([]);
+          setParentNationalMarkupLoading(false);
+          return;
+        }
+        const d = snap.data() as RecruiterAccount;
+        const pr = d.pricing;
+        const v = pr?.flatMarkupPercent as unknown;
+        const n = v == null ? NaN : Number(v);
+        setParentNationalFlatMarkupPercent(Number.isFinite(n) ? n : null);
+
+        const eVerify = d?.defaults?.eVerify;
+        const eVerifyRequired = eVerify && typeof eVerify === 'object' ? !!eVerify.eVerifyRequired : false;
+        const hiringEntityId = d?.hiringEntityId ?? null;
+        setParentDefaults({ eVerifyRequired, hiringEntityId });
+        setOrderDefaultsInheritanceParent(d);
+
+        const sched = d.roles?.schedulerIds;
+        setParentNationalSchedulerIds(
+          Array.isArray(sched)
+            ? sched.filter((x): x is string => typeof x === 'string' && x.trim() !== '')
+            : [],
+        );
+
+        setParentNationalPositions(extractAccountPricingPositions(d));
+
+        setParentNationalMarkupLoading(false);
+      },
+      (err) => {
+        console.error('RecruiterAccountDetails: parent account cascade snapshot', err);
+        setParentNationalFlatMarkupPercent(null);
+        setParentDefaults(null);
+        setOrderDefaultsInheritanceParent(null);
+        setParentNationalSchedulerIds([]);
+        setParentNationalPositions([]);
+        setParentNationalMarkupLoading(false);
+      },
+    );
+
+    return () => unsub();
+  }, [tenantId, account?.parentAccountId]);
+
   // Invoicing tab: sub-view (scaffolding for QuickBooks integration)
   const [invoicingSubView, setInvoicingSubView] = useState<'invoices' | 'ar' | 'payments' | 'mapping'>('invoices');
 
   const isMountedRef = useRef(true);
+  const cascadingOrderDetailsRef = useRef<AccountOrderDetailsFormHandle | null>(null);
+  const [cascadeChildSyncBusy, setCascadeChildSyncBusy] = useState(false);
+  const [cascadeChildSyncNotice, setCascadeChildSyncNotice] = useState<{
+    kind: 'success' | 'error';
+    text: string;
+  } | null>(null);
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -1835,10 +1974,41 @@ const RecruiterAccountDetails: React.FC = () => {
     };
   }, []);
 
+  // Keep `defaultsSavingRef` in sync with `defaultsSaving` so the account-doc onSnapshot listener
+  // (which runs once per accountId) sees the latest save flag without re-subscribing.
+  useEffect(() => {
+    defaultsSavingRef.current = defaultsSaving;
+  }, [defaultsSaving]);
+
   // Keep tab in sync with URL (e.g. when user hits back)
   useEffect(() => {
     setTabValue(tabFromUrl);
   }, [tabFromUrl]);
+
+  /** Billing & Invoicing defaults moved to Cascading Data — keep old links working. */
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    const section = searchParams.get('section');
+    if (tab === 'settings' && (section === 'billing' || section === 'customer-rules')) {
+      setSearchParams({ tab: 'cascading-data' }, { replace: true });
+      return;
+    }
+    // The Settings tab was reduced to File Uploads only on 2026-05-03 (sidebar + other
+    // sections moved to Cascading Data). On child accounts the tab is hidden entirely; if
+    // someone deep-links to `?tab=settings` on a child, send them to Cascading Data so they
+    // don't land on a hidden tab. Only run once `account` has loaded so we don't redirect
+    // before knowing the account type.
+    if (tab === 'settings' && account?.accountType === 'child') {
+      setSearchParams({ tab: 'cascading-data' }, { replace: true });
+      return;
+    }
+    // For sections that no longer exist on the slimmed-down Settings tab (anything except
+    // `files`), normalize the URL to `?tab=settings&section=files` so the back button and
+    // bookmarks stay coherent.
+    if (tab === 'settings' && section && section !== 'files' && account?.accountType !== 'child') {
+      setSearchParams({ tab: 'settings', section: 'files' }, { replace: true });
+    }
+  }, [searchParams, setSearchParams, account?.accountType]);
 
   const setAccountTab = useCallback((index: number) => {
     setTabValue(index);
@@ -1869,15 +2039,15 @@ const RecruiterAccountDetails: React.FC = () => {
   // One-time normalization on mount: rewrite legacy URLs to their new
   // canonical form so subsequent back-button / share-link behavior matches
   // the current IA. `replace` keeps legacy URLs out of history.
-  // - ?tab=pricing / ?tab=order-defaults → ?tab=settings&section=…
+  // - ?tab=pricing / ?tab=order-defaults → ?tab=cascading-data
+  //   (Both originally lived under Docs & Settings; on 2026-05-03 the
+  //   Settings tab was reduced to File Uploads only and these surfaces
+  //   moved to Cascading Data.)
   // - ?tab=overview or bare URL (no ?tab=) → ?tab=shifts
   useEffect(() => {
     const tab = searchParams.get('tab');
     if (tab && LEGACY_ACCOUNT_TAB_REDIRECTS[tab]) {
-      setSearchParams(
-        { tab: 'settings', section: LEGACY_ACCOUNT_TAB_REDIRECTS[tab] },
-        { replace: true },
-      );
+      setSearchParams({ tab: 'cascading-data' }, { replace: true });
       return;
     }
     if (tab === 'overview' || !tab) {
@@ -1922,6 +2092,74 @@ const RecruiterAccountDetails: React.FC = () => {
     }
   }, [accountId, tenantId]);
 
+  // Live listener: when the parent's "Save & sync to child accounts" runs while a child page is
+  // open, the child's `defaults.*` and `orderDefaults` are updated in Firestore but the cached
+  // React state stays stale. Subscribe so the visible page reflects cascade writes immediately.
+  // Skip the first emission (initial load is handled by `loadAccount` and would re-apply state we
+  // just set) and bail out when a local save is in flight to avoid clobbering in-flight typing.
+  useEffect(() => {
+    if (!accountId || !tenantId) return;
+    const ref = doc(db, p.recruiterAccount(tenantId, accountId));
+    let isFirst = true;
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        if (!isMountedRef.current) return;
+        if (isFirst) {
+          isFirst = false;
+          return;
+        }
+        if (defaultsSavingRef.current) return;
+        if (!snap.exists()) return;
+        const data = snap.data();
+        const d = data?.defaults;
+        if (d && typeof d === 'object') {
+          const r = d.rules;
+          if (r && typeof r === 'object') {
+            setDefaultRules({
+              replacingExistingAgency: !!r.replacingExistingAgency,
+              rolloverExistingStaff: !!r.rolloverExistingStaff,
+              timeclockSystem: r.timeclockSystem ?? '',
+              attendancePolicy: r.attendancePolicy ?? '',
+              noShowPolicy: r.noShowPolicy ?? '',
+              overtimePolicy: r.overtimePolicy ?? '',
+              callOffPolicy: r.callOffPolicy ?? '',
+              injuryHandlingPolicy: r.injuryHandlingPolicy ?? '',
+              disciplinePolicy: r.disciplinePolicy ?? '',
+            });
+          }
+          const b = d.billing;
+          if (b && typeof b === 'object') {
+            setDefaultBilling({
+              poRequired: !!b.poRequired,
+              paymentTerms: b.paymentTerms ?? '',
+              invoiceDeliveryMethod: b.invoiceDeliveryMethod ?? '',
+              invoiceFrequency: b.invoiceFrequency ?? '',
+              sendInvoicesTo: Array.isArray(b.sendInvoicesTo) ? b.sendInvoicesTo : [],
+              billingNotes: b.billingNotes ?? '',
+            });
+          }
+          const e = d.eVerify;
+          if (e && typeof e === 'object') {
+            setDefaultEVerify({ eVerifyRequired: !!e.eVerifyRequired });
+          }
+        }
+        // `orderDefaults` (staff instructions, screening defaults, etc.) is also fill-empty
+        // copied by the national cascade. Mirror it onto local `account` state so the
+        // Cascading Data → Order Defaults card refreshes too.
+        setAccount((prev) =>
+          prev
+            ? { ...prev, orderDefaults: data?.orderDefaults ?? undefined }
+            : prev,
+        );
+      },
+      (err) => {
+        console.error('RecruiterAccountDetails: account snapshot listener error', err);
+      },
+    );
+    return () => unsub();
+  }, [accountId, tenantId]);
+
   // Check if any account has this account as parent (for Children tab visibility)
   useEffect(() => {
     if (!tenantId || !account?.id) {
@@ -1938,38 +2176,6 @@ const RecruiterAccountDetails: React.FC = () => {
       cancelled = true;
     };
   }, [tenantId, account?.id]);
-
-  // Load parent account defaults when this account has a parent (for E-Verify + Hiring Entity display on Account Details card)
-  useEffect(() => {
-    const parentId = account?.parentAccountId;
-    if (!tenantId || !parentId) {
-      setParentDefaults(null);
-      setOrderDefaultsInheritanceParent(null);
-      return;
-    }
-    let cancelled = false;
-    const parentRef = doc(db, p.recruiterAccount(tenantId, parentId));
-    getDoc(parentRef).then((snap) => {
-      if (cancelled || !isMountedRef.current) return;
-      if (!snap.exists()) {
-        setParentDefaults(null);
-        setOrderDefaultsInheritanceParent(null);
-        return;
-      }
-      const d = snap.data();
-      const eVerify = d?.defaults?.eVerify;
-      const eVerifyRequired = eVerify && typeof eVerify === 'object' ? !!eVerify.eVerifyRequired : false;
-      const hiringEntityId = d?.hiringEntityId ?? null;
-      setParentDefaults({ eVerifyRequired, hiringEntityId });
-      setOrderDefaultsInheritanceParent(d as RecruiterAccount);
-    }).catch(() => {
-      if (!cancelled && isMountedRef.current) {
-        setParentDefaults(null);
-        setOrderDefaultsInheritanceParent(null);
-      }
-    });
-    return () => { cancelled = true; };
-  }, [tenantId, account?.parentAccountId]);
 
   // Default pricing SUTA/FUTA state from first worksite when available
   useEffect(() => {
@@ -2293,6 +2499,25 @@ const RecruiterAccountDetails: React.FC = () => {
     return () => { cancelled = true; };
   }, [tenantId, account?.associations?.companyIds]);
 
+  /** Child accounts: flatten parent-linked company locations for Worksites picker (Cascading Data tab). */
+  const childWorksiteSelectOptions = useMemo(() => {
+    if (!isChildAccount) return [] as { companyId: string; locationId: string; label: string }[];
+    const ids =
+      parentCompanyIds.length > 0 ? parentCompanyIds : (account?.associations?.companyIds ?? []);
+    const rows: { companyId: string; locationId: string; label: string }[] = [];
+    for (const cid of ids) {
+      for (const o of locationsByCompany[cid] ?? []) {
+        rows.push({
+          companyId: cid,
+          locationId: o.locationId,
+          label: o.label || o.locationId,
+        });
+      }
+    }
+    rows.sort((a, b) => a.label.localeCompare(b.label));
+    return rows;
+  }, [isChildAccount, parentCompanyIds, locationsByCompany, account?.associations?.companyIds]);
+
   // Load account file uploads
   const loadAccountUploads = useCallback(async () => {
     if (!tenantId || !accountId) return;
@@ -2460,6 +2685,9 @@ const RecruiterAccountDetails: React.FC = () => {
         integrations: qb != null ? { quickbooks: qb } : undefined,
         autoCreateChildAccountsForLocations: data?.autoCreateChildAccountsForLocations === true,
         autoCreateGigJobOrders: data?.autoCreateGigJobOrders === true,
+        /** F.4 national gig seed — must match Firestore top-level fields or Cascading Data reload drops them. */
+        defaultGigJobTitle: data?.defaultGigJobTitle ?? null,
+        defaultGigJobDescription: data?.defaultGigJobDescription ?? null,
         autoCreatedFromCompanyLocation: data?.autoCreatedFromCompanyLocation === true,
         companyId: data?.companyId ?? undefined,
         companyLocationId: data?.companyLocationId ?? undefined,
@@ -2482,6 +2710,11 @@ const RecruiterAccountDetails: React.FC = () => {
             }
           : undefined,
       });
+
+      // Reset so accounts without `defaults.rules` / `defaults.billing` do not keep prior account's state.
+      setDefaultRules({ ...defaultRulesInitial });
+      setDefaultBilling({ ...defaultBillingInitial });
+      setDefaultEVerify({ ...defaultEVerifyInitial });
 
       const d = data?.defaults;
       if (d && typeof d === 'object') {
@@ -3116,55 +3349,6 @@ const RecruiterAccountDetails: React.FC = () => {
     }
   }, [tenantId, account?.id]);
 
-  // Hiring Entity downstream sync — fan-out the National's
-  // `hiringEntityId` to children + their JOs (fill-empty only). Server
-  // does the validation (must be `accountType === 'national'`, must
-  // have an entity set), so the button only needs to surface the
-  // result.
-  const runHiringEntitySync = useCallback(async () => {
-    if (!tenantId || !account?.id) return;
-    setHiringEntitySyncLoading(true);
-    setHiringEntitySyncError(null);
-    try {
-      const fn = httpsCallable(functions, 'syncHiringEntityFromNationalAccount');
-      const res = await fn({ tenantId, nationalAccountId: account.id });
-      const d = res.data as {
-        summary?: Partial<NonNullable<typeof hiringEntitySyncSummary>>;
-        audit?: unknown[];
-      };
-      const s = d?.summary || {};
-      setHiringEntitySyncSummary({
-        nationalHiringEntityId:
-          typeof s.nationalHiringEntityId === 'string'
-            ? s.nationalHiringEntityId
-            : '',
-        childAccountsScanned: Number(s.childAccountsScanned) || 0,
-        childAccountsUpdated: Number(s.childAccountsUpdated) || 0,
-        childAccountsSkipped: Number(s.childAccountsSkipped) || 0,
-        childAccountsFailed: Number(s.childAccountsFailed) || 0,
-        jobOrdersScanned: Number(s.jobOrdersScanned) || 0,
-        jobOrdersUpdated: Number(s.jobOrdersUpdated) || 0,
-        jobOrdersSkipped: Number(s.jobOrdersSkipped) || 0,
-        jobOrdersFailed: Number(s.jobOrdersFailed) || 0,
-      });
-      setHiringEntitySyncStep('result');
-      // Mirror the gig backfill pattern — full audit goes to console
-      // for forensic copy/paste; the dialog only shows summary counts.
-      if (Array.isArray(d?.audit) && d.audit.length > 0) {
-        // eslint-disable-next-line no-console
-        console.info('[hiring entity sync audit]', d.audit);
-      }
-    } catch (e: unknown) {
-      const msg =
-        e && typeof e === 'object' && 'message' in e
-          ? String((e as { message?: string }).message)
-          : 'Request failed';
-      setHiringEntitySyncError(msg);
-    } finally {
-      setHiringEntitySyncLoading(false);
-    }
-  }, [tenantId, account?.id]);
-
   useEffect(() => {
     if (((tabValue === 5 && isNationalAccount) || tabValue === 7) && account?.id) {
       fetchChildAccounts();
@@ -3767,6 +3951,20 @@ const RecruiterAccountDetails: React.FC = () => {
   }, []);
 
   /**
+   * Silent national→child cascade sync was retired on 2026-05-03.
+   *
+   * Previously `saveCustomerRules` and `saveBillingDefaults` would auto-fire
+   * `syncNationalCascadingDefaultsToChildrenCallable` after each save, which:
+   *   1) Wrote to dozens of child docs on every blur/save (expensive, noisy).
+   *   2) Made the explicit "Save & sync to child accounts" button look broken
+   *      — by the time the user clicked it, the silent sync had already filled
+   *      every child, so it always reported "0 of N updated, N unchanged".
+   *
+   * Now the explicit button (`handleSaveAndSyncToChildAccounts` below) is the
+   * single propagation path. Per-section saves only persist to the parent doc.
+   */
+
+  /**
    * Section-scoped saves used by the new Docs & Settings layout. Each one
    * touches only its slice of `defaults.*` and merges, so saving Customer
    * Rules can't clobber Billing edits the user hasn't saved yet (and vice
@@ -3779,14 +3977,18 @@ const RecruiterAccountDetails: React.FC = () => {
     setDefaultsSaving(true);
     try {
       const ref = doc(db, p.recruiterAccount(tenantId, accountId));
-      await setDoc(ref, {
-        defaults: {
-          rules: { ...defaultRules },
-          eVerify: { ...defaultEVerify },
-        },
+      // Use dotted paths — not setDoc(merge) on nested `defaults`, which can drop sibling maps
+      // when saving billing vs rules in sequence (parent then had incomplete rules for child sync).
+      await updateDoc(ref, {
+        'defaults.rules': { ...defaultRules },
+        'defaults.eVerify': { ...defaultEVerify },
         updatedAt: serverTimestamp(),
         updatedBy: user?.uid ?? null,
-      }, { merge: true });
+      });
+      // Cascade to children is no longer auto-fired here. National admins must click
+      // "Save & sync to child accounts" at the bottom of the Cascading Data tab to push
+      // these values down (see `handleSaveAndSyncToChildAccounts`). See the docblock on
+      // the retired `runNationalCascadeSyncQuiet` for the rationale.
     } catch (err) {
       console.error('RecruiterAccountDetails: save customer rules error', err);
     } finally {
@@ -3799,13 +4001,12 @@ const RecruiterAccountDetails: React.FC = () => {
     setDefaultsSaving(true);
     try {
       const ref = doc(db, p.recruiterAccount(tenantId, accountId));
-      await setDoc(ref, {
-        defaults: {
-          billing: { ...defaultBilling },
-        },
+      await updateDoc(ref, {
+        'defaults.billing': { ...defaultBilling },
         updatedAt: serverTimestamp(),
         updatedBy: user?.uid ?? null,
-      }, { merge: true });
+      });
+      // No silent national→child cascade — same rationale as `saveCustomerRules`.
     } catch (err) {
       console.error('RecruiterAccountDetails: save billing defaults error', err);
     } finally {
@@ -3836,6 +4037,49 @@ const RecruiterAccountDetails: React.FC = () => {
       setPricingNotesSaving(false);
     }
   };
+
+  /** Pass `blurInputValue` from `onBlur` so the save uses the input DOM value (avoids stale state vs last keystroke). */
+  const persistCascadingFlatMarkup = useCallback(
+    async (blurInputValue: string) => {
+      if (!tenantId || !account?.id) return;
+      const trimmed = blurInputValue.trim();
+      let nextNum: number | null;
+      if (trimmed === '') {
+        nextNum = null;
+      } else {
+        const n = Number(trimmed);
+        if (Number.isNaN(n)) return;
+        nextNum = n;
+      }
+      setPricingFlatMarkupPercent(trimmed === '' ? '' : nextNum);
+
+      const prevRaw = account.pricing?.flatMarkupPercent;
+      const prevNum = prevRaw != null ? Number(prevRaw) : null;
+      if ((prevNum ?? null) === (nextNum ?? null)) return;
+
+      setCascadeMarkupSaving(true);
+      try {
+        await updateDoc(doc(db, p.recruiterAccount(tenantId, account.id)), {
+          'pricing.flatMarkupPercent': nextNum,
+          updatedAt: serverTimestamp(),
+          updatedBy: user?.uid ?? null,
+        });
+        setAccount((prev) =>
+          prev
+            ? {
+                ...prev,
+                pricing: { ...(prev.pricing ?? {}), flatMarkupPercent: nextNum },
+              }
+            : null,
+        );
+      } catch (err) {
+        console.error('RecruiterAccountDetails: cascade flat markup save', err);
+      } finally {
+        setCascadeMarkupSaving(false);
+      }
+    },
+    [tenantId, account?.id, account?.pricing?.flatMarkupPercent, user?.uid],
+  );
 
   const savePricing = async () => {
     if (!accountId || !tenantId) return;
@@ -4113,6 +4357,106 @@ const RecruiterAccountDetails: React.FC = () => {
     return [...groupRows, ...applicantRows];
   }, [account?.associations, laborPoolOptions, jobOrders, accountJobOrders]);
 
+  const schedulerNamesDisplay = useMemo(() => {
+    const localIds = Array.isArray(account?.roles?.schedulerIds) ? account.roles.schedulerIds : [];
+    const merged =
+      isChildAccount && parentNationalSchedulerIds.length > 0
+        ? [...new Set([...parentNationalSchedulerIds, ...localIds])]
+        : localIds;
+    if (merged.length === 0) return '—';
+    const labels = merged
+      .map((id) => recruitersOptions.find((p) => p.id === id)?.label?.trim())
+      .filter((x): x is string => Boolean(x));
+    return labels.length > 0 ? labels.join(', ') : '—';
+  }, [account?.roles?.schedulerIds, recruitersOptions, isChildAccount, parentNationalSchedulerIds]);
+
+  /** Child + national templates: merged rows for Cascading Data Default Positions (national text fields lock). */
+  const cascadeDefaultPositionRows = useMemo(() => {
+    const norm = (t: string) => String(t || '').trim().toLowerCase();
+    if (!isChildAccount || parentNationalPositions.length === 0) {
+      return pricingPositions.map((row, idx) => ({
+        row,
+        pricingPositionsIndex: idx,
+        lockNationalFields: false,
+      }));
+    }
+    const childByTitle = new Map<string, number>();
+    pricingPositions.forEach((r, i) => {
+      const k = norm(r.jobTitle);
+      if (k) childByTitle.set(k, i);
+    });
+    const nationalKeys = new Set(
+      parentNationalPositions.map((p) => norm(p.jobTitle)).filter(Boolean),
+    );
+    const out: Array<{
+      row: AccountPositionPricing;
+      pricingPositionsIndex: number | null;
+      lockNationalFields: boolean;
+    }> = [];
+
+    for (const nat of parentNationalPositions) {
+      const k = norm(nat.jobTitle);
+      if (!k) continue;
+      const ci = childByTitle.get(k);
+      const childRow = ci !== undefined ? pricingPositions[ci] : undefined;
+      const merged = mergeNationalTemplateWithChildVenueRow(nat, childRow);
+      out.push({
+        row: {
+          ...merged,
+          id: merged.id ?? `tpl-${k}`,
+        },
+        pricingPositionsIndex: ci ?? null,
+        lockNationalFields: true,
+      });
+    }
+
+    pricingPositions.forEach((r, idx) => {
+      const k = norm(r.jobTitle);
+      if (k && !nationalKeys.has(k)) {
+        out.push({ row: r, pricingPositionsIndex: idx, lockNationalFields: false });
+      }
+    });
+    return out;
+  }, [isChildAccount, parentNationalPositions, pricingPositions]);
+
+  /** Same merge as Default Positions rows — seeds Compliance overrides with national template + child overrides. */
+  const complianceDialogMergedPricingRow = useMemo(() => {
+    if (!positionComplianceDialog) return null;
+    const norm = (t: string) => String(t || '').trim().toLowerCase();
+    const k = norm(positionComplianceDialog.titleKey);
+    if (!k) return null;
+    if (!isChildAccount || parentNationalPositions.length === 0) return null;
+    const nat = parentNationalPositions.find((p) => norm(p.jobTitle) === k);
+    if (!nat) return null;
+    const ci = positionComplianceDialog.pricingPositionsIndex;
+    const childRow =
+      ci !== null && ci >= 0 && ci < pricingPositions.length ? pricingPositions[ci] : undefined;
+    return mergeNationalTemplateWithChildVenueRow(nat, childRow);
+  }, [positionComplianceDialog, isChildAccount, parentNationalPositions, pricingPositions]);
+
+  /** National default gig title picker — options match Positions & Pricing on this account. */
+  const defaultGigJobTitleOptionsFromPositions = useMemo(
+    () =>
+      [...new Set(pricingPositions.map((p) => String(p.jobTitle || '').trim()).filter(Boolean))].sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [pricingPositions],
+  );
+
+  /** Lowercase title → client JD from Positions & Pricing (fills Default Gig description when a title is chosen). */
+  const defaultGigPositionJobDescriptionByTitle = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const p of pricingPositions) {
+      const t = String(p.jobTitle || '').trim();
+      if (!t) continue;
+      const jd = p.jobDescriptionFromClient;
+      if (jd != null && String(jd).trim() !== '') {
+        out[t.toLowerCase()] = String(jd).trim();
+      }
+    }
+    return out;
+  }, [pricingPositions]);
+
   // Top bar shows the static section label "Account Details". The
   // per-account name + favorite star live next to the avatar in the page
   // body (see the title slot of <PageHeader/> below) — same layout the
@@ -4222,7 +4566,7 @@ const RecruiterAccountDetails: React.FC = () => {
     !!parentAccount ||
     childAccounts.length > 0;
 
-  // Companies are shown as business icons in the icon row (row 2), not in the associations row (row 4)
+  // Companies: Business icon row in the page header (below Status); other associations below.
   const headerAssociationItems = [
     ...associatedLocations.map((loc) => ({
       key: `location-${loc.companyId}-${loc.locationId}`,
@@ -4273,6 +4617,1196 @@ const RecruiterAccountDetails: React.FC = () => {
       to: `/accounts/${a.id}`,
     })),
   ];
+
+  /** Cascading Data → Positions & Pricing — card layout aligned with Job Order gig positions (JobOrderForm). */
+  const renderCascadingDefaultPositionsSection = () => {
+    /** National accounts: no worksite-state strip or per-row SUTA/FUTA (sub-accounts carry venue-level payroll taxes). */
+    const showSutaFutaInCascadingPositions = showSutaFutaOnPricingPositions && !isNationalAccount;
+
+    const worksiteStateCodeForCaption = (
+      pricingSutaFutaState ||
+      normalizeStateCode(worksiteDetails?.state) ||
+      ''
+    )
+      .trim()
+      .toUpperCase();
+
+    const normTitleForPositions = (t: string) => String(t || '').trim().toLowerCase();
+
+    const mergePositionPatch = (
+      base: AccountPositionPricing,
+      patch: Partial<AccountPositionPricing>,
+    ): AccountPositionPricing => {
+      const merged = { ...base, ...patch };
+      if (patch.payRate !== undefined || patch.markupPercent !== undefined) {
+        const pay = Number(merged.payRate) || 0;
+        const m = merged.markupPercent;
+        if (m != null && !Number.isNaN(Number(m))) {
+          merged.billRate = pay * (1 + Number(m) / 100);
+        }
+      }
+      return merged;
+    };
+
+    const applyPricingPositionPatch = (
+      titleKey: string,
+      childIdx: number | null,
+      patch: Partial<AccountPositionPricing>,
+    ) => {
+      const k = normTitleForPositions(titleKey);
+      setPricingPositions((prev) => {
+        let i = childIdx !== null && childIdx >= 0 && childIdx < prev.length ? childIdx : -1;
+        if (i < 0) i = prev.findIndex((r) => normTitleForPositions(r.jobTitle) === k);
+        if (i >= 0) {
+          const next = [...prev];
+          next[i] = mergePositionPatch(next[i], patch);
+          return next;
+        }
+        if (isChildAccount) {
+          const nat = parentNationalPositions.find((p) => normTitleForPositions(p.jobTitle) === k);
+          if (nat) {
+            return [...prev, mergePositionPatch({ ...nat, jobTitle: nat.jobTitle }, patch)];
+          }
+        }
+        const stub: AccountPositionPricing = {
+          id: `pos-${Date.now()}`,
+          jobTitle: titleKey,
+          payRate: 0,
+          markupPercent: null,
+          billRate: 0,
+          workersCompCode: '',
+          workersCompRate: null,
+          sutaRate: null,
+          futaRate: null,
+          jobDescriptionFromClient: '',
+          uniformRequirements: '',
+        };
+        return [...prev, mergePositionPatch(stub, patch)];
+      });
+    };
+
+    const storedPositionRowHasComplianceOverrides = (idx: number | null) => {
+      if (idx === null || idx < 0 || idx >= pricingPositions.length) return false;
+      const stored = pricingPositions[idx];
+      const od = stored.orderDetails;
+      if (od && typeof od === 'object') {
+        for (const v of Object.values(od)) {
+          if (v == null) continue;
+          if (Array.isArray(v) && v.length === 0) continue;
+          if (typeof v === 'string' && !String(v).trim()) continue;
+          return true;
+        }
+      }
+      return !!(stored.screeningPackageId != null && String(stored.screeningPackageId).trim() !== '');
+    };
+
+    return (
+      <Box sx={{ mt: 2 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+            Default Positions
+          </Typography>
+          <Button
+            size="small"
+            startIcon={<AddIcon />}
+            onClick={() =>
+              setPricingPositions((prev) => [
+                ...prev,
+                {
+                  id: `pos-${Date.now()}`,
+                  jobTitle: '',
+                  payRate: 0,
+                  markupPercent: null,
+                  billRate: 0,
+                  workersCompCode: '',
+                  workersCompRate: null,
+                  sutaRate: null,
+                  futaRate: null,
+                  jobDescriptionFromClient: '',
+                  uniformRequirements: '',
+                },
+              ])
+            }
+            sx={{ textTransform: 'none' }}
+          >
+            Add Position
+          </Button>
+        </Box>
+        {isNationalAccount && pricingSubAccountsManageOwn ? (
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+            Sub-accounts manage their own pricing on national accounts — defaults here still seed titles and rates where
+            used.
+          </Typography>
+        ) : null}
+
+        {isChildAccount && parentNationalPositions.length > 0 ? (
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+            Job titles and descriptions from the national parent update live. Enter venue pay, markup, bill, workers comp,
+            and payroll taxes below; save to store overrides on this sub-account.
+          </Typography>
+        ) : null}
+
+        {showSutaFutaInCascadingPositions ? (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 2 }}>
+            <FormControl size="small" sx={{ minWidth: 140 }}>
+              <InputLabel>Worksite state</InputLabel>
+              <Select
+                value={pricingSutaFutaState || ''}
+                onChange={(e) => setPricingSutaFutaState(e.target.value)}
+                label="Worksite state"
+              >
+                <MenuItem value="">
+                  <em>Select state</em>
+                </MenuItem>
+                {US_STATE_CODES.map((code) => (
+                  <MenuItem key={code} value={code}>
+                    {code}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => {
+                const stateCode = pricingSutaFutaState || normalizeStateCode(worksiteDetails?.state);
+                if (!stateCode) return;
+                const suta = getSutaRateByState(stateCode);
+                const futa = getFutaRateByState(stateCode);
+                setPricingPositions((prev) => {
+                  const applyRates = (row: AccountPositionPricing) => ({
+                    ...row,
+                    sutaRate: suta ?? row.sutaRate,
+                    futaRate: futa,
+                  });
+                  if (
+                    prev.length === 0 &&
+                    isChildAccount &&
+                    parentNationalPositions.length > 0
+                  ) {
+                    return parentNationalPositions.map((r) => applyRates({ ...r }));
+                  }
+                  return prev.map(applyRates);
+                });
+              }}
+              disabled={!pricingSutaFutaState && !normalizeStateCode(worksiteDetails?.state)}
+              sx={{
+                textTransform: 'none',
+                fontSize: '0.75rem',
+                py: 0.25,
+                px: 1,
+                minHeight: 30,
+                lineHeight: 1.25,
+              }}
+            >
+              Apply SUTA/FUTA from worksite state
+            </Button>
+            <Typography variant="caption" color="text.secondary">
+              {worksiteStateCodeForCaption
+                ? `Estimated new-employer SUTA and FUTA for ${worksiteStateCodeForCaption} (same as Account → Pricing).`
+                : 'Select a worksite with a state, or choose Worksite state above, to apply rates.'}
+            </Typography>
+          </Box>
+        ) : null}
+
+        <Stack spacing={2}>
+          {cascadeDefaultPositionRows.map(({ row, pricingPositionsIndex, lockNationalFields }, idx) => {
+            const markupVal = row.markupPercent;
+            const markup = markupVal == null ? null : Number(markupVal);
+            const markupNum = typeof markup === 'number' && !Number.isNaN(markup) ? markup : null;
+            const pay = Number(row.payRate) || 0;
+            const bill = markupNum != null ? pay * (1 + markupNum / 100) : Number(row.billRate) || 0;
+            const pricingStateCode = (
+              pricingSutaFutaState ||
+              normalizeStateCode(worksiteDetails?.state) ||
+              ''
+            )
+              .trim()
+              .toUpperCase();
+
+            const nationalFieldsCaption =
+              'Defined at national — updates live when the parent account saves.';
+
+            return (
+              <Box
+                key={row.id ?? `pos-${idx}`}
+                sx={{
+                  display: 'flex',
+                  gap: 2,
+                  alignItems: 'flex-start',
+                  p: 2,
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                }}
+              >
+                <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {lockNationalFields ? (
+                    <TextField
+                      size="small"
+                      label="Job Title"
+                      value={row.jobTitle}
+                      disabled
+                      fullWidth
+                      helperText={nationalFieldsCaption}
+                    />
+                  ) : (
+                    <Autocomplete
+                      freeSolo
+                      size="small"
+                      options={jobTitlesData as string[]}
+                      value={row.jobTitle}
+                      onInputChange={(_, v) => {
+                        const stateCode = (
+                          pricingSutaFutaState ||
+                          normalizeStateCode(worksiteDetails?.state) ||
+                          ''
+                        )
+                          .trim()
+                          .toUpperCase();
+                        const lookup =
+                          stateCode && v
+                            ? pickWorkersCompJobTitleLookup(
+                                wcJobTitleMaps,
+                                stateCode,
+                                String(v),
+                                wcModifierAccountIdForPricing,
+                              )
+                            : undefined;
+                        applyPricingPositionPatch(row.jobTitle, pricingPositionsIndex, {
+                          jobTitle: v,
+                          ...(lookup
+                            ? { workersCompCode: lookup.code, workersCompRate: lookup.rate }
+                            : {}),
+                        });
+                      }}
+                      renderInput={(params) => (
+                        <TextField {...params} label="Job Title" required placeholder="e.g. Event Worker" />
+                      )}
+                      fullWidth
+                    />
+                  )}
+
+                  <TextField
+                    label="Job Description"
+                    size="small"
+                    fullWidth
+                    multiline
+                    minRows={2}
+                    maxRows={8}
+                    value={row.jobDescriptionFromClient ?? ''}
+                    disabled={lockNationalFields}
+                    helperText={lockNationalFields ? nationalFieldsCaption : undefined}
+                    onChange={
+                      lockNationalFields
+                        ? undefined
+                        : (e) => {
+                            const v = e.target.value;
+                            applyPricingPositionPatch(row.jobTitle, pricingPositionsIndex, {
+                              jobDescriptionFromClient: v ? v : null,
+                            });
+                          }
+                    }
+                    placeholder="Customer job description or notes for postings and AI"
+                  />
+                  <TextField
+                    label="Uniform Requirements"
+                    size="small"
+                    fullWidth
+                    multiline
+                    minRows={2}
+                    maxRows={8}
+                    value={row.uniformRequirements ?? ''}
+                    disabled={lockNationalFields}
+                    helperText={lockNationalFields ? nationalFieldsCaption : undefined}
+                    onChange={
+                      lockNationalFields
+                        ? undefined
+                        : (e) => {
+                            const v = e.target.value;
+                            applyPricingPositionPatch(row.jobTitle, pricingPositionsIndex, {
+                              uniformRequirements: v ? v : null,
+                            });
+                          }
+                    }
+                    placeholder="e.g. dress code, PPE, grooming standards"
+                  />
+
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<FactCheckOutlinedIcon />}
+                      onClick={() =>
+                        setPositionComplianceDialog({
+                          titleKey: row.jobTitle,
+                          pricingPositionsIndex,
+                        })
+                      }
+                      sx={{ textTransform: 'none' }}
+                    >
+                      Compliance overrides
+                    </Button>
+                    {storedPositionRowHasComplianceOverrides(pricingPositionsIndex) ? (
+                      <Chip size="small" label="Overrides set" color="primary" variant="outlined" />
+                    ) : null}
+                  </Box>
+
+                  <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      sx={{ flex: '1 1 140px', minWidth: 120, ...numberInputNoSpinnerSx }}
+                      label="Pay Rate"
+                      type="number"
+                      required={!isNationalAccount}
+                      value={row.payRate || ''}
+                      onChange={(e) => {
+                        const v = e.target.value === '' ? 0 : Number(e.target.value);
+                        applyPricingPositionPatch(row.jobTitle, pricingPositionsIndex, { payRate: v });
+                      }}
+                      inputProps={{ min: 0, step: 0.01 }}
+                      placeholder="e.g. 15"
+                    />
+                    <TextField
+                      fullWidth
+                      size="small"
+                      sx={{ flex: '1 1 120px', minWidth: 100, ...numberInputNoSpinnerSx }}
+                      label="Markup (%)"
+                      type="number"
+                      value={row.markupPercent ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value === '' ? null : Number(e.target.value);
+                        applyPricingPositionPatch(row.jobTitle, pricingPositionsIndex, {
+                          markupPercent: v,
+                        });
+                      }}
+                      inputProps={{ min: 0, step: 0.5 }}
+                      placeholder="e.g. 25"
+                    />
+                    <TextField
+                      fullWidth
+                      size="small"
+                      sx={{ flex: '1 1 120px', minWidth: 100, ...numberInputNoSpinnerSx }}
+                      label="Bill Rate"
+                      type="number"
+                      value={markupNum != null ? bill.toFixed(2) : row.billRate ?? ''}
+                      disabled={markupNum != null}
+                      onChange={(e) => {
+                        if (markupNum != null) return;
+                        const v = e.target.value === '' ? 0 : Number(e.target.value);
+                        applyPricingPositionPatch(row.jobTitle, pricingPositionsIndex, { billRate: v });
+                      }}
+                      inputProps={{ min: 0, step: 0.01 }}
+                      placeholder="e.g. 26.25"
+                    />
+                  </Box>
+
+                  {!isNationalAccount ? (
+                    <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        sx={{ flex: '1 1 200px', minWidth: 160 }}
+                        label="Workers Comp Class Code"
+                        value={row.workersCompCode ?? ''}
+                        onChange={(e) => {
+                          const v = e.target.value.trim();
+                          applyPricingPositionPatch(row.jobTitle, pricingPositionsIndex, {
+                            workersCompCode: v || undefined,
+                          });
+                        }}
+                        placeholder="e.g. 9015"
+                        helperText="From Settings > Onboarding Library > WC Class Codes"
+                      />
+                      <TextField
+                        fullWidth
+                        size="small"
+                        sx={{ flex: '1 1 140px', minWidth: 120, ...numberInputNoSpinnerSx }}
+                        label="Workers Comp Rate"
+                        type="number"
+                        value={(() => {
+                          const code = (row.workersCompCode ?? '').trim();
+                          const fromMaster =
+                            pricingStateCode && code ? wcRatesByKey[`${pricingStateCode}_${code}`] : undefined;
+                          return fromMaster != null ? fromMaster : (row.workersCompRate ?? '');
+                        })()}
+                        onChange={(e) => {
+                          const v = e.target.value === '' ? null : Number(e.target.value);
+                          applyPricingPositionPatch(row.jobTitle, pricingPositionsIndex, {
+                            workersCompRate: v != null && !Number.isNaN(v) ? v : undefined,
+                          });
+                        }}
+                        inputProps={{ min: 0, step: 0.01 }}
+                        placeholder="e.g. 2.34"
+                      />
+                    </Box>
+                  ) : null}
+
+                  {showSutaFutaInCascadingPositions ? (
+                    <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        sx={{ flex: '1 1 140px', minWidth: 120, ...numberInputNoSpinnerSx }}
+                        label="SUTA %"
+                        type="number"
+                        value={row.sutaRate ?? ''}
+                        onChange={(e) => {
+                          const v = e.target.value === '' ? null : Number(e.target.value);
+                          applyPricingPositionPatch(row.jobTitle, pricingPositionsIndex, { sutaRate: v });
+                        }}
+                        inputProps={{ min: 0, step: 0.01 }}
+                        placeholder="e.g. 2.7"
+                        helperText="State unemployment on pay (C1 Workforce / C1 Select)"
+                      />
+                      <TextField
+                        fullWidth
+                        size="small"
+                        sx={{ flex: '1 1 140px', minWidth: 120, ...numberInputNoSpinnerSx }}
+                        label="FUTA %"
+                        type="number"
+                        value={row.futaRate ?? ''}
+                        onChange={(e) => {
+                          const v = e.target.value === '' ? null : Number(e.target.value);
+                          applyPricingPositionPatch(row.jobTitle, pricingPositionsIndex, { futaRate: v });
+                        }}
+                        inputProps={{ min: 0, step: 0.01 }}
+                        placeholder="e.g. 0.6"
+                        helperText="Federal unemployment on pay"
+                      />
+                    </Box>
+                  ) : null}
+                </Box>
+                {pricingPositionsIndex !== null || !lockNationalFields ? (
+                  <IconButton
+                    size="small"
+                    color="error"
+                    onClick={() => {
+                      if (pricingPositionsIndex === null) return;
+                      setPricingPositions((prev) => prev.filter((_, i) => i !== pricingPositionsIndex));
+                    }}
+                    aria-label="Remove position"
+                    sx={{ mt: 0.5 }}
+                  >
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
+                ) : null}
+              </Box>
+            );
+          })}
+        </Stack>
+
+        {cascadeDefaultPositionRows.length === 0 ? (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+            No default positions yet. Add titles and rates — these become the job titles available when creating orders
+            for this account.
+          </Typography>
+        ) : null}
+
+        {positionComplianceDialog ? (
+          <PositionComplianceOverridesDialog
+            open
+            jobTitle={positionComplianceDialog.titleKey}
+            account={account}
+            inheritanceParentAccount={orderDefaultsInheritanceParent}
+            mergedPricingRow={complianceDialogMergedPricingRow}
+            sourceRow={
+              positionComplianceDialog.pricingPositionsIndex !== null &&
+              positionComplianceDialog.pricingPositionsIndex >= 0 &&
+              positionComplianceDialog.pricingPositionsIndex < pricingPositions.length
+                ? pricingPositions[positionComplianceDialog.pricingPositionsIndex]
+                : {
+                    jobTitle: positionComplianceDialog.titleKey,
+                    payRate: 0,
+                    markupPercent: null,
+                    billRate: 0,
+                    workersCompCode: '',
+                    workersCompRate: null,
+                    sutaRate: null,
+                    futaRate: null,
+                    jobDescriptionFromClient: '',
+                    uniformRequirements: '',
+                  }
+            }
+            onClose={() => setPositionComplianceDialog(null)}
+            onApply={(patch) => {
+              applyPricingPositionPatch(
+                positionComplianceDialog.titleKey,
+                positionComplianceDialog.pricingPositionsIndex,
+                patch,
+              );
+            }}
+          />
+        ) : null}
+
+        <Stack direction="row" spacing={1} flexWrap="wrap" alignItems="center" sx={{ mt: 2 }}>
+          <Button
+            variant="contained"
+            size="small"
+            startIcon={pricingSaving ? <CircularProgress size={18} color="inherit" /> : <SaveIcon />}
+            onClick={() => void savePricing()}
+            disabled={pricingSaving}
+            sx={{ textTransform: 'none' }}
+          >
+            {pricingSaving ? 'Saving…' : 'Save default positions'}
+          </Button>
+          {/* "Edit in Docs & Settings" button removed 2026-05-03: the Pricing section was retired
+              from the Settings tab when it was reduced to File Uploads only. The full pricing
+              editor now lives inline on this Cascading Data card. */}
+        </Stack>
+      </Box>
+    );
+  };
+
+  /** Shared with Edit Account Details modal and Cascading Data → Account Details card. */
+  const renderAccountDetailsCoreFields = (opts?: { autoFocusName?: boolean; hideInlinePushSync?: boolean }) => (
+    <>
+      <TextField
+        label="Account Name"
+        defaultValue={account.name}
+        onBlur={(e) => {
+          const v = e.target.value.trim();
+          if (v !== account.name) updateAccountField('name', v);
+        }}
+        size="small"
+        fullWidth
+        autoFocus={opts?.autoFocusName ?? false}
+      />
+      <FormControl fullWidth size="small">
+        <InputLabel>Account type</InputLabel>
+        <Select
+          label="Account type"
+          value={account.accountType ?? 'standalone'}
+          onChange={(e) => updateAccountField('accountType', e.target.value || null)}
+          disabled={saving}
+        >
+          <MenuItem value="standalone">Standalone</MenuItem>
+          <MenuItem value="national">National account</MenuItem>
+          <MenuItem value="child">Child account (of a national)</MenuItem>
+        </Select>
+      </FormControl>
+      {/* E-Verify is set by the Hiring Entity (Settings > Entities) and is read-only here. */}
+      {displayEntityLoading ? (
+        <Typography variant="body2" color="text.secondary">
+          Loading entity…
+        </Typography>
+      ) : displayEntity ? (
+        <FormControlLabel
+          control={<Checkbox checked={displayEntity.everifyRequired} disabled />}
+          label={
+            <Box>
+              <Typography variant="body2">E-Verify Required</Typography>
+              <Typography variant="caption" color="text.secondary" display="block">
+                Set by Hiring Entity (Settings → Entities). Cannot be changed on the account.
+                {isChildAccount && account.parentAccountId?.trim()
+                  ? ' On child accounts this reflects the national parent’s hiring entity (updates live when the parent saves).'
+                  : ''}
+              </Typography>
+            </Box>
+          }
+        />
+      ) : (
+        <Typography variant="body2" color="text.secondary">
+          Select a Hiring Entity to see E-Verify setting.
+        </Typography>
+      )}
+      {canPushToActive &&
+      tenantId &&
+      account &&
+      !(isChildAccount && account.parentAccountId?.trim())
+        ? pushBanners
+            .filter((b) => b.fieldKey === 'hiringEntityId' && (b.positionId ?? null) === null)
+            .map((payload) => (
+              <PushToActiveBanner
+                key={`top-${payload.fieldKey}`}
+                tenantId={tenantId}
+                accountId={account.id}
+                payload={payload}
+                onDismiss={() => dismissPushBanner(payload)}
+              />
+            ))
+        : null}
+      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+        <Box sx={{ flex: 1 }}>
+          <FormControl fullWidth size="small">
+            <InputLabel>Hiring Entity</InputLabel>
+            <Select
+              label="Hiring Entity"
+              value={displayHiringEntityId ?? ''}
+              onChange={(e) => updateAccountField('hiringEntityId', e.target.value || null)}
+              disabled={saving || (isChildAccount && !!account.parentAccountId?.trim())}
+            >
+              <MenuItem value="">
+                <em>None</em>
+              </MenuItem>
+              {entityOptions.map((ent) => (
+                <MenuItem key={ent.id} value={ent.id}>
+                  {ent.name} {ent.entityCode ? `(${ent.entityCode} · ${ent.workerType})` : ''}
+                </MenuItem>
+              ))}
+            </Select>
+            {isChildAccount && account.parentAccountId?.trim() ? (
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: 'block' }}>
+                {parentNationalMarkupLoading
+                  ? 'Loading national parent…'
+                  : 'Inherited from the national parent account (updates live when the parent saves).'}
+              </Typography>
+            ) : null}
+          </FormControl>
+        </Box>
+        {!opts?.hideInlinePushSync &&
+        canPushToActive &&
+        tenantId &&
+        account &&
+        !(isChildAccount && account.parentAccountId?.trim()) ? (
+          <Box sx={{ pt: 0.5 }}>
+            <SyncToActiveButton
+              tenantId={tenantId}
+              accountId={account.id}
+              fieldKey="hiringEntityId"
+              getCurrentValue={() => account?.hiringEntityId ?? null}
+              fieldLabel="Hiring Entity"
+            />
+          </Box>
+        ) : null}
+      </Box>
+      <FormControlLabel
+        control={
+          <Switch
+            checked={account.active}
+            onChange={(e) => updateAccountField('active', e.target.checked)}
+            disabled={saving}
+          />
+        }
+        label="Active"
+      />
+    </>
+  );
+
+  const cascadingDataCardSx = {
+    boxShadow: 'none',
+    transition: 'none',
+    '&:hover': { boxShadow: 'none', bgcolor: 'background.paper' },
+  };
+
+  /** National-account automation toggles + gig backfill — Cascading Data tab (same fields as edit modal). */
+  const renderNationalAutomationsSection = () =>
+    account.accountType === 'national' ? (
+      <Stack spacing={2.5}>
+        <Tooltip title="When enabled, each new location added to this account's connected company will automatically create a child account linked to that location. Future locations only.">
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 2,
+              flexWrap: 'wrap',
+            }}
+          >
+            <Box component="span" sx={{ ...recordHeaderBodyTextSx }}>
+              Auto-Create Child Accounts:
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
+              <Switch
+                size="small"
+                checked={account.autoCreateChildAccountsForLocations === true}
+                disabled={saving}
+                onChange={(e) =>
+                  updateAccountField('autoCreateChildAccountsForLocations', e.target.checked)
+                }
+                inputProps={{
+                  'aria-label': 'Toggle auto-create child accounts for new company locations',
+                }}
+              />
+              <Box component="span" sx={{ color: 'text.primary', fontWeight: 500, fontSize: '0.875rem' }}>
+                {account.autoCreateChildAccountsForLocations === true ? 'On' : 'Off'}
+              </Box>
+            </Box>
+          </Box>
+        </Tooltip>
+        <Tooltip
+          title={
+            account.autoCreateChildAccountsForLocations === true
+              ? 'When a child account is auto-created under this national, a draft Gig job order is also auto-created. Pay, hiring entity, E-Verify, and screening flow down via cascade — recruiter reviews and activates manually.'
+              : 'Enable Auto-Create Child Accounts first — gig job orders only auto-spawn alongside an auto-created child account.'
+          }
+        >
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 2,
+              flexWrap: 'wrap',
+            }}
+          >
+            <Box component="span" sx={{ ...recordHeaderBodyTextSx }}>
+              Auto-Create Gig Job Orders:
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
+              <Switch
+                size="small"
+                checked={account.autoCreateGigJobOrders === true}
+                disabled={saving || account.autoCreateChildAccountsForLocations !== true}
+                onChange={(e) => updateAccountField('autoCreateGigJobOrders', e.target.checked)}
+                inputProps={{
+                  'aria-label': 'Toggle auto-create gig job orders for new child accounts',
+                }}
+              />
+              <Box component="span" sx={{ color: 'text.primary', fontWeight: 500, fontSize: '0.875rem' }}>
+                {account.autoCreateGigJobOrders === true ? 'On' : 'Off'}
+              </Box>
+            </Box>
+          </Box>
+        </Tooltip>
+        <Tooltip
+          title={
+            account.autoCreateGigJobOrders === true
+              ? "Scan all existing child accounts and create a draft gig JO for any that don't have one. Idempotent — safe to re-run."
+              : 'Enable Auto-Create Gig Job Orders first.'
+          }
+        >
+          <Box>
+            <Button
+              variant="outlined"
+              disabled={
+                saving || account.autoCreateGigJobOrders !== true || gigBackfillLoading
+              }
+              onClick={() => {
+                setGigBackfillStep('confirm');
+                setGigBackfillSummary(null);
+                setGigBackfillError(null);
+                setGigBackfillOpen(true);
+              }}
+              startIcon={gigBackfillLoading ? <CircularProgress size={14} /> : undefined}
+              sx={{
+                textTransform: 'none',
+                borderRadius: 999,
+                px: 2,
+                py: 0.75,
+              }}
+            >
+              {gigBackfillLoading ? 'Running…' : 'Backfill missing'}
+            </Button>
+          </Box>
+        </Tooltip>
+        {account.autoCreateGigJobOrders === true ? (
+          <DefaultGigSettings
+            title={account.defaultGigJobTitle ?? ''}
+            description={account.defaultGigJobDescription ?? ''}
+            saving={saving}
+            gigJobTitleOptions={defaultGigJobTitleOptionsFromPositions}
+            positionJobDescriptionByTitle={defaultGigPositionJobDescriptionByTitle}
+            onSaveTitle={(v) => void updateAccountField('defaultGigJobTitle', v || null)}
+            onSaveDescription={(v) => void updateAccountField('defaultGigJobDescription', v || null)}
+          />
+        ) : null}
+      </Stack>
+    ) : (
+      <Typography variant="body2" color="text.secondary">
+        Auto-create child accounts and gig job orders are available for national accounts. Set account type to National to
+        configure them here.
+      </Typography>
+    );
+
+  const renderCascadingCustomerRulesSection = () => (
+    <Card variant="outlined" elevation={0} sx={cascadingDataCardSx}>
+      <CardHeader
+        title="Customer Rules & Policies"
+        titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+        subheader="Formerly under Docs & Settings. National accounts: use Save & sync to child accounts at the bottom to fill empty rule/policy fields on child venues."
+        subheaderTypographyProps={{ variant: 'caption', color: 'text.secondary' }}
+      />
+      <CardContent sx={{ pt: 0 }}>
+        <Grid container spacing={2}>
+          <Grid item xs={12} md={6}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={defaultRules.replacingExistingAgency}
+                  onChange={(e) =>
+                    setDefaultRules({ ...defaultRules, replacingExistingAgency: e.target.checked })
+                  }
+                />
+              }
+              label="Replacing Existing Agency"
+            />
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={defaultRules.rolloverExistingStaff}
+                  onChange={(e) =>
+                    setDefaultRules({ ...defaultRules, rolloverExistingStaff: e.target.checked })
+                  }
+                />
+              }
+              label="Rollover Existing Staff"
+            />
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <TextField
+              fullWidth
+              size="small"
+              label="Timeclock System"
+              value={defaultRules.timeclockSystem}
+              onChange={(e) => setDefaultRules({ ...defaultRules, timeclockSystem: e.target.value })}
+              multiline
+              rows={3}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              size="small"
+              label="Attendance Policy"
+              value={defaultRules.attendancePolicy}
+              onChange={(e) => setDefaultRules({ ...defaultRules, attendancePolicy: e.target.value })}
+              multiline
+              rows={3}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              size="small"
+              label="No-Show Policy"
+              value={defaultRules.noShowPolicy}
+              onChange={(e) => setDefaultRules({ ...defaultRules, noShowPolicy: e.target.value })}
+              multiline
+              rows={3}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              size="small"
+              label="Overtime Policy"
+              value={defaultRules.overtimePolicy}
+              onChange={(e) => setDefaultRules({ ...defaultRules, overtimePolicy: e.target.value })}
+              multiline
+              rows={3}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              size="small"
+              label="Call-Off Policy"
+              value={defaultRules.callOffPolicy}
+              onChange={(e) => setDefaultRules({ ...defaultRules, callOffPolicy: e.target.value })}
+              multiline
+              rows={3}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              size="small"
+              label="Injury Handling Policy"
+              value={defaultRules.injuryHandlingPolicy}
+              onChange={(e) =>
+                setDefaultRules({ ...defaultRules, injuryHandlingPolicy: e.target.value })
+              }
+              multiline
+              rows={3}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              size="small"
+              label="Discipline Policy"
+              value={defaultRules.disciplinePolicy}
+              onChange={(e) => setDefaultRules({ ...defaultRules, disciplinePolicy: e.target.value })}
+              multiline
+              rows={3}
+            />
+          </Grid>
+        </Grid>
+        <Box sx={{ mt: 2 }}>
+          <Button
+            variant="contained"
+            startIcon={defaultsSaving ? <CircularProgress size={20} /> : <SaveIcon />}
+            onClick={() => void saveCustomerRules()}
+            disabled={defaultsSaving}
+          >
+            {defaultsSaving ? 'Saving…' : 'Save Customer Rules'}
+          </Button>
+        </Box>
+      </CardContent>
+    </Card>
+  );
+
+  const renderCascadingBillingDefaultsSection = () => (
+    <Card variant="outlined" elevation={0} sx={cascadingDataCardSx}>
+      <CardHeader
+        title="Billing & Invoicing"
+        titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+        subheader="Formerly under Docs & Settings. National accounts: use Save & sync to child accounts at the bottom to fill empty billing fields on child venues."
+        subheaderTypographyProps={{ variant: 'caption', color: 'text.secondary' }}
+      />
+      <CardContent sx={{ pt: 0 }}>
+        <Grid container spacing={2}>
+          <Grid item xs={12}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={defaultBilling.poRequired}
+                  onChange={(e) => setDefaultBilling({ ...defaultBilling, poRequired: e.target.checked })}
+                />
+              }
+              label="PO Required"
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              size="small"
+              label="Payment Terms"
+              value={defaultBilling.paymentTerms}
+              onChange={(e) => setDefaultBilling({ ...defaultBilling, paymentTerms: e.target.value })}
+              placeholder="e.g., Net 30"
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <FormControl fullWidth size="small">
+              <InputLabel>Invoice Delivery Method</InputLabel>
+              <Select
+                value={defaultBilling.invoiceDeliveryMethod}
+                label="Invoice Delivery Method"
+                onChange={(e) =>
+                  setDefaultBilling({ ...defaultBilling, invoiceDeliveryMethod: e.target.value as string })
+                }
+              >
+                <MenuItem value="">—</MenuItem>
+                <MenuItem value="email">Email</MenuItem>
+                <MenuItem value="portal">Portal</MenuItem>
+                <MenuItem value="mail">Mail</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={12}>
+            <FormControl fullWidth size="small">
+              <InputLabel>Invoice Frequency</InputLabel>
+              <Select
+                value={defaultBilling.invoiceFrequency}
+                label="Invoice Frequency"
+                onChange={(e) =>
+                  setDefaultBilling({ ...defaultBilling, invoiceFrequency: e.target.value as string })
+                }
+              >
+                <MenuItem value="">—</MenuItem>
+                <MenuItem value="weekly">Weekly</MenuItem>
+                <MenuItem value="biweekly">Bi-weekly</MenuItem>
+                <MenuItem value="monthly">Monthly</MenuItem>
+                <MenuItem value="daily_event">Daily/Event-Based</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={12}>
+            <Autocomplete
+              multiple
+              size="small"
+              options={(() => {
+                const companyIds = account?.associations?.companyIds ?? [];
+                return companyIds.length === 0 ? [] : contacts.filter((c) => c.companyId && companyIds.includes(c.companyId));
+              })()}
+              getOptionLabel={(opt) => (typeof opt === 'object' && opt && 'label' in opt ? opt.label : String(opt))}
+              value={(defaultBilling.sendInvoicesTo ?? []).map((id) => contacts.find((c) => c.id === id)).filter(Boolean) as ContactOption[]}
+              onChange={(_, next) => setDefaultBilling({ ...defaultBilling, sendInvoicesTo: next.map((c) => c.id) })}
+              renderInput={(params) => <TextField {...params} label="Send Invoices To:" placeholder="Search contacts…" />}
+              isOptionEqualToValue={(opt, val) => opt.id === val.id}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              size="small"
+              label="Billing Notes"
+              value={defaultBilling.billingNotes}
+              onChange={(e) => setDefaultBilling({ ...defaultBilling, billingNotes: e.target.value })}
+              placeholder="Optional notes for billing and invoicing"
+              multiline
+              rows={3}
+            />
+          </Grid>
+        </Grid>
+        <Box sx={{ mt: 2 }}>
+          <Button
+            variant="contained"
+            startIcon={defaultsSaving ? <CircularProgress size={20} /> : <SaveIcon />}
+            onClick={() => void saveBillingDefaults()}
+            disabled={defaultsSaving}
+          >
+            {defaultsSaving ? 'Saving…' : 'Save Billing & Invoicing'}
+          </Button>
+        </Box>
+      </CardContent>
+    </Card>
+  );
+
+  const handleSaveAndSyncToChildAccounts = async () => {
+    if (!tenantId || !account?.id || account.accountType !== 'national') return;
+    setCascadeChildSyncNotice(null);
+    setCascadeChildSyncBusy(true);
+    try {
+      // One updateDoc so rules + billing + eVerify are all on the parent doc before the callable reads it.
+      setDefaultsSaving(true);
+      try {
+        const ref = doc(db, p.recruiterAccount(tenantId, account.id));
+        await updateDoc(ref, {
+          'defaults.rules': { ...defaultRules },
+          'defaults.eVerify': { ...defaultEVerify },
+          'defaults.billing': { ...defaultBilling },
+          updatedAt: serverTimestamp(),
+          updatedBy: user?.uid ?? null,
+        });
+      } catch (err) {
+        console.error('RecruiterAccountDetails: save defaults before cascade sync error', err);
+        throw err;
+      } finally {
+        setDefaultsSaving(false);
+      }
+      await cascadingOrderDetailsRef.current?.flushSave();
+      const fn = httpsCallable(functions, 'syncNationalCascadingDefaultsToChildrenCallable');
+      const resp = await fn({ tenantId, nationalAccountId: account.id });
+      const data = resp.data as {
+        summary?: {
+          childAccountsUpdated?: number;
+          childAccountsScanned?: number;
+          childAccountsSkippedUnchanged?: number;
+        };
+      };
+      const u = data?.summary?.childAccountsUpdated ?? 0;
+      const s = data?.summary?.childAccountsScanned ?? 0;
+      const sk = data?.summary?.childAccountsSkippedUnchanged ?? 0;
+      setCascadeChildSyncNotice({
+        kind: 'success',
+        text: `Updated ${u} of ${s} child account(s). ${sk} unchanged (already had values).`,
+      });
+      await loadAccount();
+    } catch (e: unknown) {
+      const msg =
+        e && typeof e === 'object' && 'message' in e && typeof (e as Error).message === 'string'
+          ? (e as Error).message
+          : 'Sync failed.';
+      setCascadeChildSyncNotice({ kind: 'error', text: msg });
+    } finally {
+      setCascadeChildSyncBusy(false);
+    }
+  };
+
+  /** Cascading Data tab — mirrors Docs & Settings → Order Defaults → Staff Instructions (child sync uses one button at tab bottom). */
+  const renderCascadingStaffInstructionsSection = () => (
+    <>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        Default staff instructions for this account. They flow to child accounts and locations, then to job orders.
+      </Typography>
+      <Grid container spacing={3}>
+        <Grid item xs={12}>
+          <AccountOrderDefaultsCard
+            variant="flat"
+            title="First Day Instructions"
+            fieldKey="firstDay"
+            placeholder="Enter first day instructions (e.g., arrival time, what to bring, who to meet, orientation details...)"
+            uploadPlaceholder="Upload first day schedules, orientation materials, or related documents"
+            account={account}
+            accountId={accountId!}
+            tenantId={tenantId!}
+            userId={user?.uid || ''}
+            onRefresh={loadAccount}
+          />
+        </Grid>
+        <Grid item xs={12}>
+          <AccountOrderDefaultsCard
+            variant="flat"
+            title="Parking Instructions"
+            fieldKey="parking"
+            placeholder="Enter parking instructions for staff (e.g., where to park, parking pass requirements, visitor parking location...)"
+            uploadPlaceholder="Upload parking maps, diagrams, or related documents"
+            account={account}
+            accountId={accountId!}
+            tenantId={tenantId!}
+            userId={user?.uid || ''}
+            onRefresh={loadAccount}
+          />
+        </Grid>
+        <Grid item xs={12}>
+          <AccountOrderDefaultsCard
+            variant="flat"
+            title="Check-In Instructions"
+            fieldKey="checkIn"
+            placeholder="Enter check-in instructions (e.g., where to report, who to ask for, required documents...)"
+            uploadPlaceholder="Upload check-in forms, maps, or related documents"
+            account={account}
+            accountId={accountId!}
+            tenantId={tenantId!}
+            userId={user?.uid || ''}
+            onRefresh={loadAccount}
+          />
+        </Grid>
+        <Grid item xs={12}>
+          <AccountOrderDefaultsCard
+            variant="flat"
+            title="Uniform Instructions"
+            fieldKey="uniform"
+            placeholder="Enter uniform and dress code requirements (e.g., specific colors, safety gear, PPE requirements...)"
+            uploadPlaceholder="Upload uniform photos, dress code guides, or related documents"
+            account={account}
+            accountId={accountId!}
+            tenantId={tenantId!}
+            userId={user?.uid || ''}
+            onRefresh={loadAccount}
+          />
+        </Grid>
+        <Grid item xs={12}>
+          <AccountOrderDefaultsCard
+            variant="flat"
+            title="Credential Instructions"
+            fieldKey="credentials"
+            placeholder="Enter credential requirements (e.g., badge pickup, wristband issuance, ID requirements...)"
+            uploadPlaceholder="Upload credential forms, badge photos, or related documents"
+            account={account}
+            accountId={accountId!}
+            tenantId={tenantId!}
+            userId={user?.uid || ''}
+            onRefresh={loadAccount}
+          />
+        </Grid>
+        <Grid item xs={12}>
+          <AccountOrderDefaultsCard
+            variant="flat"
+            title="Other Instructions"
+            fieldKey="other"
+            placeholder="Enter any additional instructions or important information for staff..."
+            uploadPlaceholder="Upload any other relevant documents"
+            account={account}
+            accountId={accountId!}
+            tenantId={tenantId!}
+            userId={user?.uid || ''}
+            onRefresh={loadAccount}
+          />
+        </Grid>
+        <Grid item xs={12}>
+          <AccountOrderDefaultsCard
+            variant="flat"
+            title="Other Attachments"
+            fieldKey="attachments"
+            placeholder=""
+            uploadPlaceholder="Upload any other relevant documents for job orders under this account"
+            account={account}
+            accountId={accountId!}
+            tenantId={tenantId!}
+            userId={user?.uid || ''}
+            onRefresh={loadAccount}
+          />
+        </Grid>
+      </Grid>
+    </>
+  );
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
@@ -4348,246 +5882,166 @@ const RecruiterAccountDetails: React.FC = () => {
                     />
                   )}
                 </Box>
-                {/* Each line uses `recordHeaderBodyTextSx` (0.74rem / 400 /
-                    #5A6372) — same scale as the user record header body
-                    text, so account + worker headers feel uniform. Values
-                    pick up `text.primary` for a touch of contrast. */}
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                  <Typography component="span" sx={recordHeaderBodyTextSx}>
-                    Status:
-                  </Typography>
-                  <Chip
-                    label={account.active ? 'Active' : 'Inactive'}
-                    color={account.active ? 'success' : 'default'}
-                    size="small"
-                    variant={account.active ? 'filled' : 'outlined'}
-                    sx={{ fontWeight: 500, height: 18, fontSize: '0.7rem', '& .MuiChip-label': { px: 0.85 } }}
-                  />
-                </Box>
-                {associatedCompanies.length > 0 && (
-                  <Typography component="div" sx={recordHeaderBodyTextSx}>
-                    Company:{' '}
-                    {associatedCompanies.map((c, idx) => (
-                      <React.Fragment key={`hdr-company-${c.id}`}>
-                        {idx > 0 && <Box component="span" sx={{ color: 'text.primary' }}>, </Box>}
-                        <Box
-                          component="a"
-                          onClick={(e: React.MouseEvent<HTMLElement>) => {
-                            e.preventDefault();
-                            navigate(`/companies/${c.id}`);
-                          }}
-                          sx={{
-                            color: '#0057B8',
-                            cursor: 'pointer',
-                            fontWeight: 500,
-                            textDecoration: 'none',
-                            '&:hover': { textDecoration: 'underline' },
-                          }}
-                        >
-                          {c.label || 'Company'}
-                        </Box>
-                      </React.Fragment>
+                {/* Icon row under title — compact shells matching User record header (`recordHeaderActionIconButtonSx`). */}
+                {account?.id ? (
+                  <Stack
+                    direction="row"
+                    spacing={0.25}
+                    alignItems="center"
+                    flexWrap="wrap"
+                    sx={{ gap: 0.25, mt: 0.5, mb: 0 }}
+                  >
+                    {account.accountType === 'child' && parentAccount ? (
+                      <RecordHeaderActionIcon
+                        tooltip={
+                          parentAccount.label ? `View account: ${parentAccount.label}` : 'View parent account'
+                        }
+                        onClick={() => navigate(`/accounts/${parentAccount.id}`)}
+                      >
+                        <AccountBalanceIcon />
+                      </RecordHeaderActionIcon>
+                    ) : null}
+                    {associatedCompanies.map((c) => (
+                      <RecordHeaderActionIcon
+                        key={`hdr-company-${c.id}`}
+                        tooltip={c.label ? `View company: ${c.label}` : 'View company'}
+                        onClick={() => navigate(`/companies/${c.id}`)}
+                      >
+                        <BusinessIcon />
+                      </RecordHeaderActionIcon>
                     ))}
-                  </Typography>
-                )}
-                <Typography component="div" sx={recordHeaderBodyTextSx}>
-                  Type:{' '}
-                  <Box component="span" sx={{ color: 'text.primary' }}>
-                    {account.accountType === 'national'
-                      ? 'National Account'
-                      : account.accountType === 'child'
-                        ? 'Child Account'
-                        : 'Standalone'}
-                  </Box>
-                </Typography>
-                <Typography
-                  component="div"
+                    <Tooltip title="Add note" componentsProps={recordHeaderTooltipComponentsProps}>
+                      <IconButton
+                        size="small"
+                        onClick={() => setShowAddNoteDialog(true)}
+                        aria-label="Add note"
+                        sx={recordHeaderActionIconButtonSx}
+                      >
+                        <NoteIcon />
+                      </IconButton>
+                    </Tooltip>
+                  </Stack>
+                ) : null}
+                {/* Status, type, and hiring entity on one wrap row (`recordHeaderBodyTextSx` scale). */}
+                <Box
                   sx={{
-                    ...recordHeaderBodyTextSx,
-                    display: 'inline-flex',
+                    display: 'flex',
+                    flexWrap: 'wrap',
                     alignItems: 'center',
-                    gap: 0.5,
+                    columnGap: 2.5,
+                    rowGap: 0.75,
+                    mt: 0.5,
                   }}
                 >
-                  <Box component="span">Hiring Entity:&nbsp;</Box>
-                  <Box component="span" sx={{ color: 'text.primary' }}>
-                    {displayHiringEntityName}
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <Typography component="span" sx={recordHeaderBodyTextSx}>
+                      Status:
+                    </Typography>
+                    <Chip
+                      label={account.active ? 'Active' : 'Inactive'}
+                      color={account.active ? 'success' : 'default'}
+                      size="small"
+                      variant={account.active ? 'filled' : 'outlined'}
+                      sx={{ fontWeight: 500, height: 18, fontSize: '0.7rem', '& .MuiChip-label': { px: 0.85 } }}
+                    />
                   </Box>
-                  {/*
-                   * Greg, 2026-04-30 — surface a "sync downstream"
-                   * affordance only on National Accounts. Disabled when
-                   * the parent itself has no hiring entity to fan out
-                   * (server would reject anyway, but this is friendlier).
-                   */}
-                  {account.accountType === 'national' && (
-                    <Tooltip
-                      title={
-                        account.hiringEntityId
-                          ? 'Sync this hiring entity to all child accounts and their job orders. Only fills empty fields — manual overrides on individual records are preserved.'
-                          : 'Set a Hiring Entity on this National Account first, then sync it downstream.'
-                      }
+                  <Typography component="span" sx={{ ...recordHeaderBodyTextSx, display: 'inline-flex', alignItems: 'center', gap: 0.25 }}>
+                    Type:{' '}
+                    <Box component="span" sx={{ color: 'text.primary', fontWeight: 500 }}>
+                      {account.accountType === 'national'
+                        ? 'National Account'
+                        : account.accountType === 'child'
+                          ? 'Child Account'
+                          : 'Standalone'}
+                    </Box>
+                  </Typography>
+                  <Typography
+                    component="span"
+                    sx={{
+                      ...recordHeaderBodyTextSx,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 0.25,
+                      minWidth: 0,
+                      maxWidth: '100%',
+                    }}
+                  >
+                    Hiring Entity:{' '}
+                    <Box
+                      component="span"
+                      sx={{
+                        color: 'text.primary',
+                        fontWeight: 500,
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        maxWidth: { xs: 180, sm: 260, md: 360 },
+                      }}
                     >
-                      <Box component="span" sx={{ display: 'inline-flex', ml: 0.5 }}>
-                        <IconButton
-                          size="small"
-                          aria-label="Sync hiring entity to child accounts and job orders"
-                          disabled={!account.hiringEntityId || hiringEntitySyncLoading}
-                          onClick={() => {
-                            setHiringEntitySyncStep('confirm');
-                            setHiringEntitySyncSummary(null);
-                            setHiringEntitySyncError(null);
-                            setHiringEntitySyncOpen(true);
+                      {displayHiringEntityName}
+                    </Box>
+                  </Typography>
+                </Box>
+                <Box sx={{ mt: 0.35, width: '100%' }}>
+                  <Typography
+                    component="span"
+                    sx={{
+                      ...recordHeaderBodyTextSx,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 0.25,
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    Scheduler:{' '}
+                    <Box component="span" sx={{ color: 'text.primary', fontWeight: 500 }}>
+                      {schedulerNamesDisplay}
+                    </Box>
+                  </Typography>
+                </Box>
+                {isChildAccount ? (
+                  <Box sx={{ mt: 0.75, display: 'flex', flexDirection: 'column', gap: 0.25, minWidth: 0, maxWidth: '100%' }}>
+                    {worksiteDetailsLoading ? (
+                      <CircularProgress size={14} sx={{ alignSelf: 'flex-start' }} />
+                    ) : worksiteDetails &&
+                      (worksiteDetails.name ||
+                        worksiteDetails.nickname ||
+                        worksiteDetails.street ||
+                        worksiteDetails.city ||
+                        worksiteDetails.address) ? (
+                      <>
+                        <Typography
+                          component="div"
+                          sx={{
+                            fontSize: '0.74rem',
+                            fontWeight: 600,
+                            color: 'text.primary',
+                            lineHeight: 1.35,
                           }}
                         >
-                          <SyncIcon fontSize="small" />
-                        </IconButton>
-                      </Box>
-                    </Tooltip>
-                  )}
-                </Typography>
-                {account.accountType === 'national' && (
-                  <Tooltip title="When enabled, each new location added to this account's connected company will automatically create a child account linked to that location. Future locations only.">
-                    <Box
-                      sx={{
-                        ...recordHeaderBodyTextSx,
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 0.5,
-                      }}
-                    >
-                      <Box component="span">Auto-Create Child Accounts:</Box>
-                      {/**
-                       * Inline toggle — mirrors the switch in the "Edit
-                       * account details" dialog (writes the same
-                       * `autoCreateChildAccountsForLocations` field via
-                       * `updateAccountField`). Surfaced here so account
-                       * managers don't have to open the edit dialog just
-                       * to flip the location-mirroring automation on/off.
-                       */}
-                      <Switch
-                        size="small"
-                        checked={account.autoCreateChildAccountsForLocations === true}
-                        disabled={saving}
-                        onChange={(e) =>
-                          updateAccountField(
-                            'autoCreateChildAccountsForLocations',
-                            e.target.checked,
-                          )
-                        }
-                        inputProps={{
-                          'aria-label': 'Toggle auto-create child accounts for new company locations',
-                        }}
-                        sx={{ ml: 0.25 }}
-                      />
-                      <Box component="span" sx={{ color: 'text.primary', fontWeight: 500 }}>
-                        {account.autoCreateChildAccountsForLocations === true ? 'On' : 'Off'}
-                      </Box>
-                    </Box>
-                  </Tooltip>
-                )}
-                {account.accountType === 'national' && (
-                  <Tooltip
-                    title={
-                      account.autoCreateChildAccountsForLocations === true
-                        ? "When a child account is auto-created under this national, a draft Gig job order is also auto-created. Pay, hiring entity, E-Verify, and screening flow down via cascade — recruiter reviews and activates manually."
-                        : 'Enable Auto-Create Child Accounts first — gig job orders only auto-spawn alongside an auto-created child account.'
-                    }
-                  >
-                    <Box
-                      sx={{
-                        ...recordHeaderBodyTextSx,
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 0.5,
-                      }}
-                    >
-                      <Box component="span">Auto-Create Gig Job Orders:</Box>
-                      {/**
-                       * §14/#45 — companion to the Auto-Create Child Accounts
-                       * toggle. When ON, the cloud trigger
-                       * `onChildAccountCreatedAutoCreateGigJobOrder` spawns a
-                       * draft Gig JO each time a child account is auto-created
-                       * under this national. The JO is a passive consumer of
-                       * cascade values (hiring entity, E-Verify, screening,
-                       * pay) — no policy decisions live in the trigger.
-                       *
-                       * Disabled when the child-account toggle is OFF: the
-                       * trigger only fires from the auto-create child path,
-                       * so the toggle is meaningless on its own.
-                       */}
-                      <Switch
-                        size="small"
-                        checked={account.autoCreateGigJobOrders === true}
-                        disabled={
-                          saving || account.autoCreateChildAccountsForLocations !== true
-                        }
-                        onChange={(e) =>
-                          updateAccountField(
-                            'autoCreateGigJobOrders',
-                            e.target.checked,
-                          )
-                        }
-                        inputProps={{
-                          'aria-label':
-                            'Toggle auto-create gig job orders for new child accounts',
-                        }}
-                        sx={{ ml: 0.25 }}
-                      />
-                      <Box component="span" sx={{ color: 'text.primary', fontWeight: 500 }}>
-                        {account.autoCreateGigJobOrders === true ? 'On' : 'Off'}
-                      </Box>
-                    </Box>
-                  </Tooltip>
-                )}
-                {/**
-                 * §14b — backfill button. Sits next to the toggle so a
-                 * recruiter who just turned the toggle ON can run the
-                 * one-shot scan immediately to "catch up" any existing
-                 * children. Disabled when the toggle is OFF (the
-                 * tooltip explains why) and while a run is in flight.
-                 */}
-                {account.accountType === 'national' && (
-                  <Tooltip
-                    title={
-                      account.autoCreateGigJobOrders === true
-                        ? 'Scan all existing child accounts and create a draft gig JO for any that don\'t have one. Idempotent — safe to re-run.'
-                        : 'Enable Auto-Create Gig Job Orders first.'
-                    }
-                  >
-                    <Box component="span" sx={{ display: 'inline-flex' }}>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        disabled={
-                          saving ||
-                          account.autoCreateGigJobOrders !== true ||
-                          gigBackfillLoading
-                        }
-                        onClick={() => {
-                          setGigBackfillStep('confirm');
-                          setGigBackfillSummary(null);
-                          setGigBackfillError(null);
-                          setGigBackfillOpen(true);
-                        }}
-                        startIcon={
-                          gigBackfillLoading ? (
-                            <CircularProgress size={14} />
-                          ) : undefined
-                        }
-                        sx={{
-                          textTransform: 'none',
-                          ml: 1,
-                          py: 0.25,
-                          px: 1.25,
-                          fontSize: '0.75rem',
-                          minHeight: '24px',
-                        }}
-                      >
-                        {gigBackfillLoading ? 'Running…' : 'Backfill missing'}
-                      </Button>
-                    </Box>
-                  </Tooltip>
-                )}
+                          {worksiteDetails.name || worksiteDetails.nickname || 'Worksite'}
+                        </Typography>
+                        {(worksiteDetails.address ||
+                          worksiteDetails.street ||
+                          worksiteDetails.city ||
+                          worksiteDetails.state ||
+                          worksiteDetails.zipCode) && (
+                          <Typography
+                            component="div"
+                            sx={{ ...recordHeaderBodyTextSx, lineHeight: 1.35 }}
+                          >
+                            {[worksiteDetails.address || worksiteDetails.street, worksiteDetails.city, worksiteDetails.state, worksiteDetails.zipCode]
+                              .filter(Boolean)
+                              .join(', ')}
+                          </Typography>
+                        )}
+                      </>
+                    ) : (
+                      <Typography sx={recordHeaderBodyTextSx}>No worksite linked</Typography>
+                    )}
+                  </Box>
+                ) : null}
               </Box>
             </Box>
           </Box>
@@ -4782,14 +6236,21 @@ const RecruiterAccountDetails: React.FC = () => {
                 Labor Pool
               </Button>
               */}
-              <Button
-                variant="text"
-                onClick={() => setAccountTab(12)}
-                startIcon={<SettingsIcon fontSize="small" />}
-                sx={tabPillSx(tabValue === 12)}
-              >
-                Docs &amp; Settings
-              </Button>
+              {/* Tab 12 used to be "Docs & Settings" with a left nav (Roles, Pricing, Order
+                  Details, Staff Instructions, File Uploads). Those sections were folded into
+                  Cascading Data on 2026-05-03; this tab now only hosts the File Uploads card and
+                  is hidden on child accounts (uploads on a child are managed at the national,
+                  per current product direction). */}
+              {!isChildAccount && (
+                <Button
+                  variant="text"
+                  onClick={() => setAccountTab(12)}
+                  startIcon={<UploadIcon fontSize="small" />}
+                  sx={tabPillSx(tabValue === 12)}
+                >
+                  File Uploads
+                </Button>
+              )}
               {canAccessInvoicing && (
                 <Button
                   variant="text"
@@ -5184,114 +6645,7 @@ const RecruiterAccountDetails: React.FC = () => {
         <DialogTitle>Edit Account Details</DialogTitle>
         <DialogContent>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
-            <TextField
-              label="Account Name"
-              defaultValue={account.name}
-              onBlur={(e) => {
-                const v = e.target.value.trim();
-                if (v !== account.name) updateAccountField('name', v);
-              }}
-              size="small"
-              fullWidth
-              autoFocus
-            />
-            <FormControl fullWidth size="small">
-              <InputLabel>Account type</InputLabel>
-              <Select
-                label="Account type"
-                value={account.accountType ?? 'standalone'}
-                onChange={(e) => updateAccountField('accountType', e.target.value || null)}
-                disabled={saving}
-              >
-                <MenuItem value="standalone">Standalone</MenuItem>
-                <MenuItem value="national">National account</MenuItem>
-                <MenuItem value="child">Child account (of a national)</MenuItem>
-              </Select>
-            </FormControl>
-            {/* E-Verify is set by the Hiring Entity (Settings > Entities) and is read-only here. */}
-            {displayEntityLoading ? (
-              <Typography variant="body2" color="text.secondary">Loading entity…</Typography>
-            ) : displayEntity ? (
-              <FormControlLabel
-                control={<Checkbox checked={displayEntity.everifyRequired} disabled />}
-                label={
-                  <Box>
-                    <Typography variant="body2">E-Verify Required</Typography>
-                    <Typography variant="caption" color="text.secondary" display="block">
-                      Set by Hiring Entity (Settings → Entities). Cannot be changed on the account.
-                    </Typography>
-                  </Box>
-                }
-              />
-            ) : (
-              <Typography variant="body2" color="text.secondary">
-                Select a Hiring Entity to see E-Verify setting.
-              </Typography>
-            )}
-            {/* R.16.2a Phase 3 — Push-to-Active banner stack for the
-                top-level `hiringEntityId` edit. Banner appears for
-                `securityLevel === '7'` only (Q4 lock); for other users
-                the edit still cascades to draft JOs but the push
-                affordance is hidden. */}
-            {canPushToActive && tenantId && account
-              ? pushBanners
-                  .filter((b) => b.fieldKey === 'hiringEntityId' && (b.positionId ?? null) === null)
-                  .map((payload) => (
-                    <PushToActiveBanner
-                      key={`top-${payload.fieldKey}`}
-                      tenantId={tenantId}
-                      accountId={account.id}
-                      payload={payload}
-                      onDismiss={() => dismissPushBanner(payload)}
-                    />
-                  ))
-              : null}
-            {/* R.16.3-interim — manual sync button + Hiring Entity
-                selector in one row. Same gating as the banner above
-                (`securityLevel === '7'`); server still enforces. */}
-            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-              <Box sx={{ flex: 1 }}>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Hiring Entity</InputLabel>
-                  <Select
-                    label="Hiring Entity"
-                    value={account?.hiringEntityId ?? ''}
-                    onChange={(e) => updateAccountField('hiringEntityId', e.target.value || null)}
-                    disabled={saving}
-                  >
-                    <MenuItem value="">
-                      <em>None</em>
-                    </MenuItem>
-                    {entityOptions.map((ent) => (
-                      <MenuItem key={ent.id} value={ent.id}>
-                        {ent.name} {ent.entityCode ? `(${ent.entityCode} · ${ent.workerType})` : ''}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Box>
-              {canPushToActive && tenantId && account && (
-                <Box sx={{ pt: 0.5 }}>
-                  <SyncToActiveButton
-                    tenantId={tenantId}
-                    accountId={account.id}
-                    fieldKey="hiringEntityId"
-                    getCurrentValue={() => account?.hiringEntityId ?? null}
-                    fieldLabel="Hiring Entity"
-                  />
-                </Box>
-              )}
-            </Box>
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={account.active}
-                  onChange={(e) => updateAccountField('active', e.target.checked)}
-                  disabled={saving}
-                />
-              }
-              label="Active"
-            />
+            {renderAccountDetailsCoreFields({ autoFocusName: true })}
             {account.accountType === 'national' ? (
               <Box>
                 <FormControlLabel
@@ -5535,136 +6889,6 @@ const RecruiterAccountDetails: React.FC = () => {
         </DialogActions>
       </Dialog>
 
-      {/**
-       * Hiring Entity downstream sync dialog (Greg, 2026-04-30).
-       *
-       * Confirm step makes the impact + fill-empty policy explicit so a
-       * recruiter knows existing custom selections won't be clobbered.
-       * Result step shows a 2-section summary (children + JOs) with the
-       * "scanned / updated / skipped / failed" buckets the server returns.
-       */}
-      <Dialog
-        open={hiringEntitySyncOpen}
-        onClose={() => {
-          if (hiringEntitySyncLoading) return;
-          setHiringEntitySyncOpen(false);
-          setHiringEntitySyncStep('confirm');
-          setHiringEntitySyncError(null);
-        }}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>Sync Hiring Entity downstream</DialogTitle>
-        <DialogContent>
-          {hiringEntitySyncStep === 'confirm' ? (
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-              <Typography variant="body2" color="text.secondary">
-                Push{' '}
-                <Box component="span" sx={{ fontWeight: 500 }}>
-                  {displayHiringEntityName || 'this hiring entity'}
-                </Box>{' '}
-                to every child account under{' '}
-                <Box component="span" sx={{ fontWeight: 500 }}>
-                  {account?.name || 'this national account'}
-                </Box>{' '}
-                and to every job order owned by those children.
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Only fills records that don&apos;t have a hiring entity
-                set yet — anything with a manual override stays untouched.
-              </Typography>
-              {hiringEntitySyncError ? (
-                <Alert
-                  severity="error"
-                  onClose={() => setHiringEntitySyncError(null)}
-                >
-                  {hiringEntitySyncError}
-                </Alert>
-              ) : null}
-            </Box>
-          ) : hiringEntitySyncSummary ? (
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-              <Box>
-                <Typography variant="subtitle2" gutterBottom>
-                  Child accounts
-                </Typography>
-                <Typography variant="body2">
-                  Scanned {hiringEntitySyncSummary.childAccountsScanned} •
-                  Updated {hiringEntitySyncSummary.childAccountsUpdated} •
-                  Skipped {hiringEntitySyncSummary.childAccountsSkipped}
-                  {hiringEntitySyncSummary.childAccountsFailed > 0
-                    ? ` • Failed ${hiringEntitySyncSummary.childAccountsFailed}`
-                    : ''}
-                </Typography>
-              </Box>
-              <Box>
-                <Typography variant="subtitle2" gutterBottom>
-                  Job orders
-                </Typography>
-                <Typography variant="body2">
-                  Scanned {hiringEntitySyncSummary.jobOrdersScanned} •
-                  Updated {hiringEntitySyncSummary.jobOrdersUpdated} •
-                  Skipped {hiringEntitySyncSummary.jobOrdersSkipped}
-                  {hiringEntitySyncSummary.jobOrdersFailed > 0
-                    ? ` • Failed ${hiringEntitySyncSummary.jobOrdersFailed}`
-                    : ''}
-                </Typography>
-              </Box>
-              {hiringEntitySyncSummary.childAccountsFailed +
-                hiringEntitySyncSummary.jobOrdersFailed >
-              0 ? (
-                <Typography variant="body2" color="warning.main">
-                  Some records failed — see browser console for the
-                  per-row audit log.
-                </Typography>
-              ) : null}
-              <Typography variant="caption" color="text.secondary">
-                &ldquo;Skipped&rdquo; covers records that already match
-                or have a custom hiring entity set.
-              </Typography>
-            </Box>
-          ) : null}
-        </DialogContent>
-        <DialogActions>
-          {hiringEntitySyncStep === 'confirm' ? (
-            <>
-              <Button
-                onClick={() => {
-                  setHiringEntitySyncOpen(false);
-                  setHiringEntitySyncError(null);
-                }}
-                disabled={hiringEntitySyncLoading}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="contained"
-                onClick={() => void runHiringEntitySync()}
-                disabled={hiringEntitySyncLoading || !account?.hiringEntityId}
-                startIcon={
-                  hiringEntitySyncLoading ? (
-                    <CircularProgress size={16} />
-                  ) : undefined
-                }
-              >
-                {hiringEntitySyncLoading ? 'Syncing…' : 'Sync'}
-              </Button>
-            </>
-          ) : (
-            <Button
-              variant="contained"
-              onClick={() => {
-                setHiringEntitySyncOpen(false);
-                setHiringEntitySyncStep('confirm');
-                setHiringEntitySyncSummary(null);
-              }}
-            >
-              Done
-            </Button>
-          )}
-        </DialogActions>
-      </Dialog>
-
       <AddJobOrderModal
         open={showNewJobOrderModal}
         onClose={() => setShowNewJobOrderModal(false)}
@@ -5863,13 +7087,310 @@ const RecruiterAccountDetails: React.FC = () => {
           </Grid>
         </TabPanel>
         <TabPanel value={tabValue} index={3}>
-          <Box sx={{ p: 2 }}>
-            <Typography variant="h6" sx={{ fontWeight: 600, mb: 1 }}>
-              Cascading Data
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Fields and values that cascade from this account to child accounts and job orders can be managed here.
-            </Typography>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
+              <Box sx={{ flexGrow: 1 }}>
+                <Typography variant="h6" sx={{ fontWeight: 600, mb: 0.5 }}>
+                  Cascading Data
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Fields and values that cascade from this account to child accounts and job orders can be managed here.
+                </Typography>
+              </Box>
+              {/* Manual refresh: re-reads this account doc. Useful on a child account after the
+                  parent national runs Save & sync to child accounts in another tab — the page
+                  now also auto-refreshes via an onSnapshot listener, but the button gives an
+                  explicit affordance and surfaces a busy state. */}
+              <Tooltip title="Refresh cascaded values from Firestore">
+                <span>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={loading ? <CircularProgress size={16} /> : <RefreshIcon />}
+                    onClick={() => void loadAccount()}
+                    disabled={loading}
+                  >
+                    {loading ? 'Refreshing…' : 'Refresh'}
+                  </Button>
+                </span>
+              </Tooltip>
+            </Box>
+            <Card variant="outlined" elevation={0} sx={cascadingDataCardSx}>
+              <CardHeader
+                title="Account Details"
+                titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+              />
+              <CardContent sx={{ pt: 0 }}>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {renderAccountDetailsCoreFields({ hideInlinePushSync: true })}
+                </Box>
+              </CardContent>
+            </Card>
+            {isChildAccount ? (
+              <Card variant="outlined" elevation={0} sx={cascadingDataCardSx}>
+                <CardHeader
+                  title="Worksite"
+                  titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+                />
+                <CardContent sx={{ pt: 0 }}>
+                  <Autocomplete
+                    options={childWorksiteSelectOptions}
+                    getOptionLabel={(o) => o.label}
+                    value={(() => {
+                      const loc = account.associations?.locations?.[0];
+                      if (!loc) return null;
+                      return (
+                        childWorksiteSelectOptions.find(
+                          (o) => o.companyId === loc.companyId && o.locationId === loc.locationId,
+                        ) ?? null
+                      );
+                    })()}
+                    onChange={(_, v) => {
+                      void updateAccountAssociations({
+                        locations: v ? [{ companyId: v.companyId, locationId: v.locationId }] : [],
+                      });
+                    }}
+                    isOptionEqualToValue={(a, b) =>
+                      a.companyId === b.companyId && a.locationId === b.locationId
+                    }
+                    disabled={optionsLoading || saving}
+                    fullWidth
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Connected worksite"
+                        placeholder="Search locations…"
+                        size="small"
+                      />
+                    )}
+                  />
+                  {childWorksiteSelectOptions.length === 0 && !optionsLoading ? (
+                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                      Locations come from companies linked on the parent national account. Ensure the parent has CRM
+                      companies with locations.
+                    </Typography>
+                  ) : null}
+                </CardContent>
+              </Card>
+            ) : (
+              <Card variant="outlined" elevation={0} sx={cascadingDataCardSx}>
+                <CardHeader
+                  title="Automations"
+                  titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+                />
+                <CardContent sx={{ pt: 0 }}>{renderNationalAutomationsSection()}</CardContent>
+              </Card>
+            )}
+            <Card variant="outlined" elevation={0} sx={cascadingDataCardSx}>
+              <CardHeader
+                title="Compliance Defaults"
+                titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+                subheader="Same fields as Docs & Settings → Order Details. Use Save & sync to child accounts at the bottom of this tab to copy saved defaults into child venues (empty fields only)."
+                subheaderTypographyProps={{ variant: 'caption', color: 'text.secondary' }}
+              />
+              <CardContent sx={{ pt: 0 }}>
+                <AccountOrderDetailsForm
+                  ref={cascadingOrderDetailsRef}
+                  account={account}
+                  accountId={accountId!}
+                  tenantId={tenantId!}
+                  userId={user?.uid || ''}
+                  contacts={contacts}
+                  inheritanceParentAccount={orderDefaultsInheritanceParent}
+                  embedded
+                  sections="compliance"
+                  hideComplianceHeading
+                  introMode="none"
+                  omitComplianceRows={['backgroundCheckPackages']}
+                  syncLayout="footer"
+                />
+              </CardContent>
+            </Card>
+            <Card variant="outlined" elevation={0} sx={cascadingDataCardSx}>
+              <CardHeader
+                title="Positions & Pricing"
+                titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+              />
+              <CardContent sx={{ pt: 0 }}>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Set default markup (above) and default positions (below). Values cascade to job orders. Pricing notes
+                  and advanced options remain under Docs & Settings → Pricing.
+                </Typography>
+                {!isChildAccount ? (
+                  <TextField
+                    label="National Default Markup"
+                    type="number"
+                    size="small"
+                    value={pricingFlatMarkupPercent === '' ? '' : pricingFlatMarkupPercent}
+                    onChange={(e) =>
+                      setPricingFlatMarkupPercent(e.target.value === '' ? '' : Number(e.target.value))
+                    }
+                    onBlur={(e) => void persistCascadingFlatMarkup(e.currentTarget.value)}
+                    disabled={cascadeMarkupSaving}
+                    inputProps={{ min: 0, step: 0.5 }}
+                    sx={{ maxWidth: 280, mb: 2, ...numberInputNoSpinnerSx }}
+                    InputProps={{
+                      endAdornment: <InputAdornment position="end">%</InputAdornment>,
+                    }}
+                    helperText="Applies as the account-wide default; flows to children and orders per your pricing rules."
+                  />
+                ) : (
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mb: 2, maxWidth: 360 }}>
+                    <TextField
+                      label="National Default Markup"
+                      type="number"
+                      size="small"
+                      value={
+                        parentNationalMarkupLoading
+                          ? ''
+                          : parentNationalFlatMarkupPercent === null
+                            ? ''
+                            : parentNationalFlatMarkupPercent
+                      }
+                      disabled
+                      InputProps={{
+                        endAdornment: <InputAdornment position="end">%</InputAdornment>,
+                      }}
+                      sx={numberInputNoSpinnerSx}
+                      helperText={
+                        parentNationalMarkupLoading
+                          ? 'Loading parent account…'
+                          : 'From the parent national account (read-only here).'
+                      }
+                    />
+                    <TextField
+                      label="Local Default Markup"
+                      type="number"
+                      size="small"
+                      value={pricingFlatMarkupPercent === '' ? '' : pricingFlatMarkupPercent}
+                      onChange={(e) =>
+                        setPricingFlatMarkupPercent(e.target.value === '' ? '' : Number(e.target.value))
+                      }
+                      onBlur={(e) => void persistCascadingFlatMarkup(e.currentTarget.value)}
+                      disabled={cascadeMarkupSaving}
+                      inputProps={{ min: 0, step: 0.5 }}
+                      sx={numberInputNoSpinnerSx}
+                      InputProps={{
+                        endAdornment: <InputAdornment position="end">%</InputAdornment>,
+                      }}
+                      helperText="Stored on this sub-account; used when resolving pricing for this venue."
+                    />
+                  </Box>
+                )}
+                {renderCascadingDefaultPositionsSection()}
+              </CardContent>
+            </Card>
+            {isChildAccount && account.parentAccountId?.trim() ? (
+              <Card variant="outlined" elevation={0} sx={cascadingDataCardSx}>
+                <CardHeader
+                  title="Default Gig job seed"
+                  titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+                  subheader="National defaults for auto-spawned gig job orders (updates live when the parent saves)."
+                  subheaderTypographyProps={{ variant: 'caption', color: 'text.secondary' }}
+                />
+                <CardContent sx={{ pt: 0 }}>
+                  {parentNationalMarkupLoading ? (
+                    <Box sx={{ py: 1 }}>
+                      <CircularProgress size={22} />
+                    </Box>
+                  ) : (
+                    <Stack spacing={1.5}>
+                      <TextField
+                        label="Default Gig Job Title"
+                        size="small"
+                        fullWidth
+                        value={orderDefaultsInheritanceParent?.defaultGigJobTitle ?? ''}
+                        disabled
+                      />
+                      <TextField
+                        label="Default Gig Job Description"
+                        size="small"
+                        fullWidth
+                        multiline
+                        minRows={2}
+                        maxRows={8}
+                        value={orderDefaultsInheritanceParent?.defaultGigJobDescription ?? ''}
+                        disabled
+                      />
+                      {!orderDefaultsInheritanceParent ? (
+                        <Typography variant="caption" color="warning.main">
+                          Parent national account could not be loaded.
+                        </Typography>
+                      ) : null}
+                    </Stack>
+                  )}
+                </CardContent>
+              </Card>
+            ) : null}
+            <AccountRecruitingRolesCard
+              tenantId={tenantId ?? null}
+              accountId={account.id}
+              initialSchedulerIds={account?.roles?.schedulerIds ?? []}
+              parentSchedulerIds={isChildAccount ? parentNationalSchedulerIds : undefined}
+              recruiterOptions={recruitersOptions}
+              autoSave
+              title="Scheduler"
+              cardSx={cascadingDataCardSx}
+              onSaved={(nextSchedulerIds) => {
+                setAccount((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        roles: { ...(prev.roles ?? {}), schedulerIds: nextSchedulerIds },
+                      }
+                    : prev,
+                );
+              }}
+            />
+            <Card variant="outlined" elevation={0} sx={cascadingDataCardSx}>
+              <CardHeader
+                title="Staff Instructions"
+                titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+                subheader="Same content as Docs & Settings → Order Defaults → Staff Instructions. Saved values cascade to children, locations, and job orders."
+                subheaderTypographyProps={{ variant: 'caption', color: 'text.secondary' }}
+              />
+              <CardContent sx={{ pt: 0 }}>{renderCascadingStaffInstructionsSection()}</CardContent>
+            </Card>
+            {renderCascadingBillingDefaultsSection()}
+            {renderCascadingCustomerRulesSection()}
+            {isNationalAccount && canSyncCascadeDefaultsToChildren && tenantId && account?.id ? (
+              <Card variant="outlined" elevation={0} sx={cascadingDataCardSx}>
+                <CardHeader
+                  title="Save & sync to child accounts"
+                  titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+                  subheader="Copies saved values from this national account into each child venue. Only empty fields on a child are filled — existing child data is never overwritten."
+                  subheaderTypographyProps={{ variant: 'caption', color: 'text.secondary' }}
+                />
+                <CardContent sx={{ pt: 0 }}>
+                  {cascadeChildSyncNotice ? (
+                    <Alert
+                      severity={cascadeChildSyncNotice.kind === 'success' ? 'success' : 'error'}
+                      sx={{ mb: 2 }}
+                      onClose={() => setCascadeChildSyncNotice(null)}
+                    >
+                      {cascadeChildSyncNotice.text}
+                    </Alert>
+                  ) : null}
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Saves Customer Rules & Policies, Billing & Invoicing, and Compliance Defaults (above), then fills
+                    empty fields on child accounts from Firestore — hiring entity, rules/policies, billing defaults,
+                    screening and compliance defaults, staff instructions (including attachments), and default gig
+                    title/description. Click out of fields so edits auto-save, or save each section first.
+                  </Typography>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    startIcon={
+                      cascadeChildSyncBusy ? <CircularProgress size={18} color="inherit" /> : <SyncIcon />
+                    }
+                    disabled={cascadeChildSyncBusy}
+                    onClick={() => void handleSaveAndSyncToChildAccounts()}
+                  >
+                    {cascadeChildSyncBusy ? 'Saving & syncing…' : 'Save & sync to child accounts'}
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : null}
           </Box>
         </TabPanel>
         <TabPanel value={tabValue} index={4}>
@@ -6867,6 +8388,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                             sutaRate: null,
                             futaRate: null,
                             jobDescriptionFromClient: '',
+                            uniformRequirements: '',
                           },
                         ])
                       }
@@ -8026,1010 +9548,92 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
           </Grid>
         </TabPanel>
         <TabPanel value={tabValue} index={12}>
-          {          /*
-            Docs & Settings tab — consolidates the old top-level Settings,
-            Pricing, and Order Defaults tabs into one surface with a left
-            vertical nav (per ./config/accountSettingsNavigation.ts), mirroring
-            the pattern used by the global /settings page.
-
-            Layout: 2-column Grid — left nav (md=3) | section content (md=9).
-            The right-rail AccountSidebar was previously rendered here with
-            `visibleSections={[]}` (i.e. invisible) — it just stole 25% of
-            the row from the form panels for no UI value, so the column was
-            removed (Greg, 2026-04-30) and the content widened to md=9.
-            Each section is gated by `selectedSection` and inlines its own
-            content; legacy ?tab=pricing and ?tab=order-defaults URLs are
-            normalized into ?tab=settings&section=… in the URL-redirect
-            effect near the top of the component.
-          */}
-          <Grid container spacing={3}>
-            <Grid item xs={12} md={3}>
-              <Card variant="outlined" sx={{ position: { md: 'sticky' }, top: { md: 16 } }}>
-                <List
-                  subheader={<li />}
-                  sx={{
-                    py: 0,
-                    '& ul': { padding: 0, listStyle: 'none', margin: 0 },
-                  }}
-                >
-                  {ACCOUNT_SETTINGS_NAV_GROUPS.map((group) => (
-                    <li key={group.id}>
-                      <ul>
-                        <ListSubheader
-                          disableSticky
-                          sx={{
-                            bgcolor: 'transparent',
-                            color: 'text.secondary',
-                            fontSize: '0.7rem',
-                            fontWeight: 700,
-                            letterSpacing: '0.08em',
-                            textTransform: 'uppercase',
-                            lineHeight: 1.5,
-                            pt: 1.25,
-                            pb: 0.5,
-                            px: 2,
-                          }}
-                        >
-                          {group.label}
-                        </ListSubheader>
-                        {group.items.map((item) => (
-                          <ListItemButton
-                            key={item.key}
-                            selected={selectedSection === item.key}
-                            onClick={() => setSettingsSection(item.key)}
-                            sx={{
-                              py: 0.75,
-                              px: 2,
-                              borderLeft: '3px solid transparent',
-                              '&.Mui-selected': {
-                                bgcolor: 'rgba(0, 87, 184, 0.08)',
-                                borderLeftColor: '#0057B8',
-                                '&:hover': { bgcolor: 'rgba(0, 87, 184, 0.12)' },
-                              },
-                            }}
-                          >
-                            <ListItemText
-                              primary={item.label}
-                              primaryTypographyProps={{
-                                variant: 'body2',
-                                fontWeight: selectedSection === item.key ? 600 : 400,
-                                color: selectedSection === item.key ? '#0057B8' : 'text.primary',
-                              }}
-                            />
-                          </ListItemButton>
+          {/* This tab was previously "Docs & Settings" with a left sidebar covering Roles &
+              Schedulers, Pricing, Order Details, Staff Instructions, and File Uploads. The
+              first four moved to the Cascading Data tab on 2026-05-03; this tab is now scoped
+              to the file-uploads card only and is hidden on child accounts (the tab-bar Button
+              is wrapped in `!isChildAccount` — uploads on a child are managed at the parent). */}
+          <Card>
+            <CardHeader
+              title="File uploads"
+              titleTypographyProps={{ variant: 'h6', fontWeight: 600 }}
+            />
+            <CardContent sx={{ pt: 0 }}>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2 }}>
+                  <TextField
+                    size="small"
+                    label="Name"
+                    placeholder="e.g. Contract"
+                    value={uploadLabel}
+                    onChange={(e) => setUploadLabel(e.target.value)}
+                    sx={{ minWidth: 180 }}
+                  />
+                  <input
+                    key={uploadFileKey}
+                    ref={uploadInputRef}
+                    type="file"
+                    accept="*/*"
+                    style={{ display: 'none' }}
+                    onChange={handleUploadFile}
+                  />
+                  <Button
+                    variant="outlined"
+                    component="span"
+                    startIcon={uploading ? <CircularProgress size={16} /> : <UploadIcon />}
+                    disabled={uploading}
+                    onClick={() => uploadInputRef.current?.click()}
+                    sx={{ textTransform: 'none' }}
+                  >
+                    {uploading ? 'Uploading…' : 'Choose file'}
+                  </Button>
+                </Box>
+                {accountUploads.length === 0 ? (
+                  <Typography variant="body2" color="text.secondary">
+                    No uploads yet. Add a name (e.g. Contract) and choose a file to upload.
+                  </Typography>
+                ) : (
+                  <TableContainer component={Paper} variant="outlined" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell sx={{ fontWeight: 600 }}>Name</TableCell>
+                          <TableCell sx={{ fontWeight: 600 }}>File</TableCell>
+                          <TableCell sx={{ fontWeight: 600, width: 140 }} align="right">Actions</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {accountUploads.map((row) => (
+                          <TableRow key={row.id}>
+                            <TableCell>{row.name}</TableCell>
+                            <TableCell>{row.fileName}</TableCell>
+                            <TableCell align="right">
+                              <IconButton
+                                size="small"
+                                title="Open in new tab"
+                                onClick={() => window.open(row.url, '_blank')}
+                                sx={{ color: 'text.secondary' }}
+                              >
+                                <OpenInNewIcon fontSize="small" />
+                              </IconButton>
+                              <IconButton
+                                size="small"
+                                title="Delete"
+                                onClick={() => setDeleteConfirmUploadId(row.id)}
+                                sx={{ color: 'error.main' }}
+                              >
+                                <DeleteIcon fontSize="small" />
+                              </IconButton>
+                            </TableCell>
+                          </TableRow>
                         ))}
-                      </ul>
-                    </li>
-                  ))}
-                </List>
-              </Card>
-            </Grid>
-
-            <Grid item xs={12} md={9}>
-              {/* Roles & Schedulers */}
-              {selectedSection === 'roles' && (
-                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                  <Box sx={{ flex: 1 }}>
-                    <AccountRecruitingRolesCard
-                      tenantId={tenantId}
-                      accountId={account.id!}
-                      initialSchedulerIds={account?.roles?.schedulerIds ?? []}
-                      recruiterOptions={recruitersOptions}
-                      onSaved={(nextSchedulerIds) => {
-                        setAccount((prev) =>
-                          prev
-                            ? {
-                                ...prev,
-                                roles: { ...(prev.roles ?? {}), schedulerIds: nextSchedulerIds },
-                              }
-                            : prev,
-                        );
-                      }}
-                    />
-                  </Box>
-                  {/* R.16.2c — manual sync next to the schedulers editor.
-                      `scheduler` is captured in the snapshot envelope as
-                      `string[]` (the full `schedulerIds` array). V1
-                      caveat (per R.16.2c L2): pushing the array updates
-                      `jo.snapshot.scheduler` only — the live JO field
-                      `schedulerUid` (single-uid stamp set at JO creation)
-                      is NOT rewritten. Consumer rewire is deferred to
-                      R.16.2d if the post-CORT signal warrants it. */}
-                  {canPushToActive && tenantId && account && (
-                    <Box sx={{ pt: 1.5 }}>
-                      <SyncToActiveButton
-                        tenantId={tenantId}
-                        accountId={account.id}
-                        fieldKey="scheduler"
-                        getCurrentValue={() => {
-                          const ids = account?.roles?.schedulerIds;
-                          return Array.isArray(ids) ? ids : [];
-                        }}
-                        fieldLabel="Schedulers"
-                      />
-                    </Box>
-                  )}
-                </Box>
-              )}
-
-              {/* Customer Rules & Policies */}
-              {selectedSection === 'customer-rules' && (
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <Card>
-                    <CardHeader title="Customer Rules & Policies (Defaults)" />
-                    <CardContent>
-                      <Grid container spacing={2}>
-                        <Grid item xs={12} md={6}>
-                          <FormControlLabel
-                            control={
-                              <Checkbox
-                                checked={defaultRules.replacingExistingAgency}
-                                onChange={(e) => setDefaultRules({ ...defaultRules, replacingExistingAgency: e.target.checked })}
-                              />
-                            }
-                            label="Replacing Existing Agency"
-                          />
-                        </Grid>
-                        <Grid item xs={12} md={6}>
-                          <FormControlLabel
-                            control={
-                              <Checkbox
-                                checked={defaultRules.rolloverExistingStaff}
-                                onChange={(e) => setDefaultRules({ ...defaultRules, rolloverExistingStaff: e.target.checked })}
-                              />
-                            }
-                            label="Rollover Existing Staff"
-                          />
-                        </Grid>
-                        <Grid item xs={12} md={6}>
-                          <TextField
-                            fullWidth
-                            size="small"
-                            label="Timeclock System"
-                            value={defaultRules.timeclockSystem}
-                            onChange={(e) => setDefaultRules({ ...defaultRules, timeclockSystem: e.target.value })}
-                            multiline
-                            rows={3}
-                          />
-                        </Grid>
-                        <Grid item xs={12}>
-                          <TextField
-                            fullWidth
-                            size="small"
-                            label="Attendance Policy"
-                            value={defaultRules.attendancePolicy}
-                            onChange={(e) => setDefaultRules({ ...defaultRules, attendancePolicy: e.target.value })}
-                            multiline
-                            rows={3}
-                          />
-                        </Grid>
-                        <Grid item xs={12}>
-                          <TextField
-                            fullWidth
-                            size="small"
-                            label="No-Show Policy"
-                            value={defaultRules.noShowPolicy}
-                            onChange={(e) => setDefaultRules({ ...defaultRules, noShowPolicy: e.target.value })}
-                            multiline
-                            rows={3}
-                          />
-                        </Grid>
-                        <Grid item xs={12}>
-                          <TextField
-                            fullWidth
-                            size="small"
-                            label="Overtime Policy"
-                            value={defaultRules.overtimePolicy}
-                            onChange={(e) => setDefaultRules({ ...defaultRules, overtimePolicy: e.target.value })}
-                            multiline
-                            rows={3}
-                          />
-                        </Grid>
-                        <Grid item xs={12}>
-                          <TextField
-                            fullWidth
-                            size="small"
-                            label="Call-Off Policy"
-                            value={defaultRules.callOffPolicy}
-                            onChange={(e) => setDefaultRules({ ...defaultRules, callOffPolicy: e.target.value })}
-                            multiline
-                            rows={3}
-                          />
-                        </Grid>
-                        <Grid item xs={12}>
-                          <TextField
-                            fullWidth
-                            size="small"
-                            label="Injury Handling Policy"
-                            value={defaultRules.injuryHandlingPolicy}
-                            onChange={(e) => setDefaultRules({ ...defaultRules, injuryHandlingPolicy: e.target.value })}
-                            multiline
-                            rows={3}
-                          />
-                        </Grid>
-                        <Grid item xs={12}>
-                          <TextField
-                            fullWidth
-                            size="small"
-                            label="Discipline Policy"
-                            value={defaultRules.disciplinePolicy}
-                            onChange={(e) => setDefaultRules({ ...defaultRules, disciplinePolicy: e.target.value })}
-                            multiline
-                            rows={3}
-                          />
-                        </Grid>
-                      </Grid>
-                    </CardContent>
-                  </Card>
-                  <Box>
-                    <Button
-                      variant="contained"
-                      startIcon={defaultsSaving ? <CircularProgress size={20} /> : <SaveIcon />}
-                      onClick={saveCustomerRules}
-                      disabled={defaultsSaving}
-                    >
-                      {defaultsSaving ? 'Saving…' : 'Save Customer Rules'}
-                    </Button>
-                  </Box>
-                </Box>
-              )}
-
-              {/* Pricing — full content lifted from former Pricing tab */}
-              {selectedSection === 'pricing' && (
-                <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    Define how this account is billed: flat markup for all positions (e.g. Sodexo, Black Caviar) or job-title-specific pay and bill rates. Positions here are the only job titles available when creating job orders for this account.
-                  </Typography>
-                  {account.accountType === 'national' && (
-                    <Card sx={{ mb: 3 }}>
-                      <CardHeader title="National account pricing" titleTypographyProps={{ variant: 'h6', fontWeight: 600 }} />
-                      <CardContent sx={{ pt: 0 }}>
-                        <FormControlLabel
-                          control={
-                            <Checkbox
-                              checked={pricingSubAccountsManageOwn}
-                              onChange={(e) => setPricingSubAccountsManageOwn(e.target.checked)}
-                            />
-                          }
-                          label="Sub-accounts manage their own pricing (e.g. Oakland Arena has specific bill rates per title; uncheck for a single flat markup across all sub-accounts)"
-                        />
-                        {!pricingSubAccountsManageOwn && (
-                          <Box sx={{ mt: 2, display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                            <TextField
-                              size="small"
-                              type="number"
-                              label="Flat markup %"
-                              value={pricingFlatMarkupPercent}
-                              onChange={(e) => setPricingFlatMarkupPercent(e.target.value === '' ? '' : Number(e.target.value))}
-                              inputProps={{ min: 0, step: 0.5 }}
-                              sx={{ width: 160, ...numberInputNoSpinnerSx }}
-                              helperText="Applied to all job positions across all sub-accounts (e.g. 45 = 45% over pay rate)"
-                            />
-                            {/* R.16.2c — second flat markup surface
-                                (alternate layout). Same wiring + gating
-                                as the primary above. */}
-                            {canPushToActive && tenantId && account && (
-                              <Box sx={{ pt: 0.5 }}>
-                                <SyncToActiveButton
-                                  tenantId={tenantId}
-                                  accountId={account.id}
-                                  fieldKey="pricingFlatMarkupPercent"
-                                  getCurrentValue={() =>
-                                    pricingFlatMarkupPercent === ''
-                                      ? null
-                                      : Number(pricingFlatMarkupPercent)
-                                  }
-                                  fieldLabel="Flat Markup %"
-                                />
-                              </Box>
-                            )}
-                          </Box>
-                        )}
-                      </CardContent>
-                    </Card>
-                  )}
-                  <Card sx={{ mb: 3 }}>
-                    <CardHeader title="Pricing Notes" titleTypographyProps={{ variant: 'h6', fontWeight: 600 }} />
-                    <CardContent sx={{ pt: 0 }}>
-                      <TextField
-                        fullWidth
-                        multiline
-                        minRows={3}
-                        maxRows={8}
-                        label="Notes"
-                        placeholder="e.g. special billing instructions, rate notes..."
-                        value={pricingNotes}
-                        onChange={(e) => setPricingNotes(e.target.value)}
-                        onBlur={() => savePricingNotes(pricingNotes)}
-                        disabled={pricingNotesSaving}
-                        helperText={pricingNotesSaving ? 'Saving…' : 'Saved on blur. Flows downstream (e.g. National → Child → Job Order).'}
-                      />
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardHeader
-                      title="Positions table"
-                      subheader="Job titles and rates for this account. WC code and rate auto-fill when job title + state match in Settings → Workers Comp; or enter them manually. At sub-account or standalone level, workers comp and (for C1 Workforce / C1 Select) SUTA/FUTA apply."
-                      titleTypographyProps={{ variant: 'h6', fontWeight: 600 }}
-                      action={
-                        <Button
-                          size="small"
-                          startIcon={<AddIcon />}
-                          onClick={() =>
-                            setPricingPositions((prev) => [
-                              ...prev,
-                              {
-                                id: `pos-${Date.now()}`,
-                                jobTitle: '',
-                                payRate: 0,
-                                markupPercent: null,
-                                billRate: 0,
-                                workersCompCode: '',
-                                workersCompRate: null,
-                                sutaRate: null,
-                                futaRate: null,
-                                jobDescriptionFromClient: '',
-                              },
-                            ])
-                          }
-                        >
-                          Add position
-                        </Button>
-                      }
-                    />
-                    <CardContent sx={{ pt: 0 }}>
-                      {showSutaFutaOnPricingPositions && (
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 2 }}>
-                          <FormControl size="small" sx={{ minWidth: 140 }}>
-                            <InputLabel>Worksite state</InputLabel>
-                            <Select
-                              value={pricingSutaFutaState || ''}
-                              onChange={(e) => setPricingSutaFutaState(e.target.value)}
-                              label="Worksite state"
-                            >
-                              <MenuItem value="">
-                                <em>Select state</em>
-                              </MenuItem>
-                              {US_STATE_CODES.map((code) => (
-                                <MenuItem key={code} value={code}>
-                                  {code}
-                                </MenuItem>
-                              ))}
-                            </Select>
-                          </FormControl>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            onClick={() => {
-                              const stateCode = pricingSutaFutaState || normalizeStateCode(worksiteDetails?.state);
-                              if (!stateCode) return;
-                              const suta = getSutaRateByState(stateCode);
-                              const futa = getFutaRateByState(stateCode);
-                              setPricingPositions((prev) =>
-                                prev.map((row) => ({
-                                  ...row,
-                                  sutaRate: suta ?? row.sutaRate,
-                                  futaRate: futa,
-                                }))
-                              );
-                            }}
-                            disabled={!pricingSutaFutaState && !normalizeStateCode(worksiteDetails?.state)}
-                            sx={{ textTransform: 'none' }}
-                          >
-                            Apply SUTA/FUTA from state
-                          </Button>
-                          <Typography variant="caption" color="text.secondary">
-                            Uses estimated new-employer SUTA and FUTA rates for the selected state.
-                          </Typography>
-                        </Box>
-                      )}
-                      <TableContainer component={Paper} variant="outlined" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
-                        <Table size="small">
-                          <TableHead>
-                            <TableRow sx={{ bgcolor: 'grey.50' }}>
-                              <TableCell sx={{ fontWeight: 600 }}>Job title</TableCell>
-                              <TableCell sx={{ fontWeight: 600 }} align="right">Pay rate</TableCell>
-                              <TableCell sx={{ fontWeight: 600 }} align="right">Markup %</TableCell>
-                              <TableCell sx={{ fontWeight: 600 }} align="right">Bill rate</TableCell>
-                              <TableCell sx={{ fontWeight: 600 }}>WC Code</TableCell>
-                              <TableCell sx={{ fontWeight: 600 }} align="right">WC Rate %</TableCell>
-                              {showSutaFutaOnPricingPositions && (
-                                <>
-                                  <TableCell sx={{ fontWeight: 600 }} align="right">SUTA %</TableCell>
-                                  <TableCell sx={{ fontWeight: 600 }} align="right">FUTA %</TableCell>
-                                </>
-                              )}
-                              <TableCell sx={{ fontWeight: 600 }} align="right">Net margin</TableCell>
-                              <TableCell sx={{ width: 56 }} />
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            {pricingPositions.map((row, idx) => {
-                              const markupVal = row.markupPercent;
-                              const markup = markupVal == null ? null : Number(markupVal);
-                              const markupNum = typeof markup === 'number' && !Number.isNaN(markup) ? markup : null;
-                              const pay = Number(row.payRate) || 0;
-                              const bill = markupNum != null ? pay * (1 + markupNum / 100) : (Number(row.billRate) || 0);
-                              const pricingStateCode = (pricingSutaFutaState || normalizeStateCode(worksiteDetails?.state) || '').trim().toUpperCase();
-                              const wcCode = (row.workersCompCode ?? '').trim();
-                              const effectiveWcRate = (pricingStateCode && wcCode ? wcRatesByKey[`${pricingStateCode}_${wcCode}`] : undefined) ?? row.workersCompRate;
-                              const wc = (Number(effectiveWcRate) || 0) / 100;
-                              const suta = (Number(row.sutaRate) || 0) / 100;
-                              const futa = (Number(row.futaRate) || 0) / 100;
-                              const margin = bill - pay - pay * wc - pay * suta - pay * futa;
-                              return (
-                                <TableRow key={row.id || idx}>
-                                  <TableCell sx={{ minWidth: 260, maxWidth: 360, verticalAlign: 'top' }}>
-                                    <Stack spacing={1}>
-                                      <Autocomplete
-                                        freeSolo
-                                        size="small"
-                                        options={jobTitlesData as string[]}
-                                        value={row.jobTitle}
-                                        onInputChange={(_, v) => {
-                                          const stateCode = (pricingSutaFutaState || normalizeStateCode(worksiteDetails?.state) || '').trim().toUpperCase();
-                                          const lookup =
-                                            stateCode && v
-                                              ? pickWorkersCompJobTitleLookup(
-                                                  wcJobTitleMaps,
-                                                  stateCode,
-                                                  String(v),
-                                                  wcModifierAccountIdForPricing,
-                                                )
-                                              : undefined;
-                                          setPricingPositions((prev) => {
-                                            const next = [...prev];
-                                            next[idx] = { ...next[idx], jobTitle: v };
-                                            if (lookup) {
-                                              next[idx].workersCompCode = lookup.code;
-                                              next[idx].workersCompRate = lookup.rate;
-                                            }
-                                            return next;
-                                          });
-                                        }}
-                                        renderInput={(params) => <TextField {...params} placeholder="e.g. Chef" />}
-                                        sx={{ minWidth: 200 }}
-                                      />
-                                      <TextField
-                                        size="small"
-                                        fullWidth
-                                        multiline
-                                        minRows={2}
-                                        maxRows={6}
-                                        label="Client job description"
-                                        placeholder="Customer’s official JD or notes for AI job description / postings"
-                                        value={row.jobDescriptionFromClient ?? ''}
-                                        onChange={(e) => {
-                                          const v = e.target.value;
-                                          setPricingPositions((prev) => {
-                                            const next = [...prev];
-                                            next[idx] = { ...next[idx], jobDescriptionFromClient: v || '' };
-                                            return next;
-                                          });
-                                        }}
-                                      />
-                                    </Stack>
-                                  </TableCell>
-                                  <TableCell align="right">
-                                    <TextField
-                                      size="small"
-                                      type="number"
-                                      value={row.payRate || ''}
-                                      onChange={(e) => {
-                                        const v = e.target.value === '' ? 0 : Number(e.target.value);
-                                        setPricingPositions((prev) => {
-                                          const next = [...prev];
-                                          next[idx] = { ...next[idx], payRate: v };
-                                          const m = next[idx].markupPercent;
-                                          if (m != null) {
-                                            const mNum = Number(m);
-                                            if (!Number.isNaN(mNum)) next[idx].billRate = v * (1 + mNum / 100);
-                                          }
-                                          return next;
-                                        });
-                                      }}
-                                      inputProps={{ min: 0, step: 0.01 }}
-                                      sx={{ width: 90, ...numberInputNoSpinnerSx }}
-                                    />
-                                  </TableCell>
-                                  <TableCell align="right">
-                                    <TextField
-                                      size="small"
-                                      type="number"
-                                      value={row.markupPercent ?? ''}
-                                      onChange={(e) => {
-                                        const v = e.target.value === '' ? null : Number(e.target.value);
-                                        setPricingPositions((prev) => {
-                                          const next = [...prev];
-                                          next[idx] = {
-                                            ...next[idx],
-                                            markupPercent: v,
-                                            billRate: v != null ? (Number(next[idx].payRate) || 0) * (1 + v / 100) : next[idx].billRate,
-                                          };
-                                          return next;
-                                        });
-                                      }}
-                                      inputProps={{ min: 0, step: 0.5 }}
-                                      sx={{ width: 80, ...numberInputNoSpinnerSx }}
-                                      placeholder="—"
-                                    />
-                                  </TableCell>
-                                  <TableCell align="right">
-                                    <TextField
-                                      size="small"
-                                      type="number"
-                                      value={markupNum != null ? bill.toFixed(2) : (row.billRate ?? '')}
-                                      disabled={markupNum != null}
-                                      onChange={(e) => {
-                                        if (markupNum != null) return;
-                                        const v = e.target.value === '' ? 0 : Number(e.target.value);
-                                        setPricingPositions((prev) => {
-                                          const next = [...prev];
-                                          next[idx] = { ...next[idx], billRate: v };
-                                          return next;
-                                        });
-                                      }}
-                                      inputProps={{ min: 0, step: 0.01 }}
-                                      sx={{ width: 90, ...numberInputNoSpinnerSx }}
-                                    />
-                                  </TableCell>
-                                  <TableCell>
-                                    <TextField
-                                      size="small"
-                                      value={row.workersCompCode ?? ''}
-                                      onChange={(e) => {
-                                        const v = e.target.value.trim();
-                                        setPricingPositions((prev) => {
-                                          const next = [...prev];
-                                          next[idx] = { ...next[idx], workersCompCode: v || undefined };
-                                          return next;
-                                        });
-                                      }}
-                                      sx={{ width: 100 }}
-                                      placeholder="e.g. 8810"
-                                      helperText="Auto from Workers Comp when job title + state match; or enter manually"
-                                    />
-                                  </TableCell>
-                                  <TableCell align="right">
-                                    <TextField
-                                      size="small"
-                                      type="number"
-                                      value={
-                                        (() => {
-                                          const sc = (pricingSutaFutaState || normalizeStateCode(worksiteDetails?.state) || '').trim().toUpperCase();
-                                          const code = (row.workersCompCode ?? '').trim();
-                                          const fromMaster = sc && code ? wcRatesByKey[`${sc}_${code}`] : undefined;
-                                          return fromMaster != null ? fromMaster : (row.workersCompRate ?? '');
-                                        })()
-                                      }
-                                      onChange={(e) => {
-                                        const v = e.target.value === '' ? null : Number(e.target.value);
-                                        setPricingPositions((prev) => {
-                                          const next = [...prev];
-                                          next[idx] = { ...next[idx], workersCompRate: v != null && !Number.isNaN(v) ? v : undefined };
-                                          return next;
-                                        });
-                                      }}
-                                      inputProps={{ min: 0, step: 0.1 }}
-                                      sx={{ width: 70, ...numberInputNoSpinnerSx }}
-                                      placeholder="—"
-                                      helperText="Auto from Workers Comp or enter manually"
-                                    />
-                                  </TableCell>
-                                  {showSutaFutaOnPricingPositions && (
-                                    <>
-                                      <TableCell align="right">
-                                        <TextField
-                                          size="small"
-                                          type="number"
-                                          value={row.sutaRate ?? ''}
-                                          onChange={(e) => {
-                                            const v = e.target.value === '' ? null : Number(e.target.value);
-                                            setPricingPositions((prev) => {
-                                              const next = [...prev];
-                                              next[idx] = { ...next[idx], sutaRate: v };
-                                              return next;
-                                            });
-                                          }}
-                                          inputProps={{ min: 0, step: 0.1 }}
-                                          sx={{ width: 70, ...numberInputNoSpinnerSx }}
-                                          placeholder="—"
-                                        />
-                                      </TableCell>
-                                      <TableCell align="right">
-                                        <TextField
-                                          size="small"
-                                          type="number"
-                                          value={row.futaRate ?? ''}
-                                          onChange={(e) => {
-                                            const v = e.target.value === '' ? null : Number(e.target.value);
-                                            setPricingPositions((prev) => {
-                                              const next = [...prev];
-                                              next[idx] = { ...next[idx], futaRate: v };
-                                              return next;
-                                            });
-                                          }}
-                                          inputProps={{ min: 0, step: 0.1 }}
-                                          sx={{ width: 70, ...numberInputNoSpinnerSx }}
-                                          placeholder="—"
-                                        />
-                                      </TableCell>
-                                    </>
-                                  )}
-                                  <TableCell align="right">
-                                    <Typography variant="body2">{isNaN(margin) ? '—' : `$${margin.toFixed(2)}`}</Typography>
-                                  </TableCell>
-                                  <TableCell>
-                                    <IconButton
-                                      size="small"
-                                      onClick={() => setPricingPositions((prev) => prev.filter((_, i) => i !== idx))}
-                                      sx={{ color: 'error.main' }}
-                                    >
-                                      <DeleteIcon fontSize="small" />
-                                    </IconButton>
-                                  </TableCell>
-                                </TableRow>
-                              );
-                            })}
-                          </TableBody>
-                        </Table>
-                      </TableContainer>
-                      {pricingPositions.length === 0 && (
-                        <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-                          No positions yet. Add job titles and pay/bill rates (or markup %) to define pricing. These titles will be the only ones available when creating job orders for this account.
-                        </Typography>
-                      )}
-                      <Button
-                        variant="contained"
-                        startIcon={pricingSaving ? <CircularProgress size={20} /> : <SaveIcon />}
-                        onClick={savePricing}
-                        disabled={pricingSaving}
-                        sx={{ mt: 2 }}
-                      >
-                        {pricingSaving ? 'Saving…' : 'Save pricing'}
-                      </Button>
-                    </CardContent>
-                  </Card>
-                </Box>
-              )}
-
-              {/* Billing & Invoicing */}
-              {selectedSection === 'billing' && (
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <Card>
-                    <CardHeader title="Billing & Invoicing (Defaults)" />
-                    <CardContent>
-                      <Grid container spacing={2}>
-                        <Grid item xs={12}>
-                          <FormControlLabel
-                            control={
-                              <Checkbox
-                                checked={defaultBilling.poRequired}
-                                onChange={(e) => setDefaultBilling({ ...defaultBilling, poRequired: e.target.checked })}
-                              />
-                            }
-                            label="PO Required"
-                          />
-                        </Grid>
-                        <Grid item xs={12}>
-                          <TextField
-                            fullWidth
-                            size="small"
-                            label="Payment Terms"
-                            value={defaultBilling.paymentTerms}
-                            onChange={(e) => setDefaultBilling({ ...defaultBilling, paymentTerms: e.target.value })}
-                            placeholder="e.g., Net 30"
-                          />
-                        </Grid>
-                        <Grid item xs={12}>
-                          <FormControl fullWidth size="small">
-                            <InputLabel>Invoice Delivery Method</InputLabel>
-                            <Select
-                              value={defaultBilling.invoiceDeliveryMethod}
-                              label="Invoice Delivery Method"
-                              onChange={(e) => setDefaultBilling({ ...defaultBilling, invoiceDeliveryMethod: e.target.value as string })}
-                            >
-                              <MenuItem value="">—</MenuItem>
-                              <MenuItem value="email">Email</MenuItem>
-                              <MenuItem value="portal">Portal</MenuItem>
-                              <MenuItem value="mail">Mail</MenuItem>
-                            </Select>
-                          </FormControl>
-                        </Grid>
-                        <Grid item xs={12}>
-                          <FormControl fullWidth size="small">
-                            <InputLabel>Invoice Frequency</InputLabel>
-                            <Select
-                              value={defaultBilling.invoiceFrequency}
-                              label="Invoice Frequency"
-                              onChange={(e) => setDefaultBilling({ ...defaultBilling, invoiceFrequency: e.target.value as string })}
-                            >
-                              <MenuItem value="">—</MenuItem>
-                              <MenuItem value="weekly">Weekly</MenuItem>
-                              <MenuItem value="biweekly">Bi-weekly</MenuItem>
-                              <MenuItem value="monthly">Monthly</MenuItem>
-                              <MenuItem value="daily_event">Daily/Event-Based</MenuItem>
-                            </Select>
-                          </FormControl>
-                        </Grid>
-                        <Grid item xs={12}>
-                          <Autocomplete
-                            multiple
-                            size="small"
-                            options={(() => {
-                              const companyIds = account?.associations?.companyIds ?? [];
-                              return companyIds.length === 0 ? [] : contacts.filter((c) => c.companyId && companyIds.includes(c.companyId));
-                            })()}
-                            getOptionLabel={(opt) => (typeof opt === 'object' && opt && 'label' in opt ? opt.label : String(opt))}
-                            value={(defaultBilling.sendInvoicesTo ?? []).map((id) => contacts.find((c) => c.id === id)).filter(Boolean) as ContactOption[]}
-                            onChange={(_, next) => setDefaultBilling({ ...defaultBilling, sendInvoicesTo: next.map((c) => c.id) })}
-                            renderInput={(params) => <TextField {...params} label="Send Invoices To:" placeholder="Search contacts…" />}
-                            isOptionEqualToValue={(opt, val) => opt.id === val.id}
-                          />
-                        </Grid>
-                        <Grid item xs={12}>
-                          <TextField
-                            fullWidth
-                            size="small"
-                            label="Billing Notes"
-                            value={defaultBilling.billingNotes}
-                            onChange={(e) => setDefaultBilling({ ...defaultBilling, billingNotes: e.target.value })}
-                            placeholder="Optional notes for billing and invoicing"
-                            multiline
-                            rows={3}
-                          />
-                        </Grid>
-                      </Grid>
-                    </CardContent>
-                  </Card>
-                  <Box>
-                    <Button
-                      variant="contained"
-                      startIcon={defaultsSaving ? <CircularProgress size={20} /> : <SaveIcon />}
-                      onClick={saveBillingDefaults}
-                      disabled={defaultsSaving}
-                    >
-                      {defaultsSaving ? 'Saving…' : 'Save Billing & Invoicing'}
-                    </Button>
-                  </Box>
-                </Box>
-              )}
-
-              {/* Order Details — single-form section, no toggle (former subview promoted) */}
-              {selectedSection === 'order-details' && (
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <Typography variant="body2" color="text.secondary">
-                    Set default order details for this account. They flow to child accounts and locations, then to job orders.
-                  </Typography>
-                  <AccountOrderDetailsForm
-                    account={account}
-                    accountId={accountId!}
-                    tenantId={tenantId!}
-                    userId={user?.uid || ''}
-                    contacts={contacts}
-                    inheritanceParentAccount={orderDefaultsInheritanceParent}
-                  />
-                </Box>
-              )}
-
-              {/* Staff Instructions — 7 cards (former subview promoted) */}
-              {selectedSection === 'staff-instructions' && (
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <Typography variant="body2" color="text.secondary">
-                    Default staff instructions for this account. They flow to child accounts and locations, then to job orders.
-                  </Typography>
-                  <Grid container spacing={3}>
-                    <Grid item xs={12}>
-                      <AccountOrderDefaultsCard
-                        title="First Day Instructions"
-                        fieldKey="firstDay"
-                        placeholder="Enter first day instructions (e.g., arrival time, what to bring, who to meet, orientation details...)"
-                        uploadPlaceholder="Upload first day schedules, orientation materials, or related documents"
-                        account={account}
-                        accountId={accountId!}
-                        tenantId={tenantId!}
-                        userId={user?.uid || ''}
-                        onRefresh={loadAccount}
-                      />
-                    </Grid>
-                    <Grid item xs={12}>
-                      <AccountOrderDefaultsCard
-                        title="Parking Instructions"
-                        fieldKey="parking"
-                        placeholder="Enter parking instructions for staff (e.g., where to park, parking pass requirements, visitor parking location...)"
-                        uploadPlaceholder="Upload parking maps, diagrams, or related documents"
-                        account={account}
-                        accountId={accountId!}
-                        tenantId={tenantId!}
-                        userId={user?.uid || ''}
-                        onRefresh={loadAccount}
-                      />
-                    </Grid>
-                    <Grid item xs={12}>
-                      <AccountOrderDefaultsCard
-                        title="Check-In Instructions"
-                        fieldKey="checkIn"
-                        placeholder="Enter check-in instructions (e.g., where to report, who to ask for, required documents...)"
-                        uploadPlaceholder="Upload check-in forms, maps, or related documents"
-                        account={account}
-                        accountId={accountId!}
-                        tenantId={tenantId!}
-                        userId={user?.uid || ''}
-                        onRefresh={loadAccount}
-                      />
-                    </Grid>
-                    <Grid item xs={12}>
-                      <AccountOrderDefaultsCard
-                        title="Uniform Instructions"
-                        fieldKey="uniform"
-                        placeholder="Enter uniform and dress code requirements (e.g., specific colors, safety gear, PPE requirements...)"
-                        uploadPlaceholder="Upload uniform photos, dress code guides, or related documents"
-                        account={account}
-                        accountId={accountId!}
-                        tenantId={tenantId!}
-                        userId={user?.uid || ''}
-                        onRefresh={loadAccount}
-                      />
-                    </Grid>
-                    <Grid item xs={12}>
-                      <AccountOrderDefaultsCard
-                        title="Credential Instructions"
-                        fieldKey="credentials"
-                        placeholder="Enter credential requirements (e.g., badge pickup, wristband issuance, ID requirements...)"
-                        uploadPlaceholder="Upload credential forms, badge photos, or related documents"
-                        account={account}
-                        accountId={accountId!}
-                        tenantId={tenantId!}
-                        userId={user?.uid || ''}
-                        onRefresh={loadAccount}
-                      />
-                    </Grid>
-                    <Grid item xs={12}>
-                      <AccountOrderDefaultsCard
-                        title="Other Instructions"
-                        fieldKey="other"
-                        placeholder="Enter any additional instructions or important information for staff..."
-                        uploadPlaceholder="Upload any other relevant documents"
-                        account={account}
-                        accountId={accountId!}
-                        tenantId={tenantId!}
-                        userId={user?.uid || ''}
-                        onRefresh={loadAccount}
-                      />
-                    </Grid>
-                    <Grid item xs={12}>
-                      {/* R.16.2c — manual sync next to "Other Attachments".
-                          The card renders its own staff instructions /
-                          file uploader UI; we float a SyncToActiveButton
-                          beside the title for level-7 admins. The card
-                          writes through `account.orderDefaults
-                          .staffInstructions.attachments.files`, which is
-                          the same path the cascade loader reads. */}
-                      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                        <Box sx={{ flex: 1 }}>
-                          <AccountOrderDefaultsCard
-                            title="Other Attachments"
-                            fieldKey="attachments"
-                            placeholder=""
-                            uploadPlaceholder="Upload any other relevant documents for job orders under this account"
-                            account={account}
-                            accountId={accountId!}
-                            tenantId={tenantId!}
-                            userId={user?.uid || ''}
-                            onRefresh={loadAccount}
-                          />
-                        </Box>
-                        {canPushToActive && tenantId && account && (
-                          <Box sx={{ pt: 1.5 }}>
-                            <SyncToActiveButton
-                              tenantId={tenantId}
-                              accountId={account.id}
-                              fieldKey="attachments"
-                              getCurrentValue={() => {
-                                const files =
-                                  account?.orderDefaults?.staffInstructions?.attachments?.files;
-                                return Array.isArray(files) ? files : [];
-                              }}
-                              fieldLabel="Other Attachments"
-                            />
-                          </Box>
-                        )}
-                      </Box>
-                    </Grid>
-                  </Grid>
-                </Box>
-              )}
-
-              {/* File Uploads — lifted out of Overview; same Firestore path. */}
-              {selectedSection === 'files' && (
-                <Card>
-                  <CardHeader
-                    title="File uploads"
-                    titleTypographyProps={{ variant: 'h6', fontWeight: 600 }}
-                  />
-                  <CardContent sx={{ pt: 0 }}>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2 }}>
-                        <TextField
-                          size="small"
-                          label="Name"
-                          placeholder="e.g. Contract"
-                          value={uploadLabel}
-                          onChange={(e) => setUploadLabel(e.target.value)}
-                          sx={{ minWidth: 180 }}
-                        />
-                        <input
-                          key={uploadFileKey}
-                          ref={uploadInputRef}
-                          type="file"
-                          accept="*/*"
-                          style={{ display: 'none' }}
-                          onChange={handleUploadFile}
-                        />
-                        <Button
-                          variant="outlined"
-                          component="span"
-                          startIcon={uploading ? <CircularProgress size={16} /> : <UploadIcon />}
-                          disabled={uploading}
-                          onClick={() => uploadInputRef.current?.click()}
-                          sx={{ textTransform: 'none' }}
-                        >
-                          {uploading ? 'Uploading…' : 'Choose file'}
-                        </Button>
-                      </Box>
-                      {accountUploads.length === 0 ? (
-                        <Typography variant="body2" color="text.secondary">
-                          No uploads yet. Add a name (e.g. Contract) and choose a file to upload.
-                        </Typography>
-                      ) : (
-                        <TableContainer component={Paper} variant="outlined" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
-                          <Table size="small">
-                            <TableHead>
-                              <TableRow>
-                                <TableCell sx={{ fontWeight: 600 }}>Name</TableCell>
-                                <TableCell sx={{ fontWeight: 600 }}>File</TableCell>
-                                <TableCell sx={{ fontWeight: 600, width: 140 }} align="right">Actions</TableCell>
-                              </TableRow>
-                            </TableHead>
-                            <TableBody>
-                              {accountUploads.map((row) => (
-                                <TableRow key={row.id}>
-                                  <TableCell>{row.name}</TableCell>
-                                  <TableCell>{row.fileName}</TableCell>
-                                  <TableCell align="right">
-                                    <IconButton
-                                      size="small"
-                                      title="Open in new tab"
-                                      onClick={() => window.open(row.url, '_blank')}
-                                      sx={{ color: 'text.secondary' }}
-                                    >
-                                      <OpenInNewIcon fontSize="small" />
-                                    </IconButton>
-                                    <IconButton
-                                      size="small"
-                                      title="Delete"
-                                      onClick={() => setDeleteConfirmUploadId(row.id)}
-                                      sx={{ color: 'error.main' }}
-                                    >
-                                      <DeleteIcon fontSize="small" />
-                                    </IconButton>
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </TableContainer>
-                      )}
-                    </Box>
-                  </CardContent>
-                </Card>
-              )}
-            </Grid>
-
-            {/* Empty AccountSidebar (visibleSections={[]}) was removed
-                from this tab on 2026-04-30 — it occupied 25% of the row
-                without rendering any UI. */}
-          </Grid>
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                )}
+              </Box>
+            </CardContent>
+          </Card>
         </TabPanel>
         <TabPanel value={tabValue} index={13}>
           <Grid container spacing={3}>
@@ -9562,6 +10166,17 @@ interface AccountRecruitingRolesCardProps {
   initialSchedulerIds: string[];
   recruiterOptions: RecruiterOption[];
   onSaved: (nextSchedulerIds: string[]) => void;
+  /**
+   * National parent `roles.schedulerIds` (live snapshot on child accounts).
+   * Merged into the control; Firestore persists venue-only additions (IDs not on the parent).
+   */
+  parentSchedulerIds?: string[];
+  /** Persist on each add/remove (no Save button — e.g. Cascading Data tab). */
+  autoSave?: boolean;
+  /** Card title (default: Recruiting Roles). */
+  title?: string;
+  /** When set, outlined card + subtitle header styling (Cascading Data panels). */
+  cardSx?: SxProps<Theme>;
 }
 
 const AccountRecruitingRolesCard: React.FC<AccountRecruitingRolesCardProps> = ({
@@ -9570,11 +10185,22 @@ const AccountRecruitingRolesCard: React.FC<AccountRecruitingRolesCardProps> = ({
   initialSchedulerIds,
   recruiterOptions,
   onSaved,
+  parentSchedulerIds,
+  autoSave = false,
+  title,
+  cardSx,
 }) => {
+  const mergeParentSchedulers = parentSchedulerIds != null;
   const [schedulerIds, setSchedulerIds] = useState<string[]>(initialSchedulerIds);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  const mergedForUi = useMemo(() => {
+    if (!mergeParentSchedulers) return schedulerIds;
+    const parentList = parentSchedulerIds ?? [];
+    return [...new Set([...parentList, ...schedulerIds])];
+  }, [mergeParentSchedulers, parentSchedulerIds, schedulerIds]);
 
   // Stay in sync when the parent re-renders with a fresh account doc.
   useEffect(() => {
@@ -9587,36 +10213,78 @@ const AccountRecruitingRolesCard: React.FC<AccountRecruitingRolesCardProps> = ({
     return schedulerIds.some((id) => !set.has(id));
   }, [schedulerIds, initialSchedulerIds]);
 
-  const handleSave = async () => {
+  const persistToFirestore = async (nextIds: string[]) => {
     if (!tenantId || !accountId || saving) return;
     setSaving(true);
     setError(null);
     try {
       await updateDoc(doc(db, p.recruiterAccount(tenantId, accountId)), {
-        'roles.schedulerIds': schedulerIds,
+        'roles.schedulerIds': nextIds,
       });
-      onSaved(schedulerIds);
+      onSaved(nextIds);
       setSavedAt(Date.now());
     } catch (err: any) {
       setError(err?.message || 'Failed to save recruiting roles');
+      throw err;
     } finally {
       setSaving(false);
     }
   };
 
+  const handleSchedulerChange = async (nextFromUi: string[]) => {
+    const nextPersisted = mergeParentSchedulers
+      ? (() => {
+          const parentList = parentSchedulerIds ?? [];
+          const merged = [...new Set([...parentList, ...nextFromUi])];
+          const parentSet = new Set(parentList);
+          return merged.filter((id) => !parentSet.has(id));
+        })()
+      : nextFromUi;
+
+    if (!autoSave) {
+      setSchedulerIds(nextPersisted);
+      return;
+    }
+    const revert = schedulerIds;
+    setSchedulerIds(nextPersisted);
+    try {
+      await persistToFirestore(nextPersisted);
+    } catch {
+      setSchedulerIds(revert);
+    }
+  };
+
+  const handleSave = async () => {
+    try {
+      await persistToFirestore(schedulerIds);
+    } catch {
+      /* error surfaced in state */
+    }
+  };
+
+  const heading = title ?? 'Recruiting Roles';
+
   return (
-    <Card>
-      <CardHeader title="Recruiting Roles" />
-      <CardContent>
+    <Card variant={cardSx ? 'outlined' : 'elevation'} elevation={cardSx ? 0 : undefined} sx={cardSx}>
+      <CardHeader
+        title={heading}
+        titleTypographyProps={cardSx ? { variant: 'subtitle1', fontWeight: 600 } : undefined}
+      />
+      <CardContent sx={cardSx ? { pt: 0 } : undefined}>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           Schedulers picked here own this account's order flow and are stamped
           onto new orders as the Scheduler of record.
+          {mergeParentSchedulers
+            ? ' National schedulers from the parent account are included automatically and update live; only venue-specific additions are stored on this account.'
+            : ''}
         </Typography>
         <RecruiterMultiSelect
           tenantId={tenantId}
           label="Schedulers"
-          value={schedulerIds}
-          onChange={setSchedulerIds}
+          value={mergeParentSchedulers ? mergedForUi : schedulerIds}
+          onChange={(next) => {
+            void handleSchedulerChange(next);
+          }}
           helperText="Shown on Job Order headers; drives the AccountWorkforce deactivation gate."
           options={recruiterOptions}
           disabled={saving || !tenantId}
@@ -9626,20 +10294,22 @@ const AccountRecruitingRolesCard: React.FC<AccountRecruitingRolesCardProps> = ({
             {error}
           </Alert>
         ) : null}
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 2 }}>
-          <Button
-            variant="contained"
-            onClick={handleSave}
-            disabled={!dirty || saving || !tenantId}
-          >
-            {saving ? <CircularProgress size={18} /> : 'Save'}
-          </Button>
-          {savedAt && !dirty ? (
-            <Typography variant="caption" color="text.secondary">
-              Saved · {new Date(savedAt).toLocaleTimeString()}
-            </Typography>
-          ) : null}
-        </Box>
+        {!autoSave ? (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 2 }}>
+            <Button
+              variant="contained"
+              onClick={() => void handleSave()}
+              disabled={!dirty || saving || !tenantId}
+            >
+              {saving ? <CircularProgress size={18} /> : 'Save'}
+            </Button>
+            {savedAt && !dirty ? (
+              <Typography variant="caption" color="text.secondary">
+                Saved · {new Date(savedAt).toLocaleTimeString()}
+              </Typography>
+            ) : null}
+          </Box>
+        ) : null}
       </CardContent>
     </Card>
   );
