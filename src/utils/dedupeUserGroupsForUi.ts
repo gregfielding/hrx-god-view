@@ -1,4 +1,14 @@
-export type UserGroupRow = { id: string; name: string };
+export type UserGroupRow = {
+  id: string;
+  name: string;
+  /**
+   * AG.0 — true when the group was created by the auto-cascade (`type: 'auto'` on the
+   * Firestore doc OR an `autoCreatedFrom` audit object is present). Carried through the
+   * dedup helpers so downstream pickers can render an "Auto-attached" badge without
+   * re-fetching the group docs.
+   */
+  isAuto?: boolean;
+};
 
 /**
  * One row per Firestore doc id, then one row per normalized display name.

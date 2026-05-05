@@ -268,6 +268,7 @@ export const onChildAccountCreatedAutoCreateGigJobOrder = onDocumentCreated(
         jobOrderId: result.jobOrderId,
         jobOrderNumber: result.jobOrderNumber,
         assignedRecruiterCount: result.assignedRecruiterUids.length,
+        autoCreatedUserGroupId: result.autoCreatedUserGroupId, // AG.0 — null when toggle off
       });
 
       await notifyRecruitersOfAutoGigJobOrder({

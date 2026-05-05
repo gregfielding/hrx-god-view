@@ -21,6 +21,7 @@ import {
   Snackbar,
   Divider,
   FormControlLabel,
+  Tooltip,
 } from '@mui/material';
 import { Close as CloseIcon, AutoAwesome as AutoAwesomeIcon, ContentCopy as ContentCopyIcon } from '@mui/icons-material';
 import JobPostWorksiteCityPlacesField, {
@@ -509,7 +510,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
   // Job orders and user groups
   const [jobOrders, setJobOrders] = useState<Array<{ id: string; jobOrderName: string; status: string }>>([]);
   const [loadingJobOrders, setLoadingJobOrders] = useState(false);
-  const [userGroups, setUserGroups] = useState<Array<{ id: string; name: string }>>([]);
+  const [userGroups, setUserGroups] = useState<Array<{ id: string; name: string; isAuto?: boolean }>>([]);
   const [loadingUserGroups, setLoadingUserGroups] = useState(false);
 
   /** One row per doc id, then one per display name (avoids duplicate labels from legacy/duplicate Firestore user group docs). */
@@ -937,11 +938,26 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
       const userGroupsRef = collection(db, 'tenants', tenantId, 'userGroups');
       const querySnapshot = await getDocs(userGroupsRef);
       
-      const userGroupsData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        name: doc.data().title || doc.data().name || 'Unnamed Group'
-      }));
-      
+      const userGroupsData = querySnapshot.docs.map((doc) => {
+        const data = doc.data() as {
+          title?: string;
+          name?: string;
+          type?: string;
+          autoCreatedFrom?: unknown;
+        };
+        // AG.0 — match `isAutoUserGroup` in `RecruiterUserGroups.tsx` (canonical:
+        // `type === 'auto'` OR an `autoCreatedFrom` audit object exists). Surfaced
+        // through the dedup helpers so the autocomplete chip can show an "Auto" badge.
+        const isAuto =
+          data.type === 'auto' ||
+          (data.autoCreatedFrom != null && typeof data.autoCreatedFrom === 'object');
+        return {
+          id: doc.id,
+          name: data.title || data.name || 'Unnamed Group',
+          isAuto,
+        };
+      });
+
       setUserGroups(userGroupsData);
     } catch (err: any) {
       if (err.code === 'permission-denied') {
@@ -2716,14 +2732,37 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           }}
           disabled={formData.visibility === 'restricted' || loadingUserGroups}
           renderTags={(value, getTagProps) =>
-            value.map((option, index) => (
-              <Chip
-                {...getTagProps({ index })}
-                key={option.id}
-                label={option.name || 'Unnamed Group'}
-                size="small"
-              />
-            ))
+            value.map((option, index) => {
+              const tagProps = getTagProps({ index });
+              const isAuto = (option as { isAuto?: boolean }).isAuto === true;
+              if (isAuto) {
+                // AG.0 — recruiter sees this group came from the National Account auto-cascade.
+                // Removable, but the next posting sync (`syncJobOrderToLinkedPostings`) will
+                // re-attach if the JO's `autoCreatedUserGroupId` is still set.
+                return (
+                  <Tooltip
+                    key={option.id}
+                    title="Auto-attached: created automatically from the National Account's auto-group setting. Removable, but will be re-attached on the next posting sync if the JO's auto-group is still set."
+                  >
+                    <Chip
+                      {...tagProps}
+                      label={`${option.name || 'Unnamed Group'} \u00b7 Auto`}
+                      size="small"
+                      color="success"
+                      variant="outlined"
+                    />
+                  </Tooltip>
+                );
+              }
+              return (
+                <Chip
+                  {...tagProps}
+                  key={option.id}
+                  label={option.name || 'Unnamed Group'}
+                  size="small"
+                />
+              );
+            })
           }
           renderInput={(params) => (
             <JobPostFormAutoSaveTextField

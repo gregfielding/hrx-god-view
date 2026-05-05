@@ -453,7 +453,7 @@ export interface Assignment extends BaseEntity {
 export interface UserGroup extends BaseEntityWithName {
   description?: string;
   type: 'manual' | 'auto' | 'smart';
-  
+
   // Group Configuration
   criteria?: {
     skills?: string[];
@@ -465,13 +465,31 @@ export interface UserGroup extends BaseEntityWithName {
     status?: string[];
     tags?: string[];
   };
-  
+
   // Members
   memberIds: string[]; // Candidate IDs
-  
+
   // Additional Information
   tags?: string[];
   notes?: string;
+
+  /**
+   * Origin trail for auto-created groups (AG.0). Set exactly once when the group is created
+   * by `ensureAutoUserGroup` from a (childAccount × jobTitle) pair; never set by recruiter UI.
+   * Pair this with `type: 'auto'` to detect auto-groups: list filters / pills can switch on
+   * `type === 'auto'` for the canonical signal, then read `autoCreatedFrom` for audit details
+   * (which national / child / job title produced this group, and when).
+   */
+  autoCreatedFrom?: {
+    childAccountId: string;
+    jobTitleId: string;
+    /** Job title display string at creation time, denormalized for the group display name. */
+    jobTitleName?: string;
+    /** Optional: the National account that owns the cascade chain. Empty for stand-alone children. */
+    nationalAccountId?: string | null;
+    /** When the auto-group was first created. Server timestamp at write time. */
+    createdAt: number | unknown;
+  };
 }
 
 // ============================================================================

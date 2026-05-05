@@ -2685,6 +2685,15 @@ const RecruiterAccountDetails: React.FC = () => {
         integrations: qb != null ? { quickbooks: qb } : undefined,
         autoCreateChildAccountsForLocations: data?.autoCreateChildAccountsForLocations === true,
         autoCreateGigJobOrders: data?.autoCreateGigJobOrders === true,
+        /**
+         * AG.0 — auto-create one user group per (childAccount × defaultGigJobTitle).
+         * Tri-state on disk: `true` / `false` / `undefined`. Read-time default at the
+         * trigger is `true` when `autoCreateGigJobOrders === true` (see
+         * `shouldAutoCreateUserGroups` in `nationalChildCascadeMerge.ts`); the UI
+         * mirrors that default for the rendered checkbox state.
+         */
+        autoCreateUserGroups:
+          typeof data?.autoCreateUserGroups === 'boolean' ? data.autoCreateUserGroups : undefined,
         /** F.4 national gig seed — must match Firestore top-level fields or Cascading Data reload drops them. */
         defaultGigJobTitle: data?.defaultGigJobTitle ?? null,
         defaultGigJobDescription: data?.defaultGigJobDescription ?? null,
@@ -5363,6 +5372,49 @@ const RecruiterAccountDetails: React.FC = () => {
         <Tooltip
           title={
             account.autoCreateGigJobOrders === true
+              ? 'When a gig job order is auto-created for a child account, also create one user group keyed to (child × default job title). The group is auto-attached to the JO\u2019s auto-message recipients and to the linked posting\u2019s applicant feeder, so applicants drop in and get pinged on new shifts without recruiter setup. Default: on whenever gig job order auto-create is on.'
+              : 'Enable Auto-Create Gig Job Orders first \u2014 user groups only auto-spawn alongside an auto-created gig job order.'
+          }
+        >
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 2,
+              flexWrap: 'wrap',
+            }}
+          >
+            <Box component="span" sx={{ ...recordHeaderBodyTextSx }}>
+              Auto-Create User Groups:
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
+              <Switch
+                size="small"
+                checked={
+                  account.autoCreateGigJobOrders === true &&
+                  (account.autoCreateUserGroups === true ||
+                    account.autoCreateUserGroups === undefined)
+                }
+                disabled={saving || account.autoCreateGigJobOrders !== true}
+                onChange={(e) => updateAccountField('autoCreateUserGroups', e.target.checked)}
+                inputProps={{
+                  'aria-label': 'Toggle auto-create user groups for new gig job orders',
+                }}
+              />
+              <Box component="span" sx={{ color: 'text.primary', fontWeight: 500, fontSize: '0.875rem' }}>
+                {account.autoCreateGigJobOrders === true &&
+                (account.autoCreateUserGroups === true ||
+                  account.autoCreateUserGroups === undefined)
+                  ? 'On'
+                  : 'Off'}
+              </Box>
+            </Box>
+          </Box>
+        </Tooltip>
+        <Tooltip
+          title={
+            account.autoCreateGigJobOrders === true
               ? "Scan all existing child accounts and create a draft gig JO for any that don't have one. Idempotent — safe to re-run."
               : 'Enable Auto-Create Gig Job Orders first.'
           }
@@ -6692,6 +6744,40 @@ const RecruiterAccountDetails: React.FC = () => {
                   draft Gig job order for it. Hiring entity, E-Verify, screening package,
                   and pay defaults flow down via cascade — recruiters review and activate
                   the draft manually. Requires the toggle above to be enabled.
+                </Typography>
+              </Box>
+            ) : null}
+            {account.accountType === 'national' ? (
+              <Box>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      // AG.0 — tri-state field, render as `on` when explicitly true OR
+                      // when undefined while gig JO auto-create is on (read-time default).
+                      checked={
+                        account.autoCreateGigJobOrders === true &&
+                        (account.autoCreateUserGroups === true ||
+                          account.autoCreateUserGroups === undefined)
+                      }
+                      onChange={(e) =>
+                        updateAccountField('autoCreateUserGroups', e.target.checked)
+                      }
+                      disabled={saving || account.autoCreateGigJobOrders !== true}
+                    />
+                  }
+                  label="Auto-create user groups for new gig job orders"
+                />
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  display="block"
+                  sx={{ pl: 4.5, maxWidth: 520 }}
+                >
+                  Creates one user group per (child account × default job title) when a gig
+                  job order is auto-created. Auto-attached to the JO&apos;s auto-message
+                  recipients and to the linked posting&apos;s applicant feeder so applicants
+                  drop in and members get pinged on new shifts without recruiter setup.
+                  Default: on whenever the toggle above is enabled.
                 </Typography>
               </Box>
             ) : null}

@@ -724,9 +724,22 @@ export class JobsBoardService {
           : (isGigJob && firstPosition && firstPosition.payRate
             ? parseFloat(firstPosition.payRate) || undefined
             : (jobOrder.showPayRate ? jobOrder.payRate : undefined)));
-      const autoAddGroups = normalizeAutoAddGroups(
+      // AG.0 — union-merge JO-level auto-group id (when present) with whatever the
+      // recruiter passed via customData. Posting-level `autoAddToUserGroups` stays
+      // recruiter-managed (they can remove the auto-group), but the auto-group is
+      // attached on every fresh post-from-JO so a re-published posting always
+      // re-feeds the group with new applicants. The next sync (`syncJobOrderToLinkedPostings`)
+      // re-asserts this same merge.
+      const joAutoCreatedUserGroupId =
+        typeof (jobOrder as { autoCreatedUserGroupId?: string | null }).autoCreatedUserGroupId === 'string'
+          ? (jobOrder as { autoCreatedUserGroupId?: string | null }).autoCreatedUserGroupId!.trim()
+          : '';
+      const customAutoGroups = normalizeAutoAddGroups(
         customData?.autoAddToUserGroups ?? customData?.autoAddToUserGroup
       );
+      const autoAddGroups = joAutoCreatedUserGroupId
+        ? Array.from(new Set([...customAutoGroups, joAutoCreatedUserGroupId]))
+        : customAutoGroups;
       
       // Create the post data
       const postData: Omit<JobsBoardPost, 'id'> = {
@@ -1335,6 +1348,13 @@ export class JobsBoardService {
 
       const startDate = jobOrderData.startDate ?? null;
       const endDate = jobOrderData.endDate ?? null;
+      // AG.0 — re-assert the JO's auto-group on every sync so a recruiter who
+      // accidentally cleared `autoAddToUserGroups` on the posting gets it back
+      // (manual additions are preserved via union-merge below).
+      const joAutoGroupId =
+        typeof jobOrderData.autoCreatedUserGroupId === 'string'
+          ? (jobOrderData.autoCreatedUserGroupId as string).trim()
+          : '';
 
       for (const post of posts) {
         const postRef = doc(db, 'tenants', tenantId, 'job_postings', post.id);
@@ -1343,6 +1363,21 @@ export class JobsBoardService {
           ...(startDate != null && { startDate }),
           ...(endDate != null && { endDate }),
         };
+        if (joAutoGroupId) {
+          const existingGroups = normalizeAutoAddGroups(
+            (post as { autoAddToUserGroups?: string[]; autoAddToUserGroup?: string })
+              .autoAddToUserGroups ??
+              (post as { autoAddToUserGroup?: string }).autoAddToUserGroup,
+          );
+          if (!existingGroups.includes(joAutoGroupId)) {
+            updateData.autoAddToUserGroups = [...existingGroups, joAutoGroupId];
+            // Mirror the legacy single-value field only when it was the sole group;
+            // otherwise leave it (the array is the canonical reader anyway).
+            if (existingGroups.length === 0) {
+              updateData.autoAddToUserGroup = joAutoGroupId;
+            }
+          }
+        }
         await updateDoc(postRef, updateData);
         if (post.jobType === 'gig') {
           await this.syncShiftsToPosting(tenantId, post.id, jobOrderId);

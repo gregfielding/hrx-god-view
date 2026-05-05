@@ -26,6 +26,37 @@ export interface ChildCascadeMergePatch {
   defaults?: Record<string, unknown>;
   /** Self-heal: legacy auto-created children created before `accountType: 'child'` stamp. */
   accountType?: 'child';
+  /**
+   * AG.0 — National-level toggle for the auto-user-group machinery, cascaded down to
+   * children so the gig-JO trigger can read it directly off either layer without
+   * re-walking the chain. Fill-empty only: a child that has been explicitly toggled
+   * (true OR false) is left alone.
+   */
+  autoCreateUserGroups?: boolean;
+}
+
+/**
+ * AG.0 — read-time predicate for "should we auto-create a user group for this JO?".
+ *
+ * Returns `true` when:
+ *   - `autoCreateUserGroups === true` explicitly, OR
+ *   - `autoCreateUserGroups === undefined` AND `autoCreateGigJobOrders === true`
+ *     (the auto-default — if the recruiter opted in to gig JO auto-creation, the
+ *     user group is the obvious complement and shouldn't require a second click).
+ *
+ * Returns `false` when `autoCreateUserGroups === false` explicitly (recruiter
+ * deliberately opted out), or when gig-JO auto-creation itself is off (no JO to attach to).
+ *
+ * Read this off whichever account doc is closest to the action (child first, then
+ * national fallback). Both layers carry the same field after cascade merge.
+ */
+export function shouldAutoCreateUserGroups(account: {
+  autoCreateUserGroups?: boolean;
+  autoCreateGigJobOrders?: boolean;
+}): boolean {
+  if (account.autoCreateUserGroups === true) return true;
+  if (account.autoCreateUserGroups === false) return false;
+  return account.autoCreateGigJobOrders === true;
 }
 
 /** Merge parent `defaults.rules` (customer rules & policies) — fill-empty only. Exported for tests. */
@@ -329,6 +360,13 @@ export function buildChildCascadePatch(args: {
         patch[field] = pv;
       }
     }
+  }
+
+  // AG.0 — cascade `autoCreateUserGroups` fill-empty. A child that has been
+  // explicitly toggled (true or false) wins; otherwise the national's value
+  // flows down so the gig-JO trigger can read either layer interchangeably.
+  if (typeof parent.autoCreateUserGroups === 'boolean' && child.autoCreateUserGroups === undefined) {
+    patch.autoCreateUserGroups = parent.autoCreateUserGroups;
   }
 
   const mergedDefaults = mergeAccountDefaultsBillingAndRulesFillEmpty(child, parent);

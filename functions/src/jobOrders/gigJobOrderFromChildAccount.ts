@@ -68,6 +68,8 @@ import {
   loadCascadeChain,
 } from '../shared/cascade/loaders';
 import { resolveCascadedField } from '../shared/cascade/resolveCascadedField';
+import { shouldAutoCreateUserGroups } from '../accounts/nationalChildCascadeMerge';
+import { ensureAutoUserGroup } from '../userGroups/ensureAutoUserGroup';
 
 const FieldValue = admin.firestore.FieldValue;
 
@@ -208,6 +210,12 @@ export interface CreateGigJobOrderResult {
   jobOrderSeq: number;
   assignedRecruiterUids: string[];
   childAccountName: string;
+  /**
+   * AG.0 — auto-group attached to this JO (when the cascade had `autoCreateUserGroups`
+   * enabled). `null` when the toggle was off, when the cascade had no resolvable default
+   * job title, or when the upsert hiccupped (errors are logged but never fail the JO write).
+   */
+  autoCreatedUserGroupId: string | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -886,11 +894,61 @@ export async function createGigJobOrderForChildAccount(args: {
   const jobOrderRef = db.collection(`tenants/${tenantId}/job_orders`).doc();
   await jobOrderRef.set(stripUndefined(jobOrderData));
 
+  // ── AG.0 — auto-group cascade (post-JO-write, fire-and-log) ───────
+  // Run AFTER the JO write so the group write can never roll back the JO. Failures here
+  // are logged but never propagated; the cron + backfill paths can re-run the upsert
+  // idempotently if it didn't take. The two writes are intentionally not transactional —
+  // we'd rather have a JO without a group than a stuck JO write.
+  let autoCreatedUserGroupId: string | null = null;
+  if (shouldAutoCreateUserGroups(parentAccount as Record<string, unknown>) ||
+      shouldAutoCreateUserGroups(childAccount as Record<string, unknown>)) {
+    const jobTitleForGroup =
+      trim(parentAccount.defaultGigJobTitle) ||
+      trim(jobOrderData.jobTitle as unknown) ||
+      '';
+    if (jobTitleForGroup) {
+      try {
+        const { groupId } = await ensureAutoUserGroup({
+          tenantId,
+          childAccountId,
+          childAccountName,
+          jobTitleId: jobTitleForGroup,
+          jobTitleName: jobTitleForGroup,
+          nationalAccountId: trim(childAccount.parentAccountId) || null,
+          recruiterIds: assignedRecruiterUids,
+          createdBy: SYSTEM_ACTOR,
+          db,
+        });
+        autoCreatedUserGroupId = groupId;
+
+        // Stamp the JO with the denorm pointer + union-merge into the existing
+        // `autoMessagingUserGroupIds` field that `runJobOrderAutoMessagingForShift`
+        // already reads at `jobOrderAutoMessaging.ts:232`. arrayUnion preserves any
+        // recruiter-added groups that landed via direct edit.
+        await jobOrderRef.update({
+          autoCreatedUserGroupId: groupId,
+          autoMessagingUserGroupIds: FieldValue.arrayUnion(groupId),
+          updatedAt: FieldValue.serverTimestamp(),
+          updatedBy: SYSTEM_ACTOR,
+        });
+      } catch (err) {
+        // Logged via the orchestrator's caller (trigger / backfill audit row).
+        // We don't want to throw here — a failed group write should not abort
+        // the JO creation, and the next backfill will idempotently retry.
+        console.warn(
+          `[ag.0] ensureAutoUserGroup failed for childAccountId=${childAccountId} jobTitle=${jobTitleForGroup}:`,
+          err,
+        );
+      }
+    }
+  }
+
   return {
     jobOrderId: jobOrderRef.id,
     jobOrderNumber,
     jobOrderSeq,
     assignedRecruiterUids,
     childAccountName,
+    autoCreatedUserGroupId,
   };
 }

@@ -306,6 +306,9 @@ export { onJobOrderStatusTransitionSnapshot } from './jobOrders/onJobOrderStatus
 // consumer of the cascade — recruiter activates manually. See the
 // trigger file's docstring for design notes.
 export { onChildAccountCreatedAutoCreateGigJobOrder } from './jobOrders/onChildAccountCreatedAutoCreateGigJobOrder';
+export { onJobOrderCreatedAttachAutoUserGroup } from './jobOrders/onJobOrderCreatedAttachAutoUserGroup';
+export { onJobOrderUpdatedSyncAutoUserGroup } from './jobOrders/onJobOrderUpdatedSyncAutoUserGroup';
+export { backfillAutoUserGroupAttachments } from './jobOrders/backfillAutoUserGroupAttachments';
 export { backfillGigJobOrdersForNationalAccount } from './jobOrders/backfillGigJobOrdersForNationalAccount';
 export { gigJobOrderStatusCron } from './jobOrders/gigJobOrderStatusCron';
 export { syncHiringEntityFromNationalAccount } from './jobOrders/syncHiringEntityFromNationalAccount';

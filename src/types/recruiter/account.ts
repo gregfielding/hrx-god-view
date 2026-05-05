@@ -227,6 +227,17 @@ export interface RecruiterAccount {
    */
   autoCreateGigJobOrders?: boolean;
   /**
+   * National accounts only (AG.0): when true, every auto-created gig JO under this
+   * national also auto-creates one user group keyed to (childAccountId, defaultGigJobTitle).
+   * The group is pre-attached to the JO's auto-message recipients (`autoMessagingUserGroupIds`)
+   * and to the JO's linked posting's applicant feeder (`autoAddToUserGroups`).
+   *
+   * Cascade default at read time: if `autoCreateUserGroups === undefined`, treat as `true`
+   * when `autoCreateGigJobOrders === true`, else `false`. The toggle is meaningless without
+   * `autoCreateGigJobOrders` (no JO to attach the group to), so the UI disables it accordingly.
+   */
+  autoCreateUserGroups?: boolean;
+  /**
    * National accounts only (F.4 — CC.A audit, locked 2026-04-30): default
    * job title used when this national's auto-create-gig-JO trigger spawns
    * a draft JO. The JO builder (`gigJobOrderFromChildAccount.ts`) reads

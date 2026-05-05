@@ -15,6 +15,7 @@ import {
   TableHead,
   TableRow,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import {
@@ -33,7 +34,18 @@ import { db, functions } from '../../firebase';
 import { p } from '../../data/firestorePaths';
 import type { JobOrder } from '../../types/recruiter/jobOrder';
 
-type UserGroupOption = { id: string; label: string };
+type UserGroupOption = {
+  id: string;
+  label: string;
+  /**
+   * AG.0 — true when this group was created by the auto-cascade (`type: 'auto'` or
+   * an `autoCreatedFrom` audit object on the doc). Drives the "Auto-attached" chip
+   * badge so recruiters see at a glance which rows came from automation vs were
+   * added manually. Removable here even when auto-attached, but the next backfill
+   * / posting sync will re-attach if the JO's `autoCreatedUserGroupId` is still set.
+   */
+  isAuto?: boolean;
+};
 
 export type AutoMessagingSendLogRow = {
   id: string;
@@ -97,9 +109,20 @@ const JobOrderAutoMessagingTab: React.FC<JobOrderAutoMessagingTabProps> = ({
         const snap = await getDocs(ref);
         if (cancelled) return;
         const rows: UserGroupOption[] = snap.docs.map((d) => {
-          const data = d.data() as { groupName?: string; name?: string; title?: string };
+          const data = d.data() as {
+            groupName?: string;
+            name?: string;
+            title?: string;
+            type?: string;
+            autoCreatedFrom?: unknown;
+          };
           const label = data.groupName || data.title || data.name || d.id;
-          return { id: d.id, label };
+          // AG.0 — match `isAutoUserGroup` in `RecruiterUserGroups.tsx` (canonical:
+          // `type === 'auto'` OR an `autoCreatedFrom` audit object exists).
+          const isAuto =
+            data.type === 'auto' ||
+            (data.autoCreatedFrom != null && typeof data.autoCreatedFrom === 'object');
+          return { id: d.id, label, isAuto };
         });
         rows.sort((a, b) => a.label.localeCompare(b.label));
         setUserGroups(rows);
@@ -237,9 +260,30 @@ const JobOrderAutoMessagingTab: React.FC<JobOrderAutoMessagingTabProps> = ({
             getOptionLabel={(o) => o.label}
             isOptionEqualToValue={(a, b) => a.id === b.id}
             renderTags={(value, getTagProps) =>
-              value.map((option, index) => (
-                <Chip label={option.label} {...getTagProps({ index })} key={option.id} size="small" />
-              ))
+              value.map((option, index) => {
+                const tagProps = getTagProps({ index });
+                if (option.isAuto) {
+                  // AG.0 — show "Auto-attached" tooltip + success-tinted chip.
+                  // Removable still works (delete icon stays from getTagProps), but
+                  // recruiters see this row came from the automation and a future
+                  // backfill / posting sync may re-attach it.
+                  return (
+                    <Tooltip
+                      key={option.id}
+                      title="Auto-attached: created automatically from the National Account's auto-group setting. Removable, but will be re-attached on the next posting sync if the JO's auto-group is still set."
+                    >
+                      <Chip
+                        {...tagProps}
+                        label={`${option.label} \u00b7 Auto`}
+                        size="small"
+                        color="success"
+                        variant="outlined"
+                      />
+                    </Tooltip>
+                  );
+                }
+                return <Chip label={option.label} {...tagProps} key={option.id} size="small" />;
+              })
             }
             renderInput={(params) => (
               <TextField
