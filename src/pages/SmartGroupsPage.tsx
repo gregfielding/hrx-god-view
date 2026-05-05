@@ -520,7 +520,21 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
     setSaving(true);
     setSaveError(null);
     try {
+      // Canonical filter shape — must match `SavedSmartGroupDetailPage`'s
+      // edit-save (line ~373) so re-running the saved search hits the radius
+      // branch in `runSavedSmartGroupSearch`. Without `filterMode` +
+      // `residenceSubMode`, the runner falls through to the "Residence area"
+      // loop with no filters set, which matches every applicant in the tenant
+      // (the bug that produced the 1500+ member counts on radius groups).
       const filters: Record<string, unknown> = {
+        filterMode: 'residence',
+        residenceSubMode: 'radius',
+        metroFilter: null,
+        areaFilter: null,
+        cityFilter: null,
+        categoryFilter: null,
+        selectedSkills: [],
+        selectedCertifications: [],
         radiusAddress,
         radiusMiles,
         entityFilter,

@@ -76,11 +76,38 @@ function getUserResidenceData(userData: any) {
   return { city, state, lat, lng };
 }
 
+/**
+ * Infer the missing discriminator fields on a legacy / partially-saved filter
+ * blob. Some pre-fix docs in `tenants/{tid}/savedSmartGroups` were written
+ * without `filterMode` / `residenceSubMode` (see SmartGroupsPage save bug,
+ * 2026-05-05). Without this normalisation those docs fall through to the
+ * "Residence area" loop in the runner with no filters set — matching every
+ * applicant in the tenant and producing a member count in the thousands.
+ *
+ * Inference rules (least surprise):
+ *   - `filterMode` defaults to `'residence'` (the only mode the create page
+ *     ever wrote; `'application'` mode is detail-page editor only).
+ *   - `residenceSubMode` is `'radius'` when a `radiusAddress` is present,
+ *     otherwise `'area'`. We never silently coerce to anything else; if the
+ *     blob is genuinely empty (no radius, no metro/area/city), the search
+ *     still runs but with all-pass predicates — same as today, just made
+ *     explicit.
+ */
+function normalizeFilters(filters: SavedSmartGroupFilters): SavedSmartGroupFilters {
+  const next: SavedSmartGroupFilters = { ...filters };
+  if (!next.filterMode) next.filterMode = 'residence';
+  if (next.filterMode === 'residence' && !next.residenceSubMode) {
+    next.residenceSubMode = next.radiusAddress?.trim() ? 'radius' : 'area';
+  }
+  return next;
+}
+
 export async function runSavedSmartGroupSearch(
   tenantId: string,
-  filters: SavedSmartGroupFilters,
+  rawFilters: SavedSmartGroupFilters,
   customMetros: CustomMetrosMap = {}
 ): Promise<string[]> {
+  const filters = normalizeFilters(rawFilters);
   const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
   const applicationsSnap = await getDocs(applicationsRef);
   const userIds = new Set<string>();
