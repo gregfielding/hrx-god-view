@@ -5730,14 +5730,30 @@ const RecruiterAccountDetails: React.FC = () => {
           childAccountsUpdated?: number;
           childAccountsScanned?: number;
           childAccountsSkippedUnchanged?: number;
+          jobOrdersScanned?: number;
+          jobOrdersUpdated?: number;
+          jobOrderSnapshotsUpdated?: number;
+          jobOrdersSkipped?: number;
+          jobOrdersFailed?: number;
         };
       };
       const u = data?.summary?.childAccountsUpdated ?? 0;
       const s = data?.summary?.childAccountsScanned ?? 0;
       const sk = data?.summary?.childAccountsSkippedUnchanged ?? 0;
+      const joScanned = data?.summary?.jobOrdersScanned ?? 0;
+      const joUpdated = data?.summary?.jobOrdersUpdated ?? 0;
+      const joSnapUpdated = data?.summary?.jobOrderSnapshotsUpdated ?? 0;
+      const joFailed = data?.summary?.jobOrdersFailed ?? 0;
+      const childPart = `Updated ${u} of ${s} child account(s). ${sk} unchanged (already had values).`;
+      const joPart =
+        joScanned > 0
+          ? ` Job orders: ${joUpdated} updated${
+              joSnapUpdated > 0 ? ` (${joSnapUpdated} active snapshot${joSnapUpdated === 1 ? '' : 's'} re-stamped)` : ''
+            } of ${joScanned} scanned${joFailed > 0 ? `, ${joFailed} failed` : ''}. Shifts inherit from their job order — no separate write needed.`
+          : ' No job orders to scan under this national account.';
       setCascadeChildSyncNotice({
         kind: 'success',
-        text: `Updated ${u} of ${s} child account(s). ${sk} unchanged (already had values).`,
+        text: `${childPart}${joPart}`,
       });
       await loadAccount();
     } catch (e: unknown) {
@@ -7461,7 +7477,10 @@ const RecruiterAccountDetails: React.FC = () => {
                     Saves Customer Rules & Policies, Billing & Invoicing, and Compliance Defaults (above), then fills
                     empty fields on child accounts from Firestore — hiring entity, rules/policies, billing defaults,
                     screening and compliance defaults, staff instructions (including attachments), and default gig
-                    title/description. Click out of fields so edits auto-save, or save each section first.
+                    title/description. The hiring entity is also stamped onto every job order under this national
+                    (and its children) that doesn&apos;t have one, including a snapshot re-stamp on active job orders so
+                    shifts pick it up automatically. Existing JO overrides are preserved. Click out of fields so
+                    edits auto-save, or save each section first.
                   </Typography>
                   <Button
                     variant="contained"
