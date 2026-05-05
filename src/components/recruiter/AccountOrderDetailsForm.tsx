@@ -170,6 +170,24 @@ const AccountOrderDetailsForm = forwardRef<
   const [screeningPackageId, setScreeningPackageId] = useState(mergedScreening.id);
   const [screeningPackageName, setScreeningPackageName] = useState(mergedScreening.name);
   const formRef = useRef<OrderDetailsData>(form);
+  // 2026-05-05 stale-closure fix — the AccuSource selector calls
+  // `setScreeningPackageId(...)` then `scheduleSave()` synchronously in
+  // the same `onChange`. The debounced timer is scheduled from THIS
+  // render's `scheduleSave`, which closes over THIS render's `save`,
+  // which closes over THIS render's `screeningPackageId` (the value
+  // BEFORE the setState). So when the 400ms timer fires after the
+  // re-render, it runs the stale `save` and persists the previous
+  // value — typically an empty string when picking from "None", which
+  // hits the `deleteField()` branch and wipes the field. Bug Greg
+  // reported: "I am unable to select an accusource package… it's
+  // saving on change and not recording the update."
+  //
+  // Mirror the `formRef` pattern: keep the latest screening values in
+  // refs and have `save()` read from those instead of the closure-
+  // captured state. Removes the stale read without restructuring the
+  // debounce.
+  const screeningPackageIdRef = useRef<string>(screeningPackageId);
+  const screeningPackageNameRef = useRef<string>(screeningPackageName);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // R.16.1 Phase 8 — banner state. Set after a saved-to-Firestore
   // edit on a snapshot-policy field. Cleared either by the banner's
@@ -211,14 +229,29 @@ const AccountOrderDetailsForm = forwardRef<
     setScreeningPackageName(mergedScreening.name);
   }, [mergedScreening]);
 
+  // Keep refs in lockstep with state so `save()` (called from the
+  // debounce timer) sees the latest values even when the closure that
+  // scheduled the timer was created with stale state. Pairs with the
+  // ref-based reads in `save()` below.
+  useEffect(() => {
+    screeningPackageIdRef.current = screeningPackageId;
+  }, [screeningPackageId]);
+  useEffect(() => {
+    screeningPackageNameRef.current = screeningPackageName;
+  }, [screeningPackageName]);
+
   const update = useCallback((patch: Partial<OrderDetailsData>) => {
     setForm((prev) => ({ ...prev, ...patch }));
   }, []);
 
   const save = useCallback(async () => {
     const data = formRef.current;
-    const sid = screeningPackageId.trim();
-    const sname = screeningPackageName.trim();
+    // Read from refs (kept in sync with state via the effects above).
+    // Reading from the closure-captured `screeningPackageId` /
+    // `screeningPackageName` here is the source of the stale-closure
+    // bug — see the explanatory comment block on the ref declarations.
+    const sid = screeningPackageIdRef.current.trim();
+    const sname = screeningPackageNameRef.current.trim();
     const nextAdditionalScreenings = Array.isArray(data.additionalScreenings)
       ? data.additionalScreenings
       : [];
@@ -298,7 +331,11 @@ const AccountOrderDetailsForm = forwardRef<
     } finally {
       setIsSaving(false);
     }
-  }, [tenantId, accountId, userId, locationKey, onRefreshLocation, screeningPackageId, screeningPackageName]);
+    // `screeningPackageId` / `screeningPackageName` deliberately omitted
+    // from the dep list — `save` now reads them from refs, so re-creating
+    // the callback (and thus `scheduleSave`) on every keystroke would
+    // only churn the timer without changing observable behavior.
+  }, [tenantId, accountId, userId, locationKey, onRefreshLocation]);
 
   useImperativeHandle(
     ref,
@@ -528,13 +565,21 @@ const AccountOrderDetailsForm = forwardRef<
           <Grid item xs={12} md={6}>
             <Autocomplete
               multiple
+              freeSolo
               fullWidth
               size="small"
               options={languageOptions}
               value={form.languagesRequired ?? []}
               onChange={(_, v) => update({ languagesRequired: v })}
               onBlur={scheduleSave}
-              renderInput={(params) => <TextField {...params} label="Languages Required" onBlur={scheduleSave} />}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Languages Required"
+                  placeholder="Select or type to add"
+                  onBlur={scheduleSave}
+                />
+              )}
               renderTags={(value, getTagProps) => value.map((option, index) => <Chip variant="outlined" label={option} {...getTagProps({ index })} key={option} />)}
             />
           </Grid>

@@ -5195,6 +5195,84 @@ const RecruiterAccountDetails: React.FC = () => {
           <MenuItem value="child">Child account (of a national)</MenuItem>
         </Select>
       </FormControl>
+      {/* Connected CRM Company. Restored 2026-05-05 — used to feed the
+          location → child-account → gig-JO cascade (a recruiter account
+          with no associated CRM company never spawns auto-children, no
+          matter what the Automations toggles say). Multi-select because
+          a handful of accounts (e.g. Legends post-acquisition) carry
+          multiple companies; in practice most National + Standalone
+          accounts hold exactly one. Worksite/location selection still
+          lives in its own card below.
+          - Hidden / read-only for child accounts: their company link
+            is inherited from the National parent and shouldn't be
+            re-pointed here. */}
+      {!isChildAccount ? (
+        <Autocomplete
+          multiple
+          fullWidth
+          size="small"
+          options={companies}
+          getOptionLabel={(o) => o.label || o.companyName || o.id}
+          isOptionEqualToValue={(o, v) => o.id === v.id}
+          value={companies.filter((c) => (account.associations?.companyIds ?? []).includes(c.id))}
+          disabled={saving}
+          onChange={(_, next) => {
+            const nextIds = next.map((o) => o.id);
+            const prevIds = account.associations?.companyIds ?? [];
+            // Only fire the write when the set actually changed — avoids
+            // an Autocomplete no-op (e.g. focus blur) hitting Firestore.
+            const sameLength = nextIds.length === prevIds.length;
+            const sameContents =
+              sameLength && [...nextIds].sort().every((v, i) => v === [...prevIds].sort()[i]);
+            if (sameContents) return;
+            void updateAccountAssociations({ companyIds: nextIds });
+          }}
+          renderTags={(value, getTagProps) =>
+            value.map((option, index) => (
+              <Chip
+                variant="outlined"
+                size="small"
+                label={option.label || option.companyName || option.id}
+                {...getTagProps({ index })}
+                key={option.id}
+              />
+            ))
+          }
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              label="Connected CRM Company"
+              placeholder={
+                (account.associations?.companyIds ?? []).length === 0 ? 'Search a company…' : ''
+              }
+              helperText={
+                isNationalAccount
+                  ? "Locations on the connected company will spawn child accounts when 'Auto-Create Child Accounts' is on."
+                  : 'Used to source contacts, locations and job orders for this account.'
+              }
+            />
+          )}
+        />
+      ) : (
+        <Box>
+          <Typography variant="body2" sx={{ fontWeight: 500 }}>
+            Connected CRM Company
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {(() => {
+              // Child accounts inherit their company link from the
+              // National parent. Surface the parent's first connected
+              // company name (when known) so recruiters can confirm the
+              // hierarchy without leaving the page.
+              const parentIds = (orderDefaultsInheritanceParent?.associations?.companyIds ?? []) as string[];
+              const firstId = parentIds[0];
+              if (!firstId) return 'Inherited from the national parent (no connection set).';
+              const match = companies.find((c) => c.id === firstId);
+              return `${match?.label || match?.companyName || firstId} · inherited from the national parent`;
+            })()}
+          </Typography>
+        </Box>
+      )}
       {/* E-Verify is set by the Hiring Entity (Settings > Entities) and is read-only here. */}
       {displayEntityLoading ? (
         <Typography variant="body2" color="text.secondary">

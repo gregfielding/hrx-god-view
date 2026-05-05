@@ -4,6 +4,7 @@ import onetSkills from '../data/onetSkills.json';
 import credentialsSeed from '../data/credentialsSeed.json';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
 import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../data/screeningsOptions';
+import { COMMON_LANGUAGES } from '../data/commonLanguages';
 
 type CompanyDefaults = {
   backgroundPackages?: Array<{ title: string; description?: string }>;
@@ -112,7 +113,16 @@ export const getOptionsForField = (
       case 'physicalRequirements':
         return toOptions(companyDefaults.physicalRequirements);
       case 'languages':
-        return toOptions(companyDefaults.languages);
+        // Prefer tenant-curated `companyDefaults.languages` when populated;
+        // fall back to the static seed list so the dropdown is never empty
+        // (the Field Registry entry has `optionsSource: 'companyDefaults'`
+        // and tenants don't currently populate this slot — see
+        // `src/data/commonLanguages.ts` header for the 2026-05-05 fix
+        // context). Recruiters can still type custom values: both call
+        // sites use `freeSolo`.
+        return Array.isArray(companyDefaults.languages) && companyDefaults.languages.length > 0
+          ? toOptions(companyDefaults.languages)
+          : COMMON_LANGUAGES.map((name) => ({ value: name, label: name }));
       case 'skills':
         return toOptions(companyDefaults.skills);
       default:
@@ -122,6 +132,17 @@ export const getOptionsForField = (
 
   // Fallback to static registry options if provided
   if (Array.isArray(def.options)) return def.options;
+
+  // Last-resort static fallbacks for fields whose registry entry declares
+  // `optionsSource: 'companyDefaults'` but no companyDefaults blob was
+  // supplied at the call site. Without this, the `Languages Required`
+  // Autocomplete renders "No options" everywhere because tenants don't
+  // currently populate `tenants/{tid}/companyDefaults.languages`. Same
+  // intent as the in-companyDefaults branch above; centralising here so
+  // callers that pass `undefined` get the same UX as those passing `{}`.
+  if (fieldId === 'languages') {
+    return COMMON_LANGUAGES.map((name) => ({ value: name, label: name }));
+  }
 
   return [];
 };
