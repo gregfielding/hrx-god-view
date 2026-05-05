@@ -1,56 +1,68 @@
 /**
- * Workforce > Job Readiness — D.4 placeholder.
+ * Workforce > Job Readiness — D.4 thin slice.
  *
- * The full implementation reads from `assignmentReadinessItems` and renders
- * a JO-centric matrix (one row per job order, one column per requirement
- * dimension). It ships in PR D.4 — included here so the route + tab
- * navigation are real from day one and CSAs can see where the feature is
- * going.
+ * Renders the JO-centric readiness matrix: one row per active job order,
+ * one column per requirement category that has data. Sister surface to the
+ * Employee Readiness page (R.8 list / matrix) — same chip rules, different
+ * grouping.
  *
- * @see Phase D spec §4 for the table shape and filter behavior.
+ * **Scope semantics:**
+ *   - `Mine`: JOs where the current user is the recruiter
+ *     (`assignedRecruiters` array-contains uid OR legacy `recruiterId == uid`).
+ *   - `All`: every active JO in the tenant.
+ *
+ * **Empty-column hiding:** the matrix only shows requirement-category columns
+ * that have items somewhere on the visible page. As Layer 2 matchers light
+ * up (`skill_match`, `language_match`, `experience_match`, etc. — see
+ * `docs/READINESS_EXECUTION_MATRIX.md` §4), columns appear automatically
+ * without a code change here.
+ *
+ * **Out of scope for v1** (deferred to D.4.1 — same staging used for
+ * Employee Readiness D.1.1b/c):
+ *   - Bulk-action bar across selected (JO × category) cells
+ *   - Per-cell action menu (confirm / waive / mark fail)
+ *   - Vendor drawers (none of the JO matrix's columns are vendor-source)
+ *
+ * @see ../components/workforce/JobReadinessMatrix/index.tsx (the matrix view)
+ * @see ../hooks/useJobReadinessMatrixPage.ts (the data hook)
  */
 
 import React from 'react';
-import { Box, Stack, Typography, Paper, Chip } from '@mui/material';
-import WorkOutlineIcon from '@mui/icons-material/WorkOutline';
+import { Box, Stack } from '@mui/material';
 import { useOutletContext } from 'react-router-dom';
 
 import WorkforceScopeToggle from '../components/workforce/WorkforceScopeToggle';
+import JobReadinessMatrix from '../components/workforce/JobReadinessMatrix';
+import { useAuth } from '../contexts/AuthContext';
 import type { WorkforceOutletContext } from './Workforce';
 
 const WorkforceJobReadiness: React.FC = () => {
-  const { scope, setScope } = useOutletContext<WorkforceOutletContext>();
+  const { user, activeTenant } = useAuth();
+  const tenantId = activeTenant?.id ?? null;
+  const currentUserUid = user?.uid ?? null;
+
+  const { scope, setScope, search } = useOutletContext<WorkforceOutletContext>();
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25, px: { xs: 2, md: 3 }, pt: 1.5 }}>
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 1.25,
+        px: { xs: 2, md: 3 },
+        pt: 1.5,
+      }}
+    >
       <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
         <WorkforceScopeToggle value={scope} onChange={setScope} myLabel="Mine" />
-        <Box sx={{ flex: 1 }} />
-        <Chip label="Coming in D.4" size="small" color="info" variant="outlined" />
       </Stack>
 
-      <Paper
-        variant="outlined"
-        sx={{
-          p: 4,
-          textAlign: 'center',
-          bgcolor: 'rgba(0,0,0,0.015)',
-          borderStyle: 'dashed',
-          borderColor: 'divider',
-        }}
-      >
-        <WorkOutlineIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
-        <Typography variant="h6" gutterBottom>
-          Job Readiness queue
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 520, mx: 'auto' }}>
-          One row per job order, with readiness coverage across the assignment
-          requirement dimensions (job-order specific I-9, BGC tier, training
-          modules, equipment). Lands in PR D.4 — wiring the existing
-          <code style={{ margin: '0 4px' }}>assignmentReadinessItems</code>
-          collection into the matching table shape.
-        </Typography>
-      </Paper>
+      <JobReadinessMatrix
+        tenantId={tenantId}
+        currentUserUid={currentUserUid}
+        scope={scope}
+        search={search}
+      />
     </Box>
   );
 };

@@ -22,7 +22,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Box, Button } from '@mui/material';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import Diversity3Icon from '@mui/icons-material/Diversity3';
 import AssignmentIndIcon from '@mui/icons-material/AssignmentInd';
 import WorkOutlineIcon from '@mui/icons-material/WorkOutline';
 
@@ -208,24 +207,6 @@ const Workforce: React.FC = () => {
         title=""
         filters={
           <Box sx={{ display: 'flex', gap: 0.35, alignItems: 'center', flexWrap: 'wrap' }}>
-            {/* Lead the toolbar with the brand chip so the CSA always knows
-                which workspace they're in (helps when bouncing in/out of
-                drawers that take over most of the viewport). */}
-            <Box
-              aria-hidden
-              sx={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 0.5,
-                pr: 1,
-                color: 'rgba(0,0,0,0.6)',
-                fontWeight: 600,
-                fontSize: 13,
-              }}
-            >
-              <Diversity3Icon fontSize="small" />
-              Workforce
-            </Box>
             {TABS.map((tab) => {
               const isActive = activeTab === tab.id;
               return (
