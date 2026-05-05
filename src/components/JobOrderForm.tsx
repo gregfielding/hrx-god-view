@@ -486,6 +486,15 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     requirementPackId: '',
     workersCompClassCode: '',
     workersCompRate: '',
+    /**
+     * Career-only top-level SUTA / FUTA rates. Gig orders persist these
+     * per-position on `gigPositions[i]`; career orders flatten them onto
+     * the JO doc the same way Pay Rate / Markup / WC are flattened. The
+     * field name matches the legacy reader in `EditShiftForm`'s career
+     * fallback (`jobOrder.sutaRate ?? jobOrder.suta`).
+     */
+    sutaRate: '',
+    futaRate: '',
     screeningPackageId: '',
     screeningPackageName: '',
     
@@ -957,6 +966,27 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     if (!worksiteStateCodeForPricing) return;
     const suta = getSutaRateByState(worksiteStateCodeForPricing);
     const futa = getFutaRateByState(worksiteStateCodeForPricing);
+    if (formData.jobType === 'career') {
+      // Force-overwrite the career top-level rates so the recruiter has
+      // a one-click "reset to state defaults" path symmetric to the gig
+      // multi-row fan-out below. Persists immediately when editing an
+      // existing JO, mirroring how WC code/rate auto-apply persists.
+      setFormData((prev) => {
+        const next = {
+          ...prev,
+          ...(suta != null ? { sutaRate: String(suta) } : {}),
+          futaRate: String(futa),
+        };
+        if (isEditing && jobOrderId) {
+          if (suta != null) {
+            void saveFieldToFirestore('sutaRate', String(suta), next);
+          }
+          void saveFieldToFirestore('futaRate', String(futa), next);
+        }
+        return next;
+      });
+      return;
+    }
     setGigPositions((prev) =>
       prev.map((pos) => ({
         ...pos,
@@ -1111,6 +1141,72 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     showSutaFutaOnGigPositions,
     worksiteStateCodeForPricing,
     gigPositions,
+  ]);
+
+  /**
+   * Career counterpart to the gig-position auto-fill above. Same
+   * "fill-only-when-empty + only when the row has real pricing"
+   * semantics, just against `formData.sutaRate / futaRate` instead of
+   * `gigPositions[i]`. Pricing is "real" when payRate > 0 AND either
+   * a typed billRate > 0 or a markup > 0 (`calculatedBillRate` follows).
+   * Recruiter-edited custom values are never overwritten — the explicit
+   * Apply button is the force-reset path.
+   */
+  useEffect(() => {
+    if (formData.jobType !== 'career') return;
+    if (!showSutaFutaOnGigPositions) return;
+    if (!worksiteStateCodeForPricing) return;
+
+    const pay = parseFloat(String(formData.payRate ?? ''));
+    if (!Number.isFinite(pay) || pay <= 0) return;
+    const bill = parseFloat(String(formData.billRate ?? ''));
+    const markup = parseFloat(String(formData.markup ?? ''));
+    const hasPricing =
+      (Number.isFinite(bill) && bill > 0) ||
+      (Number.isFinite(markup) && markup > 0);
+    if (!hasPricing) return;
+
+    const sutaForState = getSutaRateByState(worksiteStateCodeForPricing);
+    const futaForState = getFutaRateByState(worksiteStateCodeForPricing);
+    if (sutaForState == null && futaForState == null) return;
+
+    const sutaEmpty =
+      formData.sutaRate == null || String(formData.sutaRate).trim() === '';
+    const futaEmpty =
+      formData.futaRate == null || String(formData.futaRate).trim() === '';
+    if (!sutaEmpty && !futaEmpty) return;
+
+    const patch: { sutaRate?: string; futaRate?: string } = {};
+    if (sutaEmpty && sutaForState != null) patch.sutaRate = String(sutaForState);
+    if (futaEmpty && futaForState != null) patch.futaRate = String(futaForState);
+    if (Object.keys(patch).length === 0) return;
+
+    setFormData((prev) => {
+      const next = { ...prev, ...patch };
+      // Persist immediately when editing — matches the WC auto-apply pattern
+      // for career and avoids the recruiter losing the auto-filled rate if
+      // they navigate away without explicitly hitting Save.
+      if (isEditing && jobOrderId) {
+        if (patch.sutaRate != null) {
+          void saveFieldToFirestore('sutaRate', patch.sutaRate, next);
+        }
+        if (patch.futaRate != null) {
+          void saveFieldToFirestore('futaRate', patch.futaRate, next);
+        }
+      }
+      return next;
+    });
+  }, [
+    formData.jobType,
+    formData.payRate,
+    formData.billRate,
+    formData.markup,
+    formData.sutaRate,
+    formData.futaRate,
+    showSutaFutaOnGigPositions,
+    worksiteStateCodeForPricing,
+    isEditing,
+    jobOrderId,
   ]);
 
   const loadCompanies = async () => {
@@ -1601,6 +1697,16 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           requirementPackId: (data as any).requirementPackId || '',
           workersCompClassCode: (data as any).workersCompClassCode || '',
           workersCompRate: (data as any).workersCompRate != null ? String((data as any).workersCompRate) : '',
+          // Career-only top-level SUTA/FUTA. Tolerate the legacy
+          // `suta`/`futa` keys a few imported career JOs use.
+          sutaRate: (() => {
+            const v = (data as any).sutaRate ?? (data as any).suta;
+            return v != null && v !== '' ? String(v) : '';
+          })(),
+          futaRate: (() => {
+            const v = (data as any).futaRate ?? (data as any).futa;
+            return v != null && v !== '' ? String(v) : '';
+          })(),
           screeningPackageId: String((data as any).screeningPackageId ?? '').trim(),
           screeningPackageName: String((data as any).screeningPackageName ?? '').trim(),
           
@@ -1975,6 +2081,24 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         customUniformRequirements: dataToUse.customUniformRequirements || undefined,
         screeningPackageId: String((dataToUse as any).screeningPackageId ?? '').trim() || null,
         screeningPackageName: String((dataToUse as any).screeningPackageName ?? '').trim() || null,
+        // Career-only top-level SUTA / FUTA. Gig orders persist these
+        // per-position via `gigPositions[]` (handled in the spread above).
+        // `removeUndefinedValues` strips empty fields so we never overwrite
+        // a previously saved value with `undefined` when the input is blank.
+        ...((dataToUse as any).jobType !== 'gig'
+          ? {
+              sutaRate:
+                (dataToUse as any).sutaRate != null &&
+                String((dataToUse as any).sutaRate).trim() !== ''
+                  ? toNumberSafe((dataToUse as any).sutaRate)
+                  : undefined,
+              futaRate:
+                (dataToUse as any).futaRate != null &&
+                String((dataToUse as any).futaRate).trim() !== ''
+                  ? toNumberSafe((dataToUse as any).futaRate)
+                  : undefined,
+            }
+          : {}),
         jobTitle:
           (dataToUse as any).jobType === 'gig'
             ? String(gigPositions[0]?.jobTitle ?? '')
@@ -2378,6 +2502,21 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         workersCompRate: formData.jobType === 'gig'
           ? (gigPositions[0]?.workersCompRate ? parseFloat(gigPositions[0].workersCompRate) : undefined)
           : (formData.workersCompRate ? parseFloat(formData.workersCompRate) : undefined),
+        // Career-only top-level SUTA / FUTA — gig orders persist these
+        // per-position on `gigPositions`. Numbers (not strings) so the
+        // legacy reader in `EditShiftForm` (parseFloat) round-trips
+        // cleanly. Empty input → `undefined` so we don't write `0` or
+        // `NaN` over a previous value.
+        sutaRate: formData.jobType === 'gig'
+          ? undefined
+          : (formData.sutaRate && String(formData.sutaRate).trim() !== ''
+              ? parseFloat(String(formData.sutaRate))
+              : undefined),
+        futaRate: formData.jobType === 'gig'
+          ? undefined
+          : (formData.futaRate && String(formData.futaRate).trim() !== ''
+              ? parseFloat(String(formData.futaRate))
+              : undefined),
         ppeProvidedBy: (() => {
           const reqs = formData.ppeRequirements || [];
           if (!Array.isArray(reqs) || reqs.length === 0) return undefined;
@@ -3387,6 +3526,66 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                       inputProps={{ step: 0.01, min: 0 }}
                     />
                   </Grid>
+
+                  {/*
+                   * Row 4: SUTA % / FUTA % — only when the JO's hiring entity
+                   * pays unemployment tax on payroll (today: C1 Workforce / C1
+                   * Select). Mirrors the gig-positions row immediately below
+                   * the gig "Add Position" button. Career flattens these onto
+                   * the JO doc; gig persists per-position on `gigPositions[i]`.
+                   *
+                   * The Apply button force-overwrites both fields with the
+                   * worksite-state new-employer SUTA + state-effective FUTA
+                   * (read from `src/utils/unemploymentRates.ts`). Disabled
+                   * when the worksite has no resolvable state code.
+                   */}
+                  {showSutaFutaOnGigPositions && (
+                    <>
+                      <Grid item xs={12} md={6}>
+                        <TextField
+                          fullWidth
+                          label="SUTA %"
+                          value={formData.sutaRate || ''}
+                          onChange={(e) => handleInputChange('sutaRate', e.target.value)}
+                          onBlur={(e) => handleFieldBlur('sutaRate', e.target.value)}
+                          placeholder="e.g. 2.5"
+                          type="number"
+                          inputProps={{ step: 0.01, min: 0 }}
+                          helperText="State unemployment on pay (C1 Workforce / C1 Select). Worksite state is fixed at the JO level."
+                        />
+                      </Grid>
+                      <Grid item xs={12} md={6}>
+                        <TextField
+                          fullWidth
+                          label="FUTA %"
+                          value={formData.futaRate || ''}
+                          onChange={(e) => handleInputChange('futaRate', e.target.value)}
+                          onBlur={(e) => handleFieldBlur('futaRate', e.target.value)}
+                          placeholder="e.g. 0.6"
+                          type="number"
+                          inputProps={{ step: 0.01, min: 0 }}
+                          helperText="Federal unemployment on pay. Worksite state is fixed at the JO level."
+                        />
+                      </Grid>
+                      <Grid item xs={12}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={applySutaFutaFromWorksiteState}
+                            disabled={!worksiteStateCodeForPricing}
+                          >
+                            Apply SUTA/FUTA from worksite state
+                          </Button>
+                          <Typography variant="caption" color="text.secondary">
+                            {worksiteStateCodeForPricing
+                              ? `Estimated new-employer SUTA and FUTA for ${worksiteStateCodeForPricing} (same as Account → Pricing).`
+                              : 'Select a worksite with a state to apply rates.'}
+                          </Typography>
+                        </Box>
+                      </Grid>
+                    </>
+                  )}
                 </>
               )}
 
@@ -3561,6 +3760,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               <Grid item xs={12} md={6}>
                 <Autocomplete
                   multiple
+                  freeSolo
                   fullWidth
                   options={Array.isArray(getOptionsForField('languages', companyDefaultsForOptions)) ? getOptionsForField('languages', companyDefaultsForOptions).map(opt => opt.value) : []}
                   value={formData.languagesRequired}
@@ -3571,7 +3771,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                     <TextField
                       {...params}
                       label={getFieldDef('languages')?.label || 'Languages Required'}
-                      helperText="Select required languages"
+                      helperText="Select required languages or type to add a custom one"
                     />
                   )}
                   renderTags={(value, getTagProps) =>

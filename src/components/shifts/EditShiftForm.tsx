@@ -359,12 +359,89 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
   );
 
   /**
+   * Cross-doc fallback: when the JO doesn't carry a worksite state field
+   * (legacy / manually-created career JOs that never ran through the
+   * auto-spawn helper, e.g. JO #133 under autoLoc Hyatt), but it does
+   * carry a `worksiteId / locationId`, read the linked CRM-company
+   * location doc and lift `address.state` (or top-level `state`). Stays
+   * empty when the JO doc itself already supplies a state code.
+   *
+   * Self-healing for shift pricing — without this, `worksiteStateForJo`
+   * resolves to `''` and `Apply state-default SUTA/FUTA` is gated off
+   * with the yellow "Add a worksite state…" notice, even though the
+   * location row clearly has the state set.
+   */
+  const [locationDocStateFallback, setLocationDocStateFallback] = useState<string>('');
+  useEffect(() => {
+    if (!jobOrder) {
+      if (locationDocStateFallback) setLocationDocStateFallback('');
+      return;
+    }
+    const jo = jobOrder as Record<string, unknown>;
+    const addr = (jo.worksiteAddress as Record<string, unknown> | undefined) ?? undefined;
+    const directState =
+      (typeof addr?.state === 'string' && addr.state.trim()) ||
+      (typeof addr?.stateCode === 'string' && addr.stateCode.trim()) ||
+      (typeof jo.worksiteState === 'string' && (jo.worksiteState as string).trim()) ||
+      '';
+    // The JO already carries a state on the doc — let the memo below pick
+    // it up and clear any prior fallback we cached.
+    if (directState) {
+      if (locationDocStateFallback) setLocationDocStateFallback('');
+      return;
+    }
+    const companyId = typeof jo.companyId === 'string' ? jo.companyId.trim() : '';
+    const locationId =
+      (typeof jo.worksiteId === 'string' && jo.worksiteId.trim()) ||
+      (typeof jo.locationId === 'string' && (jo.locationId as string).trim()) ||
+      '';
+    if (!companyId || !locationId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        let snap = await getDoc(
+          doc(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations', locationId),
+        );
+        if (!snap.exists()) {
+          snap = await getDoc(doc(db, 'crm_companies', companyId, 'locations', locationId));
+        }
+        if (cancelled || !snap.exists()) return;
+        const data = (snap.data() as Record<string, unknown> | undefined) ?? {};
+        const innerAddr = (data.address as Record<string, unknown> | undefined) ?? undefined;
+        const raw =
+          (typeof innerAddr?.state === 'string' && innerAddr.state) ||
+          (typeof innerAddr?.stateCode === 'string' && innerAddr.stateCode) ||
+          (typeof data.state === 'string' && (data.state as string)) ||
+          '';
+        const code = normalizeStateCode(raw).trim().toUpperCase();
+        if (!cancelled) setLocationDocStateFallback(code);
+      } catch {
+        if (!cancelled) setLocationDocStateFallback('');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Intentionally NOT depending on `locationDocStateFallback` — that's the
+    // value we're computing; including it would trigger a redundant lookup
+    // every time the location doc resolves.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    jobOrder,
+    tenantId,
+  ]);
+
+  /**
    * Worksite 2-letter state code derived from the JO doc. Tolerates the
    * canonical `worksiteAddress.state` shape (set by `JobOrderForm` and
    * the auto-spawn helper) plus a couple of legacy/fallback paths used
    * by older job orders, plus account/company snapshot fallbacks for
    * JOs that didn't denormalize a worksite address. Empty when no
    * field on the JO doc carries a state code.
+   *
+   * Final fallback (2026-05-05): the linked CRM-company location's state
+   * code, resolved by the effect above. Covers manually-created career JOs
+   * that point at a `worksiteId` but never got the address denormalized.
    */
   const worksiteStateForJo = useMemo<string>(() => {
     if (!jobOrder) return '';
@@ -384,6 +461,7 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
       jo.companyState,
       jo.accountState,
       jo.state,
+      locationDocStateFallback,
     ];
     for (const c of candidates) {
       const code = normalizeStateCode(typeof c === 'string' ? c : '')
@@ -392,7 +470,7 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
       if (code) return code;
     }
     return '';
-  }, [jobOrder]);
+  }, [jobOrder, locationDocStateFallback]);
 
   const availablePositions = useMemo<Position[]>(() => {
     if (!jobOrder) return [];
