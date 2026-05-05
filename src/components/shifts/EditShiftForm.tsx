@@ -81,6 +81,12 @@ import {
   computeShiftNotifyDiff,
   shouldPromptShiftWorkerNotify,
 } from '../../utils/shiftWorkerNotifyDiff';
+import { persistMissingSutaFutaForJobOrderAndAccount } from '../../utils/shifts/sutaFutaAccountHydration';
+import {
+  persistShiftPricingToJobOrder,
+  recomputePricingTriple,
+  type ShiftPricingPatch,
+} from '../../utils/shifts/persistShiftPricingToJobOrder';
 import {
   SHIFT_STATUS_FILTER_ENTRIES,
   type ShiftStatus,
@@ -197,6 +203,10 @@ export interface EditShiftFormProps {
    *  now we don't expose a ref API, so leave this false unless you
    *  add one. */
   hideActions?: boolean;
+  /** Called after an in-form action mutates the JO doc directly (e.g.
+   *  the "Apply state default" SUTA/FUTA buttons). Parent should re-fetch
+   *  the JO so derived position rows pick up the new value. */
+  onJobOrderUpdated?: () => void | Promise<void>;
 }
 
 const EditShiftForm: React.FC<EditShiftFormProps> = ({
@@ -208,6 +218,7 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
   onCancel,
   submitLabel,
   hideActions = false,
+  onJobOrderUpdated,
 }) => {
   const { user } = useAuth();
   const isGigJob = jobOrder?.jobType === 'gig';
@@ -351,15 +362,28 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
    * Worksite 2-letter state code derived from the JO doc. Tolerates the
    * canonical `worksiteAddress.state` shape (set by `JobOrderForm` and
    * the auto-spawn helper) plus a couple of legacy/fallback paths used
-   * by older job orders. Empty when the JO has no resolvable state.
+   * by older job orders, plus account/company snapshot fallbacks for
+   * JOs that didn't denormalize a worksite address. Empty when no
+   * field on the JO doc carries a state code.
    */
   const worksiteStateForJo = useMemo<string>(() => {
     if (!jobOrder) return '';
+    const jo = jobOrder as Record<string, unknown>;
+    const addr = (key: string): Record<string, unknown> | undefined =>
+      (jo[key] as Record<string, unknown> | undefined) ?? undefined;
     const candidates: Array<unknown> = [
-      jobOrder.worksiteAddress?.state,
-      jobOrder.worksiteState,
-      jobOrder.locationState,
-      jobOrder.address?.state,
+      addr('worksiteAddress')?.state,
+      addr('worksiteAddress')?.stateCode,
+      jo.worksiteState,
+      jo.locationState,
+      addr('address')?.state,
+      addr('address')?.stateCode,
+      addr('companyAddress')?.state,
+      addr('accountAddress')?.state,
+      addr('locationAddress')?.state,
+      jo.companyState,
+      jo.accountState,
+      jo.state,
     ];
     for (const c of candidates) {
       const code = normalizeStateCode(typeof c === 'string' ? c : '')
@@ -644,6 +668,41 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
   const [formData, setFormData] = useState<FormData>(buildInitial);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  /* --- Pricing edits ----------------------------------------------------
+   * Recruiter-editable mirror of the selected position's pricing fields.
+   * Re-seeded whenever the position dropdown changes; on save the diff vs
+   * the JO row gets propagated up via `persistShiftPricingToJobOrder` so
+   * future shifts on this JO inherit the updated rates.
+   *
+   * State (vs JO worksite) is intentionally NOT in here — Greg confirmed
+   * that the location/state of a shift is fixed at the JO level and is
+   * not editable on individual shifts. That keeps SUTA/FUTA from getting
+   * silently re-derived if someone "moves" a shift to a different state.
+   * ------------------------------------------------------------------- */
+  type ShiftPricingDraft = {
+    payRate: string;
+    markupPercent: string;
+    billRate: string;
+    workersCompCode: string;
+    workersCompRate: string;
+    sutaRate: string;
+    futaRate: string;
+  };
+  const EMPTY_PRICING_DRAFT: ShiftPricingDraft = {
+    payRate: '',
+    markupPercent: '',
+    billRate: '',
+    workersCompCode: '',
+    workersCompRate: '',
+    sutaRate: '',
+    futaRate: '',
+  };
+  const [pricingEdit, setPricingEdit] = useState<ShiftPricingDraft>(EMPTY_PRICING_DRAFT);
+  /** Snapshot of `pricingEdit` immediately after the position dropdown change so
+   *  we can detect "did the recruiter actually edit anything" at save time and
+   *  skip the JO write when they didn't. */
+  const [pricingBaseline, setPricingBaseline] = useState<ShiftPricingDraft>(EMPTY_PRICING_DRAFT);
   // Transient "copied" feedback for the Clock-In URL field. When set,
   // the end-adornment swaps the copy icon for a checkmark + tooltip
   // for ~1.5s. Reverts on its own; no snackbar.
@@ -694,6 +753,60 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
         selectedPosition.futaRate,
     );
   }, [selectedPosition]);
+
+  /* --- Re-seed the editable pricing draft whenever the position changes ----
+   * Keyed on every pricing field of `selectedPosition` so that a JO-level
+   * cascade (e.g. "Apply state default" buttons writing SUTA/FUTA back to
+   * the JO and refetching) reflows into the form without the recruiter
+   * losing their unsaved edits — only fields whose JO value actually
+   * changed get re-pulled. The current draft wins for any field the
+   * recruiter has typed into. */
+  useEffect(() => {
+    const next: ShiftPricingDraft = selectedPosition
+      ? {
+          payRate: selectedPosition.payRate || '',
+          markupPercent: selectedPosition.markupPercent || '',
+          billRate: selectedPosition.billRate || '',
+          workersCompCode: selectedPosition.workersCompCode || '',
+          workersCompRate: selectedPosition.workersCompRate || '',
+          sutaRate: selectedPosition.sutaRate || '',
+          futaRate: selectedPosition.futaRate || '',
+        }
+      : EMPTY_PRICING_DRAFT;
+    setPricingEdit(next);
+    setPricingBaseline(next);
+    // EMPTY_PRICING_DRAFT is a stable literal in render scope; lint tolerates
+    // it via the deps below. We intentionally re-seed only on position swap.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedPosition?.jobTitle,
+    selectedPosition?.payRate,
+    selectedPosition?.markupPercent,
+    selectedPosition?.billRate,
+    selectedPosition?.workersCompCode,
+    selectedPosition?.workersCompRate,
+    selectedPosition?.sutaRate,
+    selectedPosition?.futaRate,
+  ]);
+
+  /** Update one pricing field with optional pay/markup/bill auto-derivation. */
+  const setPricingField = (
+    field: keyof ShiftPricingDraft,
+    value: string,
+  ): void => {
+    setPricingEdit((prev) => {
+      if (field === 'payRate' || field === 'markupPercent' || field === 'billRate') {
+        const triple = recomputePricingTriple({
+          changed: field,
+          payRate: field === 'payRate' ? value : prev.payRate,
+          markupPercent: field === 'markupPercent' ? value : prev.markupPercent,
+          billRate: field === 'billRate' ? value : prev.billRate,
+        });
+        return { ...prev, ...triple };
+      }
+      return { ...prev, [field]: value };
+    });
+  };
 
   /**
    * Whether the displayed SUTA / FUTA values for the currently-selected
@@ -751,6 +864,61 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
           : 'none',
     };
   }, [jobOrder, formData?.defaultJobTitle, selectedPosition]);
+
+  /* --- Apply state-default SUTA/FUTA -------------------------------
+   * Recruiter-initiated cascade: writes the state-derived rate to the
+   * JO `positions[]` row (and the matching account pricing row) so
+   * every downstream consumer sees the saved value rather than the
+   * estimated fallback. Bypasses the C1 hiring-entity gate because
+   * the recruiter has explicitly opted in for this JO.
+   */
+  const [applyStateDefaultPending, setApplyStateDefaultPending] = useState<
+    null | 'suta' | 'futa' | 'both'
+  >(null);
+  const [applyStateDefaultError, setApplyStateDefaultError] = useState<string | null>(null);
+
+  const handleApplyStateDefaults = async (which: 'suta' | 'futa' | 'both') => {
+    if (!tenantId || !jobOrderId || !jobOrder) return;
+    if (!worksiteStateForJo) return;
+    setApplyStateDefaultPending(which);
+    setApplyStateDefaultError(null);
+    try {
+      const result = await persistMissingSutaFutaForJobOrderAndAccount({
+        tenantId,
+        jobOrderId,
+        jobOrder: jobOrder as Record<string, unknown>,
+        hiringEntityName: jobOrderEntity?.name ?? null,
+        userId: user?.uid ?? null,
+        force: true,
+      });
+      if (result.wroteJobOrder || result.wroteAccount) {
+        await onJobOrderUpdated?.();
+      }
+    } catch (err) {
+      setApplyStateDefaultError(
+        err instanceof Error ? err.message : 'Failed to save unemployment rates.',
+      );
+    } finally {
+      setApplyStateDefaultPending(null);
+    }
+  };
+
+  const sutaStateDefault = worksiteStateForJo
+    ? getSutaRateByState(worksiteStateForJo)
+    : null;
+  const futaStateDefault = worksiteStateForJo
+    ? getFutaRateByState(worksiteStateForJo)
+    : null;
+  // Buttons appear whenever the displayed field is empty (no value
+  // saved on the JO position or estimated for display) AND we have a
+  // state-derived default to apply. Sidesteps the C1 entity gate so a
+  // recruiter can always populate the rates explicitly.
+  const sutaFieldEmpty = !String(selectedPosition?.sutaRate ?? '').trim();
+  const futaFieldEmpty = !String(selectedPosition?.futaRate ?? '').trim();
+  const canApplySuta =
+    !!worksiteStateForJo && sutaStateDefault != null && sutaFieldEmpty;
+  const canApplyFuta =
+    !!worksiteStateForJo && futaStateDefault != null && futaFieldEmpty;
 
   /* --- Save flow ---------------------------------------------------- */
 
@@ -952,6 +1120,11 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
       // mode for missing values). Otherwise switching the shift's
       // position from one with markup -> one without would silently
       // retain the old markup on the shift doc.
+      //
+      // Sourced from `pricingEdit` (the recruiter-editable mirror) rather
+      // than `selectedPosition` so any unsaved edits in the pricing block
+      // get baked into the snapshot and onto the parent JO row in the same
+      // save action.
       const snapshotKeys = [
         'payRate',
         'billRate',
@@ -964,13 +1137,13 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
       const positionSnapshot: Record<string, unknown> = {};
       const resolved: Partial<Record<typeof snapshotKeys[number], number | string>> = {};
       if (selectedPosition) {
-        const payN = optNum(selectedPosition.payRate);
-        const billN = optNum(selectedPosition.billRate);
-        const markupN = optNum(selectedPosition.markupPercent);
-        const wcCode = optStr(selectedPosition.workersCompCode);
-        const wcRateN = optNum(selectedPosition.workersCompRate);
-        const sutaN = optNum(selectedPosition.sutaRate);
-        const futaN = optNum(selectedPosition.futaRate);
+        const payN = optNum(pricingEdit.payRate);
+        const billN = optNum(pricingEdit.billRate);
+        const markupN = optNum(pricingEdit.markupPercent);
+        const wcCode = optStr(pricingEdit.workersCompCode);
+        const wcRateN = optNum(pricingEdit.workersCompRate);
+        const sutaN = optNum(pricingEdit.sutaRate);
+        const futaN = optNum(pricingEdit.futaRate);
         if (payN !== undefined) resolved.payRate = payN;
         if (billN !== undefined) resolved.billRate = billN;
         if (markupN !== undefined) resolved.markupPercent = markupN;
@@ -984,6 +1157,68 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
           positionSnapshot[k] = resolved[k];
         } else if (editingShift) {
           positionSnapshot[k] = deleteField();
+        }
+      }
+
+      /* --- Cascade pricing edits to the parent job order --------------
+       * Edit-then-propagate: any field the recruiter touched (vs the
+       * baseline captured when the position was last selected) gets
+       * written to the matching row in JO `positions[]` /
+       * `gigPositions[]` before we write the shift, so the shift
+       * snapshot and the JO stay in sync and the *next* shift on this
+       * JO inherits the new rates.
+       *
+       * Scope per Greg: JO only — the child account's pricing.positions[]
+       * is intentionally left alone (national-level changes drive sibling
+       * JOs separately).
+       *
+       * We send `null` for fields the recruiter cleared so the JO row
+       * actually loses the value (not just our snapshot).
+       * ------------------------------------------------------------- */
+      if (selectedPosition && formData.defaultJobTitle) {
+        const draftDiffField = (
+          k: keyof typeof pricingEdit,
+        ): string | null | undefined => {
+          if (pricingEdit[k] === pricingBaseline[k]) return undefined;
+          const trimmed = pricingEdit[k].trim();
+          return trimmed === '' ? null : trimmed;
+        };
+        const numericPatch = (raw: string | null | undefined): number | null | undefined => {
+          if (raw === undefined) return undefined;
+          if (raw === null) return null;
+          const n = parseFloat(raw);
+          return Number.isFinite(n) ? n : undefined;
+        };
+        const patch: ShiftPricingPatch = {
+          payRate: numericPatch(draftDiffField('payRate')),
+          markupPercent: numericPatch(draftDiffField('markupPercent')),
+          billRate: numericPatch(draftDiffField('billRate')),
+          workersCompCode: draftDiffField('workersCompCode') as string | null | undefined,
+          workersCompRate: numericPatch(draftDiffField('workersCompRate')),
+          sutaRate: numericPatch(draftDiffField('sutaRate')),
+          futaRate: numericPatch(draftDiffField('futaRate')),
+        };
+        try {
+          const result = await persistShiftPricingToJobOrder({
+            tenantId,
+            jobOrderId,
+            jobOrder: jobOrder as Record<string, unknown>,
+            defaultJobTitle: formData.defaultJobTitle,
+            pricing: patch,
+            userId: user?.uid,
+          });
+          if (result.wrote) {
+            // Resync the baseline so a follow-up edit in the same form
+            // session diff's against what's actually on the JO now, and
+            // ask the parent to refetch so other tabs see it.
+            setPricingBaseline(pricingEdit);
+            await onJobOrderUpdated?.();
+          }
+        } catch (err) {
+          console.error('Failed to cascade shift pricing to job order:', err);
+          setError('Failed to save pricing changes to the job order. Try again.');
+          setSubmitting(false);
+          return;
         }
       }
 
@@ -1248,8 +1483,12 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
           disabled={availablePositions.length === 0}
         />
 
-        {/* Position pricing — read-only preview (same column flow as the rest
-            of the form; no extra card chrome). */}
+        {/* Position pricing — editable. Edits propagate to the parent
+            job order's positions[] row on save (see
+            persistShiftPricingToJobOrder) so the next shift on this JO
+            inherits the new rates. Worksite state is intentionally not
+            editable here — SUTA/FUTA are stored as numbers and are
+            decoupled from the location after they're written. */}
         {selectedPosition && hasPositionPricing && (
           <Stack spacing={1.5}>
             <Stack
@@ -1262,7 +1501,7 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
                 Pricing for {selectedPosition.jobTitle}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                Inherited from job order — edit on the Overview tab to change.
+                Edits save back to the job order and apply to future shifts on this position.
               </Typography>
             </Stack>
 
@@ -1271,8 +1510,11 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
                 <TextField
                   fullWidth
                   label="Pay Rate"
-                  value={selectedPosition.payRate || ''}
-                  InputProps={{ readOnly: true, startAdornment: <span>$</span> }}
+                  type="number"
+                  value={pricingEdit.payRate}
+                  onChange={(e) => setPricingField('payRate', e.target.value)}
+                  InputProps={{ startAdornment: <span>$</span> }}
+                  inputProps={{ min: 0, step: '0.01' }}
                   variant="outlined"
                 />
               </Grid>
@@ -1280,18 +1522,25 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
                 <TextField
                   fullWidth
                   label="Markup (%)"
-                  value={selectedPosition.markupPercent || ''}
-                  InputProps={{ readOnly: true }}
+                  type="number"
+                  value={pricingEdit.markupPercent}
+                  onChange={(e) => setPricingField('markupPercent', e.target.value)}
+                  inputProps={{ min: 0, step: '0.01' }}
                   variant="outlined"
+                  helperText="Bill rate auto-recalculates from pay × (1 + markup/100)."
                 />
               </Grid>
               <Grid item xs={12} md={4}>
                 <TextField
                   fullWidth
                   label="Bill Rate"
-                  value={selectedPosition.billRate || ''}
-                  InputProps={{ readOnly: true, startAdornment: <span>$</span> }}
+                  type="number"
+                  value={pricingEdit.billRate}
+                  onChange={(e) => setPricingField('billRate', e.target.value)}
+                  InputProps={{ startAdornment: <span>$</span> }}
+                  inputProps={{ min: 0, step: '0.01' }}
                   variant="outlined"
+                  helperText="Editing bill recalculates markup."
                 />
               </Grid>
 
@@ -1299,8 +1548,8 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
                 <TextField
                   fullWidth
                   label="Workers Comp Class Code"
-                  value={selectedPosition.workersCompCode || ''}
-                  InputProps={{ readOnly: true }}
+                  value={pricingEdit.workersCompCode}
+                  onChange={(e) => setPricingField('workersCompCode', e.target.value)}
                   variant="outlined"
                   helperText="From Settings > Onboarding Library > WC Class Codes"
                 />
@@ -1309,8 +1558,10 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
                 <TextField
                   fullWidth
                   label="Workers Comp Rate"
-                  value={selectedPosition.workersCompRate || ''}
-                  InputProps={{ readOnly: true }}
+                  type="number"
+                  value={pricingEdit.workersCompRate}
+                  onChange={(e) => setPricingField('workersCompRate', e.target.value)}
+                  inputProps={{ min: 0, step: '0.01' }}
                   variant="outlined"
                 />
               </Grid>
@@ -1319,13 +1570,15 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
                 <TextField
                   fullWidth
                   label="SUTA %"
-                  value={selectedPosition.sutaRate || ''}
-                  InputProps={{ readOnly: true }}
+                  type="number"
+                  value={pricingEdit.sutaRate}
+                  onChange={(e) => setPricingField('sutaRate', e.target.value)}
+                  inputProps={{ min: 0, step: '0.01' }}
                   variant="outlined"
                   helperText={
                     sutaFutaSource.suta === 'estimated' && worksiteStateForJo
-                      ? `Estimated from ${worksiteStateForJo} (new-employer rate; not yet saved on the job order)`
-                      : 'State unemployment on pay (C1 Workforce / C1 Select)'
+                      ? `Estimated from ${worksiteStateForJo} (new-employer rate; not yet saved on the job order). Worksite state is fixed at the JO level.`
+                      : 'State unemployment on pay (C1 Workforce / C1 Select). Worksite state is fixed at the JO level.'
                   }
                 />
               </Grid>
@@ -1333,16 +1586,75 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
                 <TextField
                   fullWidth
                   label="FUTA %"
-                  value={selectedPosition.futaRate || ''}
-                  InputProps={{ readOnly: true }}
+                  type="number"
+                  value={pricingEdit.futaRate}
+                  onChange={(e) => setPricingField('futaRate', e.target.value)}
+                  inputProps={{ min: 0, step: '0.01' }}
                   variant="outlined"
                   helperText={
                     sutaFutaSource.futa === 'estimated' && worksiteStateForJo
-                      ? `Estimated from ${worksiteStateForJo} (state-effective rate; not yet saved on the job order)`
-                      : 'Federal unemployment on pay'
+                      ? `Estimated from ${worksiteStateForJo} (state-effective rate; not yet saved on the job order). Worksite state is fixed at the JO level.`
+                      : 'Federal unemployment on pay. Worksite state is fixed at the JO level.'
                   }
                 />
               </Grid>
+              {/* Apply state defaults — recruiter-initiated cascade.
+                  Visible whenever a field is empty AND we know the
+                  worksite state. Writes to the JO position so every
+                  downstream consumer (account pricing, future shifts)
+                  inherits the rates. */}
+              {(canApplySuta || canApplyFuta) && (
+                <Grid item xs={12}>
+                  <Stack
+                    direction="row"
+                    spacing={1}
+                    alignItems="center"
+                    flexWrap="wrap"
+                    sx={{ rowGap: 1 }}
+                  >
+                    <Button
+                      size="small"
+                      variant="contained"
+                      color="primary"
+                      disabled={applyStateDefaultPending !== null}
+                      onClick={() =>
+                        handleApplyStateDefaults(
+                          canApplySuta && canApplyFuta
+                            ? 'both'
+                            : canApplySuta
+                              ? 'suta'
+                              : 'futa',
+                        )
+                      }
+                      sx={{ textTransform: 'none' }}
+                    >
+                      {applyStateDefaultPending != null
+                        ? 'Saving…'
+                        : canApplySuta && canApplyFuta
+                          ? `Apply ${worksiteStateForJo} SUTA (${sutaStateDefault}%) & FUTA (${futaStateDefault}%) to job order`
+                          : canApplySuta
+                            ? `Apply ${worksiteStateForJo} SUTA default (${sutaStateDefault}%) to job order`
+                            : `Apply ${worksiteStateForJo} FUTA default (${futaStateDefault}%) to job order`}
+                    </Button>
+                    {applyStateDefaultError && (
+                      <Typography variant="caption" color="error">
+                        {applyStateDefaultError}
+                      </Typography>
+                    )}
+                  </Stack>
+                </Grid>
+              )}
+              {/* Diagnostic hint when fields are empty but we couldn't
+                  resolve a worksite state — tells the recruiter what to
+                  fix on the JO Overview tab so the auto-apply unlocks. */}
+              {(sutaFieldEmpty || futaFieldEmpty) && !worksiteStateForJo && (
+                <Grid item xs={12}>
+                  <Typography variant="caption" color="warning.main">
+                    Add a worksite state on the job order's Overview tab to
+                    unlock state-default SUTA/FUTA rates.
+                  </Typography>
+                </Grid>
+              )}
             </Grid>
           </Stack>
         )}

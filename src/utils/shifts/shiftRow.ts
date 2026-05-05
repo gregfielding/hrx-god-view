@@ -161,6 +161,10 @@ export interface ShiftPlacementsDrawerSummary {
   jobTitle?: string;
   dateLabel: string;
   timeLabel: string;
+  /** YYYY-MM-DD; shift start (`shiftDate`) with JO `startDate` fallback. Used in the drawer header to show explicit start/end dates beneath the time range. */
+  startDate?: string;
+  /** YYYY-MM-DD; shift `endDate` for multi-day windows with JO `endDate` fallback. Omitted for single-day or open-ended career rows. */
+  endDate?: string;
   poNumber?: string;
   worksiteName?: string;
   worksiteStreet?: string;
@@ -193,12 +197,20 @@ export function toShiftPlacementsDrawerSummary(
   const cityStateZip = [[city, state].filter(Boolean).join(', '), zip]
     .filter(Boolean)
     .join(' ');
+  // Drawer header start/end dates: shift fields take precedence, JO fields are
+  // the fallback. Mirrors the date-range filter logic above (careerWStart /
+  // careerWEndCap). Both kept as YYYY-MM-DD; renderer formats them.
+  const drawerStartDate = trimYyyyMmDd(sh.shiftDate) || trimYyyyMmDd(jo.startDate);
+  const drawerEndDate = trimYyyyMmDd(sh.endDate) || trimYyyyMmDd(jo.endDate);
+
   return {
     id: sh.id,
     shiftTitle: sh.shiftTitle,
     jobTitle: sh.defaultJobTitle?.trim() || jo.jobTitle,
     dateLabel: row.dateLabel,
     timeLabel: row.timeLabel,
+    startDate: drawerStartDate,
+    endDate: drawerEndDate,
     poNumber: sh.poNumber || jo.poNumber,
     worksiteName: jo.worksiteName,
     worksiteStreet: street || undefined,

@@ -14,6 +14,7 @@ import {
   Alert,
   Autocomplete,
   Avatar,
+  Badge,
   Box,
   Button,
   Chip,
@@ -38,6 +39,7 @@ import {
   NotificationsActive as NotificationsActiveIcon,
   OpenInNew as OpenInNewIcon,
   Description as DescriptionIcon,
+  PriorityHigh as PriorityHighIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -60,6 +62,7 @@ import JobOrderAutoMessagingTab from '../recruiter/JobOrderAutoMessagingTab';
 import { experienceOptions, educationOptions } from '../../data/experienceOptions';
 import { JOB_REQUIREMENT_PACKS } from '../../data/jobRequirementPacks';
 import type { JobOrder } from '../../types/recruiter/jobOrder';
+import { formatDateLabel } from '../../utils/shifts/shiftRow';
 import type { ShiftPlacementsDrawerSummary } from '../../utils/shifts/shiftRow';
 import EditShiftForm, { type ShiftFormShift } from './EditShiftForm';
 import { useAuth } from '../../contexts/AuthContext';
@@ -255,6 +258,20 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
   const placementNotificationsMuted = Boolean((jobOrder as { muted?: boolean } | null)?.muted);
   const [togglingMute, setTogglingMute] = useState(false);
   const [muteError, setMuteError] = useState<string | null>(null);
+
+  // True when the JO has no `autoMessagingUserGroupIds` configured.
+  // Without selected groups, adding shifts to this JO won't notify any
+  // workers — surface that to the recruiter via a red badge on the
+  // Promotion tab.
+  const promotionMissingGroups = useMemo(() => {
+    if (!jobOrder) return false;
+    const raw = (jobOrder as { autoMessagingUserGroupIds?: unknown })
+      .autoMessagingUserGroupIds;
+    if (!Array.isArray(raw)) return true;
+    return (
+      raw.filter((x) => typeof x === 'string' && x.trim().length > 0).length === 0
+    );
+  }, [jobOrder]);
 
   const [pickedJobOrderId, setPickedJobOrderId] = useState<string | null>(null);
   const [pickerJobOrders, setPickerJobOrders] = useState<
@@ -919,6 +936,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
                         onClose();
                       }}
                       onCancel={onClose}
+                      onJobOrderUpdated={refreshJobOrder}
                     />
                   </Box>
                 ) : null)}
@@ -947,7 +965,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
           direction="row"
           spacing={1.25}
           alignItems="baseline"
-          sx={{ minWidth: 0 }}
+          sx={{ minWidth: 0, flexWrap: 'wrap', rowGap: 0.5 }}
         >
           <Typography
             variant="overline"
@@ -979,6 +997,46 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
                 Confirmed
               </Typography>
             )}
+          {/* PO# rendered inline with the section header so the field strip
+              below has more room for Account / Date / Job / Financials on a
+              single row. Missing PO mirrors the table column's yellow-pill
+              em-dash treatment. */}
+          {shift && (
+            <Stack direction="row" spacing={0.5} alignItems="baseline" sx={{ whiteSpace: 'nowrap' }}>
+              <Typography
+                variant="overline"
+                color="text.secondary"
+                sx={{ letterSpacing: 1.1, lineHeight: 1.4 }}
+              >
+                PO#
+              </Typography>
+              {(() => {
+                const po = shift.poNumber?.trim() || '';
+                if (po) {
+                  return (
+                    <Typography variant="body2" sx={{ fontWeight: 600, color: 'text.primary' }}>
+                      {po}
+                    </Typography>
+                  );
+                }
+                return (
+                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                    <Box
+                      component="span"
+                      sx={{
+                        backgroundColor: 'rgba(244, 180, 0, 0.20)',
+                        color: '#7A5C00',
+                        borderRadius: 0.5,
+                        px: 0.5,
+                      }}
+                    >
+                      —
+                    </Box>
+                  </Typography>
+                );
+              })()}
+            </Stack>
+          )}
         </Stack>
         <Stack direction="row" spacing={0.5} alignItems="center">
           {resolvedJobOrderId && (
@@ -1128,37 +1186,6 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
             )}
           </HeaderField>
 
-          <HeaderField label="PO#" sx={{ minWidth: 80 }}>
-            {(() => {
-              const po = shift?.poNumber?.trim() || '';
-              if (po) {
-                return (
-                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                    {po}
-                  </Typography>
-                );
-              }
-              // Soft yellow pill on the em-dash so a missing PO is
-              // scannable in the drawer header — mirrors the Shifts
-              // table column treatment.
-              return (
-                <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                  <Box
-                    component="span"
-                    sx={{
-                      backgroundColor: 'rgba(244, 180, 0, 0.20)',
-                      color: '#7A5C00',
-                      borderRadius: 0.5,
-                      px: 0.5,
-                    }}
-                  >
-                    —
-                  </Box>
-                </Typography>
-              );
-            })()}
-          </HeaderField>
-
           <HeaderField label="Date" sx={{ minWidth: 150 }}>
             <Typography variant="body2" sx={{ fontWeight: 500 }}>
               {shift?.dateLabel || '—'}
@@ -1166,6 +1193,16 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
             {shift?.timeLabel && shift.timeLabel !== '—' && (
               <Typography variant="caption" color="text.secondary">
                 {shift.timeLabel}
+              </Typography>
+            )}
+            {shift?.startDate && (
+              <Typography variant="caption" color="text.secondary">
+                Start: {formatDateLabel(shift.startDate)}
+              </Typography>
+            )}
+            {shift?.endDate && shift.endDate !== shift.startDate && (
+              <Typography variant="caption" color="text.secondary">
+                End: {formatDateLabel(shift.endDate)}
               </Typography>
             )}
           </HeaderField>
@@ -1254,7 +1291,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
             ] as const
           ).map((tab) => {
             const isActive = activeTab === tab.id;
-            return (
+            const tabButton = (
               <Button
                 key={tab.id}
                 variant="text"
@@ -1279,6 +1316,43 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
                 {tab.label}
               </Button>
             );
+            // Promotion tab gets a red exclamation badge when the JO has
+            // no `autoMessagingUserGroupIds` configured — without that,
+            // adding shifts to this JO won't notify any workers.
+            if (tab.id === 'promotion' && promotionMissingGroups) {
+              return (
+                <Tooltip
+                  key={tab.id}
+                  title="No notify user groups selected — new shifts won't notify any workers."
+                  placement="top"
+                >
+                  <Badge
+                    overlap="circular"
+                    anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+                    badgeContent={
+                      <Box
+                        sx={{
+                          width: 16,
+                          height: 16,
+                          borderRadius: '50%',
+                          bgcolor: 'error.main',
+                          color: 'white',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          border: '1.5px solid white',
+                        }}
+                      >
+                        <PriorityHighIcon sx={{ fontSize: 12 }} />
+                      </Box>
+                    }
+                  >
+                    {tabButton}
+                  </Badge>
+                </Tooltip>
+              );
+            }
+            return tabButton;
           })}
         </Box>
         {jobOrder && (
@@ -1375,6 +1449,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
                       }}
                       onCancel={onClose}
                       submitLabel="Add Shift"
+                      onJobOrderUpdated={refreshJobOrder}
                     />
                   </>
                 ) : (
@@ -1421,6 +1496,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
                           }}
                           onCancel={onClose}
                           submitLabel="Update Shift"
+                          onJobOrderUpdated={refreshJobOrder}
                         />
                       </>
                     )}

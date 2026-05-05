@@ -99,10 +99,17 @@ export async function persistMissingSutaFutaForJobOrderAndAccount(params: {
   jobOrder: Record<string, unknown>;
   hiringEntityName: string | null | undefined;
   userId: string | null | undefined;
+  /**
+   * When true, bypass the C1 hiring-entity gate. Use for explicit
+   * recruiter-initiated "Apply state default" actions where the
+   * recruiter has decided unemployment rates apply regardless of the
+   * entity classification.
+   */
+  force?: boolean;
 }): Promise<{ wroteJobOrder: boolean; wroteAccount: boolean }> {
-  const { tenantId, jobOrderId, jobOrder, hiringEntityName, userId } = params;
+  const { tenantId, jobOrderId, jobOrder, hiringEntityName, userId, force } = params;
 
-  if (!isC1UnemploymentPricingEntity(hiringEntityName ?? undefined)) {
+  if (!force && !isC1UnemploymentPricingEntity(hiringEntityName ?? undefined)) {
     return { wroteJobOrder: false, wroteAccount: false };
   }
 
