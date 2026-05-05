@@ -337,6 +337,7 @@ describe('runBackfillGigJobOrdersForNationalAccount — guards', () => {
         jobOrderSeq: number;
         assignedRecruiterUids: string[];
         childAccountName: string;
+        autoCreatedUserGroupId: string | null;
       } | null> => {
         calls += 1;
         if (args.childAccountId === 'acc_child_BAD') {
@@ -348,6 +349,7 @@ describe('runBackfillGigJobOrdersForNationalAccount — guards', () => {
           jobOrderSeq: 1,
           assignedRecruiterUids: [],
           childAccountName: args.childAccountId,
+          autoCreatedUserGroupId: null,
         };
       },
     });

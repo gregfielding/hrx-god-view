@@ -309,6 +309,7 @@ export { onChildAccountCreatedAutoCreateGigJobOrder } from './jobOrders/onChildA
 export { onJobOrderCreatedAttachAutoUserGroup } from './jobOrders/onJobOrderCreatedAttachAutoUserGroup';
 export { onJobOrderUpdatedSyncAutoUserGroup } from './jobOrders/onJobOrderUpdatedSyncAutoUserGroup';
 export { backfillAutoUserGroupAttachments } from './jobOrders/backfillAutoUserGroupAttachments';
+export { backfillAutoGigJobOrderCompliance } from './jobOrders/backfillAutoGigJobOrderCompliance';
 export { backfillGigJobOrdersForNationalAccount } from './jobOrders/backfillGigJobOrdersForNationalAccount';
 export { gigJobOrderStatusCron } from './jobOrders/gigJobOrderStatusCron';
 export { syncHiringEntityFromNationalAccount } from './jobOrders/syncHiringEntityFromNationalAccount';

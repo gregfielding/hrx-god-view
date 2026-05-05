@@ -83,6 +83,12 @@ function w2Cascade(): ResolvedCascadeValues {
     ],
     workersCompCode: '8015',
     flatMarkupPercent: 38,
+    // 2026-05-05 — `accountOrderDetails` / `attachmentFiles` extend the
+    // resolved cascade so the builder can flow account-level Compliance
+    // Defaults + file uploads onto the JO. Default fixture stays empty so
+    // existing tests still assert "no compliance defaults set" semantics
+    // and the new fields don't leak into unrelated assertions.
+    attachmentFiles: [],
   };
 }
 
@@ -169,8 +175,13 @@ describe('buildGigJobOrderFromChildAccount — happy path', () => {
     );
     expect(childAccountName).to.equal('CORT Baltimore Warehouse');
     expect(jobOrderData.jobTitle).to.equal('Event Worker');
-    // F.4 chain: no National defaults → cascaded position description.
-    expect(jobOrderData.jobDescription).to.equal('Furniture handling at events');
+    // F.4 chain (CC.B 2026-05-05): cascade-resolved description lands on
+    // `jobDescriptionFromClient` (the prompt-input field), not
+    // `jobDescription` (the AI-generated public-facing copy, which the
+    // recruiter generates via "Generate Job Description" on the Jobs Board
+    // tab and stays empty on auto-create).
+    expect(jobOrderData.jobDescription).to.equal('');
+    expect(jobOrderData.jobDescriptionFromClient).to.equal('Furniture handling at events');
 
     // Status / type / marker
     expect(jobOrderData.status).to.equal('on_hold');
@@ -298,7 +309,8 @@ describe('buildGigJobOrderFromChildAccount — happy path', () => {
     });
     const { jobOrderData } = buildGigJobOrderFromChildAccount(input);
     expect(jobOrderData.jobTitle).to.equal('Warehouse Associate');
-    expect(jobOrderData.jobDescription).to.equal('Greg seed copy for CORT gig JOs.');
+    expect(jobOrderData.jobDescription).to.equal('');
+    expect(jobOrderData.jobDescriptionFromClient).to.equal('Greg seed copy for CORT gig JOs.');
   });
 
   it('F.4 — only National title set: description falls back to position', () => {
@@ -310,7 +322,8 @@ describe('buildGigJobOrderFromChildAccount — happy path', () => {
     });
     const { jobOrderData } = buildGigJobOrderFromChildAccount(input);
     expect(jobOrderData.jobTitle).to.equal('Warehouse Associate');
-    expect(jobOrderData.jobDescription).to.equal('Furniture handling at events');
+    expect(jobOrderData.jobDescription).to.equal('');
+    expect(jobOrderData.jobDescriptionFromClient).to.equal('Furniture handling at events');
   });
 
   it('F.4 — neither National default nor usable position description → empty string', () => {
@@ -334,6 +347,7 @@ describe('buildGigJobOrderFromChildAccount — happy path', () => {
     const { jobOrderData } = buildGigJobOrderFromChildAccount(input);
     expect(jobOrderData.jobTitle).to.equal('Event Worker');
     expect(jobOrderData.jobDescription).to.equal('');
+    expect(jobOrderData.jobDescriptionFromClient).to.equal('');
   });
 
   it('source field tracks which path produced the JO', () => {
@@ -379,6 +393,7 @@ describe('buildGigJobOrderFromChildAccount — edge cases', () => {
     const { jobOrderData } = buildGigJobOrderFromChildAccount(input);
     expect(jobOrderData.jobTitle).to.equal(DEFAULT_GIG_JOB_TITLE);
     expect(jobOrderData.jobDescription).to.equal('');
+    expect(jobOrderData.jobDescriptionFromClient).to.equal('');
     expect(jobOrderData.payRate).to.equal(0);
     // No explicit bill rate, no markup, no pay → bill rate falls to 0.
     expect(jobOrderData.billRate).to.equal(0);
@@ -502,6 +517,162 @@ describe('buildGigJobOrderFromChildAccount — edge cases', () => {
     });
     const { jobOrderData } = buildGigJobOrderFromChildAccount(input);
     expect(jobOrderData.workersCompCode).to.equal('POSITION_WIN');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// 2026-05-05 — account-level Compliance Defaults + attachments propagation
+// ─────────────────────────────────────────────────────────────────────
+//
+// Pre-fix, the auto-JO only read compliance arrays from the lead position's
+// `orderDetails`, so anything the National (or child) typed into the
+// Cascading Data → Compliance Defaults section never reached the JO. These
+// tests pin the new layering: position OD overlays account-level merged OD,
+// which overlays the engine-resolved `additionalScreenings`. They also
+// exercise the widened `jobDescription` fallback chain Greg's CORT setup
+// surfaced (description on the position row's `jobDescriptionFromClient`).
+
+describe('buildGigJobOrderFromChildAccount — account compliance + attachments', () => {
+  it('writes account-level compliance arrays onto the JO when no position override is set', () => {
+    const { jobOrderData } = buildGigJobOrderFromChildAccount(
+      makeInput({
+        cascade: {
+          ...w2Cascade(),
+          accountOrderDetails: {
+            physicalRequirements: ['Lifting 50 lbs', 'Standing'],
+            skillsRequired: ['Forklift'],
+            languagesRequired: ['English'],
+            ppeRequirements: ['Steel-Toe Boots'],
+            ppeProvidedBy: 'worker',
+            licensesCerts: ['OSHA 10'],
+            educationRequired: 'High school diploma',
+            experienceRequired: '1+ year warehouse',
+            customUniformRequirements: 'Red CORT shirt provided onsite',
+            requirementPackId: 'pack_warehouse_default',
+            dressCode: ['Casual'],
+          },
+          attachmentFiles: [
+            { name: 'CORT Worker FAQ.pdf', label: 'Worker FAQ', url: 'https://...', uploadedAt: 1715000000000 },
+          ],
+        },
+      }),
+    );
+
+    expect(jobOrderData.physicalRequirements).to.deep.equal(['Lifting 50 lbs', 'Standing']);
+    expect(jobOrderData.skillsRequired).to.deep.equal(['Forklift']);
+    expect(jobOrderData.languagesRequired).to.deep.equal(['English']);
+    expect(jobOrderData.ppeRequirements).to.deep.equal(['Steel-Toe Boots']);
+    expect(jobOrderData.ppeProvidedBy).to.equal('worker');
+    expect(jobOrderData.licensesCerts).to.deep.equal(['OSHA 10']);
+    // requiredCertifications mirrors licensesCerts so legacy readers see the same list.
+    expect(jobOrderData.requiredCertifications).to.deep.equal(['OSHA 10']);
+    expect(jobOrderData.educationRequired).to.equal('High school diploma');
+    expect(jobOrderData.experienceRequired).to.equal('1+ year warehouse');
+    expect(jobOrderData.customUniformRequirements).to.equal('Red CORT shirt provided onsite');
+    expect(jobOrderData.requirementPackId).to.equal('pack_warehouse_default');
+    expect(jobOrderData.dressCode).to.deep.equal(['Casual']);
+    expect(jobOrderData.attachments).to.deep.equal({
+      files: [
+        { name: 'CORT Worker FAQ.pdf', label: 'Worker FAQ', url: 'https://...', uploadedAt: 1715000000000 },
+      ],
+    });
+  });
+
+  it('position orderDetails wins over account-level for the same field', () => {
+    const { jobOrderData } = buildGigJobOrderFromChildAccount(
+      makeInput({
+        cascade: {
+          ...w2Cascade(),
+          accountOrderDetails: {
+            physicalRequirements: ['Lifting 50 lbs'],
+            skillsRequired: ['Forklift'],
+          },
+          positions: [
+            {
+              positionId: 'p_event',
+              jobTitle: 'Event Worker',
+              jobDescription: 'Furniture handling at events',
+              payRate: 18,
+              billRate: 24.84,
+              markupPercentage: 38,
+              workersCompCode: '8015',
+              workersCompRate: 9.15,
+              orderDetails: {
+                physicalRequirements: ['Lifting 75 lbs'],
+                // skillsRequired intentionally omitted — account value should still win through.
+              },
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(jobOrderData.physicalRequirements).to.deep.equal(['Lifting 75 lbs']);
+    expect(jobOrderData.skillsRequired).to.deep.equal(['Forklift']);
+  });
+
+  it('falls back to position.jobDescriptionFromClient when nothing earlier in the chain has a value', () => {
+    const { jobOrderData } = buildGigJobOrderFromChildAccount(
+      makeInput({
+        parentAccount: {
+          ...fullCascadeParent(),
+          // no defaultGigJobDescription
+        },
+        cascade: {
+          ...w2Cascade(),
+          positions: [
+            {
+              positionId: 'p_event',
+              jobTitle: 'Event Worker',
+              // no jobDescription
+              jobDescriptionFromClient:
+                'Client-pasted description from the National pricing row.',
+              payRate: 18,
+              billRate: 24.84,
+              markupPercentage: 38,
+            } as ResolvedPosition & { jobDescriptionFromClient?: string },
+          ],
+        },
+      }),
+    );
+
+    expect(jobOrderData.jobDescription).to.equal('');
+    expect(jobOrderData.jobDescriptionFromClient).to.equal(
+      'Client-pasted description from the National pricing row.',
+    );
+  });
+
+  it('falls back to childAccount.defaultGigJobDescription when the National had none', () => {
+    const { jobOrderData } = buildGigJobOrderFromChildAccount(
+      makeInput({
+        parentAccount: { ...fullCascadeParent() },
+        childAccount: {
+          ...fullCascadeChild(),
+          defaultGigJobDescription: 'Child-level seed description.',
+        } as AccountDoc & { id: string; defaultGigJobDescription?: string },
+        cascade: {
+          ...w2Cascade(),
+          positions: [
+            {
+              positionId: 'p_event',
+              jobTitle: 'Event Worker',
+              // no jobDescription, no jobDescriptionFromClient
+              payRate: 18,
+              billRate: 24.84,
+              markupPercentage: 38,
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(jobOrderData.jobDescription).to.equal('');
+    expect(jobOrderData.jobDescriptionFromClient).to.equal('Child-level seed description.');
+  });
+
+  it('writes empty `attachments.files: []` when neither account has attachments', () => {
+    const { jobOrderData } = buildGigJobOrderFromChildAccount(makeInput());
+    expect(jobOrderData.attachments).to.deep.equal({ files: [] });
   });
 });
 

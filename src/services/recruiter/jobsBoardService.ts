@@ -27,6 +27,30 @@ export function isJobOrderBoardLiveStatus(status: unknown): boolean {
   return normalizeJobOrderStatusValue(status) === 'open';
 }
 
+/**
+ * Drop top-level keys whose value is `undefined` from a plain object.
+ *
+ * The Firestore Web SDK rejects `updateDoc()` payloads that contain explicit
+ * `undefined` values unless the instance was created with
+ * `ignoreUndefinedProperties: true`. We DO set that flag in `firebase.ts`, but
+ * relying on it is fragile — e.g. CRA Fast-Refresh can occasionally drop us
+ * into the `getFirestore(app)` fallback path where the flag isn't honored,
+ * which is what produces "Unsupported field value: undefined" surfacing
+ * during shift-edit sync to job postings.
+ *
+ * Strip explicitly so the shape is correct regardless of the runtime's
+ * forgiveness setting. Returns the same nominal type because `T` doesn't
+ * track which keys are present at runtime — TS optional-undefined and
+ * "missing key" are interchangeable for downstream consumers.
+ */
+function omitUndefined<T extends object>(obj: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out as T;
+}
+
 /** Coerce Firestore / legacy values to string[] for multi-select job post fields (handles nested arrays from bad merges). */
 export const coerceStringArrayField = (value: unknown): string[] => {
   if (value == null) return [];
@@ -504,7 +528,7 @@ export class JobsBoardService {
         const endDate = (data.endDate || '').toString();
         const isMulti = data?.shiftMode === 'multi' && !!endDate && endDate !== startDate;
 
-        shifts.push({
+        shifts.push(omitUndefined<JobBoardShift>({
           shiftId: d.id,
           shiftTitle: data.shiftTitle || 'Unnamed Shift',
           shiftDate: startDate, // ISO date string
@@ -526,7 +550,7 @@ export class JobsBoardService {
           shiftTitle_i18n: data.shiftTitle_i18n,
           shiftDescription_i18n: data.shiftDescription_i18n,
           defaultJobTitle_i18n: data.defaultJobTitle_i18n,
-        });
+        }));
       });
 
       // Sort by date
@@ -606,7 +630,7 @@ export class JobsBoardService {
         const endDate = (data.endDate || '').toString();
         const isMulti = data?.shiftMode === 'multi' && !!endDate && endDate !== startDate;
 
-        shiftsRaw.push({
+        shiftsRaw.push(omitUndefined<JobBoardShift>({
           shiftId: d.id,
           shiftTitle: data.shiftTitle || 'Unnamed Shift',
           shiftDate: startDate, // ISO date string
@@ -628,7 +652,7 @@ export class JobsBoardService {
           shiftTitle_i18n: data.shiftTitle_i18n,
           shiftDescription_i18n: data.shiftDescription_i18n,
           defaultJobTitle_i18n: data.defaultJobTitle_i18n,
-        });
+        }));
       });
 
       const shifts = shiftsRaw

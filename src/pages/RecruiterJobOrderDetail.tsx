@@ -96,6 +96,7 @@ import {
   limit,
   deleteField,
   deleteDoc,
+  arrayUnion,
   type Firestore,
   type QueryDocumentSnapshot,
 } from 'firebase/firestore';
@@ -2643,11 +2644,52 @@ const JobOrderJobsBoardTab: React.FC<{
         await jobsBoardService.createPostsForGigJobOrderPositions(tenantId, jobOrder.id, userId);
         list = await jobsBoardService.getPostsByJobOrder(tenantId, jobOrder.id);
       }
+      // AG.0 reconciliation — if the JO carries an auto-created user group
+      // (`jobOrder.autoCreatedUserGroupId`) but a linked posting was created
+      // BEFORE that field was stamped on the JO (or before the AG.0/AG.1
+      // cascades existed), the posting won't have the group on
+      // `autoAddToUserGroups` and the recruiter sees an empty "Auto-Add to
+      // User Groups" field — even though Auto Messaging shows the same group
+      // correctly. Self-heal here so opening the tab is enough; idempotent
+      // (no writes if the group is already present).
+      const joAutoGroupId =
+        typeof (jobOrder as { autoCreatedUserGroupId?: string | null }).autoCreatedUserGroupId ===
+        'string'
+          ? ((jobOrder as { autoCreatedUserGroupId?: string | null }).autoCreatedUserGroupId || '')
+              .trim()
+          : '';
+      if (joAutoGroupId && list.length > 0) {
+        const stalePosts = list.filter((post) => {
+          const groups = Array.isArray(
+            (post as { autoAddToUserGroups?: string[] }).autoAddToUserGroups,
+          )
+            ? ((post as { autoAddToUserGroups?: string[] }).autoAddToUserGroups as string[])
+            : [];
+          return !groups.includes(joAutoGroupId);
+        });
+        if (stalePosts.length > 0) {
+          await Promise.all(
+            stalePosts.map((post) =>
+              updateDoc(doc(db, 'tenants', tenantId, 'job_postings', post.id), {
+                autoAddToUserGroups: arrayUnion(joAutoGroupId),
+                updatedAt: new Date(),
+              }),
+            ),
+          );
+          list = await jobsBoardService.getPostsByJobOrder(tenantId, jobOrder.id);
+        }
+      }
       setPosts(list);
     } catch (err) {
       console.error('Error loading job posts:', err);
     }
-  }, [jobOrder?.id, tenantId, userId, isGigWithPositions]);
+  }, [
+    jobOrder?.id,
+    (jobOrder as { autoCreatedUserGroupId?: string | null }).autoCreatedUserGroupId,
+    tenantId,
+    userId,
+    isGigWithPositions,
+  ]);
 
   useEffect(() => {
     loadPosts();
@@ -2737,8 +2779,14 @@ const JobOrderJobsBoardTab: React.FC<{
         showWorkersNeeded: existingPostForForm.showWorkersNeeded !== undefined ? existingPostForForm.showWorkersNeeded : false,
         skills: Array.isArray(existingPostForForm.skills) ? existingPostForForm.skills : (existingPostForForm.skills ? [existingPostForForm.skills] : []),
         uniformRequirements: Array.isArray(existingPostForForm.uniformRequirements) ? existingPostForForm.uniformRequirements : (existingPostForForm.uniformRequirements ? [existingPostForForm.uniformRequirements] : []),
-        jobDescription: savedDesc || accountJd || '',
-        jobDescriptionPrompt: savedPrompt || orderClientJd,
+        // CC.B (2026-05-05): client-provided / position-level JD belongs in
+        // the prompt, NOT the public-facing `jobDescription`. The public
+        // copy stays whatever the recruiter saved — empty until they hit
+        // "Generate Job Description". `accountJd` is the per-position
+        // pricing-row value; `orderClientJd` is the JO-level field which
+        // the auto-create flow now populates from the same cascade chain.
+        jobDescription: savedDesc,
+        jobDescriptionPrompt: savedPrompt || orderClientJd || accountJd || '',
       };
     }
 
@@ -2780,15 +2828,24 @@ const JobOrderJobsBoardTab: React.FC<{
       postTitle: jobOrder.jobOrderName || '',
       jobType: jobOrder.jobType || 'career',
       jobTitle: isGigJob && positionForPrefill ? positionForPrefill.jobTitle : jobOrder.jobTitle || '',
-      jobDescription: (() => {
+      // CC.B (2026-05-05): public-facing `jobDescription` stays empty on a
+      // never-saved post. Position-level pricing JD seeds the PROMPT below
+      // (the AI input), not this field, which is filled by the recruiter
+      // clicking "Generate Job Description" on the form.
+      jobDescription: '',
+      /**
+       * Mirrors Overview → "Job description from client" for AI / Jobs Board
+       * prompt. Falls back to the account Pricing position's JD when the JO
+       * itself doesn't carry one (defensive — auto-create now stamps
+       * `jobOrder.jobDescriptionFromClient` from the same source).
+       */
+      jobDescriptionPrompt: (() => {
+        const orderClientJd = String((jobOrder as any).jobDescriptionFromClient ?? '').trim();
+        if (orderClientJd) return orderClientJd;
         const titleKey = String(positionForPrefill?.jobTitle || jobOrder.jobTitle || '').trim();
         const row = titleKey ? accountPricingByTitle.get(titleKey) : undefined;
-        const fromAccount = row?.jobDescriptionFromClient?.trim();
-        if (fromAccount) return fromAccount;
-        return '';
+        return row?.jobDescriptionFromClient?.trim() ?? '';
       })(),
-      /** Mirrors Overview → "Job description from client" for AI / Jobs Board prompt */
-      jobDescriptionPrompt: String((jobOrder as any).jobDescriptionFromClient ?? '').trim(),
       companyId: jobOrder.companyId || '',
       companyName: jobOrder.companyName || '',
       worksiteId: jobOrder.worksiteId || '',

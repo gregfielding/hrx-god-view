@@ -70,6 +70,7 @@ import {
 import { resolveCascadedField } from '../shared/cascade/resolveCascadedField';
 import { shouldAutoCreateUserGroups } from '../accounts/nationalChildCascadeMerge';
 import { ensureAutoUserGroup } from '../userGroups/ensureAutoUserGroup';
+import { resolveSnapshotEnvelope } from './onJobOrderStatusTransitionSnapshot';
 
 const FieldValue = admin.firestore.FieldValue;
 
@@ -166,6 +167,35 @@ export interface ResolvedCascadeValues {
   workersCompCode: string;
   /** National-only flat markup; used as fallback when position has no own markup. */
   flatMarkupPercent?: number;
+  /**
+   * Account-level merged compliance defaults (parent → child), read from
+   * `orderDefaults.orderDetails` on each account. Carries every shared
+   * `RecruiterOrderDetailsData` field that the recruiter UI exposes on the
+   * Cascading Data → Compliance Defaults section: `physicalRequirements`,
+   * `skillsRequired`, `licensesCerts`, `languagesRequired`, `educationRequired`,
+   * `experienceRequired`, `ppeRequirements`, `ppeProvidedBy`, `dressCode`,
+   * `customUniformRequirements`, `requirementPackId`, etc.
+   *
+   * The pure builder layers position-row `orderDetails` ON TOP of this so a
+   * National's lead position can still override the account-level defaults
+   * for that one position. `undefined` when neither account carries
+   * `orderDefaults.orderDetails` — treated as `EMPTY_RECRUITER_ORDER_DETAILS`
+   * by the merger.
+   *
+   * Mirrors the client-side merge in
+   * `src/utils/recruiterAccountOrderDefaultsMerge.ts:fetchMergedRecruiterOrderDefaultsForJobOrder`
+   * (account layer only — the per-position overlay is applied in the builder).
+   */
+  accountOrderDetails?: RecruiterOrderDetailsData;
+  /**
+   * Account-level "Other Attachments" file metadata, resolved via the
+   * cascade engine (`registry.attachments`, strategy `'replace'`). Each
+   * entry is the raw `{ name?, label?, url?, uploadedAt? }` shape stored
+   * under `orderDefaults.staffInstructions.attachments.files`. Empty array
+   * when neither side carries attachments — explicit empty (not undefined)
+   * so the JO write deterministically clears any stale value.
+   */
+  attachmentFiles: unknown[];
 }
 
 /** Worksite address shape consumed by JO doc + downstream readiness. */
@@ -253,6 +283,45 @@ export function asFiniteNumber(value: unknown): number | undefined {
     return Number.isFinite(n) ? n : undefined;
   }
   return undefined;
+}
+
+/**
+ * Walk `orderDefaults.orderDetails` on an account doc and return it as the
+ * shared `RecruiterOrderDetailsData` shape, or `undefined` when nothing's
+ * there. Defensive against malformed docs (string, number, array at any of
+ * the path segments) — the recruiter UI tolerates the same drift.
+ */
+export function readAccountOrderDetails(
+  account: AccountDoc | undefined,
+): RecruiterOrderDetailsData | undefined {
+  if (!account || typeof account !== 'object') return undefined;
+  const od = (account as { orderDefaults?: unknown }).orderDefaults;
+  if (!od || typeof od !== 'object' || Array.isArray(od)) return undefined;
+  const details = (od as { orderDetails?: unknown }).orderDetails;
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return undefined;
+  return details as RecruiterOrderDetailsData;
+}
+
+/**
+ * Walk `orderDefaults.staffInstructions.attachments.files` on an account
+ * doc — the same nested path the cascade registry's `attachments` field
+ * is keyed to (`src/shared/cascade/loaders.ts:67`). Returns `[]` when any
+ * level of the path is missing or malformed; this keeps the cascade
+ * write deterministic (we always set the field, never leave a stale
+ * value).
+ */
+export function readAccountAttachmentFiles(
+  account: AccountDoc | undefined,
+): unknown[] {
+  if (!account || typeof account !== 'object') return [];
+  const od = (account as { orderDefaults?: unknown }).orderDefaults;
+  if (!od || typeof od !== 'object' || Array.isArray(od)) return [];
+  const si = (od as { staffInstructions?: unknown }).staffInstructions;
+  if (!si || typeof si !== 'object' || Array.isArray(si)) return [];
+  const att = (si as { attachments?: unknown }).attachments;
+  if (!att || typeof att !== 'object' || Array.isArray(att)) return [];
+  const files = (att as { files?: unknown }).files;
+  return Array.isArray(files) ? files : [];
 }
 
 /**
@@ -357,12 +426,42 @@ export function buildGigJobOrderFromChildAccount(
     trim(defaultPosition?.jobTitle) ||
     DEFAULT_GIG_JOB_TITLE;
 
-  // F.4 (CC.A audit): description follows the same cascade order as the
-  // title — National-account seed wins, then the cascaded position's
-  // description, then empty string (recruiter fills in on activation).
-  const fallbackJobDescription =
+  // F.4 (CC.A audit): description cascade order, broadened 2026-05-05 to
+  // pick up National-account inputs that aren't keyed to `defaultGigJobDescription`.
+  // Recruiters in the wild type the description into one of:
+  //   1. `parentAccount.defaultGigJobDescription` (the dedicated NA Cascading
+  //      Data → Automations textarea) — original source.
+  //   2. The lead position's `jobDescription` (the per-position description
+  //      stored on `pricing.positions[i].jobDescription`).
+  //   3. The lead position's `jobDescriptionFromClient` (alt key the
+  //      position-row form persists when the recruiter pastes a client-
+  //      provided description; see `accountPricingForJobOrder.ts:42`).
+  //   4. `childAccount.defaultGigJobDescription` (occasionally set on the
+  //      child instead of the parent for child-overrides).
+  //   5. `childAccount.jobDescription` / `parentAccount.jobDescription`
+  //      (legacy top-level field on a few imported accounts).
+  // Empty string only when none of the above produced text.
+  //
+  // 2026-05-05 (CC.B): the resolved value lands on `jobOrder.jobDescriptionFromClient`
+  // — *not* `jobOrder.jobDescription`. The latter is the AI-generated public-
+  // facing posting copy (Overview tab leaves it untouched; Jobs Board tab
+  // calls "Generate Job Description" to produce it). The former is the prompt
+  // input the recruiter pasted from the client. Earlier auto-create versions
+  // wrote the prompt into `jobDescription`, which then bled through
+  // `jobsBoardService.createPostFromJobOrder` (`jobDescription: jobOrder.jobDescription`)
+  // and `getInitialDataStatic`'s `jobDescription: savedDesc || accountJd` into
+  // the public-facing posting field. This restores the intended split.
+  const positionJobDescriptionFromClient = trim(
+    (defaultPosition as { jobDescriptionFromClient?: unknown } | null | undefined)
+      ?.jobDescriptionFromClient,
+  );
+  const fallbackClientJobDescription =
     trim(parentAccount.defaultGigJobDescription) ||
     trim(defaultPosition?.jobDescription) ||
+    positionJobDescriptionFromClient ||
+    trim((childAccount as { defaultGigJobDescription?: unknown }).defaultGigJobDescription) ||
+    trim((childAccount as { jobDescription?: unknown }).jobDescription) ||
+    trim((parentAccount as { jobDescription?: unknown }).jobDescription) ||
     '';
 
   const positionPayRate = defaultPosition
@@ -391,11 +490,24 @@ export function buildGigJobOrderFromChildAccount(
     posOdRaw && typeof posOdRaw === 'object'
       ? (posOdRaw as RecruiterOrderDetailsData)
       : undefined;
+  // Layer order (top → bottom):
+  //   position.orderDetails  (override)
+  //   account-level merged OD (parent → child) (broader cascade)
+  //   { additionalScreenings: cascade } (engine-resolved fallback)
+  //   EMPTY_RECRUITER_ORDER_DETAILS (defaults baseline)
+  // mergeRecruiterOrderDetails treats the first arg as override, second as
+  // base — chain twice so we end up with position-wins-over-account-wins-
+  // over-cascade-defaults semantics, matching how the client-side
+  // `fetchMergedRecruiterOrderDefaultsForJobOrder` resolves the same
+  // values for the JO form.
   const baseComplianceOd: RecruiterOrderDetailsData = {
     ...EMPTY_RECRUITER_ORDER_DETAILS,
     additionalScreenings: cascade.additionalScreenings,
   };
-  const mergedComplianceOd = mergeRecruiterOrderDetails(posOd, baseComplianceOd);
+  const accountPlusBase = cascade.accountOrderDetails
+    ? mergeRecruiterOrderDetails(cascade.accountOrderDetails, baseComplianceOd)
+    : baseComplianceOd;
+  const mergedComplianceOd = mergeRecruiterOrderDetails(posOd, accountPlusBase);
 
   const posScreeningId = trim(dp?.screeningPackageId);
   const cascadeScreeningId = cascade.screeningPackageId ? trim(cascade.screeningPackageId) : '';
@@ -487,7 +599,15 @@ export function buildGigJobOrderFromChildAccount(
 
     // Job details
     jobTitle: fallbackJobTitle,
-    jobDescription: fallbackJobDescription,
+    // `jobDescription` (AI-generated public-facing copy) intentionally left
+    // empty on auto-create. Recruiter clicks "Generate Job Description" on
+    // the Jobs Board tab to fill it from the prompt below.
+    jobDescription: '',
+    // `jobDescriptionFromClient` is the prompt input the recruiter pasted
+    // from the client (or that cascaded down from the position row). Reads
+    // back into the Overview tab's "Job Description from Client" field and
+    // seeds `posting.jobDescriptionPrompt` on the Jobs Board tab.
+    jobDescriptionFromClient: fallbackClientJobDescription,
     assignedRecruiters,
     payRate: positionPayRate ?? 0,
     billRate: computedBillRate,
@@ -516,9 +636,15 @@ export function buildGigJobOrderFromChildAccount(
     drugScreenRequired: false,
     backgroundCheckPackages: [],
 
-    // Empty defaults unless position `orderDetails` supplies values.
+    // Compliance — full RecruiterOrderDetailsData fan-out from
+    // `mergedComplianceOd` (position OD overlaid on the account-level
+    // cascade). Empty arrays / strings when neither layer supplied a value.
+    // Recruiter UI reads these flat fields directly on the JO doc; the
+    // matching `jo.snapshot.{...}` envelope is stamped post-write below
+    // so snapshot-aware consumers (`getEffectiveJobOrderField`) see the
+    // same resolved values.
     requiredLicenses: [],
-    requiredCertifications: [],
+    requiredCertifications: mergedComplianceOd.licensesCerts ?? [],
     licensesCerts: mergedComplianceOd.licensesCerts ?? [],
     languagesRequired: mergedComplianceOd.languagesRequired ?? [],
     skillsRequired: mergedComplianceOd.skillsRequired ?? [],
@@ -526,8 +652,20 @@ export function buildGigJobOrderFromChildAccount(
     ppeRequirements: mergedComplianceOd.ppeRequirements ?? [],
     ppeProvidedBy: hasPpeRows ? mergedComplianceOd.ppeProvidedBy ?? 'company' : 'company',
     dressCode: mergedComplianceOd.dressCode ?? [],
+    educationRequired: mergedComplianceOd.educationRequired ?? '',
+    experienceRequired: mergedComplianceOd.experienceRequired ?? '',
+    customUniformRequirements: mergedComplianceOd.customUniformRequirements ?? '',
+    requirementPackId: mergedComplianceOd.requirementPackId ?? '',
     contactRoles: [],
     companyContacts: [],
+
+    // "Other Attachments" (registry: `attachments` strategy `'replace'`).
+    // Stored at the JO under the same nested key the client-side reader
+    // expects when surfacing files on the JO Documents tab. The cascade
+    // engine writes these as a flat `files: []` blob; mirror that shape
+    // here so `attachments.files` paths resolve identically across snapshot
+    // and flat reads.
+    attachments: { files: cascade.attachmentFiles },
 
     // Traceability — `autoCreatedFrom` is read by the cron (only
     // auto-manage these JOs) and by the backfill idempotency check.
@@ -797,6 +935,27 @@ export async function resolveGigJobOrderCascade(args: {
     screeningPackageName = (odPkg.id === cascadeSidStr ? odPkg.name : '').trim() || null;
   }
 
+  // Account-level compliance defaults — child wins, parent fills. Mirrors
+  // the client-side merge in `recruiterAccountOrderDefaultsMerge.ts` so a
+  // recruiter sees identical resolved values whether they're looking at the
+  // Cascading Data tab on the child or at a freshly-spawned auto-JO.
+  const childAccountOd = readAccountOrderDetails(childAccount);
+  const parentAccountOd = readAccountOrderDetails(parentAccount);
+  const accountOrderDetails =
+    childAccountOd || parentAccountOd
+      ? mergeRecruiterOrderDetails(childAccountOd, parentAccountOd)
+      : undefined;
+
+  // Attachments — registry strategy is `'replace'`, child overrides parent
+  // outright. (We deliberately do NOT stack the two arrays; that's
+  // `union_with_remove` semantics, which the registry doesn't grant for
+  // `attachments` in v1.) Empty array when neither side has attachments
+  // so the cascade write deterministically clears any stale denorm.
+  const childFiles = readAccountAttachmentFiles(childAccount);
+  const attachmentFiles = childFiles.length > 0
+    ? childFiles
+    : readAccountAttachmentFiles(parentAccount);
+
   return {
     hiringEntityId,
     eVerifyRequired,
@@ -807,6 +966,8 @@ export async function resolveGigJobOrderCascade(args: {
     positions,
     workersCompCode,
     flatMarkupPercent,
+    accountOrderDetails,
+    attachmentFiles,
   };
 }
 
@@ -890,8 +1051,51 @@ export async function createGigJobOrderForChildAccount(args: {
       source,
     });
 
-  // ── Write ─────────────────────────────────────────────────────────
+  // ── Snapshot envelope (resolved before the write so we can ship it
+  // atomically with the JO doc — see comment block below) ─────────
+  //
+  // R.16.1's `onJobOrderStatusTransitionSnapshot` only fires on a
+  // `draft → non-draft` transition, but auto-JOs are created at
+  // `'on_hold'` so they never enter that codepath. Without an explicit
+  // capture here, recruiters see a JO whose snapshot envelope is empty
+  // until they bounce it through `'draft'` — exactly the symptom that
+  // physical requirements / file uploads / customUniformRequirements
+  // weren't reaching the JO. Run `resolveSnapshotEnvelope` BEFORE the
+  // write with the in-memory JO data as `preloadedJoData` (which causes
+  // `loadCascadeChain` to skip its own JO read; see
+  // `functions/src/shared/cascade/loaders.ts:204`), then merge the
+  // resulting envelope into `jobOrderData.snapshot` so the orchestrator
+  // performs exactly one initial write — preserving the "one write per
+  // JO create" contract the unit tests assert on.
+  //
+  // Failures are logged but never propagated — the JO is still usable
+  // without a snapshot, and the backfill script can re-stamp
+  // idempotently. We do NOT write an audit log entry here: the audit
+  // collection is reserved for transition events, and an auto-create
+  // isn't a transition.
   const jobOrderRef = db.collection(`tenants/${tenantId}/job_orders`).doc();
+  try {
+    const loaderCtx = createLoaderContext({ db });
+    const { envelope } = await resolveSnapshotEnvelope({
+      tenantId,
+      jobOrderId: jobOrderRef.id,
+      preloadedJoData: jobOrderData,
+      loaderCtx,
+    });
+    jobOrderData.snapshot = stripUndefined({
+      ...envelope,
+      capturedAt: FieldValue.serverTimestamp(),
+      capturedBy: 'auto_create',
+      lastPushedAt: null,
+    });
+  } catch (err) {
+    console.warn(
+      `[gig-jo.snapshot] resolveSnapshotEnvelope failed for childAccountId=${childAccountId}:`,
+      err,
+    );
+  }
+
+  // ── Write ─────────────────────────────────────────────────────────
   await jobOrderRef.set(stripUndefined(jobOrderData));
 
   // ── AG.0 — auto-group cascade (post-JO-write, fire-and-log) ───────
