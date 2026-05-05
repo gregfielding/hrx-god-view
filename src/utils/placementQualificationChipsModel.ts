@@ -255,6 +255,43 @@ export type PlacementEmploymentChipModel = {
 };
 
 /**
+ * Categories that contribute to entity-onboarding completeness. Used to
+ * surface "what's missing" in the Onboarding chip tooltip — distinct
+ * from the red blocker chips which already render
+ * `screening` / `certification` / hard_block items separately.
+ */
+const ONBOARDING_REQUIREMENT_CATEGORIES = new Set<string>([
+  'identity',
+  'employment',
+  'policies',
+]);
+
+/**
+ * List incomplete entity-onboarding requirement labels for the
+ * Onboarding chip tooltip. Includes the historically denylisted
+ * `payroll_setup` / `tax_form` / `handbook` / `policies` keys (those
+ * are deliberately not surfaced as red blocker chips because they're
+ * generic onboarding items, but the recruiter still needs to know they
+ * are outstanding).
+ */
+export function selectIncompleteOnboardingRequirementLabelsFromSnapshot(
+  requirements: ReadinessSnapshotV1Requirement[] | null | undefined,
+): string[] {
+  if (!requirements?.length) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const r of requirements) {
+    if (r.status === 'complete') continue;
+    if (!ONBOARDING_REQUIREMENT_CATEGORIES.has(String(r.category))) continue;
+    const label = (r.label || '').trim() || r.key;
+    if (seen.has(label)) continue;
+    seen.add(label);
+    out.push(label);
+  }
+  return out;
+}
+
+/**
  * Placement tiles: one chip per hiring entity from `entity_employments`.
  * Colors: amber = onboarding / in progress / review-ish; green = active/ready; red = terminated/inactive; neutral = unknown.
  */

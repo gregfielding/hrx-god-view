@@ -49,7 +49,16 @@ import {
   Science as ScienceIcon,
   History as HistoryIcon,
   OpenInNew as OpenInNewIcon,
+  PersonAddAlt1 as PersonAddIcon,
+  Build as SkillsIcon,
+  Translate as LanguagesIcon,
+  DirectionsCar as TransportCarIcon,
+  DirectionsTransit as TransportTransitIcon,
+  DirectionsBike as TransportBikeIcon,
+  DirectionsWalk as TransportWalkIcon,
+  MoreHoriz as TransportOtherIcon,
 } from '@mui/icons-material';
+import type { SvgIconComponent } from '@mui/icons-material';
 import {
   collection,
   query,
@@ -97,6 +106,7 @@ import {
   placementEmploymentChipFromEntityData,
   formatPlacementEmploymentChipWithEntityName,
   placementBlockerOptionsForRow,
+  selectIncompleteOnboardingRequirementLabelsFromSnapshot,
   selectPlacementBlockerLabelsWithOptionalEngine,
   selectPlacementCertBlockerLabelsLegacyFromSnapshot,
   type PlacementEmploymentChipModel,
@@ -199,6 +209,8 @@ interface Worker {
   };
   skills?: string[];
   languages?: string[];
+  /** `users.transportMethod` — same enum as Profile → Employment (Car / Public Transit / Bike / Walk / Other). */
+  transportMethod?: string;
   bio?: string;
   workHistory?: any[];
   employmentHistory?: any[];
@@ -244,13 +256,68 @@ interface Worker {
 
 const WORKER_DRAG_MIME = 'application/x-hrx-worker-id';
 
-/** `users/{uid}.scoreSummary.interviewLastScore10` — same source as Interview tab / recomputeInterviewScoreSummary. */
-function formatInterviewLastScore10(v: number | undefined): string | null {
-  if (v == null || !Number.isFinite(v)) return null;
-  return `${(Math.round(v * 10) / 10).toFixed(1)}/10`;
+/**
+ * Normalize a Firestore field that may hold either an array of strings or an
+ * array of `{ label | name | value }` objects (the shape used by the
+ * Skills/Languages UI). Mirrors the helper in `mapUserDataToRecruiterUser`.
+ * Returns a deduped string array preserving original order.
+ */
+function normalizeStringList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of raw) {
+    let label: string | null = null;
+    if (typeof item === 'string') {
+      label = item;
+    } else if (item && typeof item === 'object') {
+      const obj = item as Record<string, unknown>;
+      const v = obj.label ?? obj.name ?? obj.value;
+      if (typeof v === 'string') label = v;
+    }
+    if (!label) continue;
+    const trimmed = label.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+/** Mirror of `users.transportMethod` icon mapping in `RecordHeaderTransportMethodIcon`. */
+const PLACEMENT_TRANSPORT_BY_VALUE: Record<string, { Icon: SvgIconComponent; label: string }> = {
+  Car: { Icon: TransportCarIcon, label: 'Car' },
+  'Public Transit': { Icon: TransportTransitIcon, label: 'Public Transit' },
+  Bike: { Icon: TransportBikeIcon, label: 'Bike' },
+  Walk: { Icon: TransportWalkIcon, label: 'Walk' },
+  Other: { Icon: TransportOtherIcon, label: 'Other' },
+};
+
+function resolvePlacementTransport(raw: string | null | undefined): { Icon: SvgIconComponent; label: string } | null {
+  if (raw == null) return null;
+  const key = String(raw).trim();
+  if (!key) return null;
+  return PLACEMENT_TRANSPORT_BY_VALUE[key] ?? { Icon: TransportOtherIcon, label: key };
 }
 
 const placementQualChipSx = { height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } };
+
+/**
+ * Action chips/buttons in the bottom row (status, Confirm, Assign) sized to match
+ * `placementQualChipSx` so the bottom row reads as one consistent chip strip.
+ */
+const placementActionChipSx = {
+  height: 20,
+  fontWeight: 600,
+  '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' },
+  '& .MuiChip-icon': { fontSize: 12, marginLeft: '6px', marginRight: '-4px' },
+};
+
+const placementActionIconBtnSx = {
+  width: 20,
+  height: 20,
+  '& .MuiSvgIcon-root': { fontSize: 14 },
+};
 
 /** Match `placementScreeningIconSx` / readiness row (15px). */
 const placementProfileTileIconBtnSx = {
@@ -258,6 +325,197 @@ const placementProfileTileIconBtnSx = {
   color: 'text.secondary',
   '& .MuiSvgIcon-root': { fontSize: 15 },
 } as const;
+
+/**
+ * Resume URL resolution mirrors the `getResumeUrl()` closure in the Worker Pool tile;
+ * shared so the Assignment column can render the same resume icon without duplicating
+ * the storage-bucket fallback.
+ */
+function resolvePlacementResumeUrl(worker: Worker): string | null {
+  if (worker.resumeUrl) return worker.resumeUrl;
+  if (worker.resume?.downloadUrl) return worker.resume.downloadUrl;
+  if (worker.resume?.storagePath) {
+    return `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodeURIComponent(worker.resume.storagePath)}?alt=media`;
+  }
+  return null;
+}
+
+/**
+ * Compact profile signal strip: open-in-new + resume / bio / work-history /
+ * licenses / certs / skills / languages / transport icons. Rendered as the
+ * `leadingSlot` of `PlacementTileReadinessIconRow` so it sits inline with
+ * the BG / drug / history screening icons. Used by both Worker Pool and
+ * Assignment column tiles to keep them visually identical.
+ */
+function PlacementProfileActionIcons({
+  worker,
+  jobOrder,
+  onOpenResume,
+  onOpenLicenses,
+  onOpenCerts,
+}: {
+  worker: Worker;
+  jobOrder: JobOrder | null;
+  onOpenResume: (resumeUrl: string, fileName: string | undefined) => void;
+  onOpenLicenses: (licenses: any[]) => void;
+  onOpenCerts: (certs: any[]) => void;
+}) {
+  const resumeUrl = resolvePlacementResumeUrl(worker);
+  const hasBio = !!(worker.bio && worker.bio.trim().length > 0);
+  const hasWorkHistory = !!(worker.workHistory && worker.workHistory.length > 0);
+  const hasCerts = !!(worker.certifications && worker.certifications.length > 0);
+  const hasLicenses = !!(worker.licenses && worker.licenses.length > 0);
+  const transport = resolvePlacementTransport(worker.transportMethod);
+
+  return (
+    <>
+      {/* Phase 5b — quiet "Inactive at N account(s)" signal, filtered to
+          exclude the current account the recruiter is already placing for. */}
+      <WorkforceInactiveElsewhereChip
+        entries={worker.inactiveAtAccounts}
+        currentAccountId={(jobOrder as any)?.recruiterAccountId ?? null}
+        iconOnly
+      />
+      <Tooltip title="Open user record in new tab" {...placementTileTooltipSlotProps}>
+        <IconButton
+          size="small"
+          sx={placementProfileTileIconBtnSx}
+          onClick={(e) => {
+            e.stopPropagation();
+            window.open(`/users/${worker.id}`, '_blank', 'noopener,noreferrer');
+          }}
+          aria-label="Open user record in new tab"
+        >
+          <OpenInNewIcon />
+        </IconButton>
+      </Tooltip>
+      {resumeUrl ? (
+        <Tooltip title="View resume" {...placementTileTooltipSlotProps}>
+          <IconButton
+            size="small"
+            sx={placementProfileTileIconBtnSx}
+            onClick={() => onOpenResume(resumeUrl, worker.resume?.fileName)}
+            aria-label="View resume"
+          >
+            <ResumeIcon />
+          </IconButton>
+        </Tooltip>
+      ) : null}
+      {hasBio ? (
+        <Tooltip
+          title={
+            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', maxWidth: 320, color: '#fff' }}>
+              {worker.bio}
+            </Typography>
+          }
+          {...placementTileTooltipSlotProps}
+        >
+          <IconButton size="small" sx={placementProfileTileIconBtnSx} aria-label="View bio">
+            <BioIcon />
+          </IconButton>
+        </Tooltip>
+      ) : null}
+      {hasWorkHistory ? (
+        <Tooltip
+          title={
+            <Box sx={{ maxWidth: 340 }}>
+              <Typography variant="subtitle2" sx={{ mb: 0.5, color: '#fff', fontWeight: 600 }}>
+                Work history
+              </Typography>
+              {worker.workHistory?.slice(0, 3).map((job: any, idx: number) => (
+                <Typography key={idx} variant="caption" display="block" sx={{ color: '#fff' }}>
+                  {job.position || job.title || job.role || 'Position'}
+                  {job.company ? ` at ${job.company}` : ''}
+                </Typography>
+              ))}
+            </Box>
+          }
+          {...placementTileTooltipSlotProps}
+        >
+          <IconButton size="small" sx={placementProfileTileIconBtnSx} aria-label="View work history">
+            <WorkHistoryIcon />
+          </IconButton>
+        </Tooltip>
+      ) : null}
+      {hasLicenses ? (
+        <Tooltip
+          title={`${worker.licenses?.length} license${(worker.licenses?.length || 0) > 1 ? 's' : ''} on profile`}
+          {...placementTileTooltipSlotProps}
+        >
+          <IconButton
+            size="small"
+            sx={placementProfileTileIconBtnSx}
+            onClick={() => onOpenLicenses(worker.licenses || [])}
+            aria-label="View licenses"
+          >
+            <LicenseIcon />
+          </IconButton>
+        </Tooltip>
+      ) : null}
+      {hasCerts ? (
+        <Tooltip title="View profile certifications" {...placementTileTooltipSlotProps}>
+          <IconButton
+            size="small"
+            sx={placementProfileTileIconBtnSx}
+            onClick={() => onOpenCerts(worker.certifications || [])}
+            aria-label="View certifications"
+          >
+            <ProfileCertsIcon />
+          </IconButton>
+        </Tooltip>
+      ) : null}
+      {worker.skills?.length ? (
+        <Tooltip
+          title={
+            <Box sx={{ maxWidth: 320 }}>
+              <Typography variant="caption" fontWeight={700} display="block" sx={{ mb: 0.5, color: '#fff' }}>
+                {worker.skills.length} skill{worker.skills.length === 1 ? '' : 's'}
+              </Typography>
+              <Typography variant="caption" display="block" sx={{ color: '#fff' }}>
+                {worker.skills.join(', ')}
+              </Typography>
+            </Box>
+          }
+          {...placementTileTooltipSlotProps}
+        >
+          <IconButton size="small" sx={placementProfileTileIconBtnSx} aria-label="View skills">
+            <SkillsIcon />
+          </IconButton>
+        </Tooltip>
+      ) : null}
+      {worker.languages?.length ? (
+        <Tooltip
+          title={
+            <Box sx={{ maxWidth: 320 }}>
+              <Typography variant="caption" fontWeight={700} display="block" sx={{ mb: 0.5, color: '#fff' }}>
+                {worker.languages.length} language{worker.languages.length === 1 ? '' : 's'}
+              </Typography>
+              <Typography variant="caption" display="block" sx={{ color: '#fff' }}>
+                {worker.languages.join(', ')}
+              </Typography>
+            </Box>
+          }
+          {...placementTileTooltipSlotProps}
+        >
+          <IconButton size="small" sx={placementProfileTileIconBtnSx} aria-label="View languages">
+            <LanguagesIcon />
+          </IconButton>
+        </Tooltip>
+      ) : null}
+      {transport ? (
+        <Tooltip title={`Transportation: ${transport.label}`} {...placementTileTooltipSlotProps}>
+          <IconButton
+            size="small"
+            sx={placementProfileTileIconBtnSx}
+            aria-label={`Transportation: ${transport.label}`}
+          >
+            <transport.Icon />
+          </IconButton>
+        </Tooltip>
+      ) : null}
+    </>
+  );
+}
 
 function placementScreeningIconSx(state: ScreeningSignalState, active: boolean): Record<string, unknown> {
   if (!active || state === 'na') return { fontSize: 15, color: 'text.disabled', opacity: 0.45 };
@@ -370,18 +628,56 @@ function PlacementQualificationChipsRow({
   employmentChip,
   blockerLabels,
   requiredCertStatuses = [],
+  onboardingMissingLabels = [],
 }: {
   employmentLoading: boolean;
   employmentChip: PlacementEmploymentChipModel;
   blockerLabels: string[];
   requiredCertStatuses?: PlacementRequiredCertStatus[];
+  /** Specific incomplete entity-onboarding requirements to surface in the chip's tooltip. */
+  onboardingMissingLabels?: string[];
 }) {
+  // Build a richer tooltip for the employment chip when we know the
+  // specific items still outstanding. Falls back to the canonical
+  // chip tooltip when nothing is missing (or it's already Active).
+  const employmentTooltip: React.ReactNode = (() => {
+    const baseText = employmentChip.tooltip || employmentChip.label;
+    if (!onboardingMissingLabels.length) return baseText;
+    return (
+      <Box sx={{ maxWidth: 320 }}>
+        <Typography variant="caption" sx={{ display: 'block', fontWeight: 600, color: '#fff', mb: 0.5 }}>
+          {baseText}
+        </Typography>
+        <Typography variant="caption" sx={{ display: 'block', fontWeight: 700, color: '#fff' }}>
+          Outstanding ({onboardingMissingLabels.length}):
+        </Typography>
+        <Box component="ul" sx={{ pl: 2, m: 0, color: '#fff' }}>
+          {onboardingMissingLabels.slice(0, 8).map((lab) => (
+            <Typography
+              key={lab}
+              component="li"
+              variant="caption"
+              sx={{ color: '#fff', lineHeight: 1.35 }}
+            >
+              {lab}
+            </Typography>
+          ))}
+          {onboardingMissingLabels.length > 8 && (
+            <Typography component="li" variant="caption" sx={{ color: '#fff', fontStyle: 'italic' }}>
+              + {onboardingMissingLabels.length - 8} more…
+            </Typography>
+          )}
+        </Box>
+      </Box>
+    );
+  })();
+
   return (
     <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
       {employmentLoading ? (
         <Chip size="small" label="…" variant="outlined" sx={placementQualChipSx} />
       ) : (
-        <Tooltip title={employmentChip.tooltip || employmentChip.label} {...placementTileTooltipSlotProps}>
+        <Tooltip title={employmentTooltip} {...placementTileTooltipSlotProps}>
           <Chip
             size="small"
             label={employmentChip.label}
@@ -430,6 +726,7 @@ function PlacementWorkerTileMainColumn({
   entityEmploymentByUserId,
   placementEntityEmploymentLoading,
   blockerLabels,
+  onboardingMissingLabels,
   row3,
   row4End,
   jobOrder,
@@ -437,12 +734,17 @@ function PlacementWorkerTileMainColumn({
   requiredCertStatuses,
   jobReadinessChipData,
   onJobReadinessItemClick,
+  headerLeading,
+  actions,
+  actionsSubline,
 }: {
   worker: Worker;
   hiringEntityName: string | null | undefined;
   entityEmploymentByUserId: Map<string, Record<string, unknown>>;
   placementEntityEmploymentLoading: boolean;
   blockerLabels: string[];
+  /** Specific incomplete entity-onboarding requirement labels for the Onboarding chip tooltip. */
+  onboardingMissingLabels?: string[];
   row3: React.ReactNode;
   row4End?: React.ReactNode;
   jobOrder: JobOrder | null;
@@ -467,8 +769,13 @@ function PlacementWorkerTileMainColumn({
     assignmentId: string | null | undefined,
     contributor: JobReadinessChipContributor,
   ) => void;
+  /** Optional slot rendered before the name in the header row (e.g. selection checkbox). */
+  headerLeading?: React.ReactNode;
+  /** Optional action buttons/chips appended to the bottom chips row (left-to-right). */
+  actions?: React.ReactNode;
+  /** Optional sub-line rendered below the bottom chips/actions row (e.g. confirmed-on date). */
+  actionsSubline?: React.ReactNode;
 }) {
-  const interviewLabel = formatInterviewLastScore10(worker.interviewLastScore10);
   const jf = worker.placementJobFitScore;
   const showJobFit = jf != null && Number.isFinite(jf);
   const employmentChip = formatPlacementEmploymentChipWithEntityName(
@@ -502,73 +809,69 @@ function PlacementWorkerTileMainColumn({
     >
       <Box
         sx={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1fr) auto',
-          alignItems: 'start',
-          columnGap: 1,
-          rowGap: 0.15,
+          display: 'flex',
+          alignItems: 'center',
+          columnGap: 0.5,
           width: '100%',
           minWidth: 0,
         }}
       >
-        <Typography variant="body2" fontWeight={600} noWrap sx={{ minWidth: 0 }}>
-          {worker.displayName}
-        </Typography>
+        {headerLeading}
         <Box
           sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'flex-end',
-            justifySelf: 'end',
-            justifyContent: 'flex-start',
-            gap: 0.15,
-            textAlign: 'right',
+            flex: 1,
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) auto',
+            alignItems: 'baseline',
+            columnGap: 1,
             minWidth: 0,
           }}
         >
+          <Typography variant="body2" fontWeight={600} noWrap sx={{ minWidth: 0 }}>
+            {worker.displayName}
+          </Typography>
           {showMaster ? (
-            <Box sx={{ display: 'flex', width: '100%', justifyContent: 'flex-end', minWidth: 0 }}>
-              <Tooltip
-                title={
-                  <Box sx={{ maxWidth: 300 }}>
-                    <Typography variant="caption" fontWeight={700} display="block" sx={{ mb: 0.5, color: '#fff' }}>
-                      Master score
-                    </Typography>
-                    <Typography variant="caption" display="block" sx={{ whiteSpace: 'pre-wrap', color: '#fff' }}>
-                      {worker.recruiterMasterSummary || 'Blended category, interview, and profile inputs (same as Users table).'}
-                    </Typography>
-                  </Box>
-                }
-                placement="top"
-                enterDelay={300}
-                {...placementTileTooltipSlotProps}
-              >
-                <Box
-                  component="span"
-                  sx={{
-                    display: 'inline-flex',
-                    alignItems: 'baseline',
-                    gap: 0.35,
-                    cursor: 'default',
-                  }}
-                >
-                  <Typography
-                    component="span"
-                    sx={{ fontWeight: 800, fontSize: '0.9rem', lineHeight: 1, color: gradeColor }}
-                  >
-                    {grade}
+            <Tooltip
+              title={
+                <Box sx={{ maxWidth: 300 }}>
+                  <Typography variant="caption" fontWeight={700} display="block" sx={{ mb: 0.5, color: '#fff' }}>
+                    Master score
                   </Typography>
-                  <Typography variant="caption" fontWeight={700} color="text.primary" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {Math.round(ms)}
+                  <Typography variant="caption" display="block" sx={{ whiteSpace: 'pre-wrap', color: '#fff' }}>
+                    {worker.recruiterMasterSummary || 'Blended category, interview, and profile inputs (same as Users table).'}
                   </Typography>
                 </Box>
-              </Tooltip>
-            </Box>
-          ) : null}
-          {interviewLabel ? (
-            <Typography variant="caption" color="primary" fontWeight={600} sx={{ lineHeight: 1.2, textAlign: 'right' }}>
-              Int {interviewLabel}
-            </Typography>
+              }
+              placement="top"
+              enterDelay={300}
+              {...placementTileTooltipSlotProps}
+            >
+              <Box
+                component="span"
+                sx={{
+                  display: 'inline-flex',
+                  alignItems: 'baseline',
+                  gap: 0.35,
+                  cursor: 'default',
+                  justifySelf: 'end',
+                }}
+              >
+                <Typography
+                  component="span"
+                  sx={{ fontWeight: 800, fontSize: '0.9rem', lineHeight: 1, color: gradeColor }}
+                >
+                  {grade}
+                </Typography>
+                <Typography
+                  variant="caption"
+                  fontWeight={700}
+                  color="text.primary"
+                  sx={{ fontVariantNumeric: 'tabular-nums' }}
+                >
+                  {Math.round(ms)}
+                </Typography>
+              </Box>
+            </Tooltip>
           ) : null}
         </Box>
       </Box>
@@ -577,6 +880,9 @@ function PlacementWorkerTileMainColumn({
           Job fit {Math.round(jf)}/100
         </Typography>
       ) : null}
+      {/* TEMP — model-based no-show risk hidden until HRX time-tracking
+          backed counts replace the placeholder. Re-enable when shift counts
+          (worked vs. no-show) are wired into `placementNoShowRisk`.
       {worker.placementNoShowRisk ? (
         <Tooltip
           title="Model-based no-show risk from application/assignment data. Counts of worked shifts vs. no-shows from HRX time tracking will appear here when available."
@@ -589,11 +895,15 @@ function PlacementWorkerTileMainColumn({
           </Typography>
         </Tooltip>
       ) : null}
+      */}
       {row3}
-      {/* R.4 — Job Readiness chip. Aggregates assignment + employee readiness items (cross-collection)
-          via the persisted snapshot.jobReadinessChip; pure presentation here. */}
-      {worker.assignmentId && (
-        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+      <PlacementTileReadinessIconRow jobOrder={jobOrder} worker={worker} leadingSlot={profileActionIcons} />
+      {/* Bottom row: Job Readiness chip + qualification chips on the left,
+          action buttons right-justified. The Job Readiness chip aggregates
+          assignment + employee readiness items (cross-collection) via the
+          persisted snapshot.jobReadinessChip; pure presentation here. */}
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.5 }}>
+        {worker.assignmentId ? (
           <JobReadinessChip
             data={jobReadinessChipData ?? null}
             size="sm"
@@ -603,18 +913,20 @@ function PlacementWorkerTileMainColumn({
                 : undefined
             }
           />
-        </Box>
-      )}
-      <PlacementTileReadinessIconRow jobOrder={jobOrder} worker={worker} leadingSlot={profileActionIcons} />
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.5 }}>
+        ) : null}
         <PlacementQualificationChipsRow
           employmentLoading={placementEntityEmploymentLoading}
           employmentChip={employmentChip}
           blockerLabels={blockerLabels}
           requiredCertStatuses={requiredCertStatuses}
+          onboardingMissingLabels={onboardingMissingLabels}
         />
         {row4End}
+        {actions ? (
+          <Box sx={{ ml: 'auto', display: 'flex', alignItems: 'center', gap: 0.5 }}>{actions}</Box>
+        ) : null}
       </Box>
+      {actionsSubline}
     </Box>
   );
 }
@@ -695,6 +1007,14 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   };
   const [assignmentRows, setAssignmentRows] = useState<AssignmentRow[]>([]);
   const [placementUserIds, setPlacementUserIds] = useState<Set<string>>(new Set());
+  /**
+   * Per-placement start date overrides (`tenants/{}/placements/{}.startDate`,
+   * YYYY-MM-DD). Lets recruiters edit a target start date BEFORE confirming
+   * the placement; the value is later passed as `applyDate` to
+   * `placementsCreateAssignments` so the server-side `effectiveStartDate`
+   * picks it up. Map keyed by `userId`.
+   */
+  const [placementStartDateByUserId, setPlacementStartDateByUserId] = useState<Map<string, string>>(new Map());
   const [userGroups, setUserGroups] = useState<Array<{ id: string; groupName: string }>>([]);
   const [confirmedApplicationsCount, setConfirmedApplicationsCount] = useState<number>(0);
   const [loading, setLoading] = useState(false);
@@ -745,9 +1065,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                      '';
     const resume = userData.resume || null;
     
-    // Extract skills and languages (ensure arrays)
-    const skills = Array.isArray(userData.skills) ? userData.skills : [];
-    const languages = Array.isArray(userData.languages) ? userData.languages : [];
+    // Extract skills and languages (ensure arrays of strings; profile data may
+    // store these as objects with `label`/`name`/`value`, mirroring
+    // mapUserDataToRecruiterUser).
+    const skills = normalizeStringList(userData.skills);
+    const languages = normalizeStringList(userData.languages);
     
     // Extract bio (could be from parsed resume or direct field)
     const bio = userData.bio || 
@@ -798,6 +1120,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       resume,
       skills,
       languages,
+      transportMethod: typeof userData.transportMethod === 'string' ? userData.transportMethod : undefined,
       bio,
       workHistory,
       employmentHistory: userData.employmentHistory || [],
@@ -989,48 +1312,96 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       return;
     }
     const allowed = new Set(assignmentIdsForReadinessSnapshot);
+    // Prune entries no longer in the visible set BEFORE the new
+    // listeners fire so a chip never lingers stale after a shift
+    // change.
     setReadinessSnapByAssignmentId((prev) => {
       const next = new Map(prev);
+      let mutated = false;
       for (const id of [...next.keys()]) {
-        if (!allowed.has(id)) next.delete(id);
+        if (!allowed.has(id)) {
+          next.delete(id);
+          mutated = true;
+        }
       }
-      return next;
+      return mutated ? next : prev;
     });
     setAssignmentJobOrderIdByAssignmentId((prev) => {
       const next = new Map(prev);
+      let mutated = false;
       for (const id of [...next.keys()]) {
-        if (!allowed.has(id)) next.delete(id);
+        if (!allowed.has(id)) {
+          next.delete(id);
+          mutated = true;
+        }
       }
-      return next;
+      return mutated ? next : prev;
     });
 
-    const unsubs = assignmentIdsForReadinessSnapshot.map((assignmentId) =>
-      onSnapshot(doc(db, 'tenants', tenantId, 'assignments', assignmentId), (snap) => {
-        setReadinessSnapByAssignmentId((prev) => {
-          const next = new Map(prev);
-          if (!snap.exists()) {
-            next.set(assignmentId, null);
-          } else {
-            const data = snap.data() as {
+    /**
+     * Perf (2026-05-04 — Greg): originally one `onSnapshot` per
+     * assignment, fanning N round-trips for the chip's first paint.
+     * On shift drawers with many placements that translated into 1+
+     * second of visible "computing…" chips while N independent
+     * snapshot callbacks fired, each producing its own React
+     * re-render of the entire PlacementsTab.
+     *
+     * Replaced with chunked `where(documentId(), 'in', [...])`
+     * snapshot queries (Firestore caps `in` at 30 entries). Now N
+     * docs land in O(N/30) round-trips with one state update per
+     * chunk, and `docChanges()` keeps incremental updates cheap.
+     */
+    const collRef = collection(db, 'tenants', tenantId, 'assignments');
+    const CHUNK = 30;
+    const chunks: string[][] = [];
+    for (let i = 0; i < assignmentIdsForReadinessSnapshot.length; i += CHUNK) {
+      chunks.push(assignmentIdsForReadinessSnapshot.slice(i, i + CHUNK));
+    }
+    const unsubs = chunks.map((chunk) =>
+      onSnapshot(
+        query(collRef, where(documentId(), 'in', chunk)),
+        (snap) => {
+          // Coalesce all per-chunk doc changes into a single
+          // setState per state slice so React batches.
+          const presentIds = new Set<string>();
+          const snapshotPatches: Array<[string, ReadinessSnapshotV1Firestore | null]> = [];
+          const jobOrderPatches: Array<[string, string | null]> = [];
+          snap.forEach((docSnap) => {
+            const id = docSnap.id;
+            presentIds.add(id);
+            const data = docSnap.data() as {
               readinessSnapshotV1?: ReadinessSnapshotV1Firestore;
+              jobOrderId?: string;
             };
-            next.set(assignmentId, data.readinessSnapshotV1 ?? null);
-          }
-          return next;
-        });
-        setAssignmentJobOrderIdByAssignmentId((prev) => {
-          const next = new Map(prev);
-          if (!snap.exists()) {
-            next.delete(assignmentId);
-          } else {
-            const data = snap.data() as { jobOrderId?: string };
+            snapshotPatches.push([id, data.readinessSnapshotV1 ?? null]);
             const jid = String(data.jobOrderId || '').trim();
-            if (jid) next.set(assignmentId, jid);
-            else next.delete(assignmentId);
-          }
-          return next;
-        });
-      })
+            jobOrderPatches.push([id, jid || null]);
+          });
+          // Any id we asked for but Firestore didn't return is a
+          // tombstone (deleted). Mark it so the chip stops rendering
+          // stale data.
+          const missing = chunk.filter((id) => !presentIds.has(id));
+
+          setReadinessSnapByAssignmentId((prev) => {
+            const next = new Map(prev);
+            for (const [id, val] of snapshotPatches) next.set(id, val);
+            for (const id of missing) next.set(id, null);
+            return next;
+          });
+          setAssignmentJobOrderIdByAssignmentId((prev) => {
+            const next = new Map(prev);
+            for (const [id, val] of jobOrderPatches) {
+              if (val) next.set(id, val);
+              else next.delete(id);
+            }
+            for (const id of missing) next.delete(id);
+            return next;
+          });
+        },
+        (err) => {
+          console.warn('Readiness snapshot listener error:', err);
+        },
+      ),
     );
     return () => unsubs.forEach((u) => u());
   }, [tenantId, assignmentIdsForReadinessKey]);
@@ -1193,6 +1564,22 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       jobOrder,
       engineCertBlockerLabelsByAssignmentId,
     ],
+  );
+
+  /**
+   * Incomplete entity-onboarding requirement labels (identity / employment /
+   * policies categories). Surfaced inside the Onboarding chip's tooltip so
+   * a recruiter can see *what* is outstanding without leaving the tile.
+   * Distinct from `placementBlockerLabelsForAssignmentId`, which only
+   * returns the items that warrant a separate red blocker chip.
+   */
+  const placementOnboardingMissingLabelsForAssignmentId = useCallback(
+    (assignmentId: string | undefined): string[] => {
+      if (!assignmentId) return [];
+      const reqs = readinessSnapByAssignmentId.get(assignmentId)?.requirements;
+      return selectIncompleteOnboardingRequirementLabelsFromSnapshot(reqs);
+    },
+    [readinessSnapByAssignmentId],
   );
 
   /**
@@ -1839,10 +2226,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   useEffect(() => {
     if (!tenantId || !selectedShiftId) {
       setPlacementUserIds(new Set());
+      setPlacementStartDateByUserId(new Map());
       return;
     }
 
     setPlacementUserIds(new Set());
+    setPlacementStartDateByUserId(new Map());
 
     const placementsRef = collection(db, 'tenants', tenantId, 'placements');
     const placementsQuery = query(placementsRef, where('shiftId', '==', selectedShiftId));
@@ -1851,17 +2240,21 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       { includeMetadataChanges: true },
       (snapshot) => {
         const ids = new Set<string>();
+        const startDates = new Map<string, string>();
         snapshot.docs.forEach((docSnap) => {
           const data = docSnap.data() as any;
           const userId = String(data?.userId || '');
           if (userId) {
             ids.add(userId);
             pendingPlacementAddsRef.current.delete(userId); // Confirmed by server
+            const sd = typeof data?.startDate === 'string' ? data.startDate.trim() : '';
+            if (sd && /^\d{4}-\d{2}-\d{2}$/.test(sd)) startDates.set(userId, sd);
           }
         });
         // Merge in optimistically added IDs so we don't overwrite with stale snapshot (race with local write)
         pendingPlacementAddsRef.current.forEach((id) => ids.add(id));
         setPlacementUserIds(ids);
+        setPlacementStartDateByUserId(startDates);
         // Clear pending cancels for workers now confirmed as placed by server
         setPendingAssignmentCancels((prev) => {
           if (prev.size === 0) return prev;
@@ -2000,6 +2393,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             : assignmentStatus
               ? 'accepted'
               : undefined;
+        // Placement-only workers get their start date from the placement doc
+        // (`placementStartDateByUserId`); workers with assignments use the
+        // assignment doc's startDate. Both feed the same `assignmentStartDate`
+        // field on Worker so display + edit logic stays unified.
+        const effectiveStartDate = isPlacementOnly
+          ? placementStartDateByUserId.get(userId)
+          : assignmentStartDateByUserId.get(userId);
         return {
           ...withFit,
           isAssignedToShift: true,
@@ -2007,7 +2407,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           assignmentStatus,
           assignmentId: assignmentIdByUserId.get(userId),
           confirmationStatus,
-          assignmentStartDate: assignmentStartDateByUserId.get(userId),
+          assignmentStartDate: effectiveStartDate,
           assignmentOfferSentAt: assignmentOfferSentAtByUserId.get(userId),
           assignmentConfirmedAt: assignmentConfirmedAtByUserId.get(userId),
         };
@@ -2034,6 +2434,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     selectedShiftId,
     assignedUserIds,
     placementUserIds,
+    placementStartDateByUserId,
     assignmentStatusByUserId,
     assignmentIdByUserId,
     assignmentStartDateByUserId,
@@ -2219,7 +2620,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     setConfirmingPlacementUserId(worker.id);
     try {
       setError(null);
-      await assignWorkersToShift([worker.id], selectedDay || undefined);
+      // Prefer the placement-specific start date the recruiter set via the
+      // edit pencil before hiring. Falls back to the day picker, then to the
+      // shift's default. The server's `placementsCreateAssignments` reads
+      // this as `applyDate` and uses it as `effectiveStartDate`.
+      const placementStartDate = placementStartDateByUserId.get(worker.id);
+      const dayOverride = placementStartDate || (selectedDay || undefined);
+      await assignWorkersToShift([worker.id], dayOverride);
       if (selectedDay === '') {
         await deletePlacement(worker);
       }
@@ -2678,20 +3085,34 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     setEditStartDateValue(current || '');
   };
   const handleSaveStartDate = async () => {
-    if (!editStartDateWorker?.assignmentId || !tenantId || !editStartDateValue.trim()) {
+    const trimmed = editStartDateValue.trim().split('T')[0];
+    if (!editStartDateWorker || !tenantId || !trimmed) {
       setEditStartDateWorker(null);
       return;
     }
     setEditStartDateSaving(true);
     try {
-      const assignmentRef = doc(db, 'tenants', tenantId, 'assignments', editStartDateWorker.assignmentId);
-      await updateDoc(assignmentRef, {
-        startDate: editStartDateValue.trim().split('T')[0],
-        updatedAt: serverTimestamp(),
-      });
+      if (editStartDateWorker.assignmentId) {
+        const assignmentRef = doc(db, 'tenants', tenantId, 'assignments', editStartDateWorker.assignmentId);
+        await updateDoc(assignmentRef, {
+          startDate: trimmed,
+          updatedAt: serverTimestamp(),
+        });
+      } else if (editStartDateWorker.isPlacementOnly && selectedShiftId) {
+        // Placement-only workers don't have an assignment yet — store the
+        // recruiter's intended start date on the placement doc. It's hydrated
+        // back into `Worker.assignmentStartDate` for display, and forwarded
+        // as `applyDate` when `handleConfirmPlacement` creates the assignment.
+        const placementId = `${selectedShiftId}__${editStartDateWorker.id}`;
+        const placementRef = doc(db, 'tenants', tenantId, 'placements', placementId);
+        await updateDoc(placementRef, {
+          startDate: trimmed,
+          updatedAt: serverTimestamp(),
+        });
+      }
       setEditStartDateWorker(null);
     } catch (err: any) {
-      console.error('Error updating assignment start date:', err);
+      console.error('Error updating start date:', err);
       setError(err?.message ?? 'Failed to update start date');
     } finally {
       setEditStartDateSaving(false);
@@ -3216,10 +3637,6 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                             onDragStart={(event) => handleWorkerDragStart(event, worker.id)}
                             sx={{
                               p: lockedShiftId ? 1 : 0.5,
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center',
-                              gap: 1,
                               cursor: canDragBackToPool ? 'grab' : 'default',
                               ...(lockedShiftId && {
                                 border: 'none',
@@ -3227,14 +3644,6 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                               }),
                             }}
                           >
-                            <Checkbox
-                              checked={selectedAssignmentWorkerIds.has(worker.id)}
-                              onChange={() => handleSelectOneAssignment(worker.id)}
-                              size="small"
-                              onClick={(e) => e.stopPropagation()}
-                              aria-label={`Select ${worker.displayName}`}
-                              sx={{ py: 0, px: 0.5 }}
-                            />
                             <PlacementWorkerTileMainColumn
                               worker={worker}
                               jobOrder={jobOrder}
@@ -3242,6 +3651,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                               entityEmploymentByUserId={entityEmploymentByUserId}
                               placementEntityEmploymentLoading={placementEntityEmploymentLoading}
                               blockerLabels={placementBlockerLabelsForAssignmentId(worker.assignmentId)}
+                              onboardingMissingLabels={placementOnboardingMissingLabelsForAssignmentId(worker.assignmentId)}
                               jobReadinessChipData={placementJobReadinessChipDataForAssignmentId(worker.assignmentId)}
                               onJobReadinessItemClick={handlePlacementJobReadinessItemClick}
                               requiredCertStatuses={placementRequiredCertMatchList(
@@ -3249,156 +3659,201 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                 worker.certifications,
                                 worker.licenses,
                               )}
+                              headerLeading={
+                                <Checkbox
+                                  checked={selectedAssignmentWorkerIds.has(worker.id)}
+                                  onChange={() => handleSelectOneAssignment(worker.id)}
+                                  size="small"
+                                  onClick={(e) => e.stopPropagation()}
+                                  aria-label={`Select ${worker.displayName}`}
+                                  sx={{ py: 0, px: 0.5 }}
+                                />
+                              }
+                              profileActionIcons={
+                                <PlacementProfileActionIcons
+                                  worker={worker}
+                                  jobOrder={jobOrder}
+                                  onOpenResume={(url, fileName) => {
+                                    setSelectedResume({ url, fileName });
+                                    setResumeModalOpen(true);
+                                  }}
+                                  onOpenLicenses={(licenses) => {
+                                    setSelectedLicenses(licenses);
+                                    setLicenseModalOpen(true);
+                                  }}
+                                  onOpenCerts={(certs) => {
+                                    setSelectedCerts(certs);
+                                    setCertModalOpen(true);
+                                  }}
+                                />
+                              }
                               row3={
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                  <Typography variant="caption" color="text.secondary" noWrap>
-                                    Starts: {formatDateDisplay(worker.assignmentStartDate || shiftStartDateStr) || '—'}
-                                  </Typography>
-                                  {!isPlacementOnly && worker.assignmentId && (
-                                    <Tooltip title="Edit start date">
+                                <>
+                                  {(() => {
+                                    const cityState = [worker.city, worker.state].filter(Boolean).join(', ');
+                                    return cityState ? (
+                                      <Typography variant="caption" color="text.secondary" noWrap>
+                                        {cityState}
+                                      </Typography>
+                                    ) : null;
+                                  })()}
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                    <Typography variant="caption" color="text.secondary" noWrap>
+                                      Starts: {formatDateDisplay(worker.assignmentStartDate || shiftStartDateStr) || '—'}
+                                    </Typography>
+                                    {/* Edit pencil shown for both assignment-backed workers AND
+                                        placement-only workers so the recruiter can pre-set the
+                                        target start date before hiring (persisted on the
+                                        placement doc and forwarded to the assignment). */}
+                                    {(worker.assignmentId || isPlacementOnly) && !isDeclined && !isCancelled && (
+                                      <Tooltip title={isPlacementOnly ? 'Edit target start date (saved on placement; applied when hired)' : 'Edit start date'}>
+                                        <IconButton
+                                          size="small"
+                                          sx={{ p: 0, color: 'text.secondary' }}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleOpenEditStartDate(worker);
+                                          }}
+                                          aria-label="Edit start date"
+                                        >
+                                          <EditIcon sx={{ fontSize: 14 }} />
+                                        </IconButton>
+                                      </Tooltip>
+                                    )}
+                                  </Box>
+                                </>
+                              }
+                              actions={
+                                <>
+                                  {!isPlacementOnly && !isDeclined && !isCancelled && (
+                                    <Tooltip title="Remove assignment (revert to Placed, worker will be notified)">
                                       <IconButton
                                         size="small"
-                                        sx={{ p: 0, color: 'text.secondary' }}
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleOpenEditStartDate(worker);
-                                        }}
-                                        aria-label="Edit start date"
+                                        onClick={() => setCancelAssignmentWorker(worker)}
+                                        sx={{ ...placementActionIconBtnSx, color: 'error.main' }}
+                                        aria-label="Cancel assignment"
                                       >
-                                        <EditIcon sx={{ fontSize: 14 }} />
+                                        <CloseIcon />
                                       </IconButton>
                                     </Tooltip>
                                   )}
-                                </Box>
-                              }
-                            />
-                            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.25 }}>
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                {!isPlacementOnly && !isDeclined && !isCancelled && (
-                                  <Tooltip title="Remove assignment (revert to Placed, worker will be notified)">
-                                    <IconButton
-                                      size="small"
-                                      onClick={() => setCancelAssignmentWorker(worker)}
-                                      sx={{ color: 'error.main' }}
-                                      aria-label="Cancel assignment"
-                                    >
-                                      <CloseIcon fontSize="small" />
-                                    </IconButton>
-                                  </Tooltip>
-                                )}
-                                <Tooltip title={offeringThis ? 'Sending offer…' : isPlacementOnly ? 'Click to offer position (sends accept/decline message)' : isDeclined ? 'Worker declined this assignment' : isCancelled ? 'Assignment was cancelled' : undefined}>
-                                  <Chip
-                                    size="small"
-                                    label={statusLabel}
-                                    color={isPlacementOnly ? 'info' : isDeclined || isCancelled ? 'error' : undefined}
-                                    icon={
-                                      offeringThis ? (
-                                        <CircularProgress size={14} color="inherit" sx={{ color: 'white' }} />
-                                      ) : isPlacementOnly ? (
-                                        <UnlockedIcon fontSize="small" />
-                                      ) : isDeclined || isCancelled ? (
-                                        <ErrorIcon fontSize="small" />
-                                      ) : isConfirmed ? (
-                                        <CheckIcon fontSize="small" />
-                                      ) : (
-                                        <LockedIcon fontSize="small" />
-                                      )
-                                    }
-                                    onClick={isPlacementOnly && !offeringThis ? () => handleConfirmPlacement(worker) : undefined}
-                                    disabled={offeringThis}
-                                    sx={{
-                                      ...(isPlacementOnly && !offeringThis && {
-                                        cursor: 'pointer',
-                                        zIndex: 50,
-                                        position: 'relative',
-                                        '&:hover': { opacity: 0.9 },
-                                      }),
-                                      ...(offeringThis && {
-                                        cursor: 'wait',
-                                        opacity: 0.95,
-                                        '& .MuiChip-icon': { color: 'white' },
-                                      }),
-                                      ...((isDeclined || isCancelled) && {
-                                        bgcolor: 'error.main',
-                                        color: 'white',
-                                        '& .MuiChip-icon': { color: 'white' },
-                                      }),
-                                      ...(isConfirmed && {
-                                        bgcolor: 'success.main',
-                                        color: 'white',
-                                        '& .MuiChip-icon': { color: 'white' },
-                                      }),
-                                      ...(!isPlacementOnly && !isConfirmed && !isDeclined && !isCancelled && {
-                                        bgcolor: '#e8f5e9', // Light green (Material green 50)
-                                        color: 'success.main',
-                                        '& .MuiChip-icon': { color: 'success.main' },
-                                      }),
-                                    }}
-                                  />
-                                </Tooltip>
-                                {!isPlacementOnly && !isConfirmed && !isDeclined && !isCancelled && worker.assignmentId && (
-                                  <Tooltip title="Confirm this assignment on behalf of the worker (same as them clicking Accept)">
+                                  <Tooltip title={offeringThis ? 'Sending offer…' : isPlacementOnly ? 'Click to offer position (sends accept/decline message)' : isDeclined ? 'Worker declined this assignment' : isCancelled ? 'Assignment was cancelled' : undefined}>
                                     <Chip
                                       size="small"
-                                      label={confirmLoadingAssignmentId === worker.assignmentId || confirmLoadingAssignmentId === worker.id ? 'Confirming…' : 'Confirm'}
-                                      onClick={() => handleConfirmForWorker(worker)}
-                                      disabled={confirmLoadingAssignmentId === worker.assignmentId || confirmLoadingAssignmentId === worker.id}
+                                      label={statusLabel}
+                                      color={isPlacementOnly ? 'info' : isDeclined || isCancelled ? 'error' : undefined}
+                                      icon={
+                                        offeringThis ? (
+                                          <CircularProgress size={10} color="inherit" sx={{ color: 'white' }} />
+                                        ) : isPlacementOnly ? (
+                                          <UnlockedIcon />
+                                        ) : isDeclined || isCancelled ? (
+                                          <ErrorIcon />
+                                        ) : isConfirmed ? (
+                                          <CheckIcon />
+                                        ) : (
+                                          <LockedIcon />
+                                        )
+                                      }
+                                      onClick={isPlacementOnly && !offeringThis ? () => handleConfirmPlacement(worker) : undefined}
+                                      disabled={offeringThis}
                                       sx={{
-                                        bgcolor: '#E3F2FD',
-                                        color: '#1976D2',
-                                        fontWeight: 500,
-                                        '&:hover': { bgcolor: '#BBDEFB' },
+                                        ...placementActionChipSx,
+                                        ...(isPlacementOnly && !offeringThis && {
+                                          cursor: 'pointer',
+                                          zIndex: 50,
+                                          position: 'relative',
+                                          '&:hover': { opacity: 0.9 },
+                                        }),
+                                        ...(offeringThis && {
+                                          cursor: 'wait',
+                                          opacity: 0.95,
+                                          '& .MuiChip-icon': { ...placementActionChipSx['& .MuiChip-icon'], color: 'white' },
+                                        }),
+                                        ...((isDeclined || isCancelled) && {
+                                          bgcolor: 'error.main',
+                                          color: 'white',
+                                          '& .MuiChip-icon': { ...placementActionChipSx['& .MuiChip-icon'], color: 'white' },
+                                        }),
+                                        ...(isConfirmed && {
+                                          bgcolor: 'success.main',
+                                          color: 'white',
+                                          '& .MuiChip-icon': { ...placementActionChipSx['& .MuiChip-icon'], color: 'white' },
+                                        }),
+                                        ...(!isPlacementOnly && !isConfirmed && !isDeclined && !isCancelled && {
+                                          bgcolor: '#e8f5e9', // Light green (Material green 50)
+                                          color: 'success.main',
+                                          '& .MuiChip-icon': { ...placementActionChipSx['& .MuiChip-icon'], color: 'success.main' },
+                                        }),
                                       }}
                                     />
                                   </Tooltip>
-                                )}
-                              </Box>
-                              {!isPlacementOnly && !isDeclined && !isCancelled && (worker.assignmentConfirmedAt != null || worker.assignmentOfferSentAt != null) && (
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                  <Typography variant="caption" color="text.secondary">
-                                    {isConfirmed
-                                      ? worker.assignmentConfirmedAt != null
-                                        ? `Confirmed ${new Date(worker.assignmentConfirmedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+                                  {!isPlacementOnly && !isConfirmed && !isDeclined && !isCancelled && worker.assignmentId && (
+                                    <Tooltip title="Confirm this assignment on behalf of the worker (same as them clicking Accept)">
+                                      <Chip
+                                        size="small"
+                                        label={confirmLoadingAssignmentId === worker.assignmentId || confirmLoadingAssignmentId === worker.id ? 'Confirming…' : 'Confirm'}
+                                        onClick={() => handleConfirmForWorker(worker)}
+                                        disabled={confirmLoadingAssignmentId === worker.assignmentId || confirmLoadingAssignmentId === worker.id}
+                                        sx={{
+                                          ...placementActionChipSx,
+                                          bgcolor: '#E3F2FD',
+                                          color: '#1976D2',
+                                          '&:hover': { bgcolor: '#BBDEFB' },
+                                        }}
+                                      />
+                                    </Tooltip>
+                                  )}
+                                </>
+                              }
+                              actionsSubline={
+                                !isPlacementOnly && !isDeclined && !isCancelled && (worker.assignmentConfirmedAt != null || worker.assignmentOfferSentAt != null) ? (
+                                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+                                    <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'right' }}>
+                                      {isConfirmed
+                                        ? worker.assignmentConfirmedAt != null
+                                          ? `Confirmed ${new Date(worker.assignmentConfirmedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+                                          : worker.assignmentOfferSentAt != null
+                                            ? `Confirmed (offer sent ${new Date(worker.assignmentOfferSentAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})`
+                                            : 'Confirmed'
                                         : worker.assignmentOfferSentAt != null
-                                          ? `Confirmed (offer sent ${new Date(worker.assignmentOfferSentAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})`
-                                          : 'Confirmed'
-                                      : worker.assignmentOfferSentAt != null
-                                        ? `Offer sent ${new Date(worker.assignmentOfferSentAt).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}`
-                                        : null}
-                                  </Typography>
-                                  {!isConfirmed && worker.assignmentOfferSentAt != null && (() => {
-                                    const aid = worker.assignmentId ?? '';
-                                    const loading = resendLoadingAssignmentId === aid;
-                                    const cooldownUntil = resendCooldownUntilByAssignmentId[aid] ?? 0;
-                                    const inCooldown = Date.now() < cooldownUntil;
-                                    const disabled = loading || inCooldown;
-                                    return (
-                                      <Tooltip title={inCooldown ? 'Please wait before resending' : 'Resend offer (SMS + push + email)'}>
-                                        <span>
-                                          <IconButton
-                                            size="small"
-                                            sx={{ p: 0, color: 'text.secondary' }}
-                                            onClick={() => handleResendOffer(worker)}
-                                            disabled={disabled}
-                                            aria-label="Resend offer"
-                                          >
-                                            <RefreshIcon
-                                              sx={{
-                                                fontSize: 14,
-                                                ...(loading && {
-                                                  animation: 'spin 0.8s linear infinite',
-                                                  '@keyframes spin': { from: { transform: 'rotate(0deg)' }, to: { transform: 'rotate(360deg)' } },
-                                                }),
-                                              }}
-                                            />
-                                          </IconButton>
-                                        </span>
-                                      </Tooltip>
-                                    );
-                                  })()}
-                                </Box>
-                              )}
-                            </Box>
+                                          ? `Offer sent ${new Date(worker.assignmentOfferSentAt).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+                                          : null}
+                                    </Typography>
+                                    {!isConfirmed && worker.assignmentOfferSentAt != null && (() => {
+                                      const aid = worker.assignmentId ?? '';
+                                      const loading = resendLoadingAssignmentId === aid;
+                                      const cooldownUntil = resendCooldownUntilByAssignmentId[aid] ?? 0;
+                                      const inCooldown = Date.now() < cooldownUntil;
+                                      const disabled = loading || inCooldown;
+                                      return (
+                                        <Tooltip title={inCooldown ? 'Please wait before resending' : 'Resend offer (SMS + push + email)'}>
+                                          <span>
+                                            <IconButton
+                                              size="small"
+                                              sx={{ p: 0, color: 'text.secondary' }}
+                                              onClick={() => handleResendOffer(worker)}
+                                              disabled={disabled}
+                                              aria-label="Resend offer"
+                                            >
+                                              <RefreshIcon
+                                                sx={{
+                                                  fontSize: 14,
+                                                  ...(loading && {
+                                                    animation: 'spin 0.8s linear infinite',
+                                                    '@keyframes spin': { from: { transform: 'rotate(0deg)' }, to: { transform: 'rotate(360deg)' } },
+                                                  }),
+                                                }}
+                                              />
+                                            </IconButton>
+                                          </span>
+                                        </Tooltip>
+                                      );
+                                    })()}
+                                  </Box>
+                                ) : null
+                              }
+                            />
                           </Paper>
                         );
                       })}
@@ -3605,25 +4060,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                   ) : (
                     <Stack spacing={1}>
                       {availableWorkers.map((worker) => {
-                        const getResumeUrl = () => {
-                          if (worker.resumeUrl) return worker.resumeUrl;
-                          if (worker.resume?.downloadUrl) return worker.resume.downloadUrl;
-                          if (worker.resume?.storagePath) {
-                            return `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodeURIComponent(worker.resume.storagePath)}?alt=media`;
-                          }
-                          return null;
-                        };
-
-                        const resumeUrl = getResumeUrl();
-                        const hasBio = worker.bio && worker.bio.trim().length > 0;
-                        const hasWorkHistory = worker.workHistory && worker.workHistory.length > 0;
-                        const hasCerts = worker.certifications && worker.certifications.length > 0;
-                        const hasLicenses = worker.licenses && worker.licenses.length > 0;
                         const requiredCertStatuses = placementRequiredCertMatchList(
                           jobOrder,
                           worker.certifications,
                           worker.licenses,
                         );
+
+                        const sameDayConflicts = sameDayConflictByUserId.get(worker.id);
 
                         return (
                           <Paper
@@ -3634,10 +4077,6 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                             onDragStart={(event) => handleWorkerDragStart(event, worker.id)}
                             sx={{
                               p: lockedShiftId ? 1 : 0.5,
-                              display: 'flex',
-                              flexDirection: 'row',
-                              alignItems: 'stretch',
-                              gap: 0.5,
                               cursor: 'grab',
                               ...(lockedShiftId && {
                                 border: 'none',
@@ -3645,114 +4084,34 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                               }),
                             }}
                           >
-                            <Box sx={{ flex: 1, minWidth: 0, pr: 0 }}>
-                              <PlacementWorkerTileMainColumn
+                            <PlacementWorkerTileMainColumn
                                 worker={worker}
                                 jobOrder={jobOrder}
                                 hiringEntityName={hiringEntityName}
                                 entityEmploymentByUserId={entityEmploymentByUserId}
                                 placementEntityEmploymentLoading={placementEntityEmploymentLoading}
                                 blockerLabels={placementBlockerLabelsForAssignmentId(worker.assignmentId)}
+                                onboardingMissingLabels={placementOnboardingMissingLabelsForAssignmentId(worker.assignmentId)}
                                 jobReadinessChipData={placementJobReadinessChipDataForAssignmentId(worker.assignmentId)}
                                 onJobReadinessItemClick={handlePlacementJobReadinessItemClick}
                                 requiredCertStatuses={requiredCertStatuses}
                                 profileActionIcons={
-                                  <>
-                                    {/* Phase 5b — quiet "Inactive at N account(s)"
-                                        signal, filtered to exclude the current
-                                        account the recruiter is already placing
-                                        for. Read from denormalized user doc
-                                        field; zero extra queries. */}
-                                    <WorkforceInactiveElsewhereChip
-                                      entries={worker.inactiveAtAccounts}
-                                      currentAccountId={(jobOrder as any)?.recruiterAccountId ?? null}
-                                      iconOnly
-                                    />
-                                    {resumeUrl ? (
-                                      <Tooltip title="View resume" {...placementTileTooltipSlotProps}>
-                                        <IconButton
-                                          size="small"
-                                          sx={placementProfileTileIconBtnSx}
-                                          onClick={() => {
-                                            setSelectedResume({ url: resumeUrl, fileName: worker.resume?.fileName });
-                                            setResumeModalOpen(true);
-                                          }}
-                                        >
-                                          <ResumeIcon />
-                                        </IconButton>
-                                      </Tooltip>
-                                    ) : null}
-                                    {hasBio ? (
-                                      <Tooltip
-                                        title={
-                                          <Typography
-                                            variant="body2"
-                                            sx={{ whiteSpace: 'pre-wrap', maxWidth: 320, color: '#fff' }}
-                                          >
-                                            {worker.bio}
-                                          </Typography>
-                                        }
-                                        {...placementTileTooltipSlotProps}
-                                      >
-                                        <IconButton size="small" sx={placementProfileTileIconBtnSx}>
-                                          <BioIcon />
-                                        </IconButton>
-                                      </Tooltip>
-                                    ) : null}
-                                    {hasWorkHistory ? (
-                                      <Tooltip
-                                        title={
-                                          <Box sx={{ maxWidth: 340 }}>
-                                            <Typography variant="subtitle2" sx={{ mb: 0.5, color: '#fff', fontWeight: 600 }}>
-                                              Work history
-                                            </Typography>
-                                            {worker.workHistory?.slice(0, 3).map((job: any, idx: number) => (
-                                              <Typography key={idx} variant="caption" display="block" sx={{ color: '#fff' }}>
-                                                {job.position || job.title || job.role || 'Position'}
-                                                {job.company ? ` at ${job.company}` : ''}
-                                              </Typography>
-                                            ))}
-                                          </Box>
-                                        }
-                                        {...placementTileTooltipSlotProps}
-                                      >
-                                        <IconButton size="small" sx={placementProfileTileIconBtnSx}>
-                                          <WorkHistoryIcon />
-                                        </IconButton>
-                                      </Tooltip>
-                                    ) : null}
-                                    {hasLicenses ? (
-                                      <Tooltip
-                                        title={`${worker.licenses?.length} license${(worker.licenses?.length || 0) > 1 ? 's' : ''} on profile`}
-                                        {...placementTileTooltipSlotProps}
-                                      >
-                                        <IconButton
-                                          size="small"
-                                          sx={placementProfileTileIconBtnSx}
-                                          onClick={() => {
-                                            setSelectedLicenses(worker.licenses || []);
-                                            setLicenseModalOpen(true);
-                                          }}
-                                        >
-                                          <LicenseIcon />
-                                        </IconButton>
-                                      </Tooltip>
-                                    ) : null}
-                                    {hasCerts ? (
-                                      <Tooltip title="View profile certifications" {...placementTileTooltipSlotProps}>
-                                        <IconButton
-                                          size="small"
-                                          sx={placementProfileTileIconBtnSx}
-                                          onClick={() => {
-                                            setSelectedCerts(worker.certifications || []);
-                                            setCertModalOpen(true);
-                                          }}
-                                        >
-                                          <ProfileCertsIcon />
-                                        </IconButton>
-                                      </Tooltip>
-                                    ) : null}
-                                  </>
+                                  <PlacementProfileActionIcons
+                                    worker={worker}
+                                    jobOrder={jobOrder}
+                                    onOpenResume={(url, fileName) => {
+                                      setSelectedResume({ url, fileName });
+                                      setResumeModalOpen(true);
+                                    }}
+                                    onOpenLicenses={(licenses) => {
+                                      setSelectedLicenses(licenses);
+                                      setLicenseModalOpen(true);
+                                    }}
+                                    onOpenCerts={(certs) => {
+                                      setSelectedCerts(certs);
+                                      setCertModalOpen(true);
+                                    }}
+                                  />
                                 }
                                 row3={
                                   <Typography variant="caption" color="text.secondary" noWrap>
@@ -3762,108 +4121,47 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                       'No contact info'}
                                   </Typography>
                                 }
-                                row4End={
+                                actions={
                                   <>
-                                    {!!worker.skills?.length && (
-                                      <Chip
-                                        size="small"
-                                        label={`${worker.skills.length} skills`}
-                                        sx={{ height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }}
-                                      />
-                                    )}
-                                    {!!worker.languages?.length && (
-                                      <Chip
-                                        size="small"
-                                        variant="outlined"
-                                        label={`${worker.languages.length} langs`}
-                                        sx={{ height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }}
-                                      />
-                                    )}
+                                    {sameDayConflicts?.length ? (
+                                      <Tooltip
+                                        title={
+                                          <Box>
+                                            <Typography variant="caption" fontWeight={600} display="block" sx={{ mb: 0.5, color: '#fff' }}>
+                                              Already on a shift this day
+                                            </Typography>
+                                            {sameDayConflicts.map((c, i) => (
+                                              <Typography key={i} variant="caption" display="block" sx={{ color: '#fff' }}>
+                                                {c.shiftTitle} ({c.type === 'placement' ? 'Placed' : c.type === 'assigned' ? 'Accepted' : 'Confirmed'})
+                                              </Typography>
+                                            ))}
+                                          </Box>
+                                        }
+                                        {...placementTileTooltipSlotProps}
+                                      >
+                                        <WarningIcon fontSize="small" sx={{ color: 'warning.main' }} />
+                                      </Tooltip>
+                                    ) : null}
+                                    <Tooltip title={selectedShift ? 'Add this worker to the selected shift as Placed' : 'Select a shift to assign'}>
+                                      <span>
+                                        <Chip
+                                          size="small"
+                                          label="Assign"
+                                          color="info"
+                                          icon={<PersonAddIcon />}
+                                          onClick={() => handleAssignToShift(worker, selectedShift)}
+                                          disabled={!selectedShift}
+                                          sx={{
+                                            ...placementActionChipSx,
+                                            cursor: selectedShift ? 'pointer' : 'not-allowed',
+                                            '&:hover': selectedShift ? { opacity: 0.9 } : undefined,
+                                          }}
+                                        />
+                                      </span>
+                                    </Tooltip>
                                   </>
                                 }
                               />
-                            </Box>
-                            <Box
-                              sx={{
-                                display: 'flex',
-                                flexDirection: 'column',
-                                alignItems: 'flex-end',
-                                justifyContent: 'space-between',
-                                flexShrink: 0,
-                                alignSelf: 'stretch',
-                                minWidth: 56,
-                              }}
-                            >
-                              {sameDayConflictByUserId.get(worker.id)?.length ? (
-                                <Tooltip
-                                  title={
-                                    <Box>
-                                      <Typography variant="caption" fontWeight={600} display="block" sx={{ mb: 0.5, color: '#fff' }}>
-                                        Already on a shift this day
-                                      </Typography>
-                                      {sameDayConflictByUserId.get(worker.id)?.map((c, i) => (
-                                        <Typography key={i} variant="caption" display="block" sx={{ color: '#fff' }}>
-                                          {c.shiftTitle} ({c.type === 'placement' ? 'Placed' : c.type === 'assigned' ? 'Accepted' : 'Confirmed'})
-                                        </Typography>
-                                      ))}
-                                    </Box>
-                                  }
-                                  {...placementTileTooltipSlotProps}
-                                >
-                                  <WarningIcon fontSize="small" sx={{ color: 'warning.main' }} />
-                                </Tooltip>
-                              ) : (
-                                <Box sx={{ minHeight: 0 }} />
-                              )}
-                              <Box
-                                sx={{
-                                  mt: 'auto',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 0.5,
-                                }}
-                              >
-                                {/* Open user record in a new tab — handy when the
-                                    recruiter wants to vet skills / history without
-                                    losing their place in the Placements board. */}
-                                <Tooltip title="Open user record in new tab" {...placementTileTooltipSlotProps}>
-                                  <IconButton
-                                    size="small"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      window.open(`/users/${worker.id}`, '_blank', 'noopener,noreferrer');
-                                    }}
-                                    sx={{
-                                      width: 24,
-                                      height: 24,
-                                      color: 'text.secondary',
-                                    }}
-                                    aria-label="Open user record in new tab"
-                                  >
-                                    <OpenInNewIcon sx={{ fontSize: 16 }} />
-                                  </IconButton>
-                                </Tooltip>
-                                <Button
-                                  variant="outlined"
-                                  size="small"
-                                  onClick={() => handleAssignToShift(worker, selectedShift)}
-                                  disabled={!selectedShift}
-                                  sx={{
-                                    minWidth: 0,
-                                    height: 22,
-                                    py: 0,
-                                    px: 0.75,
-                                    fontSize: '0.625rem',
-                                    fontWeight: 600,
-                                    lineHeight: 1,
-                                    textTransform: 'none',
-                                    borderRadius: '20px',
-                                  }}
-                                >
-                                  Assign
-                                </Button>
-                              </Box>
-                            </Box>
                           </Paper>
                         );
                       })}

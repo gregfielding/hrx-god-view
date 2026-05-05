@@ -20,16 +20,110 @@
  */
 
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { Box, Chip, CircularProgress, Popover, Typography } from '@mui/material';
+import { Box, Chip, CircularProgress, Popover, Tooltip, Typography } from '@mui/material';
 import type { ChipProps } from '@mui/material';
 import HistoryIcon from '@mui/icons-material/History';
 
 import type {
+  JobReadinessChipContribution,
   JobReadinessChipContributor,
   JobReadinessChipData,
   JobReadinessChipState,
 } from '../../../shared/jobReadinessChip/types';
 import JobReadinessChipPopover from './JobReadinessChipPopover';
+
+const TOOLTIP_TIER_COLOR: Record<JobReadinessChipContribution, string> = {
+  red: '#ff8a80',
+  yellow: '#ffd180',
+  green: '#b9f6ca',
+};
+
+/**
+ * Build the hover-tooltip body listing what's missing on this chip.
+ * Mirrors the popover's tier-sorted list at a glance density — designed
+ * to be readable without committing to clicking the chip. Shows the top
+ * outstanding items so the recruiter can scan multiple tiles quickly.
+ */
+function buildJobReadinessTooltip(data: JobReadinessChipData): React.ReactNode {
+  if (data.state === 'computing') {
+    return (
+      <Typography variant="caption" sx={{ color: '#fff' }}>
+        Job Ready (computing…)
+      </Typography>
+    );
+  }
+  if (data.state === 'legacy_review') {
+    return (
+      <Typography variant="caption" sx={{ color: '#fff' }}>
+        Legacy assignment — predates the readiness rebuild.
+      </Typography>
+    );
+  }
+  const outstanding = data.contributors.filter(
+    (c) => c.contribution !== 'green',
+  );
+  if (outstanding.length === 0) {
+    return (
+      <Typography variant="caption" sx={{ color: '#fff' }}>
+        {data.text} — nothing outstanding.
+      </Typography>
+    );
+  }
+  const SHOWN = 8;
+  const head = outstanding.slice(0, SHOWN);
+  return (
+    <Box sx={{ maxWidth: 320 }}>
+      <Typography variant="caption" sx={{ display: 'block', fontWeight: 700, color: '#fff', mb: 0.5 }}>
+        {data.text}
+      </Typography>
+      <Typography variant="caption" sx={{ display: 'block', fontWeight: 700, color: '#fff' }}>
+        {data.blockerCount} blocking · {data.pendingCount} pending
+      </Typography>
+      <Box component="ul" sx={{ pl: 2, m: 0, color: '#fff' }}>
+        {head.map((c) => (
+          <Typography
+            key={`${c.source}:${c.itemId}`}
+            component="li"
+            variant="caption"
+            sx={{ color: '#fff', lineHeight: 1.35 }}
+          >
+            <Box
+              component="span"
+              sx={{
+                display: 'inline-block',
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                backgroundColor: TOOLTIP_TIER_COLOR[c.contribution],
+                mr: 0.75,
+                verticalAlign: 'middle',
+              }}
+            />
+            {c.requirementLabel}
+            {c.detail ? (
+              <Typography
+                component="span"
+                variant="caption"
+                sx={{ color: '#fff', opacity: 0.85, ml: 0.5 }}
+              >
+                — {c.detail}
+              </Typography>
+            ) : null}
+          </Typography>
+        ))}
+        {outstanding.length > SHOWN && (
+          <Typography
+            component="li"
+            variant="caption"
+            sx={{ color: '#fff', fontStyle: 'italic' }}
+          >
+            + {outstanding.length - SHOWN} more…
+          </Typography>
+        )}
+      </Box>
+    </Box>
+  );
+}
 
 export type JobReadinessChipSize = 'sm' | 'lg' | 'inline';
 
@@ -107,11 +201,14 @@ function chipSx(size: JobReadinessChipSize) {
       } as const;
     case 'sm':
     default:
+      // Sized to match `placementActionChipSx` / `placementQualChipSx`
+      // in `PlacementsTab.tsx` so the placement tile's bottom row
+      // (Onboarding / Confirmed / Job Readiness) reads as one
+      // consistent chip strip.
       return {
-        height: 22,
-        fontSize: '0.72rem',
+        height: 20,
         fontWeight: 600,
-        '& .MuiChip-label': { px: 0.75 },
+        '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' },
       } as const;
   }
 }
@@ -174,50 +271,55 @@ const JobReadinessChip: React.FC<JobReadinessChipProps> = ({
     );
   }
 
+  // Hover surfaces a quick "what's missing" Tooltip; click opens the
+  // detailed Popover with clickable contributor rows for drill-in.
+  // (Hover-popover was the original interaction; we split tooltip vs.
+  // popover so a recruiter can scan tiles at a glance without losing
+  // the drill-in path.)
+  const tooltipBody = useMemo(() => buildJobReadinessTooltip(effective), [effective]);
+
   return (
     <>
-      <Box
-        ref={anchorRef}
-        component="span"
-        onMouseEnter={handleOpen}
-        onMouseLeave={handleClose}
-        onClick={handleOpen}
-        onFocus={handleOpen}
-        onBlur={handleClose}
-        sx={{ display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }}
-        // Keyboard accessibility — Enter/Space toggles the popover for
-        // users who tab through the placement tile.
-        tabIndex={0}
-        role="button"
-        aria-haspopup="dialog"
-        aria-expanded={popoverOpen}
-        aria-label={effective.text}
+      <Tooltip
+        title={tooltipBody}
+        placement="top"
+        enterDelay={150}
+        enterNextDelay={150}
+        slotProps={{ tooltip: { sx: { p: 1, maxWidth: 360 } } }}
       >
-        <Chip
-          icon={startIcon}
-          label={effective.text}
-          color={color}
-          size="small"
-          variant={effective.state === 'green' ? 'filled' : 'outlined'}
-          sx={sxOverrides}
-        />
-      </Box>
+        <Box
+          ref={anchorRef}
+          component="span"
+          onClick={handleOpen}
+          onFocus={handleOpen}
+          onBlur={handleClose}
+          sx={{ display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }}
+          tabIndex={0}
+          role="button"
+          aria-haspopup="dialog"
+          aria-expanded={popoverOpen}
+          aria-label={effective.text}
+        >
+          <Chip
+            icon={startIcon}
+            label={effective.text}
+            color={color}
+            size="small"
+            variant={effective.state === 'green' ? 'filled' : 'outlined'}
+            sx={sxOverrides}
+          />
+        </Box>
+      </Tooltip>
       <Popover
         open={popoverOpen}
         anchorEl={anchorRef.current}
         onClose={handleClose}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
         transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-        // Mouse-leave on the chip closes the popover; the popover doesn't
-        // intercept pointer events itself, so users can still hover into
-        // the popover content to click on a contributor.
         disableRestoreFocus
         slotProps={{
           paper: {
             sx: { p: 1.25, maxWidth: 360, minWidth: 240 },
-            // Allow hovering INTO the popover without it closing.
-            onMouseEnter: handleOpen,
-            onMouseLeave: handleClose,
           },
         }}
       >
