@@ -13,6 +13,7 @@ import {
   loadScopedAssignmentNoShowBand,
 } from '../workerAiPrescreen/hiringContainerStats';
 import { extractPrescreenAnswersFromInterviewDoc } from '../workerAiPrescreen/extractPrescreenAnswersFromInterviewDoc';
+import { computeRecruiterMasterScore } from '../shared/recruiterMasterScore';
 
 function norm(s: unknown): string {
   return String(s ?? '').trim();
@@ -43,11 +44,15 @@ function mapDynToValue(dyn: Record<string, string>): Record<string, DynamicAnswe
 
 type AiInterviewRecommendation = 'proceed' | 'review' | 'decline';
 
-async function buildInterviewResultInput(
+async function buildInterviewResultAndPrescreen(
   db: admin.firestore.Firestore,
   userId: string,
   data: Record<string, unknown>,
-): Promise<InterviewResultInput | null> {
+): Promise<{
+  interviewResult: InterviewResultInput;
+  prescreenAi: Record<string, unknown> | null;
+  prescreenTransportationPlan: string | null;
+} | null> {
   const aa = data.aiAutomation as Record<string, unknown> | undefined;
   if (!aa || typeof aa !== 'object') return null;
   const score = typeof aa.score === 'number' && Number.isFinite(aa.score) ? aa.score : null;
@@ -57,27 +62,37 @@ async function buildInterviewResultInput(
   let flags: string[] = [];
   let recommendation: AiInterviewRecommendation = 'proceed';
   let dynamicAnswers: Record<string, DynamicAnswerValue> | undefined;
+  let prescreenAi: Record<string, unknown> | null = null;
+  let prescreenTransportationPlan: string | null = null;
 
   if (sourceId) {
     const snap = await db.doc(`users/${userId}/interviews/${sourceId}`).get();
     if (snap.exists) {
       const idata = snap.data() as Record<string, unknown>;
       const ai = idata.ai as Record<string, unknown> | undefined;
+      if (ai && typeof ai === 'object') prescreenAi = ai as Record<string, unknown>;
       if (Array.isArray(ai?.flags)) flags = ai!.flags as string[];
       const rec = ai?.recommendation;
       if (rec === 'decline' || rec === 'review' || rec === 'proceed') recommendation = rec;
       const { dynamicAnswers: dynRaw } = extractPrescreenAnswersFromInterviewDoc(idata);
       if (Object.keys(dynRaw).length) dynamicAnswers = mapDynToValue(dynRaw);
+      const answers = idata.answers as Record<string, unknown> | undefined;
+      const tp = answers?.transportation_plan;
+      if (typeof tp === 'string') prescreenTransportationPlan = tp;
     }
   }
 
   const score10 = Math.max(0, Math.min(10, Math.round(score / 10)));
   return {
-    overallScore: score,
-    score10,
-    flags,
-    recommendation,
-    dynamicAnswers,
+    interviewResult: {
+      overallScore: score,
+      score10,
+      flags,
+      recommendation,
+      dynamicAnswers,
+    },
+    prescreenAi,
+    prescreenTransportationPlan,
   };
 }
 
@@ -111,8 +126,9 @@ export async function evaluateCurrentPolicyOrchestratorDecision(
     postingData,
     userGroupId,
   );
-  const interviewResult = await buildInterviewResultInput(db, userId, data);
-  if (!interviewResult) return { decision: null, reason: 'missing_aiAutomation.score_or_interview' };
+  const built = await buildInterviewResultAndPrescreen(db, userId, data);
+  if (!built) return { decision: null, reason: 'missing_aiAutomation.score_or_interview' };
+  const { interviewResult, prescreenAi, prescreenTransportationPlan } = built;
 
   const applicationCtx: ApplicationContextInput = {
     applicationId,
@@ -141,6 +157,26 @@ export async function evaluateCurrentPolicyOrchestratorDecision(
       typeof inputs.assignmentNoShowBand === 'string' ? inputs.assignmentNoShowBand : null;
   }
 
+  // Group-scoped: gate on Master Recruiter Score (50% category + 35% interview + 15% profile).
+  // Master.score100 is null when there's no usable signal — fall back to prescreen overall in that case.
+  let gateScoreOverride: number | null = null;
+  if (bundle.container.kind === 'group') {
+    try {
+      const userSnap = await db.doc(`users/${userId}`).get();
+      const userData = (userSnap.data() || {}) as Record<string, unknown>;
+      const master = computeRecruiterMasterScore({
+        userData,
+        prescreenAi,
+        prescreenTransportationPlan,
+      });
+      if (typeof master.score100 === 'number' && Number.isFinite(master.score100)) {
+        gateScoreOverride = master.score100;
+      }
+    } catch {
+      // Non-fatal — orchestrator falls back to prescreen overall.
+    }
+  }
+
   const orch = runAiHiringOrchestratorV1({
     interviewResult,
     resolvedPolicy: bundle.resolvedAiHiring,
@@ -150,6 +186,8 @@ export async function evaluateCurrentPolicyOrchestratorDecision(
     applicationNoShowBand: applicationNoShowBand ?? undefined,
     assignmentNoShowBand: assignmentNoShowBand ?? undefined,
     assignmentIdUsed: assignNs.assignmentId,
+    gateScoreOverride,
+    gateScoreSource: gateScoreOverride != null ? 'master_recruiter' : 'prescreen_overall',
   });
 
   const final = orch.finalResult?.decision;

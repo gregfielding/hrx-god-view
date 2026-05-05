@@ -71,6 +71,16 @@ export type OrchestratorV1Stored = {
     applicationNoShowBand?: string;
     assignmentNoShowBand?: string | null;
     assignmentScoped?: boolean;
+    /**
+     * Which signal the engine actually used for score thresholds.
+     * `master_recruiter` for group-scoped applications when a Master Recruiter Score was available;
+     * `prescreen_overall` for job-order containers and group fallbacks (master not computable).
+     */
+    gateScoreSource?: 'master_recruiter' | 'prescreen_overall';
+    /** The numeric value passed into the score-threshold step (master or prescreen, see `gateScoreSource`). */
+    gateScoreUsed?: number;
+    /** Master Recruiter Score (0–100) when computed; null otherwise. Useful for audit. */
+    masterRecruiterScore?: number | null;
   };
   steps: OrchestratorV1Step[];
   policyEngineResult: AiHiringDecisionResult;

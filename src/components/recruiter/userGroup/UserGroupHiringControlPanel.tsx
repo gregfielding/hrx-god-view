@@ -37,6 +37,7 @@ import { useUserGroupHiringPipeline } from '../../../hooks/useUserGroupHiringPip
 import {
   DEFAULT_USER_GROUP_HIRING_CONFIG,
   GROUP_HIRING_QUALITY_PRESETS,
+  detectGroupHiringQualityPreset,
   parseUserGroupHiringConfig,
   toFirestoreUserGroupHiringConfig,
   validateUserGroupHiringConfig,
@@ -348,6 +349,11 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
 
   const applyPreset = useCallback(
     (preset: GroupHiringQualityPreset) => {
+      if (preset === 'custom') {
+        // Keep current threshold values; just relabel the dropdown.
+        setQuality({ preset });
+        return;
+      }
       const b = GROUP_HIRING_QUALITY_PRESETS[preset];
       setQuality({
         preset,
@@ -419,6 +425,13 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
     setEmployment({ eVerifyRequired: derivedEverifyRequired });
   }, [derivedEverifyRequired, emp.eVerifyRequired, setEmployment]);
 
+  // On-call employment is always on for this group type — never expose the toggle.
+  useEffect(() => {
+    if (emp.employmentType !== 'on_call') {
+      setEmployment({ employmentType: 'on_call' });
+    }
+  }, [emp.employmentType, setEmployment]);
+
   const certificationFieldOptions = useMemo(() => getOptionsForField('licensesCerts', undefined), []);
 
   const selectedCertificationOptions = useMemo((): Option[] => {
@@ -450,10 +463,18 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
       w.push('You have unlimited auto-hiring enabled with no onboarding cap.');
     }
     const preset = qual.preset ?? 'balanced';
-    const fb = GROUP_HIRING_QUALITY_PRESETS[preset];
+    const fb =
+      preset === 'custom'
+        ? GROUP_HIRING_QUALITY_PRESETS.balanced
+        : GROUP_HIRING_QUALITY_PRESETS[preset];
     const interviewMin = qual.interviewMinimumScoreToAdvance ?? fb.interviewMinimumScoreToAdvance;
-    if (qual.minimumJobScoreGateEnabled !== true && interviewMin < 70) {
-      w.push('Low quality threshold may result in poor candidate selection.');
+    if (
+      preset !== 'hire_everyone' &&
+      qual.minimumJobScoreGateEnabled !== true &&
+      interviewMin > 0 &&
+      interviewMin < 60
+    ) {
+      w.push('Quality floor is below D (60). Almost everyone with a usable signal will advance.');
     }
     return w;
   }, [
@@ -499,6 +520,8 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
 
   return (
     <Stack spacing={2}>
+      {/* Pre-cards section (policy source + tenant inheritance + hire-passed preview) hidden per UX simplification — leave commented in case we restore. */}
+      {/*
       <Box>
         <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap" sx={{ mb: 0.5 }}>
           <Typography variant="h5" component="h2" fontWeight={700}>
@@ -767,8 +790,11 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
           </Box>
         </CardContent>
       </Card>
+      */}
 
       <Grid container spacing={1.5}>
+        {/* Card A merged into Card A (Employment setup) — only the "Hiring active" toggle was kept; rest deprecated. */}
+        {/*
         <Grid item xs={12} md={6}>
           <SectionCard
             title="A. Interview & automation"
@@ -886,14 +912,21 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
             </Stack>
           </SectionCard>
         </Grid>
+        */}
 
         <Grid item xs={12} md={6}>
           <SectionCard
-            title="B. Employment setup"
+            title="A. Employment setup"
             subtitle="Defaults for workers hired through this group."
             titleBadge={useTenantMode ? <GroupOnlyBadge /> : undefined}
           >
             <Stack spacing={1}>
+              <FormControlLabel
+                control={
+                  <Switch checked={!!auto.hiringActive} onChange={(_, v) => setAutomation({ hiringActive: v })} />
+                }
+                label="Hiring active"
+              />
               <FormControl
                 size="small"
                 fullWidth
@@ -928,6 +961,11 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
                   ))}
                 </Select>
                 <FormHelperText>Employer of record — choose from tenant Entities</FormHelperText>
+                {auto.hiringActive === true && !emp.hiringEntityId ? (
+                  <FormHelperText error>
+                    Required while Hiring active is on.
+                  </FormHelperText>
+                ) : null}
               </FormControl>
               <FormControl size="small" fullWidth>
                 <InputLabel>Worker type</InputLabel>
@@ -940,15 +978,6 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
                   <MenuItem value="1099">1099</MenuItem>
                 </Select>
               </FormControl>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={emp.employmentType === 'on_call'}
-                    onChange={(_, v) => setEmployment({ employmentType: v ? 'on_call' : 'standard' })}
-                  />
-                }
-                label="Use on-call employment"
-              />
               <FormControlLabel
                 control={<Switch checked={derivedEverifyRequired} disabled />}
                 label="Require E-Verify"
@@ -964,7 +993,7 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
 
         <Grid item xs={12} md={6}>
           <SectionCard
-            title="C. Requirements"
+            title="B. Requirements"
             subtitle="Screening and certification expectations."
             titleBadge={useTenantMode ? <GroupOnlyBadge /> : undefined}
           >
@@ -1066,7 +1095,10 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
 
         <Grid item xs={12} md={6}>
           <Collapse in={!useTenantMode} timeout="auto" unmountOnExit>
-            <SectionCard title="D. Quality thresholds" subtitle="Preset adjusts interview and job-fit floors together.">
+            <SectionCard
+              title="C. Quality thresholds"
+              subtitle="Floors for advancing candidates. For this group, the score floor is compared to the candidate's Master Recruiter Score (50% category profile + 35% interview + 15% resume) — not the raw interview score."
+            >
               <Stack spacing={1}>
                 <FormControl size="small" fullWidth>
                   <InputLabel>Preset</InputLabel>
@@ -1075,33 +1107,51 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
                     value={qualForm.preset ?? 'balanced'}
                     onChange={(e) => applyPreset(e.target.value as GroupHiringQualityPreset)}
                   >
-                    <MenuItem value="conservative">Conservative</MenuItem>
-                    <MenuItem value="balanced">Balanced</MenuItem>
-                    <MenuItem value="aggressive">Aggressive</MenuItem>
+                    <MenuItem value="conservative">Conservative · Master ≥ 80 (B)</MenuItem>
+                    <MenuItem value="balanced">Balanced · Master ≥ 70 (C)</MenuItem>
+                    <MenuItem value="aggressive">Aggressive · Master ≥ 60 (D)</MenuItem>
+                    <MenuItem value="hire_everyone">Hire everyone · no floor</MenuItem>
+                    <MenuItem value="custom">Custom</MenuItem>
                   </Select>
                 </FormControl>
                 <TextField
                   size="small"
-                  label="Interview minimum score to advance"
+                  label="Minimum Master Recruiter Score to advance"
                   type="number"
                   value={qualForm.interviewMinimumScoreToAdvance ?? ''}
-                  onChange={(e) =>
-                    setQuality({ interviewMinimumScoreToAdvance: parseOptionalInt(e.target.value) })
-                  }
+                  onChange={(e) => {
+                    const next = parseOptionalInt(e.target.value);
+                    setQuality({
+                      interviewMinimumScoreToAdvance: next,
+                      preset: detectGroupHiringQualityPreset(
+                        next,
+                        qualForm.jobFitMinimumScoreToAdvance,
+                      ),
+                    });
+                  }}
                   inputProps={{ min: 0, max: 100 }}
                   fullWidth
+                  helperText="0–100, same scale as the grade you see on a candidate (B=80, C=70, D=60). Falls back to the prescreen overall when a Master score can't be computed."
                 />
                 <TextField
                   size="small"
                   label="Job-fit minimum score to advance"
                   type="number"
                   value={qualForm.jobFitMinimumScoreToAdvance ?? ''}
-                  onChange={(e) =>
-                    setQuality({ jobFitMinimumScoreToAdvance: parseOptionalInt(e.target.value) })
-                  }
+                  onChange={(e) => {
+                    const next = parseOptionalInt(e.target.value);
+                    setQuality({
+                      jobFitMinimumScoreToAdvance: next,
+                      preset: detectGroupHiringQualityPreset(
+                        qualForm.interviewMinimumScoreToAdvance,
+                        next,
+                      ),
+                    });
+                  }}
                   inputProps={{ min: 0, max: 100 }}
                   fullWidth
                   required={qualForm.minimumJobScoreGateEnabled === true}
+                  helperText="0–100. Only enforced when “Require minimum job-fit score” is on AND the application has a job posting attached."
                 />
                 <FormControlLabel
                   control={
@@ -1153,7 +1203,7 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
         <Grid item xs={12} md={6}>
           <Collapse in={!useTenantMode} timeout="auto" unmountOnExit>
             <SectionCard
-              title="E. Targets"
+              title="D. Targets"
               subtitle="Onboarding caps and stop rules (stored under hiringConfig.targets)."
               titleBadge={<GroupOnlyBadge />}
             >
@@ -1165,7 +1215,6 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
                   value={tgtForm.targetOnboardingCount ?? ''}
                   onChange={(e) => setTargets({ targetOnboardingCount: parseOptionalInt(e.target.value) })}
                   fullWidth
-                  required={tgtForm.stopWhenTargetReached === true}
                 />
                 <TextField
                   size="small"
@@ -1194,7 +1243,7 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
       {useTenantMode ? (
         <Alert severity="info" variant="outlined" sx={{ borderRadius: 1 }}>
           <Typography variant="body2">
-            Sections <strong>D</strong> and <strong>E</strong> are hidden while you use tenant defaults — scoring and
+            Sections <strong>C</strong> and <strong>D</strong> are hidden while you use tenant defaults — scoring and
             capacity rules come from the tenant (see <strong>Inherited policy summary</strong> above). Choose{' '}
             <strong>Customize for this group</strong> to edit thresholds on this group only.
           </Typography>

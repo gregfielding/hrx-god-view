@@ -31,6 +31,17 @@ export type RunAiHiringOrchestratorV1Params = {
   assignmentIdUsed?: string | null;
   /** Optional — same as {@link EvaluateAiHiringDecisionParams.operationalTrust}. */
   operationalTrust?: EvaluateAiHiringDecisionParams['operationalTrust'];
+  /**
+   * When provided, replaces `interviewResult.overallScore` for **score-threshold and gig-fallback** comparisons
+   * inside `evaluateAiHiringDecision`. Used by **group-scoped** containers to gate on the candidate's
+   * Master Recruiter Score (50% category + 35% interview + 15% profile) instead of the raw prescreen overall.
+   *
+   * Recommendation (proceed/review/decline) and dynamic-answer logic still operate on the original
+   * `interviewResult` — only the numeric score input changes.
+   */
+  gateScoreOverride?: number | null;
+  /** Provenance label for the orchestratorV1 trace. */
+  gateScoreSource?: 'master_recruiter' | 'prescreen_overall';
 };
 
 function applyNoShowOverlay(
@@ -77,8 +88,17 @@ export function runAiHiringOrchestratorV1(
     }
   }
 
+  const useGateOverride =
+    typeof params.gateScoreOverride === 'number' && Number.isFinite(params.gateScoreOverride);
+  const effectiveInterviewResult: InterviewResultInput = useGateOverride
+    ? { ...params.interviewResult, overallScore: params.gateScoreOverride as number }
+    : params.interviewResult;
+  const gateScoreSource: 'master_recruiter' | 'prescreen_overall' = useGateOverride
+    ? params.gateScoreSource ?? 'master_recruiter'
+    : 'prescreen_overall';
+
   const policyEngineResult = evaluateAiHiringDecision({
-    interviewResult: params.interviewResult,
+    interviewResult: effectiveInterviewResult,
     hiringPolicy: policyInput,
     application: params.application,
     containerStats: params.containerStats,
@@ -94,7 +114,7 @@ export function runAiHiringOrchestratorV1(
     params.assignmentNoShowBand,
   );
 
-  const afterGig = applyGigFallbackAnnotation(afterNoShow, policyInput, params.interviewResult);
+  const afterGig = applyGigFallbackAnnotation(afterNoShow, policyInput, effectiveInterviewResult);
 
   const finalEligibleForAutoAdvance =
     afterGig.decision === 'advance' && params.resolvedPolicy.autoAdvanceEnabled === true;
@@ -171,6 +191,9 @@ export function runAiHiringOrchestratorV1(
       applicationNoShowBand: params.applicationNoShowBand ?? null,
       assignmentNoShowBand: params.assignmentNoShowBand ?? null,
       assignmentScoped: (params.assignmentIdUsed ?? '').length > 0,
+      gateScoreSource,
+      gateScoreUsed: useGateOverride ? (params.gateScoreOverride as number) : params.interviewResult.overallScore,
+      masterRecruiterScore: useGateOverride ? (params.gateScoreOverride as number) : null,
     },
     steps,
     policyEngineResult,

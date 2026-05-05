@@ -32,6 +32,7 @@ import {
   persistAiHiringStatsSnapshot,
 } from './hiringContainerStats';
 import { runAiHiringOrchestratorV1 } from './runAiHiringOrchestratorV1';
+import { computeRecruiterMasterScore } from '../shared/recruiterMasterScore';
 import { mergeDynamicDrugBackgroundIntoCoreAnswers } from './prescreenAnswerMerge';
 import {
   applyRecruiterOperationalOverrides,
@@ -376,6 +377,33 @@ export async function composePrescreenAiBundle(args: {
       } catch {
         /* non-fatal */
       }
+      // Group-scoped: gate on Master Recruiter Score (50% category + 35% interview + 15% profile)
+      // using the just-computed prescreen as the interview component. For job-order containers,
+      // keep legacy semantics (gate on prescreen overall).
+      let groupGateScoreOverride: number | null = null;
+      if (hp.container.kind === 'group') {
+        try {
+          const prescreenAiForMaster: Record<string, unknown> = {
+            overrideAdjustedScore: adjustedScore,
+            overallScore: adjustedScore,
+            baseInterviewScore: scored.overallScore,
+            recommendation: operationalOverride.recommendedRecommendation,
+            flags: aiFlags,
+          };
+          const tp = answersEffective.transportation_plan;
+          const master = computeRecruiterMasterScore({
+            userData: userDoc,
+            prescreenAi: prescreenAiForMaster,
+            prescreenTransportationPlan: typeof tp === 'string' ? tp : null,
+          });
+          if (typeof master.score100 === 'number' && Number.isFinite(master.score100)) {
+            groupGateScoreOverride = master.score100;
+          }
+        } catch {
+          // Non-fatal — orchestrator falls back to prescreen overall.
+        }
+      }
+
       const orch = runAiHiringOrchestratorV1({
         interviewResult: {
           overallScore: adjustedScore,
@@ -392,6 +420,8 @@ export async function composePrescreenAiBundle(args: {
         assignmentNoShowBand: assignNs.band,
         assignmentIdUsed: assignNs.assignmentId,
         operationalTrust: operationalTrustForEngine,
+        gateScoreOverride: groupGateScoreOverride,
+        gateScoreSource: groupGateScoreOverride != null ? 'master_recruiter' : 'prescreen_overall',
       });
       const orchFinalMerged = mergeOperationalBlocksIntoHiringResult(
         orch.finalResult,

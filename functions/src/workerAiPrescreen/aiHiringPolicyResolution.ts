@@ -64,11 +64,15 @@ function num(v: unknown): number | undefined {
 /**
  * Preset defaults aligned with `GROUP_HIRING_QUALITY_PRESETS` in `src/types/userGroupHiringConfig.ts`.
  * Used when `hiringConfig.quality.preset` is set but explicit numeric overrides are absent.
+ *
+ * For group-scoped applications, `interview` is interpreted as the Master Recruiter Score floor
+ * (the orchestrator substitutes Master for the prescreen overall via `gateScoreOverride`).
  */
 const GROUP_HIRING_PRESET_SCORES: Record<string, { interview: number; jobFit: number }> = {
-  conservative: { interview: 85, jobFit: 72 },
-  balanced: { interview: 75, jobFit: 60 },
-  aggressive: { interview: 65, jobFit: 50 },
+  conservative: { interview: 80, jobFit: 72 },
+  balanced: { interview: 70, jobFit: 60 },
+  aggressive: { interview: 60, jobFit: 50 },
+  hire_everyone: { interview: 0, jobFit: 0 },
 };
 
 /**

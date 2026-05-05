@@ -28,7 +28,12 @@ export type UserGroupHiringTargets = {
   stopWhenTargetReached?: boolean;
 };
 
-export type GroupHiringQualityPreset = 'conservative' | 'balanced' | 'aggressive';
+export type GroupHiringQualityPreset =
+  | 'conservative'
+  | 'balanced'
+  | 'aggressive'
+  | 'hire_everyone'
+  | 'custom';
 
 /** Nested shape written to Firestore under `hiringConfig` (canonical keys). */
 export type UserGroupHiringConfigV1 = {
@@ -61,6 +66,13 @@ export type UserGroupHiringConfigV1 = {
   };
   quality?: {
     preset?: GroupHiringQualityPreset;
+    /**
+     * Minimum 0–100 score to advance.
+     *
+     * Group-scoped applications: floor on the **Master Recruiter Score** (50% category + 35% interview + 15% profile).
+     * Job-order-scoped applications: floor on the prescreen interview overall score (legacy).
+     * The orchestrator picks the score source based on the resolved hiring container kind.
+     */
     interviewMinimumScoreToAdvance?: number;
     jobFitMinimumScoreToAdvance?: number;
     minimumJobScoreGateEnabled?: boolean;
@@ -71,14 +83,48 @@ export type UserGroupHiringConfigV1 = {
   targets?: UserGroupHiringTargets;
 };
 
+/**
+ * Fixed-value presets only. `custom` is intentionally absent — selecting Custom keeps the
+ * existing numeric values and lets the recruiter type their own.
+ *
+ * Threshold semantics for **group-scoped** applications (`hiringContainer.kind === 'group'`):
+ * `interviewMinimumScoreToAdvance` is the floor on the **Master Recruiter Score** (0–100, blended:
+ * 50% category + 35% interview + 15% profile). Aligned with grade letters: 80=B, 70=C, 60=D.
+ *
+ * Job-order-scoped applications keep the legacy semantics: the same field is the floor on the
+ * prescreen interview overall score (0–100). See `runAiHiringOrchestratorV1` `gateScoreOverride`.
+ */
 export const GROUP_HIRING_QUALITY_PRESETS: Record<
-  GroupHiringQualityPreset,
+  Exclude<GroupHiringQualityPreset, 'custom'>,
   { interviewMinimumScoreToAdvance: number; jobFitMinimumScoreToAdvance: number }
 > = {
-  conservative: { interviewMinimumScoreToAdvance: 85, jobFitMinimumScoreToAdvance: 72 },
-  balanced: { interviewMinimumScoreToAdvance: 75, jobFitMinimumScoreToAdvance: 60 },
-  aggressive: { interviewMinimumScoreToAdvance: 65, jobFitMinimumScoreToAdvance: 50 },
+  conservative: { interviewMinimumScoreToAdvance: 80, jobFitMinimumScoreToAdvance: 72 },
+  balanced: { interviewMinimumScoreToAdvance: 70, jobFitMinimumScoreToAdvance: 60 },
+  aggressive: { interviewMinimumScoreToAdvance: 60, jobFitMinimumScoreToAdvance: 50 },
+  hire_everyone: { interviewMinimumScoreToAdvance: 0, jobFitMinimumScoreToAdvance: 0 },
 };
+
+/**
+ * Returns the preset whose floors match the supplied scores, or `'custom'` when no preset matches.
+ * Used to keep the dropdown in sync after manual edits to either threshold field.
+ */
+export function detectGroupHiringQualityPreset(
+  interviewMin: number | undefined,
+  jobFitMin: number | undefined,
+): GroupHiringQualityPreset {
+  if (interviewMin === undefined || jobFitMin === undefined) return 'custom';
+  for (const [key, val] of Object.entries(GROUP_HIRING_QUALITY_PRESETS) as Array<
+    [Exclude<GroupHiringQualityPreset, 'custom'>, { interviewMinimumScoreToAdvance: number; jobFitMinimumScoreToAdvance: number }]
+  >) {
+    if (
+      val.interviewMinimumScoreToAdvance === interviewMin &&
+      val.jobFitMinimumScoreToAdvance === jobFitMin
+    ) {
+      return key;
+    }
+  }
+  return 'custom';
+}
 
 export const DEFAULT_USER_GROUP_HIRING_CONFIG: UserGroupHiringConfigV1 = {
   interview: { workerAiPrescreenRequired: true },
@@ -103,7 +149,7 @@ export const DEFAULT_USER_GROUP_HIRING_CONFIG: UserGroupHiringConfigV1 = {
   },
   quality: {
     preset: 'balanced',
-    interviewMinimumScoreToAdvance: 75,
+    interviewMinimumScoreToAdvance: 70,
     jobFitMinimumScoreToAdvance: 60,
     minimumJobScoreGateEnabled: false,
     jobFitFailAction: 'review',
@@ -120,7 +166,15 @@ function num(v: unknown): number | undefined {
 }
 
 function readPreset(v: unknown): GroupHiringQualityPreset | undefined {
-  if (v === 'conservative' || v === 'balanced' || v === 'aggressive') return v;
+  if (
+    v === 'conservative' ||
+    v === 'balanced' ||
+    v === 'aggressive' ||
+    v === 'hire_everyone' ||
+    v === 'custom'
+  ) {
+    return v;
+  }
   return undefined;
 }
 
@@ -320,7 +374,6 @@ export function validateUserGroupHiringConfig(cfg: UserGroupHiringConfigV1): Use
   const auto = cfg.automation ?? {};
   const emp = cfg.employment ?? {};
   const qual = cfg.quality ?? {};
-  const tgt = cfg.targets ?? {};
 
   const entity = String(emp.hiringEntityId ?? '').trim();
 
@@ -337,13 +390,6 @@ export function validateUserGroupHiringConfig(cfg: UserGroupHiringConfigV1): Use
     }
     if (emp.employmentType !== 'standard' && emp.employmentType !== 'on_call') {
       errors.push('Choose standard or on-call employment when auto-onboarding is enabled.');
-    }
-  }
-
-  if (tgt.stopWhenTargetReached === true) {
-    const n = tgt.targetOnboardingCount;
-    if (n === undefined || n === null || !Number.isFinite(n) || n < 1) {
-      errors.push('Set a target onboarding count (at least 1) when “stop when target reached” is enabled.');
     }
   }
 
