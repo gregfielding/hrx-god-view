@@ -38,6 +38,11 @@ import {
   getEffectiveJobOrderPositionField,
   type JobOrderForEffectiveRead,
 } from '../shared/jobOrder/getEffectiveJobOrderField';
+import {
+  getFutaRateByState,
+  getSutaRateByState,
+  normalizeStateCode,
+} from '../utils/unemploymentRates';
 import { isExcludedFromPlacementsApplicantPool } from '../utils/applicationStatusNormalize';
 
 interface AddressParts {
@@ -150,6 +155,22 @@ const readJoFinancials = (
       ? ((billRate - payRate) / payRate) * 100
       : undefined;
 
+  // Fall back to the worksite-state new-employer estimate when neither
+  // the position nor the JO doc has SUTA/FUTA stored explicitly. Mirrors
+  // the `Estimated from <ST>` line the user sees inside `EditShiftForm`'s
+  // SUTA/FUTA inputs — without this fallback the shifts list table and
+  // the placements drawer header showed "—" while the same shift's
+  // Settings tab body showed live computed values, which read as a bug
+  // ("FUTA/SUTA show in the drawer body but not the heading or table").
+  // Stored values still win — recruiters who explicitly save a rate on
+  // the JO/position keep that exact value (no estimate override).
+  const storedSuta = toFiniteNumber(p0?.sutaRate) ?? toFiniteNumber(data.sutaRate);
+  const storedFuta = toFiniteNumber(p0?.futaRate) ?? toFiniteNumber(data.futaRate);
+  const worksiteStateCode = readJoWorksiteStateCode(data);
+  const estimatedSuta =
+    worksiteStateCode ? getSutaRateByState(worksiteStateCode) : null;
+  const estimatedFuta =
+    worksiteStateCode ? getFutaRateByState(worksiteStateCode) : null;
   return {
     payRate,
     billRate,
@@ -157,9 +178,50 @@ const readJoFinancials = (
     wcRate:
       readPositionRate('workersCompRate', toFiniteNumber(p0?.workersCompRate)) ??
       toFiniteNumber(data.workersCompRate),
-    sutaRate: toFiniteNumber(p0?.sutaRate) ?? toFiniteNumber(data.sutaRate),
-    futaRate: toFiniteNumber(p0?.futaRate) ?? toFiniteNumber(data.futaRate),
+    sutaRate:
+      storedSuta ??
+      (estimatedSuta != null && Number.isFinite(estimatedSuta) ? estimatedSuta : undefined),
+    futaRate:
+      storedFuta ??
+      (estimatedFuta != null && Number.isFinite(estimatedFuta) ? estimatedFuta : undefined),
   };
+};
+
+/**
+ * Resolve the JO's worksite state for SUTA/FUTA estimation purposes.
+ * Mirrors the candidate chain in EditShiftForm.worksiteStateForJo so the
+ * drawer header / table / Settings tab all converge on the same state
+ * code. We look at:
+ *   1. `worksiteAddress.{state, stateCode}`        (canonical)
+ *   2. `worksiteAddress.address.{state, stateCode}` (older nested shape)
+ *   3. top-level `worksiteState` / `state` / `locationState` (legacy)
+ * Anything found is normalized through `normalizeStateCode` (handles
+ * "California" → "CA", lowercase codes, two-letter spellings).
+ */
+const readJoWorksiteStateCode = (data: Record<string, any>): string => {
+  const wa = data.worksiteAddress as Record<string, any> | undefined;
+  const addr = (key: string): Record<string, any> | undefined =>
+    (data[key] as Record<string, any> | undefined) ?? undefined;
+  const candidates: Array<unknown> = [
+    wa?.state,
+    wa?.stateCode,
+    wa?.address?.state,
+    wa?.address?.stateCode,
+    data.worksiteState,
+    data.locationState,
+    addr('address')?.state,
+    addr('address')?.stateCode,
+    data.companyState,
+    data.accountState,
+    data.state,
+  ];
+  for (const c of candidates) {
+    const code = normalizeStateCode(typeof c === 'string' ? c : '')
+      .trim()
+      .toUpperCase();
+    if (code) return code;
+  }
+  return '';
 };
 
 /**
@@ -547,15 +609,42 @@ const useActiveShifts = (
           entries.map(async (entry) => {
             const wa = entry.jo.worksiteAddress ?? {};
             const fullyHydrated = wa.street && wa.city && wa.state && wa.zipCode;
-            if (fullyHydrated) return;
-            if (!entry.companyId || !entry.worksiteId) return;
-            const loc = await fetchLocationAddress(entry.companyId, entry.worksiteId);
-            entry.jo.worksiteAddress = {
-              street: wa.street || loc.street,
-              city: wa.city || loc.city,
-              state: wa.state || loc.state,
-              zipCode: wa.zipCode || loc.zipCode,
-            };
+            if (!fullyHydrated && entry.companyId && entry.worksiteId) {
+              const loc = await fetchLocationAddress(entry.companyId, entry.worksiteId);
+              entry.jo.worksiteAddress = {
+                street: wa.street || loc.street,
+                city: wa.city || loc.city,
+                state: wa.state || loc.state,
+                zipCode: wa.zipCode || loc.zipCode,
+              };
+            }
+            // Post-address-hydration SUTA/FUTA estimate. `readJoFinancials`
+            // ran during the initial JO sync (before `worksiteAddress` was
+            // hydrated from the location doc), so cross-account worksites
+            // miss the state-based estimate the first time around. Re-run
+            // the estimate now that the state is reliable, but keep stored
+            // values intact — recruiters who saved an explicit JO/position
+            // SUTA/FUTA always win over the new-employer estimate.
+            const stateCode = normalizeStateCode(
+              typeof entry.jo.worksiteAddress?.state === 'string'
+                ? entry.jo.worksiteAddress.state
+                : '',
+            )
+              .trim()
+              .toUpperCase();
+            if (!stateCode) return;
+            if (entry.jo.sutaRate == null) {
+              const est = getSutaRateByState(stateCode);
+              if (est != null && Number.isFinite(est)) {
+                entry.jo.sutaRate = est;
+              }
+            }
+            if (entry.jo.futaRate == null) {
+              const est = getFutaRateByState(stateCode);
+              if (est != null && Number.isFinite(est)) {
+                entry.jo.futaRate = est;
+              }
+            }
           }),
         ),
         Promise.all(
