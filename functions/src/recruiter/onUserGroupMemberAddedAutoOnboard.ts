@@ -127,12 +127,20 @@ export const onUserGroupMemberAddedAutoOnboard = onDocumentWritten(
 
     // Quick pre-filter against the group's own automation gates so we skip
     // expensive per-uid work entirely for groups that haven't enabled
-    // auto-onboarding. The shared core re-checks these so the trigger
-    // remains safe in isolation.
+    // hiring. The shared core re-checks this so the trigger remains safe
+    // in isolation.
+    //
+    // We deliberately do NOT check `autoOnboardEnabled` here: that flag's
+    // UI was retired and groups have no path to flip it to `true`, so
+    // requiring it would silently no-op every legitimate recruiter
+    // configuration. `hiringActive` is the single user-visible switch and
+    // the manual "Apply rules to existing members" callable already
+    // mirrors this. See userGroupHiringAutoOnboardCore.ts for the long
+    // form of the same explanation.
     const automation = (afterData.hiringConfig as Record<string, unknown> | undefined)?.automation as
       | Record<string, unknown>
       | undefined;
-    if (automation?.hiringActive !== true || automation?.autoOnboardEnabled !== true) {
+    if (automation?.hiringActive !== true) {
       return;
     }
     const employment = (afterData.hiringConfig as Record<string, unknown> | undefined)?.employment as

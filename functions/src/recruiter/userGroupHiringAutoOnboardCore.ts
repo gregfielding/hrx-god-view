@@ -376,8 +376,18 @@ export async function autoOnboardForGroupIfEligible(
     | Record<string, unknown>
     | undefined;
   const hiringActive = automation?.hiringActive === true;
-  const autoOnboardEnabled = automation?.autoOnboardEnabled === true;
-  if (!hiringActive || !autoOnboardEnabled) {
+  // The legacy `autoOnboardEnabled` flag was a second toggle that the UI
+  // deprecated (see `UserGroupHiringControlPanel.tsx`: "Card A merged into
+  // Card A — only the 'Hiring active' toggle was kept; rest deprecated").
+  // Because there's no UI path to flip `autoOnboardEnabled` to true, every
+  // group sits at its default `false` and the triggers silently no-op even
+  // when recruiters have explicitly turned Hiring active ON. Manual
+  // "Apply rules to existing members" never checked this flag, which is
+  // why that path worked while triggers didn't. We now mirror the manual
+  // path: `hiringActive` is the single user-visible switch and the only
+  // gate we enforce here. Anyone reintroducing a second toggle in the
+  // future MUST also bring back its UI before re-enabling this check.
+  if (!hiringActive) {
     return { considered: false, evaluation: null, onboardingStarted: false };
   }
 

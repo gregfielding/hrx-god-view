@@ -17,9 +17,12 @@
  *     becoming submitted/reviewing/etc.
  *
  * Gated on the application carrying a `groupId` and that group having
- * `hiringConfig.automation.hiringActive && autoOnboardEnabled` with an
- * on-call hiring entity. All eligibility logic (orchestrator advance,
- * blocking C1 Select employment, `hire_everyone` bypass) is delegated to
+ * `hiringConfig.automation.hiringActive === true` with an on-call hiring
+ * entity. The legacy `autoOnboardEnabled` flag's UI was retired (only the
+ * "Hiring active" switch is exposed now) so we no longer enforce it —
+ * see `userGroupHiringAutoOnboardCore.ts` for the long-form rationale.
+ * All eligibility logic (orchestrator advance, blocking C1 Select
+ * employment, `hire_everyone` bypass) is delegated to
  * `autoOnboardForGroupIfEligible` so this trigger and the manual
  * "Apply rules to existing members" button stay in lockstep.
  *
