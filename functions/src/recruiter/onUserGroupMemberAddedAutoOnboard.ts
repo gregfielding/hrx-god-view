@@ -160,6 +160,11 @@ export const onUserGroupMemberAddedAutoOnboard = onDocumentWritten(
     let evaluatedExcluded = 0;
     let skippedNoApp = 0;
     const failures: Array<{ userId: string; message: string }> = [];
+    // Histogram of exclusion `category` codes (matches
+    // EXCLUSION_CATEGORY_LABELS in userGroupHirePassedCandidates.ts) so the
+    // summary log surfaces the dominant blocker without needing to
+    // jq-merge per-uid lines.
+    const excludedCategoryCounts: Record<string, number> = {};
 
     for (const userId of newlyAdded) {
       try {
@@ -192,8 +197,30 @@ export const onUserGroupMemberAddedAutoOnboard = onDocumentWritten(
 
         if (result.onboardingStarted) {
           onboarded += 1;
+          logger.info('userGroupAutoOnboard.member_added_onboarded', {
+            tenantId,
+            groupId,
+            userId,
+            applicationId: applicationDoc?.id ?? null,
+            pipelineId: result.pipelineId ?? null,
+            evereeProvisionWarning: result.evereeProvisionWarning ?? null,
+          });
         } else if (result.evaluation?.outcome === 'excluded') {
           evaluatedExcluded += 1;
+          const category = result.evaluation.category ?? 'unknown';
+          excludedCategoryCounts[category] = (excludedCategoryCounts[category] ?? 0) + 1;
+          // Per-uid exclusion line so recruiters debugging "member added but
+          // not onboarded" can see WHY in one log query without re-running
+          // the manual scan. Mirrors `application_signal_evaluated_excluded`
+          // shape on the companion trigger.
+          logger.info('userGroupAutoOnboard.member_added_evaluated_excluded', {
+            tenantId,
+            groupId,
+            userId,
+            applicationId: applicationDoc?.id ?? null,
+            category,
+            reason: result.evaluation.reasons?.[0] ?? null,
+          });
         } else if (result.errorMessage) {
           failures.push({ userId, message: result.errorMessage });
         }
@@ -217,6 +244,7 @@ export const onUserGroupMemberAddedAutoOnboard = onDocumentWritten(
       evaluatedExcluded,
       skippedNoApp,
       failureCount: failures.length,
+      excludedCategoryCounts,
     });
   },
 );
