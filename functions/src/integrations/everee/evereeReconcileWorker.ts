@@ -27,6 +27,7 @@ import * as admin from 'firebase-admin';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 
+import { canSelfOrManageEveree } from './evereeAccessGate';
 import { evereePaths, requireEvereeEnabledEntity } from './evereeConfig';
 import { evereeRequest } from './evereeHttp';
 import {
@@ -42,9 +43,11 @@ import {
 const db = () => admin.firestore();
 
 // ─────────────────────────────────────────────────────────────────────────
-// Auth helpers — kept private to this file. Mirror the gate logic in
-// `evereeCallables.ts` exactly so an admin's roles work consistently
-// across every Everee surface.
+// Auth helpers — the gate predicates now live in `./evereeAccessGate.ts`
+// (Firestore-first, with custom-claims fast-path) so this file no longer
+// duplicates the role-check logic. See the gate file's header comment
+// for the rationale; previously each file kept its own copy and that's
+// what hid the production claim-sync gap from regression coverage.
 // ─────────────────────────────────────────────────────────────────────────
 
 function requireAuth(request: { auth?: { uid: string; token?: Record<string, unknown> } | null }) {
@@ -52,31 +55,6 @@ function requireAuth(request: { auth?: { uid: string; token?: Record<string, unk
     throw new HttpsError('unauthenticated', 'Must be authenticated');
   }
   return request.auth;
-}
-
-function canManageEveree(
-  auth: { token?: { roles?: Record<string, { role?: string }>; hrx?: boolean } } | null | undefined,
-  tenantId: string,
-): boolean {
-  if (!auth?.token) return false;
-  const roles = auth.token.roles ?? {};
-  const tenantRole = roles[tenantId]?.role;
-  if (tenantRole && ['Recruiter', 'Manager', 'Admin'].includes(String(tenantRole))) return true;
-  if (auth.token.hrx === true) return true;
-  return false;
-}
-
-function canSelfOrManageEveree(
-  auth:
-    | { uid: string; token?: { roles?: Record<string, { role?: string }>; hrx?: boolean } }
-    | null
-    | undefined,
-  tenantId: string,
-  targetUserId: string,
-): boolean {
-  if (!auth?.uid) return false;
-  if (targetUserId && auth.uid === targetUserId) return true;
-  return canManageEveree(auth as Parameters<typeof canManageEveree>[0], tenantId);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -409,7 +387,7 @@ export const evereeAdminReconcileWorker = onCall(async (request) => {
       'tenantId, entityId, evereeWorkerId, userId required',
     );
   }
-  if (!canSelfOrManageEveree(request.auth as Parameters<typeof canSelfOrManageEveree>[0], tenantId, userId)) {
+  if (!(await canSelfOrManageEveree(request.auth as Parameters<typeof canSelfOrManageEveree>[0], tenantId, userId))) {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
 

@@ -9,6 +9,11 @@ import {
   Chip,
   CircularProgress,
   Collapse,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   FormControl,
   FormControlLabel,
   FormHelperText,
@@ -50,6 +55,8 @@ import {
   getTenantHiringPolicySummaryLines,
 } from '../../../utils/mergeTenantAndGroupHiringConfig';
 import {
+  formatUserGroupHirePassedSuccess,
+  runUserGroupHirePassedExecute,
   runUserGroupHirePassedPreview,
   type UserGroupHirePassedExecuteResult,
 } from '../../../utils/userGroupHirePassedOneClick';
@@ -58,6 +65,7 @@ import UserGroupHiringDecisionFlowPreview from './UserGroupHiringDecisionFlowPre
 import UserGroupHiringPipelineStatus from './UserGroupHiringPipelineStatus';
 import UserGroupHiringQueuePreview from './UserGroupHiringQueuePreview';
 import UserGroupHiringSummaryCard from './UserGroupHiringSummaryCard';
+import { TriggerGroupInterviewDialog } from './TriggerGroupInterviewDialog';
 import type { Option } from '../../../fields/FieldTypes';
 import { getOptionsForField } from '../../../utils/fieldOptions';
 
@@ -167,6 +175,35 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
   const [hirePassedPreviewResult, setHirePassedPreviewResult] = useState<UserGroupHirePassedExecuteResult | null>(
     null,
   );
+
+  // Backfill ("Apply hiring rules to existing members") modal — runs the
+  // `userGroupHirePassedCandidates` callable in `preview` mode on open, then
+  // `execute` on confirm. The callable scans both `applications.groupId === gid`
+  // and applications for any uid in `memberIds`, re-evaluates eligibility against
+  // the group's current saved hiring rules + tenant baseline, and calls
+  // `runStartOnCallEmploymentFlow` for each eligible distinct user. Idempotent:
+  // already-onboarded users are skipped server-side.
+  const [backfillOpen, setBackfillOpen] = useState(false);
+  const [backfillBusy, setBackfillBusy] = useState(false);
+  const [backfillPreview, setBackfillPreview] =
+    useState<UserGroupHirePassedExecuteResult | null>(null);
+  const [backfillResult, setBackfillResult] =
+    useState<UserGroupHirePassedExecuteResult | null>(null);
+  const [backfillError, setBackfillError] = useState<string | null>(null);
+
+  // "Send AI prescreen invites" — delegates to the existing
+  // `triggerUserGroupInterviewInvites` callable via `TriggerGroupInterviewDialog`.
+  // We surface it in two places: as a sibling button next to the backfill
+  // ("send invites for everyone in this group who hasn't done their interview"),
+  // and contextually inside the backfill preview when the breakdown reveals
+  // that prescreen-not-completed is the dominant blocker (most groups will
+  // hit this path more often than the other excluded categories).
+  const [interviewInvitesOpen, setInterviewInvitesOpen] = useState(false);
+  const prescreenBlockedCount = useMemo(() => {
+    const breakdown = backfillPreview?.exclusionBreakdown ?? backfillResult?.exclusionBreakdown ?? [];
+    const row = breakdown.find((b) => b.category === 'prescreen_not_completed');
+    return row?.count ?? 0;
+  }, [backfillPreview, backfillResult]);
   const [entityOptions, setEntityOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [entitiesLoading, setEntitiesLoading] = useState(false);
   const { user } = useAuth();
@@ -236,6 +273,40 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
       setHirePassedPreviewLoading(false);
     }
   }, [tenantId, groupId]);
+
+  const openBackfillDialog = useCallback(async () => {
+    setBackfillOpen(true);
+    setBackfillError(null);
+    setBackfillResult(null);
+    setBackfillPreview(null);
+    setBackfillBusy(true);
+    try {
+      const r = await runUserGroupHirePassedPreview({ tenantId, groupId });
+      setBackfillPreview(r);
+    } catch (e) {
+      setBackfillError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBackfillBusy(false);
+    }
+  }, [tenantId, groupId]);
+
+  const runBackfillExecute = useCallback(async () => {
+    setBackfillBusy(true);
+    setBackfillError(null);
+    try {
+      const r = await runUserGroupHirePassedExecute({ tenantId, groupId });
+      setBackfillResult(r);
+    } catch (e) {
+      setBackfillError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBackfillBusy(false);
+    }
+  }, [tenantId, groupId]);
+
+  const closeBackfillDialog = useCallback(() => {
+    if (backfillBusy) return;
+    setBackfillOpen(false);
+  }, [backfillBusy]);
 
   useEffect(() => {
     if (!tenantId || !groupId) return;
@@ -493,7 +564,9 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
     lines.push(`Queue after target reached: ${auto.queueAfterTargetReached === true ? 'Yes' : 'No'}`);
     const he = String(emp.hiringEntityId ?? '').trim();
     lines.push(he ? `Hiring entity: ${he}` : 'Hiring entity: not set');
-    lines.push(`Worker type: ${emp.workerType ?? 'W2'} · ${emp.employmentType === 'on_call' ? 'On-call' : 'Standard'}`);
+    lines.push(
+      `Employment: ${emp.employmentType === 'on_call' ? 'On-call' : 'Standard'} · Worker type follows hiring entity`,
+    );
     if (req.accusourceScreeningRequired) {
       const pkg = String(req.accusourcePackageId ?? '').trim();
       const pn = String(req.accusourcePackageName ?? '').trim();
@@ -967,17 +1040,11 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
                   </FormHelperText>
                 ) : null}
               </FormControl>
-              <FormControl size="small" fullWidth>
-                <InputLabel>Worker type</InputLabel>
-                <Select
-                  label="Worker type"
-                  value={emp.workerType ?? 'W2'}
-                  onChange={(e) => setEmployment({ workerType: e.target.value as 'W2' | '1099' })}
-                >
-                  <MenuItem value="W2">W2</MenuItem>
-                  <MenuItem value="1099">1099</MenuItem>
-                </Select>
-              </FormControl>
+              {/* Worker type (W-2 vs 1099) is intentionally not editable on the group:
+                  it is owned by the tenant Entity (e.g. C1 Events = 1099, C1 Select = W-2)
+                  and resolved server-side via `resolveEvereeWorkerTypeForOnCall`. The
+                  group-level `Hire passed candidates` callable now passes `entity_default`,
+                  matching the auto-onboarding trigger in `onApplicationCreatedPush.ts`. */}
               <FormControlLabel
                 control={<Switch checked={derivedEverifyRequired} disabled />}
                 label="Require E-Verify"
@@ -1253,11 +1320,175 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
       {error ? <Alert severity="error">{error}</Alert> : null}
       {done ? <Alert severity="success">{done}</Alert> : null}
 
-      <Box>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }} flexWrap="wrap">
         <Button variant="contained" onClick={() => void handleSave()} disabled={saving}>
           {saving ? 'Saving…' : 'Save hiring configuration'}
         </Button>
-      </Box>
+        <Button
+          variant="outlined"
+          color="primary"
+          onClick={() => void openBackfillDialog()}
+          disabled={saving || !emp.hiringEntityId || emp.employmentType !== 'on_call'}
+        >
+          Apply rules to existing members
+        </Button>
+        <Button
+          variant="outlined"
+          color="secondary"
+          onClick={() => setInterviewInvitesOpen(true)}
+          disabled={saving}
+        >
+          Send AI prescreen invites
+        </Button>
+        {!emp.hiringEntityId ? (
+          <Typography variant="caption" color="text.secondary">
+            Set a hiring entity above to enable the backfill.
+          </Typography>
+        ) : null}
+      </Stack>
+
+      <TriggerGroupInterviewDialog
+        open={interviewInvitesOpen}
+        onClose={() => setInterviewInvitesOpen(false)}
+        tenantId={tenantId || undefined}
+        groupId={groupId}
+      />
+
+      <Dialog
+        open={backfillOpen}
+        onClose={closeBackfillDialog}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Apply hiring rules to existing members</DialogTitle>
+        <DialogContent dividers>
+          <DialogContentText sx={{ mb: 1.5 }}>
+            This re-evaluates every member of the group (and their applications) against the{' '}
+            <strong>currently saved</strong> hiring rules, then starts on-call onboarding for each
+            user who currently passes. Members who are already onboarding or employed at the
+            hiring entity are skipped — this action is idempotent and safe to re-run.
+          </DialogContentText>
+          <DialogContentText variant="caption" color="text.secondary" sx={{ mb: 1 }}>
+            Catchall groups: with the quality preset set to <strong>"Hire everyone · no floor"</strong>,
+            members who never created an application are also onboarded — useful when the group is
+            being used as an invite list. Active C1 Select employment still blocks hiring at C1 Events.
+          </DialogContentText>
+          <DialogContentText variant="caption" color="text.secondary" sx={{ mb: 2 }}>
+            Tip: save any pending changes above first — the scan uses what's stored on the
+            group document, not your in-flight edits.
+          </DialogContentText>
+
+          {backfillBusy && !backfillResult ? (
+            <Stack direction="row" alignItems="center" gap={1} sx={{ mb: 1 }}>
+              <CircularProgress size={20} />
+              <Typography variant="body2" color="text.secondary">
+                {backfillPreview ? 'Onboarding eligible members…' : 'Scanning members and applications…'}
+              </Typography>
+            </Stack>
+          ) : null}
+
+          {backfillPreview && !backfillResult ? (
+            <Alert severity="info" variant="outlined" sx={{ mb: 1 }}>
+              <Typography variant="body2">
+                <strong>{backfillPreview.eligibleCount}</strong> eligible ·{' '}
+                <strong>{backfillPreview.excludedCount}</strong> excluded ·{' '}
+                {backfillPreview.applicationsScanned} application(s) scanned across{' '}
+                {backfillPreview.groupMemberCount} member(s)
+                {(backfillPreview.membersWithoutApplicationCount ?? 0) > 0 ? (
+                  <>
+                    {' '}·{' '}
+                    <strong>{backfillPreview.membersWithoutApplicationCount}</strong> without an
+                    application
+                  </>
+                ) : null}
+                .
+              </Typography>
+
+              {(backfillPreview.exclusionBreakdown?.length ?? 0) > 0 ? (
+                <Box sx={{ mt: 1.25 }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                    Why excluded:
+                  </Typography>
+                  <Box component="ul" sx={{ m: 0, pl: 2.25, mt: 0.25 }}>
+                    {backfillPreview.exclusionBreakdown!.map((b) => (
+                      <Typography
+                        key={b.category}
+                        component="li"
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ display: 'list-item' }}
+                      >
+                        <strong>{b.count}</strong> · {b.label}
+                      </Typography>
+                    ))}
+                  </Box>
+                </Box>
+              ) : null}
+
+              {prescreenBlockedCount > 0 ? (
+                <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Most blockers are prescreen completion. Sending invites will move them
+                    through the funnel — once they finish, the auto-onboarding trigger picks
+                    them up.
+                  </Typography>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="secondary"
+                    onClick={() => {
+                      setBackfillOpen(false);
+                      setInterviewInvitesOpen(true);
+                    }}
+                  >
+                    Send AI prescreen invites
+                  </Button>
+                </Box>
+              ) : null}
+
+              {backfillPreview.eligibleCount === 0 && prescreenBlockedCount === 0 ? (
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                  No one currently passes. The breakdown above shows the dominant blocker.
+                </Typography>
+              ) : null}
+            </Alert>
+          ) : null}
+
+          {backfillResult ? (
+            <Alert severity="success" sx={{ whiteSpace: 'pre-line' }}>
+              {formatUserGroupHirePassedSuccess(backfillResult)}
+            </Alert>
+          ) : null}
+
+          {backfillError ? (
+            <Alert severity="error" sx={{ mt: 1 }}>
+              {backfillError}
+            </Alert>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeBackfillDialog} disabled={backfillBusy}>
+            {backfillResult ? 'Close' : 'Cancel'}
+          </Button>
+          {!backfillResult ? (
+            <Button
+              variant="contained"
+              onClick={() => void runBackfillExecute()}
+              disabled={
+                backfillBusy ||
+                !backfillPreview ||
+                backfillPreview.eligibleCount === 0
+              }
+            >
+              {backfillBusy
+                ? 'Running…'
+                : backfillPreview
+                  ? `Apply to ${backfillPreview.eligibleCount} member${backfillPreview.eligibleCount === 1 ? '' : 's'}`
+                  : 'Apply'}
+            </Button>
+          ) : null}
+        </DialogActions>
+      </Dialog>
     </Stack>
   );
 };

@@ -422,6 +422,15 @@ export {
 //   account's roles.schedulerIds on JO write; re-stamp every JO for an
 //   account when its Scheduler roster changes.
 export { onUserGroupRolesOrMembersChangeRecomputeWorkersPrimary } from './recruiting/onUserGroupRolesOrMembersChange';
+// Auto-onboard reactors. The Firestore-application trigger closes the gap
+// where a worker added to a hiring-active group finishes their AI prescreen
+// days later (the manual "Apply rules to existing members" button alone
+// can't catch later-arriving signals). The user-group trigger handles the
+// dual case: a uid appended to `memberIds` after membership-driven hiring
+// rules already met. Both delegate to `autoOnboardForGroupIfEligible` so
+// the per-row evaluator stays in lockstep with the manual button.
+export { onApplicationHiringSignalsChangedAutoOnboard } from './recruiter/onApplicationHiringSignalsChangedAutoOnboard';
+export { onUserGroupMemberAddedAutoOnboard } from './recruiter/onUserGroupMemberAddedAutoOnboard';
 export { onJobOrderWriteStampScheduler } from './recruiting/onJobOrderWriteStampScheduler';
 export { onAccountRolesChangeRestampSchedulers } from './recruiting/onAccountRolesChangeRestampSchedulers';
 // Tenant role defaults — atomic add/remove for the four arrays on
@@ -11911,7 +11920,20 @@ export { sendOtp, checkOtp, sendWorkerMessage } from './twilio';
 export { onApplicationCreated, onApplicationStatusChanged } from './applicationSmsTriggers';
 
 // FCM push on application created / assignment updated (test automated push delivery)
-export { onApplicationCreatedPush } from './triggers/onApplicationCreatedPush';
+// `onApplicationCreatedPush` retired — its auto-onboard responsibility was
+// hardcoded to C1 Events with two known bugs (`jobId` vs `jobOrderId` field,
+// `submitted` gate that wizard apps never reach). The new
+// `onApplicationHiringSignalsChangedAutoOnboard` trigger (registered above)
+// covers C1 Events plus every other group whose recruiter enabled
+// auto-onboarding, and additionally fires on later signal changes
+// (prescreen completed, orchestrator decision changed) so workers don't get
+// stuck when their interview lands days after the application was created.
+// The original FCM "thank-you" responsibility had already moved to the
+// messaging orchestrator before retirement, so removing this export does not
+// regress notifications.
+//
+// To delete the deployed function:
+//   firebase functions:delete onApplicationCreatedPush --region us-central1
 export { onAssignmentUpdatedPush } from './triggers/onAssignmentUpdatedPush';
 
 // R.0b: server-side safety-net sync of application → workerAttestations on profile

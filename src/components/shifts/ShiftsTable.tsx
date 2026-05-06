@@ -22,6 +22,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   TextField,
   Tooltip,
   Typography,
@@ -512,6 +513,11 @@ const ShiftsTable: React.FC<ShiftsTableProps> = ({
   // Cleared (set back to '') makes the cell fall back to the JO-level PO.
   const [poOverrides, setPoOverrides] = useState<Record<string, string>>({});
 
+  // 3-state PO# sort: null (default JO-order order) → 'asc' → 'desc' → null.
+  // Numeric-aware so `508390` and `508405` order sensibly; empties pinned
+  // to the bottom regardless of direction.
+  const [poSortDir, setPoSortDir] = useState<'asc' | 'desc' | null>(null);
+
   const handlePoSaved = (joId: string, shiftId: string, value: string) => {
     setPoOverrides((prev) => ({ ...prev, [`${joId}:${shiftId}`]: value }));
   };
@@ -590,9 +596,36 @@ const ShiftsTable: React.FC<ShiftsTableProps> = ({
     if (page > maxPage) setPage(0);
   }, [filteredRows.length, rowsPerPage, page]);
 
+  // Sort phase. Mirrors the resolution used by the cell renderer:
+  // optimistic override → shift PO → JO PO → empty. Numeric compare wins
+  // when both values parse as finite numbers; otherwise we fall back to
+  // a numeric-aware locale compare for mixed alphanumeric POs.
+  const sortedFilteredRows = useMemo(() => {
+    if (poSortDir === null) return filteredRows;
+    const dir = poSortDir === 'asc' ? 1 : -1;
+    const resolvePo = (r: ShiftRow): string => {
+      const overrideKey = `${r.jobOrder.id}:${r.shift.id}`;
+      if (overrideKey in poOverrides) {
+        return (poOverrides[overrideKey] ?? '').toString().trim();
+      }
+      return (r.shift.poNumber ?? r.jobOrder.poNumber ?? '').toString().trim();
+    };
+    return [...filteredRows].sort((a, b) => {
+      const av = resolvePo(a);
+      const bv = resolvePo(b);
+      if (!av && !bv) return 0;
+      if (!av) return 1;
+      if (!bv) return -1;
+      const an = Number(av);
+      const bn = Number(bv);
+      if (Number.isFinite(an) && Number.isFinite(bn)) return (an - bn) * dir;
+      return av.localeCompare(bv, undefined, { numeric: true, sensitivity: 'base' }) * dir;
+    });
+  }, [filteredRows, poSortDir, poOverrides]);
+
   const pagedRows = useMemo(
-    () => filteredRows.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
-    [filteredRows, page, rowsPerPage],
+    () => sortedFilteredRows.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
+    [sortedFilteredRows, page, rowsPerPage],
   );
 
   if (loading) {
@@ -638,7 +671,24 @@ const ShiftsTable: React.FC<ShiftsTableProps> = ({
                   aria-label="Company"
                 />
                 <TableCell sx={{ fontWeight: 600 }}>Account</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>PO#</TableCell>
+                <TableCell
+                  sx={{ fontWeight: 600 }}
+                  sortDirection={poSortDir ?? false}
+                >
+                  <TableSortLabel
+                    active={poSortDir !== null}
+                    direction={poSortDir ?? 'asc'}
+                    onClick={() => {
+                      setPoSortDir((prev) => {
+                        if (prev === null) return 'asc';
+                        if (prev === 'asc') return 'desc';
+                        return null;
+                      });
+                    }}
+                  >
+                    PO#
+                  </TableSortLabel>
+                </TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Date</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Job</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Requirements</TableCell>

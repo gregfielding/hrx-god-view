@@ -2022,9 +2022,8 @@ const PublicJobsBoard: React.FC = () => {
                   
                   <Stack spacing={1}>
                   <Stack direction="row" spacing={1} alignItems="center">
-                    <Typography variant="body1" sx={{ fontWeight: 500 }}>
-                      {selectedJob.companyName}
-                    </Typography>
+                    {/* Client company name intentionally hidden on the public board — */}
+                    {/* see hero-header note in JobPostingDetail.tsx for rationale. */}
                     {/* Hide pay rate for gig jobs with shifts - it's shown on individual shift cards instead */}
                     {selectedJob.showPayRate && !(selectedJob.jobType === 'gig' && selectedJobShifts.length > 0)
                       ? (() => {

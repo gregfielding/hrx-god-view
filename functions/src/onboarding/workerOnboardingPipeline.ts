@@ -346,7 +346,22 @@ export type WorkerOnboardingPipelineTriggerSource =
    * (tenant 3138) without recruiter intervention. Filterable analytics
    * tag — same wiring as `on_call` otherwise.
    */
-  | "auto_application_c1_events";
+  | "auto_application_c1_events"
+  /**
+   * Application doc signal-change trigger
+   * (`onApplicationHiringSignalsChangedAutoOnboard`): fires on prescreen
+   * completion, orchestrator decision changes, and `status` transitioning out
+   * of `in_progress`. Closes the "worker took 3 days to do their interview"
+   * gap that previously left them un-onboarded.
+   */
+  | "auto_user_group_application_signals"
+  /**
+   * User-group membership-add trigger (`onUserGroupMemberAddedAutoOnboard`):
+   * fires when a uid is appended to `userGroups/{gid}.memberIds`. Includes
+   * the catchall pattern under the `hire_everyone` quality preset (group
+   * used as an invite list).
+   */
+  | "auto_user_group_membership_added";
 
 export async function ensureWorkerOnboardingPipeline(args: {
   tenantId: string;

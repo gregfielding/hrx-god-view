@@ -70,45 +70,33 @@ function requireTenantEntity(data: unknown): { tenantId: string; entityId: strin
 /**
  * Recruiter/admin gate for Everee management surfaces.
  *
- * Exported so sibling Everee callables in this directory (EE.5 recovery,
- * future admin tools) reuse the same predicate instead of duplicating
- * the role-check logic — keeps Everee permissions centralized in one
- * place per the Master Plan.
- */
-export function canManageEveree(
-  auth: { token?: { roles?: Record<string, { role?: string }>; hrx?: boolean } } | null | undefined,
-  tenantId: string,
-): boolean {
-  if (!auth?.token) return false;
-  const roles = auth.token.roles ?? {};
-  const tenantRole = roles[tenantId]?.role;
-  if (tenantRole && ['Recruiter', 'Manager', 'Admin'].includes(String(tenantRole))) return true;
-  if (auth.token.hrx === true) return true;
-  return false;
-}
-
-/**
- * Worker-facing embed callables allow **self-service** — a worker must be able
- * to ensure their own Everee record + open their own onboarding session from
- * the app. Recruiters retain full access via `canManageEveree`.
+ * **History:** the original sync `canManageEveree` here read only Firebase
+ * Auth custom claims (`auth.token.roles[tenantId].role`). In production
+ * the claim-sync pipeline had not run for most tenant admins — every C1
+ * admin (sL=7 in Firestore) had `customClaims = {}`, so this gate denied
+ * all of them. Greg was the only person able to use any Everee admin
+ * callable because his `hrx: true` claim was set manually.
  *
- * Returns true when (a) the caller has recruiter/admin rights, or (b) the
- * callable's target `userId` matches the auth'd uid.
+ * Replaced with the async predicate in `./evereeAccessGate.ts`, which
+ * mirrors the AccuSource pattern: Firestore-first (tenant-scoped role +
+ * securityLevel), with the legacy custom-claims path kept as a fast-path
+ * for users whose claims DO get synced. Re-exported here so existing
+ * importers (`evereeAdminRecreateWorkerOnboarding.ts`) keep their
+ * `from './evereeCallables'` import.
+ *
+ * **Migration note for callers:** the gate is now async — every call
+ * site needs `await`. The caller still throws its own
+ * `HttpsError('permission-denied')` so error messages stay specific to
+ * the surface (e.g. "Not allowed to view pay history" vs the generic
+ * "Not allowed").
  */
-function canSelfOrManageEveree(
-  auth: { uid: string; token?: { roles?: Record<string, { role?: string }>; hrx?: boolean } } | null | undefined,
-  tenantId: string,
-  targetUserId: string,
-): boolean {
-  if (!auth?.uid) return false;
-  if (targetUserId && auth.uid === targetUserId) return true;
-  return canManageEveree(auth as any, tenantId);
-}
+import { canManageEveree, canSelfOrManageEveree } from './evereeAccessGate';
+export { canManageEveree, canSelfOrManageEveree };
 
 export const evereePing = onCall(async (request) => {
   requireAuth(request);
   const { tenantId, entityId } = requireTenantEntity(request.data);
-  if (!canManageEveree(request.auth as any, tenantId)) {
+  if (!(await canManageEveree(request.auth as any, tenantId))) {
     throw new HttpsError('permission-denied', 'Not allowed to manage Everee for this tenant');
   }
   await requireEvereeEnabledEntity(tenantId, entityId);
@@ -124,7 +112,7 @@ export const evereeEnsureWorker = onCall(async (request) => {
   if (!tenantId || !entityId || !userId) {
     throw new HttpsError('invalid-argument', 'tenantId, entityId, userId required');
   }
-  if (!canSelfOrManageEveree(request.auth as any, tenantId, userId)) {
+  if (!(await canSelfOrManageEveree(request.auth as any, tenantId, userId))) {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
   await requireEvereeEnabledEntity(tenantId, entityId);
@@ -163,7 +151,7 @@ export const evereeCreateOnboardingSession = onCall(async (request) => {
   if (!tenantId || !entityId || !userId || !evereeWorkerId) {
     throw new HttpsError('invalid-argument', 'tenantId, entityId, userId, evereeWorkerId required');
   }
-  if (!canSelfOrManageEveree(request.auth as any, tenantId, userId)) {
+  if (!(await canSelfOrManageEveree(request.auth as any, tenantId, userId))) {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
   await requireEvereeEnabledEntity(tenantId, entityId);
@@ -207,7 +195,7 @@ export const evereeGetPayHistory = onCall(async (request) => {
   if (!tenantId || !entityId) {
     throw new HttpsError('invalid-argument', 'tenantId, entityId required');
   }
-  if (!canSelfOrManageEveree(request.auth as any, tenantId, userId)) {
+  if (!(await canSelfOrManageEveree(request.auth as any, tenantId, userId))) {
     throw new HttpsError('permission-denied', 'Not allowed to view pay history for this user');
   }
   await requireEvereeEnabledEntity(tenantId, entityId);
@@ -224,7 +212,7 @@ export const evereeGetPayStatement = onCall(async (request) => {
   if (!tenantId || !entityId || !statementId) {
     throw new HttpsError('invalid-argument', 'tenantId, entityId, statementId required');
   }
-  if (!canSelfOrManageEveree(request.auth as any, tenantId, userId)) {
+  if (!(await canSelfOrManageEveree(request.auth as any, tenantId, userId))) {
     throw new HttpsError('permission-denied', 'Not allowed to view pay statement for this user');
   }
   await requireEvereeEnabledEntity(tenantId, entityId);
@@ -235,7 +223,7 @@ export const evereeGetPayStatement = onCall(async (request) => {
 export const evereeAdminPushShift = onCall(async (request) => {
   requireAuth(request);
   const { tenantId, entityId } = requireTenantEntity(request.data);
-  if (!canManageEveree(request.auth as any, tenantId)) {
+  if (!(await canManageEveree(request.auth as any, tenantId))) {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
   await requireEvereeEnabledEntity(tenantId, entityId);
@@ -246,7 +234,7 @@ export const evereeAdminPushShift = onCall(async (request) => {
 export const evereeAdminPreparePayout = onCall(async (request) => {
   requireAuth(request);
   const { tenantId, entityId } = requireTenantEntity(request.data);
-  if (!canManageEveree(request.auth as any, tenantId)) {
+  if (!(await canManageEveree(request.auth as any, tenantId))) {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
   await requireEvereeEnabledEntity(tenantId, entityId);
@@ -291,7 +279,7 @@ export const evereeGetMyOnboardingStatus = onCall(async (request) => {
   if (!tenantId || !entityId || !evereeWorkerId) {
     throw new HttpsError('invalid-argument', 'tenantId, entityId, evereeWorkerId required');
   }
-  if (!canSelfOrManageEveree(request.auth as any, tenantId, targetUserId)) {
+  if (!(await canSelfOrManageEveree(request.auth as any, tenantId, targetUserId))) {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
   const config = await requireEvereeEnabledEntity(tenantId, entityId);
@@ -736,7 +724,7 @@ export const evereeAdminClearStaleStamps = onCall(async (request) => {
   // clears stale stamps when the API says not-complete). This callable
   // is for cases where the preflight is unreachable or the stamp got
   // there by some other means.
-  if (!canManageEveree(request.auth as any, tenantId)) {
+  if (!(await canManageEveree(request.auth as any, tenantId))) {
     throw new HttpsError(
       'permission-denied',
       'Not allowed to clear Everee onboarding stamps for this tenant',
@@ -823,7 +811,7 @@ export const evereeAdminGetWorker = onCall(async (request) => {
   if (!tenantId || !entityId || !evereeWorkerId) {
     throw new HttpsError('invalid-argument', 'tenantId, entityId, evereeWorkerId required');
   }
-  if (!canSelfOrManageEveree(request.auth as any, tenantId, targetUserId)) {
+  if (!(await canSelfOrManageEveree(request.auth as any, tenantId, targetUserId))) {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
   const config = await requireEvereeEnabledEntity(tenantId, entityId);
@@ -899,7 +887,7 @@ export const evereeAdminGetWorkerDocuments = onCall(async (request) => {
   if (!tenantId || !entityId || !evereeWorkerId) {
     throw new HttpsError('invalid-argument', 'tenantId, entityId, evereeWorkerId required');
   }
-  if (!canSelfOrManageEveree(request.auth as any, tenantId, targetUserId)) {
+  if (!(await canSelfOrManageEveree(request.auth as any, tenantId, targetUserId))) {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
   const config = await requireEvereeEnabledEntity(tenantId, entityId);
@@ -949,7 +937,7 @@ export const evereeAdminGetWorkerW9 = onCall(async (request) => {
   if (!tenantId || !entityId || !evereeWorkerId) {
     throw new HttpsError('invalid-argument', 'tenantId, entityId, evereeWorkerId required');
   }
-  if (!canSelfOrManageEveree(request.auth as any, tenantId, targetUserId)) {
+  if (!(await canSelfOrManageEveree(request.auth as any, tenantId, targetUserId))) {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
   const config = await requireEvereeEnabledEntity(tenantId, entityId);
@@ -996,7 +984,7 @@ export const evereeAdminGetWorkerW4 = onCall(async (request) => {
   if (!tenantId || !entityId || !evereeWorkerId) {
     throw new HttpsError('invalid-argument', 'tenantId, entityId, evereeWorkerId required');
   }
-  if (!canSelfOrManageEveree(request.auth as any, tenantId, targetUserId)) {
+  if (!(await canSelfOrManageEveree(request.auth as any, tenantId, targetUserId))) {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
   const config = await requireEvereeEnabledEntity(tenantId, entityId);

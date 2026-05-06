@@ -48,6 +48,13 @@ export type UserGroupHiringConfigV1 = {
   automation?: UserGroupHiringAutomation;
   employment?: {
     hiringEntityId?: string | null;
+    /**
+     * @deprecated Worker type (W-2 vs 1099) is owned by the tenant Entity, not the
+     * user group. Server flows pass `'entity_default'` to `runStartOnCallEmploymentFlow`
+     * and resolve the actual classification via `resolveEvereeWorkerTypeForOnCall`. The
+     * field is preserved on the schema for backward-compat with existing Firestore docs;
+     * no UI surfaces it and validation no longer requires it.
+     */
     workerType?: 'W2' | '1099';
     employmentType?: 'standard' | 'on_call';
     eVerifyRequired?: boolean;
@@ -384,9 +391,6 @@ export function validateUserGroupHiringConfig(cfg: UserGroupHiringConfigV1): Use
   if (auto.autoOnboardEnabled === true) {
     if (!entity) {
       errors.push('Set a hiring entity ID when auto-onboarding is enabled.');
-    }
-    if (emp.workerType !== 'W2' && emp.workerType !== '1099') {
-      errors.push('Choose a worker type (W2 or 1099) when auto-onboarding is enabled.');
     }
     if (emp.employmentType !== 'standard' && emp.employmentType !== 'on_call') {
       errors.push('Choose standard or on-call employment when auto-onboarding is enabled.');

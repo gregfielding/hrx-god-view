@@ -270,7 +270,7 @@ export const evereeAdminRecreateWorkerOnboarding = onCall(async (request) => {
       "tenantId, entityId, userId are required",
     );
   }
-  if (!canManageEveree(request.auth as any, tenantId)) {
+  if (!(await canManageEveree(request.auth as any, tenantId))) {
     throw new HttpsError(
       "permission-denied",
       "Not allowed to recreate Everee onboarding records for this tenant",

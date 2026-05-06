@@ -51,9 +51,23 @@ export type UserGroupHirePassedResult = {
   /** Count of user IDs on the group document (`memberIds`). */
   groupMemberCount: number;
   applicationsScanned: number;
+  /**
+   * Members in `memberIds` who have no application linked to them. These are
+   * surfaced as synthetic rows by the scan: under `hire_everyone` they count
+   * toward `eligibleCount` (subject to the C1 Select employment block); under
+   * any other preset they count toward `excludedCount` with a guiding reason.
+   */
+  membersWithoutApplicationCount: number;
   rows: UserGroupHirePassedRow[];
   eligibleCount: number;
   excludedCount: number;
+  /**
+   * Diagnostic histogram of exclusion reasons. Lets the dialog tell recruiters
+   * *why* most of their scan came back excluded (e.g. "84 prescreens not
+   * completed", "12 below score threshold") rather than just an aggregate count.
+   * Sorted by `count` desc so the top blocker reads first.
+   */
+  exclusionBreakdown: Array<{ category: string; label: string; count: number }>;
   auditId: string | null;
   committedAt: admin.firestore.Timestamp | null;
   /** Set when `mode === 'execute'`. */
@@ -67,7 +81,7 @@ function norm(s: unknown): string {
     .toLowerCase();
 }
 
-function resolveC1SelectEntityId(
+export function resolveC1SelectEntityId(
   entities: Array<{ id: string; name: string; entityCode?: string }>,
 ): string | null {
   const byCode = entities.find((e) => (e.entityCode || '').trim().toUpperCase() === 'C1SL');
@@ -81,7 +95,7 @@ function resolveC1SelectEntityId(
 }
 
 /** Orchestrator final decision (advance = passed hiring rules for this tool). */
-function extractOrchestratorDecision(data: Record<string, unknown>): string | null {
+export function extractOrchestratorDecision(data: Record<string, unknown>): string | null {
   const aa = data.aiAutomation as Record<string, unknown> | undefined;
   if (!aa || typeof aa !== 'object') return null;
   const legacy = aa.decision;
@@ -100,7 +114,7 @@ function extractOrchestratorDecision(data: Record<string, unknown>): string | nu
   return decRaw ? decRaw.trim().toLowerCase() : null;
 }
 
-function applicantNameFromApplication(data: Record<string, unknown>): string {
+export function applicantNameFromApplication(data: Record<string, unknown>): string {
   const direct = String(data.applicantName || data.displayName || '').trim();
   if (direct) return direct;
   const fn = String(data.firstName || '').trim();
@@ -109,10 +123,10 @@ function applicantNameFromApplication(data: Record<string, unknown>): string {
   return j || '—';
 }
 
-const TERMINAL_APPLICATION = new Set(['rejected', 'withdrawn']);
+export const TERMINAL_APPLICATION = new Set(['rejected', 'withdrawn']);
 const BLOCKING_C1_STATUSES = new Set(['active', 'onboarding', 'hired', 'offer_pending', 'pending', 'in_progress']);
 
-function isC1SelectEmployment(rec: Record<string, unknown>, c1EntityId: string | null): boolean {
+export function isC1SelectEmployment(rec: Record<string, unknown>, c1EntityId: string | null): boolean {
   const ek = norm(rec.entityKey);
   if (ek === 'select') return true;
   const eid = String(rec.entityId || '').trim();
@@ -120,7 +134,7 @@ function isC1SelectEmployment(rec: Record<string, unknown>, c1EntityId: string |
   return false;
 }
 
-function c1EmploymentBlocksHire(rec: Record<string, unknown>): { blocks: boolean; detail: string } {
+export function c1EmploymentBlocksHire(rec: Record<string, unknown>): { blocks: boolean; detail: string } {
   const st = norm(rec.status || rec.employmentState);
   if (st && BLOCKING_C1_STATUSES.has(st)) {
     return { blocks: true, detail: `C1 Select employment status “${st}”` };
@@ -128,9 +142,74 @@ function c1EmploymentBlocksHire(rec: Record<string, unknown>): { blocks: boolean
   return { blocks: false, detail: '' };
 }
 
-function readGroupOnCallHiringContext(groupData: Record<string, unknown>): {
+/**
+ * Stable category codes for excluded rows. Keep in sync with `categorizeExclusionRow`.
+ * The dialog renders the histogram these produce so recruiters can see *why* a
+ * scan returned mostly excluded rows (e.g. 84 prescreens not completed) instead
+ * of having to dig through audit-log row reasons.
+ */
+export const EXCLUSION_CATEGORY_LABELS: Record<string, string> = {
+  prescreen_not_completed: 'Prescreen not completed',
+  application_terminal: 'Application terminal (rejected/withdrawn)',
+  orchestrator_below_threshold: 'Below score threshold / orchestrator hold',
+  orchestrator_no_decision: 'No orchestrator decision',
+  policy_evaluation_error: 'Policy re-evaluation error',
+  blocked_by_c1_select: 'Active C1 Select employment',
+  no_application_linked: 'Member has no application linked',
+  missing_user_id: 'Application missing userId',
+  other: 'Other',
+};
+
+export function categorizeExclusionRow(row: UserGroupHirePassedRow): keyof typeof EXCLUSION_CATEGORY_LABELS {
+  const first = (row.reasons[0] ?? '').toLowerCase();
+  if (!first) return 'other';
+  if (first.includes('missing userid')) return 'missing_user_id';
+  if (first.includes('application status is terminal')) return 'application_terminal';
+  if (first.includes('interview not completed')) return 'prescreen_not_completed';
+  if (first.includes('current policy re-evaluation')) return 'policy_evaluation_error';
+  if (
+    first.includes('orchestrator decision is') ||
+    first.includes('current-policy orchestrator decision is')
+  ) {
+    return 'orchestrator_below_threshold';
+  }
+  if (
+    first.includes('no orchestrator decision') ||
+    first.includes('no current-policy orchestrator decision')
+  ) {
+    return 'orchestrator_no_decision';
+  }
+  if (first.includes('c1 select employment')) return 'blocked_by_c1_select';
+  if (first.includes('no application linked')) return 'no_application_linked';
+  return 'other';
+}
+
+/**
+ * Returns true when the group's saved quality preset is `hire_everyone`. In that
+ * case the eligibility scan bypasses the interview-completion + orchestrator-advance
+ * gates (since "hire everyone" cannot mean "everyone who happened to finish a prescreen
+ * AND was scored ≥ 0"). Sanity gates that protect data integrity still apply: missing
+ * userId, terminal application status, and active blocking C1 Select employment.
+ */
+export function isGroupHireEveryonePreset(groupData: Record<string, unknown>): boolean {
+  const hc = groupData.hiringConfig as Record<string, unknown> | undefined;
+  const q =
+    hc && typeof hc === 'object' ? (hc.quality as Record<string, unknown> | undefined) : undefined;
+  const preset = String(q?.preset ?? '').trim().toLowerCase();
+  return preset === 'hire_everyone';
+}
+
+export function readGroupOnCallHiringContext(groupData: Record<string, unknown>): {
   hiringEntityId: string;
-  workerType: 'w2' | '1099';
+  /**
+   * Worker type is owned by the tenant Entity, not the user group: we always pass
+   * `'entity_default'` to `runStartOnCallEmploymentFlow` so the server resolves it via
+   * `resolveEvereeWorkerTypeForOnCall(entityId, entityDoc)`. This matches the
+   * auto-onboarding trigger in `onApplicationCreatedPush.ts` (search: `entity_default`)
+   * and avoids drift when a recruiter ever toggled W-2/1099 on the group while the
+   * Entity disagreed.
+   */
+  workerType: 'entity_default';
   employmentType: string;
 } {
   const hc = groupData.hiringConfig as Record<string, unknown> | undefined;
@@ -139,16 +218,14 @@ function readGroupOnCallHiringContext(groupData: Record<string, unknown>): {
   const e = emp && typeof emp === 'object' ? emp : {};
   const hiringEntityId = String(e.hiringEntityId || '').trim();
   const employmentType = String(e.employmentType || 'standard').trim().toLowerCase();
-  const wtRaw = String(e.workerType || 'W2').trim().toLowerCase();
-  const workerType: 'w2' | '1099' = wtRaw === '1099' ? '1099' : 'w2';
-  return { hiringEntityId, workerType, employmentType };
+  return { hiringEntityId, workerType: 'entity_default', employmentType };
 }
 
 /**
  * Group hiring tab: `hiringConfig.requirements` AccuSource package for on-call execute.
  * Aligns with Recruiter UI (`accusourceScreeningRequired` + package id/name) and migrates legacy drug/bg toggles.
  */
-function resolveAccusourceScreeningFromGroupHiringConfig(groupData: Record<string, unknown>): {
+export function resolveAccusourceScreeningFromGroupHiringConfig(groupData: Record<string, unknown>): {
   screeningPackageId: string | null;
   screeningPackageName: string | null;
   screeningRequestedServiceIds: string[] | null;
@@ -241,6 +318,7 @@ export const userGroupHirePassedCandidates = onCall(
     const memberIds: string[] = Array.isArray(groupData.memberIds)
       ? (groupData.memberIds as unknown[]).map((x) => String(x).trim()).filter(Boolean)
       : [];
+    const hireEveryone = isGroupHireEveryonePreset(groupData);
 
     const appsCol = db.collection(`tenants/${tenantId}/applications`);
     const appById = new Map<string, { id: string; data: Record<string, unknown> }>();
@@ -281,9 +359,21 @@ export const userGroupHirePassedCandidates = onCall(
     }
 
     const userIds = new Set<string>();
+    const memberIdsWithApplication = new Set<string>();
     for (const { data } of appRows) {
       const uid = String(data.userId || data.candidateId || '').trim();
-      if (uid) userIds.add(uid);
+      if (uid) {
+        userIds.add(uid);
+        memberIdsWithApplication.add(uid);
+      }
+    }
+    // Catchall-group case: a recruiter may add workers to `memberIds` without
+    // any application existing. We still want to know if those members are
+    // blocked by C1 Select employment so the synthetic eligibility row reflects
+    // it, so include them in the employment-fetch uid set.
+    for (const m of memberIds) {
+      const t = m.trim();
+      if (t) userIds.add(t);
     }
 
     const c1EmploymentByUser = new Map<string, Array<Record<string, unknown>>>();
@@ -344,7 +434,7 @@ export const userGroupHirePassedCandidates = onCall(
         continue;
       }
 
-      if (!data.workerAiPrescreenInterviewCompletedAt) {
+      if (!data.workerAiPrescreenInterviewCompletedAt && !hireEveryone) {
         excludedCount += 1;
         reasons.push('Interview not completed (no workerAiPrescreenInterviewCompletedAt)');
         rows.push({
@@ -359,8 +449,14 @@ export const userGroupHirePassedCandidates = onCall(
         continue;
       }
 
+      // `hire_everyone` preset short-circuits the orchestrator: with no score
+      // floor, "advance" is the inevitable outcome anyway, and for members who
+      // never completed a prescreen we have nothing to grade. Sanity gates
+      // (userId, application status, blocking C1 Select employment) still run.
       let effectiveOrch: string | null = storedOrch;
-      if (eligibilityMode === 'current_policy') {
+      if (hireEveryone) {
+        effectiveOrch = 'advance';
+      } else if (eligibilityMode === 'current_policy') {
         try {
           const re = await evaluateCurrentPolicyOrchestratorDecision(
             db,
@@ -459,11 +555,18 @@ export const userGroupHirePassedCandidates = onCall(
 
       eligibleCount += 1;
       const eligibleReasons: string[] = [
-        eligibilityMode === 'current_policy'
-          ? 'Eligible under current tenant + group hiring policy (orchestrator advance) and no blocking C1 Select employment'
-          : 'Passed AI interview (orchestrator advance) and no blocking C1 Select employment row',
+        hireEveryone
+          ? 'Eligible: group quality preset is “hire_everyone” — interview & orchestrator gates bypassed; no blocking C1 Select employment.'
+          : eligibilityMode === 'current_policy'
+            ? 'Eligible under current tenant + group hiring policy (orchestrator advance) and no blocking C1 Select employment'
+            : 'Passed AI interview (orchestrator advance) and no blocking C1 Select employment row',
       ];
-      if (eligibilityMode === 'current_policy' && storedOrch && storedOrch !== 'advance') {
+      if (
+        !hireEveryone &&
+        eligibilityMode === 'current_policy' &&
+        storedOrch &&
+        storedOrch !== 'advance'
+      ) {
         eligibleReasons.push(`Earlier stored decision was “${storedOrch}” (superseded by current-policy re-evaluation).`);
       }
       rows.push({
@@ -477,10 +580,97 @@ export const userGroupHirePassedCandidates = onCall(
       });
     }
 
+    // Catchall-group synthesis: members without an application would otherwise
+    // be invisible to this scan. We surface them as synthetic rows so:
+    //   - Under `hire_everyone`, they're treated as eligible (group-as-invite-list
+    //     pattern). Blocking C1 Select employment still excludes them.
+    //   - Under any other preset, they're surfaced as excluded with a reason that
+    //     guides the recruiter toward `hire_everyone` if that's their intent.
+    // `memberIdsWithApplication` was populated alongside the per-app loop so we
+    // don't double-count members who already produced a row above.
+    let membersWithoutApplicationCount = 0;
+    for (const memberId of memberIds) {
+      const uid = memberId.trim();
+      if (!uid) continue;
+      if (memberIdsWithApplication.has(uid)) continue;
+      membersWithoutApplicationCount += 1;
+      const synthAppId = `synthetic:no_application:${uid}`;
+
+      if (!hireEveryone) {
+        excludedCount += 1;
+        rows.push({
+          applicationId: synthAppId,
+          userId: uid,
+          displayNameHint: '—',
+          outcome: 'excluded',
+          reasons: [
+            'Member has no application linked to this group — cannot evaluate hire-passed criteria. Set the quality preset to "hire_everyone" to onboard catchall-group members without an application.',
+          ],
+          orchestratorDecision: null,
+          applicationStatus: null,
+        });
+        continue;
+      }
+
+      const c1recs = c1EmploymentByUser.get(uid) ?? [];
+      let blockedByC1 = false;
+      let blockDetail = '';
+      for (const rec of c1recs) {
+        if (!isC1SelectEmployment(rec, c1SelectEntityId)) continue;
+        const { blocks, detail } = c1EmploymentBlocksHire(rec);
+        if (blocks) {
+          blockedByC1 = true;
+          blockDetail = detail;
+          break;
+        }
+      }
+
+      if (blockedByC1) {
+        excludedCount += 1;
+        rows.push({
+          applicationId: synthAppId,
+          userId: uid,
+          displayNameHint: '—',
+          outcome: 'excluded',
+          reasons: [`No application linked; ${blockDetail}.`],
+          orchestratorDecision: null,
+          applicationStatus: null,
+        });
+        continue;
+      }
+
+      eligibleCount += 1;
+      rows.push({
+        applicationId: synthAppId,
+        userId: uid,
+        displayNameHint: '—',
+        outcome: 'eligible',
+        reasons: [
+          'Eligible: catchall-group member with no application; quality preset "hire_everyone" treats group membership as the hire signal.',
+        ],
+        orchestratorDecision: null,
+        applicationStatus: null,
+      });
+    }
+
     rows.sort((a, b) => {
       if (a.outcome !== b.outcome) return a.outcome === 'eligible' ? -1 : 1;
       return a.applicationId.localeCompare(b.applicationId);
     });
+
+    const exclusionTallies = new Map<string, number>();
+    for (const r of rows) {
+      if (r.outcome !== 'excluded') continue;
+      const cat = categorizeExclusionRow(r);
+      exclusionTallies.set(cat, (exclusionTallies.get(cat) ?? 0) + 1);
+    }
+    const exclusionBreakdown = [...exclusionTallies.entries()]
+      .map(([category, count]) => ({
+        category,
+        label: EXCLUSION_CATEGORY_LABELS[category] ?? category,
+        count,
+      }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 
     let auditId: string | null = null;
     let committedAt: admin.firestore.Timestamp | null = null;
@@ -502,9 +692,11 @@ export const userGroupHirePassedCandidates = onCall(
         c1SelectEntityId,
         c1SelectResolved: Boolean(c1SelectEntityId),
         applicationsScanned: appRows.length,
+        membersWithoutApplicationCount,
         groupMemberCount: memberIds.length,
         eligibleCount,
         excludedCount,
+        exclusionBreakdown,
         rows,
         note: 'Audit only — no application status changes or background orders',
       });
@@ -590,9 +782,11 @@ export const userGroupHirePassedCandidates = onCall(
         c1SelectEntityId,
         c1SelectResolved: Boolean(c1SelectEntityId),
         applicationsScanned: appRows.length,
+        membersWithoutApplicationCount,
         groupMemberCount: memberIds.length,
         eligibleCount,
         excludedCount,
+        exclusionBreakdown,
         rows,
         hiringEntityId: hireCtx.hiringEntityId,
         employmentType: hireCtx.employmentType,
@@ -620,9 +814,11 @@ export const userGroupHirePassedCandidates = onCall(
       c1SelectResolved: Boolean(c1SelectEntityId),
       groupMemberCount: memberIds.length,
       applicationsScanned: appRows.length,
+      membersWithoutApplicationCount,
       rows,
       eligibleCount,
       excludedCount,
+      exclusionBreakdown,
       auditId,
       committedAt,
       onboardingStarted: mode === 'execute' ? onboardingStarted : undefined,

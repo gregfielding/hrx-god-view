@@ -14,8 +14,22 @@ export type UserGroupHirePassedExecuteResult = {
   eligibilityMode?: 'stored' | 'current_policy';
   groupMemberCount: number;
   applicationsScanned: number;
+  /**
+   * Members of the group who have no application linked. Surfaced as synthetic
+   * scan rows; under the `hire_everyone` quality preset they count toward
+   * `eligibleCount` (catchall-group invite pattern), otherwise toward
+   * `excludedCount`.
+   */
+  membersWithoutApplicationCount?: number;
   eligibleCount: number;
   excludedCount: number;
+  /**
+   * Per-reason histogram for excluded rows. Sorted by `count` desc on the
+   * server. Rendered in the dialog so recruiters can immediately see whether
+   * eligibility is held back by missing prescreens, terminal applications,
+   * blocking C1 Select employment, etc. — instead of just a single total.
+   */
+  exclusionBreakdown?: Array<{ category: string; label: string; count: number }>;
   auditId: string | null;
   onboardingStarted?: number;
   onboardingFailed?: Array<{ userId: string; message: string }>;
@@ -59,9 +73,17 @@ export function formatUserGroupHirePassedSuccess(r: UserGroupHirePassedExecuteRe
       ? 'Eligibility mode: stored Firestore decisions only.'
       : 'Eligibility mode: current tenant + group policy (re-evaluated per application).';
   lines.push(modeLine);
+  const noAppCount = r.membersWithoutApplicationCount ?? 0;
+  const noAppFragment = noAppCount > 0 ? ` · ${noAppCount} member(s) without an application` : '';
   lines.push(
-    `Scanned ${r.applicationsScanned} application(s) (${r.groupMemberCount} group members). Eligible: ${r.eligibleCount}, excluded: ${r.excludedCount}.`,
+    `Scanned ${r.applicationsScanned} application(s) (${r.groupMemberCount} group members${noAppFragment}). Eligible: ${r.eligibleCount}, excluded: ${r.excludedCount}.`,
   );
+  if ((r.exclusionBreakdown?.length ?? 0) > 0) {
+    lines.push('Exclusion breakdown:');
+    for (const b of r.exclusionBreakdown!) {
+      lines.push(`  • ${b.count} · ${b.label}`);
+    }
+  }
   if (r.auditId) {
     lines.push(`Audit log: ${r.auditId}`);
   }

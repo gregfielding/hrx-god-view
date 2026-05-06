@@ -1992,16 +1992,14 @@ const JobPostingDetail: React.FC = () => {
               </Tooltip>
             </Box>
 
-            {posting.companyName && (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
-                <BusinessIcon fontSize="small" color="action" />
-                <Typography variant="body1" color="text.secondary">
-                  {posting.companyName}
-                </Typography>
-              </Box>
-            )}
+            {/* Client company name intentionally hidden on public job postings — */}
+            {/* the tenant brand is shown at the top of the page; surfacing the */}
+            {/* underlying client employer publicly is not desirable for staffing-agency */}
+            {/* tenants. SEO structured data (hiringOrganization) and the post-application */}
+            {/* assignment-details card still surface the company; only the public-facing */}
+            {/* hero header line is suppressed. */}
 
-            {/* Pay rate — visually dominant in header (hierarchy: Title → Company → PAY RATE → Location → Next Shift) */}
+            {/* Pay rate — visually dominant in header (hierarchy: Title → PAY RATE → Location → Next Shift) */}
             {posting.showPayRate && posting.payRate != null && (
               <Typography
                 component="div"
