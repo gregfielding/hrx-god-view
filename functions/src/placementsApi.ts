@@ -1192,7 +1192,17 @@ export const placementsCancelAssignment = onCall(
     { merge: true },
   );
 
+  // Firestore requires ALL reads in a transaction to precede ALL writes —
+  // doing `tx.get(applicationRef)` after `tx.delete(assignmentRef)` /
+  // `tx.set(placementRef)` throws
+  // "Firestore transactions require all reads to be executed before all
+  // writes." which surfaces in the client as a vague callable
+  // INTERNAL error and blocks every assignment cancel that has a linked
+  // application doc. We do the read up front, then derive the day patch,
+  // then perform every write in a single batch.
   await db.runTransaction(async (tx) => {
+    const appSnap = applicationRef ? await tx.get(applicationRef) : null;
+
     tx.delete(assignmentRef);
     tx.set(placementRef, {
       tenantId,
@@ -1203,8 +1213,7 @@ export const placementsCancelAssignment = onCall(
       createdBy: request.auth!.uid,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
-    if (applicationRef) {
-      const appSnap = await tx.get(applicationRef);
+    if (applicationRef && appSnap) {
       const appData = appSnap.exists ? (appSnap.data() as Record<string, any>) : {};
       const currentDays = getApplicationApplyDays(appData);
       const remainingDays = placementDayKey

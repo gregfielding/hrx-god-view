@@ -2638,7 +2638,29 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   };
 
-  // Cancel assignment(s). When "All days" selected, cancel all assignments for this user on this shift.
+  /**
+   * Cancel assignment(s). When "All days" selected, cancel all assignments
+   * for this user on this shift.
+   *
+   * Optimistic-UI contract:
+   *   1. We synchronously transform the visible row in `assignmentWorkersList`
+   *      so the chip flips to "Placed" (or the row is removed when no
+   *      placement exists) BEFORE the callable RTT — recruiters see the
+   *      action take effect on click instead of waiting on the
+   *      `placementsCancelAssignment` callable, which can spend 10s+
+   *      sending offer-cancelled notifications and updating downstream
+   *      docs. The previous flow only set `pendingAssignmentCancels`,
+   *      which forced the UI to wait for the load() effect to re-run a
+   *      batch of `getDoc`s before the chip updated.
+   *   2. We still flag the uid in `pendingAssignmentCancels` so the
+   *      reconciling `load()` effect doesn't overwrite our optimistic
+   *      transform with a stale `assignmentStatusByUserId.get(userId)`
+   *      value before Firestore catches up.
+   *   3. On callable failure (e.g. INTERNAL — observed in the wild), we
+   *      clear `pendingAssignmentCancels`, which retriggers the load()
+   *      effect and pulls the original assignment status back from
+   *      Firestore truth, restoring the tile.
+   */
   const handleCancelAssignment = async (worker: Worker) => {
     if (worker.isPlacementOnly || !selectedShiftId || !jobOrderId) return;
     const assignmentIds =
@@ -2649,18 +2671,51 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           : [];
     if (assignmentIds.length === 0) return;
     setCancelAssignmentWorker(null);
+    const hasPlacement = placementUserIds.has(worker.id);
+    setAssignmentWorkersList((prev) => {
+      if (hasPlacement) {
+        return prev.map((w) =>
+          w.id === worker.id
+            ? {
+                ...w,
+                assignmentStatus: undefined,
+                assignmentId: undefined,
+                isPlacementOnly: true,
+                confirmationStatus: undefined,
+                assignmentOfferSentAt: undefined,
+                assignmentConfirmedAt: undefined,
+              }
+            : w,
+        );
+      }
+      // No placement to fall back to (rare — workers usually progress
+      // Placed → Accepted → Confirmed, so they always have a placement
+      // doc when cancellable). Drop them from the list rather than show
+      // a stale Confirmed chip.
+      return prev.filter((w) => w.id !== worker.id);
+    });
+    setPendingAssignmentCancels((prev) => new Set([...prev, worker.id]));
     try {
       setError(null);
-      setPendingAssignmentCancels((prev) => new Set([...prev, worker.id]));
       const cancelFn = httpsCallable(functions, 'placementsCancelAssignment');
       await Promise.all(
         assignmentIds.map((assignmentId) =>
           cancelFn({ tenantId, assignmentId, shiftId: selectedShiftId, userId: worker.id }),
         ),
       );
+      // Success: leave the optimistic transform in place. Firestore
+      // subscription on placements/assignments will eventually update
+      // `assignmentStatusByUserId` to 'cancelled', the load() effect
+      // re-runs, and our same shape (Placed) is rebuilt deterministically
+      // — no flicker.
     } catch (err: any) {
       console.error('Error cancelling assignment:', err);
       setError(err?.message || 'Failed to cancel assignment');
+      // Revert: clearing the pending flag retriggers `assignedUserIds`
+      // → load() effect → fresh `assignmentStatusByUserId.get(userId)`
+      // value (still the original 'confirmed' / 'accepted'), which
+      // rebuilds the row with its prior chip. No need to manually
+      // restore fields here — the load() effect is the source of truth.
       setPendingAssignmentCancels((prev) => {
         const next = new Set(prev);
         next.delete(worker.id);
@@ -2831,12 +2886,38 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   };
 
-  /** Bulk Cancel: cancel assignment (red X) for all selected workers who have an assignment. */
+  /**
+   * Bulk Cancel: cancel assignment (red X) for all selected workers who
+   * have an assignment. Same optimistic-UI contract as
+   * `handleCancelAssignment` — see that method for the long-form rationale
+   * (synchronous in-place transform, pending flag to fence the load()
+   * effect, full revert on failure).
+   */
   const handleBulkCancel = async () => {
     const selected = displayedAssignedWorkers.filter((w) => selectedAssignmentWorkerIds.has(w.id));
     const withAssignment = selected.filter((w) => !w.isPlacementOnly && w.assignmentId);
     if (withAssignment.length === 0 || !selectedShiftId || !jobOrderId) return;
     setBulkCancelBusy(true);
+    const cancelledIds = new Set(withAssignment.map((w) => w.id));
+    setAssignmentWorkersList((prev) =>
+      prev.flatMap((w) => {
+        if (!cancelledIds.has(w.id)) return [w];
+        if (placementUserIds.has(w.id)) {
+          return [
+            {
+              ...w,
+              assignmentStatus: undefined,
+              assignmentId: undefined,
+              isPlacementOnly: true,
+              confirmationStatus: undefined,
+              assignmentOfferSentAt: undefined,
+              assignmentConfirmedAt: undefined,
+            },
+          ];
+        }
+        return [];
+      }),
+    );
     try {
       setError(null);
       setPendingAssignmentCancels((prev) => new Set([...prev, ...withAssignment.map((w) => w.id)]));
