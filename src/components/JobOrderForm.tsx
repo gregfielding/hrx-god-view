@@ -953,14 +953,37 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     setFilteredLocations(finalLocations);
   }, [locations, formData.worksiteId, formData.companyId]);
 
-  /** Worksite state for SUTA/FUTA (same as Account Pricing). */
+  /**
+   * Worksite state for SUTA/FUTA (same as Account Pricing).
+   *
+   * Resolution order (most specific → most denormalized):
+   *   1. The picked worksite location object inside `filteredLocations`.
+   *   2. The JO's stored `worksiteAddress.state` (loaded directly from the
+   *      JO doc). Required because cross-account worksites (e.g. JO under
+   *      Account "Proof of the Pudding" with a worksite that lives under
+   *      a child account or a different parent) get rendered with a stub
+   *      `{ id, name: 'Current Location' }` that has no state — see the
+   *      `setFilteredLocations` effect above. Without this fallback the
+   *      "Apply SUTA/FUTA" button stays disabled even though the JO clearly
+   *      has a TX/CA/etc. address on file.
+   *   3. `worksiteAddress.address.state` (older imports nested it).
+   *   4. Top-level `state` field (legacy JO docs).
+   */
   const worksiteStateCodeForPricing = useMemo(() => {
     const selectedLocation = filteredLocations.find((loc) => loc.id === formData.worksiteId) as
       | (Location & { state?: string; address?: { state?: string } })
       | undefined;
-    const stateRaw = selectedLocation?.state ?? selectedLocation?.address?.state;
-    return normalizeStateCode(stateRaw).trim().toUpperCase();
-  }, [filteredLocations, formData.worksiteId]);
+    const fromLocation = selectedLocation?.state ?? selectedLocation?.address?.state;
+    const fromLocationCode = normalizeStateCode(fromLocation).trim().toUpperCase();
+    if (fromLocationCode) return fromLocationCode;
+
+    const wa = (loadedJobOrderData as any)?.worksiteAddress;
+    const fromJo =
+      (wa && typeof wa === 'object'
+        ? wa.state ?? wa.address?.state ?? wa.stateCode
+        : undefined) ?? (loadedJobOrderData as any)?.state;
+    return normalizeStateCode(fromJo).trim().toUpperCase();
+  }, [filteredLocations, formData.worksiteId, loadedJobOrderData]);
 
   const applySutaFutaFromWorksiteState = () => {
     if (!worksiteStateCodeForPricing) return;

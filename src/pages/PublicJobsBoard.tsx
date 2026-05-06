@@ -2480,11 +2480,16 @@ const PublicJobsBoard: React.FC = () => {
               {(() => {
                 const applicationId = selectedJob ? `${selectedJob.tenantId}_${selectedJob.id}` : '';
                 const hasApplied = userApplicationIds.includes(applicationId);
-                
+                // Gigs apply shift-by-shift only — never via a generic Apply
+                // button at the JO level. The shift application UI lives on
+                // the detail page; the dialog only offers Close for gigs.
+                const isGig = (selectedJob as any)?.jobType === 'gig';
+
                 if (hasApplied) {
                   const status = userApplicationStatuses[applicationId] || 'submitted';
                   // If application is withdrawn, cancelled, or removed by admin, show "Apply Now" button instead
                   if (status === 'withdrawn' || status === 'cancelled' || status === 'deleted') {
+                    if (isGig) return null;
                     return (
                       <Button 
                         variant="contained" 
@@ -2521,7 +2526,9 @@ const PublicJobsBoard: React.FC = () => {
                     </Button>
                   );
                 }
-                
+
+                if (isGig) return null;
+
                 return (
                   <Button 
                     variant="contained" 

@@ -2083,8 +2083,17 @@ const JobPostingDetail: React.FC = () => {
             </Box>
           </Box>
 
-          {/* Primary actions / status (unchanged logic) */}
-          {!(posting.jobType === 'gig' && dynamicShifts.length > 0) &&
+          {/*
+            Primary actions / status block.
+            For gigs, applying is always shift-by-shift — never via a generic
+            Apply button at the JO level — so we suppress this whole block
+            for any gig posting, regardless of whether shifts have loaded.
+            (Previously this was only suppressed when shifts were already
+            loaded, which let the generic Apply button leak through during
+            the brief window before `dynamicShifts` populated, and stayed
+            visible permanently for gigs that had zero shifts attached.)
+          */}
+          {posting.jobType !== 'gig' &&
             ((statusButtonProps?.label === 'accepted_special' || isAssignmentResponseMode) && statusButtonProps?.label !== 'confirmed_special' ? (
               <Typography variant="body2" sx={{ color: '#2e7d32', fontWeight: 700 }}>
                 You&apos;ve been hired to work this job.
@@ -2694,8 +2703,14 @@ const JobPostingDetail: React.FC = () => {
           })()}
         </Box>
 
-        {/* Sidebar - Only show for non-gig jobs or gig jobs without shifts */}
-        {!(posting.jobType === 'gig' && dynamicShifts.length > 0) && (
+        {/*
+          Sidebar — "Apply for this Position" card.
+          Hidden for ALL gig postings: gigs apply shift-by-shift (rendered
+          inside the main content), so a sidebar generic-Apply card is wrong
+          for gigs whether or not shifts have loaded. Only career postings
+          surface the sidebar quick-apply card.
+        */}
+        {posting.jobType !== 'gig' && (
           <Box
             sx={{
               position: 'sticky',
@@ -2942,6 +2957,11 @@ const JobPostingDetail: React.FC = () => {
         posting &&
         (() => {
           const isGigWithShifts = posting.jobType === 'gig' && dynamicShifts.length > 0;
+          // For a gig with no shifts the sticky button would otherwise fall
+          // through to `handleApply` (generic Apply). Gigs apply shift-by-shift
+          // only — if there's nothing to apply to, render no sticky at all
+          // rather than offering a misleading generic Apply CTA.
+          if (posting.jobType === 'gig' && !isGigWithShifts) return null;
           const payLabel =
             posting.showPayRate && posting.payRate != null
               ? t('jobs.hourlyRateDisplay', { amount: formatHourlyPayAmountForI18n(posting.payRate) })
