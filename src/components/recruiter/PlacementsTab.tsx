@@ -25,6 +25,7 @@ import {
   TextField,
   Checkbox,
   Autocomplete,
+  InputAdornment,
 } from '@mui/material';
 import {
   Description as ResumeIcon,
@@ -40,6 +41,7 @@ import {
   Error as ErrorIcon,
   Edit as EditIcon,
   Refresh as RefreshIcon,
+  Search as SearchIcon,
   Warning as WarningIcon,
   Email as EmailIcon,
   Sms as SmsIcon,
@@ -2446,7 +2448,37 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     assignmentNoShowRiskByUserId,
   ]);
 
-  const workforceOptions = useMemo(() => getWorkforceOptions(), [jobOrder, userGroups]);
+  /**
+   * Groups the recruiter has picked via the "Choose Group" autocomplete
+   * during this session.
+   *
+   * Why this state exists: `getWorkforceOptions()` derives the dropdown
+   * from `jobOrder.placementsLastGroup` + `jobOrder.laborPoolGroups`. When
+   * the user picks a new group via the autocomplete we
+   * `setSelectedWorkforce('group_<id>')` synchronously and write
+   * `placementsLastGroup` to Firestore in the background — but the JO
+   * doc refresh round-trip lands several ms later.
+   *
+   * In that gap, `workforceOptions` does NOT yet include the new
+   * `group_<id>`, so the reset effect below fires
+   * (`valid=false → setSelectedWorkforce(options[0])`) and snaps the
+   * selection back to "Applicants" before the user can do anything with
+   * the group. This regression made "Choose Group" appear broken even
+   * though the group was being saved correctly.
+   *
+   * Solution: remember every group picked this session in a local map
+   * and merge it into `workforceOptions` synchronously, so the picked
+   * group is in the list the same render it's selected. The Firestore
+   * write still happens (so the choice survives reload), but the UI no
+   * longer depends on its completion.
+   */
+  const [sessionPickedGroups, setSessionPickedGroups] = useState<Map<string, string>>(
+    () => new Map(),
+  );
+  const workforceOptions = useMemo(
+    () => getWorkforceOptions(),
+    [jobOrder, userGroups, sessionPickedGroups],
+  );
   const safeSelectedShiftId = shifts.some((s) => s.id === selectedShiftId) ? selectedShiftId : '';
   // For Gig, map legacy persisted 'applicants'/'candidates' to shift_applicants/shift_candidates
   const normalizedWorkforce =
@@ -2480,6 +2512,14 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       if (laborPoolGroups.length !== (job?.laborPoolGroups?.length ?? 0)) updates.laborPoolGroups = laborPoolGroups;
       if (restrictedGroups.length !== (job?.restrictedGroups?.length ?? 0)) updates.restrictedGroups = restrictedGroups;
       await updateDoc(jobOrderRef, updates);
+      // Drop from session-picked map so the removed group doesn't get
+      // resurrected by `getWorkforceOptions` on the next render.
+      setSessionPickedGroups((prev) => {
+        if (!prev.has(groupId)) return prev;
+        const next = new Map(prev);
+        next.delete(groupId);
+        return next;
+      });
       if (selectedWorkforce === groupValue) setSelectedWorkforce('choose_group');
       onJobOrderUpdated?.();
     } catch (err) {
@@ -2517,7 +2557,19 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         });
       }
     }
-    
+
+    // Add every group the recruiter has picked via Choose Group during
+    // this session. This bridges the gap between the synchronous
+    // setSelectedWorkforce('group_<id>') call and the JO doc refresh —
+    // see the long comment on `sessionPickedGroups` for the bug this
+    // fixes. Order: appended after `placementsLastGroup` so the most
+    // recent pick is naturally last (also matches the dropdown UX of
+    // "newest pick at the bottom").
+    sessionPickedGroups.forEach((groupName, groupId) => {
+      if (options.some((o) => o.value === `group_${groupId}`)) return;
+      options.push({ value: `group_${groupId}`, label: groupName });
+    });
+
     // Get labor pool groups from job order (preferred)
     const laborPoolGroups = (jobOrder as any)?.laborPoolGroups || [];
     const visibility = jobOrder?.visibility || (jobOrder as any)?.jobsBoardVisibility;
@@ -2967,6 +3019,37 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     () => workers.filter((w) => !poolExcludeIds.has(w.id)),
     [workers, poolExcludeIds],
   );
+  /**
+   * Worker Pool name search.
+   *
+   * Recruiters frequently know the worker by name and need to find them in
+   * a Worker Pool of 90+ — scrolling the entire pool to drag the right
+   * person into Assignments was the dominant UX cost. Filter is applied
+   * client-side against the already-loaded `availableWorkers` list (the
+   * pool is paginated server-side; this just narrows what's already on
+   * screen). Match runs against firstName, lastName, displayName, and
+   * "firstName lastName" so partial-token searches like "ann kell" still
+   * return Annett Kelley.
+   */
+  const [workerPoolSearch, setWorkerPoolSearch] = useState('');
+  const availableWorkersFiltered = useMemo(() => {
+    const term = workerPoolSearch.trim().toLowerCase();
+    if (!term) return availableWorkers;
+    const tokens = term.split(/\s+/).filter(Boolean);
+    return availableWorkers.filter((w) => {
+      const first = String(w.firstName ?? '').toLowerCase();
+      const last = String(w.lastName ?? '').toLowerCase();
+      const display = String(w.displayName ?? '').toLowerCase();
+      const combined = `${first} ${last}`.trim();
+      return tokens.every(
+        (t) =>
+          first.includes(t) ||
+          last.includes(t) ||
+          display.includes(t) ||
+          combined.includes(t),
+      );
+    });
+  }, [availableWorkers, workerPoolSearch]);
   const staffingTarget = useMemo(() => {
     if (!selectedShift) return null;
     const value =
@@ -3977,7 +4060,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                   }}
                 >
                   <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
-                    Worker Pool ({availableWorkers.length})
+                    {workerPoolSearch.trim()
+                      ? `Worker Pool (${availableWorkersFiltered.length} of ${availableWorkers.length})`
+                      : `Worker Pool (${availableWorkers.length})`}
                   </Typography>
                   <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', mb: 1, flexWrap: 'wrap' }}>
                     <FormControl size="small" sx={{ minWidth: 160, flex: 1 }}>
@@ -4067,6 +4152,20 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         blurOnSelect
                         onChange={async (_e, group) => {
                           if (!group) return;
+                          // Remember the pick locally FIRST so
+                          // `workforceOptions` includes `group_<id>`
+                          // synchronously this render — otherwise the
+                          // reset effect fires and snaps the selection
+                          // back to Applicants/All Applicants before the
+                          // JO refresh lands. See the long-form comment
+                          // on `sessionPickedGroups` above for full
+                          // rationale.
+                          setSessionPickedGroups((prev) => {
+                            if (prev.has(group.id)) return prev;
+                            const next = new Map(prev);
+                            next.set(group.id, group.groupName);
+                            return next;
+                          });
                           setSelectedWorkforce(`group_${group.id}`);
                           try {
                             const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
@@ -4090,9 +4189,39 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                       />
                     </Box>
                   )}
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-                    Drag into Assignments to place. Drop Placed workers here to unplace.
-                  </Typography>
+                  {/* Replaces the old "Drag into Assignments to place. Drop
+                      Placed workers here to unplace." caption — recruiters
+                      asked for a name filter because scrolling a 90-person
+                      pool to find one worker is the bottleneck. The "drag /
+                      drop to unplace" affordance is preserved by the
+                      dropzone hint inside the pool box (below). */}
+                  <TextField
+                    size="small"
+                    fullWidth
+                    value={workerPoolSearch}
+                    onChange={(e) => setWorkerPoolSearch(e.target.value)}
+                    placeholder="Search by name…"
+                    sx={{ mb: 1 }}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <SearchIcon fontSize="small" sx={{ color: 'text.secondary' }} />
+                        </InputAdornment>
+                      ),
+                      endAdornment: workerPoolSearch ? (
+                        <InputAdornment position="end">
+                          <IconButton
+                            size="small"
+                            edge="end"
+                            onClick={() => setWorkerPoolSearch('')}
+                            aria-label="Clear worker pool search"
+                          >
+                            <ClearIcon fontSize="small" />
+                          </IconButton>
+                        </InputAdornment>
+                      ) : null,
+                    }}
+                  />
 
                   <Box
                     onDragOver={handleWorkerPoolDragOver}
@@ -4138,9 +4267,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                     <Alert severity="info">
                       No available workers for the selected workforce option.
                     </Alert>
+                  ) : availableWorkersFiltered.length === 0 ? (
+                    <Alert severity="info">
+                      No workers match &quot;{workerPoolSearch.trim()}&quot;.
+                    </Alert>
                   ) : (
                     <Stack spacing={1}>
-                      {availableWorkers.map((worker) => {
+                      {availableWorkersFiltered.map((worker) => {
                         const requiredCertStatuses = placementRequiredCertMatchList(
                           jobOrder,
                           worker.certifications,
