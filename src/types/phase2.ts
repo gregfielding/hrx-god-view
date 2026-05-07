@@ -174,6 +174,46 @@ export interface Assignment {
   attendanceOutcome?: AssignmentAttendanceOutcome;
   attendanceRecordedAt?: Date | FieldValue;
   attendanceRecordedBy?: string;
+
+  /* ---------------------------------------------------------------------
+   * TS.1.P1.B — Timesheet denormalization fields (all optional).
+   *
+   * Cuts the timesheet grid's per-row fetch tree from ~5 reads
+   * (assignment → JO → entity → worksite → user → shift template) down
+   * to ~2 (assignment + entries). Populated by the one-shot backfill
+   * `backfillAssignmentDenormFieldsCallable` for existing assignments;
+   * new assignments rely on the same backfill being re-run after a
+   * deploy until a write-time hook is added (deferred — see TS.1
+   * follow-up question 3).
+   *
+   * Every field is intentionally optional + best-effort — when a source
+   * doc is missing or malformed, the backfill leaves the field unset and
+   * the grid does its own runtime lookup. Stored values are never
+   * overridden by re-runs (idempotent).
+   * ------------------------------------------------------------------ */
+
+  /** Hiring entity that owns this assignment (denormalized from JO chain).
+   *  Resolution path mirrors R.4.2's `resolveLegacyAssignmentHiringEntityId`. */
+  hiringEntityId?: string;
+  /** Two-letter state code of the worksite — drives multistate pay rules. */
+  worksiteState?: string;
+  /** Recruiter-friendly worksite label for grid grouping headers. */
+  worksiteDisplayName?: string;
+  /** Worker's display name (denormalized from `users/{userId}`). */
+  workerDisplayName?: string;
+  /** Default break minutes from the linked Shift / position — used to
+   *  seed `scheduledBreakMinutes` on new TimesheetEntryV2 docs. */
+  shiftBreakDefaultMinutes?: number;
+  /** Mirrors the latest TimesheetEntryV2.status for fast filter queries
+   *  on the recruiter dashboard. Populated by P1.D triggers, never by
+   *  the backfill (no entries exist at backfill time). */
+  latestTimesheetStatus?:
+    | 'draft'
+    | 'submitted'
+    | 'approved'
+    | 'sent_to_everee'
+    | 'paid'
+    | 'error';
 }
 
 export interface AssignmentFormData {

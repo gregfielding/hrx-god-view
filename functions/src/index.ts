@@ -328,6 +328,14 @@ export { backfillLegacyAssignmentsCallable } from './jobOrders/backfillLegacyAss
 // R.4.2-F3 (2026-04-29) — companion data-hygiene normalizer for the
 // `assignment.status` spelling drift surfaced during the R.4.2 backfill.
 export { normalizeAssignmentStatusSpellingCallable } from './jobOrders/normalizeAssignmentStatusSpellingCallable';
+// **TS.1.P1.B** — One-shot backfill that populates the new optional
+// timesheet denormalization fields on `tenants/{tid}/assignments`
+// (hiringEntityId, worksiteState, worksiteDisplayName, workerDisplayName,
+// shiftBreakDefaultMinutes). Cuts the upcoming `<TimesheetGrid />` per-row
+// fetch tree from ~5 reads to ~2. Reuses R.4.2's hiringEntityId resolver.
+// Idempotent + dry-run-by-default; sec ≥ 7 gated. See the file's docstring
+// for the full ops shape.
+export { backfillAssignmentDenormFieldsCallable } from './timesheets/backfillAssignmentDenormFieldsCallable';
 // **R.16.1 Phase 5** — Push-to-Active. `previewPushToActiveCallable`
 // is read-only and powers the dialog's affected-JO list. The write
 // twin `pushToActiveJobOrdersCallable` re-runs the preview server-
