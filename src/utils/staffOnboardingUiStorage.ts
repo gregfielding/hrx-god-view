@@ -25,6 +25,12 @@ const KEY_PREFIX = 'hrx:staffOnboardingUi:';
  */
 const SCHEMA_VERSION = 2;
 
+/** Columns the Background Checks table allows sorting on. Single
+ *  member today (Background status); structure leaves room to add
+ *  more in a follow-up without changing the storage shape. */
+export type BackgroundSortColumn = 'status';
+export type BackgroundSortDirection = 'asc' | 'desc';
+
 export type StaffOnboardingUiState = {
   /** Schema version — internal use; consumers ignore. */
   v?: number;
@@ -50,6 +56,11 @@ export type StaffOnboardingUiState = {
   bgPageSize: number;
   bgSearch: string;
   bgScrollTop: number;
+  /** Default `'status'` / `'desc'` — Z-A on Background status puts
+   *  "Report ready" / "Ordered" above "In progress" / "Complete",
+   *  surfacing rows that need CSA attention at the top of the page. */
+  bgSortColumn: BackgroundSortColumn;
+  bgSortDirection: BackgroundSortDirection;
 };
 
 const PAGE_SIZES = new Set([10, 20, 50, 100]);
@@ -72,6 +83,8 @@ export function defaultStaffOnboardingUi(): StaffOnboardingUiState {
     bgPageSize: 20,
     bgSearch: '',
     bgScrollTop: 0,
+    bgSortColumn: 'status',
+    bgSortDirection: 'desc',
   };
 }
 
@@ -116,6 +129,10 @@ function mergeSaved(o: Partial<StaffOnboardingUiState>): StaffOnboardingUiState 
     bgPageSize: typeof o.bgPageSize === 'number' && PAGE_SIZES.has(o.bgPageSize) ? o.bgPageSize : d.bgPageSize,
     bgSearch: clampSearch(o.bgSearch, d.bgSearch),
     bgScrollTop: clampInt(o.bgScrollTop, d.bgScrollTop, 0, 2_000_000),
+    bgSortColumn: o.bgSortColumn === 'status' ? 'status' : d.bgSortColumn,
+    bgSortDirection: o.bgSortDirection === 'asc' || o.bgSortDirection === 'desc'
+      ? o.bgSortDirection
+      : d.bgSortDirection,
   };
 }
 

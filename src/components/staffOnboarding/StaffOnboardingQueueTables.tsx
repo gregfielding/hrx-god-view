@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Alert,
@@ -9,6 +9,7 @@ import {
   Stack,
   TableCell,
   TableRow,
+  TableSortLabel,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -16,7 +17,14 @@ import { TABLE_AVATAR_SIZE } from '../../utils/uiConstants';
 import type { OnboardingQueuePagination } from '../../types/onboardingQueue';
 import { useOnboardingTaxPayrollQueue } from '../../hooks/useOnboardingTaxPayrollQueue';
 import { useOnboardingEverifyQueue } from '../../hooks/useOnboardingEverifyQueue';
-import { useOnboardingBackgroundQueue } from '../../hooks/useOnboardingBackgroundQueue';
+import {
+  useOnboardingBackgroundQueue,
+  type OnboardingBackgroundQueueSort,
+} from '../../hooks/useOnboardingBackgroundQueue';
+import type {
+  BackgroundSortColumn,
+  BackgroundSortDirection,
+} from '../../utils/staffOnboardingUiStorage';
 import OnboardingQueueTableShell from './OnboardingQueueTableShell';
 import OnboardingQueueWorkerSearchField from './OnboardingQueueWorkerSearchField';
 
@@ -412,9 +420,37 @@ export const StaffOnboardingBackgroundTab: React.FC<{
   tableScrollTop: number;
   onTableScrollTopChange: (scrollTop: number) => void;
   onWorkerSearchChange: (value: string) => void;
-}> = ({ tenantId, pagination, workerSearch, tableScrollTop, onTableScrollTopChange, onWorkerSearchChange }) => {
+  sortColumn: BackgroundSortColumn;
+  sortDirection: BackgroundSortDirection;
+  onSortChange: (column: BackgroundSortColumn, direction: BackgroundSortDirection) => void;
+}> = ({
+  tenantId,
+  pagination,
+  workerSearch,
+  tableScrollTop,
+  onTableScrollTopChange,
+  onWorkerSearchChange,
+  sortColumn,
+  sortDirection,
+  onSortChange,
+}) => {
   const navigate = useNavigate();
-  const q = useOnboardingBackgroundQueue(tenantId, pagination, workerSearch);
+  const sort = useMemo<OnboardingBackgroundQueueSort>(
+    () => ({ column: sortColumn, direction: sortDirection }),
+    [sortColumn, sortDirection],
+  );
+  const q = useOnboardingBackgroundQueue(tenantId, pagination, workerSearch, sort);
+
+  const handleStatusSortToggle = useCallback(() => {
+    if (sortColumn !== 'status') {
+      // First click on a previously-unsorted column → start at desc
+      // (Z-A) which matches the page-load default and surfaces
+      // action-needed rows first.
+      onSortChange('status', 'desc');
+      return;
+    }
+    onSortChange('status', sortDirection === 'desc' ? 'asc' : 'desc');
+  }, [sortColumn, sortDirection, onSortChange]);
   const emptyMessage =
     q.unfilteredCount === 0
       ? 'No workers currently need background screening follow-up.'
@@ -433,7 +469,12 @@ export const StaffOnboardingBackgroundTab: React.FC<{
     [navigate],
   );
 
-  const scrollRestoreKey = `${pagination.page}-${pagination.pageSize}-${workerSearch}`;
+  // Include sort in the restore key so toggling sort direction (which
+  // can stay on the same page + page-size + search) still invalidates
+  // the saved scroll position — restoring to a now-stale offset would
+  // land the user on whatever rows happen to occupy the prior pixel
+  // range, which is jarring after a sort change.
+  const scrollRestoreKey = `${pagination.page}-${pagination.pageSize}-${workerSearch}-${sortColumn}-${sortDirection}`;
 
   return (
     <Stack spacing={2} sx={{ width: '100%' }}>
@@ -461,7 +502,18 @@ export const StaffOnboardingBackgroundTab: React.FC<{
           <TableCell sx={headCellSx}>Entity</TableCell>
           <TableCell sx={headCellSx}>Employment mode</TableCell>
           <TableCell sx={headCellSx}>Package</TableCell>
-          <TableCell sx={headCellSx}>Background status</TableCell>
+          <TableCell
+            sx={headCellSx}
+            sortDirection={sortColumn === 'status' ? sortDirection : false}
+          >
+            <TableSortLabel
+              active={sortColumn === 'status'}
+              direction={sortColumn === 'status' ? sortDirection : 'desc'}
+              onClick={handleStatusSortToggle}
+            >
+              Background status
+            </TableSortLabel>
+          </TableCell>
           <TableCell sx={headCellSx}>Last update</TableCell>
           <TableCell sx={headCellSx}>Owner</TableCell>
           <TableCell sx={headCellSx} align="right">

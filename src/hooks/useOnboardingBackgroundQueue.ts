@@ -9,6 +9,28 @@ import {
   userProfileLiteFromUserDoc,
 } from '../utils/onboardingQueueBuilders';
 import { rowMatchesOnboardingWorkerSearch } from '../utils/onboardingQueueSearch';
+import type {
+  BackgroundSortColumn,
+  BackgroundSortDirection,
+} from '../utils/staffOnboardingUiStorage';
+
+/**
+ * Optional sort the caller can apply to the background queue. When
+ * omitted, the hook returns rows in `buildBackgroundQueueRows`'s
+ * default order (`lastUpdateMs DESC`, then `sortPriority ASC`,
+ * then displayName).
+ *
+ * Sort is applied AFTER filtering and BEFORE pagination so that
+ * page boundaries reflect the chosen order — sorting only the
+ * current page would scramble across page boundaries.
+ *
+ * Tie-break preserves the natural row order via stable sort
+ * (ECMAScript guarantees stable `Array.prototype.sort` since 2019).
+ */
+export interface OnboardingBackgroundQueueSort {
+  column: BackgroundSortColumn;
+  direction: BackgroundSortDirection;
+}
 
 const BG_LIMIT = 250;
 
@@ -20,6 +42,7 @@ export function useOnboardingBackgroundQueue(
   tenantId: string | undefined,
   controlledPagination?: OnboardingQueuePagination,
   searchQuery?: string,
+  sort?: OnboardingBackgroundQueueSort,
 ) {
   const [records, setRecords] = useState<BackgroundCheckRecord[]>([]);
   const [userById, setUserById] = useState<Record<string, UserProfileLite | undefined>>({});
@@ -116,9 +139,32 @@ export function useOnboardingBackgroundQueue(
   }, [allRows, searchQuery]);
 
   const totalCount = filteredRows.length;
+
+  /**
+   * Apply the optional sort. Stable: rows with equal sort keys keep
+   * their `buildBackgroundQueueRows` order (lastUpdateMs DESC, etc.),
+   * so changing direction only re-orders rows that actually differ
+   * on the sort key.
+   *
+   * `localeCompare` is used for `'status'` so labels with non-ASCII
+   * characters (we already have one — "Doesn't apply" with a curly
+   * apostrophe) sort intuitively. Direction multiplier flips the
+   * sign for descending.
+   */
+  const sortedRows = useMemo(() => {
+    if (!sort) return filteredRows;
+    if (sort.column === 'status') {
+      const dir = sort.direction === 'desc' ? -1 : 1;
+      return [...filteredRows].sort(
+        (a, b) => dir * a.statusLabel.localeCompare(b.statusLabel),
+      );
+    }
+    return filteredRows;
+  }, [filteredRows, sort]);
+
   const rows: OnboardingBackgroundQueueRow[] = useMemo(
-    () => filteredRows.slice(page * pageSize, page * pageSize + pageSize),
-    [filteredRows, page, pageSize],
+    () => sortedRows.slice(page * pageSize, page * pageSize + pageSize),
+    [sortedRows, page, pageSize],
   );
 
   useEffect(() => {

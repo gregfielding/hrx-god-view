@@ -142,6 +142,20 @@ const StaffOnboardingCenter: React.FC = () => {
           tableScrollTop={ui.bgScrollTop}
           onTableScrollTopChange={(y) => setUi((s) => ({ ...s, bgScrollTop: y }))}
           onWorkerSearchChange={(v) => setUi((s) => ({ ...s, bgSearch: v, bgPage: 0, bgScrollTop: 0 }))}
+          sortColumn={ui.bgSortColumn}
+          sortDirection={ui.bgSortDirection}
+          onSortChange={(column, direction) =>
+            setUi((s) => ({
+              ...s,
+              bgSortColumn: column,
+              bgSortDirection: direction,
+              // Reset to page 0 + top of table when sort changes — preserves
+              // the "the row I'm scrolled to" intuition by anchoring to a
+              // known position rather than an arbitrary mid-page offset.
+              bgPage: 0,
+              bgScrollTop: 0,
+            }))
+          }
         />
       </TabPanel>
     </Box>
