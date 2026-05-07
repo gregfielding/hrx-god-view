@@ -336,6 +336,14 @@ export { normalizeAssignmentStatusSpellingCallable } from './jobOrders/normalize
 // Idempotent + dry-run-by-default; sec ≥ 7 gated. See the file's docstring
 // for the full ops shape.
 export { backfillAssignmentDenormFieldsCallable } from './timesheets/backfillAssignmentDenormFieldsCallable';
+// **TS.1.P1.B-FU** — Going-forward write-time companion to the backfill
+// above. Fires on every `tenants/{tid}/assignments/{aid}` write and
+// auto-fills any missing denorm fields using the same resolver chain.
+// Pre-filter short-circuits when all five managed fields are set (loop
+// terminates after at most two trigger invocations per change). Without
+// this, new assignments created after deploy time would miss the denorm
+// fields until the next backfill run.
+export { onAssignmentWriteEnsureDenormFields } from './timesheets/onAssignmentWriteEnsureDenormFields';
 // **R.16.1 Phase 5** — Push-to-Active. `previewPushToActiveCallable`
 // is read-only and powers the dialog's affected-JO list. The write
 // twin `pushToActiveJobOrdersCallable` re-runs the preview server-

@@ -169,14 +169,14 @@ function normalizeStateCode(input: unknown): string | null {
  * stale view of a JO that was edited mid-backfill.
  * ------------------------------------------------------------------------- */
 
-type Caches = {
+export type Caches = {
   jo: Map<string, Promise<Record<string, unknown> | null>>;
   user: Map<string, Promise<Record<string, unknown> | null>>;
   location: Map<string, Promise<Record<string, unknown> | null>>;
   shift: Map<string, Promise<Record<string, unknown> | null>>;
 };
 
-function makeCaches(): Caches {
+export function makeCaches(): Caches {
   return {
     jo: new Map(),
     user: new Map(),
@@ -428,15 +428,37 @@ async function resolveShiftBreakDefaultMinutes(args: ResolverArgs): Promise<numb
 }
 
 /* -------------------------------------------------------------------------
- * Per-assignment driver
+ * Shared resolver core
  *
- * Reads the assignment's current state, only resolves fields that are
- * unset, applies the writes (or simulates them under dryRun), and
- * returns a per-field outcome map for the page report.
+ * Pure-ish read-side helper that figures out which of the 5 backfill-
+ * managed denorm fields are missing on a given assignment doc and
+ * resolves each one. Returns the proposed `updates` patch (or empty
+ * when nothing needs writing) plus a per-field `outcomes` map for
+ * reporting.
+ *
+ * Used by:
+ *   - `processOneAssignment` (this file) — the page driver applies a
+ *     dryRun gate around the returned `updates`.
+ *   - `onAssignmentWriteEnsureDenormFields` (sibling file) — the
+ *     write-time trigger applies the same `updates` immediately.
+ *
+ * Both consumers pass a fresh per-invocation `Caches` object; the
+ * resolver itself never writes Firestore.
  * ------------------------------------------------------------------------- */
 
-export interface PerAssignmentResult {
+export interface ResolveMissingArgs {
+  fdb: admin.firestore.Firestore;
+  tenantId: string;
   assignmentId: string;
+  assignmentData: Record<string, unknown>;
+  caches: Caches;
+}
+
+export interface ResolveMissingResult {
+  /** Patch the caller can `set(..., { merge: true })`. Empty when
+   *  there's nothing to write. */
+  updates: Record<string, unknown>;
+  /** One label per backfill-managed field — for ops/audit reporting. */
   outcomes: {
     hiringEntityId: FieldOutcome;
     worksiteState: FieldOutcome;
@@ -446,20 +468,14 @@ export interface PerAssignmentResult {
   };
   /** Whether at least one field was missing on the doc when we entered. */
   hadMissingFields: boolean;
-  error?: string;
 }
 
-async function processOneAssignment(args: {
-  fdb: admin.firestore.Firestore;
-  tenantId: string;
-  assignmentId: string;
-  assignmentData: Record<string, unknown>;
-  dryRun: boolean;
-  caches: Caches;
-}): Promise<PerAssignmentResult> {
-  const { fdb, tenantId, assignmentId, assignmentData, dryRun, caches } = args;
-  const result: PerAssignmentResult = {
-    assignmentId,
+export async function resolveMissingDenormUpdates(
+  args: ResolveMissingArgs,
+): Promise<ResolveMissingResult> {
+  const { fdb, tenantId, assignmentId, assignmentData, caches } = args;
+  const result: ResolveMissingResult = {
+    updates: {},
     outcomes: {
       hiringEntityId: 'skipped',
       worksiteState: 'skipped',
@@ -470,7 +486,6 @@ async function processOneAssignment(args: {
     hadMissingFields: false,
   };
 
-  const updates: Record<string, unknown> = {};
   const args0 = { fdb, tenantId, assignmentData, caches };
 
   // hiringEntityId — reuse R.4.2's resolver verbatim. Already-set check
@@ -485,8 +500,8 @@ async function processOneAssignment(args: {
         assignmentData,
       });
       if (hidResult.resolvedHiringEntityId) {
-        updates.hiringEntityId = hidResult.resolvedHiringEntityId;
-        result.outcomes.hiringEntityId = dryRun ? 'would_stamp' : 'stamped';
+        result.updates.hiringEntityId = hidResult.resolvedHiringEntityId;
+        result.outcomes.hiringEntityId = 'stamped';
       } else {
         result.outcomes.hiringEntityId = 'unresolvable';
       }
@@ -502,13 +517,12 @@ async function processOneAssignment(args: {
     result.outcomes.hiringEntityId = 'already_set';
   }
 
-  // worksiteState
   if (!pickStringField(assignmentData, ['worksiteState'])) {
     result.hadMissingFields = true;
     const v = await resolveWorksiteState(args0);
     if (v) {
-      updates.worksiteState = v;
-      result.outcomes.worksiteState = dryRun ? 'would_stamp' : 'stamped';
+      result.updates.worksiteState = v;
+      result.outcomes.worksiteState = 'stamped';
     } else {
       result.outcomes.worksiteState = 'unresolvable';
     }
@@ -516,13 +530,12 @@ async function processOneAssignment(args: {
     result.outcomes.worksiteState = 'already_set';
   }
 
-  // worksiteDisplayName
   if (!pickStringField(assignmentData, ['worksiteDisplayName'])) {
     result.hadMissingFields = true;
     const v = await resolveWorksiteDisplayName(args0);
     if (v) {
-      updates.worksiteDisplayName = v;
-      result.outcomes.worksiteDisplayName = dryRun ? 'would_stamp' : 'stamped';
+      result.updates.worksiteDisplayName = v;
+      result.outcomes.worksiteDisplayName = 'stamped';
     } else {
       result.outcomes.worksiteDisplayName = 'unresolvable';
     }
@@ -530,13 +543,12 @@ async function processOneAssignment(args: {
     result.outcomes.worksiteDisplayName = 'already_set';
   }
 
-  // workerDisplayName
   if (!pickStringField(assignmentData, ['workerDisplayName'])) {
     result.hadMissingFields = true;
     const v = await resolveWorkerDisplayName(args0);
     if (v) {
-      updates.workerDisplayName = v;
-      result.outcomes.workerDisplayName = dryRun ? 'would_stamp' : 'stamped';
+      result.updates.workerDisplayName = v;
+      result.outcomes.workerDisplayName = 'stamped';
     } else {
       result.outcomes.workerDisplayName = 'unresolvable';
     }
@@ -544,15 +556,12 @@ async function processOneAssignment(args: {
     result.outcomes.workerDisplayName = 'already_set';
   }
 
-  // shiftBreakDefaultMinutes
-  if (
-    pickNumberField(assignmentData, ['shiftBreakDefaultMinutes']) == null
-  ) {
+  if (pickNumberField(assignmentData, ['shiftBreakDefaultMinutes']) == null) {
     result.hadMissingFields = true;
     const v = await resolveShiftBreakDefaultMinutes(args0);
     if (v != null) {
-      updates.shiftBreakDefaultMinutes = v;
-      result.outcomes.shiftBreakDefaultMinutes = dryRun ? 'would_stamp' : 'stamped';
+      result.updates.shiftBreakDefaultMinutes = v;
+      result.outcomes.shiftBreakDefaultMinutes = 'stamped';
     } else {
       result.outcomes.shiftBreakDefaultMinutes = 'unresolvable';
     }
@@ -560,9 +569,78 @@ async function processOneAssignment(args: {
     result.outcomes.shiftBreakDefaultMinutes = 'already_set';
   }
 
-  // Apply writes when not dry-running and we actually have something to set.
-  if (!dryRun && Object.keys(updates).length > 0) {
-    updates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+  return result;
+}
+
+/* -------------------------------------------------------------------------
+ * Per-assignment driver (page-only)
+ *
+ * Thin wrapper around `resolveMissingDenormUpdates`: applies the dryRun
+ * gate, performs the actual Firestore write under the page's
+ * concurrency budget, and adapts the outcome labels for the
+ * dryRun-aware report (a `'stamped'` outcome flips to `'would_stamp'`
+ * during a dry run).
+ * ------------------------------------------------------------------------- */
+
+export interface PerAssignmentResult {
+  assignmentId: string;
+  outcomes: ResolveMissingResult['outcomes'];
+  /** Whether at least one field was missing on the doc when we entered. */
+  hadMissingFields: boolean;
+  error?: string;
+}
+
+async function processOneAssignment(args: {
+  fdb: admin.firestore.Firestore;
+  tenantId: string;
+  assignmentId: string;
+  assignmentData: Record<string, unknown>;
+  dryRun: boolean;
+  caches: Caches;
+}): Promise<PerAssignmentResult> {
+  const { fdb, tenantId, assignmentId, assignmentData, dryRun, caches } = args;
+  const resolved = await resolveMissingDenormUpdates({
+    fdb,
+    tenantId,
+    assignmentId,
+    assignmentData,
+    caches,
+  });
+
+  const result: PerAssignmentResult = {
+    assignmentId,
+    outcomes: dryRun
+      ? {
+          hiringEntityId:
+            resolved.outcomes.hiringEntityId === 'stamped'
+              ? 'would_stamp'
+              : resolved.outcomes.hiringEntityId,
+          worksiteState:
+            resolved.outcomes.worksiteState === 'stamped'
+              ? 'would_stamp'
+              : resolved.outcomes.worksiteState,
+          worksiteDisplayName:
+            resolved.outcomes.worksiteDisplayName === 'stamped'
+              ? 'would_stamp'
+              : resolved.outcomes.worksiteDisplayName,
+          workerDisplayName:
+            resolved.outcomes.workerDisplayName === 'stamped'
+              ? 'would_stamp'
+              : resolved.outcomes.workerDisplayName,
+          shiftBreakDefaultMinutes:
+            resolved.outcomes.shiftBreakDefaultMinutes === 'stamped'
+              ? 'would_stamp'
+              : resolved.outcomes.shiftBreakDefaultMinutes,
+        }
+      : resolved.outcomes,
+    hadMissingFields: resolved.hadMissingFields,
+  };
+
+  if (!dryRun && Object.keys(resolved.updates).length > 0) {
+    const updates = {
+      ...resolved.updates,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
     try {
       await fdb
         .doc(`tenants/${tenantId}/assignments/${assignmentId}`)
