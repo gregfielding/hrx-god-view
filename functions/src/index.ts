@@ -364,6 +364,26 @@ export { createDraftTimesheetEntryCallable } from './timesheets/createDraftTimes
 // denorm trigger, which itself ignores `latestTimesheetStatus` via
 // its tier-2 diff guard's ancillary set.
 export { onTimesheetEntryWriteUpdateAssignmentLatestStatus } from './timesheets/onTimesheetEntryWriteUpdateAssignmentLatestStatus';
+// **TS.1.P2.B** — multistate pay rules engine, server side. Fires on
+// every `tenants/{tid}/timesheet_entries/{entryId}` write and recomputes
+// the pay breakdown (regular/OT/DT/meal+rest penalties) for the entry's
+// FULL workweek — not just the changed entry — because weekly OT is
+// cascading (adding 5h to Wednesday flips Friday from regular to OT
+// once the worker crosses 40h/wk) and CA's 7th-consecutive-day rule
+// is also cascading. Workweek scoping uses (workerId + hiringEntityId)
+// per the staffing-industry convention that each hiring entity tracks
+// weekly OT independently — so a worker with assignments at both C1
+// Events and C1 Select doesn't have hours pooled across entities.
+// Workweek bounds derive from `entity.payPeriodPolicy.weekStartDOW`
+// (Sunday fallback, including for `per_event` entities whose pay
+// batches don't align to calendar weeks but whose OT computation
+// still needs a 7-day window). Two-tier loop guard: Tier-1
+// pre-compute gate skips the read budget when no compute-input field
+// changed (notes-only edits, status flips); Tier-2 self-fire guard
+// catches re-fires of the trigger's own writes. Per-entry
+// skip-when-equal write-back bounds fan-out — only entries whose
+// breakdown actually changed get written.
+export { onTimesheetEntryWriteRecomputePayBreakdown } from './timesheets/onTimesheetEntryWriteRecomputePayBreakdown';
 // **R.16.1 Phase 5** — Push-to-Active. `previewPushToActiveCallable`
 // is read-only and powers the dialog's affected-JO list. The write
 // twin `pushToActiveJobOrdersCallable` re-runs the preview server-

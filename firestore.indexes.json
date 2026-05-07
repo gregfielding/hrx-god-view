@@ -1467,6 +1467,15 @@
       ]
     },
     {
+      "collectionGroup": "timesheet_entries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "hiringEntityId", "order": "ASCENDING" },
+        { "fieldPath": "workerId", "order": "ASCENDING" },
+        { "fieldPath": "workDate", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "timesheet_batches",
       "queryScope": "COLLECTION",
       "fields": [
