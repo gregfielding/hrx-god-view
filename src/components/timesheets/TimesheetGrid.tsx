@@ -2,54 +2,72 @@
  * TimesheetGrid — read-only grid of timesheet rows for the
  * recruiter/admin workspace.
  *
- * **P1.C.1 scope (this commit):** skeleton + filter gating only.
- *   - When `filter` is `null` (no entity + period selected on the
- *     parent page), renders an empty state with helper copy.
- *   - When `filter` is set, renders a placeholder card explaining the
- *     resolver lands in P1.C.2. The Totals header is also a stub.
+ * **Phasing:**
+ *   - P1.C.1 — page shell + filter gating + skeleton (placeholder card).
+ *   - **P1.C.2 (this commit)** — wire to `useTimesheetGridRows`,
+ *     render the row table + live totals header. Read-only.
+ *   - P3+ — inline-editable cells; status pill flow; variance filter;
+ *     batch submit / Everee dispatch.
  *
- * **P1.C.2 (next commit):** wire to `timesheetGridResolver` →
- * assignment query → period expansion → entry lookup → render rows +
- * live totals header. Empty rows (no entry yet for that workDate) show
- * "(no entry yet)" with a "—" status pill.
+ * **Read-only contract.** This component MUST NOT write anything to
+ * Firestore. Empty rows stay empty until P3 makes cells editable. The
+ * status pill on empty rows shows "no entry yet" instead of "draft" —
+ * critical for the operator's mental model that nothing has been
+ * persisted yet.
  *
- * **P3+ scope:** cells become inline-editable; status pill becomes
- * interactive (draft → submit → approve flow). The grid itself stays
- * non-virtualized for now — typical view is ≤100 rows. Re-evaluate when
- * editing makes the per-cell render cost meaningful (then reach for
- * `react-window` or similar; nothing is currently installed).
+ * **Tenant + filter coupling.** The page (`Timesheets.tsx`) owns both;
+ * this component is purely controlled. When `filter` is `null`,
+ * renders the empty state with helper copy. When `filter` is set,
+ * delegates to the hook for hydration.
  */
 
 import React from 'react';
 import {
   Alert,
+  AlertTitle,
   Box,
   Card,
   CardContent,
+  Chip,
+  CircularProgress,
   Paper,
   Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import {
-  AccessTime as AccessTimeIcon,
   TableChart as TableChartIcon,
 } from '@mui/icons-material';
 
+import { useAuth } from '../../contexts/AuthContext';
+import useTimesheetGridRows from '../../hooks/useTimesheetGridRows';
 import type { TimesheetFilter } from '../../types/recruiter/timesheet';
 import { formatPeriodLabel } from '../../utils/timesheets/dateRange';
 
+import TimesheetTotalsHeader from './TimesheetTotalsHeader';
+import {
+  type TimesheetGridRow,
+  type TimesheetRowDisplayStatus,
+  actualHoursForRow,
+  displayStatusForRow,
+  periodFromFilter,
+  scheduledHoursForRow,
+} from './timesheetGridResolver';
+
 export interface TimesheetGridProps {
-  /** Composite filter from the page filter bar. `null` when the
-   *  recruiter hasn't yet selected the required entity + period. */
   filter: TimesheetFilter | null;
 }
 
-/**
- * Render a friendly start-from-zero state when the page hasn't yet
- * narrowed scope. The page is responsible for surfacing the entity +
- * period pickers above this — we just explain what happens once
- * they're set.
- */
+/* -------------------------------------------------------------------------
+ * Empty / loading / error states
+ * ------------------------------------------------------------------------- */
+
 const EmptyFilterState: React.FC = () => (
   <Card variant="outlined" sx={{ mt: 2 }}>
     <CardContent>
@@ -74,114 +92,283 @@ const EmptyFilterState: React.FC = () => (
   </Card>
 );
 
-/**
- * Compact human label for the filter, shown in the placeholder card to
- * confirm what the page will load once the resolver ships.
- */
-function describeFilter(filter: TimesheetFilter): string {
-  switch (filter.kind) {
-    case 'entity_period':
-      return `Entity ${filter.hiringEntityId} · ${formatPeriodLabel({
-        start: filter.periodStart,
-        end: filter.periodEnd,
-      })}`;
-    case 'jobOrder':
-      return `Job order ${filter.jobOrderId}${
-        filter.periodStart && filter.periodEnd
-          ? ` · ${formatPeriodLabel({
-              start: filter.periodStart,
-              end: filter.periodEnd,
-            })}`
-          : ''
-      }`;
-    case 'shift':
-      return `Shift ${filter.shiftId}`;
-    case 'worker':
-      return `Worker ${filter.workerId} · ${formatPeriodLabel({
-        start: filter.periodStart,
-        end: filter.periodEnd,
-      })}`;
-    case 'account':
-      return `Account ${filter.accountId} · ${formatPeriodLabel({
-        start: filter.periodStart,
-        end: filter.periodEnd,
-      })}`;
-    default:
-      return 'Unknown filter';
-  }
+const LoadingState: React.FC<{ filter: TimesheetFilter }> = ({ filter }) => {
+  const period = periodFromFilter(filter);
+  return (
+    <Card variant="outlined" sx={{ mt: 2 }}>
+      <CardContent>
+        <Stack direction="row" alignItems="center" spacing={2}>
+          <CircularProgress size={20} />
+          <Typography variant="body2" color="text.secondary">
+            Loading timesheet rows
+            {period ? ` for ${formatPeriodLabel(period)}` : ''}…
+          </Typography>
+        </Stack>
+      </CardContent>
+    </Card>
+  );
+};
+
+interface NoRowsStateProps {
+  filter: TimesheetFilter;
+  consideredAssignmentCount: number;
 }
 
-/**
- * Stub totals header — P1.C.2 wires this to live counts/sums of
- * visible rows. Present in the skeleton so the layout doesn't shift
- * when the resolver lands.
- */
-const TotalsHeaderStub: React.FC = () => (
-  <Paper
-    variant="outlined"
-    sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 3 }}
-  >
-    <Stack direction="row" alignItems="center" spacing={1}>
-      <AccessTimeIcon fontSize="small" color="disabled" />
-      <Typography variant="body2" color="text.secondary">
-        Workers
-      </Typography>
-      <Typography variant="body2" fontWeight={600}>
-        —
-      </Typography>
-    </Stack>
-    <Stack direction="row" alignItems="center" spacing={1}>
-      <Typography variant="body2" color="text.secondary">
-        Scheduled hrs
-      </Typography>
-      <Typography variant="body2" fontWeight={600}>
-        —
-      </Typography>
-    </Stack>
-    <Stack direction="row" alignItems="center" spacing={1}>
-      <Typography variant="body2" color="text.secondary">
-        Actual hrs
-      </Typography>
-      <Typography variant="body2" fontWeight={600}>
-        —
-      </Typography>
-    </Stack>
-    <Box sx={{ flexGrow: 1 }} />
-    <Typography variant="caption" color="text.secondary">
-      Totals reflect scheduled time until entries are saved.
-    </Typography>
-  </Paper>
-);
+const NoRowsState: React.FC<NoRowsStateProps> = ({ filter, consideredAssignmentCount }) => {
+  const period = periodFromFilter(filter);
+  const periodLabel = period ? formatPeriodLabel(period) : null;
+  const headline =
+    consideredAssignmentCount === 0
+      ? 'No active assignments in this period'
+      : 'No scheduled days in this period';
+  const detail =
+    consideredAssignmentCount === 0
+      ? 'No assignments under this hiring entity overlap the selected period. Pick a different period or entity.'
+      : `Found ${consideredAssignmentCount} active assignment${
+          consideredAssignmentCount === 1 ? '' : 's'
+        }, but none have any scheduled days inside the selected period. Check each assignment's weekly schedule.`;
+  return (
+    <Card variant="outlined" sx={{ mt: 2 }}>
+      <CardContent>
+        <Typography variant="body1" fontWeight={600}>
+          {headline}
+          {periodLabel ? ` (${periodLabel})` : ''}
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+          {detail}
+        </Typography>
+      </CardContent>
+    </Card>
+  );
+};
 
-const RowsPlaceholder: React.FC<{ filter: TimesheetFilter }> = ({ filter }) => (
-  <Card variant="outlined" sx={{ mt: 2 }}>
-    <CardContent>
-      <Alert severity="info" sx={{ mb: 2 }}>
-        Rows hydrate in <strong>TS.1.P1.C.2</strong>. The filter you
-        selected is wired up and will drive the grid in the next commit.
-      </Alert>
-      <Typography variant="body2" color="text.secondary">
-        Filter: {describeFilter(filter)}
-      </Typography>
-      <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-        P1.C.2 will: query assignments matching this filter, expand each
-        weekly schedule across the period, look up
-        <code style={{ margin: '0 4px' }}>tenants/&#123;t&#125;/timesheet_entries/&#123;assignmentId&#125;_&#123;workDate&#125;</code>
-        and render either the entry or an "empty" row populated from the
-        assignment snapshot.
-      </Typography>
-    </CardContent>
-  </Card>
-);
+/* -------------------------------------------------------------------------
+ * Status pill
+ *
+ * Same vocabulary + colors as `TimesheetTotalsHeader` — by design, so
+ * the header counts visually match the per-row chips beneath them.
+ * ------------------------------------------------------------------------- */
+
+const STATUS_LABELS: Record<TimesheetRowDisplayStatus, string> = {
+  no_entry: '—',
+  draft: 'draft',
+  submitted: 'submitted',
+  approved: 'approved',
+  sent_to_everee: 'sent',
+  paid: 'paid',
+  error: 'error',
+};
+
+const STATUS_COLORS: Record<
+  TimesheetRowDisplayStatus,
+  'default' | 'primary' | 'success' | 'warning' | 'error' | 'info'
+> = {
+  no_entry: 'default',
+  draft: 'default',
+  submitted: 'info',
+  approved: 'primary',
+  sent_to_everee: 'info',
+  paid: 'success',
+  error: 'error',
+};
+
+interface StatusPillProps {
+  status: TimesheetRowDisplayStatus;
+}
+
+const StatusPill: React.FC<StatusPillProps> = ({ status }) => {
+  if (status === 'no_entry') {
+    return (
+      <Tooltip title="No entry yet — this day will appear in the next batch only after a recruiter saves an entry.">
+        <Chip
+          size="small"
+          color="default"
+          variant="outlined"
+          label="—"
+          sx={{ fontWeight: 600 }}
+        />
+      </Tooltip>
+    );
+  }
+  return (
+    <Chip
+      size="small"
+      color={STATUS_COLORS[status]}
+      variant="filled"
+      label={STATUS_LABELS[status]}
+    />
+  );
+};
+
+/* -------------------------------------------------------------------------
+ * Row rendering
+ * ------------------------------------------------------------------------- */
+
+function formatHours(h: number): string {
+  if (!Number.isFinite(h) || h === 0) return '0';
+  if (Number.isInteger(h)) return `${h}`;
+  return h.toFixed(1);
+}
+
+function formatRate(n: number): string {
+  if (!Number.isFinite(n)) return '—';
+  return `$${n.toFixed(2)}`;
+}
+
+interface TimesheetGridRowViewProps {
+  row: TimesheetGridRow;
+}
+
+const TimesheetGridRowView: React.FC<TimesheetGridRowViewProps> = ({ row }) => {
+  const scheduledHrs = scheduledHoursForRow(row);
+  const actualHrs = actualHoursForRow(row);
+  const status = displayStatusForRow(row);
+
+  const isEmpty = row.kind === 'empty';
+
+  return (
+    <TableRow
+      hover
+      sx={{
+        // Subtle visual cue that empty rows haven't been entered yet —
+        // makes the "(no entry yet)" caption pop without screaming.
+        backgroundColor: isEmpty ? 'action.hover' : undefined,
+      }}
+    >
+      <TableCell>
+        <Typography variant="body2" fontWeight={600}>
+          {row.assignment.workerDisplayName ?? row.assignment.candidateId}
+        </Typography>
+        {row.assignment.worksiteDisplayName ? (
+          <Typography variant="caption" color="text.secondary">
+            {row.assignment.worksiteDisplayName}
+            {row.assignment.worksiteState ? ` · ${row.assignment.worksiteState}` : ''}
+          </Typography>
+        ) : row.assignment.worksiteState ? (
+          <Typography variant="caption" color="text.secondary">
+            {row.assignment.worksiteState}
+          </Typography>
+        ) : null}
+      </TableCell>
+
+      <TableCell>{row.workDate}</TableCell>
+
+      <TableCell>
+        {row.scheduled.startTime}–{row.scheduled.endTime}
+        {row.scheduled.breakMinutes > 0 ? (
+          <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>
+            ({row.scheduled.breakMinutes}m brk)
+          </Typography>
+        ) : null}
+      </TableCell>
+
+      <TableCell align="right">{formatHours(scheduledHrs)}</TableCell>
+
+      <TableCell>
+        {isEmpty ? (
+          <Typography variant="caption" color="text.secondary">
+            (no entry yet)
+          </Typography>
+        ) : (
+          <>
+            {row.entry.actualStartTime ?? '—'}–{row.entry.actualEndTime ?? '—'}
+          </>
+        )}
+      </TableCell>
+
+      <TableCell align="right">{isEmpty ? '0' : formatHours(actualHrs)}</TableCell>
+
+      <TableCell align="right">{formatRate(row.assignment.payRate)}</TableCell>
+      <TableCell align="right">{formatRate(row.assignment.billRate)}</TableCell>
+
+      <TableCell>
+        <StatusPill status={status} />
+      </TableCell>
+    </TableRow>
+  );
+};
+
+/* -------------------------------------------------------------------------
+ * Top-level component
+ * ------------------------------------------------------------------------- */
 
 export const TimesheetGrid: React.FC<TimesheetGridProps> = ({ filter }) => {
+  const { tenantId } = useAuth();
+  const { rows, loading, error, errors, consideredAssignmentCount } =
+    useTimesheetGridRows(tenantId, filter);
+
   if (!filter) {
     return <EmptyFilterState />;
   }
+
   return (
     <Stack spacing={2}>
-      <TotalsHeaderStub />
-      <RowsPlaceholder filter={filter} />
+      <TimesheetTotalsHeader rows={rows} loading={loading} />
+
+      {error ? (
+        <Alert severity="error">
+          <AlertTitle>Couldn’t load timesheet rows</AlertTitle>
+          {error}
+        </Alert>
+      ) : null}
+
+      {errors.length > 0 ? (
+        <Alert severity="warning" variant="outlined">
+          <AlertTitle>
+            {errors.length === 1
+              ? '1 assignment had an issue'
+              : `${errors.length} assignments had issues`}
+          </AlertTitle>
+          <Stack component="ul" sx={{ pl: 2, mb: 0 }}>
+            {errors.slice(0, 5).map((msg, i) => (
+              <li key={i}>
+                <Typography variant="body2">{msg}</Typography>
+              </li>
+            ))}
+            {errors.length > 5 ? (
+              <li>
+                <Typography variant="caption" color="text.secondary">
+                  …and {errors.length - 5} more.
+                </Typography>
+              </li>
+            ) : null}
+          </Stack>
+        </Alert>
+      ) : null}
+
+      {loading ? (
+        <LoadingState filter={filter} />
+      ) : rows.length === 0 && !error ? (
+        <NoRowsState
+          filter={filter}
+          consideredAssignmentCount={consideredAssignmentCount}
+        />
+      ) : (
+        <Paper variant="outlined">
+          <TableContainer>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Worker</TableCell>
+                  <TableCell>Work date</TableCell>
+                  <TableCell>Scheduled</TableCell>
+                  <TableCell align="right">Sched hrs</TableCell>
+                  <TableCell>Actual</TableCell>
+                  <TableCell align="right">Actual hrs</TableCell>
+                  <TableCell align="right">Pay rate</TableCell>
+                  <TableCell align="right">Bill rate</TableCell>
+                  <TableCell>Status</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {rows.map((row) => (
+                  <TimesheetGridRowView key={row.key} row={row} />
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
+      )}
     </Stack>
   );
 };
