@@ -87,20 +87,26 @@ export interface DayInput {
  *   - `regular + ot + dt` exactly equals `workedMinutes / 60` (within
  *     standard floating-point tolerance, ~1e-9).
  *   - `totalOTHours === totalFlsaOTHours + totalNonFlsaOTHours` (within
- *     ~1e-9). The split fields exist so Phase 4 can submit hours
- *     under the right `fullyClassifiedHours.type` enum on Everee's
- *     `/integration/v1/labor/timesheet/worked-shifts`:
- *       - FLSA OT (federal weekly cascade) → `FLSA_QUALIFIED_OVERTIME`
- *       - non-FLSA OT (state-level e.g. CA daily-8 / 7th-day) →
- *         `NON_FLSA_QUALIFIED_OVERTIME`
- *     Without this split, Everee can't compute taxes / reports
- *     correctly. The summed `totalOTHours` field is preserved for
- *     UI consumers (resolver, totals header) so the split is
- *     additive — older code keeps working unchanged.
+ *     ~1e-9).
  *   - Penalties are SEPARATE — they're additional pay obligations
  *     (typically 1 hour of regular-rate pay each), not subtractions
  *     from worked hours.
  *   - All values are non-negative.
+ *
+ * **Why the FLSA / non-FLSA OT split.** The default Phase 4
+ * submission path (`/integration/v1/labor/timesheet/worked-shifts`,
+ * `fullyClassifiedHours[]`) collapses both buckets back to
+ * `type: 'OVERTIME'` at the wire boundary — the shifts endpoint's
+ * `type` enum only accepts `REGULAR_TIME | OVERTIME | DOUBLE_TIME`.
+ * The split matters on the **bulk fallback** path
+ * (`/integration/v1/labor/classified-hours/bulk`), whose schema has
+ * distinct field names `flsaQualifiedOvertimeHoursWorked` vs
+ * `nonFlsaQualifiedOvertimeHoursWorked` and requires the wire payload
+ * to honor the federal-vs-state split for tax/reporting accuracy.
+ * Engine output also feeds future internal reporting (CA premium-rate
+ * audits, etc.) where the distinction is the whole point. Carrying
+ * the split through the engine means we don't have to re-derive it
+ * at submission time when only the bulk path is available.
  *
  * Numbers are in HOURS (not minutes), to match the
  * `TimesheetEntryV2` schema. The engine's internal math is in minutes;
@@ -112,7 +118,9 @@ export interface DayBreakdown {
    * Sum of `totalFlsaOTHours + totalNonFlsaOTHours`. Kept for
    * backward compatibility with consumers that don't care about the
    * federal/state distinction (UI totals, grid resolver). Phase 4
-   * Everee submission reads the split fields directly.
+   * Everee submission reads the split fields when needed (bulk
+   * fallback) and falls back to this sum when not (default shifts
+   * path, where both collapse to `type: 'OVERTIME'`).
    */
   totalOTHours: number;
   /**
@@ -121,7 +129,12 @@ export interface DayBreakdown {
    * cumulative regular threshold is crossed; in DEFAULT/NY/TX/MA this
    * is the ONLY OT source.
    *
-   * Maps to Everee's `FLSA_QUALIFIED_OVERTIME` classification.
+   * Wire mapping:
+   *   - Default path (shifts endpoint with `fullyClassifiedHours[]`):
+   *     emitted as `type: 'OVERTIME'` segments alongside non-FLSA OT.
+   *   - Bulk fallback (`classified-hours/bulk`): emitted as
+   *     `flsaQualifiedOvertimeHoursWorked` on a dedicated
+   *     `ClassifiedHoursPerWorker` entry.
    */
   totalFlsaOTHours: number;
   /**
@@ -130,7 +143,14 @@ export interface DayBreakdown {
    * 7th-consecutive-day-first-8h rules produce non-FLSA OT.
    * DEFAULT/NY/TX/MA return 0 here today.
    *
-   * Maps to Everee's `NON_FLSA_QUALIFIED_OVERTIME` classification.
+   * Wire mapping:
+   *   - Default path (shifts endpoint with `fullyClassifiedHours[]`):
+   *     emitted as `type: 'OVERTIME'` segments alongside FLSA OT.
+   *     The shifts endpoint does not distinguish the two on the wire.
+   *   - Bulk fallback (`classified-hours/bulk`): emitted as
+   *     `nonFlsaQualifiedOvertimeHoursWorked` on a dedicated
+   *     `ClassifiedHoursPerWorker` entry — the split is required at
+   *     the wire boundary on this path.
    */
   totalNonFlsaOTHours: number;
   totalDoubleTimeHours: number;

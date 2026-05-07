@@ -163,23 +163,30 @@ export interface TimesheetEntryV2 {
    * Sum of `totalFlsaOTHours + totalNonFlsaOTHours`. Kept for
    * compatibility with consumers that don't care about the
    * federal-vs-state distinction (UI totals header, grid resolver).
-   * Phase 4 Everee submission reads the split fields directly to map
-   * onto `fullyClassifiedHours.type`:
-   *   - FLSA → `FLSA_QUALIFIED_OVERTIME`
-   *   - non-FLSA → `NON_FLSA_QUALIFIED_OVERTIME`
+   *
+   * Phase 4 wire mapping:
+   *   - Default shifts path (`fullyClassifiedHours[]`): both buckets
+   *     emit as `type: 'OVERTIME'` segments — the endpoint's `type`
+   *     enum is `REGULAR_TIME | OVERTIME | DOUBLE_TIME` only.
+   *   - Bulk fallback (`classified-hours/bulk`): the split matters —
+   *     `totalFlsaOTHours` → `flsaQualifiedOvertimeHoursWorked`,
+   *     `totalNonFlsaOTHours` → `nonFlsaQualifiedOvertimeHoursWorked`,
+   *     emitted as separate `ClassifiedHoursPerWorker` entries.
    */
   totalOTHours: number;
   /**
    * OT hours classified by federal weekly cascade (FLSA §207, 40h/wk).
-   * Optional for backward compatibility — entries written before
-   * P2.C ships may not have this field; readers should treat absent
-   * as 0 and rely on the recompute trigger to backfill on next write.
+   * See `totalOTHours` for the Phase 4 wire mapping. Optional for
+   * backward compatibility — entries written before P2.C may not have
+   * this field; readers should treat absent as 0 and rely on the
+   * recompute trigger to backfill on next write.
    */
   totalFlsaOTHours?: number;
   /**
    * OT hours classified by state-specific daily / consecutive-day
    * rules (CA daily-8, CA 7th-day-first-8h). DEFAULT/NY/TX/MA = 0.
-   * Optional for backward compatibility — see `totalFlsaOTHours`.
+   * See `totalOTHours` for the Phase 4 wire mapping. Optional for
+   * backward compatibility — see `totalFlsaOTHours`.
    */
   totalNonFlsaOTHours?: number;
   totalDoubleTimeHours: number;

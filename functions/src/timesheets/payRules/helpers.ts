@@ -258,15 +258,21 @@ export interface PerDayMinutes {
 
 /**
  * Per-day classification AFTER the weekly cascade — splits OT into
- * the federal/state buckets the Everee Timesheets API needs for
- * `fullyClassifiedHours.type`:
+ * federal-rule and state-rule buckets:
  *
  *   - `otFlsa`    → minutes flipped from regular by the weekly
  *                   cascade (federal §207, 40h/wk rule).
- *                   Maps to Everee's `FLSA_QUALIFIED_OVERTIME`.
  *   - `otNonFlsa` → minutes that arrived as `ot` in the cascade
  *                   input (CA daily-8 / 7th-day / etc.).
- *                   Maps to Everee's `NON_FLSA_QUALIFIED_OVERTIME`.
+ *
+ * Both buckets are needed at the wire boundary on Everee's bulk
+ * `/integration/v1/labor/classified-hours/bulk` endpoint, which has
+ * distinct fields `flsaQualifiedOvertimeHoursWorked` and
+ * `nonFlsaQualifiedOvertimeHoursWorked`. The default shifts-with-
+ * `fullyClassifiedHours` path collapses both to `type: 'OVERTIME'`
+ * (the shifts endpoint's `type` enum only accepts
+ * `REGULAR_TIME | OVERTIME | DOUBLE_TIME`); the split is preserved
+ * here for that bulk path and for internal reporting.
  *
  * Invariant: `otFlsa + otNonFlsa === pre-cascade.ot + flippedFromReg`.
  */
