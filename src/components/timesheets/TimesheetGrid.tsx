@@ -1,24 +1,28 @@
 /**
- * TimesheetGrid — read-only grid of timesheet rows for the
- * recruiter/admin workspace.
+ * TimesheetGrid — recruiter/admin grid of timesheet rows.
  *
  * **Phasing:**
  *   - P1.C.1 — page shell + filter gating + skeleton (placeholder card).
- *   - **P1.C.2 (this commit)** — wire to `useTimesheetGridRows`,
- *     render the row table + live totals header. Read-only.
- *   - P3+ — inline-editable cells; status pill flow; variance filter;
- *     batch submit / Everee dispatch.
- *
- * **Read-only contract.** This component MUST NOT write anything to
- * Firestore. Empty rows stay empty until P3 makes cells editable. The
- * status pill on empty rows shows "no entry yet" instead of "draft" —
- * critical for the operator's mental model that nothing has been
- * persisted yet.
+ *   - P1.C.2 — row hydration via `useTimesheetGridRows` + totals header.
+ *   - P1.D — "+ Add entry" affordance materializes draft entry rows.
+ *   - **P3.A (this commit)** — inline-editable cells for actuals
+ *     (start/end time), breaks, tips, bonus, notes. Save-on-blur
+ *     with optimistic UI, validation chips, 150ms spinner / 300ms
+ *     checkmark, auto-rollback on Firestore failure, Cmd+Z undo.
+ *   - P3.B+ — bulk select + bulk approve, Excel paste, header-row
+ *     apply, fill handle, variance pre-filter.
  *
  * **Tenant + filter coupling.** The page (`Timesheets.tsx`) owns both;
  * this component is purely controlled. When `filter` is `null`,
  * renders the empty state with helper copy. When `filter` is set,
  * delegates to the hook for hydration.
+ *
+ * **Edit path.** Each editable cell is a small standalone component
+ * (`TimeCell`, `NumberCell`, `NotesCell`, `BreaksCell`) wired to
+ * `useTimesheetEntryEditor`'s field handlers. The hook itself is the
+ * single source of truth for the surgical Firestore patch + undo
+ * registration + deferred recompute-aware refetch. No edit logic
+ * lives in this component beyond rendering the cells in their slots.
  */
 
 import React, { useState } from 'react';
@@ -48,11 +52,24 @@ import {
 import { FirebaseError } from 'firebase/app';
 
 import { useAuth } from '../../contexts/AuthContext';
+import { TimesheetEditorProvider } from '../../contexts/TimesheetEditorContext';
+import useTimesheetEntryEditor from '../../hooks/useTimesheetEntryEditor';
 import useTimesheetGridRows from '../../hooks/useTimesheetGridRows';
-import type { TimesheetFilter } from '../../types/recruiter/timesheet';
+import type {
+  TimesheetEntryV2,
+  TimesheetFilter,
+} from '../../types/recruiter/timesheet';
 import { createDraftTimesheetEntry } from '../../utils/timesheets/createDraftTimesheetEntry';
 import { formatPeriodLabel } from '../../utils/timesheets/dateRange';
+import {
+  validateBonusAmount,
+  validateTips,
+} from '../../utils/timesheets/entryValidation';
 
+import BreaksCell from './cells/BreaksCell';
+import NotesCell from './cells/NotesCell';
+import NumberCell from './cells/NumberCell';
+import TimeCell from './cells/TimeCell';
 import TimesheetTotalsHeader from './TimesheetTotalsHeader';
 import {
   type TimesheetGridRow,
@@ -213,13 +230,14 @@ function formatHours(h: number): string {
   return h.toFixed(1);
 }
 
-function formatRate(n: number): string {
-  if (!Number.isFinite(n)) return '—';
-  return `$${n.toFixed(2)}`;
+interface RowCommonProps {
+  row: TimesheetGridRow;
+  status: TimesheetRowDisplayStatus;
+  scheduledHrs: number;
+  actualHrs: number;
 }
 
-interface TimesheetGridRowViewProps {
-  row: TimesheetGridRow;
+interface EmptyRowProps extends RowCommonProps {
   /** Tenant scope for the create-entry callable. Required when the
    *  row is empty AND the caller has provided an `onCreated` handler. */
   tenantId?: string | null;
@@ -228,34 +246,73 @@ interface TimesheetGridRowViewProps {
   onCreated?: () => void;
 }
 
+interface EntryRowProps extends RowCommonProps {
+  tenantId: string;
+  entry: TimesheetEntryV2;
+  mergeEntryUpdate: (entryId: string, patch: Partial<TimesheetEntryV2>) => void;
+  refreshEntry: (entryId: string) => Promise<void>;
+}
+
 /**
- * Per-row local state for the "+ Add entry" affordance. Each row
- * tracks its own `creating` / `error` independently so multiple
+ * Per-row local state for the "+ Add entry" affordance on empty rows.
+ * Each row tracks its own `creating` / `error` independently so multiple
  * recruiters can fire creates in parallel without coupling.
- *
- * Errors are inline (small caption + retry link) rather than a
- * dialog — the recruiter can see exactly which row failed and why
- * without leaving the grid context.
  */
 interface CreatingState {
   status: 'idle' | 'creating' | 'error';
   message?: string;
 }
 
-const TimesheetGridRowView: React.FC<TimesheetGridRowViewProps> = ({
+/* -------------------------------------------------------------------------
+ * Worker name + site cell
+ *
+ * Shared between the empty and entry row variants — single source of
+ * truth for the leftmost identity column so they stay visually
+ * aligned no matter which kind of row is rendering.
+ * ------------------------------------------------------------------------- */
+
+const WorkerSiteCell: React.FC<{ row: TimesheetGridRow }> = ({ row }) => (
+  <TableCell>
+    <Typography variant="body2" fontWeight={600}>
+      {row.assignment.workerDisplayName ?? row.assignment.candidateId}
+    </Typography>
+    {row.assignment.worksiteDisplayName ? (
+      <Typography variant="caption" color="text.secondary">
+        {row.assignment.worksiteDisplayName}
+        {row.assignment.worksiteState ? ` · ${row.assignment.worksiteState}` : ''}
+      </Typography>
+    ) : row.assignment.worksiteState ? (
+      <Typography variant="caption" color="text.secondary">
+        {row.assignment.worksiteState}
+      </Typography>
+    ) : null}
+  </TableCell>
+);
+
+const ScheduledCell: React.FC<{ row: TimesheetGridRow }> = ({ row }) => (
+  <TableCell>
+    {row.scheduled.startTime}–{row.scheduled.endTime}
+    {row.scheduled.breakMinutes > 0 ? (
+      <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>
+        ({row.scheduled.breakMinutes}m brk)
+      </Typography>
+    ) : null}
+  </TableCell>
+);
+
+/* -------------------------------------------------------------------------
+ * Empty-row renderer (no entry doc materialized yet)
+ * ------------------------------------------------------------------------- */
+
+const EmptyRow: React.FC<EmptyRowProps> = ({
   row,
+  status,
+  scheduledHrs,
   tenantId,
   onCreated,
 }) => {
-  const scheduledHrs = scheduledHoursForRow(row);
-  const actualHrs = actualHoursForRow(row);
-  const status = displayStatusForRow(row);
-
-  const isEmpty = row.kind === 'empty';
-
   const [creating, setCreating] = useState<CreatingState>({ status: 'idle' });
-
-  const canCreate = isEmpty && tenantId && onCreated && creating.status !== 'creating';
+  const canCreate = !!tenantId && !!onCreated && creating.status !== 'creating';
 
   const handleAddEntry = async () => {
     if (!tenantId || !onCreated) return;
@@ -267,13 +324,9 @@ const TimesheetGridRowView: React.FC<TimesheetGridRowViewProps> = ({
         workDate: row.workDate,
       });
       // Hook refresh re-resolves the row set; the empty row will
-      // be replaced by an `entry` row on the next render. We do
-      // NOT setCreating to 'idle' here because the row is about to
-      // unmount when refresh() lands.
+      // be replaced by an `entry` row on the next render.
       onCreated();
     } catch (err) {
-      // Surface a friendly per-error message. Most callable errors
-      // come back as FirebaseError with a `.code` and `.message`.
       const fallback = err instanceof Error ? err.message : String(err);
       const message =
         err instanceof FirebaseError && typeof err.message === 'string'
@@ -284,100 +337,155 @@ const TimesheetGridRowView: React.FC<TimesheetGridRowViewProps> = ({
   };
 
   return (
-    <TableRow
-      hover
-      sx={{
-        // Subtle visual cue that empty rows haven't been entered yet —
-        // makes the "(no entry yet)" caption pop without screaming.
-        backgroundColor: isEmpty ? 'action.hover' : undefined,
-      }}
-    >
-      <TableCell>
-        <Typography variant="body2" fontWeight={600}>
-          {row.assignment.workerDisplayName ?? row.assignment.candidateId}
-        </Typography>
-        {row.assignment.worksiteDisplayName ? (
-          <Typography variant="caption" color="text.secondary">
-            {row.assignment.worksiteDisplayName}
-            {row.assignment.worksiteState ? ` · ${row.assignment.worksiteState}` : ''}
-          </Typography>
-        ) : row.assignment.worksiteState ? (
-          <Typography variant="caption" color="text.secondary">
-            {row.assignment.worksiteState}
-          </Typography>
-        ) : null}
-      </TableCell>
-
+    <TableRow hover sx={{ backgroundColor: 'action.hover' }}>
+      <WorkerSiteCell row={row} />
       <TableCell>{row.workDate}</TableCell>
-
-      <TableCell>
-        {row.scheduled.startTime}–{row.scheduled.endTime}
-        {row.scheduled.breakMinutes > 0 ? (
-          <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>
-            ({row.scheduled.breakMinutes}m brk)
-          </Typography>
-        ) : null}
-      </TableCell>
-
+      <ScheduledCell row={row} />
       <TableCell align="right">{formatHours(scheduledHrs)}</TableCell>
-
-      <TableCell>
-        {isEmpty ? (
-          <Stack direction="column" spacing={0.25}>
-            {creating.status === 'creating' ? (
-              <Stack direction="row" alignItems="center" spacing={0.5}>
-                <CircularProgress size={12} />
-                <Typography variant="caption" color="text.secondary">
-                  Adding…
-                </Typography>
-              </Stack>
-            ) : canCreate ? (
+      <TableCell colSpan={6}>
+        <Stack direction="column" spacing={0.25}>
+          {creating.status === 'creating' ? (
+            <Stack direction="row" alignItems="center" spacing={0.5}>
+              <CircularProgress size={12} />
+              <Typography variant="caption" color="text.secondary">
+                Adding…
+              </Typography>
+            </Stack>
+          ) : canCreate ? (
+            <Link
+              component="button"
+              type="button"
+              variant="caption"
+              onClick={handleAddEntry}
+              underline="hover"
+              sx={{ textAlign: 'left', alignSelf: 'flex-start' }}
+            >
+              + Add entry
+            </Link>
+          ) : (
+            <Typography variant="caption" color="text.secondary">
+              (no entry yet)
+            </Typography>
+          )}
+          {creating.status === 'error' ? (
+            <Stack direction="row" alignItems="center" spacing={0.5}>
+              <Typography variant="caption" color="error">
+                {creating.message ?? 'Failed to add entry'}
+              </Typography>
               <Link
                 component="button"
                 type="button"
                 variant="caption"
                 onClick={handleAddEntry}
                 underline="hover"
-                sx={{ textAlign: 'left', alignSelf: 'flex-start' }}
               >
-                + Add entry
+                retry
               </Link>
-            ) : (
-              // Read-only fallback (no tenantId / no onCreated handler
-              // — e.g. an unauthenticated render path) — keep the
-              // original caption intact.
-              <Typography variant="caption" color="text.secondary">
-                (no entry yet)
-              </Typography>
-            )}
-            {creating.status === 'error' ? (
-              <Stack direction="row" alignItems="center" spacing={0.5}>
-                <Typography variant="caption" color="error">
-                  {creating.message ?? 'Failed to add entry'}
-                </Typography>
-                <Link
-                  component="button"
-                  type="button"
-                  variant="caption"
-                  onClick={handleAddEntry}
-                  underline="hover"
-                >
-                  retry
-                </Link>
-              </Stack>
-            ) : null}
-          </Stack>
-        ) : (
-          <>
-            {row.entry.actualStartTime ?? '—'}–{row.entry.actualEndTime ?? '—'}
-          </>
-        )}
+            </Stack>
+          ) : null}
+        </Stack>
+      </TableCell>
+      <TableCell>
+        <StatusPill status={status} />
+      </TableCell>
+    </TableRow>
+  );
+};
+
+/* -------------------------------------------------------------------------
+ * Entry-row renderer (entry doc exists; cells are inline-editable)
+ * ------------------------------------------------------------------------- */
+
+const EntryRow: React.FC<EntryRowProps> = ({
+  row,
+  status,
+  scheduledHrs,
+  actualHrs,
+  tenantId,
+  entry,
+  mergeEntryUpdate,
+  refreshEntry,
+}) => {
+  const editor = useTimesheetEntryEditor({
+    tenantId,
+    entry,
+    mergeEntryUpdate,
+    refreshEntry,
+  });
+  const { fieldHandlers, readOnly } = editor;
+
+  // Shift window for the breaks-inside-shift validator. Use actuals
+  // when set (recruiter-edited), fall back to scheduled otherwise.
+  const shiftStart = entry.actualStartTime ?? row.scheduled.startTime;
+  const shiftEnd = entry.actualEndTime ?? row.scheduled.endTime;
+
+  return (
+    <TableRow hover>
+      <WorkerSiteCell row={row} />
+      <TableCell>{row.workDate}</TableCell>
+      <ScheduledCell row={row} />
+      <TableCell align="right">{formatHours(scheduledHrs)}</TableCell>
+
+      <TableCell>
+        <Stack direction="row" alignItems="center" spacing={0.25}>
+          <TimeCell
+            value={entry.actualStartTime ?? null}
+            onSave={fieldHandlers.actualStartTime}
+            disabled={readOnly}
+            ariaLabel="Actual start time"
+          />
+          <Typography component="span" variant="body2" color="text.secondary">
+            –
+          </Typography>
+          <TimeCell
+            value={entry.actualEndTime ?? null}
+            onSave={fieldHandlers.actualEndTime}
+            disabled={readOnly}
+            ariaLabel="Actual end time"
+          />
+        </Stack>
       </TableCell>
 
-      <TableCell align="right">{isEmpty ? '0' : formatHours(actualHrs)}</TableCell>
+      <TableCell>
+        <BreaksCell
+          value={Array.isArray(entry.breaks) ? entry.breaks : []}
+          onSave={fieldHandlers.breaks}
+          shiftStart={shiftStart}
+          shiftEnd={shiftEnd}
+          disabled={readOnly}
+        />
+      </TableCell>
 
-      <TableCell align="right">{formatRate(row.assignment.payRate)}</TableCell>
-      <TableCell align="right">{formatRate(row.assignment.billRate)}</TableCell>
+      <TableCell align="right">{formatHours(actualHrs)}</TableCell>
+
+      <TableCell align="right">
+        <NumberCell
+          value={typeof entry.tips === 'number' ? entry.tips : 0}
+          onSave={fieldHandlers.tips}
+          validate={(raw) => validateTips(raw)}
+          disabled={readOnly}
+          ariaLabel="Tips"
+        />
+      </TableCell>
+
+      <TableCell align="right">
+        <NumberCell
+          value={typeof entry.bonusAmount === 'number' ? entry.bonusAmount : 0}
+          onSave={fieldHandlers.bonusAmount}
+          validate={(raw) => validateBonusAmount(raw)}
+          disabled={readOnly}
+          ariaLabel="Bonus"
+        />
+      </TableCell>
+
+      <TableCell>
+        <NotesCell
+          value={typeof entry.notes === 'string' ? entry.notes : ''}
+          onSave={fieldHandlers.notes}
+          disabled={readOnly}
+          ariaLabel="Notes"
+        />
+      </TableCell>
 
       <TableCell>
         <StatusPill status={status} />
@@ -392,87 +500,140 @@ const TimesheetGridRowView: React.FC<TimesheetGridRowViewProps> = ({
 
 export const TimesheetGrid: React.FC<TimesheetGridProps> = ({ filter }) => {
   const { tenantId } = useAuth();
-  const { rows, loading, error, errors, consideredAssignmentCount, refresh } =
-    useTimesheetGridRows(tenantId, filter);
+  const {
+    rows,
+    loading,
+    error,
+    errors,
+    consideredAssignmentCount,
+    refresh,
+    mergeEntryUpdate,
+    refreshEntry,
+  } = useTimesheetGridRows(tenantId, filter);
 
   if (!filter) {
     return <EmptyFilterState />;
   }
 
   return (
-    <Stack spacing={2}>
-      <TimesheetTotalsHeader rows={rows} loading={loading} />
+    <TimesheetEditorProvider>
+      <Stack spacing={2}>
+        <TimesheetTotalsHeader rows={rows} loading={loading} />
 
-      {error ? (
-        <Alert severity="error">
-          <AlertTitle>Couldn’t load timesheet rows</AlertTitle>
-          {error}
-        </Alert>
-      ) : null}
+        {error ? (
+          <Alert severity="error">
+            <AlertTitle>Couldn’t load timesheet rows</AlertTitle>
+            {error}
+          </Alert>
+        ) : null}
 
-      {errors.length > 0 ? (
-        <Alert severity="warning" variant="outlined">
-          <AlertTitle>
-            {errors.length === 1
-              ? '1 assignment had an issue'
-              : `${errors.length} assignments had issues`}
-          </AlertTitle>
-          <Stack component="ul" sx={{ pl: 2, mb: 0 }}>
-            {errors.slice(0, 5).map((msg, i) => (
-              <li key={i}>
-                <Typography variant="body2">{msg}</Typography>
-              </li>
-            ))}
-            {errors.length > 5 ? (
-              <li>
-                <Typography variant="caption" color="text.secondary">
-                  …and {errors.length - 5} more.
-                </Typography>
-              </li>
-            ) : null}
-          </Stack>
-        </Alert>
-      ) : null}
+        {errors.length > 0 ? (
+          <Alert severity="warning" variant="outlined">
+            <AlertTitle>
+              {errors.length === 1
+                ? '1 assignment had an issue'
+                : `${errors.length} assignments had issues`}
+            </AlertTitle>
+            <Stack component="ul" sx={{ pl: 2, mb: 0 }}>
+              {errors.slice(0, 5).map((msg, i) => (
+                <li key={i}>
+                  <Typography variant="body2">{msg}</Typography>
+                </li>
+              ))}
+              {errors.length > 5 ? (
+                <li>
+                  <Typography variant="caption" color="text.secondary">
+                    …and {errors.length - 5} more.
+                  </Typography>
+                </li>
+              ) : null}
+            </Stack>
+          </Alert>
+        ) : null}
 
-      {loading ? (
-        <LoadingState filter={filter} />
-      ) : rows.length === 0 && !error ? (
-        <NoRowsState
-          filter={filter}
-          consideredAssignmentCount={consideredAssignmentCount}
-        />
-      ) : (
-        <Paper variant="outlined">
-          <TableContainer>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Worker</TableCell>
-                  <TableCell>Work date</TableCell>
-                  <TableCell>Scheduled</TableCell>
-                  <TableCell align="right">Sched hrs</TableCell>
-                  <TableCell>Actual</TableCell>
-                  <TableCell align="right">Actual hrs</TableCell>
-                  <TableCell align="right">Pay rate</TableCell>
-                  <TableCell align="right">Bill rate</TableCell>
-                  <TableCell>Status</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {rows.map((row) => (
-                  <TimesheetGridRowView
-                    key={row.key}
-                    row={row}
-                    tenantId={tenantId}
-                    onCreated={refresh}
-                  />
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </Paper>
-      )}
-    </Stack>
+        {loading ? (
+          <LoadingState filter={filter} />
+        ) : rows.length === 0 && !error ? (
+          <NoRowsState
+            filter={filter}
+            consideredAssignmentCount={consideredAssignmentCount}
+          />
+        ) : (
+          <Paper variant="outlined">
+            <TableContainer>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Worker</TableCell>
+                    <TableCell>Work date</TableCell>
+                    <TableCell>Scheduled</TableCell>
+                    <TableCell align="right">Sched hrs</TableCell>
+                    <TableCell>Actual</TableCell>
+                    <TableCell>Breaks</TableCell>
+                    <TableCell align="right">Actual hrs</TableCell>
+                    <TableCell align="right">Tips</TableCell>
+                    <TableCell align="right">Bonus</TableCell>
+                    <TableCell>Notes</TableCell>
+                    <TableCell>Status</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {rows.map((row) => {
+                    const status = displayStatusForRow(row);
+                    const scheduledHrs = scheduledHoursForRow(row);
+                    const actualHrs = actualHoursForRow(row);
+
+                    if (row.kind === 'empty') {
+                      return (
+                        <EmptyRow
+                          key={row.key}
+                          row={row}
+                          status={status}
+                          scheduledHrs={scheduledHrs}
+                          actualHrs={actualHrs}
+                          tenantId={tenantId}
+                          onCreated={refresh}
+                        />
+                      );
+                    }
+
+                    if (!tenantId) {
+                      // Defensive: tenantId is required for the edit
+                      // path's Firestore writes. If it's somehow null
+                      // we render a non-editable fallback so the
+                      // grid doesn't crash mid-render.
+                      return (
+                        <EmptyRow
+                          key={row.key}
+                          row={row}
+                          status={status}
+                          scheduledHrs={scheduledHrs}
+                          actualHrs={actualHrs}
+                        />
+                      );
+                    }
+
+                    return (
+                      <EntryRow
+                        key={row.key}
+                        row={row}
+                        status={status}
+                        scheduledHrs={scheduledHrs}
+                        actualHrs={actualHrs}
+                        tenantId={tenantId}
+                        entry={row.entry}
+                        mergeEntryUpdate={mergeEntryUpdate}
+                        refreshEntry={refreshEntry}
+                      />
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Paper>
+        )}
+      </Stack>
+    </TimesheetEditorProvider>
   );
 };
 

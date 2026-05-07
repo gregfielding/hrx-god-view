@@ -31,6 +31,10 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  doc,
+  getDoc,
+} from 'firebase/firestore';
 
 import { db } from '../firebase';
 import {
@@ -38,7 +42,7 @@ import {
   type TimesheetGridResolution,
   type TimesheetGridRow,
 } from '../components/timesheets/timesheetGridResolver';
-import type { TimesheetFilter } from '../types/recruiter/timesheet';
+import type { TimesheetEntryV2, TimesheetFilter } from '../types/recruiter/timesheet';
 
 export interface UseTimesheetGridRowsResult {
   rows: TimesheetGridRow[];
@@ -47,6 +51,27 @@ export interface UseTimesheetGridRowsResult {
   errors: string[];
   consideredAssignmentCount: number;
   refresh: () => void;
+  /**
+   * Apply a local patch to an entry row in-place, without refetching
+   * the full grid. Used by P3.A inline edits to reflect a successful
+   * save instantly. The patch overlays onto the existing entry data —
+   * fields not in the patch keep their prior values.
+   *
+   * Empty rows can also be promoted: when the patch lands on a `key`
+   * that maps to an `kind: 'empty'` row, the caller should follow the
+   * patch with a server-side refetch so the row picks up the freshly-
+   * minted entry doc. This is rare — P3.A edits only happen on rows
+   * that are already `entry` kind.
+   */
+  mergeEntryUpdate: (entryId: string, patch: Partial<TimesheetEntryV2>) => void;
+  /**
+   * Re-fetch a single entry from Firestore and merge it in. Used
+   * after a successful save to pick up the recompute trigger's
+   * recomputed totals (which the local merge alone can't infer).
+   * Best-effort: silently swallows fetch errors so a transient
+   * recompute-fetch flake doesn't poison the row.
+   */
+  refreshEntry: (entryId: string) => Promise<void>;
 }
 
 const EMPTY_RESULT: TimesheetGridResolution = {
@@ -105,6 +130,40 @@ export function useTimesheetGridRows(
     };
   }, [tenantId, filter, refreshTick]);
 
+  const mergeEntryUpdate = useCallback(
+    (entryId: string, patch: Partial<TimesheetEntryV2>) => {
+      setResolution((prev) => {
+        const next: TimesheetGridRow[] = prev.rows.map((r) => {
+          if (r.key !== entryId) return r;
+          if (r.kind !== 'entry') return r;
+          return {
+            ...r,
+            entry: { ...r.entry, ...patch },
+          };
+        });
+        return { ...prev, rows: next };
+      });
+    },
+    [],
+  );
+
+  const refreshEntry = useCallback(
+    async (entryId: string) => {
+      if (!tenantId) return;
+      try {
+        const ref = doc(db, 'tenants', tenantId, 'timesheet_entries', entryId);
+        const snap = await getDoc(ref);
+        if (!snap.exists()) return;
+        const data = snap.data() as TimesheetEntryV2;
+        mergeEntryUpdate(entryId, { ...data, id: snap.id });
+      } catch {
+        // Silently ignore — the next user-initiated refresh() will
+        // re-resolve the row set anyway.
+      }
+    },
+    [tenantId, mergeEntryUpdate],
+  );
+
   return {
     rows: resolution.rows,
     loading,
@@ -112,6 +171,8 @@ export function useTimesheetGridRows(
     errors: resolution.errors,
     consideredAssignmentCount: resolution.consideredAssignmentCount,
     refresh,
+    mergeEntryUpdate,
+    refreshEntry,
   };
 }
 

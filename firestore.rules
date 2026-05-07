@@ -224,12 +224,18 @@ service cloud.firestore {
       // pipeline. Doc id = `{assignmentId}_{workDate}` per
       // createDraftTimesheetEntryCallable.
       //
-      // Writes flow through Cloud Functions (admin SDK, bypasses rules):
+      // Creation + status transitions + Everee response stamps flow
+      // through Cloud Functions (admin SDK, bypasses rules):
       //   - createDraftTimesheetEntryCallable (creates)
       //   - onTimesheetEntryWriteRecomputePayBreakdown (re-stamps computed fields)
-      // Client-side writes are blocked here intentionally; Phase 3
-      // (inline edit) will add a tight `allow update` for the recruiter
-      // band scoped to actual-time / break / notes fields.
+      //   - approveTimesheetEntryCallable (Phase 3.B — status flip to 'approved')
+      //   - submitTimesheetBatchCallable (Phase 4 — sent_to_everee + paid stamps)
+      //
+      // P3.A inline edits (this rule's `allow update`) are tightly
+      // scoped: only the recruiter-editable adjustment fields, only on
+      // entries that haven't been shipped to Everee. Computed fields
+      // (totalRegularHours, totalOTHours, ...), payRate, billRate,
+      // status, and Everee response data all stay server-only.
       match /timesheet_entries/{entryId} {
         // Read mirrors the assignments pattern: HRX, tenant role claim,
         // tenant assignment, securityLevel >= 5 (recruiter band), and
@@ -244,10 +250,30 @@ service cloud.firestore {
           hasSecurityLevel(tenantId, 5)
         );
 
-        // Client-side mutations blocked. All writes go through callables
-        // (admin SDK) until Phase 3 adds explicit inline-edit rules.
+        // P3.A inline edit. Surgical: caller is recruiter-band (HRX or
+        // sec >= 5 on the tenant), entry is editable (status not shipped
+        // or paid), and ONLY the listed fields differ between before/after.
+        // Anything outside this set — including a malicious or buggy
+        // attempt to bump status, mutate computed fields, or rewrite
+        // rates — gets rejected by `affectedKeys().hasOnly([...])`.
+        allow update: if request.auth != null
+          && (isHRX() || hasSecurityLevel(tenantId, 5))
+          && resource.data.status in ['draft', 'submitted', 'approved', 'error']
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'actualStartTime',
+               'actualEndTime',
+               'breaks',
+               'tips',
+               'bonusAmount',
+               'notes',
+               'updatedAt',
+               'updatedBy'
+             ]);
+
+        // Creates + deletes still go through callables. Status
+        // transitions are server-only: client cannot flip draft → approved
+        // (the affectedKeys allowlist excludes 'status').
         allow create: if false;
-        allow update: if false;
         allow delete: if false;
       }
 
