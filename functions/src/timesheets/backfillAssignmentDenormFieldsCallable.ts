@@ -1,13 +1,21 @@
 /**
  * **TS.1.P1.B — Assignment denormalization backfill** — admin callable
- * that populates the six new optional fields on `tenants/{tid}/assignments`
- * needed by the upcoming `<TimesheetGrid />` (P1.C):
+ * that populates the optional denorm fields on `tenants/{tid}/assignments`
+ * needed by `<TimesheetGrid />` (P1.C) and the multistate pay rules
+ * trigger (P2.B):
  *
  *   - `hiringEntityId`            — reused from R.4.2's resolver.
  *   - `worksiteState`             — JO chain → location doc fallback.
  *   - `worksiteDisplayName`       — JO chain → location doc fallback.
  *   - `workerDisplayName`         — `users/{userId}` doc.
  *   - `shiftBreakDefaultMinutes`  — Shift doc → JO position fallback.
+ *   - `weeklySchedule` *(P1.B.3)* — Shift doc fallback. Required by the
+ *     grid resolver to project rows across the period; without it the
+ *     row is dropped to a warning. Shift-bound assignments
+ *     (id pattern `{userId}__{shiftId}__{date}`) historically don't
+ *     snapshot the parent shift's schedule onto themselves, so the
+ *     denorm chain has to fill it in. Shape validated before stamping
+ *     to avoid persisting half-formed schedules.
  *
  * `latestTimesheetStatus` is intentionally NOT populated here — it
  * mirrors a child collection that doesn't exist yet (the V2
@@ -52,11 +60,11 @@
  * @see TS.1 build plan §2.5
  */
 
-import * as admin from 'firebase-admin';
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import { logger } from 'firebase-functions/v2';
+import * as admin from "firebase-admin";
+import {onCall, HttpsError} from "firebase-functions/v2/https";
+import {logger} from "firebase-functions/v2";
 
-import { resolveLegacyAssignmentHiringEntityId } from '../jobOrders/backfillLegacyAssignmentsCallable';
+import {resolveLegacyAssignmentHiringEntityId} from "../jobOrders/backfillLegacyAssignmentsCallable";
 
 const DEFAULT_LIMIT = 1000;
 const MAX_LIMIT = 5000;
@@ -74,11 +82,11 @@ interface BackfillRequest {
  * ------------------------------------------------------------------------- */
 
 export type FieldOutcome =
-  | 'already_set'
-  | 'stamped'
-  | 'would_stamp'
-  | 'unresolvable'
-  | 'skipped';
+  | "already_set"
+  | "stamped"
+  | "would_stamp"
+  | "unresolvable"
+  | "skipped";
 
 interface FieldStat {
   already_set: number;
@@ -112,6 +120,7 @@ export interface BackfillReport {
     worksiteDisplayName: FieldStat;
     workerDisplayName: FieldStat;
     shiftBreakDefaultMinutes: FieldStat;
+    weeklySchedule: FieldStat;
   };
   errors: Array<{ assignmentId: string; error: string }>;
   truncated: boolean;
@@ -125,22 +134,22 @@ export interface BackfillReport {
  * ------------------------------------------------------------------------- */
 
 function pickStringField(obj: unknown, keys: string[]): string {
-  if (!obj || typeof obj !== 'object') return '';
+  if (!obj || typeof obj !== "object") return "";
   const o = obj as Record<string, unknown>;
   for (const k of keys) {
     const v = o[k];
-    if (typeof v === 'string' && v.trim().length > 0) return v.trim();
+    if (typeof v === "string" && v.trim().length > 0) return v.trim();
   }
-  return '';
+  return "";
 }
 
 function pickNumberField(obj: unknown, keys: string[]): number | null {
-  if (!obj || typeof obj !== 'object') return null;
+  if (!obj || typeof obj !== "object") return null;
   const o = obj as Record<string, unknown>;
   for (const k of keys) {
     const v = o[k];
-    if (typeof v === 'number' && Number.isFinite(v)) return v;
-    if (typeof v === 'string') {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string") {
       const n = parseFloat(v);
       if (Number.isFinite(n)) return n;
     }
@@ -148,8 +157,125 @@ function pickNumberField(obj: unknown, keys: string[]): number | null {
   return null;
 }
 
+/* -------------------------------------------------------------------------
+ * weeklySchedule shape — kept as a type alias here (vs. importing from
+ * `src/types/phase2`) to avoid a server↔client cross-dependency. The
+ * shape is documented on `Assignment.weeklySchedule` (P2 types):
+ *
+ *   { '0' | '1' | ... | '6': { enabled, startTime, endTime } }
+ *
+ * Keys are JS Date.getDay() day-of-week numbers as strings
+ * (0=Sun..6=Sat). Times are HH:mm 24h.
+ * ------------------------------------------------------------------------- */
+
+export type WeeklyScheduleEntry = {
+  enabled: boolean;
+  startTime: string;
+  endTime: string;
+};
+
+export type WeeklySchedule = Record<string, WeeklyScheduleEntry>;
+
+const VALID_DOW_KEYS: ReadonlySet<string> = new Set(["0", "1", "2", "3", "4", "5", "6"]);
+const HHMM_RE = /^\d{2}:\d{2}$/;
+
+/**
+ * Returns the field value if it's a valid `WeeklySchedule` (at least
+ * one DOW entry, every entry well-formed, at least one `enabled: true`),
+ * else `null`. Used both as the resolver's already-set check and as
+ * the post-resolution validator before stamping — never persist a
+ * half-formed schedule.
+ *
+ * "Well-formed entry" means:
+ *   - key is one of '0'..'6'
+ *   - `enabled` is boolean
+ *   - `startTime` and `endTime` are HH:mm strings
+ *
+ * "Functionally non-empty" means: at least one entry has
+ * `enabled: true` AND non-empty start/end times. A schedule with all
+ * days disabled is structurally valid but useless to the grid
+ * resolver — treat it as null so the resolver tries to re-resolve from
+ * the parent shift.
+ */
+export function pickWeeklyScheduleField(
+  obj: unknown,
+  key = "weeklySchedule",
+): WeeklySchedule | null {
+  if (!obj || typeof obj !== "object") return null;
+  const o = obj as Record<string, unknown>;
+  const raw = o[key];
+  return validateWeeklySchedule(raw);
+}
+
+export function validateWeeklySchedule(raw: unknown): WeeklySchedule | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const candidate = raw as Record<string, unknown>;
+  const keys = Object.keys(candidate);
+  if (keys.length === 0) return null;
+
+  const cleaned: WeeklySchedule = {};
+  let anyEnabledWithTimes = false;
+
+  for (const k of keys) {
+    if (!VALID_DOW_KEYS.has(k)) continue;
+    const entry = candidate[k];
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as Record<string, unknown>;
+    const enabled = typeof e.enabled === "boolean" ? e.enabled : false;
+    const startTime = typeof e.startTime === "string" ? e.startTime.trim() : "";
+    const endTime = typeof e.endTime === "string" ? e.endTime.trim() : "";
+    // Per-entry shape gate: skip malformed entries. This is permissive
+    // by design — a single bad DOW shouldn't disqualify the whole
+    // schedule when the others are usable.
+    if (typeof e.enabled !== "boolean") continue;
+    if (enabled && (!HHMM_RE.test(startTime) || !HHMM_RE.test(endTime))) {
+      // Enabled but missing times — drop this entry (the resolver will
+      // attempt a parent-shift fallback). Non-enabled entries with
+      // missing times are fine; the grid won't render them anyway.
+      continue;
+    }
+    cleaned[k] = {enabled, startTime, endTime};
+    if (enabled && startTime && endTime) anyEnabledWithTimes = true;
+  }
+
+  if (!anyEnabledWithTimes) return null;
+  return cleaned;
+}
+
+/**
+ * Synthesizes a single-DOW `WeeklySchedule` from a shift's
+ * `defaultStartTime`/`defaultEndTime` and `shiftDate`. Used as a
+ * fallback when the parent shift is single-day (multi-day shifts
+ * persist a full `weeklySchedule` directly; single-day shifts persist
+ * `defaultStartTime`/`defaultEndTime` + `shiftDate` only).
+ *
+ * Returns null if any input is missing or unparseable. Time format
+ * tolerance matches the resolver — HH:mm with optional surrounding
+ * whitespace.
+ */
+export function synthesizeSingleDowSchedule(
+  shiftDate: string,
+  defaultStartTime: string,
+  defaultEndTime: string,
+): WeeklySchedule | null {
+  if (!shiftDate || !defaultStartTime || !defaultEndTime) return null;
+  const start = defaultStartTime.trim();
+  const end = defaultEndTime.trim();
+  if (!HHMM_RE.test(start) || !HHMM_RE.test(end)) return null;
+
+  // Local-time parse — `new Date('2026-04-29')` gives UTC midnight,
+  // so a naive `getDay()` can drift across timezones. The +T12:00:00
+  // pattern matches the rest of the resolver.
+  const d = new Date(`${shiftDate.trim()}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  const dow = d.getDay();
+  if (dow < 0 || dow > 6) return null;
+
+  return {[String(dow)]: {enabled: true, startTime: start, endTime: end}};
+}
+
 function normalizeStateCode(input: unknown): string | null {
-  if (typeof input !== 'string') return null;
+  if (typeof input !== "string") return null;
   const trimmed = input.trim().toUpperCase();
   if (!trimmed) return null;
   if (trimmed.length === 2) return trimmed;
@@ -309,10 +435,10 @@ interface ResolverArgs {
 }
 
 async function resolveWorksiteState(args: ResolverArgs): Promise<string | null> {
-  const { fdb, tenantId, assignmentData, caches } = args;
+  const {fdb, tenantId, assignmentData, caches} = args;
 
   // 1. JO `worksiteAddress.state` (most JOs persist this directly).
-  const jobOrderId = pickStringField(assignmentData, ['jobOrderId']);
+  const jobOrderId = pickStringField(assignmentData, ["jobOrderId"]);
   const jo = await readJoDoc(fdb, tenantId, jobOrderId, caches);
   if (jo) {
     const wa = jo.worksiteAddress as Record<string, unknown> | undefined;
@@ -324,9 +450,9 @@ async function resolveWorksiteState(args: ResolverArgs): Promise<string | null> 
 
   // 2. Canonical location doc fallback. Need both companyId + worksite.
   const companyId =
-    pickStringField(assignmentData, ['companyId']) ||
-    (jo ? pickStringField(jo, ['companyId']) : '');
-  const worksiteId = pickStringField(assignmentData, ['worksite', 'worksiteId', 'locationId']);
+    pickStringField(assignmentData, ["companyId"]) ||
+    (jo ? pickStringField(jo, ["companyId"]) : "");
+  const worksiteId = pickStringField(assignmentData, ["worksite", "worksiteId", "locationId"]);
   if (companyId && worksiteId) {
     const loc = await readLocationDoc(fdb, tenantId, companyId, worksiteId, caches);
     if (loc) {
@@ -343,25 +469,25 @@ async function resolveWorksiteState(args: ResolverArgs): Promise<string | null> 
 }
 
 async function resolveWorksiteDisplayName(args: ResolverArgs): Promise<string | null> {
-  const { fdb, tenantId, assignmentData, caches } = args;
+  const {fdb, tenantId, assignmentData, caches} = args;
 
   // 1. JO's worksiteName / locationName.
-  const jobOrderId = pickStringField(assignmentData, ['jobOrderId']);
+  const jobOrderId = pickStringField(assignmentData, ["jobOrderId"]);
   const jo = await readJoDoc(fdb, tenantId, jobOrderId, caches);
   if (jo) {
-    const fromJo = pickStringField(jo, ['worksiteName', 'locationName']);
+    const fromJo = pickStringField(jo, ["worksiteName", "locationName"]);
     if (fromJo) return fromJo;
   }
 
   // 2. Location doc's nickname / name.
   const companyId =
-    pickStringField(assignmentData, ['companyId']) ||
-    (jo ? pickStringField(jo, ['companyId']) : '');
-  const worksiteId = pickStringField(assignmentData, ['worksite', 'worksiteId', 'locationId']);
+    pickStringField(assignmentData, ["companyId"]) ||
+    (jo ? pickStringField(jo, ["companyId"]) : "");
+  const worksiteId = pickStringField(assignmentData, ["worksite", "worksiteId", "locationId"]);
   if (companyId && worksiteId) {
     const loc = await readLocationDoc(fdb, tenantId, companyId, worksiteId, caches);
     if (loc) {
-      const fromLoc = pickStringField(loc, ['nickname', 'locationName', 'name']);
+      const fromLoc = pickStringField(loc, ["nickname", "locationName", "name"]);
       if (fromLoc) return fromLoc;
     }
   }
@@ -370,34 +496,57 @@ async function resolveWorksiteDisplayName(args: ResolverArgs): Promise<string | 
 }
 
 async function resolveWorkerDisplayName(args: ResolverArgs): Promise<string | null> {
-  const { fdb, assignmentData, caches } = args;
-  const userId = pickStringField(assignmentData, ['userId', 'candidateId', 'workerUid']);
+  const {fdb, assignmentData, caches} = args;
+  const userId = pickStringField(assignmentData, ["userId", "candidateId", "workerUid"]);
   if (!userId) return null;
   const user = await readUserDoc(fdb, userId, caches);
   if (!user) return null;
 
-  const display = pickStringField(user, ['displayName', 'fullName', 'name']);
+  const display = pickStringField(user, ["displayName", "fullName", "name"]);
   if (display) return display;
 
-  const first = pickStringField(user, ['firstName', 'givenName']);
-  const last = pickStringField(user, ['lastName', 'familyName', 'surname']);
+  const first = pickStringField(user, ["firstName", "givenName"]);
+  const last = pickStringField(user, ["lastName", "familyName", "surname"]);
   const combined = `${first} ${last}`.trim();
   return combined || null;
 }
 
+async function resolveWeeklySchedule(args: ResolverArgs): Promise<WeeklySchedule | null> {
+  const {fdb, tenantId, assignmentData, caches} = args;
+
+  // 1. Linked Shift doc (`assignment.shiftId`). Multi-day shifts
+  //    persist a full `weeklySchedule`; single-day shifts persist
+  //    `defaultStartTime`/`defaultEndTime` + `shiftDate` and we
+  //    synthesize a single-DOW schedule from those.
+  const jobOrderId = pickStringField(assignmentData, ["jobOrderId"]);
+  const shiftId = pickStringField(assignmentData, ["shiftId"]);
+  if (!jobOrderId || !shiftId) return null;
+
+  const shift = await readShiftDoc(fdb, tenantId, jobOrderId, shiftId, caches);
+  if (!shift) return null;
+
+  const fromShift = pickWeeklyScheduleField(shift, "weeklySchedule");
+  if (fromShift) return fromShift;
+
+  const shiftDate = pickStringField(shift, ["shiftDate"]);
+  const defaultStart = pickStringField(shift, ["defaultStartTime"]);
+  const defaultEnd = pickStringField(shift, ["defaultEndTime"]);
+  return synthesizeSingleDowSchedule(shiftDate, defaultStart, defaultEnd);
+}
+
 async function resolveShiftBreakDefaultMinutes(args: ResolverArgs): Promise<number | null> {
-  const { fdb, tenantId, assignmentData, caches } = args;
+  const {fdb, tenantId, assignmentData, caches} = args;
 
   // 1. Linked Shift doc (`assignment.shiftId`).
-  const jobOrderId = pickStringField(assignmentData, ['jobOrderId']);
-  const shiftId = pickStringField(assignmentData, ['shiftId']);
+  const jobOrderId = pickStringField(assignmentData, ["jobOrderId"]);
+  const shiftId = pickStringField(assignmentData, ["shiftId"]);
   if (jobOrderId && shiftId) {
     const shift = await readShiftDoc(fdb, tenantId, jobOrderId, shiftId, caches);
     if (shift) {
       const fromShift = pickNumberField(shift, [
-        'breakMinutes',
-        'defaultBreakMinutes',
-        'scheduledBreakMinutes',
+        "breakMinutes",
+        "defaultBreakMinutes",
+        "scheduledBreakMinutes",
       ]);
       if (fromShift != null) return fromShift;
     }
@@ -408,17 +557,17 @@ async function resolveShiftBreakDefaultMinutes(args: ResolverArgs): Promise<numb
   const jo = await readJoDoc(fdb, tenantId, jobOrderId, caches);
   if (jo) {
     const positions =
-      (Array.isArray(jo.positions) && (jo.positions as unknown[]).length > 0
-        ? (jo.positions as unknown[])
-        : Array.isArray(jo.gigPositions)
-          ? (jo.gigPositions as unknown[])
-          : []) as Array<Record<string, unknown>>;
+      (Array.isArray(jo.positions) && (jo.positions as unknown[]).length > 0 ?
+        (jo.positions as unknown[]) :
+        Array.isArray(jo.gigPositions) ?
+          (jo.gigPositions as unknown[]) :
+          []) as Array<Record<string, unknown>>;
     const p0 = positions[0];
     if (p0) {
       const fromPos = pickNumberField(p0, [
-        'defaultBreakMinutes',
-        'breakMinutes',
-        'scheduledBreakMinutes',
+        "defaultBreakMinutes",
+        "breakMinutes",
+        "scheduledBreakMinutes",
       ]);
       if (fromPos != null) return fromPos;
     }
@@ -465,6 +614,7 @@ export interface ResolveMissingResult {
     worksiteDisplayName: FieldOutcome;
     workerDisplayName: FieldOutcome;
     shiftBreakDefaultMinutes: FieldOutcome;
+    weeklySchedule: FieldOutcome;
   };
   /** Whether at least one field was missing on the doc when we entered. */
   hadMissingFields: boolean;
@@ -473,24 +623,25 @@ export interface ResolveMissingResult {
 export async function resolveMissingDenormUpdates(
   args: ResolveMissingArgs,
 ): Promise<ResolveMissingResult> {
-  const { fdb, tenantId, assignmentId, assignmentData, caches } = args;
+  const {fdb, tenantId, assignmentId, assignmentData, caches} = args;
   const result: ResolveMissingResult = {
     updates: {},
     outcomes: {
-      hiringEntityId: 'skipped',
-      worksiteState: 'skipped',
-      worksiteDisplayName: 'skipped',
-      workerDisplayName: 'skipped',
-      shiftBreakDefaultMinutes: 'skipped',
+      hiringEntityId: "skipped",
+      worksiteState: "skipped",
+      worksiteDisplayName: "skipped",
+      workerDisplayName: "skipped",
+      shiftBreakDefaultMinutes: "skipped",
+      weeklySchedule: "skipped",
     },
     hadMissingFields: false,
   };
 
-  const args0 = { fdb, tenantId, assignmentData, caches };
+  const args0 = {fdb, tenantId, assignmentData, caches};
 
   // hiringEntityId — reuse R.4.2's resolver verbatim. Already-set check
   // lives inside that helper so we don't duplicate the logic.
-  if (!pickStringField(assignmentData, ['hiringEntityId'])) {
+  if (!pickStringField(assignmentData, ["hiringEntityId"])) {
     result.hadMissingFields = true;
     try {
       const hidResult = await resolveLegacyAssignmentHiringEntityId({
@@ -501,20 +652,20 @@ export async function resolveMissingDenormUpdates(
       });
       if (hidResult.resolvedHiringEntityId) {
         result.updates.hiringEntityId = hidResult.resolvedHiringEntityId;
-        result.outcomes.hiringEntityId = 'stamped';
+        result.outcomes.hiringEntityId = "stamped";
       } else {
-        result.outcomes.hiringEntityId = 'unresolvable';
+        result.outcomes.hiringEntityId = "unresolvable";
       }
     } catch (e) {
-      result.outcomes.hiringEntityId = 'unresolvable';
-      logger.warn('[TS.1.P1.B] hiringEntityId resolver threw', {
+      result.outcomes.hiringEntityId = "unresolvable";
+      logger.warn("[TS.1.P1.B] hiringEntityId resolver threw", {
         tenantId,
         assignmentId,
         error: e instanceof Error ? e.message : String(e),
       });
     }
   } else {
-    result.outcomes.hiringEntityId = 'already_set';
+    result.outcomes.hiringEntityId = "already_set";
   }
 
   // Per-field try/catch from here down: a malformed location doc that
@@ -524,92 +675,117 @@ export async function resolveMissingDenormUpdates(
   // tolerate per-doc read failures internally; this outer wrap is the
   // belt-and-suspenders for any unexpected throw inside a resolver.
 
-  if (!pickStringField(assignmentData, ['worksiteState'])) {
+  if (!pickStringField(assignmentData, ["worksiteState"])) {
     result.hadMissingFields = true;
     try {
       const v = await resolveWorksiteState(args0);
       if (v) {
         result.updates.worksiteState = v;
-        result.outcomes.worksiteState = 'stamped';
+        result.outcomes.worksiteState = "stamped";
       } else {
-        result.outcomes.worksiteState = 'unresolvable';
+        result.outcomes.worksiteState = "unresolvable";
       }
     } catch (e) {
-      result.outcomes.worksiteState = 'unresolvable';
-      logger.warn('[TS.1.P1.B] worksiteState resolver threw', {
+      result.outcomes.worksiteState = "unresolvable";
+      logger.warn("[TS.1.P1.B] worksiteState resolver threw", {
         tenantId,
         assignmentId,
         error: e instanceof Error ? e.message : String(e),
       });
     }
   } else {
-    result.outcomes.worksiteState = 'already_set';
+    result.outcomes.worksiteState = "already_set";
   }
 
-  if (!pickStringField(assignmentData, ['worksiteDisplayName'])) {
+  if (!pickStringField(assignmentData, ["worksiteDisplayName"])) {
     result.hadMissingFields = true;
     try {
       const v = await resolveWorksiteDisplayName(args0);
       if (v) {
         result.updates.worksiteDisplayName = v;
-        result.outcomes.worksiteDisplayName = 'stamped';
+        result.outcomes.worksiteDisplayName = "stamped";
       } else {
-        result.outcomes.worksiteDisplayName = 'unresolvable';
+        result.outcomes.worksiteDisplayName = "unresolvable";
       }
     } catch (e) {
-      result.outcomes.worksiteDisplayName = 'unresolvable';
-      logger.warn('[TS.1.P1.B] worksiteDisplayName resolver threw', {
+      result.outcomes.worksiteDisplayName = "unresolvable";
+      logger.warn("[TS.1.P1.B] worksiteDisplayName resolver threw", {
         tenantId,
         assignmentId,
         error: e instanceof Error ? e.message : String(e),
       });
     }
   } else {
-    result.outcomes.worksiteDisplayName = 'already_set';
+    result.outcomes.worksiteDisplayName = "already_set";
   }
 
-  if (!pickStringField(assignmentData, ['workerDisplayName'])) {
+  if (!pickStringField(assignmentData, ["workerDisplayName"])) {
     result.hadMissingFields = true;
     try {
       const v = await resolveWorkerDisplayName(args0);
       if (v) {
         result.updates.workerDisplayName = v;
-        result.outcomes.workerDisplayName = 'stamped';
+        result.outcomes.workerDisplayName = "stamped";
       } else {
-        result.outcomes.workerDisplayName = 'unresolvable';
+        result.outcomes.workerDisplayName = "unresolvable";
       }
     } catch (e) {
-      result.outcomes.workerDisplayName = 'unresolvable';
-      logger.warn('[TS.1.P1.B] workerDisplayName resolver threw', {
+      result.outcomes.workerDisplayName = "unresolvable";
+      logger.warn("[TS.1.P1.B] workerDisplayName resolver threw", {
         tenantId,
         assignmentId,
         error: e instanceof Error ? e.message : String(e),
       });
     }
   } else {
-    result.outcomes.workerDisplayName = 'already_set';
+    result.outcomes.workerDisplayName = "already_set";
   }
 
-  if (pickNumberField(assignmentData, ['shiftBreakDefaultMinutes']) == null) {
+  if (pickNumberField(assignmentData, ["shiftBreakDefaultMinutes"]) == null) {
     result.hadMissingFields = true;
     try {
       const v = await resolveShiftBreakDefaultMinutes(args0);
       if (v != null) {
         result.updates.shiftBreakDefaultMinutes = v;
-        result.outcomes.shiftBreakDefaultMinutes = 'stamped';
+        result.outcomes.shiftBreakDefaultMinutes = "stamped";
       } else {
-        result.outcomes.shiftBreakDefaultMinutes = 'unresolvable';
+        result.outcomes.shiftBreakDefaultMinutes = "unresolvable";
       }
     } catch (e) {
-      result.outcomes.shiftBreakDefaultMinutes = 'unresolvable';
-      logger.warn('[TS.1.P1.B] shiftBreakDefaultMinutes resolver threw', {
+      result.outcomes.shiftBreakDefaultMinutes = "unresolvable";
+      logger.warn("[TS.1.P1.B] shiftBreakDefaultMinutes resolver threw", {
         tenantId,
         assignmentId,
         error: e instanceof Error ? e.message : String(e),
       });
     }
   } else {
-    result.outcomes.shiftBreakDefaultMinutes = 'already_set';
+    result.outcomes.shiftBreakDefaultMinutes = "already_set";
+  }
+
+  // weeklySchedule (P1.B.3) — `pickWeeklyScheduleField` doubles as the
+  // already-set check AND the "is this functionally usable?" check, so
+  // a stored `{}` or all-disabled schedule re-attempts resolution.
+  if (pickWeeklyScheduleField(assignmentData, "weeklySchedule") == null) {
+    result.hadMissingFields = true;
+    try {
+      const v = await resolveWeeklySchedule(args0);
+      if (v) {
+        result.updates.weeklySchedule = v;
+        result.outcomes.weeklySchedule = "stamped";
+      } else {
+        result.outcomes.weeklySchedule = "unresolvable";
+      }
+    } catch (e) {
+      result.outcomes.weeklySchedule = "unresolvable";
+      logger.warn("[TS.1.P1.B] weeklySchedule resolver threw", {
+        tenantId,
+        assignmentId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  } else {
+    result.outcomes.weeklySchedule = "already_set";
   }
 
   return result;
@@ -627,7 +803,7 @@ export async function resolveMissingDenormUpdates(
 
 export interface PerAssignmentResult {
   assignmentId: string;
-  outcomes: ResolveMissingResult['outcomes'];
+  outcomes: ResolveMissingResult["outcomes"];
   /** Whether at least one field was missing on the doc when we entered. */
   hadMissingFields: boolean;
   error?: string;
@@ -641,7 +817,7 @@ async function processOneAssignment(args: {
   dryRun: boolean;
   caches: Caches;
 }): Promise<PerAssignmentResult> {
-  const { fdb, tenantId, assignmentId, assignmentData, dryRun, caches } = args;
+  const {fdb, tenantId, assignmentId, assignmentData, dryRun, caches} = args;
   const resolved = await resolveMissingDenormUpdates({
     fdb,
     tenantId,
@@ -650,32 +826,20 @@ async function processOneAssignment(args: {
     caches,
   });
 
+  const dryAdapt = (o: FieldOutcome): FieldOutcome => (o === "stamped" ? "would_stamp" : o);
+
   const result: PerAssignmentResult = {
     assignmentId,
-    outcomes: dryRun
-      ? {
-          hiringEntityId:
-            resolved.outcomes.hiringEntityId === 'stamped'
-              ? 'would_stamp'
-              : resolved.outcomes.hiringEntityId,
-          worksiteState:
-            resolved.outcomes.worksiteState === 'stamped'
-              ? 'would_stamp'
-              : resolved.outcomes.worksiteState,
-          worksiteDisplayName:
-            resolved.outcomes.worksiteDisplayName === 'stamped'
-              ? 'would_stamp'
-              : resolved.outcomes.worksiteDisplayName,
-          workerDisplayName:
-            resolved.outcomes.workerDisplayName === 'stamped'
-              ? 'would_stamp'
-              : resolved.outcomes.workerDisplayName,
-          shiftBreakDefaultMinutes:
-            resolved.outcomes.shiftBreakDefaultMinutes === 'stamped'
-              ? 'would_stamp'
-              : resolved.outcomes.shiftBreakDefaultMinutes,
-        }
-      : resolved.outcomes,
+    outcomes: dryRun ?
+      {
+        hiringEntityId: dryAdapt(resolved.outcomes.hiringEntityId),
+        worksiteState: dryAdapt(resolved.outcomes.worksiteState),
+        worksiteDisplayName: dryAdapt(resolved.outcomes.worksiteDisplayName),
+        workerDisplayName: dryAdapt(resolved.outcomes.workerDisplayName),
+        shiftBreakDefaultMinutes: dryAdapt(resolved.outcomes.shiftBreakDefaultMinutes),
+        weeklySchedule: dryAdapt(resolved.outcomes.weeklySchedule),
+      } :
+      resolved.outcomes,
     hadMissingFields: resolved.hadMissingFields,
   };
 
@@ -687,7 +851,7 @@ async function processOneAssignment(args: {
     try {
       await fdb
         .doc(`tenants/${tenantId}/assignments/${assignmentId}`)
-        .set(updates, { merge: true });
+        .set(updates, {merge: true});
     } catch (e) {
       result.error = e instanceof Error ? e.message : String(e);
     }
@@ -711,7 +875,7 @@ export interface RunBackfillPageArgs {
 export async function runBackfillAssignmentDenormFieldsPage(
   args: RunBackfillPageArgs,
 ): Promise<BackfillReport> {
-  const { tenantId, dryRun, limit, pageToken, fdb } = args;
+  const {tenantId, dryRun, limit, pageToken, fdb} = args;
   const startMs = Date.now();
 
   let q = fdb
@@ -734,6 +898,7 @@ export async function runBackfillAssignmentDenormFieldsPage(
       worksiteDisplayName: emptyFieldStat(),
       workerDisplayName: emptyFieldStat(),
       shiftBreakDefaultMinutes: emptyFieldStat(),
+      weeklySchedule: emptyFieldStat(),
     },
     errors: [],
     truncated: snap.size === limit,
@@ -743,23 +908,27 @@ export async function runBackfillAssignmentDenormFieldsPage(
 
   const caches = makeCaches();
 
-  // Pre-filter: skip rows that already have all five backfill-managed
-  // fields set. Cheap doc-level check; saves the resolver round-trips.
+  // Pre-filter: skip rows that already have all backfill-managed fields
+  // set. Cheap doc-level check; saves the resolver round-trips. Note:
+  // the weeklySchedule check uses the same shape validator the resolver
+  // does, so a stored-but-unusable schedule (e.g. `{}` or all-disabled)
+  // re-enters the candidate set rather than passing the pre-filter.
   type Candidate = { id: string; data: Record<string, unknown> };
   const candidates: Candidate[] = [];
   for (const doc of snap.docs) {
     const data = (doc.data() ?? {}) as Record<string, unknown>;
     const allSet =
-      pickStringField(data, ['hiringEntityId']) &&
-      pickStringField(data, ['worksiteState']) &&
-      pickStringField(data, ['worksiteDisplayName']) &&
-      pickStringField(data, ['workerDisplayName']) &&
-      pickNumberField(data, ['shiftBreakDefaultMinutes']) != null;
+      pickStringField(data, ["hiringEntityId"]) &&
+      pickStringField(data, ["worksiteState"]) &&
+      pickStringField(data, ["worksiteDisplayName"]) &&
+      pickStringField(data, ["workerDisplayName"]) &&
+      pickNumberField(data, ["shiftBreakDefaultMinutes"]) != null &&
+      pickWeeklyScheduleField(data, "weeklySchedule") != null;
     if (allSet) {
       report.preFilteredFullyHealthy += 1;
       continue;
     }
-    candidates.push({ id: doc.id, data });
+    candidates.push({id: doc.id, data});
   }
   report.candidatesProcessed = candidates.length;
 
@@ -780,11 +949,12 @@ export async function runBackfillAssignmentDenormFieldsPage(
           return {
             assignmentId: cand.id,
             outcomes: {
-              hiringEntityId: 'unresolvable' as const,
-              worksiteState: 'unresolvable' as const,
-              worksiteDisplayName: 'unresolvable' as const,
-              workerDisplayName: 'unresolvable' as const,
-              shiftBreakDefaultMinutes: 'unresolvable' as const,
+              hiringEntityId: "unresolvable" as const,
+              worksiteState: "unresolvable" as const,
+              worksiteDisplayName: "unresolvable" as const,
+              workerDisplayName: "unresolvable" as const,
+              shiftBreakDefaultMinutes: "unresolvable" as const,
+              weeklySchedule: "unresolvable" as const,
             },
             hadMissingFields: true,
             error: e instanceof Error ? e.message : String(e),
@@ -795,13 +965,14 @@ export async function runBackfillAssignmentDenormFieldsPage(
 
     for (const row of results) {
       if (row.error) {
-        report.errors.push({ assignmentId: row.assignmentId, error: row.error });
+        report.errors.push({assignmentId: row.assignmentId, error: row.error});
       }
       report.fieldStats.hiringEntityId[row.outcomes.hiringEntityId] += 1;
       report.fieldStats.worksiteState[row.outcomes.worksiteState] += 1;
       report.fieldStats.worksiteDisplayName[row.outcomes.worksiteDisplayName] += 1;
       report.fieldStats.workerDisplayName[row.outcomes.workerDisplayName] += 1;
       report.fieldStats.shiftBreakDefaultMinutes[row.outcomes.shiftBreakDefaultMinutes] += 1;
+      report.fieldStats.weeklySchedule[row.outcomes.weeklySchedule] += 1;
     }
   }
 
@@ -815,7 +986,7 @@ export async function runBackfillAssignmentDenormFieldsPage(
 
 function normalizeSecurityLevel(level: unknown): number {
   if (level === undefined || level === null) return 1;
-  if (typeof level === 'number') return Math.min(Math.max(level, 1), 7);
+  if (typeof level === "number") return Math.min(Math.max(level, 1), 7);
   const n = parseInt(String(level), 10);
   if (Number.isNaN(n)) return 1;
   return Math.min(Math.max(n, 1), 7);
@@ -836,44 +1007,44 @@ function getSecurityLevelForActiveTenant(user: Record<string, unknown>): number 
 export const backfillAssignmentDenormFieldsCallable = onCall(
   {
     cors: true,
-    invoker: 'public',
+    invoker: "public",
     maxInstances: 1,
     timeoutSeconds: 540,
-    memory: '1GiB',
+    memory: "1GiB",
   },
   async (request): Promise<BackfillReport> => {
     const data = (request.data ?? {}) as BackfillRequest;
     const uid = request.auth?.uid;
-    if (!uid) throw new HttpsError('unauthenticated', 'You must be signed in.');
+    if (!uid) throw new HttpsError("unauthenticated", "You must be signed in.");
 
-    const tenantId = String(data.tenantId ?? '').trim();
-    if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+    const tenantId = String(data.tenantId ?? "").trim();
+    if (!tenantId) throw new HttpsError("invalid-argument", "tenantId is required.");
 
     const dryRun = data.dryRun !== false; // default TRUE
     const requestedLimit = Number(data.limit);
     const limit =
-      Number.isFinite(requestedLimit) && requestedLimit > 0
-        ? Math.min(Math.floor(requestedLimit), MAX_LIMIT)
-        : DEFAULT_LIMIT;
+      Number.isFinite(requestedLimit) && requestedLimit > 0 ?
+        Math.min(Math.floor(requestedLimit), MAX_LIMIT) :
+        DEFAULT_LIMIT;
     const pageToken =
-      typeof data.pageToken === 'string' && data.pageToken.trim().length > 0
-        ? data.pageToken.trim()
-        : null;
+      typeof data.pageToken === "string" && data.pageToken.trim().length > 0 ?
+        data.pageToken.trim() :
+        null;
 
     const db = admin.firestore();
-    const userSnap = await db.collection('users').doc(uid).get();
+    const userSnap = await db.collection("users").doc(uid).get();
     if (!userSnap.exists) {
-      throw new HttpsError('permission-denied', 'User record not found.');
+      throw new HttpsError("permission-denied", "User record not found.");
     }
     const callerUser = userSnap.data() ?? {};
     const callerSecurityLevel = getSecurityLevelForActiveTenant(callerUser);
     const callerActiveTenantId =
-      typeof callerUser.activeTenantId === 'string' ? callerUser.activeTenantId : null;
+      typeof callerUser.activeTenantId === "string" ? callerUser.activeTenantId : null;
 
     if (callerActiveTenantId !== tenantId || callerSecurityLevel < 7) {
       throw new HttpsError(
-        'permission-denied',
-        'Insufficient permissions. TS.1.P1.B backfill requires security level 7 on the requested tenant.',
+        "permission-denied",
+        "Insufficient permissions. TS.1.P1.B backfill requires security level 7 on the requested tenant.",
       );
     }
 
@@ -885,7 +1056,7 @@ export const backfillAssignmentDenormFieldsCallable = onCall(
       fdb: db,
     });
 
-    logger.info('[TS.1.P1.B][backfillAssignmentDenormFieldsCallable] complete', {
+    logger.info("[TS.1.P1.B][backfillAssignmentDenormFieldsCallable] complete", {
       tenantId,
       dryRun,
       limit,

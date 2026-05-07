@@ -1,5 +1,5 @@
 /**
- * **TS.1.P1.B.2 — Going-forward write-time denormalization trigger.**
+ * **TS.1.P1.B.2 / P1.B.3 — Going-forward write-time denormalization trigger.**
  *
  * Companion to `backfillAssignmentDenormFieldsCallable`. The backfill
  * is a one-shot that fixes existing rows; this trigger keeps NEW rows
@@ -66,15 +66,16 @@
  * @see TS.1 build plan §2.5 — Assignment denormalization
  */
 
-import * as admin from 'firebase-admin';
-import _ from 'lodash';
-import { logger } from 'firebase-functions/v2';
-import { onDocumentWritten } from 'firebase-functions/v2/firestore';
+import * as admin from "firebase-admin";
+import _ from "lodash";
+import {logger} from "firebase-functions/v2";
+import {onDocumentWritten} from "firebase-functions/v2/firestore";
 
 import {
   makeCaches,
+  pickWeeklyScheduleField,
   resolveMissingDenormUpdates,
-} from './backfillAssignmentDenormFieldsCallable';
+} from "./backfillAssignmentDenormFieldsCallable";
 
 if (!admin.apps.length) admin.initializeApp();
 
@@ -88,35 +89,43 @@ const db = admin.firestore();
  * something we care about").
  */
 const TRIGGER_MANAGED_STRING_FIELDS = [
-  'hiringEntityId',
-  'worksiteState',
-  'worksiteDisplayName',
-  'workerDisplayName',
+  "hiringEntityId",
+  "worksiteState",
+  "worksiteDisplayName",
+  "workerDisplayName",
 ] as const;
-const TRIGGER_MANAGED_NUMBER_FIELDS = ['shiftBreakDefaultMinutes'] as const;
+const TRIGGER_MANAGED_NUMBER_FIELDS = ["shiftBreakDefaultMinutes"] as const;
+/**
+ * Object-shaped managed fields. `weeklySchedule` is a
+ * `Record<string, { enabled, startTime, endTime }>` — `_.isEqual`
+ * handles the deep-equality comparison cleanly so it falls into the
+ * generic ignored-for-diff bucket.
+ */
+const TRIGGER_MANAGED_OBJECT_FIELDS = ["weeklySchedule"] as const;
 /**
  * Auxiliary fields the trigger writes alongside its managed fields.
  * `updatedAt` always rolls forward when we patch. `latestTimesheetStatus`
  * is owned by a sibling trigger but lives in the same doc — we want
  * neither to fight the other.
  */
-const TRIGGER_ANCILLARY_FIELDS = ['updatedAt', 'latestTimesheetStatus'] as const;
+const TRIGGER_ANCILLARY_FIELDS = ["updatedAt", "latestTimesheetStatus"] as const;
 
 const ALL_IGNORED_FOR_DIFF = new Set<string>([
   ...TRIGGER_MANAGED_STRING_FIELDS,
   ...TRIGGER_MANAGED_NUMBER_FIELDS,
+  ...TRIGGER_MANAGED_OBJECT_FIELDS,
   ...TRIGGER_ANCILLARY_FIELDS,
 ]);
 
 function hasNonEmptyString(data: Record<string, unknown>, key: string): boolean {
   const v = data[key];
-  return typeof v === 'string' && v.trim().length > 0;
+  return typeof v === "string" && v.trim().length > 0;
 }
 
 function hasFiniteNumber(data: Record<string, unknown>, key: string): boolean {
   const v = data[key];
-  if (typeof v === 'number' && Number.isFinite(v)) return true;
-  if (typeof v === 'string') {
+  if (typeof v === "number" && Number.isFinite(v)) return true;
+  if (typeof v === "string") {
     const n = parseFloat(v);
     return Number.isFinite(n);
   }
@@ -129,17 +138,18 @@ function hasFiniteNumber(data: Record<string, unknown>, key: string): boolean {
  * fields it doesn't care about). Concretely: when `after` differs from
  * `before` only in `hiringEntityId` / `worksiteState` /
  * `worksiteDisplayName` / `workerDisplayName` / `shiftBreakDefaultMinutes`
- * / `updatedAt` / `latestTimesheetStatus`, the write almost certainly
- * came from this trigger (or a sibling denorm-only writer) and the
- * resolver would have nothing new to do.
+ * / `weeklySchedule` / `updatedAt` / `latestTimesheetStatus`, the write
+ * almost certainly came from this trigger (or a sibling denorm-only
+ * writer) and the resolver would have nothing new to do.
  *
  * Used as a fast path that avoids the resolver chain on the trigger's
  * own re-fire. Without this guard, an unresolvable-tail assignment
  * (e.g. 3 stamped, 2 unresolvable) would re-run the entire 4-read
  * resolver chain on every re-fire even though we know nothing changed.
  *
- * Lodash `_.isEqual` handles the deep-equality comparison; for the
- * ~6-field shape on assignment docs this is sub-millisecond.
+ * Lodash `_.isEqual` handles the deep-equality comparison (including
+ * the nested `weeklySchedule` object); for the ~7-field shape on
+ * assignment docs this is sub-millisecond.
  */
 function onlyTriggerManagedFieldsChanged(
   before: Record<string, unknown> | undefined,
@@ -159,8 +169,8 @@ function onlyTriggerManagedFieldsChanged(
 
 export const onAssignmentWriteEnsureDenormFields = onDocumentWritten(
   {
-    document: 'tenants/{tenantId}/assignments/{assignmentId}',
-    region: 'us-central1',
+    document: "tenants/{tenantId}/assignments/{assignmentId}",
+    region: "us-central1",
     maxInstances: 10,
     retry: false,
   },
@@ -174,16 +184,21 @@ export const onAssignmentWriteEnsureDenormFields = onDocumentWritten(
     }
 
     const afterData = event.data.after.data() as Record<string, unknown>;
-    const beforeData = event.data?.before?.exists
-      ? (event.data.before.data() as Record<string, unknown>)
-      : undefined;
+    const beforeData = event.data?.before?.exists ?
+      (event.data.before.data() as Record<string, unknown>) :
+      undefined;
 
     // Tier-1 guard: every managed field is already set. Cheap doc-level
     // check; no Firestore reads, no diff. Catches the steady state
     // where existing assignments are touched for unrelated reasons.
+    // weeklySchedule uses the same shape validator the resolver uses,
+    // so a stored-but-unusable schedule (e.g. `{}` or all-disabled)
+    // doesn't pass the pre-filter and the resolver gets a chance to
+    // re-stamp it from the parent shift.
     const allSet =
       TRIGGER_MANAGED_STRING_FIELDS.every((k) => hasNonEmptyString(afterData, k)) &&
-      TRIGGER_MANAGED_NUMBER_FIELDS.every((k) => hasFiniteNumber(afterData, k));
+      TRIGGER_MANAGED_NUMBER_FIELDS.every((k) => hasFiniteNumber(afterData, k)) &&
+      pickWeeklyScheduleField(afterData, "weeklySchedule") != null;
     if (allSet) return;
 
     // Tier-2 guard: this write only touched fields we manage (or
@@ -202,7 +217,7 @@ export const onAssignmentWriteEnsureDenormFields = onDocumentWritten(
       });
     } catch (error) {
       logger.error(
-        '[TS.1.P1.B.2][onAssignmentWriteEnsureDenormFields] resolver threw',
+        "[TS.1.P1.B.2][onAssignmentWriteEnsureDenormFields] resolver threw",
         {
           tenantId,
           assignmentId,
@@ -218,7 +233,7 @@ export const onAssignmentWriteEnsureDenormFields = onDocumentWritten(
       // Don't write — leave the doc untouched so the next user edit (or
       // a periodic backfill run) can re-attempt resolution.
       logger.debug(
-        '[TS.1.P1.B.2][onAssignmentWriteEnsureDenormFields] nothing resolvable',
+        "[TS.1.P1.B.2][onAssignmentWriteEnsureDenormFields] nothing resolvable",
         {
           tenantId,
           assignmentId,
@@ -234,10 +249,10 @@ export const onAssignmentWriteEnsureDenormFields = onDocumentWritten(
           ...resolved.updates,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
-        { merge: true },
+        {merge: true},
       );
       logger.info(
-        '[TS.1.P1.B.2][onAssignmentWriteEnsureDenormFields] stamped',
+        "[TS.1.P1.B.2][onAssignmentWriteEnsureDenormFields] stamped",
         {
           tenantId,
           assignmentId,
@@ -247,7 +262,7 @@ export const onAssignmentWriteEnsureDenormFields = onDocumentWritten(
       );
     } catch (error) {
       logger.error(
-        '[TS.1.P1.B.2][onAssignmentWriteEnsureDenormFields] write failed',
+        "[TS.1.P1.B.2][onAssignmentWriteEnsureDenormFields] write failed",
         {
           tenantId,
           assignmentId,
