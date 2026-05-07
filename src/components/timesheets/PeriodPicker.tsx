@@ -27,7 +27,7 @@
  * this component is controlled.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Box,
@@ -59,6 +59,7 @@ import {
   DEFAULT_WEEK_START_DOW,
   DEFAULT_WEEK_END_DOW,
 } from '../../utils/timesheets/dateRange';
+import { isAfter } from 'date-fns';
 
 /**
  * Scope context the page passes when the user navigated here from a
@@ -132,12 +133,46 @@ export const PeriodPicker: React.FC<PeriodPickerProps> = ({
 }) => {
   const [manualOverride, setManualOverride] = useState(false);
 
+  /**
+   * Per_event manual mode holds its date pickers' partial state
+   * locally so we don't surface a half-filled period to the parent.
+   * Without this, a user picking only a start date would silently
+   * commit `{start, end: start}` and trigger the grid to load a
+   * one-day period — a confusing footgun. The parent only sees a
+   * non-null period after BOTH endpoints are filled and validated.
+   *
+   * Seeded from `value` whenever the parent's value changes (e.g.
+   * the user navigated here with a deep link). When the user clears
+   * one picker, `onChange(null)` fires and the grid re-gates back to
+   * the empty state — same UX as if they hadn't selected anything.
+   */
+  const [manualStartDate, setManualStartDate] = useState<Date | null>(
+    value ? parseYyyyMmDdLocal(value.start) : null,
+  );
+  const [manualEndDate, setManualEndDate] = useState<Date | null>(
+    value ? parseYyyyMmDdLocal(value.end) : null,
+  );
+
   // Reset the manual-override flag whenever the entity changes — a new
   // entity may switch back to a weekly policy where the override is
-  // meaningless.
+  // meaningless. Also reset the local manual-mode state so we don't
+  // leak the previous entity's half-typed dates.
   useEffect(() => {
     setManualOverride(false);
+    setManualStartDate(null);
+    setManualEndDate(null);
   }, [entity.id]);
+
+  // Sync local manual state when the parent's value changes from
+  // outside (e.g. scoped → manual switch with a pre-resolved scope, or
+  // a deep link populating both dates). Only reseed when the parent
+  // value is non-null; clearing the parent shouldn't wipe the user's
+  // in-progress local entry.
+  useEffect(() => {
+    if (!value) return;
+    setManualStartDate(parseYyyyMmDdLocal(value.start));
+    setManualEndDate(parseYyyyMmDdLocal(value.end));
+  }, [value]);
 
   const mode = useMemo(
     () => resolvePolicyMode(entity, scope, manualOverride),
@@ -199,36 +234,78 @@ export const PeriodPicker: React.FC<PeriodPickerProps> = ({
 
   /* -------------------------------------------------------------------
    * Manual date picker controls
+   *
+   * Strategy: track partial state locally; only emit `onChange(period)`
+   * to the parent when both pickers have valid, non-inverted dates.
+   * Clearing either picker emits `onChange(null)` so the grid re-gates
+   * to the empty state — same as if the user hadn't picked anything.
+   *
+   * Inverted ranges (end < start) emit `onChange(null)` and rely on
+   * the inline validation message to nudge the user. We deliberately
+   * don't auto-snap because that masks the misclick — the user typed
+   * a date, we should respect it and show why nothing's loading.
    * ------------------------------------------------------------------- */
-  const handleManualStartChange = (newStart: Date | null) => {
-    const startIso = dateToLocalYyyyMmDd(newStart);
-    if (!startIso) return;
-    const next: PeriodRange = {
-      start: startIso,
-      end: value?.end ?? startIso,
-    };
-    if (isValidPeriod(next)) {
+  const commitManual = useCallback(
+    (start: Date | null, end: Date | null) => {
+      if (!start || !end) {
+        if (value !== null) onChange(null);
+        return;
+      }
+      if (isAfter(start, end)) {
+        // Inverted — surface the validation but don't load a phantom
+        // one-day period.
+        if (value !== null) onChange(null);
+        return;
+      }
+      const startIso = dateToLocalYyyyMmDd(start);
+      const endIso = dateToLocalYyyyMmDd(end);
+      if (!startIso || !endIso) {
+        if (value !== null) onChange(null);
+        return;
+      }
+      const next: PeriodRange = { start: startIso, end: endIso };
+      if (!isValidPeriod(next)) {
+        if (value !== null) onChange(null);
+        return;
+      }
+      // Only emit when something actually changed — avoids re-render
+      // loops with the parent's filter useMemo.
+      if (
+        value &&
+        value.start === next.start &&
+        value.end === next.end
+      ) {
+        return;
+      }
       onChange(next);
-    } else {
-      // If the user picked a start AFTER the current end, snap end to
-      // start so the period stays valid.
-      onChange({ start: startIso, end: startIso });
-    }
+    },
+    [onChange, value],
+  );
+
+  const handleManualStartChange = (newStart: Date | null) => {
+    setManualStartDate(newStart);
+    commitManual(newStart, manualEndDate);
   };
   const handleManualEndChange = (newEnd: Date | null) => {
-    const endIso = dateToLocalYyyyMmDd(newEnd);
-    if (!endIso) return;
-    const next: PeriodRange = {
-      start: value?.start ?? endIso,
-      end: endIso,
-    };
-    if (isValidPeriod(next)) {
-      onChange(next);
-    } else {
-      // End before start — snap start to end for a single-day period.
-      onChange({ start: endIso, end: endIso });
-    }
+    setManualEndDate(newEnd);
+    commitManual(manualStartDate, newEnd);
   };
+
+  /** True when either picker is empty OR the range is inverted. Drives
+   *  both the inline "select both dates" hint and the date pickers'
+   *  error styling. */
+  const manualValidationMessage = useMemo(() => {
+    if (mode.kind !== 'per_event_manual') return null;
+    if (!manualStartDate && !manualEndDate) {
+      return 'Select a start and end date to load timesheets.';
+    }
+    if (!manualStartDate) return 'Select a start date.';
+    if (!manualEndDate) return 'Select an end date.';
+    if (isAfter(manualStartDate, manualEndDate)) {
+      return 'End date must be on or after start date.';
+    }
+    return null;
+  }, [mode.kind, manualStartDate, manualEndDate]);
 
   /* -------------------------------------------------------------------
    * Render
@@ -326,22 +403,49 @@ export const PeriodPicker: React.FC<PeriodPickerProps> = ({
         ) : null}
 
         {mode.kind === 'per_event_manual' ? (
-          <Stack direction="row" alignItems="center" spacing={1}>
-            <DatePicker
-              label="Start date"
-              value={value ? parseYyyyMmDdLocal(value.start) : null}
-              onChange={handleManualStartChange}
-              slotProps={{ textField: { size: 'small' } }}
-            />
-            <Typography variant="body2" color="text.secondary">
-              –
-            </Typography>
-            <DatePicker
-              label="End date"
-              value={value ? parseYyyyMmDdLocal(value.end) : null}
-              onChange={handleManualEndChange}
-              slotProps={{ textField: { size: 'small' } }}
-            />
+          <Stack spacing={1}>
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <DatePicker
+                label="Start date"
+                value={manualStartDate}
+                onChange={handleManualStartChange}
+                slotProps={{
+                  textField: {
+                    size: 'small',
+                    required: true,
+                    error: Boolean(manualValidationMessage) && !manualStartDate,
+                  },
+                }}
+              />
+              <Typography variant="body2" color="text.secondary">
+                –
+              </Typography>
+              <DatePicker
+                label="End date"
+                value={manualEndDate}
+                onChange={handleManualEndChange}
+                minDate={manualStartDate ?? undefined}
+                slotProps={{
+                  textField: {
+                    size: 'small',
+                    required: true,
+                    error:
+                      Boolean(manualValidationMessage) &&
+                      (!manualEndDate ||
+                        Boolean(
+                          manualStartDate &&
+                            manualEndDate &&
+                            isAfter(manualStartDate, manualEndDate),
+                        )),
+                  },
+                }}
+              />
+            </Stack>
+            {manualValidationMessage ? (
+              <Typography variant="caption" color="text.secondary">
+                {manualValidationMessage}
+              </Typography>
+            ) : null}
           </Stack>
         ) : null}
 
