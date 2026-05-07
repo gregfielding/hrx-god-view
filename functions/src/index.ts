@@ -344,6 +344,26 @@ export { backfillAssignmentDenormFieldsCallable } from './timesheets/backfillAss
 // this, new assignments created after deploy time would miss the denorm
 // fields until the next backfill run.
 export { onAssignmentWriteEnsureDenormFields } from './timesheets/onAssignmentWriteEnsureDenormFields';
+// **TS.1.P1.D** — Timesheet entry creation primitive. Get-or-create
+// callable that materializes the first draft TimesheetEntryV2 doc
+// for a (assignment, workDate) tuple. Powers the recruiter grid's
+// "+ Add entry" affordance; also the data-layer primitive that
+// Phase 3's inline editing will call on first edit. Idempotent
+// against the deterministic doc id `{assignmentId}_{YYYY-MM-DD}`,
+// gated at sec ≥ 5, validates that the day is actually scheduled
+// per `weeklySchedule[dow].enabled`, and falls back to the shared
+// resolver chain when P1.B denorm fields are absent.
+export { createDraftTimesheetEntryCallable } from './timesheets/createDraftTimesheetEntryCallable';
+// **TS.1.P1.D** — Companion trigger that maintains
+// `Assignment.latestTimesheetStatus` by aggregating across all the
+// assignment's entries with a precedence rule (error > draft >
+// submitted > approved > sent_to_everee > paid). Powers the recruiter
+// dashboard's fast-filter "show me assignments where
+// latestTimesheetStatus IN ('draft','error')". Skips writing when the
+// new value equals the current one — saves churn through the P1.B.2
+// denorm trigger, which itself ignores `latestTimesheetStatus` via
+// its tier-2 diff guard's ancillary set.
+export { onTimesheetEntryWriteUpdateAssignmentLatestStatus } from './timesheets/onTimesheetEntryWriteUpdateAssignmentLatestStatus';
 // **R.16.1 Phase 5** — Push-to-Active. `previewPushToActiveCallable`
 // is read-only and powers the dialog's affected-JO list. The write
 // twin `pushToActiveJobOrdersCallable` re-runs the preview server-

@@ -21,7 +21,7 @@
  * delegates to the hook for hydration.
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Alert,
   AlertTitle,
@@ -30,6 +30,7 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Link,
   Paper,
   Stack,
   Table,
@@ -44,10 +45,12 @@ import {
 import {
   TableChart as TableChartIcon,
 } from '@mui/icons-material';
+import { FirebaseError } from 'firebase/app';
 
 import { useAuth } from '../../contexts/AuthContext';
 import useTimesheetGridRows from '../../hooks/useTimesheetGridRows';
 import type { TimesheetFilter } from '../../types/recruiter/timesheet';
+import { createDraftTimesheetEntry } from '../../utils/timesheets/createDraftTimesheetEntry';
 import { formatPeriodLabel } from '../../utils/timesheets/dateRange';
 
 import TimesheetTotalsHeader from './TimesheetTotalsHeader';
@@ -217,14 +220,68 @@ function formatRate(n: number): string {
 
 interface TimesheetGridRowViewProps {
   row: TimesheetGridRow;
+  /** Tenant scope for the create-entry callable. Required when the
+   *  row is empty AND the caller has provided an `onCreated` handler. */
+  tenantId?: string | null;
+  /** Fires after a successful create. The grid hook's `refresh()`
+   *  re-resolves the row set so the new entry replaces the empty row. */
+  onCreated?: () => void;
 }
 
-const TimesheetGridRowView: React.FC<TimesheetGridRowViewProps> = ({ row }) => {
+/**
+ * Per-row local state for the "+ Add entry" affordance. Each row
+ * tracks its own `creating` / `error` independently so multiple
+ * recruiters can fire creates in parallel without coupling.
+ *
+ * Errors are inline (small caption + retry link) rather than a
+ * dialog — the recruiter can see exactly which row failed and why
+ * without leaving the grid context.
+ */
+interface CreatingState {
+  status: 'idle' | 'creating' | 'error';
+  message?: string;
+}
+
+const TimesheetGridRowView: React.FC<TimesheetGridRowViewProps> = ({
+  row,
+  tenantId,
+  onCreated,
+}) => {
   const scheduledHrs = scheduledHoursForRow(row);
   const actualHrs = actualHoursForRow(row);
   const status = displayStatusForRow(row);
 
   const isEmpty = row.kind === 'empty';
+
+  const [creating, setCreating] = useState<CreatingState>({ status: 'idle' });
+
+  const canCreate = isEmpty && tenantId && onCreated && creating.status !== 'creating';
+
+  const handleAddEntry = async () => {
+    if (!tenantId || !onCreated) return;
+    setCreating({ status: 'creating' });
+    try {
+      await createDraftTimesheetEntry({
+        tenantId,
+        assignmentId: row.assignment.id,
+        workDate: row.workDate,
+      });
+      // Hook refresh re-resolves the row set; the empty row will
+      // be replaced by an `entry` row on the next render. We do
+      // NOT setCreating to 'idle' here because the row is about to
+      // unmount when refresh() lands.
+      onCreated();
+    } catch (err) {
+      // Surface a friendly per-error message. Most callable errors
+      // come back as FirebaseError with a `.code` and `.message`.
+      const fallback = err instanceof Error ? err.message : String(err);
+      const message =
+        err instanceof FirebaseError && typeof err.message === 'string'
+          ? err.message
+          : fallback;
+      setCreating({ status: 'error', message });
+    }
+  };
 
   return (
     <TableRow
@@ -266,9 +323,50 @@ const TimesheetGridRowView: React.FC<TimesheetGridRowViewProps> = ({ row }) => {
 
       <TableCell>
         {isEmpty ? (
-          <Typography variant="caption" color="text.secondary">
-            (no entry yet)
-          </Typography>
+          <Stack direction="column" spacing={0.25}>
+            {creating.status === 'creating' ? (
+              <Stack direction="row" alignItems="center" spacing={0.5}>
+                <CircularProgress size={12} />
+                <Typography variant="caption" color="text.secondary">
+                  Adding…
+                </Typography>
+              </Stack>
+            ) : canCreate ? (
+              <Link
+                component="button"
+                type="button"
+                variant="caption"
+                onClick={handleAddEntry}
+                underline="hover"
+                sx={{ textAlign: 'left', alignSelf: 'flex-start' }}
+              >
+                + Add entry
+              </Link>
+            ) : (
+              // Read-only fallback (no tenantId / no onCreated handler
+              // — e.g. an unauthenticated render path) — keep the
+              // original caption intact.
+              <Typography variant="caption" color="text.secondary">
+                (no entry yet)
+              </Typography>
+            )}
+            {creating.status === 'error' ? (
+              <Stack direction="row" alignItems="center" spacing={0.5}>
+                <Typography variant="caption" color="error">
+                  {creating.message ?? 'Failed to add entry'}
+                </Typography>
+                <Link
+                  component="button"
+                  type="button"
+                  variant="caption"
+                  onClick={handleAddEntry}
+                  underline="hover"
+                >
+                  retry
+                </Link>
+              </Stack>
+            ) : null}
+          </Stack>
         ) : (
           <>
             {row.entry.actualStartTime ?? '—'}–{row.entry.actualEndTime ?? '—'}
@@ -294,7 +392,7 @@ const TimesheetGridRowView: React.FC<TimesheetGridRowViewProps> = ({ row }) => {
 
 export const TimesheetGrid: React.FC<TimesheetGridProps> = ({ filter }) => {
   const { tenantId } = useAuth();
-  const { rows, loading, error, errors, consideredAssignmentCount } =
+  const { rows, loading, error, errors, consideredAssignmentCount, refresh } =
     useTimesheetGridRows(tenantId, filter);
 
   if (!filter) {
@@ -362,7 +460,12 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({ filter }) => {
               </TableHead>
               <TableBody>
                 {rows.map((row) => (
-                  <TimesheetGridRowView key={row.key} row={row} />
+                  <TimesheetGridRowView
+                    key={row.key}
+                    row={row}
+                    tenantId={tenantId}
+                    onCreated={refresh}
+                  />
                 ))}
               </TableBody>
             </Table>
