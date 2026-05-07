@@ -219,6 +219,38 @@ service cloud.firestore {
         );
       }
 
+      // Timesheet entries (TS.1): per-day worked-hours docs feeding the
+      // recruiter grid, P2 pay engine, and (Phase 4) the Everee submission
+      // pipeline. Doc id = `{assignmentId}_{workDate}` per
+      // createDraftTimesheetEntryCallable.
+      //
+      // Writes flow through Cloud Functions (admin SDK, bypasses rules):
+      //   - createDraftTimesheetEntryCallable (creates)
+      //   - onTimesheetEntryWriteRecomputePayBreakdown (re-stamps computed fields)
+      // Client-side writes are blocked here intentionally; Phase 3
+      // (inline edit) will add a tight `allow update` for the recruiter
+      // band scoped to actual-time / break / notes fields.
+      match /timesheet_entries/{entryId} {
+        // Read mirrors the assignments pattern: HRX, tenant role claim,
+        // tenant assignment, securityLevel >= 5 (recruiter band), and
+        // worker self-read via the denormalized workerId field on the entry
+        // (TimesheetEntryV2.workerId per src/types/recruiter/timesheet.ts —
+        // value is the auth uid, field name uses the domain term).
+        allow read: if request.auth != null && (
+          resource.data.workerId == request.auth.uid ||
+          isHRX() ||
+          (request.auth.token.roles != null && hasTenantRole(tenantId, request.auth.token.roles)) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5)
+        );
+
+        // Client-side mutations blocked. All writes go through callables
+        // (admin SDK) until Phase 3 adds explicit inline-edit rules.
+        allow create: if false;
+        allow update: if false;
+        allow delete: if false;
+      }
+
       // Placements: recruiter staging (placed but not yet offered - no Assignment created)
       match /placements/{placementId} {
         allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId));
