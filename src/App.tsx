@@ -172,6 +172,9 @@ import InviteUsersPage from './pages/InviteUsersPage';
 import SavedSmartGroupDetailPage from './pages/SavedSmartGroupDetailPage';
 import RecruiterUsers from './pages/RecruiterUsers';
 import UsersLayout from './pages/UsersLayout';
+import BulkImportPage from './pages/users/BulkImportPage';
+import BulkImportNewTab from './components/bulkInvite/BulkImportNewTab';
+import BulkImportOperatorDashboard from './components/bulkInvite/BulkImportOperatorDashboard';
 import RecruiterAccountDetails from './pages/RecruiterAccountDetails';
 import AccountLocationDetail from './pages/AccountLocationDetail';
 import GlobalInvoicingPage from './pages/GlobalInvoicingPage';
@@ -791,6 +794,27 @@ function App() {
           <Route path="all-smart-groups" element={<AllSmartGroupsPage hideHeader />} />
           <Route path="my-smart-groups" element={<MySmartGroupsListPage hideHeader />} />
           <Route path="my-smart-groups/:groupId" element={<SavedSmartGroupDetailPage hideHeader />} />
+          {/* BI.1: bulk-invite landing — sec 7 only (admin band) per
+              BULK_INVITE_PLAN.md Appendix A.E. The parent /users route
+              already requires sec >= 5 + RecruiterAccessGuard; this
+              inner ProtectedRoute tightens to sec >= 7 because bulk
+              operations affect 3,000+ records and trigger external
+              state (Everee provisions + Twilio SMS sends). The pill
+              row in UsersLayout filters this tab out below sec 7
+              (UI parity), but a recruiter who guesses the URL still
+              hits this gate's "Access Denied" view. */}
+          <Route
+            path="bulk-import"
+            element={
+              <ProtectedRoute requiredSecurityLevel="7">
+                <BulkImportPage />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<Navigate to="new" replace />} />
+            <Route path="new" element={<BulkImportNewTab />} />
+            <Route path="imports" element={<BulkImportOperatorDashboard />} />
+          </Route>
           <Route path=":uid/readiness" element={<UserReadinessPage />} />
           <Route path=":uid" element={<UserProfile />} />
         </Route>

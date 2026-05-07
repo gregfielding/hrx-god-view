@@ -16,8 +16,8 @@ import PageHeader from '../components/PageHeader';
 // import { OnCallI9SupportingReminderDialog } from '../components/staffOnboarding/OnCallI9SupportingReminderDialog';
 import UniversalSearchBar from '../components/UniversalSearchBar';
 import {
-  USERS_LAYOUT_TAB_CONFIG,
   getActiveUsersTab,
+  getVisibleUsersTabs,
   loadUsersLayoutPersisted,
   pathIsUsersListPath,
   persistUsersLayout,
@@ -49,7 +49,11 @@ const UsersLayout: React.FC = () => {
   const location = useLocation();
   const pathname = location.pathname;
   const activeTab = getActiveUsersTab(pathname);
-  const { activeTenant } = useAuth();
+  const { activeTenant, securityLevel } = useAuth();
+  const visibleTabs = React.useMemo(
+    () => getVisibleUsersTabs(securityLevel),
+    [securityLevel],
+  );
   // const [i9MasterReminderOpen, setI9MasterReminderOpen] = useState(false);
 
   /* Temporary prescreen backfill (triggerRecentUserInterviewBackfill) — restore if needed:
@@ -233,7 +237,7 @@ const UsersLayout: React.FC = () => {
         title=""
         filters={
           <Box sx={{ display: 'flex', gap: 0.35, alignItems: 'center', flexWrap: 'wrap' }}>
-            {USERS_LAYOUT_TAB_CONFIG.map(({ tab, path, label }) => {
+            {visibleTabs.map(({ tab, path, label }) => {
               const isActive = activeTab === tab;
               return (
                 <Button

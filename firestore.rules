@@ -277,6 +277,51 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      // ────────────────────────────────────────────────────────────
+      // BI.1 — Bulk Invite (Tempworks → HRX → Everee migration).
+      //
+      // Rules-side gate is sec >= 7 (admin-only) per
+      // BULK_INVITE_PLAN.md Appendix A.E. Bulk operations affect
+      // 3,000+ records and trigger external state (Everee provisions
+      // + Twilio SMS sends — real money). "Tighten first, loosen on
+      // actual demand."
+      //
+      // Phase 1 (this rule) is read-only from the client. All mutating
+      // paths are server-only:
+      //   - parseAndPreviewBulkInvite (P2 callable)
+      //   - confirmBulkInviteJob (P3 callable, enqueues Cloud Tasks)
+      //   - cancelBulkInviteJob (P3 callable)
+      //   - retryFailedBulkInviteRows (P3 callable)
+      //   - bulkInviteRowProcessor (P3 HTTP, Cloud Tasks target)
+      //   - bulkInviteReminderCron (P4 scheduled)
+      //   - bulkInviteJobReconciler (P3 scheduled, 1-min counter sync)
+      //   - bulkInviteCancellationCompleter (P3 scheduled)
+      //   - evereeWebhook → handleWorkerOnboardingCompleted (P4)
+      //
+      // Until the callables ship, recruiters can only see existing
+      // jobs (none today) — the page renders empty state. This is
+      // intentional: schema first, behavior second.
+      // ────────────────────────────────────────────────────────────
+      match /bulk_invite_jobs/{jobId} {
+        allow read: if request.auth != null && (
+          isHRX() || hasSecurityLevel(tenantId, 7)
+        );
+
+        // P1: client-side mutations are not permitted. P2/P3 callables
+        // run server-side via the Admin SDK and bypass these rules.
+        allow create, update, delete: if false;
+
+        // The per-row subcollection. Same gate as the parent job.
+        // Reads are needed for the operator dashboard's row-detail
+        // drilldown; writes go through callables + the row processor.
+        match /rows/{rowId} {
+          allow read: if request.auth != null && (
+            isHRX() || hasSecurityLevel(tenantId, 7)
+          );
+          allow create, update, delete: if false;
+        }
+      }
+
       // Placements: recruiter staging (placed but not yet offered - no Assignment created)
       match /placements/{placementId} {
         allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId));

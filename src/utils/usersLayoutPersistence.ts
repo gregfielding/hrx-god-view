@@ -3,6 +3,8 @@
  * UsersLayout (e.g. /users/user-groups → /usergroups/:id).
  */
 
+import type { SecurityLevel } from './AccessRoles';
+
 export type UsersTab =
   | 'all'
   | 'my'
@@ -11,9 +13,24 @@ export type UsersTab =
   | 'my-user-groups'
   | 'smart-groups'
   | 'all-smart-groups'
-  | 'my-smart-groups';
+  | 'my-smart-groups'
+  | 'bulk-import';
 
-export const USERS_LAYOUT_TAB_CONFIG: { tab: UsersTab; path: string; label: string }[] = [
+export interface UsersLayoutTabConfig {
+  tab: UsersTab;
+  path: string;
+  label: string;
+  /**
+   * When set, the tab pill is only rendered for users at or above
+   * this security level. Route-level access is enforced separately by
+   * `<ProtectedRoute>` in App.tsx — this is purely a visibility hint
+   * for the pill row. Lower-privilege users hitting the URL directly
+   * still get the route gate's "Access Denied" view.
+   */
+  minSecurityLevel?: SecurityLevel;
+}
+
+export const USERS_LAYOUT_TAB_CONFIG: UsersLayoutTabConfig[] = [
   { tab: 'all', path: '/users/all', label: 'All Users' },
   { tab: 'my', path: '/users/my', label: 'My Users' },
   // Hidden from the toolbar — the route still exists for direct navigation
@@ -25,7 +42,33 @@ export const USERS_LAYOUT_TAB_CONFIG: { tab: UsersTab; path: string; label: stri
   { tab: 'smart-groups', path: '/users/smart-groups', label: 'Add Smart Group' },
   { tab: 'all-smart-groups', path: '/users/all-smart-groups', label: 'Smart Groups' },
   { tab: 'my-smart-groups', path: '/users/my-smart-groups', label: 'My Smart Groups' },
+  // BI.1: bulk-invite landing — sec 7 only (admin band) per
+  // BULK_INVITE_PLAN.md Appendix A.E. The route gate enforces the same
+  // level; this `minSecurityLevel` is a UI-only visibility filter.
+  { tab: 'bulk-import', path: '/users/bulk-import', label: 'Bulk Import', minSecurityLevel: '7' },
 ];
+
+/**
+ * Returns the tab config rows that should be rendered for a user at
+ * the given security level. Rows without a `minSecurityLevel` are
+ * always visible. Used by `UsersLayout` to filter the pill row.
+ */
+export function getVisibleUsersTabs(
+  securityLevel: SecurityLevel | null | undefined,
+): UsersLayoutTabConfig[] {
+  const userLevel = parseSecurityLevel(securityLevel);
+  return USERS_LAYOUT_TAB_CONFIG.filter((row) => {
+    if (!row.minSecurityLevel) return true;
+    const required = parseSecurityLevel(row.minSecurityLevel);
+    return userLevel >= required;
+  });
+}
+
+function parseSecurityLevel(value: SecurityLevel | null | undefined): number {
+  if (value == null) return 0;
+  const n = Number.parseInt(String(value), 10);
+  return Number.isFinite(n) ? n : 0;
+}
 
 const STORAGE_KEY = 'hrx_users_layout_v1';
 
@@ -95,6 +138,7 @@ export function getActiveUsersTab(pathname: string): UsersTab {
   if (pathname.includes('/users/all-smart-groups')) return 'all-smart-groups';
   if (pathname.includes('/users/smart-groups')) return 'smart-groups';
   if (pathname.includes('/users/invite-users')) return 'invite-users';
+  if (pathname.includes('/users/bulk-import')) return 'bulk-import';
   if (pathname.includes('/users/my')) return 'my';
   if (pathname.includes('/users/all')) return 'all';
   return 'all';
