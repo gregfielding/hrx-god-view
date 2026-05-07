@@ -210,6 +210,22 @@ describe('timesheets/payRules/computeWeekBreakdown — orchestrator', () => {
       const sum = b.totalRegularHours + b.totalOTHours + b.totalDoubleTimeHours;
       expect(Math.abs(sum - 14)).to.be.lessThan(0.01);
     });
+
+    it('totalOTHours = totalFlsaOTHours + totalNonFlsaOTHours (P2.C invariant)', () => {
+      const days = [day('a', '2026-05-03', 14)];
+      const r = computeWeekBreakdown({
+        stateCode: 'CA',
+        days,
+        workWeekStartDate: '2026-05-03',
+      });
+      const b = r.get('a')!;
+      expect(b.totalFlsaOTHours).to.be.at.least(0);
+      expect(b.totalNonFlsaOTHours).to.be.at.least(0);
+      expect(b.totalOTHours).to.be.closeTo(
+        b.totalFlsaOTHours + b.totalNonFlsaOTHours,
+        0.001,
+      );
+    });
   });
 
   describe('registry helpers', () => {

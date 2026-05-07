@@ -256,34 +256,42 @@ describe('timesheets/payRules/helpers', () => {
   });
 
   describe('applyWeeklyOTCascade', () => {
-    it('no-op when below threshold', () => {
+    it('no-op when below threshold (returns split with otFlsa=otNonFlsa=0)', () => {
       const days = [
         { reg: 8 * 60, ot: 0, dt: 0 },
         { reg: 8 * 60, ot: 0, dt: 0 },
       ];
       expect(applyWeeklyOTCascade(days, 40 * 60)).to.deep.equal([
-        { reg: 480, ot: 0, dt: 0 },
-        { reg: 480, ot: 0, dt: 0 },
+        { reg: 480, otFlsa: 0, otNonFlsa: 0, dt: 0 },
+        { reg: 480, otFlsa: 0, otNonFlsa: 0, dt: 0 },
       ]);
     });
 
-    it('flips reg → ot once cumulative reg crosses threshold', () => {
+    it('flips reg → otFlsa once cumulative reg crosses threshold', () => {
       // 5 days × 10h reg = 50h reg pre-cascade.
-      // Cascade: first 40h reg, last 10h all ot.
+      // Cascade: first 40h reg, last 10h all FLSA OT.
       const days = Array.from({ length: 5 }, () => ({ reg: 10 * 60, ot: 0, dt: 0 }));
       const result = applyWeeklyOTCascade(days, 40 * 60);
       const totalReg = result.reduce((s, d) => s + d.reg, 0);
-      const totalOt = result.reduce((s, d) => s + d.ot, 0);
+      const totalFlsa = result.reduce((s, d) => s + d.otFlsa, 0);
+      const totalNonFlsa = result.reduce((s, d) => s + d.otNonFlsa, 0);
       expect(totalReg).to.equal(40 * 60);
-      expect(totalOt).to.equal(10 * 60);
-      // The 5th day should be entirely ot.
-      expect(result[4]).to.deep.equal({ reg: 0, ot: 10 * 60, dt: 0 });
-      // The 4th day should be partially flipped.
-      expect(result[3].reg + result[3].ot).to.equal(10 * 60);
+      expect(totalFlsa).to.equal(10 * 60); // all OT here is cascade-flipped → FLSA
+      expect(totalNonFlsa).to.equal(0); // no daily-OT input → no non-FLSA
+      // The 5th day should be entirely FLSA OT.
+      expect(result[4]).to.deep.equal({
+        reg: 0,
+        otFlsa: 10 * 60,
+        otNonFlsa: 0,
+        dt: 0,
+      });
+      // The 4th day should be partially flipped, all flips are FLSA.
+      expect(result[3].reg + result[3].otFlsa).to.equal(10 * 60);
+      expect(result[3].otNonFlsa).to.equal(0);
     });
 
-    it('preserves daily ot/dt across cascade', () => {
-      // CA-style: each day is 10h with 8 reg + 2 ot pre-cascade.
+    it('preserves daily ot as otNonFlsa across cascade (no cascade flip)', () => {
+      // CA-style: each day is 10h with 8 reg + 2 ot (daily-OT) pre-cascade.
       // 5 days × 8h reg = 40h reg → cascade just barely doesn't fire.
       const days = Array.from({ length: 5 }, () => ({
         reg: 8 * 60,
@@ -292,29 +300,68 @@ describe('timesheets/payRules/helpers', () => {
       }));
       const result = applyWeeklyOTCascade(days, 40 * 60);
       const totalReg = result.reduce((s, d) => s + d.reg, 0);
-      const totalOt = result.reduce((s, d) => s + d.ot, 0);
+      const totalFlsa = result.reduce((s, d) => s + d.otFlsa, 0);
+      const totalNonFlsa = result.reduce((s, d) => s + d.otNonFlsa, 0);
       expect(totalReg).to.equal(40 * 60);
-      expect(totalOt).to.equal(10 * 60); // 5 × 2 daily ot, no cascade flip
+      expect(totalFlsa).to.equal(0); // cascade didn't fire
+      expect(totalNonFlsa).to.equal(10 * 60); // 5 × 2h daily-OT preserved
     });
 
-    it('cascade activates with daily-classified inputs', () => {
-      // 6 days × 8h reg = 48h. Cascade flips last 8h to OT.
+    it('mixes FLSA + non-FLSA when both daily-OT and cascade fire', () => {
+      // CA-style: first 4 days × 9h (8 reg + 1 daily-OT), then 5th day
+      // 9h (8 reg + 1 daily-OT). Cumulative reg = 5 × 8 = 40h. Cascade
+      // doesn't fire on reg (exactly at threshold). All 5h of daily-OT
+      // is non-FLSA.
+      // Then 6th day 5h reg → cumulative reg becomes 45h → all 5h flips
+      // to FLSA OT.
+      const days = [
+        ...Array.from({ length: 5 }, () => ({ reg: 8 * 60, ot: 1 * 60, dt: 0 })),
+        { reg: 5 * 60, ot: 0, dt: 0 },
+      ];
+      const result = applyWeeklyOTCascade(days, 40 * 60);
+      const totalReg = result.reduce((s, d) => s + d.reg, 0);
+      const totalFlsa = result.reduce((s, d) => s + d.otFlsa, 0);
+      const totalNonFlsa = result.reduce((s, d) => s + d.otNonFlsa, 0);
+      expect(totalReg).to.equal(40 * 60);
+      expect(totalFlsa).to.equal(5 * 60); // 6th day's 5h reg → FLSA
+      expect(totalNonFlsa).to.equal(5 * 60); // 5 × 1h daily-OT preserved
+      // 6th day should be entirely FLSA OT.
+      expect(result[5]).to.deep.equal({
+        reg: 0,
+        otFlsa: 5 * 60,
+        otNonFlsa: 0,
+        dt: 0,
+      });
+    });
+
+    it('cascade activates with daily-classified zero-OT inputs', () => {
+      // 6 days × 8h reg = 48h. Cascade flips last 8h to FLSA OT.
       const days = Array.from({ length: 6 }, () => ({ reg: 8 * 60, ot: 0, dt: 0 }));
       const result = applyWeeklyOTCascade(days, 40 * 60);
-      // Day 5 (0-indexed) is the 6th day, all 8h becomes OT.
-      expect(result[5]).to.deep.equal({ reg: 0, ot: 8 * 60, dt: 0 });
-      // Days 0-4 are unchanged.
+      // Day 5 (0-indexed) is the 6th day, all 8h becomes FLSA OT.
+      expect(result[5]).to.deep.equal({
+        reg: 0,
+        otFlsa: 8 * 60,
+        otNonFlsa: 0,
+        dt: 0,
+      });
+      // Days 0-4 are unchanged with zero OT in either bucket.
       for (let i = 0; i < 5; i++) {
-        expect(result[i]).to.deep.equal({ reg: 8 * 60, ot: 0, dt: 0 });
+        expect(result[i]).to.deep.equal({
+          reg: 8 * 60,
+          otFlsa: 0,
+          otNonFlsa: 0,
+          dt: 0,
+        });
       }
     });
 
-    it('Infinity threshold → no-op clones', () => {
-      const days = [{ reg: 100 * 60, ot: 0, dt: 0 }];
+    it('Infinity threshold → otNonFlsa = day.ot, otFlsa = 0', () => {
+      const days = [{ reg: 100 * 60, ot: 30, dt: 0 }];
       const result = applyWeeklyOTCascade(days, Infinity);
-      expect(result).to.deep.equal(days);
-      // ensures it's a clone, not the same reference
-      expect(result[0]).to.not.equal(days[0]);
+      expect(result).to.deep.equal([
+        { reg: 100 * 60, otFlsa: 0, otNonFlsa: 30, dt: 0 },
+      ]);
     });
 
     it('throws on negative threshold', () => {

@@ -40,8 +40,10 @@ describe('timesheets/payRules/rules/default — federal FLSA', () => {
     expect(totalDt).to.equal(0);
   });
 
-  it('flips to OT after 40h', () => {
+  it('flips to OT after 40h (all OT classified as FLSA)', () => {
     // 5 × 10h = 50h total. First 40 reg, next 10 OT.
+    // DEFAULT has no daily-OT, so all 10 OT hours are FLSA federal
+    // weekly rule, totalNonFlsaOTHours stays 0.
     const days = [
       day('a', '2026-05-03', 10),
       day('b', '2026-05-04', 10),
@@ -52,13 +54,22 @@ describe('timesheets/payRules/rules/default — federal FLSA', () => {
     const result = defaultRules.computeWeekBreakdown(days, '2026-05-03');
     let totalReg = 0;
     let totalOt = 0;
+    let totalFlsa = 0;
+    let totalNonFlsa = 0;
     for (const d of days) {
       const b = result.get(d.entryId)!;
       totalReg += b.totalRegularHours;
       totalOt += b.totalOTHours;
+      totalFlsa += b.totalFlsaOTHours;
+      totalNonFlsa += b.totalNonFlsaOTHours;
+      // Per-day invariant: split fields sum to totalOTHours.
+      expect(b.totalOTHours).to.equal(b.totalFlsaOTHours + b.totalNonFlsaOTHours);
+      expect(b.totalNonFlsaOTHours, 'DEFAULT never produces non-FLSA OT').to.equal(0);
     }
     expect(totalReg).to.equal(40);
     expect(totalOt).to.equal(10);
+    expect(totalFlsa).to.equal(10);
+    expect(totalNonFlsa).to.equal(0);
   });
 
   it('exact 40h → no OT', () => {
@@ -86,6 +97,8 @@ describe('timesheets/payRules/rules/default — federal FLSA', () => {
       expect(result.get(d.entryId)).to.deep.equal({
         totalRegularHours: 0,
         totalOTHours: 0,
+        totalFlsaOTHours: 0,
+        totalNonFlsaOTHours: 0,
         totalDoubleTimeHours: 0,
         mealBreakPenaltyHours: 0,
         restBreakPenaltyHours: 0,

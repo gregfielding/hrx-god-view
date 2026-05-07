@@ -119,6 +119,8 @@ const COMPUTE_INPUT_FIELDS = [
 const COMPUTED_FIELDS = [
   'totalRegularHours',
   'totalOTHours',
+  'totalFlsaOTHours',
+  'totalNonFlsaOTHours',
   'totalDoubleTimeHours',
   'mealBreakPenaltyHours',
   'restBreakPenaltyHours',
@@ -324,6 +326,8 @@ function breakdownsEqual(a: DayBreakdown, b: DayBreakdown): boolean {
   return (
     Math.abs(a.totalRegularHours - b.totalRegularHours) < eps &&
     Math.abs(a.totalOTHours - b.totalOTHours) < eps &&
+    Math.abs(a.totalFlsaOTHours - b.totalFlsaOTHours) < eps &&
+    Math.abs(a.totalNonFlsaOTHours - b.totalNonFlsaOTHours) < eps &&
     Math.abs(a.totalDoubleTimeHours - b.totalDoubleTimeHours) < eps &&
     Math.abs(a.mealBreakPenaltyHours - b.mealBreakPenaltyHours) < eps &&
     Math.abs(a.restBreakPenaltyHours - b.restBreakPenaltyHours) < eps
@@ -335,6 +339,16 @@ function readBreakdown(data: EntryData): DayBreakdown {
     totalRegularHours:
       typeof data.totalRegularHours === 'number' ? data.totalRegularHours : 0,
     totalOTHours: typeof data.totalOTHours === 'number' ? data.totalOTHours : 0,
+    // Default 0 for legacy entries written before P2.C — they read as
+    // {flsa: 0, nonFlsa: 0} which won't match the engine's split, so
+    // breakdownsEqual returns false and the entry gets re-stamped on
+    // its next write. Acceptable backfill behavior.
+    totalFlsaOTHours:
+      typeof data.totalFlsaOTHours === 'number' ? data.totalFlsaOTHours : 0,
+    totalNonFlsaOTHours:
+      typeof data.totalNonFlsaOTHours === 'number'
+        ? data.totalNonFlsaOTHours
+        : 0,
     totalDoubleTimeHours:
       typeof data.totalDoubleTimeHours === 'number'
         ? data.totalDoubleTimeHours
@@ -475,6 +489,8 @@ async function recomputeScope(scope: WorkweekScope): Promise<number> {
       {
         totalRegularHours: computed.totalRegularHours,
         totalOTHours: computed.totalOTHours,
+        totalFlsaOTHours: computed.totalFlsaOTHours,
+        totalNonFlsaOTHours: computed.totalNonFlsaOTHours,
         totalDoubleTimeHours: computed.totalDoubleTimeHours,
         mealBreakPenaltyHours: computed.mealBreakPenaltyHours,
         restBreakPenaltyHours: computed.restBreakPenaltyHours,

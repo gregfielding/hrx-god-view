@@ -465,6 +465,8 @@ export const createDraftTimesheetEntryCallable = onCall(
 
       totalRegularHours: 0,
       totalOTHours: 0,
+      totalFlsaOTHours: 0,
+      totalNonFlsaOTHours: 0,
       totalDoubleTimeHours: 0,
       mealBreakPenaltyHours: 0,
       restBreakPenaltyHours: 0,

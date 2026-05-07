@@ -159,7 +159,29 @@ export interface TimesheetEntryV2 {
 
   /* ---------- Computed (rules engine output, read-only in UI) ----------- */
   totalRegularHours: number;
+  /**
+   * Sum of `totalFlsaOTHours + totalNonFlsaOTHours`. Kept for
+   * compatibility with consumers that don't care about the
+   * federal-vs-state distinction (UI totals header, grid resolver).
+   * Phase 4 Everee submission reads the split fields directly to map
+   * onto `fullyClassifiedHours.type`:
+   *   - FLSA → `FLSA_QUALIFIED_OVERTIME`
+   *   - non-FLSA → `NON_FLSA_QUALIFIED_OVERTIME`
+   */
   totalOTHours: number;
+  /**
+   * OT hours classified by federal weekly cascade (FLSA §207, 40h/wk).
+   * Optional for backward compatibility — entries written before
+   * P2.C ships may not have this field; readers should treat absent
+   * as 0 and rely on the recompute trigger to backfill on next write.
+   */
+  totalFlsaOTHours?: number;
+  /**
+   * OT hours classified by state-specific daily / consecutive-day
+   * rules (CA daily-8, CA 7th-day-first-8h). DEFAULT/NY/TX/MA = 0.
+   * Optional for backward compatibility — see `totalFlsaOTHours`.
+   */
+  totalNonFlsaOTHours?: number;
   totalDoubleTimeHours: number;
   /** CA-only today; DEFAULT rule-set returns 0. */
   mealBreakPenaltyHours: number;

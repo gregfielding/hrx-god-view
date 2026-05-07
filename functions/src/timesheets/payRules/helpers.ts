@@ -243,9 +243,12 @@ export function splitDailyHoursWithThresholds(
  * ------------------------------------------------------------------------- */
 
 /**
- * Per-day classification before the weekly cascade. Used internally
- * by `applyWeeklyOTCascade` so it can reshape regular → OT in-place
- * without losing each day's prior daily-OT/DT.
+ * Per-day classification BEFORE the weekly cascade. The `ot` field
+ * holds OT minutes classified by daily / consecutive-day state rules
+ * (CA daily-8, CA 7th-day-first-8h). DEFAULT-style rule sets pass
+ * `ot: 0` here because they have no daily-OT concept.
+ *
+ * Used as cascade input. The cascade preserves these as `otNonFlsa`.
  */
 export interface PerDayMinutes {
   reg: number;
@@ -254,30 +257,65 @@ export interface PerDayMinutes {
 }
 
 /**
+ * Per-day classification AFTER the weekly cascade — splits OT into
+ * the federal/state buckets the Everee Timesheets API needs for
+ * `fullyClassifiedHours.type`:
+ *
+ *   - `otFlsa`    → minutes flipped from regular by the weekly
+ *                   cascade (federal §207, 40h/wk rule).
+ *                   Maps to Everee's `FLSA_QUALIFIED_OVERTIME`.
+ *   - `otNonFlsa` → minutes that arrived as `ot` in the cascade
+ *                   input (CA daily-8 / 7th-day / etc.).
+ *                   Maps to Everee's `NON_FLSA_QUALIFIED_OVERTIME`.
+ *
+ * Invariant: `otFlsa + otNonFlsa === pre-cascade.ot + flippedFromReg`.
+ */
+export interface PerDayMinutesClassified {
+  reg: number;
+  otFlsa: number;
+  otNonFlsa: number;
+  dt: number;
+}
+
+/**
  * Apply weekly OT cascade across the week's days, in workDate order.
  * Once cumulative `reg` minutes cross `weeklyOTThresholdMinutes`,
- * subsequent regular minutes flip to OT. Daily OT and DT minutes are
- * preserved as-is — they don't count against the weekly regular cap
- * because they're already classified as overtime.
+ * subsequent regular minutes flip to OT (counted as `otFlsa` —
+ * federal weekly rule). Daily OT (`day.ot`, e.g. CA daily-8) and DT
+ * are preserved as-is and counted as `otNonFlsa` / `dt` respectively;
+ * they don't count against the weekly regular cap because they're
+ * already classified as overtime.
  *
- * Returns a new array of `PerDayMinutes` in the same order.
+ * Returns a new array of `PerDayMinutesClassified` in the same order.
  *
- * Example (DEFAULT, threshold 40h = 2400 min):
- *   Mon: 8h reg → 8h reg. cumulative=8h.
- *   Tue: 8h reg → 8h reg. cumulative=16h.
- *   Wed: 8h reg → 8h reg. cumulative=24h.
- *   Thu: 8h reg → 8h reg. cumulative=32h.
- *   Fri: 10h reg → 8h reg + 2h ot (cumulative crosses 40h after 8h).
- *   Sat: 4h reg → 4h ot (already past 40h).
+ * Example (DEFAULT, threshold 40h = 2400 min, no daily-OT):
+ *   Mon: {reg: 8h, ot: 0, dt: 0} → {reg: 8h, otFlsa: 0, otNonFlsa: 0, dt: 0}
+ *   Tue: {reg: 8h, ot: 0, dt: 0} → {reg: 8h, otFlsa: 0, otNonFlsa: 0, dt: 0}
+ *   Wed: {reg: 8h, ot: 0, dt: 0} → {reg: 8h, otFlsa: 0, otNonFlsa: 0, dt: 0}
+ *   Thu: {reg: 8h, ot: 0, dt: 0} → {reg: 8h, otFlsa: 0, otNonFlsa: 0, dt: 0}
+ *   Fri: {reg:10h, ot: 0, dt: 0} → {reg: 8h, otFlsa: 2h, otNonFlsa: 0, dt: 0}
+ *   Sat: {reg: 4h, ot: 0, dt: 0} → {reg: 0, otFlsa: 4h, otNonFlsa: 0, dt: 0}
  *
- * `weeklyOTThresholdMinutes === Infinity` → no-op (return clones).
+ * Example (CA, threshold 40h, with daily-8 OT):
+ *   Mon: {reg: 8h, ot: 4h, dt: 0} → {reg: 8h, otFlsa: 0, otNonFlsa: 4h, dt: 0}
+ *   ...
+ *   Fri: {reg: 8h, ot: 0, dt: 0}  → {reg: 0,  otFlsa: 8h, otNonFlsa: 0,  dt: 0}
+ *     (already past 40h cumulative reg → all of Fri's reg flips to FLSA)
+ *
+ * `weeklyOTThresholdMinutes === Infinity` → no-op (otNonFlsa = day.ot,
+ * otFlsa = 0).
  */
 export function applyWeeklyOTCascade(
   days: ReadonlyArray<PerDayMinutes>,
   weeklyOTThresholdMinutes: number,
-): PerDayMinutes[] {
+): PerDayMinutesClassified[] {
   if (weeklyOTThresholdMinutes === Infinity) {
-    return days.map((d) => ({reg: d.reg, ot: d.ot, dt: d.dt}));
+    return days.map((d) => ({
+      reg: d.reg,
+      otFlsa: 0,
+      otNonFlsa: d.ot,
+      dt: d.dt,
+    }));
   }
   if (!Number.isFinite(weeklyOTThresholdMinutes) || weeklyOTThresholdMinutes < 0) {
     throw new Error(
@@ -285,7 +323,7 @@ export function applyWeeklyOTCascade(
     );
   }
 
-  const out: PerDayMinutes[] = [];
+  const out: PerDayMinutesClassified[] = [];
   let cumulativeReg = 0;
   for (const day of days) {
     const remainingCap = Math.max(0, weeklyOTThresholdMinutes - cumulativeReg);
@@ -293,7 +331,8 @@ export function applyWeeklyOTCascade(
     const flippedToOt = day.reg - newReg;
     out.push({
       reg: newReg,
-      ot: day.ot + flippedToOt,
+      otFlsa: flippedToOt,
+      otNonFlsa: day.ot,
       dt: day.dt,
     });
     cumulativeReg += newReg;

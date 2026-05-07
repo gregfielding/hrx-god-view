@@ -192,9 +192,14 @@ export const caRules: PayRuleSet = {
         result.set(day.entryId, {...EMPTY_BREAKDOWN});
         continue;
       }
+      // CA: daily-8 OT and 7th-consecutive-day OT are NON-FLSA (state
+      // rule, not federal §207). Cascade-flipped OT is FLSA. Total
+      // OT is the sum of both buckets.
       const breakdown: DayBreakdown = {
         totalRegularHours: minutesToHours(c.reg),
-        totalOTHours: minutesToHours(c.ot),
+        totalOTHours: minutesToHours(c.otFlsa + c.otNonFlsa),
+        totalFlsaOTHours: minutesToHours(c.otFlsa),
+        totalNonFlsaOTHours: minutesToHours(c.otNonFlsa),
         totalDoubleTimeHours: minutesToHours(c.dt),
         mealBreakPenaltyHours: computeMealBreakPenalty(day),
         restBreakPenaltyHours: computeRestBreakPenalty(day),

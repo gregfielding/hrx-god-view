@@ -68,9 +68,15 @@ export const defaultRules: PayRuleSet = {
         result.set(day.entryId, {...EMPTY_BREAKDOWN});
         continue;
       }
+      // DEFAULT has no daily-OT, so otNonFlsa is always 0 and the
+      // weekly cascade is the sole OT producer. Both summed and split
+      // fields are stamped to keep the schema invariant
+      // (totalOTHours === totalFlsaOTHours + totalNonFlsaOTHours).
       const breakdown: DayBreakdown = {
         totalRegularHours: minutesToHours(c.reg),
-        totalOTHours: minutesToHours(c.ot),
+        totalOTHours: minutesToHours(c.otFlsa + c.otNonFlsa),
+        totalFlsaOTHours: minutesToHours(c.otFlsa),
+        totalNonFlsaOTHours: minutesToHours(c.otNonFlsa),
         totalDoubleTimeHours: minutesToHours(c.dt),
         mealBreakPenaltyHours: 0,
         restBreakPenaltyHours: 0,

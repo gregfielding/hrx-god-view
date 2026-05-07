@@ -45,6 +45,8 @@ const sampleEntry = {
   ],
   totalRegularHours: 8,
   totalOTHours: 0,
+  totalFlsaOTHours: 0,
+  totalNonFlsaOTHours: 0,
   totalDoubleTimeHours: 0,
   mealBreakPenaltyHours: 0,
   restBreakPenaltyHours: 0,
@@ -248,6 +250,8 @@ describe('timesheets/onTimesheetEntryWriteRecomputePayBreakdown — pure helpers
     const z = {
       totalRegularHours: 0,
       totalOTHours: 0,
+      totalFlsaOTHours: 0,
+      totalNonFlsaOTHours: 0,
       totalDoubleTimeHours: 0,
       mealBreakPenaltyHours: 0,
       restBreakPenaltyHours: 0,
@@ -273,6 +277,18 @@ describe('timesheets/onTimesheetEntryWriteRecomputePayBreakdown — pure helpers
       expect(breakdownsEqual(z, { ...z, mealBreakPenaltyHours: 1 })).to.equal(false);
       expect(breakdownsEqual(z, { ...z, restBreakPenaltyHours: 1 })).to.equal(false);
       expect(breakdownsEqual(z, { ...z, totalDoubleTimeHours: 1 })).to.equal(false);
+      expect(breakdownsEqual(z, { ...z, totalFlsaOTHours: 1 })).to.equal(false);
+      expect(breakdownsEqual(z, { ...z, totalNonFlsaOTHours: 1 })).to.equal(false);
+    });
+
+    it('legacy entries (missing FLSA split fields) re-stamp on next write', () => {
+      // Simulates an entry written before P2.C: stored breakdown
+      // reads as flsa=nonFlsa=0 due to readBreakdown defaults. The
+      // engine's split (e.g. flsa=2, nonFlsa=0) doesn't match → trigger
+      // proceeds with re-stamp. This is the intended backfill path.
+      const legacy = { ...z, totalOTHours: 2 }; // no flsa/nonFlsa fields
+      const computed = { ...z, totalOTHours: 2, totalFlsaOTHours: 2, totalNonFlsaOTHours: 0 };
+      expect(breakdownsEqual(legacy, computed)).to.equal(false);
     });
   });
 
@@ -287,6 +303,8 @@ describe('timesheets/onTimesheetEntryWriteRecomputePayBreakdown — pure helpers
       const b = readBreakdown({});
       expect(b.totalRegularHours).to.equal(0);
       expect(b.totalOTHours).to.equal(0);
+      expect(b.totalFlsaOTHours).to.equal(0);
+      expect(b.totalNonFlsaOTHours).to.equal(0);
       expect(b.totalDoubleTimeHours).to.equal(0);
       expect(b.mealBreakPenaltyHours).to.equal(0);
       expect(b.restBreakPenaltyHours).to.equal(0);

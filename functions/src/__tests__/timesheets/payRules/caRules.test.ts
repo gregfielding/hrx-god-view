@@ -462,6 +462,8 @@ describe('timesheets/payRules/rules/ca — California', () => {
         expect(result.get(d.entryId)).to.deep.equal({
           totalRegularHours: 0,
           totalOTHours: 0,
+          totalFlsaOTHours: 0,
+          totalNonFlsaOTHours: 0,
           totalDoubleTimeHours: 0,
           mealBreakPenaltyHours: 0,
           restBreakPenaltyHours: 0,
@@ -474,6 +476,120 @@ describe('timesheets/payRules/rules/ca — California', () => {
       const result = caRules.computeWeekBreakdown(days, '2026-05-03');
       expect(result.has('a')).to.equal(true);
       expect(result.size).to.equal(1);
+    });
+  });
+
+  describe('FLSA / non-FLSA OT split (P2.C — for Everee fullyClassifiedHours)', () => {
+    it('daily-only OT (10h × 1 day) → all OT is non-FLSA', () => {
+      // 10h: daily classification splits 8 reg + 2 OT. Cumulative reg
+      // = 8h, way under 40h cap → cascade doesn't fire. The 2h OT is
+      // CA daily-8 rule → non-FLSA. totalFlsaOTHours = 0.
+      const days = [day('a', '2026-05-03', 10, { breaks: [meal('11:00', 30)] })];
+      const r = caRules.computeWeekBreakdown(days, '2026-05-03').get('a')!;
+      expect(r.totalOTHours).to.equal(2);
+      expect(r.totalFlsaOTHours).to.equal(0);
+      expect(r.totalNonFlsaOTHours).to.equal(2);
+      expect(r.totalOTHours).to.equal(r.totalFlsaOTHours + r.totalNonFlsaOTHours);
+    });
+
+    it('cascade-only OT (5×10h: cumulative reg crosses 40h) splits both buckets', () => {
+      // Each day: 8 reg + 2 daily-OT (non-FLSA) = 10h.
+      // Cumulative reg over 5 days: 8,16,24,32,40 → cascade JUST hits
+      // threshold at end of day 5. No reg flips → totalFlsa = 0.
+      // Non-FLSA = 5 × 2 = 10h.
+      const days: DayInput[] = [];
+      for (let i = 0; i < 5; i++) {
+        days.push(
+          day('d' + i, `2026-05-0${3 + i}`, 10, { breaks: [meal('11:00', 30)] }),
+        );
+      }
+      const result = caRules.computeWeekBreakdown(days, '2026-05-03');
+      let flsa = 0;
+      let nonFlsa = 0;
+      for (const d of days) {
+        const b = result.get(d.entryId)!;
+        flsa += b.totalFlsaOTHours;
+        nonFlsa += b.totalNonFlsaOTHours;
+        expect(b.totalOTHours).to.equal(b.totalFlsaOTHours + b.totalNonFlsaOTHours);
+      }
+      expect(flsa).to.equal(0);
+      expect(nonFlsa).to.equal(10);
+    });
+
+    it('mixed: 6×10h triggers cascade flip + preserves daily-OT', () => {
+      // Days 1-5: 8 reg + 2 daily-OT (non-FLSA). Cumulative reg = 40h.
+      // Day 6: 10h → daily classification 8 reg + 2 ot. But cumulative
+      // reg already 40h → all 8h reg flips to FLSA OT.
+      // Final: totalFlsa = 8h (day 6's reg flipped),
+      //        totalNonFlsa = 6×2 = 12h (every day's daily-OT preserved).
+      const days: DayInput[] = [];
+      for (let i = 0; i < 6; i++) {
+        days.push(
+          day('d' + i, `2026-05-0${3 + i}`, 10, { breaks: [meal('11:00', 30)] }),
+        );
+      }
+      const result = caRules.computeWeekBreakdown(days, '2026-05-03');
+      let flsa = 0;
+      let nonFlsa = 0;
+      for (const d of days) {
+        const b = result.get(d.entryId)!;
+        flsa += b.totalFlsaOTHours;
+        nonFlsa += b.totalNonFlsaOTHours;
+      }
+      expect(flsa).to.equal(8);
+      expect(nonFlsa).to.equal(12);
+
+      // Day 6 specifically: 0 reg, 8 FLSA OT, 2 non-FLSA OT.
+      const d6 = result.get('d5')!;
+      expect(d6.totalRegularHours).to.equal(0);
+      expect(d6.totalFlsaOTHours).to.equal(8);
+      expect(d6.totalNonFlsaOTHours).to.equal(2);
+    });
+
+    it('7th-consecutive-day OT is non-FLSA', () => {
+      // 7 × 8h consecutive days. Days 1-6: each 8 reg (no daily-OT,
+      // since exactly 8h). Day 7 (7th consecutive): 7th-day rule →
+      // 8h OT (non-FLSA, state rule), 0 reg.
+      // Cascade input: reg = [8,8,8,8,8,8,0]; ot = [0,0,0,0,0,0,8].
+      // Cumulative reg through day 6: 48h → day 6's reg (8h) flips
+      // to FLSA OT. Final:
+      //   day 5 (i=5, 6th day): reg flipped → totalFlsa = 8.
+      //   day 6 (i=6, 7th day): preserved 7th-day OT → totalNonFlsa = 8.
+      const days: DayInput[] = [];
+      for (let i = 0; i < 7; i++) {
+        const d = i + 3;
+        days.push(
+          day('d' + i, `2026-05-0${d}`, 8, { breaks: [meal('11:00', 30)] }),
+        );
+      }
+      const result = caRules.computeWeekBreakdown(days, '2026-05-03');
+      const d5 = result.get('d5')!;
+      const d6 = result.get('d6')!;
+      expect(d5.totalFlsaOTHours, '6th day reg flipped to FLSA').to.equal(8);
+      expect(d5.totalNonFlsaOTHours).to.equal(0);
+      expect(d6.totalFlsaOTHours, '7th-day OT is state rule, not FLSA').to.equal(0);
+      expect(d6.totalNonFlsaOTHours).to.equal(8);
+    });
+
+    it('per-day invariant holds: totalOTHours = totalFlsaOTHours + totalNonFlsaOTHours', () => {
+      // Soak test across a non-trivial mix of day shapes.
+      const days = [
+        day('a', '2026-05-03', 14, { breaks: [meal('11:00', 30)] }), // 8 reg + 4 ot + 2 dt
+        day('b', '2026-05-04', 0),
+        day('c', '2026-05-05', 10, { breaks: [meal('11:00', 30)] }), // 8 reg + 2 ot
+        day('d', '2026-05-06', 8, { breaks: [meal('11:00', 30)] }), // all reg
+        day('e', '2026-05-07', 12, { breaks: [meal('11:00', 30)] }), // 8 reg + 4 ot
+        day('f', '2026-05-08', 6, { breaks: [meal('11:00', 30)] }),
+        day('g', '2026-05-09', 4, { breaks: [meal('11:00', 30)] }),
+      ];
+      const result = caRules.computeWeekBreakdown(days, '2026-05-03');
+      for (const d of days) {
+        const b = result.get(d.entryId)!;
+        expect(b.totalOTHours).to.be.closeTo(
+          b.totalFlsaOTHours + b.totalNonFlsaOTHours,
+          0.001,
+        );
+      }
     });
   });
 });

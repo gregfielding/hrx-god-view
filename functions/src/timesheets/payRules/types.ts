@@ -86,6 +86,17 @@ export interface DayInput {
  * Per-day output. The engine guarantees:
  *   - `regular + ot + dt` exactly equals `workedMinutes / 60` (within
  *     standard floating-point tolerance, ~1e-9).
+ *   - `totalOTHours === totalFlsaOTHours + totalNonFlsaOTHours` (within
+ *     ~1e-9). The split fields exist so Phase 4 can submit hours
+ *     under the right `fullyClassifiedHours.type` enum on Everee's
+ *     `/integration/v1/labor/timesheet/worked-shifts`:
+ *       - FLSA OT (federal weekly cascade) → `FLSA_QUALIFIED_OVERTIME`
+ *       - non-FLSA OT (state-level e.g. CA daily-8 / 7th-day) →
+ *         `NON_FLSA_QUALIFIED_OVERTIME`
+ *     Without this split, Everee can't compute taxes / reports
+ *     correctly. The summed `totalOTHours` field is preserved for
+ *     UI consumers (resolver, totals header) so the split is
+ *     additive — older code keeps working unchanged.
  *   - Penalties are SEPARATE — they're additional pay obligations
  *     (typically 1 hour of regular-rate pay each), not subtractions
  *     from worked hours.
@@ -97,7 +108,31 @@ export interface DayInput {
  */
 export interface DayBreakdown {
   totalRegularHours: number;
+  /**
+   * Sum of `totalFlsaOTHours + totalNonFlsaOTHours`. Kept for
+   * backward compatibility with consumers that don't care about the
+   * federal/state distinction (UI totals, grid resolver). Phase 4
+   * Everee submission reads the split fields directly.
+   */
   totalOTHours: number;
+  /**
+   * OT hours classified by the federal weekly cascade (FLSA §207 —
+   * over 40h/wk regular). All states accumulate FLSA OT once the
+   * cumulative regular threshold is crossed; in DEFAULT/NY/TX/MA this
+   * is the ONLY OT source.
+   *
+   * Maps to Everee's `FLSA_QUALIFIED_OVERTIME` classification.
+   */
+  totalFlsaOTHours: number;
+  /**
+   * OT hours classified by state-specific daily / consecutive-day
+   * rules that don't require crossing 40h/wk. CA's daily-8 and
+   * 7th-consecutive-day-first-8h rules produce non-FLSA OT.
+   * DEFAULT/NY/TX/MA return 0 here today.
+   *
+   * Maps to Everee's `NON_FLSA_QUALIFIED_OVERTIME` classification.
+   */
+  totalNonFlsaOTHours: number;
   totalDoubleTimeHours: number;
   /** CA-only today; DEFAULT/NY/TX/MA return 0. */
   mealBreakPenaltyHours: number;
@@ -162,6 +197,8 @@ export interface PayRuleSet {
 export const EMPTY_BREAKDOWN: Readonly<DayBreakdown> = Object.freeze({
   totalRegularHours: 0,
   totalOTHours: 0,
+  totalFlsaOTHours: 0,
+  totalNonFlsaOTHours: 0,
   totalDoubleTimeHours: 0,
   mealBreakPenaltyHours: 0,
   restBreakPenaltyHours: 0,
