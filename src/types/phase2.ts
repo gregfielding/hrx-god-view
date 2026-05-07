@@ -223,6 +223,17 @@ export interface ShiftTemplateFormData {
   };
 }
 
+/**
+ * @deprecated Embedded-array timesheet model — never used in the live
+ * codebase (zero non-test imports as of TS.1.P1.A). Superseded by the
+ * doc-per-row V2 model in `src/types/recruiter/timesheet.ts`
+ * (`TimesheetEntryV2`, `TimesheetBatch`, `TimesheetAdjustment`).
+ *
+ * Kept here only for the deprecation window so an inadvertent old import
+ * doesn't immediately break a build. Delete in the cleanup PR after TS.1
+ * launch — verify zero imports first with
+ * `rg "from .*phase2.*\bTimesheet(Entry)?\b"` and confirm zero matches.
+ */
 export interface TimesheetEntry {
   date: string; // ISO date
   clockIn?: string; // HH:mm format
@@ -237,6 +248,10 @@ export interface TimesheetEntry {
   notes?: string;
 }
 
+/**
+ * @deprecated See `TimesheetEntry` above — same deprecation notice. Replaced
+ * by `TimesheetEntryV2` + `TimesheetBatch` in `src/types/recruiter/timesheet.ts`.
+ */
 export interface Timesheet {
   id: string;
   tenantId: string;

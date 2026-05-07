@@ -55,6 +55,7 @@ import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
+import TableChartIcon from '@mui/icons-material/TableChart';
 import PersonIcon from '@mui/icons-material/Person';
 import CheckIcon from '@mui/icons-material/Check';
 import Menu from '@mui/material/Menu';
@@ -1062,6 +1063,7 @@ const Layout: React.FC = function Layout() {
       'Companies': <BusinessIcon />,
       'Job Orders': <AssignmentIcon />,
       'Shifts': <SwapHorizIcon />,
+      'Timesheets': <TableChartIcon />,
       'Flex Jobs': <AssignmentIcon />,
       'Jobs Board': <WorkIcon />,
       'Sales CRM': <SellIcon />,

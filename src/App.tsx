@@ -151,6 +151,7 @@ import RecruiterDashboard from './pages/RecruiterDashboard';
 import Shifts from './pages/Shifts';
 import ShiftsList from './pages/ShiftsList';
 import ShiftsCalendar from './pages/ShiftsCalendar';
+import Timesheets from './pages/Timesheets';
 import Workforce from './pages/Workforce';
 import WorkforceEmployeeReadiness from './pages/WorkforceEmployeeReadiness';
 import WorkforceJobReadiness from './pages/WorkforceJobReadiness';
@@ -1333,6 +1334,17 @@ function App() {
               after one release with no traffic on /active. */}
           <Route path="active" element={<Navigate to="/shifts/list" replace />} />
         </Route>
+
+        {/* Timesheets — top-level recruiter/admin timesheet workspace.
+            P1.A ships the route + page shell only; the inline-editable
+            grid, filter bar, totals header, and Everee batch submission
+            arrive in TS.1.P1.C and onwards. Sec 5+ matches the sidebar
+            gate in `menuGenerator.ts`. */}
+        <Route path="timesheets" element={
+          <ProtectedRoute requiredSecurityLevel="5">
+            <Timesheets />
+          </ProtectedRoute>
+        } />
 
         {/* Workforce — Phase D CSA workspace.
             Same Outlet pattern as /shifts: parent layout with two pill tabs

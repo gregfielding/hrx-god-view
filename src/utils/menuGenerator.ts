@@ -253,6 +253,18 @@ export async function generateMenuItems(
         icon: 'swap_horiz',
         requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
       }] : []),
+      // Timesheets — TS.1 recruiter/admin timesheet workspace. Sits directly
+      // under Shifts since both operate over the same shift × assignment
+      // subgraph (Shifts schedules them, Timesheets records actuals). Sec 5+
+      // only — matches the route gate in App.tsx. P1.A ships the page shell
+      // only; the inline grid, filters, totals, and Everee submission arrive
+      // in subsequent phases.
+      ...((effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) ? [{
+        text: 'Timesheets',
+        to: '/timesheets',
+        icon: 'table_chart',
+        requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
+      }] : []),
       // Workforce — Phase D CSA workspace (Employee Readiness + Job Readiness
       // queues). Sits directly under Shifts because both are operational
       // dashboards for internal staff over the same worker × job-order graph.
