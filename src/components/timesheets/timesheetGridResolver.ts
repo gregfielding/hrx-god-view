@@ -142,27 +142,77 @@ function isoDateGte(a: string, b: string): boolean {
   return a >= b;
 }
 
+/** YYYY-MM-DD format guard for Firestore date strings. Permissive on
+ *  surrounding whitespace; rejects everything else (timestamps,
+ *  shorthand "5/8/26", empty strings, etc.). */
+function isYyyyMmDdString(value: unknown): value is string {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
+}
+
+/**
+ * Result of the assignment-level overlap check. `overlaps: true` means
+ * the assignment lifecycle touches the period and should proceed to
+ * the per-day expansion. `warning` is non-null when the assignment
+ * was dropped due to a malformed date — the caller surfaces these in
+ * the grid's soft-errors banner so legacy docs aren't silently
+ * disappearing.
+ *
+ * Why a discriminated result instead of a bare boolean: silently
+ * dropping a malformed assignment was the failure mode flagged in the
+ * P1.C.2 build review ("not silently dropped"). Surfacing the
+ * `warning` lets the operator see exactly why a worker isn't
+ * appearing without diving into Firestore.
+ */
+type OverlapCheck =
+  | { overlaps: true; warning: null }
+  | { overlaps: false; warning: string | null };
+
 /**
  * Assignment-level date overlap: `startDate <= periodEnd AND (endDate >=
  * periodStart OR endDate is unset)`. Both endpoints are inclusive on
  * both sides.
  *
- * Returns `false` when `startDate` is missing/malformed — a valid
- * timesheet flow requires a known start date, and a missing one would
- * silently include every assignment which is worse than dropping a few.
+ * Soft-error semantics: dropped assignments return a `warning` when
+ * the cause was a malformed date (`startDate` missing/bad,
+ * `endDate` set but bad). True out-of-range drops return `null` —
+ * those are healthy "didn't match this period" cases that don't
+ * deserve a warning chip.
  */
 function assignmentOverlapsPeriod(
+  assignmentId: string,
   assignment: Pick<Assignment, 'startDate' | 'endDate'>,
   period: PeriodRange,
-): boolean {
+): OverlapCheck {
   const start = assignment.startDate;
-  if (!start || typeof start !== 'string') return false;
-  if (!isoDateLte(start, period.end)) return false;
-  const end = assignment.endDate;
-  if (end && typeof end === 'string') {
-    if (!isoDateGte(end, period.start)) return false;
+  if (!isYyyyMmDdString(start)) {
+    return {
+      overlaps: false,
+      warning: `Assignment ${assignmentId} has a missing or malformed startDate (${
+        start === undefined ? 'unset' : `"${String(start)}"`
+      }) — dropped from the period. Fix the assignment doc to bring it back.`,
+    };
   }
-  return true;
+  const end = assignment.endDate;
+  if (end !== undefined && end !== null && end !== '' && !isYyyyMmDdString(end)) {
+    return {
+      overlaps: false,
+      warning: `Assignment ${assignmentId} has a malformed endDate ("${String(
+        end,
+      )}") — dropped from the period. Expected YYYY-MM-DD or unset.`,
+    };
+  }
+
+  // Both dates parsed cleanly (or endDate is intentionally unset for
+  // open-ended assignments). Now do the actual overlap check.
+  if (!isoDateLte(start.trim(), period.end)) {
+    return { overlaps: false, warning: null };
+  }
+  if (isYyyyMmDdString(end)) {
+    if (!isoDateGte(end.trim(), period.start)) {
+      return { overlaps: false, warning: null };
+    }
+  }
+  return { overlaps: true, warning: null };
 }
 
 /**
@@ -380,9 +430,24 @@ export async function resolveTimesheetGrid(
   // lifecycle doesn't touch the period at all (CRITICAL — prevents the
   // "phantom rows from a 3-month-old assignment" scenario flagged in
   // the build review).
-  const overlapping = rawAssignments.filter((a) =>
-    assignmentOverlapsPeriod(a, period),
-  );
+  //
+  // Soft-error pass: assignments dropped due to malformed dates
+  // generate a warning the grid surfaces in its banner — silently
+  // dropping them was the failure mode flagged on the P1.C.2 spot
+  // check.
+  const errors: string[] = [];
+  const overlapping: (Assignment & { id: string })[] = [];
+
+  for (const a of rawAssignments) {
+    const check = assignmentOverlapsPeriod(a.id, a, period);
+    if (check.overlaps) {
+      overlapping.push(a);
+    } else if (check.warning) {
+      errors.push(check.warning);
+    }
+    // check.overlaps === false && warning === null is a healthy
+    // out-of-range drop (no warning).
+  }
 
   // Step 2b: expand each surviving assignment across the period via
   // weeklySchedule[dow], skipping disabled days. The DOW enabled flag
@@ -397,18 +462,22 @@ export async function resolveTimesheetGrid(
     scheduled: ScheduledShift;
   };
   const tuples: Tuple[] = [];
-  const errors: string[] = [];
 
   for (const a of overlapping) {
     let perAssignmentDayCount = 0;
+    // We've already validated a.startDate via the overlap check, so
+    // this typeof guard is a defensive belt-and-suspenders rather
+    // than a real branch — keeps the linter and the readers happy.
+    const startStr = isYyyyMmDdString(a.startDate) ? a.startDate.trim() : null;
+    const endStr =
+      isYyyyMmDdString(a.endDate) ? a.endDate.trim() : null;
+
     for (const d of periodDates) {
       // Day must also be inside the assignment's own active window.
       // Otherwise, a Mon/Wed schedule on an assignment that ended on
       // Tuesday would still yield a Wed row.
-      if (!isoDateGte(d, a.startDate ?? '')) continue;
-      if (a.endDate && typeof a.endDate === 'string' && !isoDateLte(d, a.endDate)) {
-        continue;
-      }
+      if (startStr && !isoDateGte(d, startStr)) continue;
+      if (endStr && !isoDateLte(d, endStr)) continue;
       const scheduled = scheduledShiftForDate(a, d);
       if (!scheduled) continue;
       tuples.push({ assignment: a, workDate: d, scheduled });

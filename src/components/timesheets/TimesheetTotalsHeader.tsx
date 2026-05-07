@@ -29,7 +29,6 @@ import {
 import {
   AccessTime as AccessTimeIcon,
   Group as GroupIcon,
-  Pending as PendingIcon,
 } from '@mui/icons-material';
 
 import {
@@ -92,11 +91,19 @@ function formatHours(hours: number): string {
   return hours.toFixed(1);
 }
 
-/** Friendly label for the per-status chip group. Mirrors the build
- *  plan's status vocabulary; "no_entry" reads as "no entry yet" since
- *  it's the only non-`TimesheetEntryStatus` value. */
-const STATUS_LABELS: Record<TimesheetRowDisplayStatus, string> = {
-  no_entry: 'no entry yet',
+/**
+ * Friendly label + visual treatment for each persisted-entry status
+ * chip in the header. `no_entry` is intentionally absent from this
+ * map and from `STATUS_ORDER` below — empty rows aren't real entries
+ * and shouldn't generate an aggregate chip in the header (per the
+ * P1.C.2 spot-check feedback). Empty rows still contribute to worker
+ * count and scheduled-hours totals; they just don't get a header
+ * chip. The per-row status pill in the table itself still reads "—"
+ * for empty rows (handled in `TimesheetGrid`'s StatusPill).
+ */
+type ChipStatus = Exclude<TimesheetRowDisplayStatus, 'no_entry'>;
+
+const STATUS_LABELS: Record<ChipStatus, string> = {
   draft: 'draft',
   submitted: 'submitted',
   approved: 'approved',
@@ -108,10 +115,9 @@ const STATUS_LABELS: Record<TimesheetRowDisplayStatus, string> = {
 /** Visual treatment for each status chip. Matches the in-row pill
  *  colors so the header reads as a summary of the table below it. */
 const STATUS_COLORS: Record<
-  TimesheetRowDisplayStatus,
+  ChipStatus,
   'default' | 'primary' | 'success' | 'warning' | 'error' | 'info'
 > = {
-  no_entry: 'default',
   draft: 'default',
   submitted: 'info',
   approved: 'primary',
@@ -120,11 +126,10 @@ const STATUS_COLORS: Record<
   error: 'error',
 };
 
-/** Stable status order — never alphabetical; the lifecycle reads
- *  left-to-right (no_entry → draft → submitted → approved → ...).
- *  Statuses absent from `byStatus` are skipped (no zero-count chips). */
-const STATUS_ORDER: TimesheetRowDisplayStatus[] = [
-  'no_entry',
+/** Stable lifecycle order. Statuses absent from `byStatus` are skipped
+ *  (no zero-count chips). Reads left-to-right as the entry's natural
+ *  progression: draft → submitted → approved → sent → paid → error. */
+const STATUS_ORDER: ChipStatus[] = [
   'draft',
   'submitted',
   'approved',
@@ -199,8 +204,7 @@ export const TimesheetTotalsHeader: React.FC<TimesheetTotalsHeaderProps> = ({
                 key={status}
                 size="small"
                 color={STATUS_COLORS[status]}
-                variant={status === 'no_entry' ? 'outlined' : 'filled'}
-                icon={status === 'no_entry' ? <PendingIcon fontSize="small" /> : undefined}
+                variant="filled"
                 label={`${count} ${STATUS_LABELS[status]}`}
               />
             );
