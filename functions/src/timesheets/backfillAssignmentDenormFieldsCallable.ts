@@ -517,14 +517,30 @@ export async function resolveMissingDenormUpdates(
     result.outcomes.hiringEntityId = 'already_set';
   }
 
+  // Per-field try/catch from here down: a malformed location doc that
+  // throws while resolving `worksiteState` must not prevent
+  // `workerDisplayName` from being stamped from the worker user doc
+  // (and vice versa). The individual readers (`readJoDoc` etc.) already
+  // tolerate per-doc read failures internally; this outer wrap is the
+  // belt-and-suspenders for any unexpected throw inside a resolver.
+
   if (!pickStringField(assignmentData, ['worksiteState'])) {
     result.hadMissingFields = true;
-    const v = await resolveWorksiteState(args0);
-    if (v) {
-      result.updates.worksiteState = v;
-      result.outcomes.worksiteState = 'stamped';
-    } else {
+    try {
+      const v = await resolveWorksiteState(args0);
+      if (v) {
+        result.updates.worksiteState = v;
+        result.outcomes.worksiteState = 'stamped';
+      } else {
+        result.outcomes.worksiteState = 'unresolvable';
+      }
+    } catch (e) {
       result.outcomes.worksiteState = 'unresolvable';
+      logger.warn('[TS.1.P1.B] worksiteState resolver threw', {
+        tenantId,
+        assignmentId,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   } else {
     result.outcomes.worksiteState = 'already_set';
@@ -532,12 +548,21 @@ export async function resolveMissingDenormUpdates(
 
   if (!pickStringField(assignmentData, ['worksiteDisplayName'])) {
     result.hadMissingFields = true;
-    const v = await resolveWorksiteDisplayName(args0);
-    if (v) {
-      result.updates.worksiteDisplayName = v;
-      result.outcomes.worksiteDisplayName = 'stamped';
-    } else {
+    try {
+      const v = await resolveWorksiteDisplayName(args0);
+      if (v) {
+        result.updates.worksiteDisplayName = v;
+        result.outcomes.worksiteDisplayName = 'stamped';
+      } else {
+        result.outcomes.worksiteDisplayName = 'unresolvable';
+      }
+    } catch (e) {
       result.outcomes.worksiteDisplayName = 'unresolvable';
+      logger.warn('[TS.1.P1.B] worksiteDisplayName resolver threw', {
+        tenantId,
+        assignmentId,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   } else {
     result.outcomes.worksiteDisplayName = 'already_set';
@@ -545,12 +570,21 @@ export async function resolveMissingDenormUpdates(
 
   if (!pickStringField(assignmentData, ['workerDisplayName'])) {
     result.hadMissingFields = true;
-    const v = await resolveWorkerDisplayName(args0);
-    if (v) {
-      result.updates.workerDisplayName = v;
-      result.outcomes.workerDisplayName = 'stamped';
-    } else {
+    try {
+      const v = await resolveWorkerDisplayName(args0);
+      if (v) {
+        result.updates.workerDisplayName = v;
+        result.outcomes.workerDisplayName = 'stamped';
+      } else {
+        result.outcomes.workerDisplayName = 'unresolvable';
+      }
+    } catch (e) {
       result.outcomes.workerDisplayName = 'unresolvable';
+      logger.warn('[TS.1.P1.B] workerDisplayName resolver threw', {
+        tenantId,
+        assignmentId,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   } else {
     result.outcomes.workerDisplayName = 'already_set';
@@ -558,12 +592,21 @@ export async function resolveMissingDenormUpdates(
 
   if (pickNumberField(assignmentData, ['shiftBreakDefaultMinutes']) == null) {
     result.hadMissingFields = true;
-    const v = await resolveShiftBreakDefaultMinutes(args0);
-    if (v != null) {
-      result.updates.shiftBreakDefaultMinutes = v;
-      result.outcomes.shiftBreakDefaultMinutes = 'stamped';
-    } else {
+    try {
+      const v = await resolveShiftBreakDefaultMinutes(args0);
+      if (v != null) {
+        result.updates.shiftBreakDefaultMinutes = v;
+        result.outcomes.shiftBreakDefaultMinutes = 'stamped';
+      } else {
+        result.outcomes.shiftBreakDefaultMinutes = 'unresolvable';
+      }
+    } catch (e) {
       result.outcomes.shiftBreakDefaultMinutes = 'unresolvable';
+      logger.warn('[TS.1.P1.B] shiftBreakDefaultMinutes resolver threw', {
+        tenantId,
+        assignmentId,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   } else {
     result.outcomes.shiftBreakDefaultMinutes = 'already_set';
