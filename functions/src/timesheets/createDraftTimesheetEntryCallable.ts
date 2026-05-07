@@ -362,7 +362,15 @@ async function resolveDenormFallbacks(
  * ------------------------------------------------------------------------- */
 
 export const createDraftTimesheetEntryCallable = onCall(
-  { cors: true, memory: '256MiB', timeoutSeconds: 30 },
+  // Memory: rely on the 512MiB global default set in index.ts. The
+  // earlier 256MiB override was tuned to the working set of THIS
+  // callable, but the deployed container bundles all 150+ functions
+  // in functions/src/index.ts, which alone needs ~285 MiB to bootstrap
+  // (dotenv + SendGrid + feature flags + firestoreTriggers). Cold
+  // starts under 256MiB OOM at the readiness probe and the request
+  // 500s before the handler ever runs. See logs from
+  // createdrafttimesheetentrycallable on 2026-05-07.
+  { cors: true, timeoutSeconds: 30 },
   async (request): Promise<CreateDraftTimesheetEntryResult> => {
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required.');
