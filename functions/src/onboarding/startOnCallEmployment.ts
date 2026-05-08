@@ -114,29 +114,6 @@ export async function runStartOnCallEmploymentFlow(
      * actor having opted out.
      */
     suppressNotifications?: boolean;
-    /**
-     * When true, skip ONLY the pre-Everee payroll invite
-     * (`runPayrollOnboardingInviteForOnCallEmployment`). Keep
-     * `dispatchOnCallEmploymentStarted` ("you're hired" framing —
-     * meaningful and non-redundant) and
-     * `runEvereePayrollOnboardingInviteAfterOnCallProvision` (post-Everee
-     * invite with the real `/c1/workers/payroll/{evereeTenantId}` URL —
-     * the useful follow-up if the worker doesn't complete the in-session
-     * Everee embed redirect).
-     *
-     * Use case: apply-wizard-driven auto-onboard. The wizard redirects
-     * the worker straight to the Everee embed after submit, so the
-     * pre-Everee invite SMS arriving while they're literally still on
-     * the success screen is confusing duplication. The post-Everee
-     * invite is the authoritative "complete your payroll" message and
-     * can stand alone.
-     *
-     * Distinct from `suppressNotifications` (bulk-migration use case
-     * which suppresses ALL three customer-facing dispatches) — this is
-     * a narrower carve-out that preserves the "you're hired" + the
-     * embed-URL invite while stripping the duplicative pre-Everee SMS.
-     */
-    suppressInflightPayrollInvite?: boolean;
   }
 ): Promise<{
   pipelineId: string;
@@ -165,7 +142,6 @@ export async function runStartOnCallEmploymentFlow(
     triggerSource: triggerSourceOverride,
     applicationId,
     suppressNotifications,
-    suppressInflightPayrollInvite,
   } = args;
   const effectiveTriggerSource: WorkerOnboardingPipelineTriggerSource =
     triggerSourceOverride ?? "on_call";
@@ -351,47 +327,19 @@ export async function runStartOnCallEmploymentFlow(
       });
     }
 
-    if (suppressInflightPayrollInvite) {
-      // Audit row: the pre-Everee payroll invite was deliberately skipped
-      // because the calling surface (typically apply-wizard auto-onboard)
-      // redirects the worker straight to the Everee embed in-session. The
-      // post-Everee invite still fires below — that one carries the real
-      // `/c1/workers/payroll/{evereeTenantId}` URL and is the authoritative
-      // "complete your payroll" follow-up.
-      await writeOnboardingAutomationDispatchLog({
+    try {
+      await runPayrollOnboardingInviteForOnCallEmployment({
         tenantId,
-        eventType: "payroll_onboarding_invite_needed",
-        correlationKey: `payroll_pre_everee_inflight_suppressed__${ON_CALL_AUDIT_V}__${tenantId}__${pipelineId}`,
-        assignmentId: "",
         userId: trimmedUser,
-        outcome: "skipped",
-        skipReason: "suppressInflightPayrollInvite=true (apply-driven auto-onboard; wizard handles in-session redirect)",
         hiringEntityId: trimmedEntity,
-        details: {
-          pipelineId,
-          entityKey,
-          triggerSource: effectiveTriggerSource,
-          source: "on_call_employment_pre_everee",
-          // Post-Everee invite still runs — see
-          // runEvereePayrollOnboardingInviteAfterOnCallProvision below.
-          postEvereeInviteWillStillFire: true,
-        },
+        contextLabel: "your on-call employment",
       });
-    } else {
-      try {
-        await runPayrollOnboardingInviteForOnCallEmployment({
-          tenantId,
-          userId: trimmedUser,
-          hiringEntityId: trimmedEntity,
-          contextLabel: "your on-call employment",
-        });
-      } catch (e: unknown) {
-        logger.warn("runPayrollOnboardingInviteForOnCallEmployment failed", {
-          tenantId,
-          pipelineId,
-          error: e instanceof Error ? e.message : String(e),
-        });
-      }
+    } catch (e: unknown) {
+      logger.warn("runPayrollOnboardingInviteForOnCallEmployment failed", {
+        tenantId,
+        pipelineId,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   }
 
