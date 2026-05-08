@@ -27,6 +27,11 @@ import {
 } from '../messaging/twilioSecrets';
 import { userInInterviewReinviteCooldown } from './interviewInviteCooldown';
 import { userHasWorkerAiPrescreenWithFallback } from './hasWorkerAiPrescreenDenormalized';
+import {
+  userIsInActiveMigration,
+  AUTO_INTERVIEW_SUPPRESSION_OUTCOME,
+  MIGRATION_SUPPRESSION_LOG_TAG,
+} from '../messaging/migrationSuppress';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -143,6 +148,30 @@ export const onUserCreatedScheduleAutoInterviewInvite = onDocumentCreated(
     if (data.applyResumeSnapshot && typeof data.applyResumeSnapshot === 'object') return;
     if (data.applyWizardReminderPending === true) return;
 
+    // Bulk-migration suppression gate (BI.0 / BI.1). When a user doc is
+    // created with `migrationSource` matching an active-migration prefix,
+    // refuse to schedule the auto interview invite — the migration tool
+    // owns its own messaging cadence. Mark `interviewStatus: 'skipped'`
+    // with `interviewSource: 'active_migration'` so the doc never enters
+    // the scheduler's `never_invited` query result set.
+    if (userIsInActiveMigration(data)) {
+      await snap.ref.set(
+        {
+          interviewStatus: 'skipped',
+          interviewSource: 'active_migration',
+          interviewInviteLastOutcome: AUTO_INTERVIEW_SUPPRESSION_OUTCOME,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      logger.info(`autoInterviewInvite: suppressed (${MIGRATION_SUPPRESSION_LOG_TAG})`, {
+        userId: event.params.userId,
+        migrationSource: String(data.migrationSource || ''),
+        gate: 'trigger',
+      });
+      return;
+    }
+
     if (userInInterviewReinviteCooldown(data)) {
       await snap.ref.set(
         {
@@ -235,6 +264,7 @@ export const processScheduledInterviewInvites = onSchedule(
     let sent = 0;
     let deferred = 0;
     let skipped = 0;
+    let suppressedActiveMigration = 0;
 
     for (const docSnap of q.docs) {
       const uid = docSnap.id;
@@ -242,6 +272,32 @@ export const processScheduledInterviewInvites = onSchedule(
 
       if (data.interviewStatus !== 'never_invited') {
         skipped += 1;
+        continue;
+      }
+
+      // Bulk-migration suppression gate. The load-bearing case: an
+      // existing user doc already had `interviewStatus: 'never_invited'`
+      // and `interviewInviteScheduledAt <= now`, and the migration tool
+      // subsequently stamped `migrationSource: 'tempworks_*' | 'bi1_*'`.
+      // Without this gate the scheduler would happily ship the
+      // pre-existing invite mid-migration. In-loop skip + per-doc state
+      // change so the row leaves the query result set going forward.
+      if (userIsInActiveMigration(data)) {
+        await docSnap.ref.set(
+          {
+            interviewStatus: 'skipped',
+            interviewSource: 'active_migration',
+            interviewInviteLastOutcome: AUTO_INTERVIEW_SUPPRESSION_OUTCOME,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+        suppressedActiveMigration += 1;
+        logger.info(`autoInterviewInvite: suppressed (${MIGRATION_SUPPRESSION_LOG_TAG})`, {
+          uid,
+          migrationSource: String(data.migrationSource || ''),
+          gate: 'scheduler',
+        });
         continue;
       }
 
@@ -465,6 +521,12 @@ export const processScheduledInterviewInvites = onSchedule(
       sent += 1;
     }
 
-    logger.info('autoInterviewInvite: batch done', { scanned: q.size, sent, deferred, skipped });
+    logger.info('autoInterviewInvite: batch done', {
+      scanned: q.size,
+      sent,
+      deferred,
+      skipped,
+      suppressedActiveMigration,
+    });
   },
 );
