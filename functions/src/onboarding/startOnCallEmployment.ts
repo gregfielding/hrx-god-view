@@ -95,6 +95,25 @@ export async function runStartOnCallEmploymentFlow(
     authForAccusource?: AuthForAccusource;
     /** When true (dedicated on-call onboarding entrypoint), require tenant membership for the worker and entity on-call eligibility. */
     enforceOnCallOnboardingPolicy?: boolean;
+    /**
+     * When true, skip all worker-facing notification dispatches (recruiter
+     * audit "on-call employment started" email/SMS, pre-Everee payroll invite,
+     * post-Everee payroll invite). Pipeline + entity_employment + Everee
+     * provisioning still run; only the customer-facing messaging is held back.
+     *
+     * Use case: bulk migrations (Tempworks → HRX → Everee) where workers
+     * receive a single curated migration message via a separate mass-send
+     * tool, and the per-row default "complete your C1 onboarding" template
+     * would arrive without context. Also avoids hitting Twilio's 1-msg/sec
+     * sender-ID rate limit when fan-out is high (3,000 workers × 10 in-flight
+     * concurrency = burst 10/sec without this flag).
+     *
+     * Audit trail: when suppressed, a single dispatch log row with
+     * `outcome: "suppressed"` and `eventType: "on_call_notifications_suppressed"`
+     * records the deliberate skip so the audit trail is honest about the
+     * actor having opted out.
+     */
+    suppressNotifications?: boolean;
   }
 ): Promise<{
   pipelineId: string;
@@ -122,6 +141,7 @@ export async function runStartOnCallEmploymentFlow(
     enforceOnCallOnboardingPolicy,
     triggerSource: triggerSourceOverride,
     applicationId,
+    suppressNotifications,
   } = args;
   const effectiveTriggerSource: WorkerOnboardingPipelineTriggerSource =
     triggerSourceOverride ?? "on_call";
@@ -242,37 +262,65 @@ export async function runStartOnCallEmploymentFlow(
     },
   });
 
-  try {
-    await dispatchOnCallEmploymentStarted({
+  if (suppressNotifications) {
+    // Honest audit trail: record that we deliberately skipped the customer-
+    // facing dispatches. Single row covers both pre- and post-Everee invites
+    // so the trail doesn't lie about which step "succeeded" silently.
+    await writeOnboardingAutomationDispatchLog({
       tenantId,
+      eventType: "on_call_notifications_suppressed",
+      correlationKey: `on_call_notifications_suppressed__${ON_CALL_AUDIT_V}__${tenantId}__${pipelineId}`,
+      assignmentId: "",
       userId: trimmedUser,
-      pipelineId,
+      outcome: "skipped",
+      skipReason: "suppressNotifications=true (caller opted out of customer-facing dispatches)",
       hiringEntityId: trimmedEntity,
-      entityName,
-      entityKey,
-      initiatedByUid,
+      details: {
+        pipelineId,
+        entityKey,
+        initiatedByUid,
+        // Explicit list of dispatches that were skipped — useful when
+        // grepping logs to confirm a specific run's behavior.
+        suppressedDispatches: [
+          "dispatchOnCallEmploymentStarted",
+          "runPayrollOnboardingInviteForOnCallEmployment",
+          "runEvereePayrollOnboardingInviteAfterOnCallProvision",
+        ],
+      },
     });
-  } catch (e: unknown) {
-    logger.warn("dispatchOnCallEmploymentStarted failed", {
-      tenantId,
-      pipelineId,
-      error: e instanceof Error ? e.message : String(e),
-    });
-  }
+  } else {
+    try {
+      await dispatchOnCallEmploymentStarted({
+        tenantId,
+        userId: trimmedUser,
+        pipelineId,
+        hiringEntityId: trimmedEntity,
+        entityName,
+        entityKey,
+        initiatedByUid,
+      });
+    } catch (e: unknown) {
+      logger.warn("dispatchOnCallEmploymentStarted failed", {
+        tenantId,
+        pipelineId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
 
-  try {
-    await runPayrollOnboardingInviteForOnCallEmployment({
-      tenantId,
-      userId: trimmedUser,
-      hiringEntityId: trimmedEntity,
-      contextLabel: "your on-call employment",
-    });
-  } catch (e: unknown) {
-    logger.warn("runPayrollOnboardingInviteForOnCallEmployment failed", {
-      tenantId,
-      pipelineId,
-      error: e instanceof Error ? e.message : String(e),
-    });
+    try {
+      await runPayrollOnboardingInviteForOnCallEmployment({
+        tenantId,
+        userId: trimmedUser,
+        hiringEntityId: trimmedEntity,
+        contextLabel: "your on-call employment",
+      });
+    } catch (e: unknown) {
+      logger.warn("runPayrollOnboardingInviteForOnCallEmployment failed", {
+        tenantId,
+        pipelineId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
 
   const pkg = String(screeningPackageId || "").trim();
@@ -418,7 +466,7 @@ export async function runStartOnCallEmploymentFlow(
       "Everee payroll setup did not complete automatically. Use Employment → payroll sync when the worker profile is ready.";
   }
 
-  if (!evereeProvisionWarning && evereePostProvisionInvite) {
+  if (!evereeProvisionWarning && evereePostProvisionInvite && !suppressNotifications) {
     try {
       await runEvereePayrollOnboardingInviteAfterOnCallProvision({
         tenantId,
