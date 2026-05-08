@@ -236,7 +236,19 @@ async function sendOnboardingReminderSms(args: {
 
 export const processWorkerOnboardingReminders = onSchedule(
   {
-    schedule: 'every 10 minutes',
+    // Cadence rationale: reminders fire at 2h / 24h / 48h offsets from
+    // `onCallStartedAt`. With a 60-min tick, worst-case R1 latency is
+    // 2:00-3:00h and R2/R3 are 24:00-25:00h / 48:00-49:00h — well within
+    // "feels human" timing for an "complete your I-9 + payroll setup"
+    // reminder. Down from the prior 10-min cadence for two reasons:
+    //   (a) reduces migration-suppression log volume by 6× — the gate
+    //       below in-loop-skips every BI.0 / BI.1 worker every tick.
+    //   (b) reduces scheduler invocation cost. Sibling reminder
+    //       schedulers (`processApplyWizardReminders`,
+    //       `processScheduledInterviewInvites`) keep their 10-min /
+    //       5-min cadences because their reminder offsets are
+    //       15 min — relative variance would balloon.
+    schedule: 'every 60 minutes',
     timeZone: 'America/Los_Angeles',
     region: 'us-central1',
     memory: '512MiB',
