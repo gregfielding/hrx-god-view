@@ -8,6 +8,7 @@ import { sendMessage } from './routingOrchestrator';
 import { markLifecycleEventIfFirst } from './lifecycleDedupe';
 import { SYSTEM_TRIGGER_KEYS } from './triggerRegistry';
 import { workerTypeLabelForEntityKey, type WorkerTypeLanguage } from './workerTypeLabels';
+import { userIsInActiveMigration, MIGRATION_SUPPRESSION_LOG_TAG } from './migrationSuppress';
 
 const db = admin.firestore();
 const DEDUPE_V = 'v1';
@@ -99,6 +100,45 @@ export async function dispatchWorkerHired(args: {
 }): Promise<void> {
   const { tenantId, userId, pipelineId, entityId, entityName, entityKey, triggerSource } = args;
 
+  // Read the user doc up front — we need it for both (a) the bulk-migration
+  // suppression gate (must run BEFORE the lifecycle dedupe is marked, so a
+  // user who exits migration could in principle re-trigger the dispatch
+  // later) and (b) firstName / language extraction below.
+  let userData: Record<string, unknown> = {};
+  try {
+    const snap = await db.doc(`users/${userId}`).get();
+    if (snap.exists) {
+      userData = (snap.data() || {}) as Record<string, unknown>;
+    }
+  } catch (e) {
+    logger.warn('worker_hired: failed to load user doc', {
+      tenantId,
+      userId,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+
+  // Bulk-migration suppression gate (BI.0 / BI.1 architectural defense).
+  // When the user doc carries `migrationSource` matching `^tempworks_`
+  // or `^bi1_`, the migration tool owns its own messaging cadence — refuse
+  // to fire the worker-hired dispatch regardless of caller. Belt-and-
+  // suspenders with the in-process `suppressOutboundAutomation` flag on
+  // `ensureWorkerOnboardingPipeline`: the in-process flag stops the call
+  // path from being reached when the BI.0 emergency import script is the
+  // caller; this gate catches every other caller (Firestore triggers,
+  // future code paths) that may forget the flag.
+  if (userIsInActiveMigration(userData)) {
+    logger.info(`worker_hired: suppressed (${MIGRATION_SUPPRESSION_LOG_TAG})`, {
+      tenantId,
+      userId,
+      entityKey,
+      pipelineId,
+      migrationSource: String(userData.migrationSource || ''),
+      gate: 'dispatcher',
+    });
+    return;
+  }
+
   const dedupeKey = `worker_hired__${DEDUPE_V}__${tenantId}__${userId}__${entityKey}`;
   const first = await markLifecycleEventIfFirst({
     tenantId,
@@ -111,22 +151,11 @@ export async function dispatchWorkerHired(args: {
     return;
   }
 
-  let firstName = 'there';
-  let preferredLanguage: WorkerTypeLanguage = 'en';
-  try {
-    const snap = await db.doc(`users/${userId}`).get();
-    if (snap.exists) {
-      const u = snap.data() || {};
-      firstName = String(u.firstName || u.displayName || 'there').trim() || 'there';
-      preferredLanguage = normalizeLang(u.preferredLanguage ?? u.languagePreference ?? u.language);
-    }
-  } catch (e) {
-    logger.warn('worker_hired: failed to load user doc', {
-      tenantId,
-      userId,
-      error: e instanceof Error ? e.message : String(e),
-    });
-  }
+  const firstName =
+    String(userData.firstName || userData.displayName || 'there').trim() || 'there';
+  const preferredLanguage: WorkerTypeLanguage = normalizeLang(
+    userData.preferredLanguage ?? userData.languagePreference ?? userData.language,
+  );
 
   const workerTypeLabel = workerTypeLabelForEntityKey(entityKey, preferredLanguage);
   const workerTypeLabelEn = workerTypeLabelForEntityKey(entityKey, 'en');

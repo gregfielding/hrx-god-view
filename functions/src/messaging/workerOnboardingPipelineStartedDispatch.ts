@@ -3,11 +3,13 @@
  * `worker_onboarding/{pipelineId}` is created (first time per worker + entity key).
  * Independent of assignment confirmation; assignment/job context is included when present.
  */
+import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { buildWorkerEntityEmploymentUrl } from '../utils/workerUrls';
 import { markLifecycleEventIfFirst } from './lifecycleDedupe';
 import { dispatchSystemMessage } from './systemMessageDispatcher';
 import { SYSTEM_TRIGGER_KEYS } from './triggerRegistry';
+import { userIsInActiveMigration, MIGRATION_SUPPRESSION_LOG_TAG } from './migrationSuppress';
 
 const DEDUPE_V = 'v1';
 
@@ -33,6 +35,37 @@ export async function dispatchWorkerOnboardingPipelineStarted(args: {
     jobOrderId,
     triggerSource,
   } = args;
+
+  // Bulk-migration suppression gate (BI.0 / BI.1 architectural defense).
+  // Check user.migrationSource BEFORE marking the lifecycle event so a user
+  // who exits migration could in principle re-trigger later. Mirrors the
+  // gate in `dispatchWorkerHired` and the contract documented in
+  // `migrationSuppress.ts`. Belt-and-suspenders with the in-process
+  // `suppressOutboundAutomation` / `suppressPipelineStartedAutomation`
+  // flags on `ensureWorkerOnboardingPipeline`.
+  try {
+    const snap = await admin.firestore().doc(`users/${userId}`).get();
+    if (snap.exists && userIsInActiveMigration(snap.data() as Record<string, unknown>)) {
+      logger.info(`worker_onboarding_pipeline_started: suppressed (${MIGRATION_SUPPRESSION_LOG_TAG})`, {
+        tenantId,
+        userId,
+        pipelineId,
+        entityKey,
+        migrationSource: String((snap.data() || {}).migrationSource || ''),
+        gate: 'dispatcher',
+      });
+      return;
+    }
+  } catch (e) {
+    // Fail open — if we can't read the user doc, fall through to the
+    // existing behavior. The gate is defense-in-depth; the load-bearing
+    // suppression for BI.0 lives in the in-process flags upstream.
+    logger.warn('worker_onboarding_pipeline_started: migration gate read_failed (fail open)', {
+      tenantId,
+      userId,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
 
   const dedupeKey = `worker_onboarding_pipeline_started__${DEDUPE_V}__${tenantId}__${pipelineId}`;
   const first = await markLifecycleEventIfFirst({

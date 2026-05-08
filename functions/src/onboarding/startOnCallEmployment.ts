@@ -183,6 +183,21 @@ export async function runStartOnCallEmploymentFlow(
     onCallScreeningPackageName: screeningPackageName ?? null,
     workerTypeOverride,
     suppressPipelineStartedAutomation: true,
+    // Belt-and-suspenders for bulk-migration suppression: when the caller
+    // opts out of customer-facing dispatches via `suppressNotifications`,
+    // also stop the pipeline-internal `dispatchWorkerHired` (gated by
+    // `suppressOutboundAutomation` at workerOnboardingPipeline.ts:562)
+    // and `dispatchWorkerOnboardingPipelineStarted` (gated by both
+    // `suppressPipelineStartedAutomation` and `suppressOutboundAutomation`
+    // at workerOnboardingPipeline.ts:584). These two were the load-bearing
+    // BI.0 leak surfaced during the c1_events_llc dry-run window — the
+    // suppressNotifications block below covers `dispatchOnCallEmploymentStarted`
+    // + the pre/post Everee invites but did NOT reach inside the pipeline.
+    // The dispatchers ALSO carry their own doc-level migrationSource gate
+    // (see `userIsInActiveMigration`) — that's the architectural defense
+    // for any other caller of `ensureWorkerOnboardingPipeline` that
+    // forgets these flags.
+    suppressOutboundAutomation: !!suppressNotifications,
   });
 
   const { pipelineId, created } = pipelineResult;
@@ -285,6 +300,11 @@ export async function runStartOnCallEmploymentFlow(
           "dispatchOnCallEmploymentStarted",
           "runPayrollOnboardingInviteForOnCallEmployment",
           "runEvereePayrollOnboardingInviteAfterOnCallProvision",
+          // Pipeline-internal dispatchers — suppressed via
+          // `suppressOutboundAutomation: true` on ensureWorkerOnboardingPipeline
+          // above. Listed here so the audit row tells the full story.
+          "dispatchWorkerHired",
+          "dispatchWorkerOnboardingPipelineStarted",
         ],
       },
     });
