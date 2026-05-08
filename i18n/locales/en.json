@@ -575,6 +575,12 @@
       "background_check_detail": {
         "prompt": "You indicated something may appear on a background check. Briefly explain what we should know. If you tapped Yes by mistake, go Back to change your answer."
       },
+      "background_offense_class": {
+        "prompt": "Optional: if you shared a criminal record, was it generally a misdemeanor or a felony? (You can skip this if you prefer.)"
+      },
+      "background_offense_when": {
+        "prompt": "Optional: roughly when did that happen (year or timeframe)? We focus on roughly the last 7\u201310 years for staffing."
+      },
       "supervisor_feedback": {
         "prompt": "What would your last supervisor say about you? Include:\n- one strength they might mention\n- one area you were working on (if any)"
       },
@@ -1153,6 +1159,7 @@
     "title": "Assignment",
     "viewAssignment": "View Assignment",
     "assignmentInfo": "Assignment Info",
+    "clockInUrl": "Clock-In URL",
     "worksite": "Worksite",
     "worksiteName": "Worksite name",
     "worksiteAddress": "Worksite address",

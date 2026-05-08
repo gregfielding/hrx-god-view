@@ -575,6 +575,12 @@
       "background_check_detail": {
         "prompt": "Indicaste que podría aparecer algo en una verificación de antecedentes. Explica brevemente qué debemos saber. Si elegiste Sí por error, vuelve atrás para cambiar tu respuesta."
       },
+      "background_offense_class": {
+        "prompt": "Opcional: si compartiste un antecedente penal, \u00bffue generalmente un delito menor (misdemeanor) o un delito grave (felony)? (Puedes omitir esto si lo prefieres.)"
+      },
+      "background_offense_when": {
+        "prompt": "Opcional: \u00bfaproximadamente cu\u00e1ndo ocurri\u00f3 eso (a\u00f1o o per\u00edodo)? Para colocaciones nos enfocamos aproximadamente en los \u00faltimos 7\u201310 a\u00f1os."
+      },
       "supervisor_feedback": {
         "prompt": "¿Qué diría tu último supervisor sobre ti? Incluye:\n- una fortaleza que podría mencionar\n- un área en la que estabas trabajando (si aplica)"
       },
@@ -1153,6 +1159,7 @@
     "title": "Asignación",
     "viewAssignment": "Ver asignación",
     "assignmentInfo": "Información de la asignación",
+    "clockInUrl": "Enlace de fichaje",
     "worksite": "Lugar de trabajo",
     "worksiteName": "Nombre del lugar de trabajo",
     "worksiteAddress": "Dirección del lugar de trabajo",
