@@ -15,6 +15,7 @@ import { enqueueSystemWelcomeSms, ensureSystemOnboardingWelcomeTemplates } from 
 import { dispatchSystemMessage } from './systemMessageDispatcher';
 import { SYSTEM_TRIGGER_KEYS } from './triggerRegistry';
 import { TWILIO_MESSAGING_PHONE_NUMBER } from './twilioSecrets';
+import { userIsInActiveMigration, MIGRATION_SUPPRESSION_LOG_TAG } from './migrationSuppress';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -50,6 +51,22 @@ export const enqueueWelcomeSmsOnUserCreated = onDocumentCreated(
           userId,
           error: refetchErr?.message,
         });
+      }
+
+      // Bulk-migration suppression gate (BI.0 / BI.1) — defense-in-depth.
+      // The function is already gated by `tenants/{t}/settings/messaging.systemSmsEnabled`
+      // (default off), but the migration prefix gate is the architectural
+      // contract: when a user doc carries `migrationSource: 'tempworks_*' | 'bi1_*'`,
+      // refuse all auto-messaging regardless of tenant settings. The migration
+      // tool owns its own messaging cadence. Run against the freshly-refetched
+      // userData so we catch the case where `migrationSource` was written
+      // by a follow-up `set({ ..., migrationSource }, { merge: true })` call.
+      if (userIsInActiveMigration(userData as Record<string, unknown> | null | undefined)) {
+        logger.info(`enqueueWelcomeSmsOnUserCreated: suppressed (${MIGRATION_SUPPRESSION_LOG_TAG})`, {
+          userId,
+          migrationSource: String((userData as Record<string, unknown>)?.migrationSource || ''),
+        });
+        return;
       }
 
       const phoneE164 = (userData?.phoneE164 || '').trim();

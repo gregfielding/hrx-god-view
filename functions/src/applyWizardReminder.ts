@@ -24,6 +24,11 @@ import {
 } from './messaging/twilioSecrets';
 import { userInInterviewReinviteCooldown } from './workerAiPrescreen/interviewInviteCooldown';
 import { normalizeApplicationStatus } from './utils/applicationStatusNormalize';
+import {
+  userIsInActiveMigration,
+  APPLY_WIZARD_SUPPRESSION_REASON,
+  MIGRATION_SUPPRESSION_LOG_TAG,
+} from './messaging/migrationSuppress';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -144,6 +149,26 @@ export const onUserCreatedScheduleApplyWizardReminder = onDocumentCreated(
     if (data.applyWizardReminderPending !== true) return;
     if (data.applyWizardReminderDueAt) return;
 
+    // Bulk-migration suppression gate (BI.0 / BI.1). When a user doc is
+    // created with `migrationSource` matching an active-migration prefix,
+    // refuse to schedule the apply-wizard reminder — the migration tool
+    // owns its own messaging cadence. Clear `applyWizardReminderPending`
+    // so a future scheduler tick doesn't pick the doc back up if anything
+    // else later sets `applyWizardReminderDueAt`.
+    if (userIsInActiveMigration(data)) {
+      await snap.ref.update({
+        applyWizardReminderPending: false,
+        applyWizardReminderAbortedReason: APPLY_WIZARD_SUPPRESSION_REASON,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      logger.info(`applyWizardReminder: suppressed (${MIGRATION_SUPPRESSION_LOG_TAG})`, {
+        userId: event.params.userId,
+        migrationSource: String(data.migrationSource || ''),
+        gate: 'trigger',
+      });
+      return;
+    }
+
     const due = admin.firestore.Timestamp.fromMillis(Date.now() + REMINDER_DELAY_MS);
     await snap.ref.update({ applyWizardReminderDueAt: due });
     logger.info('applyWizardReminder: scheduled dueAt', { userId: event.params.userId, due: due.toDate().toISOString() });
@@ -180,10 +205,35 @@ export const processApplyWizardReminders = onSchedule(
     let sent = 0;
     let deferred = 0;
     let aborted = 0;
+    let suppressedActiveMigration = 0;
 
     for (const docSnap of q.docs) {
       const uid = docSnap.id;
       const data = docSnap.data() as Record<string, unknown>;
+
+      // Bulk-migration suppression gate. The load-bearing case: an
+      // existing user doc already had `applyWizardReminderPending = true`
+      // and `applyWizardReminderDueAt <= now` (queued by an earlier
+      // product-flow event), and the migration tool subsequently
+      // stamped `migrationSource: 'tempworks_*' | 'bi1_*'` on the same
+      // doc. Without this gate the scheduler would happily ship the
+      // pre-existing reminder mid-migration. In-loop skip + per-doc
+      // clear so the row leaves the query result set going forward.
+      if (userIsInActiveMigration(data)) {
+        await docSnap.ref.update({
+          applyWizardReminderPending: false,
+          applyWizardReminderAbortedReason: APPLY_WIZARD_SUPPRESSION_REASON,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        suppressedActiveMigration += 1;
+        logger.info(`applyWizardReminder: suppressed (${MIGRATION_SUPPRESSION_LOG_TAG})`, {
+          uid,
+          migrationSource: String(data.migrationSource || ''),
+          gate: 'scheduler',
+        });
+        continue;
+      }
+
       const snapshot = data.applyResumeSnapshot as Record<string, unknown> | undefined;
       if (!snapshot || typeof snapshot !== 'object') {
         await docSnap.ref.update({
@@ -321,6 +371,7 @@ export const processApplyWizardReminders = onSchedule(
       sent,
       deferred,
       aborted,
+      suppressedActiveMigration,
     });
   }
 );
