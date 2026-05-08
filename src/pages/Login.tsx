@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { signInWithEmailAndPassword } from 'firebase/auth';
-import { Box, Button, TextField, Typography, Paper, Alert, CircularProgress } from '@mui/material';
+import { sendPasswordResetEmail, signInWithEmailAndPassword } from 'firebase/auth';
+import { Box, Button, TextField, Typography, Paper, Alert, CircularProgress, Link as MuiLink } from '@mui/material';
 
 import { auth } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -30,6 +30,12 @@ const Login = () => {
         password: 'Contraseña',
         submit: 'Iniciar sesión',
         language: 'Idioma',
+        forgotPassword: '¿Olvidaste tu contraseña?',
+        firstTimePrompt: '¿Primera vez?',
+        firstTimeAction: 'Configura tu cuenta',
+        forgotEnterEmail: 'Ingresa tu correo electrónico arriba primero, luego haz clic en "¿Olvidaste tu contraseña?".',
+        forgotSent: 'Te enviamos un enlace para restablecer tu contraseña. Revisa tu correo.',
+        forgotError: 'No se pudo enviar el enlace de restablecimiento. Verifica el correo electrónico e inténtalo de nuevo.',
       }
     : {
         title: 'Platform Login',
@@ -37,6 +43,12 @@ const Login = () => {
         password: 'Password',
         submit: 'Login',
         language: 'Language',
+        forgotPassword: 'Forgot password?',
+        firstTimePrompt: 'First time here?',
+        firstTimeAction: 'Set up your account',
+        forgotEnterEmail: 'Enter your email above first, then tap "Forgot password?".',
+        forgotSent: "We've sent you a password reset link. Check your email.",
+        forgotError: "Couldn't send reset link. Double-check the email and try again.",
       };
 
   // Redirect once fully authenticated and role is loaded
@@ -96,6 +108,38 @@ const Login = () => {
       setLocalLoading(false);
     } catch (err: any) {
       setError(err.message);
+      setLocalLoading(false);
+    }
+  };
+
+  /**
+   * BI.0 RECOVERY (PR #6 Fix D — login UX hardening): "Forgot password?" sends
+   * a password-reset email via Firebase. Same flow as `inviteUser.ts` server-
+   * side; the resulting link lands on `/setup-password?oobCode=...` which the
+   * worker can use to set a new password and auto-sign-in (Fix B). For the
+   * 4,400 migration workers this also doubles as a "claim my account" path:
+   * once `createAuthForMigrants.ts --write` runs, every migrant has an Auth
+   * account, so triggering Forgot password by email just regenerates a fresh
+   * setup-password oobCode.
+   */
+  const handleForgotPassword = async () => {
+    setError('');
+    setSuccessMessage('');
+    if (!email || !email.includes('@')) {
+      setError(copy.forgotEnterEmail);
+      return;
+    }
+    setLocalLoading(true);
+    try {
+      await sendPasswordResetEmail(auth, email.trim().toLowerCase(), {
+        url: 'https://app.hrxone.com/setup-password?continueUrl=/c1/workers/payroll',
+        handleCodeInApp: true,
+      });
+      setSuccessMessage(copy.forgotSent);
+    } catch (err: unknown) {
+      console.warn('sendPasswordResetEmail failed:', err);
+      setError(copy.forgotError);
+    } finally {
       setLocalLoading(false);
     }
   };
@@ -174,6 +218,36 @@ const Login = () => {
           >
             {localLoading || loading ? <CircularProgress size={24} /> : copy.submit}
           </Button>
+
+          <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1 }}>
+            <MuiLink
+              component="button"
+              type="button"
+              variant="body2"
+              underline="hover"
+              onClick={handleForgotPassword}
+              disabled={localLoading || loading}
+              sx={{ cursor: 'pointer' }}
+            >
+              {copy.forgotPassword}
+            </MuiLink>
+            <Box sx={{ textAlign: 'right' }}>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                {copy.firstTimePrompt}
+              </Typography>
+              <MuiLink
+                component="button"
+                type="button"
+                variant="body2"
+                underline="hover"
+                onClick={handleForgotPassword}
+                disabled={localLoading || loading}
+                sx={{ cursor: 'pointer' }}
+              >
+                {copy.firstTimeAction}
+              </MuiLink>
+            </Box>
+          </Box>
         </form>
       </Paper>
     </Box>
