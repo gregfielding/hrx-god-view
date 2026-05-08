@@ -990,6 +990,8 @@
     "progressVerification": "Verification",
     "progressFinal": "Final",
     "applicationSubmittedMessage": "Your application has been submitted.",
+    "settingUpPayroll": "Taking you to your payroll setup\u2026",
+    "settingUpPayrollHelper": "If you're not redirected automatically, you can find it later under My Payroll.",
     "viewMyApplications": "View My Applications",
     "browseMoreJobs": "Browse More Jobs",
     "progressPersonal": "Personal",

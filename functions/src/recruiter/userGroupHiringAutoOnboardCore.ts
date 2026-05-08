@@ -438,10 +438,30 @@ export async function autoOnboardForGroupIfEligible(
     screeningRequestedServiceIds: screening.screeningRequestedServiceIds,
   };
 
+  // Apply-wizard-driven hires (the worker just submitted the apply
+  // wizard; auto-onboard fires from the application/group triggers
+  // below) → wizard redirects them to the Everee embed in-session, so
+  // the pre-Everee payroll invite SMS would arrive WHILE they're still
+  // on the success screen → confusing duplication. Skip that one
+  // narrowly; keep the "you're hired" dispatch + the post-Everee invite
+  // (which carries the real `/c1/workers/payroll/{evereeTenantId}` URL
+  // and stands as the authoritative follow-up if the worker bails
+  // before completing in-session). See `runStartOnCallEmploymentFlow`'s
+  // `suppressInflightPayrollInvite` JSDoc for the carve-out shape.
+  //
+  // Recruiter-initiated paths (`manual`, `recruiter_confirmation`,
+  // `on_call`, `assignment_confirmed`, etc.) keep firing the pre-Everee
+  // invite normally — those workers aren't at the wizard.
+  const isApplyDrivenTrigger =
+    triggerSource === 'auto_application_c1_events' ||
+    triggerSource === 'auto_user_group_application_signals' ||
+    triggerSource === 'auto_user_group_membership_added';
+
   try {
     const result = await runStartOnCallEmploymentFlow({
       ...payload,
       enforceOnCallOnboardingPolicy: true,
+      suppressInflightPayrollInvite: isApplyDrivenTrigger,
     });
     return {
       considered: true,

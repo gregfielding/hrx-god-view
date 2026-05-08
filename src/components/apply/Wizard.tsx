@@ -233,6 +233,112 @@ const buildAdditionalScreeningCanonicalKey = (screeningName: string): string => 
   return compact.charAt(0).toLowerCase() + compact.slice(1);
 };
 
+interface PostSubmitRedirectProps {
+  to: string;
+  delayMs: number;
+  headlineKey: string;
+  subheadKey: string;
+  helperKey: string;
+  applicationsPath: string;
+  jobsBoardPath: string;
+  t: (key: string, params?: Record<string, string | number>) => string;
+}
+
+/**
+ * Post-apply success screen with auto-redirect to payroll setup.
+ *
+ * Worker UX: a fresh applicant typically gets auto-hired by the userGroup
+ * trigger (`onApplicationHiringSignalsChangedAutoOnboard` /
+ * `onUserGroupMemberAddedAutoOnboard`) ~500ms-2s after submit, which then
+ * spins up Everee provisioning. The 3-second delay here is sized to land
+ * AFTER that pipeline completes for most workers, so when this redirects
+ * to `/c1/workers/payroll` the index page resolves to the embed instead
+ * of "no payroll account yet".
+ *
+ * For the rare slow path (Everee provisioning >3s, or no Everee at all),
+ * `WorkerPayrollIndex` already renders a graceful fallback with a "Back
+ * to dashboard" CTA — so this redirect is safe to fire unconditionally.
+ *
+ * The pre-deadline alternative (static "View applications / Browse jobs"
+ * paper) is preserved as secondary text-link affordances at the bottom in
+ * case the worker wants to bail mid-redirect.
+ */
+const PostSubmitRedirect: React.FC<PostSubmitRedirectProps> = ({
+  to,
+  delayMs,
+  headlineKey,
+  subheadKey,
+  helperKey,
+  applicationsPath,
+  jobsBoardPath,
+  t,
+}) => {
+  const navigate = useNavigate();
+  const [redirected, setRedirected] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setRedirected(true);
+      navigate(to);
+    }, delayMs);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [to, delayMs, navigate]);
+
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        maxWidth: 480,
+        mx: 'auto',
+        mt: { xs: 4, md: 6 },
+        p: 3,
+        textAlign: 'center',
+      }}
+    >
+      <Typography variant="h6" sx={{ mb: 1, fontWeight: 600 }}>
+        {t(headlineKey)}
+      </Typography>
+      <Box
+        sx={{
+          mt: 2,
+          mb: 2,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 1.5,
+        }}
+      >
+        <CircularProgress size={28} />
+        <Typography variant="body2" color="text.secondary">
+          {t(subheadKey)}
+        </Typography>
+      </Box>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+        {t(helperKey)}
+      </Typography>
+      <Stack direction="row" spacing={2} justifyContent="center" sx={{ mt: 1 }}>
+        <Button
+          variant="text"
+          size="small"
+          disabled={redirected}
+          onClick={() => navigate(applicationsPath)}
+        >
+          {t('apply.viewMyApplications')}
+        </Button>
+        <Button
+          variant="text"
+          size="small"
+          disabled={redirected}
+          onClick={() => navigate(jobsBoardPath)}
+        >
+          {t('apply.browseMoreJobs')}
+        </Button>
+      </Stack>
+    </Paper>
+  );
+};
+
 const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId, uid, signupGroupId = null }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -3339,40 +3445,28 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
   const applicationsPath = tenantSlug ? `/${tenantSlug}/applications` : '/c1/applications';
   const jobsBoardPath = tenantSlug ? `/${tenantSlug}/jobs-board` : '/c1/jobs-board';
+  // Worker payroll lives under the c1 slug regardless of which tenant the
+  // application was for — it's a fixed worker-facing surface backed by
+  // `WorkerPayrollIndex` (auto-redirects to the Everee embed when there's
+  // exactly one provisioned employer; falls back to a "no payroll yet" /
+  // dashboard link when Everee hasn't provisioned yet, e.g. because the
+  // background hire-automation trigger hasn't fired before this redirect
+  // lands). Confirmed with Greg 2026-05-08: always `c1`.
+  const payrollPath = '/c1/workers/payroll';
 
   if (submittedSuccess) {
     return (
       <Box sx={{ px: 0, py: 0, display: 'flex', flexDirection: 'column' }}>
-        <Paper
-          elevation={0}
-          sx={{
-            maxWidth: 480,
-            mx: 'auto',
-            mt: { xs: 4, md: 6 },
-            p: 3,
-            textAlign: 'center',
-          }}
-        >
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
-            {t('apply.applicationSubmittedMessage')}
-          </Typography>
-          <Stack direction="column" spacing={2} alignItems="stretch" sx={{ mt: 3 }}>
-            <Button
-              variant="contained"
-              fullWidth
-              onClick={() => navigate(applicationsPath)}
-            >
-              {t('apply.viewMyApplications')}
-            </Button>
-            <Button
-              variant="outlined"
-              fullWidth
-              onClick={() => navigate(jobsBoardPath)}
-            >
-              {t('apply.browseMoreJobs')}
-            </Button>
-          </Stack>
-        </Paper>
+        <PostSubmitRedirect
+          to={payrollPath}
+          delayMs={3000}
+          headlineKey="apply.applicationSubmittedMessage"
+          subheadKey="apply.settingUpPayroll"
+          helperKey="apply.settingUpPayrollHelper"
+          applicationsPath={applicationsPath}
+          jobsBoardPath={jobsBoardPath}
+          t={t}
+        />
       </Box>
     );
   }
