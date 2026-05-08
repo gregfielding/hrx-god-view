@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { confirmPasswordReset, verifyPasswordResetCode } from 'firebase/auth';
+import { confirmPasswordReset, signInWithEmailAndPassword, verifyPasswordResetCode } from 'firebase/auth';
 import {
   Box,
   Button,
@@ -27,18 +27,40 @@ const SetupPassword = () => {
   const [success, setSuccess] = useState(false);
   const [email, setEmail] = useState('');
 
-  // Get the action code from URL parameters
   const searchParams = new URLSearchParams(location.search);
   const actionCode = searchParams.get('oobCode');
+  /**
+   * BI.0 RECOVERY (PR #6 Fix B): one-tap migration flow honors a same-origin
+   * `continueUrl` query param so the post-set-password redirect can land the
+   * worker directly on `/c1/workers/payroll` (or any same-origin path) instead
+   * of the generic `/dashboard`. Safelist:
+   *   - same-origin only (path must begin with `/`, no scheme, no double-slash);
+   *   - max 256 chars to avoid open-redirect-style abuse;
+   *   - falls back to `/dashboard` on validation failure.
+   * The migration `createAuthForMigrants.ts` script bakes
+   * `?continueUrl=/c1/workers/payroll` into the Firebase action code URL; the
+   * Firebase auth handler appends `oobCode` etc. and then redirects here.
+   */
+  const rawContinueUrl = searchParams.get('continueUrl');
+  const continueUrl = (() => {
+    if (!rawContinueUrl) return '/dashboard';
+    if (rawContinueUrl.length > 256) return '/dashboard';
+    if (!rawContinueUrl.startsWith('/')) return '/dashboard';
+    if (rawContinueUrl.startsWith('//')) return '/dashboard';
+    return rawContinueUrl;
+  })();
 
   useEffect(() => {
-    // If user is already authenticated, redirect to dashboard
+    // If user is already authenticated, redirect to continueUrl (or `/` if none).
+    // This also catches the post-auto-sign-in race after `confirmPasswordReset`
+    // (BI.0 RECOVERY one-tap flow): if AuthContext rerenders with the new
+    // `user` before our explicit `navigate(continueUrl)` call commits, this
+    // useEffect's redirect lands on the correct destination instead of `/`.
     if (user) {
-      navigate('/');
+      navigate(continueUrl !== '/dashboard' ? continueUrl : '/', { replace: true });
       return;
     }
 
-    // Verify the password reset code and get the email
     if (actionCode) {
       verifyPasswordResetCode(auth, actionCode)
         .then((email) => {
@@ -50,7 +72,7 @@ const SetupPassword = () => {
     } else {
       setError('No invitation code found. Please use the link from your invitation email.');
     }
-  }, [actionCode, user, navigate]);
+  }, [actionCode, user, navigate, continueUrl]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,11 +96,43 @@ const SetupPassword = () => {
     setError('');
 
     try {
-      // Confirm the password reset
       await confirmPasswordReset(auth, actionCode, password);
-      
+
+      /**
+       * BI.0 RECOVERY (PR #6 Fix B): one-tap migration flow auto-signs the
+       * worker in immediately after a successful password set, so the
+       * continueUrl redirect lands them on `/c1/workers/payroll` already
+       * authenticated. Without this, `/dashboard` would bounce to `/login`
+       * and the worker would have to type their just-set password a second
+       * time — defeating the purpose of the one-tap pattern. The sign-in is
+       * best-effort: if it fails we fall through to the success screen and
+       * the worker can still navigate manually (legacy UX preserved).
+       *
+       * `email` is set by the prior `verifyPasswordResetCode` call (line ~58),
+       * so it's the canonical Firebase-recognized email tied to this oobCode.
+       */
+      let autoSignedIn = false;
+      if (email) {
+        try {
+          await signInWithEmailAndPassword(auth, email, password);
+          autoSignedIn = true;
+        } catch (signInErr) {
+          console.warn('Auto-sign-in after password reset failed; user can sign in manually:', signInErr);
+        }
+      }
+
+      if (autoSignedIn) {
+        // One-tap success: skip the legacy "Password changed → CONTINUE" screen
+        // entirely and navigate the (now authenticated) worker straight to the
+        // continueUrl. The AuthContext-driven `useEffect` above will fire on
+        // the next render with `user` set, but `navigate(continueUrl, { replace })`
+        // wins because it's synchronous in this same React batch.
+        navigate(continueUrl, { replace: true });
+        return;
+      }
+
       setSuccess(true);
-      
+
     } catch (err: any) {
       console.error('Password reset error:', err);
       
@@ -109,7 +163,7 @@ const SetupPassword = () => {
             <Button
               variant="contained"
               color="primary"
-              onClick={() => navigate('/dashboard')}
+              onClick={() => navigate(continueUrl)}
               sx={{ minWidth: 120 }}
             >
               CONTINUE

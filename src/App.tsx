@@ -522,8 +522,19 @@ function App() {
             <Route path="support" element={<WorkerSupport />} />
             <Route path="settings" element={<Navigate to="/c1/workers/profile/app-language" replace />} />
             <Route path="notifications" element={<C1WorkerNotifications />} />
-            <Route path="payroll" element={<WorkerPayrollIndex />} />
-            <Route path="payroll/:evereeTenantId" element={<WorkerPayrollEvereeTenant />} />
+            {/*
+              BI.0 RECOVERY (PR #6 Fix C): the migration messaging push (4,402
+              workers, May 8 2026) sent SMS deep links to /c1/workers/payroll
+              for users who had Firestore docs but no Auth accounts. Without
+              this guard the page rendered a static "Sign in to view payroll"
+              with no CTA — workers bounced to /c1/apply (orphaning records)
+              or gave up. WorkerRoute redirects unauthenticated visitors to
+              /login with the deep link preserved in state.from, then Login.tsx
+              honors that on successful auth (existing logic, ../pages/Login.tsx
+              line 49-57). Workers and staff (level 5+) handled by WorkerRoute.
+            */}
+            <Route path="payroll" element={<WorkerRoute><WorkerPayrollIndex /></WorkerRoute>} />
+            <Route path="payroll/:evereeTenantId" element={<WorkerRoute><WorkerPayrollEvereeTenant /></WorkerRoute>} />
             <Route path="inbox" element={<Navigate to="/c1/workers/notifications" replace />} />
             <Route path="inbox/:conversationId" element={<Navigate to="/c1/workers/notifications" replace />} />
           </Route>
