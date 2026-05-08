@@ -14,7 +14,6 @@ import {
   TWILIO_MESSAGING_PHONE_NUMBER,
   TWILIO_A2P_CAMPAIGN,
 } from '../messaging/twilioSecrets';
-import { userIsInActiveMigration, MIGRATION_SUPPRESSION_LOG_TAG } from '../messaging/migrationSuppress';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -240,14 +239,21 @@ export const processWorkerOnboardingReminders = onSchedule(
     // `onCallStartedAt`. With a 60-min tick, worst-case R1 latency is
     // 2:00-3:00h and R2/R3 are 24:00-25:00h / 48:00-49:00h — well within
     // "feels human" timing for an "complete your I-9 + payroll setup"
-    // reminder. Down from the prior 10-min cadence for two reasons:
-    //   (a) reduces migration-suppression log volume by 6× — the gate
-    //       below in-loop-skips every BI.0 / BI.1 worker every tick.
-    //   (b) reduces scheduler invocation cost. Sibling reminder
-    //       schedulers (`processApplyWizardReminders`,
-    //       `processScheduledInterviewInvites`) keep their 10-min /
-    //       5-min cadences because their reminder offsets are
-    //       15 min — relative variance would balloon.
+    // reminder. Down from the prior 10-min cadence to reduce scheduler
+    // invocation cost. Sibling reminder schedulers
+    // (`processApplyWizardReminders`, `processScheduledInterviewInvites`)
+    // keep their 10-min / 5-min cadences because their reminder offsets
+    // are 15 min — relative variance would balloon.
+    //
+    // BI.0 / BI.1 note: stock onboarding reminders ARE relevant to
+    // migration workers (they need to complete I-9 + payroll on Everee
+    // post-import). The migration framing message is sent separately
+    // via `.scratch/sendMigrationMessages.ts` after the import lands;
+    // these stock reminders are the implementation follow-ups. So this
+    // scheduler intentionally has NO `userIsInActiveMigration` gate —
+    // unlike `dispatchWorkerHired` /
+    // `dispatchWorkerOnboardingPipelineStarted` which are new-applicant
+    // / hire-announcement surfaces that don't fit migration context.
     schedule: 'every 60 minutes',
     timeZone: 'America/Los_Angeles',
     region: 'us-central1',
@@ -279,7 +285,6 @@ export const processWorkerOnboardingReminders = onSchedule(
     let initCount = 0;
     let sent = 0;
     let errors = 0;
-    let suppressedActiveMigration = 0;
 
     for (const docSnap of q.docs) {
       const tenantId = tenantIdFromEmploymentRef(docSnap.ref);
@@ -327,29 +332,6 @@ export const processWorkerOnboardingReminders = onSchedule(
         continue;
       }
       const userData = (userSnap.data() || {}) as Record<string, unknown>;
-
-      // Bulk-migration suppression gate (BI.0 / BI.1). When the user
-      // doc carries `migrationSource` matching `^tempworks_` or `^bi1_`,
-      // refuse to send the onboarding reminder — the migration tool owns
-      // its own messaging cadence. In-loop skip + counter (no doc-state
-      // change) so when migration completes for that user the next tick
-      // resumes normal reminder cadence cleanly. The doc remains in the
-      // query result set, which produces a "suppressed" log line per
-      // tick per migrated worker — that's the intended observability.
-      if (userIsInActiveMigration(userData)) {
-        suppressedActiveMigration += 1;
-        logger.info(
-          `processWorkerOnboardingReminders: suppressed (${MIGRATION_SUPPRESSION_LOG_TAG})`,
-          {
-            tenantId,
-            userId,
-            pipelineId,
-            migrationSource: String(userData.migrationSource || ''),
-            gate: 'scheduler',
-          },
-        );
-        continue;
-      }
 
       const incomplete = await hasIncompleteOnboarding({ tenantId, userId, emp });
       if (!incomplete) {
@@ -409,13 +391,12 @@ export const processWorkerOnboardingReminders = onSchedule(
       }
     }
 
-    if (initCount || sent || errors || suppressedActiveMigration) {
+    if (initCount || sent || errors) {
       logger.info('processWorkerOnboardingReminders tick', {
         scanned: q.size,
         initSchedules: initCount,
         sent,
         errors,
-        suppressedActiveMigration,
       });
     }
   },
