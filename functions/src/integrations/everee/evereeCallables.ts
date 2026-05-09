@@ -3,6 +3,7 @@
  * Stub implementations; real logic in evereeService.
  */
 
+import * as admin from 'firebase-admin';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import {
@@ -16,6 +17,87 @@ import {
   type EvereeEmbedExperienceType,
 } from './evereeService';
 import { mirrorWorkEligibilityFromAuthoritativeSource } from '../../utils/workEligibilityMirror';
+
+if (!admin.apps.length) {
+  admin.initializeApp();
+}
+
+/**
+ * Pull worker identity (firstName / lastName / email / phone) from the
+ * `users/{uid}` doc as a defensive fallback when the caller didn't pass
+ * those fields.
+ *
+ * Why this exists (May 2026):
+ *   The worker-facing "Complete payroll setup" dialog
+ *   (`EvereePayrollSetupEmbed.tsx`) launches without a `prefill` prop —
+ *   so the client's `evereeEnsureWorker` call arrives with `firstName /
+ *   lastName / email / phone` undefined. Everee's contractor endpoint
+ *   responds with 422 `Validation failed: 'firstName' must not be null`
+ *   (and the same for lastName), and the user sees a generic "Server
+ *   error (internal)" toast.
+ *
+ *   Rather than fix every caller individually (admin card already
+ *   pre-fetches; restart callable already pre-fetches; embed dialog
+ *   doesn't), we centralize the fallback here so any caller that omits
+ *   these fields still gets a working POST. Caller-supplied values
+ *   always win — the only fields the helper fills are the ones missing.
+ */
+async function fillEvereeIdentityFromUserDoc(
+  userId: string,
+  current: {
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+    phone?: string;
+  },
+): Promise<{ firstName?: string; lastName?: string; email?: string; phone?: string }> {
+  const has = (v: unknown) => typeof v === 'string' && v.trim().length > 0;
+  // Caller already provided everything — skip the read.
+  if (
+    has(current.firstName) &&
+    has(current.lastName) &&
+    has(current.email) &&
+    has(current.phone)
+  ) {
+    return current;
+  }
+  try {
+    const snap = await admin.firestore().doc(`users/${userId}`).get();
+    if (!snap.exists) return current;
+    const u = (snap.data() ?? {}) as Record<string, unknown>;
+    const pick = (...keys: string[]): string | undefined => {
+      for (const k of keys) {
+        const v = u[k];
+        if (typeof v === 'string' && v.trim()) return v.trim();
+      }
+      return undefined;
+    };
+    // displayName fallback: split on whitespace once. We don't try to be
+    // smart about middle names — Everee just needs *something* non-null
+    // for first/last so the contractor record can be created. If the
+    // worker types a different name into the embed itself, Everee wins.
+    const displayName = pick('displayName');
+    let displayFirst: string | undefined;
+    let displayLast: string | undefined;
+    if (displayName) {
+      const parts = displayName.split(/\s+/).filter(Boolean);
+      if (parts.length >= 1) displayFirst = parts[0];
+      if (parts.length >= 2) displayLast = parts.slice(1).join(' ');
+    }
+    return {
+      firstName: has(current.firstName) ? current.firstName : pick('firstName') ?? displayFirst,
+      lastName: has(current.lastName) ? current.lastName : pick('lastName') ?? displayLast,
+      email: has(current.email) ? current.email : pick('email'),
+      phone: has(current.phone) ? current.phone : pick('phoneE164', 'phone', 'phoneNumber'),
+    };
+  } catch (err) {
+    logger.warn('[evereeEnsureWorker] user-doc fallback failed', {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return current;
+  }
+}
 
 const ALLOWED_EMBED_EXPERIENCE_TYPES = new Set<EvereeEmbedExperienceType>([
   'ONBOARDING',
@@ -48,7 +130,6 @@ function coerceEmbedExperienceVersion(value: unknown): string | undefined {
 }
 import { requireEvereeEnabledEntity } from './evereeConfig';
 import { evereeRequest } from './evereeHttp';
-import * as admin from 'firebase-admin';
 
 function requireAuth(request: { auth?: { uid: string; token?: Record<string, unknown> } | null }) {
   if (!request.auth?.uid) {
@@ -127,16 +208,29 @@ export const evereeEnsureWorker = onCall(async (request) => {
         ? parseInt(approvalGroupRaw.trim(), 10)
         : undefined;
 
+  // May 2026 — fall back to `users/{uid}` for any identity field the
+  // caller didn't pass. Worker-facing surfaces (e.g. the "Complete
+  // payroll setup" embed) launch without a prefill, so without this
+  // fallback Everee's contractor endpoint rejects with
+  // 422 'firstName must not be null' and the user sees a generic
+  // "Server error (internal)" toast. See the helper docstring above.
+  const identity = await fillEvereeIdentityFromUserDoc(userId, {
+    email: typeof d?.email === 'string' ? d.email : undefined,
+    firstName: typeof d?.firstName === 'string' ? d.firstName : undefined,
+    lastName: typeof d?.lastName === 'string' ? d.lastName : undefined,
+    phone: typeof d?.phone === 'string' ? d.phone : undefined,
+  });
+
   return createWorkerIfNeeded({
     tenantId,
     entityId,
     userId,
     firebaseUid: userId,
     workerType: (d?.workerType as 'employee' | 'contractor') || 'employee',
-    email: typeof d?.email === 'string' ? d.email : undefined,
-    firstName: typeof d?.firstName === 'string' ? d.firstName : undefined,
-    lastName: typeof d?.lastName === 'string' ? d.lastName : undefined,
-    phone: typeof d?.phone === 'string' ? d.phone : undefined,
+    email: identity.email,
+    firstName: identity.firstName,
+    lastName: identity.lastName,
+    phone: identity.phone,
     ...(approvalGroupId !== undefined ? { approvalGroupId } : {}),
   });
 });
