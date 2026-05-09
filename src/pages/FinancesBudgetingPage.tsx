@@ -210,8 +210,19 @@ function buildGigPositionsForFinance(data: Record<string, unknown>): any[] {
   const pos: Record<string, unknown> = { jobTitle, payRate: String(payRate) };
   const markup = parseFloat(String(data.markup ?? ''));
   if (Number.isFinite(markup)) pos.markup = String(markup);
-  const bill = parseFloat(String(data.calculatedBillRate ?? data.billRate ?? ''));
-  if (Number.isFinite(bill) && bill >= 0) pos.billRate = String(bill);
+  // May 2026 — pick the first **positive** bill rate from
+  // [calculatedBillRate, billRate]. The `??` short-circuit alone wasn't
+  // enough: legacy career rows that were saved without a markup persist
+  // `calculatedBillRate: 0` (a defined value, so `??` skips the explicit
+  // billRate fallback) and the bill column then renders as $0 with a
+  // negative gross equal to −payTotal. Customers who price by direct
+  // bill-rate (no markup, e.g. food-service / events accounts) hit this
+  // routinely. Preferring the first > 0 candidate makes both the legacy
+  // bad-cache row and the canonical `billRate` field land correctly.
+  const billCandidates = [data.calculatedBillRate, data.billRate]
+    .map((v) => parseFloat(String(v ?? '')))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (billCandidates.length > 0) pos.billRate = String(billCandidates[0]);
   const wc = data.workersCompRate;
   if (wc != null && wc !== '') pos.workersCompRate = String(wc);
   return [pos];

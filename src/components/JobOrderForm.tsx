@@ -2596,10 +2596,24 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       const endDateParsed = dataToUse.endDate || null;
       
 
-      // Compute calculated bill rate if markup/payRate present
+      // Compute calculated bill rate if markup/payRate present.
+      // May 2026 — when markup is empty/0 but the recruiter typed a manual
+      // billRate (the "no-markup, direct bill rate" pricing model — common
+      // for events / food-service accounts), `calculatedBillRate` should
+      // mirror the explicit billRate, NOT 0. The Finances & Budgeting page
+      // uses `calculatedBillRate` as a derived cache; persisting 0 there
+      // makes the bill column render as $0 and the gross go strongly
+      // negative (−payTotal). Treat `calculatedBillRate` as "effective bill
+      // rate" so downstream consumers don't need to know about the markup
+      // path vs. the explicit-rate path.
       const numericPay = toNumberSafe((dataToUse as any).payRate) ?? 0;
       const numericMarkup = toNumberSafe((dataToUse as any).markup) ?? 0;
-      const computedBill = numericMarkup > 0 && numericPay > 0 ? Number((numericPay * (1 + numericMarkup / 100)).toFixed(2)) : 0;
+      const explicitBill = toNumberSafe((dataToUse as any).billRate) ?? 0;
+      const markupComputedBill =
+        numericMarkup > 0 && numericPay > 0
+          ? Number((numericPay * (1 + numericMarkup / 100)).toFixed(2))
+          : 0;
+      const computedBill = markupComputedBill > 0 ? markupComputedBill : explicitBill;
 
       // For gigs, per-position descriptions live on `gigPositions[i]`; the
       // top-level field is mirrored from position[0] so legacy consumers
@@ -3046,13 +3060,25 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               return markup > 0 && payRate > 0 ? Number((payRate * (1 + markup / 100)).toFixed(2)) : (parseFloat((gigPositions[0] as any)?.billRate || '0') || 0);
             })()
           : (numericMarkupForCreate > 0 ? computedBillForCreate : (parseFloat(formData.billRate) || 0)),
+        // May 2026 — `calculatedBillRate` mirrors the *effective* bill rate
+        // (markup-derived OR explicit). Persisting 0 when the recruiter
+        // priced by direct bill rate (no markup) caused Finances &
+        // Budgeting to render Bill = $0 with Gross = −payTotal. See
+        // `buildGigPositionsForFinance` in FinancesBudgetingPage.tsx.
         calculatedBillRate: formData.jobType === 'gig'
           ? (() => {
               const payRate = parseFloat(gigPositions[0]?.payRate || '0') || 0;
               const markup = parseFloat((gigPositions[0] as any)?.markup || '0') || 0;
-              return markup > 0 && payRate > 0 ? Number((payRate * (1 + markup / 100)).toFixed(2)) : 0;
+              const explicit = parseFloat((gigPositions[0] as any)?.billRate || '0') || 0;
+              const computed =
+                markup > 0 && payRate > 0
+                  ? Number((payRate * (1 + markup / 100)).toFixed(2))
+                  : 0;
+              return computed > 0 ? computed : explicit;
             })()
-          : computedBillForCreate,
+          : (computedBillForCreate > 0
+              ? computedBillForCreate
+              : (parseFloat(formData.billRate) || 0)),
         startDate: formData.startDate || null,
         endDate: formData.endDate || null,
         

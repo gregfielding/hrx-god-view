@@ -61,6 +61,20 @@ export function hoursBetweenHHmm(start: string, end: string): number {
 /**
  * Resolve pay/bill/WC from gigPositions for a shift's default job title.
  * Bill = pay * (1 + markup/100) when markup set; else explicit billRate.
+ *
+ * May 2026 — when both markup and explicit billRate are missing/zero we
+ * fall back to `billRate = payRate` (gross = 0). The previous logic
+ * treated `billRate: 0` as a *valid explicit zero rate* (the `>= 0`
+ * check), which produced a strongly negative gross (= −payTotal)
+ * whenever upstream code accidentally persisted a 0 cache. The
+ * `JobOrderForm` save path used to do exactly that for "no-markup"
+ * pricing models (direct bill rate, no markup % — common with food-
+ * service / events accounts). The save path is also fixed; this
+ * tightening is belt-and-suspenders so any other consumer that lands
+ * a 0 in the position record can't reproduce the −payTotal symptom.
+ * Treating 0 as "no rate set" is correct: a customer literally billed
+ * at $0 isn't a rate model we support today; if it ever is, we'll add
+ * an explicit `billRate: null with revenue: 'pro_bono'` flag.
  */
 export function resolveGigPositionRates(gigPositions: any[] | undefined, defaultJobTitle: string | undefined): GigPositionRates | null {
   if (!gigPositions?.length) return null;
@@ -77,7 +91,7 @@ export function resolveGigPositionRates(gigPositions: any[] | undefined, default
   let billRate: number;
   if (Number.isFinite(markup) && markup > 0) {
     billRate = payRate * (1 + markup / 100);
-  } else if (Number.isFinite(billExplicit) && billExplicit >= 0) {
+  } else if (Number.isFinite(billExplicit) && billExplicit > 0) {
     billRate = billExplicit;
   } else {
     billRate = payRate;
