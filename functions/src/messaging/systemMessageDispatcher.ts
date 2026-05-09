@@ -94,6 +94,15 @@ const AUTOMATION_CONTEXT_TEMPLATE_KEYS = [
   'preferredLanguage',
   'onboardingPipelineId',
   'workerEntityEmploymentUrl',
+  // Direct Everee payroll iframe URL (e.g. `…/c1/workers/payroll/3138`).
+  // Set by `dispatchOnCallEmploymentStarted` /
+  // `dispatchWorkerOnboardingPipelineStarted` for events (1099) entities so
+  // tenant templates can deep-link straight into the Everee Embed instead of
+  // bouncing through the My Employment hub. The same dispatchers also
+  // substitute this value in for `workerEntityEmploymentUrl` so existing
+  // templates keep working without edits — `workerPayrollUrl` is here for
+  // templates that want both links explicitly (e.g. plain text vs SMS variants).
+  'workerPayrollUrl',
   'i9SupportingDocumentsApplicable',
   'payrollOnboardingUrl',
   'payrollSignupUrl',

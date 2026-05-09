@@ -5,7 +5,11 @@
  */
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
-import { buildWorkerEntityEmploymentUrl } from '../utils/workerUrls';
+import {
+  buildWorkerEntityEmploymentUrl,
+  buildWorkerPayrollEvereeTenantUrl,
+} from '../utils/workerUrls';
+import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
 import { markLifecycleEventIfFirst } from './lifecycleDedupe';
 import { dispatchSystemMessage } from './systemMessageDispatcher';
 import { SYSTEM_TRIGGER_KEYS } from './triggerRegistry';
@@ -79,8 +83,35 @@ export async function dispatchWorkerOnboardingPipelineStarted(args: {
     return;
   }
 
-  const workerEntityEmploymentUrl = buildWorkerEntityEmploymentUrl(pipelineId);
-  const i9SupportingDocumentsApplicable = String(entityKey || '').trim().toLowerCase() !== 'events';
+  const isEventsEntity = String(entityKey || '').trim().toLowerCase() === 'events';
+  const i9SupportingDocumentsApplicable = !isEventsEntity;
+
+  // Same pattern as `dispatchOnCallEmploymentStarted`: for events / 1099
+  // workers we resolve the entity's `evereeTenantId` and substitute the
+  // direct payroll iframe URL for the standard My Employment hub URL.
+  // Templates referencing `{{workerEntityEmploymentUrl}}` keep working with
+  // no edits; new templates can opt into the explicit `{{workerPayrollUrl}}`
+  // variable. Falls back to the hub URL if Everee isn't configured on the
+  // entity — preserves the previous behavior for that case.
+  const fallbackHubUrl = buildWorkerEntityEmploymentUrl(pipelineId);
+  let workerPayrollUrl = '';
+  if (isEventsEntity && entityId) {
+    try {
+      const cfg = await getEvereeConfigForEntity(tenantId, entityId);
+      const evereeTenantId = cfg?.evereeTenantId?.trim() || '';
+      if (evereeTenantId) {
+        workerPayrollUrl = buildWorkerPayrollEvereeTenantUrl(evereeTenantId);
+      }
+    } catch (e: unknown) {
+      logger.warn('worker_onboarding_pipeline_started: evereeTenantId resolve failed', {
+        tenantId,
+        entityId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+  const workerEntityEmploymentUrl =
+    isEventsEntity && workerPayrollUrl ? workerPayrollUrl : fallbackHubUrl;
 
   const result = await dispatchSystemMessage({
     tenantId,
@@ -92,6 +123,7 @@ export async function dispatchWorkerOnboardingPipelineStarted(args: {
       onboardingPipelineId: pipelineId,
       entityKey,
       workerEntityEmploymentUrl,
+      ...(workerPayrollUrl ? { workerPayrollUrl } : {}),
       i9SupportingDocumentsApplicable,
       ...(assignmentId ? { assignmentId } : {}),
       ...(jobOrderId ? { jobOrderId } : {}),
