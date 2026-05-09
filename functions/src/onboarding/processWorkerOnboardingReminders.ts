@@ -7,7 +7,11 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import { sendWorkerMessageInternal } from '../twilio';
 import { userDocHasUsablePhone } from '../workerAiPrescreen/evaluateAiPrescreenEligibility';
-import { buildWorkerEntityEmploymentUrl } from '../utils/workerUrls';
+import {
+  buildWorkerEntityEmploymentUrl,
+  buildWorkerPayrollEvereeTenantUrl,
+} from '../utils/workerUrls';
+import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -25,25 +29,59 @@ const BATCH_LIMIT = 200;
 const REMINDER_1_MS = 2 * 60 * 60 * 1000;
 const REMINDER_2_MS = 24 * 60 * 60 * 1000;
 const REMINDER_3_MS = 48 * 60 * 60 * 1000;
+/** R4 / R5 are extended-cadence reminders. They only apply to 1099 / events
+ *  workers (`entityKey === 'events'`). W2 employments stop at R3 because the
+ *  recruiter chases I-9 supporting docs through a separate flow; spamming
+ *  "finish your I-9" SMS for a full week was the exact "confusing links"
+ *  failure mode that prompted this scheduler tweak. */
+const REMINDER_4_MS = 96 * 60 * 60 * 1000;
+const REMINDER_5_MS = 168 * 60 * 60 * 1000;
 
 const DUE_KEYS = [
   'onboardingReminder1DueAt',
   'onboardingReminder2DueAt',
   'onboardingReminder3DueAt',
+  'onboardingReminder4DueAt',
+  'onboardingReminder5DueAt',
 ] as const;
 const SENT_KEYS = [
   'onboardingReminder1SentAt',
   'onboardingReminder2SentAt',
   'onboardingReminder3SentAt',
+  'onboardingReminder4SentAt',
+  'onboardingReminder5SentAt',
 ] as const;
+type ReminderNumber = 1 | 2 | 3 | 4 | 5;
 
-export function buildOnboardingReminderSmsBody(firstName: string, link: string, lang: 'en' | 'es'): string {
+/** True when the entity is C1 Events (1099 contractors). Used to pick payroll-only
+ *  copy + a direct Everee payroll iframe link, and to gate the R4/R5 cadence. */
+function isEventsEntityKey(entityKey: unknown): boolean {
+  return String(entityKey || '').trim().toLowerCase() === 'events';
+}
+
+export function buildOnboardingReminderSmsBody(
+  firstName: string,
+  link: string,
+  lang: 'en' | 'es',
+  variant: 'standard' | 'events' = 'standard',
+): string {
   const fn = firstName.trim() || 'there';
   const safeLink = String(link || '').trim();
   if (!safeLink) {
     return lang === 'es'
       ? `${fn}, completa tu proceso de incorporación.`
       : `${fn}, please complete your onboarding.`;
+  }
+  // 1099 workers (today: C1 Events LLC) only need to finish their Everee payroll
+  // signup — no I-9 since they're contractors. The standard copy mentioning
+  // "I-9 and payroll setup" was actively confusing them. Direct-payroll link
+  // also drops them straight into the Everee Embed for the right tenant
+  // instead of the My Employment landing page that lists every employment.
+  if (variant === 'events') {
+    if (lang === 'es') {
+      return `Hola ${fn}, este es un recordatorio para completar tu configuración de pago con Everee y poder recibir tu pago.\n\nTermina aquí (toma menos de 5 minutos):\n${safeLink}\n\nResponde si necesitas ayuda.`;
+    }
+    return `Hi ${fn}, this is a reminder to finish your Everee payroll setup so we can pay you.\n\nFinish here (takes under 5 minutes):\n${safeLink}\n\nReply if you need help.`;
   }
   if (lang === 'es') {
     return `Hola ${fn}, este es un recordatorio para completar tu proceso para próximas oportunidades de trabajo.\n\nPor favor completa tu I-9 y configuración de pago aquí:\n${safeLink}\n\nResponde si necesitas ayuda.`;
@@ -162,20 +200,58 @@ async function hasIncompleteOnboarding(args: {
   return false;
 }
 
-function scheduleReminderDueFields(onCallStartedAt: admin.firestore.Timestamp): Record<string, unknown> {
+function scheduleReminderDueFields(
+  onCallStartedAt: admin.firestore.Timestamp,
+  isEventsEntity: boolean,
+): Record<string, unknown> {
   const base = onCallStartedAt.toMillis();
-  return {
+  const fields: Record<string, unknown> = {
     onboardingReminder1DueAt: admin.firestore.Timestamp.fromMillis(base + REMINDER_1_MS),
     onboardingReminder2DueAt: admin.firestore.Timestamp.fromMillis(base + REMINDER_2_MS),
     onboardingReminder3DueAt: admin.firestore.Timestamp.fromMillis(base + REMINDER_3_MS),
   };
+  // R4 (4 days) and R5 (7 days) are events-only. Don't write them on W2
+  // employments — keeps non-events docs clean and prevents the per-tick
+  // sender loop from accidentally firing extended reminders if the entity
+  // is later re-classified.
+  if (isEventsEntity) {
+    fields.onboardingReminder4DueAt = admin.firestore.Timestamp.fromMillis(base + REMINDER_4_MS);
+    fields.onboardingReminder5DueAt = admin.firestore.Timestamp.fromMillis(base + REMINDER_5_MS);
+  }
+  return fields;
+}
+
+/** Resolve the Everee tenant id (e.g. `3138` for C1 Events LLC) for a hiring
+ *  entity. Returns null when the entity isn't Everee-enabled or has no
+ *  `evereeTenantId` configured — the caller falls back to the standard My
+ *  Employment URL in that case. Wraps `getEvereeConfigForEntity` so the
+ *  scheduler stays consistent with how callables / dispatches read entity
+ *  Everee config; if a future migration moves the field, only one place needs
+ *  to change. */
+async function resolveEvereeTenantIdForEntity(
+  tenantId: string,
+  entityId: string | null | undefined,
+): Promise<string | null> {
+  const eid = String(entityId || '').trim();
+  if (!eid) return null;
+  try {
+    const cfg = await getEvereeConfigForEntity(tenantId, eid);
+    return cfg?.evereeTenantId?.trim() || null;
+  } catch (e: unknown) {
+    logger.warn('resolveEvereeTenantIdForEntity: failed', {
+      tenantId,
+      entityId: eid,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return null;
+  }
 }
 
 async function writeAudit(args: {
   tenantId: string;
   userId: string;
   entityEmploymentId: string;
-  reminderNumber: 1 | 2 | 3;
+  reminderNumber: ReminderNumber;
   success: boolean;
   error?: string;
 }): Promise<void> {
@@ -201,11 +277,37 @@ async function sendOnboardingReminderSms(args: {
   tenantId: string;
   userId: string;
   pipelineId: string;
-  reminderNumber: 1 | 2 | 3;
+  reminderNumber: ReminderNumber;
   userData: Record<string, unknown>;
+  emp: Record<string, unknown>;
 }): Promise<{ success: boolean; error?: string }> {
-  const { tenantId, userId, pipelineId, userData } = args;
-  const link = buildWorkerEntityEmploymentUrl(pipelineId);
+  const { tenantId, userId, pipelineId, userData, emp } = args;
+
+  // Pick the right variant + link by entity. For events (1099), prefer the
+  // direct Everee payroll iframe URL so the worker isn't bounced through the
+  // generic My Employment list. If we can't resolve `evereeTenantId` (entity
+  // doc missing the field, network blip, etc.), fall back to the standard
+  // My Employment URL — better to send a working-but-extra-hop link than
+  // skip the reminder entirely.
+  const eventsEntity = isEventsEntityKey(emp.entityKey);
+  let link = '';
+  let variant: 'standard' | 'events' = 'standard';
+  if (eventsEntity) {
+    const eid = String(emp.entityId || '').trim() || null;
+    const evereeTenantId = await resolveEvereeTenantIdForEntity(tenantId, eid);
+    const directUrl = evereeTenantId ? buildWorkerPayrollEvereeTenantUrl(evereeTenantId) : '';
+    if (directUrl) {
+      link = directUrl;
+      variant = 'events';
+    } else {
+      link = buildWorkerEntityEmploymentUrl(pipelineId);
+      // Keep `variant` = 'standard' so the body says "complete your onboarding"
+      // instead of "Everee payroll setup" — the My Employment hub UI handles
+      // both surfaces and the events-specific copy would be misleading.
+    }
+  } else {
+    link = buildWorkerEntityEmploymentUrl(pipelineId);
+  }
   if (!link) {
     return { success: false, error: 'missing_worker_entity_url' };
   }
@@ -218,7 +320,7 @@ async function sendOnboardingReminderSms(args: {
   }
   const lang = workerLang(userData);
   const fn = firstNameFromUser(userData);
-  const body = buildOnboardingReminderSmsBody(fn, link, lang);
+  const body = buildOnboardingReminderSmsBody(fn, link, lang, variant);
   const result = await sendWorkerMessageInternal(phone, body, {
     systemContext: true,
     tenantId,
@@ -236,14 +338,24 @@ async function sendOnboardingReminderSms(args: {
 export const processWorkerOnboardingReminders = onSchedule(
   {
     // Cadence rationale: reminders fire at 2h / 24h / 48h offsets from
-    // `onCallStartedAt`. With a 60-min tick, worst-case R1 latency is
-    // 2:00-3:00h and R2/R3 are 24:00-25:00h / 48:00-49:00h — well within
-    // "feels human" timing for an "complete your I-9 + payroll setup"
-    // reminder. Down from the prior 10-min cadence to reduce scheduler
-    // invocation cost. Sibling reminder schedulers
+    // `onCallStartedAt` for every entity. With a 60-min tick, worst-case
+    // R1 latency is 2:00-3:00h and R2/R3 are 24:00-25:00h / 48:00-49:00h
+    // — well within "feels human" timing for an "complete your I-9 +
+    // payroll setup" reminder. Down from the prior 10-min cadence to
+    // reduce scheduler invocation cost. Sibling reminder schedulers
     // (`processApplyWizardReminders`, `processScheduledInterviewInvites`)
     // keep their 10-min / 5-min cadences because their reminder offsets
     // are 15 min — relative variance would balloon.
+    //
+    // Events extension: events / 1099 employments (today: C1 Events LLC)
+    // additionally fire R4 @ 96h (4 days) and R5 @ 168h (7 days). Everee
+    // payroll signup is the only thing they need to finish, the link
+    // changes are a bigger UX win (see `sendOnboardingReminderSms` for
+    // direct-payroll URL handling), and operators were watching workers
+    // sit in `Onboarding` past the 48h R3 cutoff with no further nudges.
+    // W2 employments are intentionally still capped at R3 — recruiters
+    // chase I-9 supporting docs via a separate dedicated flow, and a
+    // week of "finish your I-9" SMS would be net-negative.
     //
     // BI.0 / BI.1 note: stock onboarding reminders ARE relevant to
     // migration workers (they need to complete I-9 + payroll on Everee
@@ -313,11 +425,21 @@ export const processWorkerOnboardingReminders = onSchedule(
         continue;
       }
 
+      const eventsEntity = isEventsEntityKey(emp.entityKey);
       const r1Due = tsMillis(emp.onboardingReminder1DueAt);
-      if (r1Due == null) {
+      // First-time init writes R1-R3 always, R4-R5 only for events. We also
+      // backfill R4/R5 on the next pass for events employments that were
+      // initialized before the extended cadence shipped — without this,
+      // already-stuck workers like the C1 Events backlog would never get the
+      // 4-day or 7-day pings even after the deploy lands.
+      const needsExtendedInit =
+        eventsEntity &&
+        r1Due != null &&
+        emp.onboardingReminder4DueAt == null;
+      if (r1Due == null || needsExtendedInit) {
         await docSnap.ref.set(
           {
-            ...scheduleReminderDueFields(onCallStartedAt),
+            ...scheduleReminderDueFields(onCallStartedAt, eventsEntity),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true },
@@ -338,9 +460,13 @@ export const processWorkerOnboardingReminders = onSchedule(
         continue;
       }
 
-      /** At most one reminder attempt per employment per tick (first due unsent: 1 → 2 → 3). */
-      for (let i = 0; i < 3; i += 1) {
-        const reminderNum = (i + 1) as 1 | 2 | 3;
+      // R4/R5 are events-only. Capping the loop at 3 for non-events
+      // preserves the original 2h/24h/48h W2 cadence even though the
+      // DUE_KEYS / SENT_KEYS arrays are sized for 5.
+      const maxReminderIndex = eventsEntity ? 5 : 3;
+      /** At most one reminder attempt per employment per tick (first due unsent: 1 → 2 → 3 → events 4 → 5). */
+      for (let i = 0; i < maxReminderIndex; i += 1) {
+        const reminderNum = (i + 1) as ReminderNumber;
         const dueKey = DUE_KEYS[i];
         const sentKey = SENT_KEYS[i];
         const dueMs = tsMillis(emp[dueKey]);
@@ -357,6 +483,7 @@ export const processWorkerOnboardingReminders = onSchedule(
           pipelineId,
           reminderNumber: reminderNum,
           userData,
+          emp,
         });
 
         if (sendResult.success) {

@@ -40,6 +40,8 @@ import {
 import SyncIcon from '@mui/icons-material/Sync';
 import RestoreIcon from '@mui/icons-material/Restore';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import SmsIcon from '@mui/icons-material/Sms';
+import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { p } from '../../data/firestorePaths';
@@ -49,6 +51,10 @@ import {
   evereeEnsureWorker,
   type EvereeWorkerType,
 } from '../../services/everee/evereeCallables';
+import {
+  resendOnboardingPayrollLinkCallable,
+  restartEvereeOnboardingCallable,
+} from '../../services/onboardingReminderCallables';
 import { formatFirebaseHttpsError } from '../../utils/firebaseHttpsErrors';
 
 export interface EvereeAdminSyncCardProps {
@@ -89,6 +95,8 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
   const [evereeWorkerIdsMap, setEvereeWorkerIdsMap] = useState<Record<string, string>>({});
   const [syncing, setSyncing] = useState(false);
   const [recovering, setRecovering] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [restarting, setRestarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ severity: 'success' | 'error'; message: string } | null>(
     null,
@@ -229,6 +237,153 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
     }
   }, [entityId, onSynced, tenantId, userId]);
 
+  // Manual "Resend payroll link" — fires the same SMS the scheduler at
+  // `processWorkerOnboardingReminders.ts` would send (events / 1099 → direct
+  // payroll iframe URL with payroll-only copy; W2 → My Employment hub link
+  // with the standard "I-9 + payroll" copy). Useful when a worker says
+  // they didn't get the link, deleted the prior SMS, or the recruiter
+  // wants to force a nudge before the next R{N} due time.
+  //
+  // Backend (`resendOnboardingPayrollLinkCallable`) is idempotent — it
+  // does NOT update `onboardingReminderNSentAt` so future automated
+  // reminders still fire on schedule. Audited as `reminderNumber: 0`
+  // (manual sentinel) in `tenants/{tid}/onboarding_reminder_audit`.
+  const handleResendPayrollLink = useCallback(async () => {
+    if (!entityId) {
+      setError('This entity is not yet linked to an Everee tenant.');
+      return;
+    }
+    setResending(true);
+    setError(null);
+    try {
+      const result = await resendOnboardingPayrollLinkCallable({
+        tenantId,
+        userId,
+        entityId,
+      });
+      const data = result.data;
+      if (data.ok) {
+        const variantLabel = data.variant === 'events' ? 'direct payroll link' : 'onboarding link';
+        setToast({
+          severity: 'success',
+          message: `SMS sent — ${variantLabel}`,
+        });
+      } else {
+        // Map backend reason codes to human-readable text. Keep the link
+        // visible in the toast so the recruiter can manually share via
+        // another channel (email / DM) when SMS isn't deliverable.
+        const reasonLabel = (() => {
+          switch (data.reason) {
+            case 'missing_phone':
+              return 'No phone number on file for this worker.';
+            case 'invalid_e164':
+              return 'Phone number is not in a valid SMS format.';
+            case 'missing_link':
+              return "Couldn't build a payroll link (entity may not be Everee-linked).";
+            case 'sms_failed':
+              return `SMS failed to send${data.twilioError ? `: ${data.twilioError}` : ''}.`;
+            case 'employment_not_found':
+              return 'No active employment record for this worker on this entity.';
+            case 'user_not_found':
+              return 'User document not found.';
+            default:
+              return data.reason || 'Unknown error.';
+          }
+        })();
+        setToast({ severity: 'error', message: reasonLabel });
+      }
+    } catch (err: unknown) {
+      const msg =
+        formatFirebaseHttpsError(err) || (err instanceof Error ? err.message : String(err));
+      setError(msg);
+      setToast({ severity: 'error', message: msg });
+    } finally {
+      setResending(false);
+    }
+  }, [entityId, tenantId, userId]);
+
+  // Built for the legacy-payroll → Everee migration scenario where a worker
+  // is stuck because their `entity_employments` row is marked
+  // `payrollStatus: 'complete'` from a prior payroll system (today: TempWorks).
+  // That flag silences the Everee payroll step in the My Employment hub AND
+  // tells `processWorkerOnboardingReminders` to skip them — so neither the
+  // worker nor the cadence does anything. Clicking Restart resets the
+  // payroll signal, anchors the cadence at "now", and fires R1 immediately.
+  //
+  // We require `evereeWorkerId` to be present (i.e. the worker is already
+  // provisioned in Everee) — the backend enforces this too, but we mirror
+  // it here so the button disables before a wasted click. Recruiter sees a
+  // tooltip directing them to "Sync to Everee" first when missing.
+  const handleRestartOnboarding = useCallback(async () => {
+    if (!entityId) {
+      setError('This entity is not yet linked to an Everee tenant.');
+      return;
+    }
+    setRestarting(true);
+    setError(null);
+    try {
+      const result = await restartEvereeOnboardingCallable({
+        tenantId,
+        userId,
+        entityId,
+      });
+      const data = result.data;
+      if (data.ok) {
+        const variantLabel =
+          data.variant === 'events' ? 'direct Everee payroll link' : 'My Employment link';
+        setToast({
+          severity: 'success',
+          message: `Everee onboarding restarted — R1 SMS sent (${variantLabel}). R2 in 24h.`,
+        });
+      } else {
+        const reasonLabel = (() => {
+          switch (data.reason) {
+            case 'needs_sync':
+              return 'Worker has no Everee shell yet — click "Sync to Everee" first.';
+            case 'entity_not_everee':
+              return 'This entity is not Everee-enabled.';
+            case 'employment_not_found':
+              return 'No active employment record for this worker on this entity.';
+            case 'user_not_found':
+              return 'User document not found.';
+            case 'missing_phone':
+              return 'Cadence reset, but no phone on file — copy the link and share manually.';
+            case 'invalid_e164':
+              return 'Cadence reset, but phone number is not valid for SMS.';
+            case 'missing_link':
+              return "Cadence reset, but couldn't build a payroll link.";
+            case 'sms_failed':
+              return `Cadence reset, but R1 SMS failed${
+                data.twilioError ? `: ${data.twilioError}` : ''
+              }. Scheduler will retry.`;
+            default:
+              return data.reason || 'Unknown error.';
+          }
+        })();
+        // partial-success: data was reset even though SMS didn't go out.
+        // Use a warning-flavored error toast so the recruiter knows the
+        // backend state changed and they don't double-click.
+        const partialSuccess =
+          data.reason === 'missing_phone' ||
+          data.reason === 'invalid_e164' ||
+          data.reason === 'missing_link' ||
+          data.reason === 'sms_failed';
+        setToast({
+          severity: partialSuccess ? 'success' : 'error',
+          message: reasonLabel,
+        });
+      }
+      onSynced?.(evereeWorkerId ?? '');
+    } catch (err: unknown) {
+      const msg =
+        formatFirebaseHttpsError(err) || (err instanceof Error ? err.message : String(err));
+      setError(msg);
+      setToast({ severity: 'error', message: msg });
+    } finally {
+      setRestarting(false);
+    }
+  }, [entityId, evereeWorkerId, onSynced, tenantId, userId]);
+
   if (!canManage) return null;
 
   // Disabled-with-tooltip path — keeps the card visible so recruiters know the
@@ -248,6 +403,18 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
   const recreateTooltip = disabledReason
     ? disabledReason
     : 'Recreates the worker_onboarding doc and the everee_workers linkage doc when either has been deleted from Firestore. Does not change employment state, does not re-fire onboarding messaging.';
+  const resendTooltip = disabledReason
+    ? disabledReason
+    : 'Sends the worker an SMS with a direct link to finish their payroll setup. Does not affect the automated reminder cadence.';
+  // The restart button has its own gate: even when sync is fine, we need
+  // the Everee shell to exist before flipping cadence on. If it's missing,
+  // tell the recruiter to click "Sync to Everee" first; otherwise describe
+  // exactly what restart will do so it's not a surprise.
+  const restartTooltip = disabledReason
+    ? disabledReason
+    : !evereeWorkerId
+      ? 'Click "Sync to Everee" first to create the worker shell. Restart needs an Everee worker to send the worker to.'
+      : 'Resets payroll status, schedules a fresh R1–R3 (or R1–R5 for events) cadence anchored at right now, and sends R1 immediately. Use this when a worker was onboarded with a prior payroll system (e.g. TempWorks) and never finished payroll setup in Everee.';
 
   return (
     <Box
@@ -306,6 +473,63 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
           </span>
         </Tooltip>
         */}
+        {/*
+          "Restart Everee Onboarding" — the heaviest of the three manual
+          actions. Wipes `payrollStatus` (so the My Employment hub stops
+          treating payroll as done), resets the cadence anchor to "now",
+          re-schedules R1–R{N}, and fires R1 inline. Built specifically
+          for the legacy-payroll → Everee migration scenario where a
+          worker is stuck because a prior system marked payroll complete.
+          Does NOT create the Everee shell — backend rejects with
+          `needs_sync` when `evereeWorkerIds[evereeTenantId]` is missing,
+          and the disabled-state below mirrors that gate so a recruiter
+          gets a tooltip instead of a wasted callable round-trip.
+        */}
+        <Tooltip title={restartTooltip}>
+          <span>
+            <Button
+              size="small"
+              variant="outlined"
+              color="warning"
+              startIcon={
+                restarting ? <CircularProgress size={14} color="inherit" /> : <RestartAltIcon />
+              }
+              onClick={handleRestartOnboarding}
+              disabled={
+                restarting ||
+                syncing ||
+                recovering ||
+                resending ||
+                Boolean(disabledReason) ||
+                !evereeWorkerId
+              }
+            >
+              Restart onboarding
+            </Button>
+          </span>
+        </Tooltip>
+        {/*
+          "Resend payroll link" — manual escape hatch for workers stuck in
+          onboarding (e.g. lost the previous SMS, the auto-reminder cadence
+          hasn't reached the next rung yet, or the recruiter is on a call
+          and wants the worker to finish in real time). Fires the same
+          payload the scheduler would send for this entity. Safe to click
+          repeatedly — the backend doesn't track per-row send counts here,
+          but the audit collection records every call with `reminderNumber: 0`.
+        */}
+        <Tooltip title={resendTooltip}>
+          <span>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={resending ? <CircularProgress size={14} color="inherit" /> : <SmsIcon />}
+              onClick={handleResendPayrollLink}
+              disabled={resending || syncing || recovering || restarting || Boolean(disabledReason)}
+            >
+              Resend payroll link
+            </Button>
+          </span>
+        </Tooltip>
         <Tooltip title={buttonTooltip}>
           <span>
             <Button
@@ -313,7 +537,7 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
               variant="contained"
               startIcon={syncing ? <CircularProgress size={14} color="inherit" /> : <SyncIcon />}
               onClick={handleClick}
-              disabled={syncing || recovering || Boolean(disabledReason)}
+              disabled={syncing || recovering || resending || restarting || Boolean(disabledReason)}
             >
               {buttonLabel}
             </Button>

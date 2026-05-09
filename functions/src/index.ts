@@ -562,6 +562,8 @@ export { userGroupProfileReminderSend } from './recruiter/userGroupProfileRemind
 export { searchRecruiterTableUsers } from './recruiter/searchRecruiterTableUsers';
 export { onCallI9SupportingReminder } from './onboarding/onCallI9SupportingReminderCallable';
 export { processWorkerOnboardingReminders } from './onboarding/processWorkerOnboardingReminders';
+export { resendOnboardingPayrollLink } from './onboarding/resendOnboardingPayrollLinkCallable';
+export { restartEvereeOnboarding } from './onboarding/restartEvereeOnboardingCallable';
 
 // Auth Functions
 export { setTenantRole } from './auth/setTenantRole';
