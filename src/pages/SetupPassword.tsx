@@ -1,9 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { confirmPasswordReset, signInWithEmailAndPassword, verifyPasswordResetCode } from 'firebase/auth';
+import {
+  confirmPasswordReset,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  verifyPasswordResetCode,
+} from 'firebase/auth';
 import {
   Box,
   Button,
+  Stack,
   TextField,
   Typography,
   Paper,
@@ -26,6 +32,32 @@ const SetupPassword = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [email, setEmail] = useState('');
+
+  /**
+   * BI.0 RECOVERY (PR #7): when the Firebase password-reset oobCode is
+   * invalid or expired, replace the dead-end "Please contact your administrator"
+   * message with an inline self-recovery panel. The user enters their email
+   * and we call `sendPasswordResetEmail` to issue a fresh code — same flow as
+   * the Login page's "Forgot password" affordance, but without a round-trip
+   * back to /login. The vast majority of "invalid invitation" hits are TTL
+   * expiry (Firebase's 1-hour wall) or single-use consumption — both fully
+   * recoverable by the user without admin intervention.
+   *
+   * - `linkInvalid`: set true when verifyPasswordResetCode or
+   *   confirmPasswordReset reports `auth/invalid-action-code` /
+   *   `auth/expired-action-code`. Hides the password form and shows the
+   *   recovery panel instead.
+   * - `recoveryEmail`: separate state from `email` because verifyPasswordResetCode
+   *   only returns the canonical email when the code is valid; on invalid
+   *   codes we have to ask the user.
+   * - `recoverySent`: flips after a successful sendPasswordResetEmail call so
+   *   the panel can swap to the "check your email" confirmation.
+   */
+  const [linkInvalid, setLinkInvalid] = useState(false);
+  const [recoveryEmail, setRecoveryEmail] = useState('');
+  const [recoveryLoading, setRecoveryLoading] = useState(false);
+  const [recoverySent, setRecoverySent] = useState(false);
+  const [recoveryError, setRecoveryError] = useState('');
 
   const searchParams = new URLSearchParams(location.search);
   const actionCode = searchParams.get('oobCode');
@@ -66,11 +98,15 @@ const SetupPassword = () => {
         .then((email) => {
           setEmail(email);
         })
-        .catch((err) => {
-          setError('Invalid or expired invitation link. Please contact your administrator for a new invitation.');
+        .catch(() => {
+          // Firebase password-reset codes expire after 1h or after a single
+          // use. Flip into the recovery panel rather than showing a dead-end
+          // "contact your administrator" message — the user can request a
+          // fresh link inline (PR #7).
+          setLinkInvalid(true);
         });
     } else {
-      setError('No invitation code found. Please use the link from your invitation email.');
+      setLinkInvalid(true);
     }
   }, [actionCode, user, navigate, continueUrl]);
 
@@ -135,10 +171,17 @@ const SetupPassword = () => {
 
     } catch (err: any) {
       console.error('Password reset error:', err);
-      
+
       // Handle specific Firebase Auth errors
-      if (err.code === 'auth/invalid-action-code') {
-        setError('Invalid or expired invitation link. Please contact your administrator for a new invitation.');
+      if (err.code === 'auth/invalid-action-code' || err.code === 'auth/expired-action-code') {
+        // Code may have been valid on initial verify but expired between
+        // page-load and submit (1h TTL is generous but we've seen workers
+        // sit on the form). Or the user navigated back and re-submitted
+        // after a previous successful set. Either way: drop into recovery
+        // mode and prefill the email since we already have it from the
+        // initial verify call.
+        setLinkInvalid(true);
+        if (email) setRecoveryEmail(email);
       } else if (err.code === 'auth/weak-password') {
         setError('Password is too weak. Please choose a stronger password.');
       } else {
@@ -146,6 +189,43 @@ const SetupPassword = () => {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  /**
+   * Recovery panel: send a fresh password-reset email to the user. We use the
+   * same `actionCodeSettings` as the Login page's "Forgot password" so the
+   * generated link lands the user back at /setup-password — keeping them on
+   * the same flow rather than bouncing through /login.
+   */
+  const handleSendFreshLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRecoveryError('');
+    const trimmed = recoveryEmail.trim().toLowerCase();
+    if (!trimmed || !trimmed.includes('@')) {
+      setRecoveryError('Please enter the email address you used to sign up.');
+      return;
+    }
+    setRecoveryLoading(true);
+    try {
+      // Preserve the user's original `continueUrl` so a recruiter / agency-admin
+      // invite that hit the dead-link → recovery loop doesn't get force-routed
+      // into the worker payroll surface. The component-level `continueUrl`
+      // value is already validated (same-origin, length-capped) at line ~77.
+      await sendPasswordResetEmail(auth, trimmed, {
+        url: `https://app.hrxone.com/setup-password?continueUrl=${encodeURIComponent(continueUrl)}`,
+        handleCodeInApp: true,
+      });
+      // Firebase intentionally does not signal whether the email is registered
+      // (to prevent enumeration attacks). We always show success — if the
+      // address is unknown, no email is sent and the user will eventually
+      // contact support.
+      setRecoverySent(true);
+    } catch (err: any) {
+      console.warn('sendPasswordResetEmail failed:', err);
+      setRecoveryError('Could not send a new link right now. Please try again in a moment.');
+    } finally {
+      setRecoveryLoading(false);
     }
   };
 
@@ -174,6 +254,96 @@ const SetupPassword = () => {
     );
   }
 
+  if (linkInvalid) {
+    return (
+      <Container maxWidth="sm">
+        <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
+          <Paper elevation={3} sx={{ p: 4, width: '100%' }}>
+            {recoverySent ? (
+              <>
+                <Typography variant="h5" gutterBottom>
+                  Check your email
+                </Typography>
+                <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
+                  We sent a fresh setup link to <strong>{recoveryEmail.trim().toLowerCase()}</strong>.
+                  Open it on this phone to finish setting your password.
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                  If you don&rsquo;t see it within a few minutes, check your spam folder or try
+                  again with a different email address.
+                </Typography>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+                  <Button
+                    variant="outlined"
+                    onClick={() => {
+                      setRecoverySent(false);
+                      setRecoveryError('');
+                    }}
+                  >
+                    Try a different email
+                  </Button>
+                  <Button variant="text" onClick={() => navigate('/login')}>
+                    Sign in instead
+                  </Button>
+                </Stack>
+              </>
+            ) : (
+              <>
+                <Typography variant="h5" gutterBottom>
+                  This link has expired
+                </Typography>
+                <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
+                  Setup links work for a limited time and only once. Enter your email and
+                  we&rsquo;ll send you a fresh one.
+                </Typography>
+
+                {recoveryError && (
+                  <Alert severity="error" sx={{ mb: 2 }}>
+                    {recoveryError}
+                  </Alert>
+                )}
+
+                <form onSubmit={handleSendFreshLink}>
+                  <TextField
+                    label="Email"
+                    type="email"
+                    fullWidth
+                    value={recoveryEmail}
+                    onChange={(e) => setRecoveryEmail(e.target.value)}
+                    margin="normal"
+                    autoComplete="email"
+                    autoFocus
+                    required
+                    helperText="Use the email your employer has on file."
+                  />
+                  <Button
+                    type="submit"
+                    variant="contained"
+                    color="primary"
+                    fullWidth
+                    sx={{ mt: 2 }}
+                    disabled={recoveryLoading}
+                  >
+                    {recoveryLoading ? <CircularProgress size={24} /> : 'Send me a new link'}
+                  </Button>
+                </form>
+
+                <Box sx={{ mt: 2, textAlign: 'center' }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Already set your password?{' '}
+                    <Button variant="text" size="small" onClick={() => navigate('/login')}>
+                      Sign In
+                    </Button>
+                  </Typography>
+                </Box>
+              </>
+            )}
+          </Paper>
+        </Box>
+      </Container>
+    );
+  }
+
   return (
     <Container maxWidth="sm">
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
@@ -181,7 +351,7 @@ const SetupPassword = () => {
           <Typography variant="h5" gutterBottom>
             Set Your Password
           </Typography>
-          
+
           {email && (
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               Setting up account for: {email}
@@ -205,7 +375,7 @@ const SetupPassword = () => {
               required
               helperText="Password must be at least 6 characters long"
             />
-            
+
             <TextField
               label="Confirm Password"
               type="password"
