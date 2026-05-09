@@ -8169,14 +8169,32 @@ export const inviteUserV2 = onCall(async (request) => {
     worker_security_level: securityLevel || null,
     invited_by_name: invitedByUser ? `${invitedByUser.firstName || ''} ${invitedByUser.lastName || ''}`.trim() || invitedByUser.displayName || 'Administrator' : 'Administrator',
     invitation_link: link,
-    expiration_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString('en-US', { 
-      weekday: 'long', 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric' 
-    })
+    /**
+     * TTL-agnostic copy for the validity notice.
+     *
+     * The previous `expiration_date` field tried to render a literal date
+     * (`Date.now() + 7d`), but the underlying Firebase password-reset
+     * `oobCode` actually expires after 1 hour by default — a project-wide
+     * Auth setting, not configurable per-template. That meant the email
+     * promised a 7-day window and the link was dead within an hour. This
+     * note replaces the date with copy that's correct under any TTL the
+     * Firebase Console is set to, and points dead-link users at the
+     * `SetupPassword.tsx` self-recovery panel.
+     *
+     * SendGrid template `d-36383cd72987421fa5335e9ea7db10d9` references
+     * this as `{{invitation_validity_note}}` — see
+     * `sendgrid-worker-invitation-template.html` (the source-of-truth
+     * file uploaded via the steps in `SENDGRID_TEMPLATE_SETUP_GUIDE.md`).
+     * After changing this code path, re-upload that HTML to the SendGrid
+     * dashboard before (or alongside) the functions deploy so the live
+     * template doesn't render an empty `{{expiration_date}}`.
+     */
+    invitation_validity_note:
+      "This invitation link works for a limited time and only once. " +
+      "If it's expired by the time you click it, just enter your email on " +
+      "the setup page and we'll send you a fresh one.",
   };
-  
+
   // 6. Send invite email via SendGrid with dynamic template
   let msg: any = {
     to: email,
@@ -8217,8 +8235,7 @@ export const inviteUserV2 = onCall(async (request) => {
             </a>
           </div>
           <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 15px; border-radius: 6px; margin: 20px 0; font-size: 14px;">
-            <strong>⏰ Important:</strong> This invitation expires on ${templateData.expiration_date}. 
-            Please complete your account setup before then.
+            <strong>⏰ Heads up:</strong> ${templateData.invitation_validity_note}
           </div>
           ${templateData.tenant_website ? `<p style="text-align: center; margin: 20px 0; font-size: 14px; color: #666;">
             Learn more about ${templateData.tenant_name} at 
@@ -8252,7 +8269,7 @@ ${templateData.worker_security_level ? `- Access Level: ${templateData.worker_se
 
 Accept your invitation: ${templateData.invitation_link}
 
-This invitation expires on ${templateData.expiration_date}.
+${templateData.invitation_validity_note}
 
 ${templateData.tenant_website ? `Learn more about ${templateData.tenant_name}: ${templateData.tenant_website}` : ''}
 
@@ -8376,14 +8393,14 @@ export const resendInviteV2 = onCall(async (request) => {
     worker_security_level: userData.securityLevel || null,
     invited_by_name: invitedByUser ? `${invitedByUser.firstName || ''} ${invitedByUser.lastName || ''}`.trim() || invitedByUser.displayName || 'Administrator' : 'Administrator',
     invitation_link: link,
-    expiration_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString('en-US', { 
-      weekday: 'long', 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric' 
-    })
+    // See `inviteUserV2.invitation_validity_note` above for the rationale —
+    // same TTL-agnostic copy is rendered for re-sends.
+    invitation_validity_note:
+      "This invitation link works for a limited time and only once. " +
+      "If it's expired by the time you click it, just enter your email on " +
+      "the setup page and we'll send you a fresh one.",
   };
-  
+
   // Send resend email via SendGrid with dynamic template
   let msg: any = {
     to: email,
@@ -8424,8 +8441,7 @@ export const resendInviteV2 = onCall(async (request) => {
             </a>
           </div>
           <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 15px; border-radius: 6px; margin: 20px 0; font-size: 14px;">
-            <strong>⏰ Important:</strong> This invitation expires on ${templateData.expiration_date}. 
-            Please complete your account setup before then.
+            <strong>⏰ Heads up:</strong> ${templateData.invitation_validity_note}
           </div>
           ${templateData.tenant_website ? `<p style="text-align: center; margin: 20px 0; font-size: 14px; color: #666;">
             Learn more about ${templateData.tenant_name} at 
@@ -8459,7 +8475,7 @@ ${templateData.worker_security_level ? `- Access Level: ${templateData.worker_se
 
 Complete your account setup: ${templateData.invitation_link}
 
-This invitation expires on ${templateData.expiration_date}.
+${templateData.invitation_validity_note}
 
 ${templateData.tenant_website ? `Learn more about ${templateData.tenant_name}: ${templateData.tenant_website}` : ''}
 

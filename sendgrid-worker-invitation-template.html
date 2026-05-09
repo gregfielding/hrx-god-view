@@ -306,10 +306,19 @@
                 </a>
             </div>
             
-            <!-- Expiration Notice -->
+            <!-- Validity Notice
+                 The variable below is `invitation_validity_note`, NOT
+                 `expiration_date`. The previous template referenced
+                 `{{expiration_date}}` and rendered a literal calendar date,
+                 but the underlying Firebase password-reset oobCode actually
+                 expires after 1 hour by default (project-wide Auth setting).
+                 The new variable is TTL-agnostic and tells the recipient
+                 what to do if the link is dead by the time they click —
+                 which the SetupPassword.tsx self-recovery panel handles
+                 inline. See `functions/src/index.ts` (`inviteUserV2` /
+                 `resendInviteV2`) for where the value is constructed. -->
             <div class="expiration-notice">
-                <strong>⏰ Important:</strong> This invitation expires on {{expiration_date}}. 
-                Please complete your account setup before then.
+                <strong>⏰ Heads up:</strong> {{invitation_validity_note}}
             </div>
             
             <!-- Features Section -->

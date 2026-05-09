@@ -14,7 +14,7 @@ This guide will help you set up a dynamic SendGrid template for worker invitatio
 
 ### 📋 **Personalized Content**
 - **Worker Details**: Name, position, department, access level
-- **Invitation Details**: Who sent the invite, expiration date
+- **Invitation Details**: Who sent the invite, plus a TTL-agnostic validity note (see `invitation_validity_note` below — replaces the legacy `expiration_date` field, which lied about the underlying Firebase oobCode 1-hour TTL)
 - **Company Information**: Website, HR contact, legal footer
 - **Features Overview**: What the worker will get access to
 
@@ -69,7 +69,15 @@ The template uses these dynamic variables (automatically populated by your Fireb
   // Invitation Details
   invited_by_name: "Jane Smith",
   invitation_link: "https://app.hrxone.com/setup-password?oobCode=...",
-  expiration_date: "Friday, July 22, 2025"
+  /**
+   * TTL-agnostic copy. Replaced the legacy `expiration_date` field in
+   * 2026-05-08 because Firebase oobCodes actually expire after 1 hour
+   * (project-wide setting), while the prior copy claimed a 7-day window.
+   * The new wording is correct under any action-link lifetime the
+   * Firebase Console is set to, and refers users to the SetupPassword
+   * self-recovery panel if the link is dead at click-time.
+   */
+  invitation_validity_note: "This invitation link works for a limited time and only once. If it's expired by the time you click it, just enter your email on the setup page and we'll send you a fresh one."
 }
 ```
 
@@ -115,7 +123,7 @@ The template uses these dynamic variables (automatically populated by your Fireb
 - **Personalized Greeting**: Uses worker's first name
 - **Invitation Details Card**: Shows all relevant information
 - **Clear Call-to-Action**: Prominent "Accept Invitation" button
-- **Expiration Notice**: Important reminder about deadline
+- **Validity Notice**: Renders `{{invitation_validity_note}}` — TTL-agnostic copy that tells the recipient the link is single-use, time-limited, and explains how to recover via the `SetupPassword` self-recovery panel if it's already dead by the time they click. **Do not** revert this to a literal `{{expiration_date}}` — see the field comment in `functions/src/index.ts` (`inviteUserV2`) for why.
 
 ### 🚀 **Features Overview**
 - **Mobile App Access**: Highlight mobile capabilities
@@ -202,7 +210,7 @@ The template uses these dynamic variables (automatically populated by your Fireb
 ### Content Strategy
 - **Personalization**: Use recipient's name
 - **Clear CTAs**: One primary action
-- **Urgency**: Include expiration dates
+- **Validity, not urgency**: Use TTL-agnostic copy (`invitation_validity_note`) rather than literal expiration dates. Firebase oobCode TTLs are project-wide (default 1h, configurable up to 24h) and the worker has no per-template knob — so any literal date you embed is likely to be wrong. Tell the recipient the link is single-use and point them at the recovery flow if it's dead.
 - **Trust**: Show company branding
 
 ## Support
