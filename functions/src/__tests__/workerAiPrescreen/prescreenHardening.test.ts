@@ -96,4 +96,55 @@ describe('prescreen blue-collar hardening', () => {
     assert.strictEqual(r.decision, 'review');
     assert.ok(r.reasonCodes.includes('interview_recommendation_review'));
   });
+
+  it('advanceOnReviewRecommendation lifts review → advance when score passes the floor', () => {
+    const r = evaluateAiHiringDecision({
+      interviewResult: {
+        overallScore: 75,
+        flags: [],
+        recommendation: 'review',
+      },
+      hiringPolicy: {
+        minimumScoreToAdvance: 30,
+        advanceOnReviewRecommendation: true,
+      },
+      application: { applicationId: 'a-review-override' },
+    });
+    assert.strictEqual(r.decision, 'advance');
+    assert.ok(r.reasonCodes.includes('interview_recommendation_review_overridden'));
+  });
+
+  it('advanceOnReviewRecommendation still defers to the score floor', () => {
+    const r = evaluateAiHiringDecision({
+      interviewResult: {
+        overallScore: 25,
+        flags: [],
+        recommendation: 'review',
+      },
+      hiringPolicy: {
+        minimumScoreToAdvance: 30,
+        advanceOnReviewRecommendation: true,
+      },
+      application: { applicationId: 'a-review-override-low' },
+    });
+    assert.strictEqual(r.decision, 'review');
+    assert.ok(r.reasonCodes.includes('below_score_threshold'));
+  });
+
+  it('advanceOnReviewRecommendation does not lift decline (only review)', () => {
+    const r = evaluateAiHiringDecision({
+      interviewResult: {
+        overallScore: 75,
+        flags: [],
+        recommendation: 'decline',
+      },
+      hiringPolicy: {
+        minimumScoreToAdvance: 30,
+        advanceOnReviewRecommendation: true,
+      },
+      application: { applicationId: 'a-review-override-decline' },
+    });
+    assert.strictEqual(r.decision, 'reject');
+    assert.ok(r.reasonCodes.includes('recommendation_decline'));
+  });
 });

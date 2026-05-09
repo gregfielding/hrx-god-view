@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { safeToDate, getJobOrderAge } from '../utils/dateUtils';
+import { safeToDate } from '../utils/dateUtils';
 import {
   Box,
   Typography,
@@ -27,8 +27,7 @@ import {
   Card,
   CardContent,
   Grid,
-  Autocomplete,
-  TextField,
+  Collapse,
 } from '@mui/material';
 import StandardTablePagination from '../components/StandardTablePagination';
 import {
@@ -39,6 +38,7 @@ import {
   Work as WorkIcon,
   Business as BusinessIcon,
   Schedule as ScheduleIcon,
+  LocationOn as LocationOnIcon,
 } from '@mui/icons-material';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
@@ -73,13 +73,7 @@ import {
   fetchRecruiterPickerOptions,
   type RecruiterPickerOption,
 } from '../utils/fetchRecruiterPickerOptions';
-
-function summarizeAssignedRecruiters(ids: string[], opts: Map<string, RecruiterPickerOption>): string {
-  if (!ids.length) return 'Unassigned';
-  const names = ids.map((id) => opts.get(id)?.displayName || id);
-  const first = names[0];
-  return ids.length > 1 ? `${first} (+${ids.length - 1})` : first;
-}
+import RecruiterAssignmentCell from '../components/recruiter/RecruiterAssignmentCell';
 
 /** Firestore job orders use recruiter statuses (lowercase); Phase1 JobOrder used title-case. */
 interface JobOrderWithDetails extends Omit<JobOrder, 'status'> {
@@ -117,6 +111,7 @@ const CACHE_DEFAULTS = {
   sortField: 'jobOrderNumber',
   sortDirection: 'desc' as const,
   companyFilter: 'all',
+  typeFilter: 'all',
   page: 0,
   rowsPerPage: 20,
 };
@@ -234,6 +229,11 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
   const outletCtx = useOutletContext<RecruiterOutletContext | null>();
   const effectiveSearch = searchProp || outletCtx?.search || '';
   const effectiveShowFavoritesOnly = showFavoritesOnlyProp || outletCtx?.showFavoritesOnly || false;
+  // Filter row visibility is lifted into <RecruiterDashboard> so the
+  // Show/Hide button can live in the global tab strip (mirrors `/shifts/list`).
+  // Falls back to a local state default for any caller that mounts this
+  // page outside the recruiter outlet (none today, but cheap to support).
+  const filtersExpanded = outletCtx?.filtersExpanded ?? false;
   const effectiveOnlyMyOrders = typeof onlyMyOrdersProp === 'boolean'
     ? onlyMyOrdersProp
     : outletCtx?.activeTab === 'my-orders';
@@ -248,6 +248,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
   const sortField = cacheState.sortField ?? CACHE_DEFAULTS.sortField;
   const sortDirection = (cacheState.sortDirection ?? CACHE_DEFAULTS.sortDirection) as 'asc' | 'desc';
   const companyFilter = cacheState.companyFilter ?? CACHE_DEFAULTS.companyFilter;
+  const typeFilter = cacheState.typeFilter ?? CACHE_DEFAULTS.typeFilter;
   const page = typeof cacheState.page === 'number' ? cacheState.page : CACHE_DEFAULTS.page;
   const rowsPerPage = typeof cacheState.rowsPerPage === 'number' ? cacheState.rowsPerPage : CACHE_DEFAULTS.rowsPerPage;
   
@@ -261,9 +262,8 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
   const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
   const [recruiterPickerOptions, setRecruiterPickerOptions] = useState<RecruiterPickerOption[]>([]);
   const [loadingRecruiterOptions, setLoadingRecruiterOptions] = useState(false);
-  const [assigningRecruitersJobOrderId, setAssigningRecruitersJobOrderId] = useState<string | null>(null);
   const firstLoadRef = useRef(true);
-  const prevFiltersRef = useRef<{ search: string; statusFilter: string; companyFilter: string; showFavoritesOnly: boolean } | null>(null);
+  const prevFiltersRef = useRef<{ search: string; statusFilter: string; companyFilter: string; typeFilter: string; showFavoritesOnly: boolean } | null>(null);
 
   const { favorites, toggleFavorite, isFavorite } = useFavorites('jobOrders');
 
@@ -303,36 +303,22 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
     };
   }, [tenantId]);
 
-  const recruiterOptionMap = useMemo(
-    () => new Map(recruiterPickerOptions.map((o) => [o.id, o])),
-    [recruiterPickerOptions],
-  );
-
-  const persistAssignedRecruiters = async (jobOrderId: string, selected: RecruiterPickerOption[]) => {
-    if (!tenantId) return;
-    const ids = selected.map((s) => s.id);
-    setAssigningRecruitersJobOrderId(jobOrderId);
-    setLoadError(null);
-    try {
-      await updateDoc(doc(db, p.jobOrder(tenantId, jobOrderId)), {
-        assignedRecruiters: ids,
-        updatedAt: serverTimestamp(),
-      });
-      const mergedNameMap = new Map(recruiterOptionMap);
-      selected.forEach((s) => mergedNameMap.set(s.id, s));
-      const recruiterName = summarizeAssignedRecruiters(ids, mergedNameMap);
+  // Patch the in-memory list after <RecruiterAssignmentCell> persists. The
+  // cell handles the Firestore write itself; this only refreshes the row
+  // we already render so the recruiter pill + sort key reflect the change
+  // without waiting for a full refetch.
+  const handleAssignmentSaved = useCallback(
+    (jobOrderId: string, ids: string[], summary: string) => {
       setJobOrders((prev) =>
         prev.map((jo) =>
-          jo.id === jobOrderId ? { ...jo, assignedRecruiters: ids, recruiterName } : jo,
+          jo.id === jobOrderId
+            ? { ...jo, assignedRecruiters: ids, recruiterName: summary }
+            : jo,
         ),
       );
-    } catch (err) {
-      console.error('Failed to update assigned recruiters:', err);
-      setLoadError(err instanceof Error ? err.message : 'Failed to update recruiters');
-    } finally {
-      setAssigningRecruitersJobOrderId(null);
-    }
-  };
+    },
+    [],
+  );
 
   const fetchJobOrders = useCallback(async () => {
     if (!tenantId) return;
@@ -584,6 +570,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
       search: effectiveSearch,
       statusFilter,
       companyFilter,
+      typeFilter,
       showFavoritesOnly: effectiveShowFavoritesOnly,
     };
     if (prevFiltersRef.current === null) {
@@ -594,12 +581,13 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
       prevFiltersRef.current.search !== current.search ||
       prevFiltersRef.current.statusFilter !== current.statusFilter ||
       prevFiltersRef.current.companyFilter !== current.companyFilter ||
+      prevFiltersRef.current.typeFilter !== current.typeFilter ||
       prevFiltersRef.current.showFavoritesOnly !== current.showFavoritesOnly
     ) {
       updateCache({ page: 0 });
       prevFiltersRef.current = current;
     }
-  }, [effectiveSearch, effectiveShowFavoritesOnly, statusFilter, companyFilter, updateCache]);
+  }, [effectiveSearch, effectiveShowFavoritesOnly, statusFilter, companyFilter, typeFilter, updateCache]);
 
   // Client-side filtering for real-time search and other filters
   const filteredJobOrders = jobOrders.filter(jo => {
@@ -631,7 +619,15 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
     if (companyFilter !== 'all' && jo.companyName !== companyFilter) {
       return false;
     }
-    
+
+    // Type filter — Career vs Gig. `jobType === 'gig'` => Gig; anything else
+    // (including missing) is treated as Career.
+    if (typeFilter !== 'all') {
+      const isGigJob = (jo as any).jobType === 'gig';
+      if (typeFilter === 'gig' && !isGigJob) return false;
+      if (typeFilter === 'career' && isGigJob) return false;
+    }
+
     return true;
   });
 
@@ -974,17 +970,21 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
       px: { xs: 2, md: 3 },
       pt: 2,
     }}>
-      {/* Filter & Toolbar Area */}
-      <Box sx={{ 
-        mb: 2,
-        p: 1.5,
-        backgroundColor: '#F9FAFB',
-        borderRadius: '8px',
-        border: '1px solid #E5E7EB',
-        borderBottom: '1px solid #D1D5DB'
-      }}>
-        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
-        
+      {/* Filter & Toolbar Area — collapsible, flat (no wrapping card) so it
+          matches `/shifts/list` visually. The Show/Hide button lives in the
+          parent <RecruiterDashboard> tab strip. */}
+      <Collapse in={filtersExpanded} timeout="auto" unmountOnExit>
+        <Box
+          sx={{
+            display: 'flex',
+            gap: 1.25,
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            rowGap: 1,
+            pt: 1.25,
+            pb: 1.5,
+          }}
+        >
         <FormControl size="small" sx={{ minWidth: 150, height: 36 }}>
           <InputLabel sx={{ fontSize: '0.875rem' }}>Status</InputLabel>
           <Select
@@ -1040,7 +1040,32 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
             ))}
           </Select>
         </FormControl>
-        
+
+        <FormControl size="small" sx={{ minWidth: 130, height: 36 }}>
+          <InputLabel sx={{ fontSize: '0.875rem' }}>Type</InputLabel>
+          <Select
+            value={typeFilter}
+            onChange={(e) => updateCache({ typeFilter: e.target.value })}
+            label="Type"
+            sx={{
+              height: 36,
+              borderRadius: '6px',
+              backgroundColor: 'white',
+              fontSize: '0.875rem',
+              '& .MuiOutlinedInput-notchedOutline': {
+                borderColor: '#E5E7EB',
+              },
+              '&:hover .MuiOutlinedInput-notchedOutline': {
+                borderColor: '#D1D5DB',
+              },
+            }}
+          >
+            <MenuItem value="all">All</MenuItem>
+            <MenuItem value="career">Career</MenuItem>
+            <MenuItem value="gig">Gig</MenuItem>
+          </Select>
+        </FormControl>
+
         <FormControl size="small" sx={{ minWidth: 150, height: 36 }}>
           <InputLabel sx={{ fontSize: '0.875rem' }}>Sort By</InputLabel>
           <Select
@@ -1067,7 +1092,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
           </Select>
         </FormControl>
         </Box>
-      </Box>
+      </Collapse>
 
       {loadError && (
         <Alert severity="error" sx={{ mb: 2 }}>
@@ -1094,20 +1119,20 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
           </Typography>
         </Box>
       ) : (
+        /* Layout/design copied from the account-detail Job Orders tab so the
+           two surfaces stay visually identical — uppercase 0.75rem header
+           cells, zebra-striped rows, gray Type chip. The Recruiter cell on
+           BOTH surfaces uses <RecruiterAssignmentCell> (inline edit). */
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <TableContainer 
+          <TableContainer
             component={Paper}
-            sx={{ 
+            sx={{
               flex: 1,
               display: 'flex',
               flexDirection: 'column',
               overflowY: 'auto',
               overflowX: 'auto',
-              // Scrollbar styling per Inbox Standard
-              '&::-webkit-scrollbar': {
-                width: '8px',
-                height: '8px',
-              },
+              '&::-webkit-scrollbar': { width: '8px', height: '8px' },
               '&::-webkit-scrollbar-track': {
                 background: 'rgba(0, 0, 0, 0.02)',
                 borderRadius: '4px',
@@ -1115,40 +1140,17 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
               '&::-webkit-scrollbar-thumb': {
                 background: 'rgba(0, 0, 0, 0.15)',
                 borderRadius: '4px',
-                '&:hover': {
-                  background: 'rgba(0, 0, 0, 0.25)',
-                },
+                '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
               },
-              // Firefox scrollbar styling
               scrollbarWidth: 'thin',
               scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
             }}
           >
-            <Table stickyHeader>
-              <TableHead sx={{
-                position: 'sticky',
-                top: 0,
-                zIndex: 10,
-                backgroundColor: '#FFFFFF',
-              }}>
+            <Table stickyHeader size="small">
+              <TableHead>
                 <TableRow>
-                  <TableCell sx={{ 
-                    fontWeight: 700, 
-                    bgcolor: '#FFFFFF',
-                    color: 'text.secondary', 
-                    textTransform: 'uppercase', 
-                    fontSize: '0.75rem', 
-                    width: 60,
-                  }}>
-                    {/* Empty - just for spacing the favorites column */}
-                  </TableCell>
-                  <TableCell sx={{ 
-                    fontWeight: 700, 
-                    bgcolor: '#FFFFFF',
-                    color: 'text.secondary', 
-                    textTransform: 'uppercase', 
-                    fontSize: '0.75rem',
-                  }}>
+                  <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', width: 60 }} />
+                  <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
                     <TableSortLabel
                       active={sortField === 'jobOrderNumber'}
                       direction={sortField === 'jobOrderNumber' ? sortDirection : 'desc'}
@@ -1157,40 +1159,11 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                       #
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell sx={{ 
-                    fontWeight: 700, 
-                    bgcolor: '#FFFFFF',
-                    color: 'text.secondary', 
-                    textTransform: 'uppercase', 
-                    fontSize: '0.75rem',
-                  }}>
-                    Title
-                  </TableCell>
-                  <TableCell sx={{ 
-                    fontWeight: 700, 
-                    bgcolor: '#FFFFFF',
-                    color: 'text.secondary', 
-                    textTransform: 'uppercase', 
-                    fontSize: '0.75rem',
-                  }}>
-                    Job Title
-                  </TableCell>
-                  <TableCell sx={{ 
-                    fontWeight: 700, 
-                    bgcolor: '#FFFFFF',
-                    color: 'text.secondary', 
-                    textTransform: 'uppercase', 
-                    fontSize: '0.75rem',
-                  }}>
-                    Account
-                  </TableCell>
-                  <TableCell sx={{ 
-                    fontWeight: 700, 
-                    bgcolor: '#FFFFFF',
-                    color: 'text.secondary', 
-                    textTransform: 'uppercase', 
-                    fontSize: '0.75rem',
-                  }}>
+                  <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Title</TableCell>
+                  <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Type</TableCell>
+                  <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Job Title</TableCell>
+                  <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Account</TableCell>
+                  <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
                     <TableSortLabel
                       active={sortField === 'worksiteState'}
                       direction={sortField === 'worksiteState' ? sortDirection : 'asc'}
@@ -1202,31 +1175,8 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                       Location
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell sx={{ 
-                    fontWeight: 700, 
-                    bgcolor: '#FFFFFF',
-                    color: 'text.secondary', 
-                    textTransform: 'uppercase', 
-                    fontSize: '0.75rem',
-                  }}>
-                    Status
-                  </TableCell>
-                  <TableCell sx={{
-                    fontWeight: 700,
-                    bgcolor: '#FFFFFF',
-                    color: 'text.secondary',
-                    textTransform: 'uppercase',
-                    fontSize: '0.75rem',
-                  }}>
-                    Applicants
-                  </TableCell>
-                  <TableCell sx={{ 
-                    fontWeight: 700, 
-                    bgcolor: '#FFFFFF',
-                    color: 'text.secondary', 
-                    textTransform: 'uppercase', 
-                    fontSize: '0.75rem',
-                  }}>
+                  <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Status</TableCell>
+                  <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
                     <TableSortLabel
                       active={sortField === 'recruiterName'}
                       direction={sortField === 'recruiterName' ? sortDirection : 'asc'}
@@ -1235,29 +1185,18 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                       Recruiter(s)
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell sx={{ 
-                    fontWeight: 700, 
-                    bgcolor: '#FFFFFF',
-                    color: 'text.secondary', 
-                    textTransform: 'uppercase', 
-                    fontSize: '0.75rem',
-                  }}>
-                    Age
-                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {paginatedJobOrders.map((jobOrder, index) => (
-                  <TableRow 
-                    key={jobOrder.id} 
-                    hover 
+                  <TableRow
+                    key={jobOrder.id}
+                    hover
                     onClick={() => navigate(`/jobs/job-orders/${jobOrder.id}`)}
-                    sx={{ 
+                    sx={{
                       cursor: 'pointer',
                       backgroundColor: index % 2 === 0 ? 'background.paper' : 'action.hover',
-                      '&:hover': {
-                        backgroundColor: 'action.selected'
-                      }
+                      '&:hover': { backgroundColor: 'action.selected' },
                     }}
                   >
                     <TableCell onClick={(e) => e.stopPropagation()}>
@@ -1280,25 +1219,9 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                     </TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, minWidth: 0 }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
-                          <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                            {jobOrder.jobOrderName}
-                          </Typography>
-                          <Chip
-                            label={jobOrder.jobType === 'gig' ? 'Gig' : 'Career'}
-                            size="small"
-                            variant="outlined"
-                            sx={{
-                              height: 22,
-                              fontSize: '0.7rem',
-                              fontWeight: 600,
-                              flexShrink: 0,
-                              ...(jobOrder.jobType === 'gig'
-                                ? { borderColor: 'secondary.main', color: 'secondary.dark' }
-                                : { borderColor: 'primary.main', color: 'primary.dark' }),
-                            }}
-                          />
-                        </Box>
+                        <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                          {jobOrder.jobOrderName}
+                        </Typography>
                         {(() => {
                           const jobPosts = jobPostsByJobOrderId[jobOrder.id] || [];
                           const indeedFromPosts = (jobPosts as any[])
@@ -1363,6 +1286,39 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                       </Box>
                     </TableCell>
                     <TableCell>
+                      {/* Type column — Career/Gig chip with the same gray
+                          background treatment used on the account-detail
+                          Job Orders tab. */}
+                      {(() => {
+                        const raw = (jobOrder as any).jobType;
+                        const label =
+                          raw === 'gig'
+                            ? 'Gig'
+                            : raw === 'career'
+                              ? 'Career'
+                              : raw
+                                ? String(raw)
+                                : null;
+                        return label ? (
+                          <Chip
+                            label={label}
+                            size="small"
+                            sx={{
+                              height: 22,
+                              fontSize: '0.7rem',
+                              fontWeight: 600,
+                              bgcolor: 'rgba(0,0,0,0.06)',
+                              '& .MuiChip-label': { px: 0.75 },
+                            }}
+                          />
+                        ) : (
+                          <Typography variant="body2" color="text.disabled">
+                            —
+                          </Typography>
+                        );
+                      })()}
+                    </TableCell>
+                    <TableCell>
                       <Typography variant="body2">{jobOrder.jobTitle || 'No Job Title'}</Typography>
                     </TableCell>
                     <TableCell>
@@ -1377,16 +1333,45 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                       </Box>
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2" color="text.primary">
-                        {jobOrder.locationName || 'No Location'}
-                      </Typography>
+                      {/* Worksite name on top, then street + city/state/zip
+                          on lines 2/3 — same shape as the account-detail
+                          Job Orders tab so a recruiter can disambiguate
+                          two same-named worksites without opening the JO. */}
                       {(() => {
-                        const line = formatWorksiteCityStateZip(jobOrder.worksiteAddress);
-                        return line ? (
-                          <Typography variant="caption" color="text.secondary" display="block">
-                            {line}
-                          </Typography>
-                        ) : null;
+                        const locName = jobOrder.locationName || 'No Location';
+                        const addr = jobOrder.worksiteAddress as
+                          | { street?: string; city?: string; state?: string; zipCode?: string }
+                          | undefined;
+                        const street = addr?.street?.trim() || '';
+                        const cityStateZip = formatWorksiteCityStateZip(jobOrder.worksiteAddress);
+                        return (
+                          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.5, minWidth: 0 }}>
+                            <LocationOnIcon sx={{ fontSize: 16, color: 'text.secondary', mt: '2px', flexShrink: 0 }} />
+                            <Box sx={{ minWidth: 0 }}>
+                              <Typography variant="body2" sx={{ lineHeight: 1.3 }}>
+                                {locName}
+                              </Typography>
+                              {street && (
+                                <Typography
+                                  variant="caption"
+                                  color="text.secondary"
+                                  sx={{ display: 'block', lineHeight: 1.3 }}
+                                >
+                                  {street}
+                                </Typography>
+                              )}
+                              {cityStateZip && (
+                                <Typography
+                                  variant="caption"
+                                  color="text.secondary"
+                                  sx={{ display: 'block', lineHeight: 1.3 }}
+                                >
+                                  {cityStateZip}
+                                </Typography>
+                              )}
+                            </Box>
+                          </Box>
+                        );
                       })()}
                     </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
@@ -1426,71 +1411,23 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                         ))}
                       </Menu>
                     </TableCell>
-                    <TableCell>
-                      {/* Unique applicant count for this job order (deduped by userId across
-                          all shifts in the order). `undefined` while the batch fetch is in
-                          flight — show a dash so the column doesn't lie with a stale "0". */}
-                      <Typography variant="body2">
-                        {jobOrder.applicantCount === undefined ? '—' : jobOrder.applicantCount}
-                      </Typography>
-                    </TableCell>
                     <TableCell
                       onClick={(e) => e.stopPropagation()}
-                      sx={{ verticalAlign: 'middle', minWidth: 220, maxWidth: 320 }}
+                      sx={{ verticalAlign: 'middle' }}
                     >
-                      <Autocomplete
-                        multiple
-                        size="small"
-                        loading={loadingRecruiterOptions}
-                        disabled={assigningRecruitersJobOrderId === jobOrder.id}
+                      <RecruiterAssignmentCell
+                        tenantId={tenantId}
+                        jobOrderId={jobOrder.id}
+                        assignedRecruiterIds={jobOrder.assignedRecruiters || []}
                         options={recruiterPickerOptions}
-                        value={(jobOrder.assignedRecruiters || [])
-                          .map((id) => recruiterOptionMap.get(id))
-                          .filter((x): x is RecruiterPickerOption => Boolean(x))}
-                        onChange={(_, newValue) => {
-                          void persistAssignedRecruiters(jobOrder.id, newValue);
-                        }}
-                        getOptionLabel={(o) => o.displayName}
-                        isOptionEqualToValue={(a, b) => a.id === b.id}
-                        filterSelectedOptions
-                        renderTags={(tagValue, getTagProps) =>
-                          tagValue.map((option, index) => (
-                            <Chip
-                              {...getTagProps({ index })}
-                              key={option.id}
-                              label={option.displayName}
-                              size="small"
-                              sx={{ maxWidth: 120 }}
-                            />
-                          ))
+                        optionsLoading={loadingRecruiterOptions}
+                        onSaved={handleAssignmentSaved}
+                        onError={(err) =>
+                          setLoadError(
+                            err instanceof Error ? err.message : 'Failed to update recruiters',
+                          )
                         }
-                        renderInput={(params) => (
-                          <TextField
-                            {...params}
-                            placeholder="Assign recruiters…"
-                            variant="outlined"
-                            InputProps={{
-                              ...params.InputProps,
-                              endAdornment: (
-                                <>
-                                  {assigningRecruitersJobOrderId === jobOrder.id ? (
-                                    <CircularProgress color="inherit" size={14} sx={{ mr: 0.5 }} />
-                                  ) : null}
-                                  {params.InputProps.endAdornment}
-                                </>
-                              ),
-                            }}
-                          />
-                        )}
-                        sx={{
-                          '& .MuiOutlinedInput-root': { py: 0.25 },
-                        }}
                       />
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">
-                        {getJobOrderAge(jobOrder.createdAt)} days
-                      </Typography>
                     </TableCell>
                   </TableRow>
                 ))}

@@ -1564,6 +1564,45 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 </Box>
               </Grid>
             )}
+            {/*
+              Gigs: there's no JO-level "Workers Needed" number (each
+              shift carries its own `totalStaffRequested`), so the
+              toggle stands alone and labels itself as "Spots Remaining"
+              to match the chip text on the public Jobs Board (see
+              `ShiftSelector` chip rendered when `showSpots` is true).
+              The flag persists to `post.showWorkersNeeded` and is the
+              single source of truth for whether the public board's
+              per-shift "X spots left" chip is rendered. Defaults to
+              hidden so recruiters opt in. May 2026.
+            */}
+            {formData.jobType === 'gig' && (
+              <Grid item xs={12} sm={6}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    height: '100%',
+                  }}
+                >
+                  <Box>
+                    <Typography variant="body1">
+                      Show Spots Remaining on Public Jobs Board
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      When off, the &quot;X spots left&quot; chip is hidden on each shift.
+                    </Typography>
+                  </Box>
+                  <Switch
+                    checked={formData.showWorkersNeeded}
+                    onChange={(e) => {
+                      setFormData({ ...formData, showWorkersNeeded: e.target.checked });
+                      maybeTickPersist();
+                    }}
+                  />
+                </Box>
+              </Grid>
+            )}
           </Grid>
         </Box>
 
@@ -2168,14 +2207,36 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
               {/* Empty left column for spacing */}
             </Grid>
             <Grid item xs={12} sm={6}>
+              {/*
+                E-Verify is 100% dictated by the hiring entity (e.g.
+                C1 Select LLC). When the form is attached to a job
+                order (`hideJobOrderConnection={true}` — the JO detail
+                Jobs Board tab), the switch reads the JO's
+                entity-resolved value and is locked for editing here.
+                The value is still set by `getInitialDataStatic` in
+                `RecruiterJobOrderDetail.tsx` (line ~2906 — reads
+                `jobOrderEntity.everifyRequired` first, then JO /
+                compliance fallbacks). To change it, edit the hiring
+                entity's settings, not this post. Standalone post
+                creation (no JO link) keeps the switch editable since
+                there's no entity context to read from.
+              */}
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
-                <Typography variant="body1">E-Verify Required</Typography>
+                <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                  <Typography variant="body1">E-Verify Required</Typography>
+                  {hideJobOrderConnection && (
+                    <Typography variant="caption" color="text.secondary">
+                      Set by the hiring entity
+                    </Typography>
+                  )}
+                </Box>
                 <Switch
                   checked={formData.eVerifyRequired}
+                  disabled={hideJobOrderConnection}
                   onChange={(e) => {
-                  setFormData({ ...formData, eVerifyRequired: e.target.checked });
-                  maybeTickPersist();
-                }}
+                    setFormData({ ...formData, eVerifyRequired: e.target.checked });
+                    maybeTickPersist();
+                  }}
                 />
               </Box>
             </Grid>
@@ -2814,12 +2875,29 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         </Box>
 
         <Box sx={{ mb: 1, mt: 1, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+          {/*
+            Pill-styled small buttons (May 2026) — matches the
+            "Copy Jobs Board Link" toolbar button on
+            `RecruiterJobOrderDetail.tsx` and the JO detail tab
+            strip so the Jobs Board tab toolbar reads as one
+            consistent horizontal pill row.
+          */}
           <Button
             variant="outlined"
             startIcon={generatingDescription ? <CircularProgress size={16} /> : <AutoAwesomeIcon />}
             onClick={handleGenerateDescription}
             disabled={generatingDescription}
             size="small"
+            sx={{
+              textTransform: 'none',
+              borderRadius: '999px',
+              fontSize: '0.8125rem',
+              minHeight: 32,
+              py: 0.5,
+              px: 1.5,
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+            }}
           >
             {generatingDescription ? 'Generating...' : 'Generate Job Description'}
           </Button>
@@ -2831,6 +2909,16 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
               !(jobDescriptionFocusRef.current ? jobDescriptionLocal : formData.jobDescription)?.trim()
             }
             size="small"
+            sx={{
+              textTransform: 'none',
+              borderRadius: '999px',
+              fontSize: '0.8125rem',
+              minHeight: 32,
+              py: 0.5,
+              px: 1.5,
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+            }}
           >
             Copy to clipboard
           </Button>
@@ -2863,9 +2951,19 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
 
         {!(autoSave && mode === 'edit') && (
           <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 2, mt: 3 }}>
-            <Button variant="outlined" onClick={onCancel} disabled={loading || !onCancel}>
-              Cancel
-            </Button>
+            {/*
+              Cancel button only renders when an `onCancel` handler is
+              provided. The standalone Edit Job Post page (`EditJobPost.tsx`)
+              passes a real handler that navigates back. The Job Order
+              detail page (`RecruiterJobOrderDetail.tsx`) doesn't need a
+              cancel — the form is embedded under a tab, the user navigates
+              by switching tabs or pressing back. Don't show dead UI there.
+            */}
+            {onCancel && (
+              <Button variant="outlined" onClick={onCancel} disabled={loading}>
+                Cancel
+              </Button>
+            )}
             <Button
               variant="contained"
               onClick={handleSubmit}

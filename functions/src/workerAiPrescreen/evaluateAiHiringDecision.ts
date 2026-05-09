@@ -30,6 +30,20 @@ export type AiHiringPolicyDecisionInput = {
   stopWhenTargetReached?: boolean;
   allowGigFallback?: boolean;
   topPercentToAdvance?: number;
+  /**
+   * When `true`, the prescreen LLM's `recommendation === 'review'` is lifted to `proceed` so a
+   * candidate who otherwise passes every gate (score, flags, dynamic-answers, capacity, no-show)
+   * can still advance.
+   *
+   * **User groups:** resolved policy sets this to `true` whenever `hiringConfig.quality` exists
+   * (preset only changes numeric floors); a stale `userGroup.aiHiring` flag cannot turn it off.
+   * **Job orders / tenant:** often unset — legacy behavior keeps `review` as a hold until STEP 1b.
+   *
+   * Has no effect on `recommendation === 'decline'` or any of the policy-engine's other gates.
+   * When the override fires and the engine returns `advance`, the trace includes
+   * `interview_recommendation_review_overridden` so audits stay attributable.
+   */
+  advanceOnReviewRecommendation?: boolean;
 };
 
 export type ApplicationContextInput = {
@@ -71,6 +85,12 @@ export type AiHiringReasonCode =
   | 'advance_with_caution_flags'
   /** Interview score engine said `review` — hiring decision aligns (no Review+Advance). */
   | 'interview_recommendation_review'
+  /**
+   * Interview score engine said `review`, but the resolved policy
+   * (`advanceOnReviewRecommendation: true`) lifted it to `proceed`. Stamped on
+   * `advance` results so audits know the candidate would otherwise have been held.
+   */
+  | 'interview_recommendation_review_overridden'
   | 'not_in_top_percent'
   | 'recommendation_decline'
   | 'gig_path_eligible'
@@ -191,8 +211,20 @@ export function evaluateAiHiringDecision(params: EvaluateAiHiringDecisionParams)
   const { overallScore, flags, recommendation, dynamicAnswers } = interviewResult;
 
   let effectiveRecommendation = recommendation;
+  let reviewOverridden = false;
   if (operationalTrust?.promoteDeclineToReview && recommendation === 'decline') {
     effectiveRecommendation = 'review';
+  }
+  // Policy-level lift: when `advanceOnReviewRecommendation` is true (user groups always set this
+  // from `hiringConfig.quality`; job orders may leave it unset), promote `review` → `proceed` so
+  // the candidate is re-graded by the score / flag / dynamic / capacity / no-show gates rather than
+  // being held by the LLM's qualitative review verdict alone. `decline` is intentionally NOT lifted here.
+  if (
+    effectiveRecommendation === 'review' &&
+    hiringPolicy.advanceOnReviewRecommendation === true
+  ) {
+    effectiveRecommendation = 'proceed';
+    reviewOverridden = true;
   }
 
   const minScore =
@@ -327,10 +359,14 @@ export function evaluateAiHiringDecision(params: EvaluateAiHiringDecisionParams)
 
   // STEP 8 — Default advance (`finalize` applies gig-path annotation when applicable).
   // Never emit `passed_all_checks` when caution flags remain (only positive signals allowed).
+  const advanceCodes = advanceReasonCodes(flags);
+  if (reviewOverridden && !advanceCodes.includes('interview_recommendation_review_overridden')) {
+    advanceCodes.push('interview_recommendation_review_overridden');
+  }
   return finalize(
     'advance',
     hiringPolicy,
-    advanceReasonCodes(flags),
+    advanceCodes,
     interviewResult,
     applyGig,
   );

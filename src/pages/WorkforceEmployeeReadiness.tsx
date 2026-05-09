@@ -1,9 +1,11 @@
 /**
- * RD.1 — CSA daily action-list home (formerly the per-worker readiness queue).
+ * RD.1 — Onboarding Specialist daily action-list home (formerly the
+ * per-worker readiness queue, formerly known as the CSA queue).
  *
- * **Why this changed:** the CSA role definition narrowed
- * (see `docs/RECRUITING_ROLE_MODEL.md` §2.1). CSAs are no longer doing
- * universal readiness triage — that's moving to a Recruiter / HRX-admin
+ * **Why this changed:** the role formerly known as CSA narrowed
+ * (see `docs/RECRUITING_ROLE_MODEL.md` §2.1) and was renamed
+ * "Onboarding Specialist". They are no longer doing universal
+ * readiness triage — that's moving to a Recruiter / HRX-admin
  * surface. Their two remaining responsibilities are:
  *   1. The human voice of C1 for new workers (welcome calls, first-shift
  *      follow-up).
@@ -11,7 +13,7 @@
  *      on a separate forthcoming page.
  *
  * This page is now (1): three stacked tables that surface "do this today"
- * work for the active CSA. The previous queue (chip filters + matrix +
+ * work for the active Onboarding Specialist. The previous queue (chip filters + matrix +
  * worker × entity grouping) is intentionally retired here, but its
  * supporting components (`WorkerReadinessRow`, `MatrixView`,
  * `WorkforceStatusChips`, `WorkforceEntityFilter`, `useEmployeeReadinessItems`)
@@ -60,20 +62,22 @@ const WorkforceEmployeeReadiness: React.FC = () => {
   const ctx = useOutletContext<WorkforceOutletContext>();
   const { scope, setScope } = ctx;
 
-  // Role-based default scope: CSAs land on My Users; HRX admins land on
-  // All Users. Apply ONLY when the persisted scope matches the global
-  // default ('all') AND the role would naturally prefer a different
-  // default — this prevents stomping a CSA who deliberately switched to
-  // "All" mid-session. We rely on the persistence layer to remember the
-  // user's last explicit pick; this effect just nudges first-time users.
+  // Role-based default scope: Onboarding Specialists land on My Users;
+  // HRX admins land on All Users. Apply ONLY when the persisted scope
+  // matches the global default ('all') AND the role would naturally
+  // prefer a different default — this prevents stomping an Onboarding
+  // Specialist who deliberately switched to "All" mid-session. We rely
+  // on the persistence layer to remember the user's last explicit
+  // pick; this effect just nudges first-time users.
   const hasAppliedRoleDefault = useRef(false);
   useEffect(() => {
     if (hasAppliedRoleDefault.current || !currentUserUid) return;
     hasAppliedRoleDefault.current = true;
     // HRX admins keep 'all'; everyone else (Recruiter / Manager / Admin /
-    // CSA — `currentClaimsRole` doesn't have a CSA-specific value yet
-    // since the role model migration is in flight) defaults to 'mine'
-    // when they haven't explicitly chosen otherwise.
+    // Onboarding Specialist — `currentClaimsRole` doesn't have an
+    // Onboarding-Specialist-specific value yet since the role model
+    // migration is in flight) defaults to 'mine' when they haven't
+    // explicitly chosen otherwise.
     if (!isHRX && scope === 'all' && currentClaimsRole !== 'HRX') {
       setScope('mine');
     }
@@ -149,7 +153,7 @@ const WorkforceEmployeeReadiness: React.FC = () => {
             gap: 0.5,
           }}
         >
-          <Tooltip title="Workers I'm the Candidate Success Agent for">
+          <Tooltip title="Workers I'm the Onboarding Specialist for">
             <ToggleButton value="mine" aria-label="My users">
               My Users
             </ToggleButton>
@@ -165,7 +169,7 @@ const WorkforceEmployeeReadiness: React.FC = () => {
 
         {scope === 'mine' && (
           <Typography variant="caption" color="text.secondary">
-            Showing workers where you&apos;re the CSA.
+            Showing workers where you&apos;re the Onboarding Specialist.
           </Typography>
         )}
       </Stack>

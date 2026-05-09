@@ -148,6 +148,8 @@ export async function evaluateCurrentPolicyOrchestratorDecision(
 
   let applicationNoShowBand: string | null | undefined;
   let assignmentNoShowBand: string | null | undefined;
+  let applicationNoShowScore: number | null | undefined;
+  let assignmentNoShowScore: number | null | undefined;
   const aa = data.aiAutomation as Record<string, unknown> | undefined;
   const v1 = aa?.orchestratorV1 as Record<string, unknown> | undefined;
   const inputs = v1?.inputs as Record<string, unknown> | undefined;
@@ -156,6 +158,18 @@ export async function evaluateCurrentPolicyOrchestratorDecision(
     assignmentNoShowBand =
       typeof inputs.assignmentNoShowBand === 'string' ? inputs.assignmentNoShowBand : null;
   }
+  // `aiAutomation.noShowRisk.score` is the numeric counterpart to the band (0–100). Always re-read
+  // from the live application so a re-evaluation against today's policy uses the freshest signal.
+  const noShowRisk = aa?.noShowRisk as Record<string, unknown> | undefined;
+  if (noShowRisk && typeof noShowRisk.score === 'number' && Number.isFinite(noShowRisk.score)) {
+    applicationNoShowScore = noShowRisk.score as number;
+    if (typeof noShowRisk.band === 'string' && !applicationNoShowBand) {
+      applicationNoShowBand = noShowRisk.band as string;
+    }
+  }
+  // assignment-level score from the loadScoped result (already loaded above)
+  assignmentNoShowScore = assignNs.score;
+  if (!assignmentNoShowBand && assignNs.band) assignmentNoShowBand = assignNs.band;
 
   // Group-scoped: gate on Master Recruiter Score (50% category + 35% interview + 15% profile).
   // Master.score100 is null when there's no usable signal — fall back to prescreen overall in that case.
@@ -185,6 +199,8 @@ export async function evaluateCurrentPolicyOrchestratorDecision(
     jobFitScore: jobFit,
     applicationNoShowBand: applicationNoShowBand ?? undefined,
     assignmentNoShowBand: assignmentNoShowBand ?? undefined,
+    applicationNoShowScore: applicationNoShowScore ?? undefined,
+    assignmentNoShowScore: assignmentNoShowScore ?? undefined,
     assignmentIdUsed: assignNs.assignmentId,
     gateScoreOverride,
     gateScoreSource: gateScoreOverride != null ? 'master_recruiter' : 'prescreen_overall',

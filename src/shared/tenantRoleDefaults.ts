@@ -1,30 +1,32 @@
 /**
- * Tenant-level role defaults — the four roles a recruiting tenant can
- * pin to specific users at the tenant scope. These power both
+ * Tenant-level role defaults — the roles a recruiting tenant can pin to
+ * specific users at the tenant scope. These power both
  * `resolveRole(...)`'s tenant-default tier and the Workforce admin UI's
  * inline role chips.
  *
- * Stored at `tenants/{tid}/settings/roleDefaults` as four parallel
+ * Stored at `tenants/{tid}/settings/roleDefaults` as parallel
  * `string[]` arrays — one per role. A user can hold zero or multiple of
  * these; a role can have zero or multiple holders.
  *
  * Runtime-neutral: no firebase imports, ISO-8601 strings for timestamps.
- * Mirrored byte-for-byte to `src/shared/tenantRoleDefaults.ts` so CRA's
- * ModuleScopePlugin lets the client import it.
+ * Mirrored byte-for-byte to `shared/tenantRoleDefaults.ts` (legacy
+ * import path) so CRA's ModuleScopePlugin lets the client import it.
+ *
+ * History: the `csa_fallback` default was dropped when the CSA role was
+ * renamed to "Onboarding Specialist" and narrowed to a group-scoped
+ * specialty (no tenant-level fallback). Existing
+ * `roleDefaults.csaFallbackIds` data on disk is ignored by the resolver
+ * after the rename; a separate cleanup script removes the field.
  */
 
 /**
- * The four roles that can be pinned at tenant scope.
+ * The roles that can be pinned at tenant scope.
  *
  * - `hrx_systems_operator` — Receives platform-level escalations and is
  *   the "owner" target when something needs HRX support attention. Maps
  *   to `roleDefaults.hrxSystemsOperatorIds[]`.
  * - `payroll_coordinator` — Reviews timesheets and processes payroll for
  *   the tenant. Maps to `roleDefaults.payrollCoordinatorIds[]`.
- * - `csa_fallback` — Last-resort CSA when no user group the worker
- *   belongs to has a `roles.csaIds` assignment. Used by the Phase 4 CSA
- *   tier walk's final fallback before "Unassigned". Maps to
- *   `roleDefaults.csaFallbackIds[]`.
  * - `scheduler_fallback` — Last-resort Scheduler when the worker's
  *   account has no `roles.schedulerIds` assignment. Maps to
  *   `roleDefaults.schedulerFallbackIds[]`.
@@ -32,15 +34,13 @@
 export type TenantRoleDefault =
   | 'hrx_systems_operator'
   | 'payroll_coordinator'
-  | 'csa_fallback'
   | 'scheduler_fallback';
 
-/** All four values, in the order we render them in the UI. Importable so
+/** All values, in the order we render them in the UI. Importable so
  *  the client doesn't have to repeat the literal array. */
 export const TENANT_ROLE_DEFAULTS: readonly TenantRoleDefault[] = [
   'hrx_systems_operator',
   'payroll_coordinator',
-  'csa_fallback',
   'scheduler_fallback',
 ] as const;
 
@@ -48,7 +48,6 @@ export const TENANT_ROLE_DEFAULTS: readonly TenantRoleDefault[] = [
 export const TENANT_ROLE_DEFAULT_LABELS: Record<TenantRoleDefault, string> = {
   hrx_systems_operator: 'HRX Systems Operator',
   payroll_coordinator: 'Payroll Coordinator',
-  csa_fallback: 'CSA fallback',
   scheduler_fallback: 'Scheduler fallback',
 };
 
@@ -57,7 +56,6 @@ export const TENANT_ROLE_DEFAULT_DESCRIPTIONS: Record<TenantRoleDefault, string>
   hrx_systems_operator:
     'Receives platform-level escalations and is the owner target for HRX support tickets.',
   payroll_coordinator: 'Reviews timesheets and processes payroll for the tenant.',
-  csa_fallback: 'Used when no user group has a CSA assigned for the worker.',
   scheduler_fallback: 'Used when no account has a Scheduler assigned for the worker.',
 };
 
@@ -69,18 +67,19 @@ export const TENANT_ROLE_DEFAULT_DESCRIPTIONS: Record<TenantRoleDefault, string>
 export const TENANT_ROLE_DEFAULT_FIELD: Record<TenantRoleDefault, string> = {
   hrx_systems_operator: 'hrxSystemsOperatorIds',
   payroll_coordinator: 'payrollCoordinatorIds',
-  csa_fallback: 'csaFallbackIds',
   scheduler_fallback: 'schedulerFallbackIds',
 };
 
 /**
  * Read shape of the `tenants/{tid}/settings/roleDefaults` doc. All
- * arrays are optional — the doc may not exist for new tenants.
+ * arrays are optional — the doc may not exist for new tenants. The
+ * legacy `csaFallbackIds` field is intentionally NOT modeled here:
+ * existing data on disk is ignored, and the resolver no longer reads it
+ * (Onboarding Specialist is group-scoped only).
  */
 export interface TenantRoleDefaultsDoc {
   hrxSystemsOperatorIds?: string[];
   payrollCoordinatorIds?: string[];
-  csaFallbackIds?: string[];
   schedulerFallbackIds?: string[];
   /** ISO-8601. */
   updatedAt?: string;
@@ -89,11 +88,10 @@ export interface TenantRoleDefaultsDoc {
 }
 
 /** Per-user view derived from the doc — used by the UI to populate the
- *  four chips on each row of the Workforce table. */
+ *  role chips on each row of the Workforce table. */
 export interface TenantRoleDefaultMembership {
   hrx_systems_operator: boolean;
   payroll_coordinator: boolean;
-  csa_fallback: boolean;
   scheduler_fallback: boolean;
 }
 
@@ -107,7 +105,6 @@ export function tenantRoleDefaultMembershipForUser(
   return {
     hrx_systems_operator: (safe.hrxSystemsOperatorIds ?? []).includes(uid),
     payroll_coordinator: (safe.payrollCoordinatorIds ?? []).includes(uid),
-    csa_fallback: (safe.csaFallbackIds ?? []).includes(uid),
     scheduler_fallback: (safe.schedulerFallbackIds ?? []).includes(uid),
   };
 }
@@ -125,7 +122,7 @@ export interface SetTenantRoleDefaultMembershipInput {
   tenantId: string;
   /** The user being added or removed. */
   uid: string;
-  /** Which of the four arrays to touch. */
+  /** Which array to touch. */
   role: TenantRoleDefault;
   /** `true` to add the uid (idempotent — no-op if already present),
    *  `false` to remove (idempotent — no-op if already absent). */

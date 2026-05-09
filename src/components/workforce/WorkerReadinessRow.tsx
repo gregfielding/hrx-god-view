@@ -177,7 +177,7 @@ const WorkerReadinessRow: React.FC<WorkerReadinessRowProps> = ({
             </Avatar>
           </Tooltip>
         ) : (
-          <Tooltip title="Unassigned — first CSA to act becomes primary owner">
+          <Tooltip title="Unassigned — first Onboarding Specialist to act becomes primary owner">
             <Chip label="Unassigned" size="small" variant="outlined" />
           </Tooltip>
         )}

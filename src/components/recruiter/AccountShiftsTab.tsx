@@ -87,17 +87,55 @@ export interface AccountShiftsTabProps {
   account: RecruiterAccount | null;
   /** True while the parent page is still resolving the account doc (optional). */
   accountLoading?: boolean;
+  /**
+   * Controlled search/favorites/add-drawer state — when provided, the corresponding
+   * controls are rendered by the parent (in the account page header next to the tabs)
+   * instead of inside this tab's own toolbar. This keeps the search bar + add button
+   * on the same row as the account-level tab strip, matching `/jobs/job-orders` and
+   * the rest of the page set.
+   *
+   * Pass nothing and the tab still works standalone with internal state + an internal
+   * search/add toolbar.
+   */
+  search?: string;
+  onSearchChange?: (next: string) => void;
+  showFavoritesOnly?: boolean;
+  onToggleFavorites?: (next: boolean) => void;
+  addShiftDrawerOpen?: boolean;
+  onAddShiftDrawerOpenChange?: (next: boolean) => void;
 }
 
 const AccountShiftsTab: React.FC<AccountShiftsTabProps> = ({
   tenantId,
   account,
   accountLoading = false,
+  search: searchProp,
+  onSearchChange,
+  showFavoritesOnly: showFavoritesOnlyProp,
+  onToggleFavorites,
+  addShiftDrawerOpen: addShiftDrawerOpenProp,
+  onAddShiftDrawerOpenChange,
 }) => {
   const [activeView, setActiveView] = useState<ShiftsTab>('list');
-  const [addShiftDrawerOpen, setAddShiftDrawerOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [internalAddShiftDrawerOpen, setInternalAddShiftDrawerOpen] = useState(false);
+  const [internalSearch, setInternalSearch] = useState('');
+  const [internalShowFavoritesOnly, setInternalShowFavoritesOnly] = useState(false);
+  // Toolbar (search + add) is rendered by the parent page header when *all* the
+  // controlled props are supplied — otherwise the tab falls back to its own toolbar
+  // for any standalone callers we add in the future.
+  const toolbarHoistedToParent =
+    searchProp !== undefined &&
+    onSearchChange !== undefined &&
+    showFavoritesOnlyProp !== undefined &&
+    onToggleFavorites !== undefined &&
+    addShiftDrawerOpenProp !== undefined &&
+    onAddShiftDrawerOpenChange !== undefined;
+  const search = searchProp ?? internalSearch;
+  const setSearch = onSearchChange ?? setInternalSearch;
+  const showFavoritesOnly = showFavoritesOnlyProp ?? internalShowFavoritesOnly;
+  const setShowFavoritesOnly = onToggleFavorites ?? setInternalShowFavoritesOnly;
+  const addShiftDrawerOpen = addShiftDrawerOpenProp ?? internalAddShiftDrawerOpen;
+  const setAddShiftDrawerOpen = onAddShiftDrawerOpenChange ?? setInternalAddShiftDrawerOpen;
   const [statusFilter, setStatusFilter] = useState<ShiftsStatusFilter>('all');
   const [jobTypeFilter, setJobTypeFilter] = useState<ShiftsJobTypeFilter>('all');
   const [filtersExpanded, setFiltersExpanded] = useState(false);
@@ -352,31 +390,33 @@ const AccountShiftsTab: React.FC<AccountShiftsTabProps> = ({
           </Box>
         }
         rightActions={
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            <UniversalSearchBar
-              value={search}
-              onChange={setSearch}
-              onSearch={setSearch}
-              placeholder="Search shifts..."
-              favoriteType="shifts"
-              showFavoritesOnly={showFavoritesOnly}
-              onToggleFavorites={setShowFavoritesOnly}
-            />
-            <Tooltip title="Add shift">
-              <IconButton
-                onClick={() => setAddShiftDrawerOpen(true)}
-                sx={{
-                  width: 32,
-                  height: 32,
-                  bgcolor: '#0057B8',
-                  color: '#fff',
-                  '&:hover': { bgcolor: '#004a9f' },
-                }}
-              >
-                <AddIcon sx={{ fontSize: 18 }} />
-              </IconButton>
-            </Tooltip>
-          </Box>
+          toolbarHoistedToParent ? undefined : (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              <UniversalSearchBar
+                value={search}
+                onChange={setSearch}
+                onSearch={setSearch}
+                placeholder="Search shifts..."
+                favoriteType="shifts"
+                showFavoritesOnly={showFavoritesOnly}
+                onToggleFavorites={setShowFavoritesOnly}
+              />
+              <Tooltip title="Add shift">
+                <IconButton
+                  onClick={() => setAddShiftDrawerOpen(true)}
+                  sx={{
+                    width: 32,
+                    height: 32,
+                    bgcolor: '#0057B8',
+                    color: '#fff',
+                    '&:hover': { bgcolor: '#004a9f' },
+                  }}
+                >
+                  <AddIcon sx={{ fontSize: 18 }} />
+                </IconButton>
+              </Tooltip>
+            </Box>
+          )
         }
       />
 
@@ -430,6 +470,15 @@ const AccountShiftsTab: React.FC<AccountShiftsTabProps> = ({
         jobOrderId={null}
         shift={null}
         pickJobOrderFirst
+        // Pre-select the current account so the recruiter doesn't have
+        // to re-pick the account they're already viewing. The Job
+        // order dropdown immediately scopes to this account's JOs;
+        // they can still pivot to another account inside the drawer
+        // if they need to. Name is passed as a hydration fallback
+        // for the case where the account has no JOs yet (the
+        // Autocomplete option list derives from the JO query).
+        initialAccountId={account?.id ?? null}
+        initialAccountName={account?.name ?? null}
         onShiftAdded={() => {
           void refetch();
         }}

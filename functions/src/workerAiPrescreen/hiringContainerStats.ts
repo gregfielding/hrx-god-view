@@ -109,8 +109,8 @@ export async function loadScopedAssignmentNoShowBand(
   tenantId: string,
   applicationId: string,
   jobOrderId: string | null | undefined,
-): Promise<{ band: string | null; assignmentId: string | null }> {
-  if (!jobOrderId) return { band: null, assignmentId: null };
+): Promise<{ band: string | null; score: number | null; assignmentId: string | null }> {
+  if (!jobOrderId) return { band: null, score: null, assignmentId: null };
   let q: QuerySnapshot;
   try {
     q = await db
@@ -120,13 +120,15 @@ export async function loadScopedAssignmentNoShowBand(
       .limit(3)
       .get();
   } catch {
-    return { band: null, assignmentId: null };
+    return { band: null, score: null, assignmentId: null };
   }
-  if (q.size !== 1) return { band: null, assignmentId: null };
+  if (q.size !== 1) return { band: null, score: null, assignmentId: null };
   const data = q.docs[0].data() as Record<string, unknown>;
   const pred = data.noShowRiskPredictionV1 as Record<string, unknown> | undefined;
   const band = pred && typeof pred.band === 'string' ? pred.band : null;
-  return { band, assignmentId: q.docs[0].id };
+  const score =
+    pred && typeof pred.score === 'number' && Number.isFinite(pred.score) ? (pred.score as number) : null;
+  return { band, score, assignmentId: q.docs[0].id };
 }
 
 export async function persistAiHiringStatsSnapshot(

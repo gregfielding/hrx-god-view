@@ -9,7 +9,6 @@ import { accusourceScreeningLineItems } from './accusourceScreeningLineItems';
 import { getEVerifyComfortStatusFromUserData } from './eVerifyComfortDisplay';
 import type { RecruiterUserBreakdownExtras, RecruiterUserReadinessLike } from './recruiterUsersReadinessDisplay';
 import { hasRecruiterInterviewCompletionEvidence } from './scoreSummary';
-import { getWorkAuthorizedStatus } from './workAuthorizedDisplay';
 import type { UserListEntityOnboardingItem } from './userListEntityEmploymentStatus';
 import type { UserListEntityOnboardingTone } from './userListEntityEmploymentStatus';
 
@@ -212,8 +211,15 @@ export function getRecruiterUserTopConcernDetailed(
   const sec = String(user.securityLevel ?? '0');
   if (sec === '0') return 'Account suspended';
 
-  const auth = getWorkAuthorizedStatus(user);
-  if (auth === 'no') return 'Work authorization denied';
+  // Work-authorization concerns ("Work authorization denied", "Missing
+  // work authorization or E-Verify docs") were removed in May 2026.
+  // Everee now collects and verifies work authorization during
+  // external onboarding, so HRX has no authoritative view and these
+  // strings produced false-positive blockers on workers Everee had
+  // already cleared. E-Verify checks below remain because HRX still
+  // owns that step for C1 Select. If HRX resumes work-auth tracking,
+  // restore the `auth === 'no'` and `auth === 'skipped'` branches
+  // here and the matching breakdown row in `recruiterUsersReadinessDisplay`.
 
   const evComfort = getEVerifyComfortStatusFromUserData(user);
   if (evComfort === 'no') return 'E-Verify participation declined';
@@ -258,7 +264,13 @@ export function getRecruiterUserTopConcernDetailed(
     if (/background|criminal|screen/i.test(blob)) return 'Background check attention';
   }
 
-  if (auth === 'skipped' || evComfort === 'skipped') return 'Missing work authorization or E-Verify docs';
+  // Was: `if (auth === 'skipped' || evComfort === 'skipped') return 'Missing work authorization or E-Verify docs';`
+  // The `auth === 'skipped'` half is dropped (Everee now handles work
+  // auth — see comment at top of this function). E-Verify "skipped"
+  // alone isn't strong enough to surface as a top concern when none of
+  // the higher-priority checks above (suspended, evComfort 'no',
+  // unfavorable case, entity-onboarding incomplete, background pending)
+  // already produced one — fall through to category-score concerns.
 
   if (sec === '2' || sec === '3') {
     if (!hasRecruiterInterviewCompletionEvidence(user.scoreSummary, user)) return 'Interview not completed';

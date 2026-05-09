@@ -7,7 +7,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Box, Button } from '@mui/material';
+import { Box, Button, Divider, IconButton, Tooltip } from '@mui/material';
 import {
   Work as WorkIcon,
   Assignment as AssignmentIcon,
@@ -18,8 +18,7 @@ import {
 } from '@mui/icons-material';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
-import InboxSearchBar from '../components/InboxSearchBar';
-import FavoritesFilter from '../components/FavoritesFilter';
+import UniversalSearchBar from '../components/UniversalSearchBar';
 import { useAuth } from '../contexts/AuthContext';
 import AddJobOrderModal from '../components/recruiter/AddJobOrderModal';
 
@@ -36,6 +35,15 @@ export type RecruiterOutletContext = {
   setSearch: (value: string) => void;
   showFavoritesOnly: boolean;
   setShowFavoritesOnly: (value: boolean) => void;
+  /**
+   * Show/hide state for the Job Orders / My Job Orders inline filter row.
+   * Lifted up here (mirrors `/shifts/list`) so the toggle button can live
+   * in the global PageHeader tab strip instead of inside the page body.
+   * Optional because this context type is reused by Accounts / Contacts /
+   * Companies / Users surfaces that have no inline filter row.
+   */
+  filtersExpanded?: boolean;
+  setFiltersExpanded?: (value: boolean) => void;
   /** Set by Job Orders / My Job Orders list so the header modal can refresh after creating an order. */
   jobOrdersListRefreshRef?: React.MutableRefObject<(() => Promise<void>) | null>;
 };
@@ -66,16 +74,22 @@ const RecruiterDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<RecruiterTab>(getActiveTab());
   const [search, setSearch] = useState('');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  // Mirrors `/shifts/list`: the Job Orders filter row is collapsed by
+  // default; the toggle button lives next to the tabs in the header.
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
 
   // Update active tab when route changes
   useEffect(() => {
     setActiveTab(getActiveTab());
   }, [location.pathname]);
 
-  // Reset search and favorites when switching tabs
+  // Reset search and favorites when switching tabs. Filter visibility
+  // also resets so /jobs/my-orders doesn't inherit the open state from
+  // /jobs/job-orders (and vice versa).
   useEffect(() => {
     setSearch('');
     setShowFavoritesOnly(false);
+    setFiltersExpanded(false);
   }, [activeTab]);
 
   const handleTabChange = (tab: RecruiterTab) => {
@@ -87,7 +101,7 @@ const RecruiterDashboard: React.FC = () => {
     { id: 'job-orders' as RecruiterTab, label: 'Job Orders', icon: <WorkIcon fontSize="small" /> },
     { id: 'my-orders' as RecruiterTab, label: 'My Job Orders', icon: <PersonIcon fontSize="small" /> },
     // Phase 1 readiness action queue — readiness items owned by the current recruiter.
-    { id: 'my-queue' as RecruiterTab, label: 'My Queue', icon: <PlaylistAddCheckIcon fontSize="small" /> },
+    // { id: 'my-queue' as RecruiterTab, label: 'My Queue', icon: <PlaylistAddCheckIcon fontSize="small" /> },
     { id: 'jobs-board' as RecruiterTab, label: 'Jobs Board', icon: <AssignmentIcon fontSize="small" /> },
   ];
 
@@ -97,6 +111,7 @@ const RecruiterDashboard: React.FC = () => {
         <PageHeader
           hideHeading
           dense
+          showDivider={false}
           title=""
           filters={
             <Box sx={{ display: 'flex', gap: 0.35, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -133,33 +148,50 @@ const RecruiterDashboard: React.FC = () => {
                   </Button>
                 );
               })}
+
+              {/* Show/Hide filters — design copied from `/shifts/list`. The
+                  matching collapsible filter row lives in <RecruiterJobOrders>
+                  and reads `filtersExpanded` from outlet context. The toggle
+                  is only meaningful on the Job Orders / My Job Orders tabs;
+                  Jobs Board has no inline filters. */}
+              {(activeTab === 'job-orders' || activeTab === 'my-orders') && (
+                <>
+                  <Divider
+                    orientation="vertical"
+                    flexItem
+                    sx={{ mx: 0.5, my: 0.5, borderColor: 'rgba(0, 0, 0, 0.08)' }}
+                  />
+                  <Button
+                    variant="text"
+                    onClick={() => setFiltersExpanded(!filtersExpanded)}
+                    sx={{
+                      textTransform: 'none',
+                      borderRadius: '999px',
+                      fontSize: '13px',
+                      fontWeight: 500,
+                      color: '#0057B8',
+                      bgcolor: 'rgba(0, 87, 184, 0.06)',
+                      px: 1.25,
+                      py: 0.5,
+                      minHeight: 30,
+                      minWidth: 'auto',
+                      lineHeight: 1.2,
+                      '&:hover': {
+                        bgcolor: 'rgba(0, 87, 184, 0.1)',
+                      },
+                    }}
+                  >
+                    {filtersExpanded ? 'Hide Filters' : 'Show Filters'}
+                  </Button>
+                </>
+              )}
             </Box>
           }
           rightActions={
             activeTab === 'job-orders' || activeTab === 'my-orders' || activeTab === 'jobs-board'
                 ? (
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                <FavoritesFilter
-                  favoriteType={
-                    activeTab === 'job-orders' || activeTab === 'my-orders'
-                      ? 'jobOrders'
-                      : 'jobPosts'
-                  }
-                  showFavoritesOnly={showFavoritesOnly}
-                  onToggle={setShowFavoritesOnly}
-                  showText={false}
-                  size="small"
-                  sx={{
-                    minWidth: '32px',
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '50%',
-                    '&:hover': {
-                      backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover',
-                    },
-                  }}
-                />
-                <InboxSearchBar
+                <UniversalSearchBar
                   value={search}
                   onChange={setSearch}
                   onSearch={setSearch}
@@ -168,60 +200,45 @@ const RecruiterDashboard: React.FC = () => {
                       ? 'Search job orders...'
                       : 'Search job posts...'
                   }
+                  favoriteType={
+                    activeTab === 'job-orders' || activeTab === 'my-orders'
+                      ? 'jobOrders'
+                      : 'jobPosts'
+                  }
+                  showFavoritesOnly={showFavoritesOnly}
+                  onToggleFavorites={setShowFavoritesOnly}
                 />
                 {(activeTab === 'job-orders' || activeTab === 'my-orders') && (
-                  <Button
-                    variant="contained"
-                    startIcon={<AddIcon sx={{ fontSize: 16 }} />}
-                    onClick={() => setNewJobOrderModalOpen(true)}
-                    sx={{
-                      textTransform: 'none',
-                      borderRadius: '999px',
-                      px: 1.5,
-                      py: 0.5,
-                      minHeight: 30,
-                      height: 30,
-                      fontWeight: 600,
-                      fontSize: '13px',
-                      bgcolor: '#0057B8',
-                      boxShadow: 'none',
-                      '& .MuiButton-startIcon': { mr: 0.35 },
-                      '&:hover': {
-                        bgcolor: '#004a9f',
-                        boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
-                      },
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    New Order
-                  </Button>
+                  <Tooltip title="Add job order">
+                    <IconButton
+                      onClick={() => setNewJobOrderModalOpen(true)}
+                      sx={{
+                        width: 32,
+                        height: 32,
+                        bgcolor: '#0057B8',
+                        color: '#fff',
+                        '&:hover': { bgcolor: '#004a9f' },
+                      }}
+                    >
+                      <AddIcon sx={{ fontSize: 18 }} />
+                    </IconButton>
+                  </Tooltip>
                 )}
                 {activeTab === 'jobs-board' && (
-                  <Button
-                    variant="contained"
-                    startIcon={<AddIcon sx={{ fontSize: 16 }} />}
-                    onClick={() => navigate('/jobs/jobs-board?new=1')}
-                    sx={{
-                      textTransform: 'none',
-                      borderRadius: '999px',
-                      px: 1.5,
-                      py: 0.5,
-                      minHeight: 30,
-                      height: 30,
-                      fontWeight: 600,
-                      fontSize: '13px',
-                      bgcolor: '#0057B8',
-                      boxShadow: 'none',
-                      '& .MuiButton-startIcon': { mr: 0.35 },
-                      '&:hover': {
-                        bgcolor: '#004a9f',
-                        boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
-                      },
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    New Post
-                  </Button>
+                  <Tooltip title="Add job post">
+                    <IconButton
+                      onClick={() => navigate('/jobs/jobs-board?new=1')}
+                      sx={{
+                        width: 32,
+                        height: 32,
+                        bgcolor: '#0057B8',
+                        color: '#fff',
+                        '&:hover': { bgcolor: '#004a9f' },
+                      }}
+                    >
+                      <AddIcon sx={{ fontSize: 18 }} />
+                    </IconButton>
+                  </Tooltip>
                 )}
               </Box>
                 )
@@ -249,7 +266,6 @@ const RecruiterDashboard: React.FC = () => {
           display: 'flex',
           flexDirection: 'column',
           minHeight: 0,
-          pb: 2, // 16px bottom padding standard
         }}
       >
         <Outlet
@@ -259,6 +275,8 @@ const RecruiterDashboard: React.FC = () => {
             setSearch,
             showFavoritesOnly,
             setShowFavoritesOnly,
+            filtersExpanded,
+            setFiltersExpanded,
             jobOrdersListRefreshRef,
           } satisfies RecruiterOutletContext}
         />

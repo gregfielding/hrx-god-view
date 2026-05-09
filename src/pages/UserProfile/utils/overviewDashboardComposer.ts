@@ -24,6 +24,14 @@ export interface OverviewBlockerLine {
 
 /**
  * Priority-ordered operational blockers (max 2 shown in snapshot).
+ *
+ * `workAuthorized` is accepted on the input for backward compatibility
+ * with existing callers, but is no longer surfaced as a blocker (May
+ * 2026): work authorization is collected and verified by Everee during
+ * external onboarding, not tracked authoritatively in HRX. Surfacing it
+ * here produced false-positive errors on workers Everee had already
+ * cleared. The flag is intentionally not removed from the input shape
+ * to avoid touching every call site.
  */
 export function composeOverviewBlockers(input: {
   workAuthorized: boolean;
@@ -32,9 +40,8 @@ export function composeOverviewBlockers(input: {
 }): OverviewBlockerLine[] {
   const out: OverviewBlockerLine[] = [];
 
-  if (!input.workAuthorized) {
-    out.push({ label: 'Work authorization not confirmed', severity: 'error' });
-  }
+  // Work-auth blocker removed — see function-level comment above.
+  void input.workAuthorized;
 
   const next = input.scoreSummary?.explainability?.nextActions?.[0];
   if (next?.label && typeof next.label === 'string') {
@@ -58,6 +65,10 @@ export function composeOverviewBlockers(input: {
 
 /**
  * Deployment snapshot only — no interview filler; score/interview live on record header.
+ *
+ * Work-authorization blocker removed in May 2026 — see the matching
+ * comment on `composeOverviewBlockers` above. `workAuthorized` is
+ * accepted but ignored.
  */
 export function composeOverviewBlockersOperational(input: {
   workAuthorized: boolean;
@@ -65,9 +76,7 @@ export function composeOverviewBlockersOperational(input: {
 }): OverviewBlockerLine[] {
   const out: OverviewBlockerLine[] = [];
 
-  if (!input.workAuthorized) {
-    out.push({ label: 'Work authorization not confirmed', severity: 'error' });
-  }
+  void input.workAuthorized;
 
   const next = input.scoreSummary?.explainability?.nextActions?.[0];
   if (next?.label && typeof next.label === 'string') {

@@ -1,5 +1,5 @@
 /**
- * E.7 — Pure aggregation tests for the CSA action queue.
+ * E.7 — Pure aggregation tests for the Onboarding Specialist action queue.
  *
  * Pins the (worker × entity) → action-type decision rules so a future
  * refactor of the data flow can't silently change which workers surface
@@ -54,9 +54,9 @@ interface UserLite {
 }
 
 import {
-  buildCsaActionItems,
+  buildOnboardingSpecialistActionItems,
   decideActionType,
-} from '../buildCsaActionItems';
+} from '../buildOnboardingSpecialistActionItems';
 
 const NOW = 1700000000000; // fixed clock: 2023-11-14T22:13:20Z
 
@@ -109,7 +109,7 @@ const buildInput = (args: {
   };
 };
 
-describe('E.7 — buildCsaActionItems', () => {
+describe('E.7 — buildOnboardingSpecialistActionItems', () => {
   describe('decideActionType — TNC band', () => {
     it('returns address_tnc when status === "tnc"', () => {
       const action = decideActionType({
@@ -234,9 +234,9 @@ describe('E.7 — buildCsaActionItems', () => {
     });
   });
 
-  describe('buildCsaActionItems — composition', () => {
+  describe('buildOnboardingSpecialistActionItems — composition', () => {
     it('skips inactive rows entirely (active=false)', () => {
-      const items = buildCsaActionItems(
+      const items = buildOnboardingSpecialistActionItems(
         buildInput({
           emp: { active: false, everifyStatus: 'tnc' },
         }),
@@ -245,14 +245,14 @@ describe('E.7 — buildCsaActionItems', () => {
     });
 
     it('skips rows without entityId or userId', () => {
-      const items = buildCsaActionItems(
+      const items = buildOnboardingSpecialistActionItems(
         buildInput({ emp: { entityId: null, everifyStatus: 'tnc' } }),
       );
       expect(items).toHaveLength(0);
     });
 
-    it('My scope: filters out workers not owned by the current CSA', () => {
-      const items = buildCsaActionItems(
+    it('My scope: filters out workers not owned by the current Onboarding Specialist', () => {
+      const items = buildOnboardingSpecialistActionItems(
         buildInput({
           emp: { everifyStatus: 'tnc' },
           myWorkerUids: new Set(['someone-else']),
@@ -261,8 +261,8 @@ describe('E.7 — buildCsaActionItems', () => {
       expect(items).toHaveLength(0);
     });
 
-    it('My scope: keeps workers owned by the current CSA', () => {
-      const items = buildCsaActionItems(
+    it('My scope: keeps workers owned by the current Onboarding Specialist', () => {
+      const items = buildOnboardingSpecialistActionItems(
         buildInput({
           emp: { everifyStatus: 'tnc' },
           myWorkerUids: new Set(['worker-1']),
@@ -273,14 +273,14 @@ describe('E.7 — buildCsaActionItems', () => {
     });
 
     it('All scope (myWorkerUids=null): no scope filtering', () => {
-      const items = buildCsaActionItems(
+      const items = buildOnboardingSpecialistActionItems(
         buildInput({ emp: { everifyStatus: 'tnc' }, myWorkerUids: null }),
       );
       expect(items).toHaveLength(1);
     });
 
     it('falls back to uid/entityId display when user/entity caches are empty', () => {
-      const items = buildCsaActionItems({
+      const items = buildOnboardingSpecialistActionItems({
         entityEmployments: [
           baseEmp({
             everifyStatus: 'tnc',
@@ -299,23 +299,23 @@ describe('E.7 — buildCsaActionItems', () => {
     });
 
     it('produces stable composite ids: `${actionType}__${entityId}__${userId}`', () => {
-      const items = buildCsaActionItems(
+      const items = buildOnboardingSpecialistActionItems(
         buildInput({ emp: { everifyStatus: 'tnc' } }),
       );
       expect(items[0].id).toBe('address_tnc__ent-A__worker-1');
     });
 
     it('priority is mirrored on the item for inline sort', () => {
-      const items = buildCsaActionItems(
+      const items = buildOnboardingSpecialistActionItems(
         buildInput({ emp: { everifyStatus: 'tnc' } }),
       );
       expect(items[0].priority).toBe(0);
     });
   });
 
-  describe('buildCsaActionItems — ageMs anchoring', () => {
+  describe('buildOnboardingSpecialistActionItems — ageMs anchoring', () => {
     it('TNC band anchors to everifyTncReceivedAt when present', () => {
-      const items = buildCsaActionItems(
+      const items = buildOnboardingSpecialistActionItems(
         buildInput({
           emp: {
             everifyStatus: 'tnc',
@@ -328,7 +328,7 @@ describe('E.7 — buildCsaActionItems', () => {
     });
 
     it('I-9 Section 2 anchors to mirror.i9SignedAt when present', () => {
-      const items = buildCsaActionItems(
+      const items = buildOnboardingSpecialistActionItems(
         buildInput({
           emp: { hiredAt: NOW - 86_400_000 },
           mirror: { i9SignedAt: NOW - 3_600_000 },
@@ -338,7 +338,7 @@ describe('E.7 — buildCsaActionItems', () => {
     });
 
     it('Start E-Verify anchors to i9Section2CompletedAt when present', () => {
-      const items = buildCsaActionItems(
+      const items = buildOnboardingSpecialistActionItems(
         buildInput({
           emp: {
             i9Section2CompletedAt: NOW - 600_000,
@@ -351,9 +351,9 @@ describe('E.7 — buildCsaActionItems', () => {
     });
   });
 
-  describe('buildCsaActionItems — entity_employments-level everify override', () => {
+  describe('buildOnboardingSpecialistActionItems — entity_employments-level everify override', () => {
     it('emp-level everifyRequired=false hides start_everify even when entity-level enabled', () => {
-      const items = buildCsaActionItems(
+      const items = buildOnboardingSpecialistActionItems(
         buildInput({
           emp: {
             i9Section2CompletedAt: NOW - 1000,
@@ -367,7 +367,7 @@ describe('E.7 — buildCsaActionItems', () => {
     });
 
     it('entity-level everifyRequired=false hides start_everify even when emp-level enabled', () => {
-      const items = buildCsaActionItems(
+      const items = buildOnboardingSpecialistActionItems(
         buildInput({
           emp: {
             i9Section2CompletedAt: NOW - 1000,

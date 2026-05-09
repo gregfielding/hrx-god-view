@@ -5,7 +5,8 @@
  * overkill — this file exports a single `resolveRole(input)` that
  * branches on `input.role` and walks the appropriate tier chain. The
  * shape of `input` carries whatever the role needs (user groups for
- * CSA, account for Scheduler, tenant defaults for all four).
+ * Onboarding Specialist, account for Scheduler, tenant defaults for
+ * the tenant-level roles).
  *
  * Runtime-neutral: no firebase imports, no Timestamp. Callers load the
  * tier data (user groups, account doc, tenant defaults) and pass it in;
@@ -13,18 +14,26 @@
  *
  * Parallels the older `resolveOwnership` resolver (single "recruiter"
  * per worker). Old callers keep working; new code uses `resolveRole`.
+ *
+ * History: the role formerly known as "Candidate Success Agent (CSA)"
+ * was renamed to **Onboarding Specialist** and narrowed to a
+ * group-scoped specialty (welcome / onboarding calls). The tenant
+ * fallback tier was dropped as part of that narrowing. The Recruiter
+ * absorbed the durable per-worker relationship work that the broader
+ * CSA had been sharing with it; that relationship is still resolved
+ * through `resolveOwnership` and `users.{uid}.primaryRecruiterId`.
  */
 
-/** Four roles from the Recruiting Role Structure brief (§2 of the doc). */
+/** Roles supported by the resolver. See doc §2 for the canonical list. */
 export type RecruitingRole =
-  | 'candidate_success_agent'
+  | 'onboarding_specialist'
   | 'scheduler'
   | 'hrx_systems_operator'
   | 'payroll_coordinator';
 
 /** Which tier produced the current `primaryUid`. Audit/debug. */
 export type ResolveRoleSource =
-  /** From a user group's `roles.csaIds`. CSA only. */
+  /** From a user group's `roles.onboardingSpecialistIds`. Onboarding Specialist only. */
   | 'user_group'
   /** From an account's `roles.schedulerIds`. Scheduler only. */
   | 'account'
@@ -34,16 +43,23 @@ export type ResolveRoleSource =
   | 'unassigned';
 
 /**
- * A user group feeding into CSA resolution.
+ * A user group feeding into Onboarding Specialist resolution.
  * Ordering is determined by `createdAtIso` ascending — earliest-created
- * group's CSAs win when a worker is in multiple groups (doc §3.1).
+ * group's specialists win when a worker is in multiple groups (doc §3.1).
  */
 export type ResolveRoleUserGroup = {
   id: string;
   /** ISO-8601 group creation timestamp. Missing groups sort last. */
   createdAtIso?: string;
-  /** CSAs assigned to this group. Empty array or missing = skip this group. */
-  csaIds?: string[];
+  /**
+   * Onboarding Specialists assigned to this group. Empty array or
+   * missing = skip this group. The defensive read pattern at every
+   * call site is `roles.onboardingSpecialistIds ?? roles.csaIds ?? []`
+   * — see the rename brief for the transition window. The resolver
+   * input itself only carries the new field; callers normalize before
+   * passing data in.
+   */
+  onboardingSpecialistIds?: string[];
 };
 
 /** Account input for Scheduler resolution. */
@@ -57,15 +73,13 @@ export type ResolveRoleAccount = {
 export type ResolveRoleTenantDefaults = {
   hrxSystemsOperatorIds?: string[];
   payrollCoordinatorIds?: string[];
-  /** Used by CSA tier walk as the last step before Unassigned. */
-  csaFallbackIds?: string[];
   /** Used by Scheduler tier walk as the last step before Unassigned. */
   schedulerFallbackIds?: string[];
 };
 
 export type ResolveRoleInput = {
   role: RecruitingRole;
-  /** Required for `candidate_success_agent`. Ignored for other roles. */
+  /** Required for `onboarding_specialist`. Ignored for other roles. */
   userGroups?: ResolveRoleUserGroup[];
   /** Required for `scheduler`. Ignored for other roles. */
   account?: ResolveRoleAccount;
@@ -77,10 +91,11 @@ export type ResolveRoleResult = {
   /** Primary role-holder — the one who "owns" this scope. Null = Unassigned. */
   primaryUid: string | null;
   /**
-   * Everyone eligible for this role in the relevant tier. For CSA, that's
-   * every CSA across every matching group (plus fallback); for Scheduler,
-   * every Scheduler on the account (plus fallback). The `primaryUid` is
-   * always the first element when non-null.
+   * Everyone eligible for this role in the relevant tier. For
+   * Onboarding Specialist, that's every specialist across every
+   * matching group; for Scheduler, every Scheduler on the account
+   * (plus fallback). The `primaryUid` is always the first element
+   * when non-null.
    */
   visibleUids: string[];
   source: ResolveRoleSource;
@@ -134,23 +149,31 @@ function sortGroupsByCreatedAt(
 /**
  * Main entry. Returns `primaryUid` + `visibleUids` for the requested role
  * given the loaded tier data. Callers not providing required inputs
- * (e.g. CSA without `userGroups`) get an `unassigned` result — not an
- * error — so the resolver stays pure and explicitly optional.
+ * (e.g. Onboarding Specialist without `userGroups`) get an `unassigned`
+ * result — not an error — so the resolver stays pure and explicitly
+ * optional.
  */
 export function resolveRole(input: ResolveRoleInput): ResolveRoleResult {
   const { role, userGroups, account, tenantDefaults } = input;
 
-  if (role === 'candidate_success_agent') {
-    // Walk groups in deterministic order. The FIRST group with any non-empty
-    // `csaIds` wins — its CSAs become the result. This gives stable "first
-    // group the worker joined is authoritative" semantics even when a worker
-    // belongs to several overlapping groups.
+  if (role === 'onboarding_specialist') {
+    // Walk groups in deterministic order. The FIRST group with any
+    // non-empty `onboardingSpecialistIds` wins — its specialists become
+    // the result. This gives stable "first group the worker joined is
+    // authoritative" semantics even when a worker belongs to several
+    // overlapping groups.
+    //
+    // Onboarding Specialist is intentionally a one-tier role: groups →
+    // unassigned. There is no tenant-default fallback for this role
+    // (per the rename brief). "Unassigned" is a legitimate state — the
+    // recruiter still owns the worker relationship via
+    // `resolveOwnership` / `primaryRecruiterId`.
     if (userGroups && userGroups.length > 0) {
       const ordered = sortGroupsByCreatedAt(userGroups);
       const visibleSet = new Set<string>();
       let primaryFromGroup: string | null = null;
       for (const g of ordered) {
-        const ids = dedupeIds(g.csaIds ?? []);
+        const ids = dedupeIds(g.onboardingSpecialistIds ?? []);
         if (ids.length === 0) continue;
         if (primaryFromGroup == null) primaryFromGroup = ids[0];
         for (const id of ids) visibleSet.add(id);
@@ -161,9 +184,7 @@ export function resolveRole(input: ResolveRoleInput): ResolveRoleResult {
         return { primaryUid: primaryFromGroup, visibleUids: visible, source: 'user_group' };
       }
     }
-    // Fallback to tenant-default CSA list.
-    const fallback = dedupeIds(tenantDefaults?.csaFallbackIds ?? []);
-    return resultFrom(fallback, fallback.length > 0 ? 'tenant_default' : 'unassigned');
+    return emptyResult();
   }
 
   if (role === 'scheduler') {

@@ -70,6 +70,15 @@ export type OrchestratorV1Stored = {
     containerStats?: ContainerStatsInput;
     applicationNoShowBand?: string;
     assignmentNoShowBand?: string | null;
+    /** Numeric application no-show risk (0–100) actually used by the no-show overlay step. Null when only a band was available. */
+    applicationNoShowScore?: number | null;
+    /** Numeric assignment-level no-show risk (0–100) used by the overlay; null when missing. */
+    assignmentNoShowScore?: number | null;
+    /**
+     * Threshold from `resolvedAiHiring.maximumNoShowRiskToAdvance` actually applied by the overlay
+     * (null = legacy band-based block on `high`/`critical`).
+     */
+    maximumNoShowRiskToAdvance?: number | null;
     assignmentScoped?: boolean;
     /**
      * Which signal the engine actually used for score thresholds.

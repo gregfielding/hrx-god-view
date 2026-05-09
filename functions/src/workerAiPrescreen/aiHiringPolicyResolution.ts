@@ -30,6 +30,32 @@ export type ResolvedAiHiringPolicy = {
   minimumJobScoreToAdvance?: number;
   /** When job fit is below threshold (gate on). Default `review`. */
   jobFitFailAction?: 'review' | 'hold';
+  /**
+   * Upper bound on the no-show risk score (0–100) that still allows auto-advance. When set, the orchestrator's
+   * `no_show_overlay` step compares **numeric** `aiAutomation.noShowRisk.score` (and assignment-level
+   * `noShowRiskPredictionV1.score`) to this threshold and only downgrades to `review` when the candidate's score
+   * is **strictly greater** than this value. When unset, legacy band behavior applies (block on
+   * `high` or `critical` band, i.e. ≥ 50).
+   *
+   * Group preset defaults (when `hiringConfig.quality.maximumNoShowRiskToAdvance` is not explicitly set):
+   * - `conservative` / `balanced`: `49` (legacy — block high/critical).
+   * - `aggressive`: `100` (lift the overlay; preset signals "fill seats, accept higher operational risk").
+   * - `hire_everyone`: `100`.
+   */
+  maximumNoShowRiskToAdvance?: number;
+  /**
+   * When true, the prescreen LLM's `recommendation === 'review'` is treated as `proceed` so the
+   * remaining hiring gates (score floor, flags, dynamic answers, capacity, no-show overlay) do
+   * the gating instead of the LLM's qualitative judgement.
+   *
+   * **User groups:** always `true` when `hiringConfig.quality` exists (`readGroupHiringConfigAsAiPartial`).
+   * A legacy `userGroup.aiHiring.advanceOnReviewRecommendation: false` cannot disable this — see
+   * `mergeGroupUserDocAiHiringPartial`.
+   *
+   * Job-order containers and tenant default: leave `undefined` (legacy: treat `review` as hold
+   * until STEP 1b in `evaluateAiHiringDecision`).
+   */
+  advanceOnReviewRecommendation?: boolean;
   maximumAutoAdvances?: number;
   targetReadyCount?: number;
   targetOnboardingCount?: number;
@@ -76,6 +102,23 @@ const GROUP_HIRING_PRESET_SCORES: Record<string, { interview: number; jobFit: nu
 };
 
 /**
+ * Default `maximumNoShowRiskToAdvance` per preset when `hiringConfig.quality.maximumNoShowRiskToAdvance`
+ * is not explicitly set on the user group.
+ *
+ * Aggressive / Hire-everyone "fill seats" presets implicitly lift the no-show overlay (orchestrator
+ * step 2) the same way they implicitly lift the LLM `review` block (`advanceOnReviewRecommendation: true`).
+ * Without this default, an aggressive preset still has every "high"/"critical" no-show-band candidate
+ * downgraded to `review` regardless of the user's intent — which is what the “20 · Below score threshold
+ * / orchestrator hold” diagnosis on `userGroups/DgpS7tIHXPcm65I8xR97` exposed.
+ */
+const GROUP_HIRING_PRESET_MAX_NS_RISK: Record<string, number> = {
+  conservative: 49,
+  balanced: 49,
+  aggressive: 100,
+  hire_everyone: 100,
+};
+
+/**
  * Maps Recruiter user-group `hiringConfig` (quality + automation + targets) into the same shape as `aiHiring`,
  * so `resolveAiHiringPolicyBundle` applies group D. Quality thresholds to the orchestrator — not only `userGroup.aiHiring`.
  * Explicit `userGroup.aiHiring` still wins per-field (merged after this partial).
@@ -118,7 +161,36 @@ function readGroupHiringConfigAsAiPartial(groupDoc: Record<string, unknown>): Pa
   if (qual.jobFitFailAction === 'hold' || qual.jobFitFailAction === 'review') {
     out.jobFitFailAction = qual.jobFitFailAction;
   }
+
+  const explicitMaxNs = num(qual.maximumNoShowRiskToAdvance);
+  if (explicitMaxNs !== undefined) {
+    out.maximumNoShowRiskToAdvance = explicitMaxNs;
+  } else if (presetKey && GROUP_HIRING_PRESET_MAX_NS_RISK[presetKey] !== undefined) {
+    out.maximumNoShowRiskToAdvance = GROUP_HIRING_PRESET_MAX_NS_RISK[presetKey];
+  }
+
+  // User groups: never let the prescreen LLM's qualitative `review` verdict
+  // block automation on its own — score floor, flags, dynamic answers, job-fit
+  // gate, capacity, and hard `decline` still gate. Preset only changes numeric
+  // floors (Conservative / Balanced / Aggressive / Custom / Hire everyone).
+  out.advanceOnReviewRecommendation = true;
   return out;
+}
+
+/**
+ * `readAiHiringPartial` used to return `{ field: undefined, ... }` for every
+ * Firestore field that was absent. Spreading that object after
+ * `readGroupHiringConfigAsAiPartial` (`{ ...fromHiringConfig, ...fromAiHiringDoc }`)
+ * **clobbered** preset-derived values (e.g. `advanceOnReviewRecommendation: true`
+ * for user groups, `minimumScoreToAdvance` from preset floors) with `undefined`.
+ * Strip missing keys so partial merges behave as “only explicit overrides”.
+ */
+function omitUndefinedShallow<T extends Record<string, unknown>>(obj: T): Partial<T> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out as Partial<T>;
 }
 
 function readAiHiringPartial(raw: unknown): Partial<ResolvedAiHiringPolicy> {
@@ -134,13 +206,16 @@ function readAiHiringPartial(raw: unknown): Partial<ResolvedAiHiringPolicy> {
       address: norm(w.address) || undefined,
     };
   }
-  return {
+  return omitUndefinedShallow({
     autoAdvanceEnabled: typeof o.autoAdvanceEnabled === 'boolean' ? o.autoAdvanceEnabled : undefined,
     minimumScoreToAdvance: num(o.minimumScoreToAdvance),
     minimumJobScoreGateEnabled: typeof o.minimumJobScoreGateEnabled === 'boolean' ? o.minimumJobScoreGateEnabled : undefined,
     minimumJobScoreToAdvance: num(o.minimumJobScoreToAdvance),
     jobFitFailAction:
       o.jobFitFailAction === 'review' || o.jobFitFailAction === 'hold' ? o.jobFitFailAction : undefined,
+    maximumNoShowRiskToAdvance: num(o.maximumNoShowRiskToAdvance),
+    advanceOnReviewRecommendation:
+      typeof o.advanceOnReviewRecommendation === 'boolean' ? o.advanceOnReviewRecommendation : undefined,
     maximumAutoAdvances: num(o.maximumAutoAdvances),
     targetReadyCount: num(o.targetReadyCount),
     targetOnboardingCount: num(o.targetOnboardingCount),
@@ -149,7 +224,23 @@ function readAiHiringPartial(raw: unknown): Partial<ResolvedAiHiringPolicy> {
     topPercentToAdvance: num(o.topPercentToAdvance),
     defaultCompany: norm(o.defaultCompany) || undefined,
     defaultWorksite,
-  };
+  });
+}
+
+/**
+ * Merge `hiringConfig`-derived AI hiring partial with optional `userGroups/{id}.aiHiring`
+ * overrides. Exported for unit tests (regression: sparse `aiHiring` must not clobber preset fields).
+ */
+export function mergeGroupUserDocAiHiringPartial(groupDoc: Record<string, unknown>): Partial<ResolvedAiHiringPolicy> {
+  const fromHiringConfig = readGroupHiringConfigAsAiPartial(groupDoc);
+  const fromAiHiringDoc = readAiHiringPartial(groupDoc.aiHiring);
+  const merged = { ...fromHiringConfig, ...fromAiHiringDoc };
+  // `hiringConfig.quality` always sets `advanceOnReviewRecommendation: true` for groups. A legacy
+  // `userGroup.aiHiring.advanceOnReviewRecommendation: false` must not resurrect LLM-only review holds.
+  if (fromHiringConfig.advanceOnReviewRecommendation === true) {
+    merged.advanceOnReviewRecommendation = true;
+  }
+  return merged;
 }
 
 function mergeAiHiring(
@@ -252,6 +343,7 @@ export function toAiHiringPolicyDecisionInput(r: ResolvedAiHiringPolicy): AiHiri
     stopWhenTargetReached: r.stopWhenTargetReached,
     allowGigFallback: r.allowGigFallback,
     topPercentToAdvance: r.topPercentToAdvance,
+    advanceOnReviewRecommendation: r.advanceOnReviewRecommendation,
   };
 }
 
@@ -315,9 +407,7 @@ export async function resolveAiHiringPolicyBundle(
 
   const gSnap = await db.doc(`tenants/${tenantId}/userGroups/${container.groupId}`).get();
   const g = (gSnap.data() || {}) as Record<string, unknown>;
-  const fromHiringConfig = readGroupHiringConfigAsAiPartial(g);
-  const fromAiHiringDoc = readAiHiringPartial(g.aiHiring);
-  const groupPartial = { ...fromHiringConfig, ...fromAiHiringDoc };
+  const groupPartial = mergeGroupUserDocAiHiringPartial(g);
   const groupInterviewPartial = readHiringConfigInterviewPartial(g);
   return {
     container,
@@ -343,9 +433,7 @@ export async function resolveAiHiringPolicyBundleForUserGroupTool(
 
   const gSnap = await db.doc(`tenants/${tenantId}/userGroups/${userGroupId}`).get();
   const g = (gSnap.exists ? gSnap.data() : {}) as Record<string, unknown>;
-  const fromHiringConfig = readGroupHiringConfigAsAiPartial(g);
-  const fromAiHiringDoc = readAiHiringPartial(g.aiHiring);
-  const groupPartial = { ...fromHiringConfig, ...fromAiHiringDoc };
+  const groupPartial = mergeGroupUserDocAiHiringPartial(g);
   const groupInterviewPartial = readHiringConfigInterviewPartial(g);
 
   return {

@@ -126,14 +126,18 @@ import type { AccountPositionPricing } from '../types/recruiter/account';
 import PageHeader from '../components/PageHeader';
 import UniversalBackButton from '../components/common/UniversalBackButton';
 import FavoriteButton from '../components/FavoriteButton';
-import InboxSearchBar from '../components/InboxSearchBar';
-import FavoritesFilter from '../components/FavoritesFilter';
+import UniversalSearchBar from '../components/UniversalSearchBar';
 import StandardTablePagination from '../components/StandardTablePagination';
 import { useFavorites } from '../hooks/useFavorites';
 import { useSetTopBarTitle } from '../contexts/TopBarTitleContext';
 import { useEntity } from '../hooks/useEntity';
 import { getJobOrderAge } from '../utils/dateUtils';
 import { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderChecklist';
+import RecruiterAssignmentCell from '../components/recruiter/RecruiterAssignmentCell';
+import {
+  fetchRecruiterPickerOptions,
+  type RecruiterPickerOption,
+} from '../utils/fetchRecruiterPickerOptions';
 import AccountOrderDefaultsCard from '../components/recruiter/AccountOrderDefaultsCard';
 import AccountOrderDetailsForm, {
   type AccountOrderDetailsFormHandle,
@@ -1502,8 +1506,20 @@ const RecruiterAccountDetails: React.FC = () => {
   const [accountJobOrders, setAccountJobOrders] = useState<JobOrderWithDetails[]>([]);
   const [accountJobOrdersLoading, setAccountJobOrdersLoading] = useState(false);
   const [accountJobOrdersError, setAccountJobOrdersError] = useState<string | null>(null);
+  // Recruiter picker options shared by every row's inline-edit Recruiter
+  // cell on the Job Orders tab. Loaded once per tenant; the cell handles
+  // its own per-row "saving" state.
+  const [recruiterPickerOptions, setRecruiterPickerOptions] = useState<RecruiterPickerOption[]>([]);
+  const [loadingRecruiterOptions, setLoadingRecruiterOptions] = useState(false);
   const [jobOrdersSearch, setJobOrdersSearch] = useState('');
   const [jobOrdersShowFavoritesOnly, setJobOrdersShowFavoritesOnly] = useState(false);
+  // Shifts toolbar state lives here so the search bar + Add button sit on the
+  // same row as the account-level tab strip (next to "Notes"), matching how
+  // Job Orders / Locations now lay out. AccountShiftsTab consumes these via
+  // controlled props and skips its own toolbar when they're supplied.
+  const [shiftsSearch, setShiftsSearch] = useState('');
+  const [shiftsShowFavoritesOnly, setShiftsShowFavoritesOnly] = useState(false);
+  const [shiftsAddDrawerOpen, setShiftsAddDrawerOpen] = useState(false);
   const [jobOrdersStatusFilter, setJobOrdersStatusFilter] = useState('');
   const [jobOrdersCompanyFilter, setJobOrdersCompanyFilter] = useState('all');
   const [jobOrdersSortField, setJobOrdersSortField] = useState('jobOrderNumber');
@@ -2958,6 +2974,46 @@ const RecruiterAccountDetails: React.FC = () => {
     }
   }, [tabValue, jobOrdersTabCompanyIds.length, fetchAccountJobOrders]);
 
+  // Recruiter picker options for the inline-editable Recruiter cell on the
+  // Job Orders tab. Mirrors the load on `/jobs/job-orders`.
+  useEffect(() => {
+    if (!tenantId) {
+      setRecruiterPickerOptions([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingRecruiterOptions(true);
+    fetchRecruiterPickerOptions(tenantId)
+      .then((opts) => {
+        if (!cancelled) setRecruiterPickerOptions(opts);
+      })
+      .catch(() => {
+        if (!cancelled) setRecruiterPickerOptions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingRecruiterOptions(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId]);
+
+  // Patch the in-memory list after <RecruiterAssignmentCell> persists. The
+  // cell does the Firestore write itself; this just refreshes the row we
+  // already render.
+  const handleAccountJobOrderAssignmentSaved = useCallback(
+    (jobOrderId: string, ids: string[], summary: string) => {
+      setAccountJobOrders((prev) =>
+        prev.map((jo) =>
+          jo.id === jobOrderId
+            ? ({ ...jo, assignedRecruiters: ids, recruiterName: summary } as JobOrderWithDetails)
+            : jo,
+        ),
+      );
+    },
+    [],
+  );
+
   const fetchAccountJobPosts = useCallback(async () => {
     const companyIdsToUse = isChildAccount ? parentCompanyIds : (account?.associations?.companyIds ?? []);
     if (!tenantId || companyIdsToUse.length === 0) {
@@ -3628,6 +3684,11 @@ const RecruiterAccountDetails: React.FC = () => {
         const aTime = (a as any).createdAt?.toDate?.()?.getTime?.() ?? (typeof (a as any).createdAt === 'number' ? (a as any).createdAt : 0);
         const bTime = (b as any).createdAt?.toDate?.()?.getTime?.() ?? (typeof (b as any).createdAt === 'number' ? (b as any).createdAt : 0);
         return dir * (aTime - bTime);
+      }
+      if (jobOrdersSortField === 'status') {
+        const sa = (a.status ?? '').toString().toLowerCase();
+        const sb = (b.status ?? '').toString().toLowerCase();
+        return dir * sa.localeCompare(sb);
       }
       return 0;
     });
@@ -6194,26 +6255,11 @@ const RecruiterAccountDetails: React.FC = () => {
         }
         titleRightActions={
           <>
-            {tabValue === 9 && (
-              // Universal icon-only Add button — matches the canonical
-              // pattern on /accounts, /contacts, and /users/user-groups
-              // so every top-of-page Add action looks identical.
-              <Tooltip title="Add job order">
-                <IconButton
-                  onClick={() => setShowNewJobOrderModal(true)}
-                  sx={{
-                    width: 32,
-                    height: 32,
-                    bgcolor: '#0057B8',
-                    color: '#fff',
-                    flexShrink: 0,
-                    '&:hover': { bgcolor: '#004a9f' },
-                  }}
-                >
-                  <AddIcon sx={{ fontSize: 18 }} />
-                </IconButton>
-              </Tooltip>
-            )}
+            {/* Add job order intentionally lives on the tab-strip row
+                (in `rightActions` below) when the Job Orders tab is
+                active — same as Shifts and Locations — so every
+                tab-scoped "+" lives next to its corresponding search
+                bar instead of up here next to the account name. */}
             {account.accountType === 'national' && companyIds.length > 0 && (
               <Tooltip title="Sync locations to children — create a child account for each company location under your linked companies. Skips locations that already have a child account.">
                 <IconButton
@@ -6442,16 +6488,49 @@ const RecruiterAccountDetails: React.FC = () => {
           </Box>
         }
         rightActions={
-          tabValue === 5 ? (
+          tabValue === 0 ? (
+            /* Shifts tab toolbar — hoisted out of `<AccountShiftsTab>` so the
+               search bar + Add button live on the same row as the tab strip,
+               same as Job Orders / Locations. AccountShiftsTab consumes the
+               same state via controlled props and skips its own toolbar. */
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'nowrap', minWidth: 0 }}>
-              <Box sx={{ minWidth: 0, flex: '1 1 200px', maxWidth: 420 }}>
-                <InboxSearchBar
-                  value={isNationalAccount ? childrenSearchQuery : locationsSearchQuery}
-                  onChange={isNationalAccount ? setChildrenSearchQuery : setLocationsSearchQuery}
-                  onSearch={isNationalAccount ? setChildrenSearchQuery : setLocationsSearchQuery}
-                  placeholder={isNationalAccount ? 'Search child accounts…' : 'Search by name, code, city, or state...'}
-                />
-              </Box>
+              <UniversalSearchBar
+                value={shiftsSearch}
+                onChange={setShiftsSearch}
+                onSearch={setShiftsSearch}
+                placeholder="Search shifts..."
+                favoriteType="shifts"
+                showFavoritesOnly={shiftsShowFavoritesOnly}
+                onToggleFavorites={setShiftsShowFavoritesOnly}
+              />
+              <Tooltip title="Add shift">
+                <IconButton
+                  onClick={() => setShiftsAddDrawerOpen(true)}
+                  sx={{
+                    width: 32,
+                    height: 32,
+                    bgcolor: '#0057B8',
+                    color: '#fff',
+                    flexShrink: 0,
+                    '&:hover': { bgcolor: '#004a9f' },
+                  }}
+                >
+                  <AddIcon sx={{ fontSize: 18 }} />
+                </IconButton>
+              </Tooltip>
+            </Box>
+          ) : tabValue === 5 ? (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'nowrap', minWidth: 0 }}>
+              {/* Universal 32×240 pill — same control used on /accounts,
+                  /jobs/job-orders, /shifts/list. No favorites concept yet
+                  for child accounts or locations, so the right edge falls
+                  back to the ⌘K hint. */}
+              <UniversalSearchBar
+                value={isNationalAccount ? childrenSearchQuery : locationsSearchQuery}
+                onChange={isNationalAccount ? setChildrenSearchQuery : setLocationsSearchQuery}
+                onSearch={isNationalAccount ? setChildrenSearchQuery : setLocationsSearchQuery}
+                placeholder={isNationalAccount ? 'Search child accounts…' : 'Search by name, code, city, or state...'}
+              />
               {isNationalAccount ? (
                 <Button
                   variant="contained"
@@ -6464,35 +6543,103 @@ const RecruiterAccountDetails: React.FC = () => {
               ) : null}
               {!isNationalAccount &&
               (isChildAccount ? parentCompanyIds.length : (account?.associations?.companyIds?.length ?? 0)) ? (
-                <Button
-                  variant="contained"
-                  startIcon={<AddIcon />}
-                  onClick={openAddLocationDialogForAccount}
-                  sx={{ flexShrink: 0 }}
-                >
-                  Add Location
-                </Button>
+                /* Universal icon-only Add button — same control used on
+                   /jobs/job-orders, /accounts, etc. Replaces the previous
+                   oversized contained "Add Location" pill. */
+                <Tooltip title="Add location">
+                  <IconButton
+                    onClick={openAddLocationDialogForAccount}
+                    sx={{
+                      width: 32,
+                      height: 32,
+                      bgcolor: '#0057B8',
+                      color: '#fff',
+                      flexShrink: 0,
+                      '&:hover': { bgcolor: '#004a9f' },
+                    }}
+                  >
+                    <AddIcon sx={{ fontSize: 18 }} />
+                  </IconButton>
+                </Tooltip>
               ) : null}
             </Box>
           ) : tabValue === 9 ? (
-            <Stack direction="row" alignItems="center" spacing={1.5} flexWrap="nowrap" sx={{ minWidth: 0 }}>
-              <FavoritesFilter
+            /* Universal 32×240 pill with the favorites star rendered
+               inside the trailing slot, paired with the Add JO button —
+               same row layout as Shifts / Locations. */
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'nowrap', minWidth: 0 }}>
+              <UniversalSearchBar
+                value={jobOrdersSearch}
+                onChange={setJobOrdersSearch}
+                onSearch={setJobOrdersSearch}
+                placeholder="Search job orders..."
                 favoriteType="jobOrders"
                 showFavoritesOnly={jobOrdersShowFavoritesOnly}
-                onToggle={setJobOrdersShowFavoritesOnly}
-                showText={false}
-                size="small"
-                sx={{ flexShrink: 0, minWidth: 36, width: 36, height: 36, borderRadius: '50%' }}
+                onToggleFavorites={setJobOrdersShowFavoritesOnly}
               />
-              <Box sx={{ minWidth: 0, flex: '1 1 200px', maxWidth: 420 }}>
-                <InboxSearchBar
-                  value={jobOrdersSearch}
-                  onChange={setJobOrdersSearch}
-                  onSearch={setJobOrdersSearch}
-                  placeholder="Search job orders..."
-                />
-              </Box>
-            </Stack>
+              <Tooltip title="Add job order">
+                <IconButton
+                  onClick={() => setShowNewJobOrderModal(true)}
+                  sx={{
+                    width: 32,
+                    height: 32,
+                    bgcolor: '#0057B8',
+                    color: '#fff',
+                    flexShrink: 0,
+                    '&:hover': { bgcolor: '#004a9f' },
+                  }}
+                >
+                  <AddIcon sx={{ fontSize: 18 }} />
+                </IconButton>
+              </Tooltip>
+            </Box>
+          ) : tabValue === 6 ? (
+            /* Same row layout as Shifts / Locations / Job Orders. The
+               worksite + state filter dropdowns stay below in the tab
+               body since they're tab-specific filters, not search. */
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'nowrap', minWidth: 0 }}>
+              <UniversalSearchBar
+                value={contactsSearchQuery}
+                onChange={setContactsSearchQuery}
+                onSearch={setContactsSearchQuery}
+                placeholder="Search contacts..."
+              />
+              {contactTabCompanyIds.length > 0 ? (
+                <Tooltip title="Add contact">
+                  <IconButton
+                    onClick={() => {
+                      const companyIds = account?.associations?.companyIds ?? parentCompanyIds;
+                      setAddContactCompanyId(companyIds[0] ?? '');
+                      setAddContactLocationId(null);
+                      setAddContactForm({
+                        firstName: '',
+                        lastName: '',
+                        email: '',
+                        phone: '',
+                        jobTitle: '',
+                        contactType: 'Unknown',
+                        linkedInUrl: '',
+                        tags: [],
+                        isActive: true,
+                        notes: '',
+                      });
+                      setAddContactError(null);
+                      setShowAddContactDialog(true);
+                    }}
+                    sx={{
+                      width: 32,
+                      height: 32,
+                      bgcolor: '#0057B8',
+                      color: '#fff',
+                      flexShrink: 0,
+                      '&:hover': { bgcolor: '#004a9f' },
+                    }}
+                  >
+                    <AddIcon sx={{ fontSize: 18 }} />
+                  </IconButton>
+                </Tooltip>
+              ) : null}
+            </Box>
           ) : undefined
         }
       />
@@ -7106,7 +7253,17 @@ const RecruiterAccountDetails: React.FC = () => {
       >
         <TabPanel value={tabValue} index={0} contentSx={{ px: 0 }}>
           <Box sx={{ flex: 1, minHeight: 0, height: '100%', display: 'flex', flexDirection: 'column' }}>
-            <AccountShiftsTab tenantId={tenantId} account={account} accountLoading={loading} />
+            <AccountShiftsTab
+              tenantId={tenantId}
+              account={account}
+              accountLoading={loading}
+              search={shiftsSearch}
+              onSearchChange={setShiftsSearch}
+              showFavoritesOnly={shiftsShowFavoritesOnly}
+              onToggleFavorites={setShiftsShowFavoritesOnly}
+              addShiftDrawerOpen={shiftsAddDrawerOpen}
+              onAddShiftDrawerOpenChange={setShiftsAddDrawerOpen}
+            />
           </Box>
         </TabPanel>
         <TabPanel value={tabValue} index={1}>
@@ -7742,99 +7899,134 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                 No locations found.
               </Typography>
             ) : (
-              <TableContainer component={Paper} sx={{ border: '1px solid #E5E7EB', borderRadius: 1 }}>
-                <Table size="small" stickyHeader>
-                  <TableHead>
-                    <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
-                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                        Company
-                      </TableCell>
-                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                        Location Name
-                      </TableCell>
-                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                        Code
-                      </TableCell>
-                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                        Address
-                      </TableCell>
-                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                        Type
-                      </TableCell>
-                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                        Division
-                      </TableCell>
-                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                        Contacts
-                      </TableCell>
-                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                        Deals
-                      </TableCell>
-                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                        Status
-                      </TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {filteredAccountLocations.map((location) => (
-                      <TableRow
-                        key={`${location.companyId}-${location.id}`}
-                        onClick={() => navigate(`/accounts/${account.id}/locations/${location.id}?companyId=${location.companyId}`)}
-                        sx={{
-                          cursor: 'pointer',
-                          '&:hover': { backgroundColor: '#F9FAFB' },
-                        }}
-                      >
-                        <TableCell sx={{ py: 1, px: 2 }}>
-                          <Typography sx={{ fontSize: '0.875rem', color: '#374151', fontWeight: 500 }}>
+              /* Table styling mirrors /jobs/job-orders (which mirrors /shifts/list):
+                 outlined Paper card, plain-case sentence headers, no zebra
+                 striping, plain hover. */
+              <Paper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
+                <TableContainer>
+                  <Table size="small" stickyHeader>
+                    <TableHead>
+                      <TableRow>
+                        {/* Header style mirrors the Job Orders tab table:
+                            uppercase 12px text in text.secondary so the column
+                            labels read as eyebrow-style ledes rather than
+                            full-size sentence text. */}
+                        <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', bgcolor: '#FFFFFF' }}>
+                          Company
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', bgcolor: '#FFFFFF' }}>
+                          Location Name
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', bgcolor: '#FFFFFF' }}>
+                          Code
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', bgcolor: '#FFFFFF' }}>
+                          Address
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', bgcolor: '#FFFFFF' }}>
+                          Type
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', bgcolor: '#FFFFFF' }}>
+                          Division
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', bgcolor: '#FFFFFF' }}>
+                          Contacts
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', bgcolor: '#FFFFFF' }}>
+                          Deals
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', bgcolor: '#FFFFFF' }}>
+                          Status
+                        </TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {filteredAccountLocations.map((location) => (
+                        <TableRow
+                          key={`${location.companyId}-${location.id}`}
+                          hover
+                          onClick={() => navigate(`/accounts/${account.id}/locations/${location.id}?companyId=${location.companyId}`)}
+                          sx={{ cursor: 'pointer' }}
+                        >
+                        {/* All cells use the JO-tab table treatment:
+                            `variant="body2"` (0.875rem) primaries + `variant="caption"` secondaries,
+                            `fontWeight={500}` for the dominant cell (Location Name) — matches the JO
+                            title cell — and the Type/Division chips are styled as compact uppercase
+                            pills, mirroring the JO Type chip rather than full-color MUI primary chips. */}
+                        <TableCell>
+                          <Typography variant="body2" color="text.secondary">
                             {location.companyName}
                           </Typography>
                         </TableCell>
-                        <TableCell sx={{ py: 1, px: 2 }}>
-                          <Typography sx={{ fontWeight: 600, color: '#111827', fontSize: '0.9375rem' }}>
+                        <TableCell>
+                          <Typography variant="body2" fontWeight={500}>
                             {location.name || location.nickname || 'Unnamed Location'}
                           </Typography>
                         </TableCell>
-                        <TableCell sx={{ py: 1 }}>
+                        <TableCell>
                           {location.code ? (
-                            <Typography sx={{ fontSize: '0.875rem', color: '#374151', fontWeight: 500, fontFamily: 'monospace' }}>
+                            <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
                               {location.code}
                             </Typography>
                           ) : (
-                            <Typography sx={{ fontSize: '0.875rem', color: '#9CA3AF' }}>-</Typography>
+                            <Typography variant="body2" color="text.disabled">—</Typography>
                           )}
                         </TableCell>
-                        <TableCell sx={{ py: 1 }}>
-                          <Typography sx={{ fontSize: '0.875rem', color: '#111827' }}>
-                            {location.address || location.street || '-'}
+                        <TableCell>
+                          <Typography variant="body2">
+                            {location.address || location.street || '—'}
                           </Typography>
                           {(location.city || location.state || location.zipCode) && (
-                            <Typography sx={{ fontSize: '0.875rem', color: '#6B7280' }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
                               {[location.city, location.state, location.zipCode].filter(Boolean).join(', ')}
                             </Typography>
                           )}
                         </TableCell>
-                        <TableCell sx={{ py: 1 }}>
-                          <Chip label={location.type || 'Unknown'} size="small" color="primary" sx={{ fontSize: '0.75rem', fontWeight: 500 }} />
-                        </TableCell>
-                        <TableCell sx={{ py: 1 }}>
-                          {location.division ? (
-                            <Chip label={location.division} size="small" color="secondary" variant="outlined" sx={{ fontSize: '0.75rem', fontWeight: 500 }} />
+                        <TableCell>
+                          {location.type ? (
+                            <Chip
+                              label={location.type}
+                              size="small"
+                              sx={{
+                                height: 22,
+                                fontSize: '0.7rem',
+                                fontWeight: 600,
+                                bgcolor: 'rgba(0,0,0,0.06)',
+                                '& .MuiChip-label': { px: 0.75 },
+                              }}
+                            />
                           ) : (
-                            <Typography sx={{ fontSize: '0.875rem', color: '#9CA3AF' }}>-</Typography>
+                            <Typography variant="body2" color="text.disabled">—</Typography>
                           )}
                         </TableCell>
-                        <TableCell sx={{ py: 1 }}>
-                          <Typography sx={{ fontSize: '0.875rem', color: '#374151', fontWeight: 500 }}>
+                        <TableCell>
+                          {location.division ? (
+                            <Chip
+                              label={location.division}
+                              size="small"
+                              variant="outlined"
+                              sx={{
+                                height: 22,
+                                fontSize: '0.7rem',
+                                fontWeight: 600,
+                                '& .MuiChip-label': { px: 0.75 },
+                              }}
+                            />
+                          ) : (
+                            <Typography variant="body2" color="text.disabled">—</Typography>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2">
                             {location.contactCount ?? 0}
                           </Typography>
                         </TableCell>
-                        <TableCell sx={{ py: 1 }}>
-                          <Typography sx={{ fontSize: '0.875rem', color: '#374151', fontWeight: 500 }}>
+                        <TableCell>
+                          <Typography variant="body2">
                             {location.dealCount ?? 0}
                           </Typography>
                         </TableCell>
-                        <TableCell sx={{ py: 1 }}>
+                        <TableCell>
                           <Chip
                             label={location.active !== false ? 'Active' : 'Inactive'}
                             size="small"
@@ -7850,7 +8042,8 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                     ))}
                   </TableBody>
                 </Table>
-              </TableContainer>
+                </TableContainer>
+              </Paper>
             )}
               </>
             )}
@@ -7858,91 +8051,36 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
         </TabPanel>
         <TabPanel value={tabValue} index={6}>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
-              <Typography variant="h6" fontWeight={700}>
-                Contacts
-              </Typography>
+            {!isChildAccount && (
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                {!isChildAccount && (
-                  <>
-                    <FormControl size="small" sx={{ minWidth: 150, height: 36 }}>
-                      <Select
-                        value={contactsWorksiteFilter}
-                        onChange={(e) => setContactsWorksiteFilter(e.target.value)}
-                        displayEmpty
-                        sx={{ height: 36, fontSize: '0.875rem', backgroundColor: 'white', borderRadius: '6px', '& .MuiOutlinedInput-notchedOutline': { borderColor: '#E5E7EB' }, '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#D1D5DB' } }}
-                      >
-                        <MenuItem value=""><em>All Worksites</em></MenuItem>
-                        {availableContactWorksites.map((ws) => (
-                          <MenuItem key={ws} value={ws}>{ws}</MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-                    <FormControl size="small" sx={{ minWidth: 120, height: 36 }}>
-                      <Select
-                        value={contactsStateFilter}
-                        onChange={(e) => setContactsStateFilter(e.target.value)}
-                        displayEmpty
-                        sx={{ height: 36, fontSize: '0.875rem', backgroundColor: 'white', borderRadius: '6px', '& .MuiOutlinedInput-notchedOutline': { borderColor: '#E5E7EB' }, '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#D1D5DB' } }}
-                      >
-                        <MenuItem value=""><em>All States</em></MenuItem>
-                        {availableContactStates.map((st) => (
-                          <MenuItem key={st} value={st}>{st}</MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-                    <TextField
-                      size="small"
-                      placeholder="Search by name or email..."
-                      value={contactsSearchQuery}
-                      onChange={(e) => setContactsSearchQuery(e.target.value)}
-                      sx={{ minWidth: 260 }}
-                      InputProps={{
-                        startAdornment: (
-                          <InputAdornment position="start">
-                            <SearchIcon fontSize="small" sx={{ color: 'text.secondary' }} />
-                          </InputAdornment>
-                        ),
-                        endAdornment: contactsSearchQuery ? (
-                          <InputAdornment position="end">
-                            <IconButton size="small" onClick={() => setContactsSearchQuery('')} aria-label="Clear">
-                              <ClearIcon fontSize="small" />
-                            </IconButton>
-                          </InputAdornment>
-                        ) : null,
-                      }}
-                    />
-                  </>
-                )}
-                {contactTabCompanyIds.length > 0 && (
-                  <Button
-                    variant="contained"
-                    startIcon={<AddIcon />}
-                    onClick={() => {
-                      const companyIds = account?.associations?.companyIds ?? parentCompanyIds;
-                      setAddContactCompanyId(companyIds[0] ?? '');
-                      setAddContactLocationId(null);
-                      setAddContactForm({
-                        firstName: '',
-                        lastName: '',
-                        email: '',
-                        phone: '',
-                        jobTitle: '',
-                        contactType: 'Unknown',
-                        linkedInUrl: '',
-                        tags: [],
-                        isActive: true,
-                        notes: '',
-                      });
-                      setAddContactError(null);
-                      setShowAddContactDialog(true);
-                    }}
+                <FormControl size="small" sx={{ minWidth: 150, height: 36 }}>
+                  <Select
+                    value={contactsWorksiteFilter}
+                    onChange={(e) => setContactsWorksiteFilter(e.target.value)}
+                    displayEmpty
+                    sx={{ height: 36, fontSize: '0.875rem', backgroundColor: 'white', borderRadius: '6px', '& .MuiOutlinedInput-notchedOutline': { borderColor: '#E5E7EB' }, '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#D1D5DB' } }}
                   >
-                    Add Contact
-                  </Button>
-                )}
+                    <MenuItem value=""><em>All Worksites</em></MenuItem>
+                    {availableContactWorksites.map((ws) => (
+                      <MenuItem key={ws} value={ws}>{ws}</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                <FormControl size="small" sx={{ minWidth: 120, height: 36 }}>
+                  <Select
+                    value={contactsStateFilter}
+                    onChange={(e) => setContactsStateFilter(e.target.value)}
+                    displayEmpty
+                    sx={{ height: 36, fontSize: '0.875rem', backgroundColor: 'white', borderRadius: '6px', '& .MuiOutlinedInput-notchedOutline': { borderColor: '#E5E7EB' }, '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#D1D5DB' } }}
+                  >
+                    <MenuItem value=""><em>All States</em></MenuItem>
+                    {availableContactStates.map((st) => (
+                      <MenuItem key={st} value={st}>{st}</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
               </Box>
-            </Box>
+            )}
             {!contactTabCompanyIds.length ? (
               <Typography variant="body2" color="text.secondary">
                 {isChildAccount ? 'No parent company locations linked. Link worksites in the sidebar to see contacts.' : 'Link at least one company to this account to see and add contacts.'}
@@ -7952,12 +8090,12 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                 <Table size="small">
                   <TableHead>
                     <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
-                      <TableCell sx={{ fontWeight: 600 }}>Name</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Title</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Email</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Phone</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Location</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>LinkedIn</TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em', bgcolor: '#FFFFFF' }}>Name</TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em', bgcolor: '#FFFFFF' }}>Title</TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em', bgcolor: '#FFFFFF' }}>Email</TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em', bgcolor: '#FFFFFF' }}>Phone</TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em', bgcolor: '#FFFFFF' }}>Location</TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em', bgcolor: '#FFFFFF' }}>LinkedIn</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -7989,12 +8127,12 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                 <Table size="small" stickyHeader>
                   <TableHead>
                     <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
-                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.5 }}>Name</TableCell>
-                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.5 }}>Title</TableCell>
-                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.5 }}>Email</TableCell>
-                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.5 }}>Phone</TableCell>
-                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.5 }}>Location</TableCell>
-                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.5 }}>LinkedIn</TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em', bgcolor: '#FFFFFF' }}>Name</TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em', bgcolor: '#FFFFFF' }}>Title</TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em', bgcolor: '#FFFFFF' }}>Email</TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em', bgcolor: '#FFFFFF' }}>Phone</TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em', bgcolor: '#FFFFFF' }}>Location</TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em', bgcolor: '#FFFFFF' }}>LinkedIn</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -8025,19 +8163,19 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                           onClick={() => navigate(`/contacts/${contact.id}`)}
                           sx={{ cursor: 'pointer', '&:hover': { backgroundColor: '#F9FAFB' } }}
                         >
-                          <TableCell sx={{ py: 1.25 }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                              <Avatar sx={{ width: 36, height: 36, bgcolor: 'grey.200', color: 'text.primary', fontSize: '0.875rem' }}>
+                          <TableCell>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                              <Avatar sx={{ width: 28, height: 28, bgcolor: 'grey.200', color: 'text.primary', fontSize: '0.75rem' }}>
                                 {fullName.split(/\s+/).map((w) => w[0]).join('').toUpperCase().slice(0, 2)}
                               </Avatar>
-                              <Typography fontWeight={600} sx={{ fontSize: '0.9375rem' }}>{fullName}</Typography>
+                              <Typography variant="body2" fontWeight={500}>{fullName}</Typography>
                             </Box>
                           </TableCell>
-                          <TableCell sx={{ py: 1.25 }}>{contact.jobTitle || contact.title || '—'}</TableCell>
-                          <TableCell sx={{ py: 1.25 }}>{contact.email || '—'}</TableCell>
-                          <TableCell sx={{ py: 1.25 }}>{contact.phone ? formatPhone(contact.phone) : '—'}</TableCell>
-                          <TableCell sx={{ py: 1.25 }}>{locationName}</TableCell>
-                          <TableCell sx={{ py: 1.25 }}>
+                          <TableCell><Typography variant="body2">{contact.jobTitle || contact.title || '—'}</Typography></TableCell>
+                          <TableCell><Typography variant="body2">{contact.email || '—'}</Typography></TableCell>
+                          <TableCell><Typography variant="body2">{contact.phone ? formatPhone(contact.phone) : '—'}</Typography></TableCell>
+                          <TableCell><Typography variant="body2">{locationName}</Typography></TableCell>
+                          <TableCell>
                             {linkedinUrl ? (
                               <IconButton size="small" onClick={(e) => { e.stopPropagation(); window.open(linkedinUrl, '_blank'); }} sx={{ color: '#0077B5' }} title="LinkedIn">
                                 <LinkedInIcon fontSize="small" />
@@ -8944,7 +9082,11 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
           <Grid container spacing={3}>
             <Grid item xs={12}>
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0 }}>
-                {/* Filters: Status, Company, Sort By */}
+                {/* Filters card hidden per UX (Status filter + national sub-account toggles).
+                    State (`jobOrdersStatusFilter`, `jobOrdersView`, `subAccountsFilter`) is
+                    intentionally retained — it still drives filtering, empty-state copy, and
+                    grouped rendering. Flip the `false` below to re-enable the card. */}
+                {false && (
                 <Box
                   sx={{
                     p: 1.5,
@@ -9077,6 +9219,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                     )}
                   </Stack>
                 </Box>
+                )}
                 {accountJobOrdersError && (
                   <Alert severity="error">{accountJobOrdersError}</Alert>
                 )}
@@ -9153,7 +9296,21 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                               <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Account</TableCell>
                             )}
                             <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Location</TableCell>
-                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Status</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                              <TableSortLabel
+                                active={jobOrdersSortField === 'status'}
+                                direction={jobOrdersSortField === 'status' ? jobOrdersSortDirection : 'asc'}
+                                onClick={() => {
+                                  setJobOrdersSortField('status');
+                                  setJobOrdersSortDirection((d) =>
+                                    jobOrdersSortField === 'status' ? (d === 'asc' ? 'desc' : 'asc') : 'asc',
+                                  );
+                                  setJobOrdersPage(0);
+                                }}
+                              >
+                                Status
+                              </TableSortLabel>
+                            </TableCell>
                             {/* Requested/Filled column — hidden per UX feedback; uncomment to restore. */}
                             {/* <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Requested/Filled</TableCell> */}
                             <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
@@ -9370,11 +9527,31 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                                   </Typography>
                                 </TableCell>
                                 */}
-                                <TableCell>
-                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                    <PersonIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
-                                    <Typography variant="body2">{jobOrder.recruiterName || 'Unassigned'}</Typography>
-                                  </Box>
+                                <TableCell
+                                  onClick={(e) => e.stopPropagation()}
+                                  sx={{ verticalAlign: 'middle' }}
+                                >
+                                  {/* Inline-editable Recruiter cell — same
+                                      <RecruiterAssignmentCell> used on
+                                      /jobs/job-orders. Persists to the JO
+                                      doc and patches the in-memory list
+                                      so the row reflects the change without
+                                      a refetch. */}
+                                  <RecruiterAssignmentCell
+                                    tenantId={tenantId}
+                                    jobOrderId={jobOrder.id}
+                                    assignedRecruiterIds={(jobOrder as any).assignedRecruiters || []}
+                                    options={recruiterPickerOptions}
+                                    optionsLoading={loadingRecruiterOptions}
+                                    onSaved={handleAccountJobOrderAssignmentSaved}
+                                    onError={(err) =>
+                                      setAccountJobOrdersError(
+                                        err instanceof Error
+                                          ? err.message
+                                          : 'Failed to update recruiters',
+                                      )
+                                    }
+                                  />
                                 </TableCell>
                                 {/* Age cell — hidden per UX feedback; uncomment to restore. */}
                                 {/*

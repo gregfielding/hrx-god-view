@@ -2620,6 +2620,15 @@ const JobPostingDetail: React.FC = () => {
                     jobPostId={postId}
                     tenantId={resolvedTenantId}
                     language={displayLanguage}
+                    /*
+                      Single source of truth for the "X spots left" chip
+                      on the public Jobs Board: the post-level
+                      `showWorkersNeeded` toggle (set on the JO's Jobs
+                      Board tab). Defaults to hidden — recruiters opt in
+                      per posting. Per-shift `showStaffNeeded` no
+                      longer drives this chip. May 2026.
+                    */
+                    showSpots={posting.showWorkersNeeded === true}
                   />
                 ) : posting.jobOrderId ? (
                   <Alert severity="info">

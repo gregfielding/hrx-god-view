@@ -1,18 +1,28 @@
 /**
- * RD.2 — Integration tests for `getReadinessBreakdownRows` chip-strip
- * output when the Everee `readinessMirror` snapshot is wired through
+ * Integration tests for `getReadinessBreakdownRows` chip-strip output
+ * when the Everee `readinessMirror` snapshot is wired through
  * `RecruiterUserEmploymentBreakdownContext.evereeReadinessMirror`.
  *
- * Mirror present → mirror wins for Direct deposit / I-9 / W-4 / 1099 /
- * Handbook / Policies, plus a new "TIN/SSN" row inserted between W-4
- * and E-Verify. Work auth + E-Verify stay HRX-sourced.
+ * **May 2026 — second pass.** The Readiness column was slimmed down
+ * from 8 rows to 2:
  *
- * Mirror absent → legacy 8-row layout (no TIN row, no regression).
+ *   1. `direct_deposit` — Everee mirror tells us Pay setup is done.
+ *   2. `employer_i9`    — Section 2 (employer portion) is the only
+ *                          I-9 step HRX still owns. Section 1 is on
+ *                          Everee.
+ *
+ * Removed rows (worker-side onboarding HRX doesn't actually own
+ * anymore — Everee took over): Work auth, worker I-9 Section 1, W-4,
+ * 1099, TIN/SSN, Handbook, Policies, plus E-Verify (which has its own
+ * column on the user header anyway).
+ *
+ * Indeed Flex / Fieldglass live as separate checkboxes in the column
+ * container, not as breakdown rows.
  *
  * These tests pin the row order + literal strings the chip-strip
  * surfaces consume — RecruiterUsers, UserProfile header,
- * UserGroupMembersTable, ApplicantsUsersStyleTableCells. Any drift here
- * is a UX-visible change.
+ * UserGroupMembersTable, ApplicantsUsersStyleTableCells. Any drift
+ * here is a UX-visible change.
  */
 
 import {
@@ -56,6 +66,13 @@ interface EeRecord {
   everifyStatus?: string;
   taxIdentityStatus?: string | null;
   handbookStatus?: string | null;
+  /**
+   * Employer-side I-9 (Section 2) completion stamp. Set by the
+   * Onboarding Specialist queue when the employer attests that
+   * Section 2 documents have been inspected. Drives the new
+   * "Employer I-9: …" row in the Readiness column.
+   */
+  i9Section2CompletedAt?: { toDate: () => Date } | null;
 }
 
 interface CtxLike {
@@ -153,25 +170,25 @@ function rowMap(rows: ReturnType<typeof getReadinessBreakdownRows>): Record<stri
 }
 
 describe('getReadinessBreakdownRows with Everee mirror — W-2 worker', () => {
-  it('renders 9 rows in the documented order with TIN inserted between w4 and everify', () => {
+  // Row count dropped from 8 → 2 in May 2026 (second pass): every
+  // worker-side onboarding row HRX doesn't actually own (Work auth,
+  // worker I-9 Section 1, W-4, 1099, TIN/SSN, Handbook, Policies, plus
+  // E-Verify which has its own column) was removed because Everee owns
+  // those steps. Two rows survive: `direct_deposit` (Everee mirror)
+  // and `employer_i9` (Section 2 — only HRX-owned I-9 step). Indeed
+  // Flex / Fieldglass live as separate checkboxes in the column
+  // container, not as breakdown rows.
+  it('renders 2 rows in the documented order: direct_deposit, employer_i9', () => {
     const rows = getReadinessBreakdownRows(makeUser(), undefined, {
       employmentBreakdown: makeCtx({ mirror: w2MirrorAllComplete() }) as never,
     });
 
-    expect(rows.map((r) => r.key)).toEqual([
-      'direct_deposit',
-      'work_auth',
-      'i9',
-      'w4',
-      'tax_1099',
-      'tin',
-      'everify',
-      'handbook',
-      'policies',
-    ]);
+    expect(rows.map((r) => r.key)).toEqual(['direct_deposit', 'employer_i9']);
   });
 
-  it('all-complete mirror → all Everee-owned rows show "Complete", 1099 "N/A", TIN "IRS verified"', () => {
+  it('all-complete mirror + no Section 2 stamp → "Direct deposit: Complete", "Employer I-9: Action needed"', () => {
+    // Worker has signed Section 1 in Everee but the employer (CSA)
+    // hasn't physically inspected docs yet → action needed.
     const rows = rowMap(
       getReadinessBreakdownRows(makeUser(), undefined, {
         employmentBreakdown: makeCtx({ mirror: w2MirrorAllComplete() }) as never,
@@ -179,17 +196,37 @@ describe('getReadinessBreakdownRows with Everee mirror — W-2 worker', () => {
     );
 
     expect(rows.direct_deposit).toBe('Direct deposit: Complete');
-    expect(rows.i9).toBe('I-9: Complete');
-    expect(rows.w4).toBe('W-4: Complete');
-    expect(rows.tax_1099).toBe('1099: N/A');
-    expect(rows.tin).toBe('TIN/SSN: IRS verified');
-    expect(rows.handbook).toBe('Handbook: Complete');
-    expect(rows.policies).toBe('Policies: Complete');
-    // HRX-sourced — unchanged by mirror.
-    expect(rows.work_auth).toBe('Work auth: Authorized');
+    expect(rows.employer_i9).toBe('Employer I-9: Action needed');
+    // All previously-tracked rows are gone. Pin the absence so a
+    // future PR doesn't quietly re-add one without updating this
+    // contract.
+    expect(rows.work_auth).toBeUndefined();
+    expect(rows.i9).toBeUndefined();
+    expect(rows.w4).toBeUndefined();
+    expect(rows.tax_1099).toBeUndefined();
+    expect(rows.tin).toBeUndefined();
+    expect(rows.everify).toBeUndefined();
+    expect(rows.handbook).toBeUndefined();
+    expect(rows.policies).toBeUndefined();
   });
 
-  it('all-empty mirror → all Everee-owned rows show "Not started", 1099 "N/A", TIN "Not submitted"', () => {
+  it('all-complete mirror + Section 2 stamp set → "Employer I-9: Complete"', () => {
+    const rows = rowMap(
+      getReadinessBreakdownRows(makeUser(), undefined, {
+        employmentBreakdown: makeCtx({
+          ee: { i9Section2CompletedAt: { toDate: () => new Date() } },
+          mirror: w2MirrorAllComplete(),
+        }) as never,
+      }),
+    );
+
+    expect(rows.employer_i9).toBe('Employer I-9: Complete');
+  });
+
+  it('all-empty mirror → "Direct deposit: Not started", "Employer I-9: Waiting on worker"', () => {
+    // Worker hasn't signed Section 1 yet → no employer action is
+    // possible. Make this state visually distinct from "Action
+    // needed" so the CSA queue knows where the ball is.
     const rows = rowMap(
       getReadinessBreakdownRows(makeUser(), undefined, {
         employmentBreakdown: makeCtx({ mirror: w2MirrorAllEmpty() }) as never,
@@ -197,17 +234,14 @@ describe('getReadinessBreakdownRows with Everee mirror — W-2 worker', () => {
     );
 
     expect(rows.direct_deposit).toBe('Direct deposit: Not started');
-    expect(rows.i9).toBe('I-9: Not started');
-    expect(rows.w4).toBe('W-4: Not started');
-    expect(rows.tax_1099).toBe('1099: N/A');
-    expect(rows.tin).toBe('TIN/SSN: Not submitted');
-    expect(rows.handbook).toBe('Handbook: Not started');
-    expect(rows.policies).toBe('Policies: Not started');
+    expect(rows.employer_i9).toBe('Employer I-9: Waiting on worker');
   });
 });
 
 describe('getReadinessBreakdownRows with Everee mirror — 1099 contractor', () => {
-  it('all-complete contractor mirror → I-9/W-4 "N/A", 1099 "Complete", TIN "Submitted to IRS"', () => {
+  it('contractor mirror → "Direct deposit: Complete", "Employer I-9: N/A"', () => {
+    // 1099 contractors don't sign I-9 (W-9 instead), so Section 2 is
+    // permanently `N/A` for them.
     const rows = rowMap(
       getReadinessBreakdownRows(makeUser(), undefined, {
         employmentBreakdown: makeCtx({
@@ -218,18 +252,14 @@ describe('getReadinessBreakdownRows with Everee mirror — 1099 contractor', () 
     );
 
     expect(rows.direct_deposit).toBe('Direct deposit: Complete');
-    expect(rows.i9).toBe('I-9: N/A');
-    expect(rows.w4).toBe('W-4: N/A');
-    expect(rows.tax_1099).toBe('1099: Complete');
-    expect(rows.tin).toBe('TIN/SSN: Submitted to IRS');
-    expect(rows.handbook).toBe('Handbook: Complete');
-    expect(rows.policies).toBe('Policies: Complete');
+    expect(rows.employer_i9).toBe('Employer I-9: N/A');
   });
 
-  it('mirror applicability flags win over entity workerType disagreement', () => {
+  it('mirror i9Applicable=false wins over entity workerType disagreement', () => {
     // Edge case: legacy `entityEmployment.workerType` says w2, but the
-    // mirror says 1099 (contractor was switched in Everee but the HRX
-    // record hasn't synced). The chip strip should follow the mirror.
+    // mirror says contractor (i9Applicable=false). The Employer I-9
+    // line should follow the mirror — Everee is the source of truth
+    // for the worker's classification.
     const rows = rowMap(
       getReadinessBreakdownRows(makeUser(), undefined, {
         employmentBreakdown: makeCtx({
@@ -239,76 +269,30 @@ describe('getReadinessBreakdownRows with Everee mirror — 1099 contractor', () 
       }),
     );
 
-    expect(rows.i9).toBe('I-9: N/A'); // mirror wins
-    expect(rows.w4).toBe('W-4: N/A'); // mirror wins
-    expect(rows.tax_1099).toBe('1099: Complete'); // mirror wins
-  });
-});
-
-describe('getReadinessBreakdownRows TIN 4-state matrix in row context', () => {
-  function tinRowFor(status: string | null): string {
-    const mirror: MirrorLike = { ...w2MirrorAllComplete(), tinVerificationStatus: status };
-    const rows = rowMap(
-      getReadinessBreakdownRows(makeUser(), undefined, {
-        employmentBreakdown: makeCtx({ mirror }) as never,
-      }),
-    );
-    return rows.tin;
-  }
-
-  it.each([
-    ['VERIFIED', 'TIN/SSN: IRS verified'],
-    ['SENT_FOR_VERIFICATION', 'TIN/SSN: Submitted to IRS'],
-    ['NEEDS_VERIFICATION', 'TIN/SSN: Not submitted'],
-    ['MISMATCH', 'TIN/SSN: IRS rejected'],
-  ])('%s → %s', (status, expected) => {
-    expect(tinRowFor(status)).toBe(expected);
-  });
-
-  it('null TIN status (mirror present, never submitted) → "Not submitted"', () => {
-    expect(tinRowFor(null)).toBe('TIN/SSN: Not submitted');
+    expect(rows.employer_i9).toBe('Employer I-9: N/A'); // mirror wins
   });
 });
 
 describe('getReadinessBreakdownRows fallback when mirror absent (legacy path preserved)', () => {
-  it('omits TIN row entirely (no regression for non-Everee tenants)', () => {
+  it('mirror absent → still 2 rows (direct_deposit, employer_i9), em-dash for direct_deposit, "Waiting on worker" for I-9', () => {
+    // Without an Everee mirror we don't know if Section 1 was signed,
+    // so the breakdown path falls back to "Waiting on worker" until
+    // the mirror catches up. Direct deposit is em-dash because the
+    // checklist model produces no completion signal without the
+    // mirror.
     const rows = getReadinessBreakdownRows(makeUser(), undefined, {
       employmentBreakdown: makeCtx({ mirror: null }) as never,
     });
 
     const keys = rows.map((r) => r.key);
-    expect(keys).not.toContain('tin');
-    expect(keys).toEqual([
-      'direct_deposit',
-      'work_auth',
-      'i9',
-      'w4',
-      'tax_1099',
-      'everify',
-      'handbook',
-      'policies',
-    ]);
+    expect(keys).toEqual(['direct_deposit', 'employer_i9']);
+
+    const map = rowMap(rows);
+    expect(map.direct_deposit).toBe('Direct deposit: Not started');
+    expect(map.employer_i9).toBe('Employer I-9: Waiting on worker');
   });
 
-  it('mirror absent + W-2 worker → legacy "Not started" wording for unsourced rows', () => {
-    const rows = rowMap(
-      getReadinessBreakdownRows(makeUser(), undefined, {
-        employmentBreakdown: makeCtx({ mirror: null }) as never,
-      }),
-    );
-
-    // Legacy path with no externalOnboardingSteps + no entity-section
-    // mirror flags falls back to "Not started" for everything except
-    // the explicit N/A slots. This is the contract pre-RD.2.
-    expect(rows.direct_deposit).toBe('Direct deposit: Not started');
-    expect(rows.i9).toBe('I-9: Not started');
-    expect(rows.w4).toBe('W-4: Not started');
-    expect(rows.tax_1099).toBe('1099: N/A');
-    expect(rows.handbook).toBe('Handbook: Not started');
-    expect(rows.policies).toBe('Policies: Not started');
-  });
-
-  it('mirror absent + 1099 contractor → legacy 1099 path ("W-4: N/A", "1099: Not started")', () => {
+  it('mirror absent + 1099 entity → "Employer I-9: N/A"', () => {
     const rows = rowMap(
       getReadinessBreakdownRows(makeUser(), undefined, {
         employmentBreakdown: makeCtx({
@@ -318,18 +302,27 @@ describe('getReadinessBreakdownRows fallback when mirror absent (legacy path pre
       }),
     );
 
-    expect(rows.w4).toBe('W-4: N/A');
-    expect(rows.tax_1099).toBe('1099: Not started');
+    expect(rows.employer_i9).toBe('Employer I-9: N/A');
   });
 
-  it('no employmentBreakdown opt at all → legacy fallback path (em-dash placeholders)', () => {
-    // This is the fully-legacy path: no breakdown context, just the
-    // user shape. Pre-existing behaviour — pinned here to make sure
-    // RD.2 didn't accidentally change it.
+  it('no employmentBreakdown opt at all → legacy em-dash fallback (2 rows)', () => {
+    // Fully-legacy path: no breakdown context, just the user shape.
+    // Without context we can't compute Section 2 status, so the
+    // employer I-9 row shows an em-dash. Direct deposit stays em-dash
+    // (legacy never had a completion source).
     const rows = rowMap(getReadinessBreakdownRows(makeUser()));
     expect(rows.direct_deposit).toBe('Direct deposit: —');
-    expect(rows.handbook).toBe('Handbook: —');
-    expect(rows.policies).toBe('Policies: —');
+    expect(rows.employer_i9).toBe('Employer I-9: —');
+    expect(rows.handbook).toBeUndefined();
+    expect(rows.policies).toBeUndefined();
+    expect(rows.i9).toBeUndefined();
+  });
+
+  it('no employmentBreakdown opt + 1099 onboarding type → "Employer I-9: N/A"', () => {
+    const rows = rowMap(
+      getReadinessBreakdownRows({ ...makeUser(), onboardingType: '1099' }),
+    );
+    expect(rows.employer_i9).toBe('Employer I-9: N/A');
   });
 });
 
@@ -337,12 +330,12 @@ describe('getReadinessBreakdownRows mirror entity scoping', () => {
   it('lookup is per-(worker × entity) — different entity contexts pick different mirrors', () => {
     // Two different entities for the same user. The hook attaches a
     // per-context mirror; here we simulate two calls for two entity
-    // contexts and confirm each call uses its own mirror.
+    // contexts and confirm each call uses its own mirror. The
+    // surviving rows are direct_deposit + employer_i9.
     const selectMirror = w2MirrorAllComplete();
     const eventsMirror: MirrorLike = {
       ...contractorMirrorAllComplete(),
       directDepositReady: false,
-      handbookSignedAt: null,
     };
 
     const selectRows = rowMap(
@@ -362,15 +355,12 @@ describe('getReadinessBreakdownRows mirror entity scoping', () => {
       }),
     );
 
-    // Select entity → W-2 path, all complete.
+    // Select entity → W-2 path, DD complete, employer I-9 needs CSA action.
     expect(selectRows.direct_deposit).toBe('Direct deposit: Complete');
-    expect(selectRows.handbook).toBe('Handbook: Complete');
-    expect(selectRows.tax_1099).toBe('1099: N/A');
+    expect(selectRows.employer_i9).toBe('Employer I-9: Action needed');
 
-    // Events entity → 1099 path with the doctored mirror (DD + handbook unset).
+    // Events entity → 1099, DD not ready, employer I-9 always N/A for 1099.
     expect(eventsRows.direct_deposit).toBe('Direct deposit: Not started');
-    expect(eventsRows.handbook).toBe('Handbook: Not started');
-    expect(eventsRows.tax_1099).toBe('1099: Complete');
-    expect(eventsRows.i9).toBe('I-9: N/A');
+    expect(eventsRows.employer_i9).toBe('Employer I-9: N/A');
   });
 });

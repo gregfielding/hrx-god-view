@@ -1,22 +1,28 @@
 /**
  * Trigger — recompute `users/{uid}.primaryRecruiterId` for every worker
- * whose CSA assignment could have shifted when a user group's
+ * whose Onboarding Specialist assignment could have shifted when a user
+ * group's `roles.onboardingSpecialistIds` (preferred) or legacy
  * `roles.csaIds` or `memberIds` changed.
  *
- * Phase 4b of `docs/RECRUITING_ROLE_MODEL.md`. The CSA tier walk
- * (§2.1, §3.1) resolves a worker's CSA from their user-group
- * memberships. This trigger is the server-side glue that keeps the
- * denormalized scalar in sync with both directions of change:
+ * Phase 4b of `docs/RECRUITING_ROLE_MODEL.md`. The Onboarding Specialist
+ * tier walk (§2.1, §3.1) resolves a worker's specialist from their
+ * user-group memberships. This trigger is the server-side glue that
+ * keeps the denormalized scalar in sync with both directions of change:
  *
- *   - A group's CSA list is rewritten → every current member's primary
- *     is recomputed.
+ *   - A group's specialist list is rewritten → every current member's
+ *     primary is recomputed.
  *   - A worker is added to / removed from a group → their primary is
- *     recomputed (they just gained or lost a CSA source).
+ *     recomputed (they just gained or lost a specialist source).
  *
  * Works by delegating each affected worker to `recomputePrimaryForWorker`,
- * which tries the CSA path first and falls back to the legacy anchor
- * computation. That shared helper also owns the transactional write, so
- * this trigger stays a thin fan-out.
+ * which tries the Onboarding Specialist path first and falls back to
+ * the legacy anchor computation. That shared helper also owns the
+ * transactional write, so this trigger stays a thin fan-out.
+ *
+ * Defensive read pattern: prefers `roles.onboardingSpecialistIds`;
+ * falls back to the legacy `roles.csaIds` while the rename migration
+ * soaks. After the cleanup PR drops the legacy field, the `?? csaIds`
+ * clause goes away.
  *
  * Idempotent — `recomputePrimaryForWorker` compares before/after and
  * skips the write when the scalar hasn't actually changed.
@@ -74,18 +80,31 @@ export const onUserGroupRolesOrMembersChangeRecomputeWorkersPrimary = onDocument
 
     const beforeMembers = readStringArray(beforeData, ['memberIds']);
     const afterMembers = readStringArray(afterData, ['memberIds']);
-    const beforeCsas = readStringArray(beforeData, ['roles', 'csaIds']);
-    const afterCsas = readStringArray(afterData, ['roles', 'csaIds']);
+    // Defensive read pattern: prefer the new
+    // `roles.onboardingSpecialistIds`, fall back to legacy
+    // `roles.csaIds` so the trigger correctly fires while data
+    // co-exists in both fields during the rename transition window.
+    const beforeOnboardingSpecialists =
+      readStringArray(beforeData, ['roles', 'onboardingSpecialistIds']).length > 0
+        ? readStringArray(beforeData, ['roles', 'onboardingSpecialistIds'])
+        : readStringArray(beforeData, ['roles', 'csaIds']);
+    const afterOnboardingSpecialists =
+      readStringArray(afterData, ['roles', 'onboardingSpecialistIds']).length > 0
+        ? readStringArray(afterData, ['roles', 'onboardingSpecialistIds'])
+        : readStringArray(afterData, ['roles', 'csaIds']);
 
     const membersChanged = !stringArraysEqual(beforeMembers, afterMembers);
-    const csasChanged = !stringArraysEqual(beforeCsas, afterCsas);
-    if (!membersChanged && !csasChanged) return;
+    const onboardingSpecialistsChanged = !stringArraysEqual(
+      beforeOnboardingSpecialists,
+      afterOnboardingSpecialists,
+    );
+    if (!membersChanged && !onboardingSpecialistsChanged) return;
 
     // Workers to recompute:
-    //   - CSAs changed → everyone currently in the group.
+    //   - Onboarding Specialists changed → everyone currently in the group.
     //   - Members changed → the symmetric difference (added ∪ removed).
     const affected = new Set<string>();
-    if (csasChanged) {
+    if (onboardingSpecialistsChanged) {
       for (const m of afterMembers) affected.add(m);
     }
     if (membersChanged) {
@@ -131,7 +150,7 @@ export const onUserGroupRolesOrMembersChangeRecomputeWorkersPrimary = onDocument
     logger.info('onUserGroupRolesOrMembersChange: recomputed primaries', {
       tenantId,
       groupId,
-      csasChanged,
+      onboardingSpecialistsChanged,
       membersChanged,
       affectedCount: affected.size,
       scalarChanges: recomputed,

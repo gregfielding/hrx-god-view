@@ -6,6 +6,7 @@ import {
   Button,
   Checkbox,
   CircularProgress,
+  Collapse,
   FormControl,
   InputLabel,
   MenuItem,
@@ -142,6 +143,11 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   // Use outlet context if available, otherwise use local state
   const searchTerm = outletCtx?.search !== undefined ? outletCtx.search : localSearch;
   const showFavoritesOnly = outletCtx?.showFavoritesOnly !== undefined ? outletCtx.showFavoritesOnly : localShowFavoritesOnly;
+  // Show/Hide filters lives in the parent layout's tab strip (mirrors
+  // `/jobs/job-orders`). Default closed when no outlet context is
+  // present (defensive — this page only renders inside <UsersLayout>
+  // today, but the legacy `hideHeader=false` path could reach here too).
+  const filtersExpanded = outletCtx?.filtersExpanded ?? false;
   
   const handleSearchChange = (value: string) => {
     if (outletCtx?.setSearch) {
@@ -237,9 +243,9 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     return m;
   }, [groupLookup]);
 
-  // Map of recruiter uid -> display name; powers the "CSA: <name>" line on
-  // each Person cell (the row only carries `users.{uid}.primaryRecruiterId`,
-  // and we want a name without N getDocs).
+  // Map of recruiter uid -> display name; powers the "Recruiter: <name>"
+  // line on each Person cell (the row only carries
+  // `users.{uid}.primaryRecruiterId`, and we want a name without N getDocs).
   const recruiterNameByUid = useTenantRecruiterNamesByUid(activeTenant?.id ?? null);
 
   // Reset pagination when core filters (excluding search) change
@@ -945,25 +951,21 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
           flexDirection: 'column',
         }}
       >
-        {/* Filter & Toolbar Area */}
-        <Box
-          ref={filtersRef}
-          sx={{ 
-            mt: 0,
-            mb: 0,
-            px: 1.5,
-            py: 1.25,
-            backgroundColor: '#F9FAFB',
-            borderRadius: 0,
-            border: '1px solid #E5E7EB',
-            borderBottom: '1px solid #EAEEF4',
-            overflowX: 'auto',
-            overflowY: 'hidden',
-            position: 'sticky',
-            top: 0,
-            zIndex: 15,
-          }}
-        >
+        {/* Filter & Toolbar Area — collapsible, flat (no card wrapper)
+            so it matches `/jobs/job-orders` and `/shifts/list` visually.
+            The Show/Hide toggle lives in the parent <UsersLayout> tab
+            strip; this surface only consumes the boolean. */}
+        <Collapse in={filtersExpanded} timeout="auto" unmountOnExit>
+          <Box
+            ref={filtersRef}
+            sx={{
+              px: { xs: 2, md: 3 },
+              pt: 1.25,
+              pb: 1.5,
+              overflowX: 'auto',
+              overflowY: 'hidden',
+            }}
+          >
           <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
             {showAllMyTabs && (
               <Box sx={{ display: 'flex', gap: 0.5, mr: 0.5 }}>
@@ -1106,7 +1108,8 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
               </Select>
             </FormControl>
           </Box>
-        </Box>
+          </Box>
+        </Collapse>
 
         {/* Initial loading indicator */}
         {tableLoading && users.length === 0 && (

@@ -132,12 +132,36 @@ const StaffInstructionCard: React.FC<StaffInstructionCardProps> = ({
   };
 
   return (
-    <Card>
-      <CardHeader 
-        title={title} 
+    /*
+     * Flat layout for the Staff Instructions tab cards (May 2026).
+     * The user-visible spacing between sections comes from the
+     * parent's `<Grid container spacing={3}>`, so each card here
+     * renders without a shadow / hover lift / horizontal+top
+     * padding. Affects every surface that mounts this component:
+     *   - JO detail (`RecruiterJobOrderDetail.tsx` Staff Instructions tab)
+     *   - Account detail (`RecruiterAccountDetails.tsx` Staff Instructions tab)
+     *   - Account location detail (`AccountLocationDetail.tsx`)
+     *   - Agency profile job order (`AgencyProfile/.../JobOrderDetails.tsx`)
+     *
+     * The bottom padding stays at MUI's default (CardHeader: 16px,
+     * CardContent last-child: 24px) so consecutive card sections
+     * still have breathing room before the next title.
+     */
+    <Card
+      elevation={0}
+      sx={{
+        boxShadow: 'none',
+        backgroundColor: 'transparent',
+        border: 'none',
+        '&:hover': { boxShadow: 'none' },
+      }}
+    >
+      <CardHeader
+        title={title}
         titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+        sx={{ pt: 0, px: 0 }}
       />
-      <CardContent>
+      <CardContent sx={{ pt: 0, px: 0 }}>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           {/* Text Area - only show if placeholder is provided */}
           {placeholder && (

@@ -1,10 +1,10 @@
 /**
- * E.7 — RTL component tests for `CsaActionQueue`.
+ * E.7 — RTL component tests for `OnboardingSpecialistActionQueue`.
  *
- * The hook (`useCsaActionQueueItems`) is mocked via `jest.mock` so the
+ * The hook (`useOnboardingSpecialistActionQueueItems`) is mocked via `jest.mock` so the
  * test drives the rendering directly with synthetic items. Hook
  * integration is covered by the pure aggregator tests in
- * `src/utils/csaActionQueue/__tests__/buildCsaActionItems.e7.test.ts` —
+ * `src/utils/onboardingSpecialistActionQueue/__tests__/buildOnboardingSpecialistActionItems.e7.test.ts` —
  * mocking the live Firestore listener is brittle and not the goal here.
  *
  * Coverage:
@@ -14,14 +14,14 @@
  *   - Clicking "Start E-Verify" navigates to the user profile with the
  *     existing R.5 employmentScrollTo=e_verify pattern + entityKey
  *   - Clicking "Open TNC flow" navigates to the same surface
- *   - Search bar filters items in-place (uses csaActionItemMatchesSearch)
+ *   - Search bar filters items in-place (uses onboardingSpecialistActionItemMatchesSearch)
  *   - My / All toggle is rendered (default = "mine" for non-HRX)
  */
 
 import React from 'react';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 
-import type { CsaActionItem } from '../../../types/csaActionQueue';
+import type { OnboardingSpecialistActionItem } from '../../../types/onboardingSpecialistActionQueue';
 
 const mockNavigate = jest.fn();
 const mockUseHook = jest.fn();
@@ -52,7 +52,7 @@ jest.mock(
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { MemoryRouter } = require('react-router-dom');
 
-jest.mock('../../../hooks/useCsaActionQueueItems', () => ({
+jest.mock('../../../hooks/useOnboardingSpecialistActionQueueItems', () => ({
   __esModule: true,
   default: (...args: unknown[]) => mockUseHook(...args),
 }));
@@ -60,7 +60,7 @@ jest.mock('../../../hooks/useCsaActionQueueItems', () => ({
 jest.mock('../../../contexts/AuthContext', () => ({
   __esModule: true,
   useAuth: () => ({
-    user: { uid: 'csa-1' },
+    user: { uid: 'onboarding-specialist-1' },
     securityLevel: '5',
     isHRX: false,
     activeTenant: { id: 'tenant-1' },
@@ -72,7 +72,7 @@ jest.mock('../../../contexts/AuthContext', () => ({
 // opens without dragging in the real submit path.
 jest.mock('../I9Section2CompleteDialog', () => ({
   __esModule: true,
-  default: ({ open, item }: { open: boolean; item: CsaActionItem | null }) =>
+  default: ({ open, item }: { open: boolean; item: OnboardingSpecialistActionItem | null }) =>
     open && item ? (
       <div data-testid="i9-section2-dialog-stub">
         I9 dialog open for {item.workerName}
@@ -82,11 +82,11 @@ jest.mock('../I9Section2CompleteDialog', () => ({
 
 // Inline import the SUT after mocks have been set up.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const CsaActionQueue = require('../CsaActionQueue').default as React.ComponentType<{
+const OnboardingSpecialistActionQueue = require('../OnboardingSpecialistActionQueue').default as React.ComponentType<{
   tenantId: string | undefined;
 }>;
 
-function makeItem(overrides: Partial<CsaActionItem> = {}): CsaActionItem {
+function makeItem(overrides: Partial<OnboardingSpecialistActionItem> = {}): OnboardingSpecialistActionItem {
   return {
     id: 'i9_section_2__ent-A__worker-1',
     actionType: 'i9_section_2',
@@ -115,12 +115,12 @@ function makeItem(overrides: Partial<CsaActionItem> = {}): CsaActionItem {
 function renderQueue() {
   return render(
     <MemoryRouter>
-      <CsaActionQueue tenantId="tenant-1" />
+      <OnboardingSpecialistActionQueue tenantId="tenant-1" />
     </MemoryRouter>,
   );
 }
 
-describe('E.7 — CsaActionQueue rendering + interactions', () => {
+describe('E.7 — OnboardingSpecialistActionQueue rendering + interactions', () => {
   beforeEach(() => {
     mockNavigate.mockReset();
     mockUseHook.mockReset();
@@ -129,7 +129,7 @@ describe('E.7 — CsaActionQueue rendering + interactions', () => {
   it('renders the empty state when there are no items', () => {
     mockUseHook.mockReturnValue({ items: [], loading: false, error: null });
     renderQueue();
-    expect(screen.getByTestId('csa-action-queue-empty')).toBeInTheDocument();
+    expect(screen.getByTestId('onboarding-specialist-action-queue-empty')).toBeInTheDocument();
     expect(
       screen.getByText(/All caught up — no action items pending/),
     ).toBeInTheDocument();
@@ -146,7 +146,7 @@ describe('E.7 — CsaActionQueue rendering + interactions', () => {
       screen.getByText('Complete I-9 Section 2 — Greg Worker'),
     ).toBeInTheDocument();
     const item = screen.getByTestId(
-      'csa-action-queue-item-i9_section_2__ent-A__worker-1',
+      'onboarding-specialist-action-queue-item-i9_section_2__ent-A__worker-1',
     );
     expect(within(item).getByText('Mark complete')).toBeInTheDocument();
   });
@@ -170,7 +170,7 @@ describe('E.7 — CsaActionQueue rendering + interactions', () => {
     // The chip label and button label both say "Start E-Verify" — assert
     // on the button via its test-id to disambiguate.
     expect(
-      screen.getByTestId('csa-action-queue-button-start_everify__ent-A__worker-1'),
+      screen.getByTestId('onboarding-specialist-action-queue-button-start_everify__ent-A__worker-1'),
     ).toHaveTextContent('Start E-Verify');
   });
 
@@ -190,7 +190,7 @@ describe('E.7 — CsaActionQueue rendering + interactions', () => {
     expect(
       screen.getByText('Address E-Verify TNC — Greg Worker'),
     ).toBeInTheDocument();
-    const item = screen.getByTestId('csa-action-queue-item-address_tnc__ent-A__worker-1');
+    const item = screen.getByTestId('onboarding-specialist-action-queue-item-address_tnc__ent-A__worker-1');
     expect(within(item).getByText('Open TNC flow')).toBeInTheDocument();
   });
 
@@ -203,7 +203,7 @@ describe('E.7 — CsaActionQueue rendering + interactions', () => {
     renderQueue();
     fireEvent.click(
       screen.getByTestId(
-        'csa-action-queue-button-i9_section_2__ent-A__worker-1',
+        'onboarding-specialist-action-queue-button-i9_section_2__ent-A__worker-1',
       ),
     );
     expect(screen.getByTestId('i9-section2-dialog-stub')).toHaveTextContent(
@@ -226,7 +226,7 @@ describe('E.7 — CsaActionQueue rendering + interactions', () => {
     renderQueue();
     fireEvent.click(
       screen.getByTestId(
-        'csa-action-queue-button-start_everify__ent-A__worker-1',
+        'onboarding-specialist-action-queue-button-start_everify__ent-A__worker-1',
       ),
     );
     expect(mockNavigate).toHaveBeenCalledTimes(1);
@@ -250,7 +250,7 @@ describe('E.7 — CsaActionQueue rendering + interactions', () => {
     });
     renderQueue();
     fireEvent.click(
-      screen.getByTestId('csa-action-queue-button-address_tnc__ent-A__worker-1'),
+      screen.getByTestId('onboarding-specialist-action-queue-button-address_tnc__ent-A__worker-1'),
     );
     expect(mockNavigate).toHaveBeenCalledTimes(1);
     const dest = String(mockNavigate.mock.calls[0][0]);
@@ -278,10 +278,10 @@ describe('E.7 — CsaActionQueue rendering + interactions', () => {
     renderQueue();
 
     expect(
-      screen.getByTestId('csa-action-queue-item-i9_section_2__ent-A__worker-1'),
+      screen.getByTestId('onboarding-specialist-action-queue-item-i9_section_2__ent-A__worker-1'),
     ).toBeInTheDocument();
     expect(
-      screen.getByTestId('csa-action-queue-item-i9_section_2__ent-A__worker-2'),
+      screen.getByTestId('onboarding-specialist-action-queue-item-i9_section_2__ent-A__worker-2'),
     ).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText(/Search by name, email, or phone/), {
@@ -289,10 +289,10 @@ describe('E.7 — CsaActionQueue rendering + interactions', () => {
     });
 
     expect(
-      screen.queryByTestId('csa-action-queue-item-i9_section_2__ent-A__worker-1'),
+      screen.queryByTestId('onboarding-specialist-action-queue-item-i9_section_2__ent-A__worker-1'),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByTestId('csa-action-queue-item-i9_section_2__ent-A__worker-2'),
+      screen.getByTestId('onboarding-specialist-action-queue-item-i9_section_2__ent-A__worker-2'),
     ).toBeInTheDocument();
   });
 
@@ -307,7 +307,7 @@ describe('E.7 — CsaActionQueue rendering + interactions', () => {
     mockUseHook.mockReturnValue({ items: [], loading: false, error: null });
     renderQueue();
     const lastCall = mockUseHook.mock.calls[mockUseHook.mock.calls.length - 1];
-    expect(lastCall[0]).toMatchObject({ scope: 'mine', currentUserUid: 'csa-1' });
+    expect(lastCall[0]).toMatchObject({ scope: 'mine', currentUserUid: 'onboarding-specialist-1' });
   });
 
   it('renders a loading spinner when the hook reports loading=true', () => {

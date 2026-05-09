@@ -1,7 +1,7 @@
 # Recruiting role model
 
-This document defines the four-role operating model the Recruiting Department
-is moving to, and how each role is represented in HRX. It supersedes the
+This document defines the operating model the Recruiting Department is
+moving to, and how each role is represented in HRX. It supersedes the
 single-concept "recruiter owns the worker" framing that drove
 `recruiter-ownership-model.md` and the existing `resolveOwnership` resolver.
 
@@ -10,15 +10,42 @@ brief (Greg, 2026). That document defines the roles and mission statements;
 this one maps them to HRX data structures, resolver semantics, and migration
 steps.
 
+> **Changelog — model simplification (2026-05).**
+>
+> The earlier draft of this model named four record-scoped roles
+> (CSA + Scheduler) and treated CSA as the durable per-worker
+> relationship. That overlapped uncomfortably with the existing
+> Recruiter role. The model is now simplified to:
+>
+> - **Two record-scoped roles** with durable per-worker meaning:
+>   - **Recruiter** — durable per-worker relationship (the original
+>     `primaryRecruiterId` semantic, untouched).
+>   - **Scheduler** — order/account-scoped, unchanged.
+> - **One narrow specialty**:
+>   - **Onboarding Specialist** — formerly known as "Candidate Success
+>     Agent (CSA)". Renamed and narrowed to a single function:
+>     making welcome / onboarding calls to new workers in their group.
+>     Per user group only. **No tenant-level fallback.**
+> - **Two tenant-level roles**: HRX Systems Operator, Payroll
+>   Coordinator (unchanged).
+>
+> Practically: anywhere this doc previously said "CSA" or "Candidate
+> Success Agent" in the durable per-worker sense, the role is now
+> **Recruiter**. Anywhere the previous CSA wording referred to the
+> welcome-call function, the role is now **Onboarding Specialist**.
+> The schema field on user groups was renamed
+> `userGroup.roles.csaIds` → `userGroup.roles.onboardingSpecialistIds`,
+> and the tenant default `csaFallbackIds` was deleted.
+
 **Scope**
 
-- **In scope:** the four roles, where role assignments live, how HRX
-  resolves "who is the CSA / Scheduler for this record," and what changes in
-  denormalized fields on workers, accounts, user groups, orders, and
-  timesheets.
-- **Out of scope (yet):** the Action Queue split across roles (deferred per
-  Greg — revisit after the role model lands), any automation that routes
-  work to role-holders.
+- **In scope:** the role model, where role assignments live, how HRX
+  resolves "who is the Recruiter / Onboarding Specialist / Scheduler
+  for this record," and what changes in denormalized fields on workers,
+  accounts, user groups, orders, and timesheets.
+- **Out of scope (yet):** the Action Queue split across roles (deferred
+  per Greg — revisit after the role model lands), any automation that
+  routes work to role-holders.
 
 ---
 
@@ -26,34 +53,40 @@ steps.
 
 > **Every order has exactly one owner at every stage.** Not every worker.
 > A Systems Operator records reality. A Scheduler decides who works where.
-> A Candidate Success Agent owns the worker relationship. A Payroll
-> Coordinator owns hours.
+> A Recruiter owns the durable worker relationship. An Onboarding
+> Specialist owns the welcome / onboarding-call function for new
+> workers in their group. A Payroll Coordinator owns hours.
 
 Workers don't get "owned" by a single human in the old sense. They have a
-Candidate Success Agent — a relationship, not authority — and an
-ever-rotating cast of Schedulers who touched their shifts. The scalar
-"primary recruiter" concept was the right shape for the old generalist
-model; under the new model it narrows to specifically **CSA**.
+**Recruiter** (a durable per-worker relationship), they may have an
+**Onboarding Specialist** during their first weeks (resolved via user
+group membership, narrowly responsible for welcome calls), and they
+have an ever-rotating cast of Schedulers who touched their shifts. The
+scalar `primaryRecruiterId` continues to mean **Recruiter** under this
+model — that's the durable per-worker tie.
 
 ---
 
-## 2. The four roles
+## 2. The roles
 
 Each role has a mission, a scope, and a home for its assignments.
 
-### 2.1 Candidate Success Agent (CSA)
+### 2.1 Onboarding Specialist
 
-- **Mission**: human voice of C1 for every worker. Welcome calls,
-  ongoing support, first-shift follow-up, onboarding unblockers.
-- **Scope**: per worker (derived via user group membership).
-- **Assignment lives on**: `userGroup.roles.csaIds`.
-- **Denormalized onto the worker**: `users.{uid}.primaryRecruiterId`
-  (kept for continuity; semantically **narrows to CSA** under this model).
+- **Mission**: make welcome / onboarding calls to new workers in their
+  group. The human voice that greets a new worker in their first week.
+- **Scope**: per user group. No durable per-worker ownership — that's
+  the Recruiter.
+- **Assignment lives on**: `userGroup.roles.onboardingSpecialistIds`.
+- **Denormalized onto the worker**: none. There is no scalar field
+  for "this worker's Onboarding Specialist." The role is resolved live
+  from group membership at action-queue read time.
 
-A worker's CSA is resolved by walking their user group memberships and
-taking the first group with CSA assignments. Tenant default exists as a
-last-resort fallback; "unassigned" is a legitimate resolved state for
-workers who aren't in any group with a CSA.
+A worker's Onboarding Specialist (when one applies) is resolved by
+walking their user group memberships and taking the first group with
+non-empty `roles.onboardingSpecialistIds`. **There is no tenant-level
+fallback.** "Unassigned" is a legitimate resolved state for workers
+who aren't in any group with an Onboarding Specialist.
 
 ### 2.2 Scheduler
 
@@ -89,13 +122,34 @@ right now. We do not denormalize a Scheduler scalar onto the worker doc.
   build timesheets, `timesheet.payrollCoordinatorUid` gets stamped at
   create time the same way `jobOrder.schedulerUid` is.
 
-### 2.5 Role overlap
+### 2.5 Recruiter (per-worker durable relationship)
+
+- **Mission**: the worker's durable point-of-contact inside HRX.
+  Recruiters carry the relationship across assignments and
+  re-engagements; they own the longitudinal "this is the human I work
+  with at C1" channel.
+- **Scope**: per worker. Modeled as a scalar
+  `users.{uid}.primaryRecruiterId`.
+- **Assignment lives on**: `users.{uid}.primaryRecruiterId` (existing
+  scalar, semantics unchanged).
+- **Resolver**: existing `resolveOwnership` / `workerPrimaryRecruiter`
+  helpers. **No changes** under this model — the Recruiter role is
+  not in `resolveRole`'s scope.
+
+The Recruiter and Onboarding Specialist roles can overlap in practice
+(the same human may do welcome calls for their own workers), but the
+fields are independent. The Onboarding Specialist resolver does not
+read `primaryRecruiterId`, and the Recruiter resolver does not read
+`onboardingSpecialistIds`.
+
+### 2.6 Role overlap
 
 One person can hold multiple roles. A small account might have the same
-uid in both `userGroup.roles.csaIds` and `account.roles.schedulerIds`.
-The role assignments are **independent fields** — we don't collapse them
-into a union of "operator roles." Overlap shows up naturally in lookups
-rather than being explicitly modeled.
+uid in `userGroup.roles.onboardingSpecialistIds`,
+`account.roles.schedulerIds`, and `users.{workerUid}.primaryRecruiterId`.
+The role assignments are **independent fields** — we don't collapse
+them into a union of "operator roles." Overlap shows up naturally in
+lookups rather than being explicitly modeled.
 
 ---
 
@@ -105,19 +159,22 @@ Each role has its own tier walk. The resolver picks the most specific
 non-empty tier. All tier walks end in "unassigned" (null) so the UI can
 render a visible "Unassigned" badge rather than a silent blank.
 
-### 3.1 CSA (per worker)
+### 3.1 Onboarding Specialist (per worker via user group)
 
 ```
-worker's user groups (ordered) → userGroup.roles.csaIds
-  → (fallback) tenants/{tid}/settings/roleDefaults.csaFallbackIds
+worker's user groups (ordered) → userGroup.roles.onboardingSpecialistIds
   → unassigned
 ```
 
-A worker in multiple groups with multiple CSAs gets a deterministic
-pick (earliest-created group first, or alphabetical on group id when
-timestamps tie) plus a `visibleRecruiterIds`-style array of every CSA
-across their groups — the primary is sticky, the visible list
-re-derives on group membership changes.
+**One tier only.** No tenant-level fallback — the Onboarding
+Specialist function is intentionally local to the group, and a worker
+whose groups have no Onboarding Specialist resolves to "Unassigned"
+rather than to a tenant-default human.
+
+A worker in multiple groups with multiple Onboarding Specialists gets
+a deterministic pick (earliest-created group first, or alphabetical on
+group id when timestamps tie) plus a visibility array of every
+Onboarding Specialist across their groups.
 
 ### 3.2 Scheduler (per order)
 
@@ -127,9 +184,9 @@ jobOrder.recruiterAccountId → account.roles.schedulerIds
   → unassigned
 ```
 
-Multiple Schedulers on one account → same primary-plus-visibility
-pattern as CSA. The primary is the Scheduler stamped onto the order; the
-visibility list is every Scheduler on that account.
+Multiple Schedulers on one account → primary-plus-visibility pattern.
+The primary is the Scheduler stamped onto the order; the visibility
+list is every Scheduler on that account.
 
 ### 3.3 HRX Systems Operator (per tenant)
 
@@ -145,6 +202,13 @@ Same as HRX Systems Operator for now. When timesheets ship, we'll
 either keep it tenant-level or introduce a per-account / per-entity
 override (TBD during the Phase 6 design pass).
 
+### 3.5 Recruiter (per worker)
+
+Resolved by the legacy `resolveOwnership` resolver and persisted as
+`users.{uid}.primaryRecruiterId`. Not part of `resolveRole`. Outside
+the scope of this rewrite — see `recruiter-ownership-model.md` and
+`shared/workerPrimaryRecruiter.ts`.
+
 ---
 
 ## 4. Schema additions
@@ -155,16 +219,24 @@ New fields, roughly in dependency order for implementation.
 
 ```ts
 userGroup.roles = {
-  /** Candidate Success Agents responsible for this group's workers. */
-  csaIds: string[];
+  /**
+   * Onboarding Specialists responsible for welcome calls to new
+   * workers in this group. Per-group scope only.
+   */
+  onboardingSpecialistIds: string[];
 };
 ```
 
+**Defensive read pattern** during the rename transition window: every
+call site that reads this field reads
+`group.roles?.onboardingSpecialistIds ?? group.roles?.csaIds ?? []`.
+The legacy `roles.csaIds` is left in place by the migration script and
+removed by a separate cleanup PR after the transition soak.
+
 The pre-existing `groupManagerIds` field is **not** the same thing and
 doesn't get repurposed. `groupManagerIds` keeps whatever semantics it
-has today (admin rights on the group); `roles.csaIds` is the new
-CSA-specific list. If it turns out they're always identical in
-practice, a later pass can collapse them — don't do it pre-emptively.
+has today (admin rights on the group); `roles.onboardingSpecialistIds`
+is the new Onboarding-Specialist-specific list.
 
 ### 4.2 Account
 
@@ -177,8 +249,7 @@ account.roles = {
 
 Pre-existing `account.associations.recruiterIds` stays. It's the
 visibility list ("anyone who should see this account in their queue"),
-not the role assignment. The Scheduler list is a subset of or
-orthogonal to it — up to account admins.
+not the role assignment.
 
 ### 4.3 Tenant
 
@@ -186,10 +257,14 @@ orthogonal to it — up to account admins.
 tenants/{tid}/settings/roleDefaults = {
   hrxSystemsOperatorIds: string[];
   payrollCoordinatorIds: string[];
-  csaFallbackIds?: string[];      // used when a worker's groups have no CSA
   schedulerFallbackIds?: string[]; // used when an account has no Scheduler
 };
 ```
+
+**No `csaFallbackIds`.** The Onboarding Specialist role is intentionally
+group-scoped and does not have a tenant-level fallback. If a tenant
+needs a tenant-wide welcome-calls list, that's a separate role
+(tracked as a future ticket).
 
 Lives under `settings/` rather than as a top-level tenant field — same
 path pattern as existing tenant config docs.
@@ -207,14 +282,13 @@ Scheduler resolves.
 ### 4.5 User doc (denormalization, minimal change)
 
 ```ts
-users.{uid}.primaryRecruiterId   // KEEP — semantically narrows to CSA
+users.{uid}.primaryRecruiterId   // KEEP — unchanged. This is the Recruiter.
 ```
 
-No rename. Callers that already read this field continue to work; its
-meaning tightens to "the worker's CSA, resolved via user groups." A
-future pass can introduce `users.{uid}.candidateSuccessAgentUid` as a
-clearer alias, but keeping the existing field avoids a migration of
-every consumer on day one.
+No rename, no semantic shift. This field continues to mean the
+worker's durable Recruiter relationship. Any earlier draft of this
+doc that suggested narrowing this scalar to "the worker's CSA" is
+superseded.
 
 ---
 
@@ -222,77 +296,76 @@ every consumer on day one.
 
 ### 5.1 The "Owner" block on the user profile header
 
-Renamed to **"Candidate Success Agent"** (same data source:
-`primaryRecruiterId`). "Unassigned" state is preserved — it's more
-visible than silent absence.
+**No change** — the user profile header continues to show the
+**Recruiter** (`primaryRecruiterId`). The earlier draft proposed
+renaming this block to "Candidate Success Agent"; that prescription
+was withdrawn when the model was simplified.
 
 ### 5.2 The Job Order header
 
 Add a **"Scheduler"** chip or line in the header, resolved from
 `jobOrder.schedulerUid`. Click through goes to that recruiter's
-profile, same as the CSA link on the worker header.
+profile.
 
 ### 5.3 AccountWorkforce deactivation gate
 
-Today's gate is security level 5/6/7 for the tenant. The role model
-tightens this to: **any CSA for the account's groups OR any Scheduler
-for the account**. Rationale: deactivating a worker from an account is
-an operational call the relationship-owner or the order-owner should
-make — security-level-5-as-generic-admin was the old model's
-approximation.
+The role-model gate is: **any Onboarding Specialist for any user
+group containing this worker, OR any Scheduler for the account, OR
+HRX auto-qualifies, OR (legacy fallback) tenant security level
+5/6/7**. Defensive read of
+`userGroup.roles.onboardingSpecialistIds ?? userGroup.roles.csaIds`
+lets the gate continue working through the rename transition.
 
-Technical shape: the `setAccountWorkforceStatus` callable's gate
-becomes a two-step check — role-resolver says "is this caller a CSA
-for any group that contains this worker, or a Scheduler for this
-account?" If either, allow. HRX still auto-qualifies.
+The legacy security-level fallback is kept so tenants that haven't
+populated Onboarding Specialists / Schedulers yet don't lose the
+ability to deactivate.
 
 ### 5.4 `resolveOwnership` → `resolveRole`
 
-Today's resolver returns one "recruiter." We add a sibling resolver
-that takes a `role` parameter and does the tier walk specific to that
-role (§3). Existing callers of `resolveOwnership` keep working; new
-code uses `resolveRole(role, context)`. A future cleanup pass can
-replace `resolveOwnership` with `resolveRole('candidate_success_agent',
-...)` once every call site is updated.
+`resolveOwnership` continues to own per-worker Recruiter resolution.
+`resolveRole(role, context)` handles the new role model:
+`'onboarding_specialist'`, `'scheduler'`, `'hrx_systems_operator'`,
+`'payroll_coordinator'`. The two resolvers do not share state and do
+not call each other.
 
 ### 5.5 Action Queue (`RecruiterMyQueue`)
 
 Intentionally deferred. The current queue keeps working as-is. We
 revisit after the role model lands, most likely splitting into a
-role-aware queue (CSAs see worker items, Schedulers see order items,
-Payroll sees timesheet items). Open question §7.
+role-aware queue (Onboarding Specialists see their group's onboarding
+items, Schedulers see order items, Payroll sees timesheet items).
 
 ---
 
 ## 6. Migration plan
 
-Six phases, small enough to land independently.
+Phases sized to land independently.
 
-**Phase 1 — Doc + header rename.** This doc + change "Owner" label to
-"Candidate Success Agent" on the user profile header. Zero data
-changes, unblocks the rest.
+**Phase 2 — Schema additions.** Add
+`userGroup.roles.onboardingSpecialistIds` and
+`account.roles.schedulerIds`, plus
+`tenants/{tid}/settings/roleDefaults` (without
+`csaFallbackIds`). Empty by default — existing behavior unchanged
+until admins populate them.
 
-**Phase 2 — Schema additions.** Add `userGroup.roles.csaIds`,
-`account.roles.schedulerIds`,
-`tenants/{tid}/settings/roleDefaults`. Empty by default — existing
-behavior unchanged until admins populate them.
+> Phase 1 (the doc + header rename) is dropped under the simplified
+> model. The user profile header continues to show Recruiter, so
+> there's nothing to rename there.
 
 **Phase 3 — Role assignment UI.** Edit fields on the User Group
-editor (CSAs) and Account editor (Schedulers). Tenant Settings gets a
-"Role Defaults" section for the tenant-level lists. This is the first
-human-visible change beyond the header rename.
+editor (Onboarding Specialists) and Account editor (Schedulers).
+Tenant Settings gets a "Role Defaults" section for the tenant-level
+lists. This is the first human-visible change.
 
 **Phase 4 — Resolver and trigger updates.**
 - Add `resolveRole(role, context)` alongside `resolveOwnership`.
-- Update the `primaryRecruiterId` denorm trigger to prefer the new
-  CSA resolution path when `userGroup.roles.csaIds` is populated,
-  falling back to the legacy walk when it isn't. No breaking change.
 - Add the `jobOrder.schedulerUid` denormalization trigger.
+- Onboarding Specialist resolution is read live at action-queue read
+  time; no scalar denorm field on the worker.
 
 **Phase 5 — Surfaces.** Add the Scheduler chip to the Job Order
-header. Tighten the `setAccountWorkforceStatus` gate (§5.3). Update
-the doc-wide "primary recruiter" language on any screen where
-"Candidate Success Agent" is more accurate.
+header. Tighten the `setAccountWorkforceStatus` gate (§5.3). Surface
+the Onboarding Specialist action queue at `/staff-onboarding`.
 
 **Phase 6 — Action Queue split.** Open-ended; design pass after 60
 days of operating with the role model.
@@ -301,26 +374,22 @@ days of operating with the role model.
 
 ## 7. Open questions
 
-- **Visibility list for CSAs across multiple groups.** If a worker is
-  in three groups each with its own CSA, should the "primary CSA"
-  be the earliest-created group's CSA, or the group the worker has
-  been in longest, or explicitly configurable per tenant? Punting
-  to "earliest-created group" as the default in Phase 4; revisit if
-  recruiters complain.
+- **Visibility list for Onboarding Specialists across multiple groups.**
+  If a worker is in three groups each with its own Onboarding
+  Specialist, the "primary" is the earliest-created group's
+  Onboarding Specialist. Revisit if the picker proves confusing in
+  practice.
 - **Scheduler on orders where `recruiterAccountId` is a National
   parent.** National accounts are rare at the order level (child
   accounts own the orders), but if it ever happens, resolution
   walks parent.roles.schedulerIds as a fallback. Confirm during
   Phase 4 when we code the trigger.
 - **Does the tenant `hrxSystemsOperatorIds` list gate any actions?**
-  The role doc says the HRX Operator "owns data truth" but doesn't
-  give the role any callable-level permissions we don't already
-  have. Keeping it as a display/Slack-routing concept for now — no
+  Keeping it as a display/Slack-routing concept for now — no
   Firestore rule tightening.
 - **When the Payroll Coordinator ships (Phase 6 of Workforce),
   does the role stay tenant-wide or narrow to per-hiring-entity?**
-  Decide during Phase 6 design. Recorded here so the
-  tenant-level default isn't read as permanent.
+  Decide during Phase 6 design.
 
 ---
 
@@ -331,11 +400,12 @@ days of operating with the role model.
   humans carry which roles against that workforce. The two are
   orthogonal: Workforce is data, role model is operator coverage.
 - **`shared/resolveOwnership.ts`** (and `shared/actionItemOwnership.ts`)
-  — old single-owner resolver. Keeps working for Phase 4; replaced
-  incrementally by `resolveRole`.
+  — owns per-worker Recruiter resolution. Untouched by the
+  Onboarding Specialist rename.
 - **`shared/workerPrimaryRecruiter.ts`** — helper that populates
-  `users.{uid}.primaryRecruiterId`. Logic updates in Phase 4 to
-  prefer the CSA tier walk.
+  `users.{uid}.primaryRecruiterId`. Untouched.
 - **`recruiter-ownership-model.md`** (referenced in older comments
   like `actionItemOwnership.ts`) — supersede. Keep the file for
   history; cite this one going forward.
+- **`docs/ONBOARDING_SPECIALIST_RENAME_CURSOR_BRIEF.md`** — the
+  rename PR brief. References this doc as the canonical role model.

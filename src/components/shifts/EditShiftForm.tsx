@@ -989,8 +989,9 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
     : null;
   // Buttons appear whenever the displayed field is empty (no value
   // saved on the JO position or estimated for display) AND we have a
-  // state-derived default to apply. Sidesteps the C1 entity gate so a
-  // recruiter can always populate the rates explicitly.
+  // state-derived default to apply. The surrounding render block is
+  // additionally gated on `showSutaFutaForJo` so non-EoR entities
+  // (e.g. C1 Events LLC) never see SUTA/FUTA at all.
   const sutaFieldEmpty = !String(selectedPosition?.sutaRate ?? '').trim();
   const futaFieldEmpty = !String(selectedPosition?.futaRate ?? '').trim();
   const canApplySuta =
@@ -1644,94 +1645,111 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
                 />
               </Grid>
 
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="SUTA %"
-                  type="number"
-                  value={pricingEdit.sutaRate}
-                  onChange={(e) => setPricingField('sutaRate', e.target.value)}
-                  inputProps={{ min: 0, step: '0.01' }}
-                  variant="outlined"
-                  helperText={
-                    sutaFutaSource.suta === 'estimated' && worksiteStateForJo
-                      ? `Estimated from ${worksiteStateForJo} (new-employer rate; not yet saved on the job order). Worksite state is fixed at the JO level.`
-                      : 'State unemployment on pay (C1 Workforce / C1 Select). Worksite state is fixed at the JO level.'
-                  }
-                />
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="FUTA %"
-                  type="number"
-                  value={pricingEdit.futaRate}
-                  onChange={(e) => setPricingField('futaRate', e.target.value)}
-                  inputProps={{ min: 0, step: '0.01' }}
-                  variant="outlined"
-                  helperText={
-                    sutaFutaSource.futa === 'estimated' && worksiteStateForJo
-                      ? `Estimated from ${worksiteStateForJo} (state-effective rate; not yet saved on the job order). Worksite state is fixed at the JO level.`
-                      : 'Federal unemployment on pay. Worksite state is fixed at the JO level.'
-                  }
-                />
-              </Grid>
-              {/* Apply state defaults — recruiter-initiated cascade.
-                  Visible whenever a field is empty AND we know the
-                  worksite state. Writes to the JO position so every
-                  downstream consumer (account pricing, future shifts)
-                  inherits the rates. */}
-              {(canApplySuta || canApplyFuta) && (
-                <Grid item xs={12}>
-                  <Stack
-                    direction="row"
-                    spacing={1}
-                    alignItems="center"
-                    flexWrap="wrap"
-                    sx={{ rowGap: 1 }}
-                  >
-                    <Button
-                      size="small"
-                      variant="contained"
-                      color="primary"
-                      disabled={applyStateDefaultPending !== null}
-                      onClick={() =>
-                        handleApplyStateDefaults(
-                          canApplySuta && canApplyFuta
-                            ? 'both'
-                            : canApplySuta
-                              ? 'suta'
-                              : 'futa',
-                        )
+              {/*
+                SUTA/FUTA fields + apply-state-default button are
+                only meaningful when the JO's hiring entity is one of
+                the C1 Employer-of-Record entities (C1 Workforce /
+                C1 Select). For other entities (e.g. C1 Events LLC,
+                which is the customer/event-organizer model and is
+                NOT an EoR), unemployment-on-pay rates don't apply —
+                C1 isn't paying the workers there. Gate the entire
+                SUTA/FUTA block on `showSutaFutaForJo` so it stays
+                hidden for those JOs. May 2026 (was previously
+                "always show so recruiter can override" — the override
+                affordance was misleading for non-EoR entities).
+              */}
+              {showSutaFutaForJo && (
+                <>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="SUTA %"
+                      type="number"
+                      value={pricingEdit.sutaRate}
+                      onChange={(e) => setPricingField('sutaRate', e.target.value)}
+                      inputProps={{ min: 0, step: '0.01' }}
+                      variant="outlined"
+                      helperText={
+                        sutaFutaSource.suta === 'estimated' && worksiteStateForJo
+                          ? `Estimated from ${worksiteStateForJo} (new-employer rate; not yet saved on the job order). Worksite state is fixed at the JO level.`
+                          : 'State unemployment on pay (C1 Workforce / C1 Select). Worksite state is fixed at the JO level.'
                       }
-                      sx={{ textTransform: 'none' }}
-                    >
-                      {applyStateDefaultPending != null
-                        ? 'Saving…'
-                        : canApplySuta && canApplyFuta
-                          ? `Apply ${worksiteStateForJo} SUTA (${sutaStateDefault}%) & FUTA (${futaStateDefault}%) to job order`
-                          : canApplySuta
-                            ? `Apply ${worksiteStateForJo} SUTA default (${sutaStateDefault}%) to job order`
-                            : `Apply ${worksiteStateForJo} FUTA default (${futaStateDefault}%) to job order`}
-                    </Button>
-                    {applyStateDefaultError && (
-                      <Typography variant="caption" color="error">
-                        {applyStateDefaultError}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="FUTA %"
+                      type="number"
+                      value={pricingEdit.futaRate}
+                      onChange={(e) => setPricingField('futaRate', e.target.value)}
+                      inputProps={{ min: 0, step: '0.01' }}
+                      variant="outlined"
+                      helperText={
+                        sutaFutaSource.futa === 'estimated' && worksiteStateForJo
+                          ? `Estimated from ${worksiteStateForJo} (state-effective rate; not yet saved on the job order). Worksite state is fixed at the JO level.`
+                          : 'Federal unemployment on pay. Worksite state is fixed at the JO level.'
+                      }
+                    />
+                  </Grid>
+                  {/* Apply state defaults — recruiter-initiated cascade.
+                      Visible whenever a field is empty AND we know the
+                      worksite state. Writes to the JO position so every
+                      downstream consumer (account pricing, future shifts)
+                      inherits the rates. */}
+                  {(canApplySuta || canApplyFuta) && (
+                    <Grid item xs={12}>
+                      <Stack
+                        direction="row"
+                        spacing={1}
+                        alignItems="center"
+                        flexWrap="wrap"
+                        sx={{ rowGap: 1 }}
+                      >
+                        <Button
+                          size="small"
+                          variant="contained"
+                          color="primary"
+                          disabled={applyStateDefaultPending !== null}
+                          onClick={() =>
+                            handleApplyStateDefaults(
+                              canApplySuta && canApplyFuta
+                                ? 'both'
+                                : canApplySuta
+                                  ? 'suta'
+                                  : 'futa',
+                            )
+                          }
+                          sx={{ textTransform: 'none' }}
+                        >
+                          {applyStateDefaultPending != null
+                            ? 'Saving…'
+                            : canApplySuta && canApplyFuta
+                              ? `Apply ${worksiteStateForJo} SUTA (${sutaStateDefault}%) & FUTA (${futaStateDefault}%) to job order`
+                              : canApplySuta
+                                ? `Apply ${worksiteStateForJo} SUTA default (${sutaStateDefault}%) to job order`
+                                : `Apply ${worksiteStateForJo} FUTA default (${futaStateDefault}%) to job order`}
+                        </Button>
+                        {applyStateDefaultError && (
+                          <Typography variant="caption" color="error">
+                            {applyStateDefaultError}
+                          </Typography>
+                        )}
+                      </Stack>
+                    </Grid>
+                  )}
+                  {/* Diagnostic hint when fields are empty but we couldn't
+                      resolve a worksite state — tells the recruiter what to
+                      fix on the JO Overview tab so the auto-apply unlocks. */}
+                  {(sutaFieldEmpty || futaFieldEmpty) && !worksiteStateForJo && (
+                    <Grid item xs={12}>
+                      <Typography variant="caption" color="warning.main">
+                        Add a worksite state on the job order's Overview tab to
+                        unlock state-default SUTA/FUTA rates.
                       </Typography>
-                    )}
-                  </Stack>
-                </Grid>
-              )}
-              {/* Diagnostic hint when fields are empty but we couldn't
-                  resolve a worksite state — tells the recruiter what to
-                  fix on the JO Overview tab so the auto-apply unlocks. */}
-              {(sutaFieldEmpty || futaFieldEmpty) && !worksiteStateForJo && (
-                <Grid item xs={12}>
-                  <Typography variant="caption" color="warning.main">
-                    Add a worksite state on the job order's Overview tab to
-                    unlock state-default SUTA/FUTA rates.
-                  </Typography>
-                </Grid>
+                    </Grid>
+                  )}
+                </>
               )}
             </Grid>
           </Stack>

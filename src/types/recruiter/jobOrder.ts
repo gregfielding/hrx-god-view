@@ -86,7 +86,17 @@ export interface JobOrder {
   showStartDate: boolean;
   showShiftTimes: boolean;
   restrictedGroups?: string[]; // Group IDs for visibility
-  
+  /**
+   * Per-JO Auto-Add to User Groups (May 2026). Recruiter picks
+   * groups once on the JO and the post-creation cascade
+   * (`JobsBoardService.createPostsForGigJobOrderPositions`) seeds
+   * each new posting with the same list. Independent of
+   * `autoCreatedUserGroupId` (the National Account auto-group). The
+   * cascade union-merges these arrays so a posting always inherits
+   * both signals.
+   */
+  autoAddToUserGroups?: string[];
+
   // Requirements
   requiredLicenses: string[];
   requiredCertifications: string[];

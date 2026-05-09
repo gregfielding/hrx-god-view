@@ -36,10 +36,14 @@ interface TenantUserGroup {
   memberStatusById?: Record<string, string>;
   /**
    * Recruiting role assignments. See `docs/RECRUITING_ROLE_MODEL.md` §2.1 —
-   * CSA assignment lives at the user-group level because a worker's CSA
-   * is resolved via their group memberships.
+   * Onboarding Specialist assignment lives at the user-group level
+   * because a worker's specialist is resolved via their group
+   * memberships.
    */
   roles?: {
+    /** Preferred field — the role formerly known as CSA. */
+    onboardingSpecialistIds?: string[];
+    /** Legacy alias retained during the rename transition window. */
     csaIds?: string[];
   };
 }
@@ -414,21 +418,30 @@ const RecruiterUserGroupDetails: React.FC = () => {
               </Typography>
             </Paper>
 
-            {/* Recruiting roles — CSA assignment (per docs/RECRUITING_ROLE_MODEL.md §2.1).
-                CSAs picked here own the relationship for every worker in this
-                group. A worker in multiple groups aggregates CSAs across
-                groups; the first (by group creation order) is the primary
-                and denormalizes onto users.{uid}.primaryRecruiterId. */}
+            {/* Recruiting roles — Onboarding Specialist assignment
+                (per docs/RECRUITING_ROLE_MODEL.md §2.1). Specialists
+                picked here own welcome / onboarding calls for every
+                worker in this group. A worker in multiple groups
+                aggregates specialists across groups; the first (by
+                group creation order) is the primary and denormalizes
+                onto users.{uid}.primaryRecruiterId. The defensive read
+                falls back to the legacy `roles.csaIds` field while the
+                rename migration soaks. */}
             <GroupRolesEditor
               tenantId={tenantId || null}
               groupId={group.id}
-              initialCsaIds={group.roles?.csaIds ?? []}
-              onSaved={(nextCsaIds) => {
+              initialOnboardingSpecialistIds={
+                group.roles?.onboardingSpecialistIds ?? group.roles?.csaIds ?? []
+              }
+              onSaved={(nextIds) => {
                 setGroup((prev) =>
                   prev
                     ? {
                         ...prev,
-                        roles: { ...(prev.roles ?? {}), csaIds: nextCsaIds },
+                        roles: {
+                          ...(prev.roles ?? {}),
+                          onboardingSpecialistIds: nextIds,
+                        },
                       }
                     : prev,
                 );
@@ -477,49 +490,56 @@ export default RecruiterUserGroupDetails;
 
 // ---------------------------------------------------------------------------
 // GroupRolesEditor — inline editor for the user group's recruiting roles.
-// Today this is just the CSA list. Kept as a separate component so the
-// Settings tab stays readable and so future roles (e.g. a sourcing lead
-// per group) drop in without bloating the parent.
+// Today this is just the Onboarding Specialist list (the role formerly
+// known as CSA). Kept as a separate component so the Settings tab stays
+// readable and so future roles (e.g. a sourcing lead per group) drop in
+// without bloating the parent.
 // ---------------------------------------------------------------------------
 
 interface GroupRolesEditorProps {
   tenantId: string | null;
   groupId: string;
-  initialCsaIds: string[];
-  onSaved: (nextCsaIds: string[]) => void;
+  initialOnboardingSpecialistIds: string[];
+  onSaved: (nextIds: string[]) => void;
 }
 
 const GroupRolesEditor: React.FC<GroupRolesEditorProps> = ({
   tenantId,
   groupId,
-  initialCsaIds,
+  initialOnboardingSpecialistIds,
   onSaved,
 }) => {
-  const [csaIds, setCsaIds] = React.useState<string[]>(initialCsaIds);
+  const [onboardingSpecialistIds, setOnboardingSpecialistIds] = React.useState<string[]>(
+    initialOnboardingSpecialistIds,
+  );
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [savedAt, setSavedAt] = React.useState<number | null>(null);
 
   // Sync local state when the parent re-renders with a fresh group doc.
   React.useEffect(() => {
-    setCsaIds(initialCsaIds);
-  }, [initialCsaIds.join(',')]);
+    setOnboardingSpecialistIds(initialOnboardingSpecialistIds);
+  }, [initialOnboardingSpecialistIds.join(',')]);
 
   const dirty = useMemo(() => {
-    if (csaIds.length !== initialCsaIds.length) return true;
-    const set = new Set(initialCsaIds);
-    return csaIds.some((id) => !set.has(id));
-  }, [csaIds, initialCsaIds]);
+    if (onboardingSpecialistIds.length !== initialOnboardingSpecialistIds.length) return true;
+    const set = new Set(initialOnboardingSpecialistIds);
+    return onboardingSpecialistIds.some((id) => !set.has(id));
+  }, [onboardingSpecialistIds, initialOnboardingSpecialistIds]);
 
   const handleSave = async () => {
     if (!tenantId || !groupId || saving) return;
     setSaving(true);
     setError(null);
     try {
+      // Write only the new field. The defensive read pattern in
+      // consumers (see `recomputePrimaryForWorker.ts` and the Cloud
+      // Functions trigger) keeps legacy `roles.csaIds` working until
+      // the cleanup PR drops the fallback.
       await updateDoc(doc(db, 'tenants', tenantId, 'userGroups', groupId), {
-        'roles.csaIds': csaIds,
+        'roles.onboardingSpecialistIds': onboardingSpecialistIds,
       });
-      onSaved(csaIds);
+      onSaved(onboardingSpecialistIds);
       setSavedAt(Date.now());
     } catch (err: any) {
       setError(err?.message || 'Failed to save recruiting roles');
@@ -534,16 +554,17 @@ const GroupRolesEditor: React.FC<GroupRolesEditorProps> = ({
         Recruiting roles
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Candidate Success Agents picked here own the relationship for every
-        worker in this group. Click a chip's × to remove; save to apply.
+        Onboarding Specialists picked here make welcome / onboarding
+        calls to every worker in this group. Click a chip's × to remove;
+        save to apply.
       </Typography>
 
       <RecruiterMultiSelect
         tenantId={tenantId}
-        label="Candidate Success Agents"
-        value={csaIds}
-        onChange={setCsaIds}
-        helperText="Workers in this group will show these CSAs on their profile header."
+        label="Onboarding Specialists"
+        value={onboardingSpecialistIds}
+        onChange={setOnboardingSpecialistIds}
+        helperText="Workers in this group will show these Onboarding Specialists on their profile header."
         disabled={saving || !tenantId}
       />
 

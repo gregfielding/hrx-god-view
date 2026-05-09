@@ -81,6 +81,15 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
   const [showForm, setShowForm] = useState(false);
   const [managerOptions, setManagerOptions] = useState<any[]>([]);
   const [groupManagerIds, setGroupManagerIds] = useState<string[]>([]);
+  // Onboarding Specialists for the Create User Group dialog (May 2026).
+  // Same user pool as Group Managers — both come from the agency-staff
+  // candidate query (`fetchAgencyUserGroupManagerCandidates`). Writes
+  // to `roles.onboardingSpecialistIds` on the new group doc, matching
+  // the field shape consumed by the resolver
+  // (`src/shared/resolveRole.ts`) and the per-group editor
+  // (`UserGroupDetails.tsx`). No tenant-level fallback for this role
+  // per the Onboarding Specialist rename brief.
+  const [onboardingSpecialistIds, setOnboardingSpecialistIds] = useState<string[]>([]);
   const [localSearchTerm, setLocalSearchTerm] = useState('');
   const [localShowFavoritesOnly, setLocalShowFavoritesOnly] = useState(false);
   // Per-column sort. Defaults to title ascending so the table opens
@@ -328,9 +337,21 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
         createdBy: user,
         memberIds: [],
         groupManagerIds,
+        // (May 2026) Onboarding Specialist role: persisted under
+        // `roles.onboardingSpecialistIds` so the resolver
+        // (`src/shared/resolveRole.ts`) and downstream consumers
+        // (auto-onboard call queues, dashboards) read it from a
+        // canonical location. Always written — empty array is a
+        // valid "no specialists yet" sentinel and lets the editor
+        // page display an empty selection without falling through
+        // the legacy `csaIds` defensive read.
+        roles: {
+          onboardingSpecialistIds,
+        },
       });
       setForm({ title: '', description: '' });
       setGroupManagerIds([]);
+      setOnboardingSpecialistIds([]);
       setShowForm(false);
       setSuccess(true);
       fetchGroups();
@@ -688,6 +709,37 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
                   )}
                 />
               </Grid>
+              {/*
+                Onboarding Specialists (May 2026). Same user pool as
+                Group Managers — both come from the agency-staff
+                candidate query — but distinct role: Onboarding
+                Specialists own welcome / first-shift onboarding
+                calls for new workers in this group. Per the rename
+                brief, the field is `roles.onboardingSpecialistIds`
+                with no tenant-level fallback; an empty selection
+                means "no Onboarding Specialist assigned yet" and
+                downstream consumers (auto-onboard call queue,
+                dashboards) treat that as unassigned.
+              */}
+              <Grid item xs={12}>
+                <Autocomplete
+                  multiple
+                  options={managerOptions}
+                  getOptionLabel={(u: any) => managerOptionLabel(u)}
+                  value={managerOptions.filter((u) => onboardingSpecialistIds.includes(u.id))}
+                  onChange={(_, newValue) =>
+                    setOnboardingSpecialistIds(newValue.map((u: any) => u.id))
+                  }
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Onboarding Specialists"
+                      placeholder="Select onboarding specialists"
+                      fullWidth
+                    />
+                  )}
+                />
+              </Grid>
             </Grid>
           </DialogContent>
           <DialogActions>
@@ -695,6 +747,7 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
               setShowForm(false);
               setForm({ title: '', description: '' });
               setGroupManagerIds([]);
+              setOnboardingSpecialistIds([]);
             }}>
               Cancel
             </Button>

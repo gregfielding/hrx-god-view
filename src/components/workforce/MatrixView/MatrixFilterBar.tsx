@@ -4,7 +4,7 @@
  * D7.R8 lock — filters are purely client-side post-page for MVP. The
  * filter set is intentionally narrow:
  *
- *   - **Severity**: `blockers only` / `pending CSA action` / `all`
+ *   - **Severity**: `blockers only` / `pending Onboarding Specialist action` / `all`
  *     (matches the list-view's existing language for consistency).
  *   - **JO**: pick one of the JOs referenced by the page's rows. If the
  *     page only shows rows from one JO, this collapses to a label.

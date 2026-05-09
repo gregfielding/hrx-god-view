@@ -102,6 +102,7 @@ export type AiHiringReasonCode =
   | 'passed_all_checks'
   | 'advance_with_caution_flags'
   | 'interview_recommendation_review'
+  | 'interview_recommendation_review_overridden'
   | 'not_in_top_percent'
   | 'recommendation_decline'
   | 'gig_path_eligible'

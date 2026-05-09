@@ -28,6 +28,14 @@ export type RunAiHiringOrchestratorV1Params = {
   jobFitScore: number | null;
   applicationNoShowBand?: string | null;
   assignmentNoShowBand?: string | null;
+  /**
+   * Numeric application no-show risk (0–100). When provided, the no-show overlay compares this to
+   * `resolvedPolicy.maximumNoShowRiskToAdvance` instead of relying on the band string. Falls back to
+   * a band-derived approximation (low=0, moderate=25, high=50, critical=75) when not provided.
+   */
+  applicationNoShowScore?: number | null;
+  /** Numeric assignment-level no-show risk (0–100); same semantics as `applicationNoShowScore`. */
+  assignmentNoShowScore?: number | null;
   assignmentIdUsed?: string | null;
   /** Optional — same as {@link EvaluateAiHiringDecisionParams.operationalTrust}. */
   operationalTrust?: EvaluateAiHiringDecisionParams['operationalTrust'];
@@ -44,25 +52,65 @@ export type RunAiHiringOrchestratorV1Params = {
   gateScoreSource?: 'master_recruiter' | 'prescreen_overall';
 };
 
+/**
+ * Lower bound numeric approximation when only a band string is available — used so the policy
+ * threshold (`maximumNoShowRiskToAdvance`) still has predictable semantics in legacy code paths
+ * that haven't been wired to pass `applicationNoShowScore` yet.
+ */
+function approxScoreFromBand(b?: string | null): number | null {
+  if (b === 'low') return 0;
+  if (b === 'moderate') return 25;
+  if (b === 'high') return 50;
+  if (b === 'critical') return 75;
+  return null;
+}
+
+/**
+ * Step 2 of the orchestrator pipeline: clamp a hiring `advance` to `review` when no-show risk is too
+ * high. Threshold is `resolvedPolicy.maximumNoShowRiskToAdvance` (0–100, exclusive — strictly greater
+ * blocks). When the policy does not supply a threshold (legacy callers, tenant default not set),
+ * falls back to the original band-based behavior of blocking on `high` or `critical`.
+ */
 function applyNoShowOverlay(
   r: AiHiringDecisionResult,
   applicationBand?: string | null,
   assignmentBand?: string | null,
+  applicationScore?: number | null,
+  assignmentScore?: number | null,
+  maximumNoShowRiskToAdvance?: number,
 ): AiHiringDecisionResult {
   if (r.decision !== 'advance') return r;
-  const bad = (b?: string | null) => b === 'high' || b === 'critical';
-  if (bad(applicationBand) || bad(assignmentBand)) {
-    const reasonCodes: AiHiringReasonCode[] = r.reasonCodes.includes('no_show_overlay_review')
-      ? r.reasonCodes
-      : [...r.reasonCodes, 'no_show_overlay_review'];
-    return {
-      ...r,
-      decision: 'review',
-      eligibleForAutoAdvance: false,
-      reasonCodes,
-    };
+
+  const thresholdSet =
+    typeof maximumNoShowRiskToAdvance === 'number' && Number.isFinite(maximumNoShowRiskToAdvance);
+
+  let block = false;
+  if (thresholdSet) {
+    const t = maximumNoShowRiskToAdvance as number;
+    const appScore =
+      typeof applicationScore === 'number' && Number.isFinite(applicationScore)
+        ? applicationScore
+        : approxScoreFromBand(applicationBand);
+    const asgScore =
+      typeof assignmentScore === 'number' && Number.isFinite(assignmentScore)
+        ? assignmentScore
+        : approxScoreFromBand(assignmentBand);
+    if ((appScore != null && appScore > t) || (asgScore != null && asgScore > t)) block = true;
+  } else {
+    const bad = (b?: string | null) => b === 'high' || b === 'critical';
+    if (bad(applicationBand) || bad(assignmentBand)) block = true;
   }
-  return r;
+
+  if (!block) return r;
+  const reasonCodes: AiHiringReasonCode[] = r.reasonCodes.includes('no_show_overlay_review')
+    ? r.reasonCodes
+    : [...r.reasonCodes, 'no_show_overlay_review'];
+  return {
+    ...r,
+    decision: 'review',
+    eligibleForAutoAdvance: false,
+    reasonCodes,
+  };
 }
 
 /**
@@ -112,6 +160,9 @@ export function runAiHiringOrchestratorV1(
     policyEngineResult,
     params.applicationNoShowBand,
     params.assignmentNoShowBand,
+    params.applicationNoShowScore,
+    params.assignmentNoShowScore,
+    params.resolvedPolicy.maximumNoShowRiskToAdvance,
   );
 
   const afterGig = applyGigFallbackAnnotation(afterNoShow, policyInput, effectiveInterviewResult);
@@ -190,6 +241,19 @@ export function runAiHiringOrchestratorV1(
       containerStats: params.containerStats ?? null,
       applicationNoShowBand: params.applicationNoShowBand ?? null,
       assignmentNoShowBand: params.assignmentNoShowBand ?? null,
+      applicationNoShowScore:
+        typeof params.applicationNoShowScore === 'number' && Number.isFinite(params.applicationNoShowScore)
+          ? params.applicationNoShowScore
+          : null,
+      assignmentNoShowScore:
+        typeof params.assignmentNoShowScore === 'number' && Number.isFinite(params.assignmentNoShowScore)
+          ? params.assignmentNoShowScore
+          : null,
+      maximumNoShowRiskToAdvance:
+        typeof params.resolvedPolicy.maximumNoShowRiskToAdvance === 'number' &&
+        Number.isFinite(params.resolvedPolicy.maximumNoShowRiskToAdvance)
+          ? params.resolvedPolicy.maximumNoShowRiskToAdvance
+          : null,
       assignmentScoped: (params.assignmentIdUsed ?? '').length > 0,
       gateScoreSource,
       gateScoreUsed: useGateOverride ? (params.gateScoreOverride as number) : params.interviewResult.overallScore,

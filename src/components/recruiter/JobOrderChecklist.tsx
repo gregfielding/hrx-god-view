@@ -147,9 +147,10 @@ export function getJobOrderChecklistProgress(input: {
   })();
 
   const hasJobBoardPost = Array.isArray(jobPosts) && jobPosts.length > 0;
-  const hasAiJobDescription =
-    Array.isArray(jobPosts) &&
-    jobPosts.some((post) => typeof post.jobDescription === 'string' && post.jobDescription.trim().length > 0);
+  // 'aiJobDescription' (AI job description generated) removed from
+  // the checklist by request — descriptions land on jobs board posts
+  // through several paths (AI generator, manual, account default)
+  // and the JO doesn't gate on which one was used.
 
   const hasAutoAddUserGroup =
     Array.isArray(jobPosts) &&
@@ -167,16 +168,35 @@ export function getJobOrderChecklistProgress(input: {
 
   const hasShiftCreated = shiftsCount > 0;
 
+  // Gig orders skip two rows that don't model their workflow:
+  //   1. `clientJobDescription` — gigs carry one JD per position
+  //      (`gigPositions[].jobDescription`), not a single JO-level
+  //      `jobDescriptionFromClient`, so the row would always read
+  //      "Missing" even when every position has its own description.
+  //   2. `externalJobBoards` — gigs are sourced through the public
+  //      jobs board + auto-add user groups, not Indeed / Craigslist
+  //      cross-posts. Career orders still cross-post externally, so
+  //      the row stays for those. May 2026.
+  const isGigOrder = String((jobOrder as any)?.jobType ?? '').toLowerCase() === 'gig';
+
   const statuses: Array<{ id: string; label: string; complete: boolean }> = [
     { id: 'worksite', label: 'Worksite location is set', complete: hasLocation },
-    { id: 'dealContact', label: 'Primary deal contact added', complete: hasDealContact },
+    // 'dealContact' (Primary deal contact added) removed from the
+    // checklist by request — recruiters edit hiring contacts on the
+    // Account / Contact pages and the JO doesn't gate on it.
     { id: 'recruiterAssigned', label: 'Recruiter assigned', complete: hasRecruiterAssigned },
     { id: 'jobTitleSelected', label: 'Job title selected', complete: hasStandardJobTitle },
-    { id: 'clientJobDescription', label: 'Client job description added', complete: hasClientDescription },
+    ...(isGigOrder
+      ? []
+      : [{ id: 'clientJobDescription', label: 'Client job description added', complete: hasClientDescription }]),
     { id: 'jobBoardPost', label: 'Job board posting created', complete: hasJobBoardPost },
-    { id: 'aiJobDescription', label: 'AI job description generated', complete: hasAiJobDescription },
+    // 'aiJobDescription' removed from the summary by request — see
+    // the explanatory comment alongside the dropped `hasAiJobDescription`
+    // computation above.
     { id: 'autoAddUserGroups', label: 'Auto-add user group selected', complete: hasAutoAddUserGroup },
-    { id: 'externalJobBoards', label: 'External job board postings linked', complete: hasExternalJobPost },
+    ...(isGigOrder
+      ? []
+      : [{ id: 'externalJobBoards', label: 'External job board postings linked', complete: hasExternalJobPost }]),
     { id: 'shiftCreated', label: 'Shift created', complete: hasShiftCreated },
   ];
 
@@ -385,10 +405,8 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
   // Auto-computed status: at least one jobs board post exists for this job order
   const hasJobBoardPost = Array.isArray(jobPosts) && jobPosts.length > 0;
 
-  // Auto-computed status: at least one jobs board post has a full description (AI or manual)
-  const hasAiJobDescription =
-    Array.isArray(jobPosts) &&
-    jobPosts.some((post) => typeof post.jobDescription === 'string' && post.jobDescription.trim().length > 0);
+  // 'hasAiJobDescription' (AI job description generated) removed —
+  // see the matching comment above the dropped `statuses` row.
 
   // Auto-computed status: at least one auto-add user group is configured
   const hasAutoAddUserGroup =
@@ -406,6 +424,14 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
 
   const hasShiftCreated = shiftsCount > 0;
 
+  // Gigs hide two rows from the full panel — `clientJobDescription`
+  // (per-position JDs, not a JO-level field) and `externalJobBoards`
+  // (gigs aren't cross-posted to Indeed / Craigslist; they're sourced
+  // through the public jobs board + auto-add user groups). Mirrors the
+  // same skip in `getJobOrderChecklistProgress` above so summary chips
+  // and full panel stay in sync. May 2026.
+  const isGigOrder = String((jobOrder as any)?.jobType ?? '').toLowerCase() === 'gig';
+
   const items: ChecklistItem[] = [
     {
       id: 'worksite',
@@ -419,18 +445,8 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
       onAction: hasLocation ? undefined : onEditLocation,
       actionLabel: 'Add location',
     },
-    {
-      id: 'dealContact',
-      label: 'Primary deal contact added',
-      description: hasDealContact
-        ? 'At least one CRM deal contact is associated to this job order.'
-        : 'Add a hiring manager or primary contact for this job.',
-      status: hasDealContact ? 'complete' : 'missing',
-      auto: true,
-      icon: <ContactsIcon sx={{ fontSize: 18 }} />,
-      onAction: hasDealContact ? undefined : onEditContacts,
-      actionLabel: 'Add contact',
-    },
+    // 'dealContact' (Primary deal contact added) checklist row removed
+    // by request — see the matching note in the `statuses` array above.
     {
       id: 'recruiterAssigned',
       label: 'Recruiter assigned',
@@ -453,16 +469,20 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
       auto: true,
       icon: <BriefcaseIcon sx={{ fontSize: 18 }} />,
     },
-    {
-      id: 'clientJobDescription',
-      label: 'Client job description added',
-      description: hasClientDescription
-        ? "Client's original job description is saved with this job order."
-        : 'Paste the job description from the client so recruiters and AI have full context.',
-      status: hasClientDescription ? 'complete' : 'missing',
-      auto: true,
-      icon: <DescriptionIcon sx={{ fontSize: 18 }} />,
-    },
+    ...(isGigOrder
+      ? []
+      : [
+          {
+            id: 'clientJobDescription',
+            label: 'Client job description added',
+            description: hasClientDescription
+              ? "Client's original job description is saved with this job order."
+              : 'Paste the job description from the client so recruiters and AI have full context.',
+            status: (hasClientDescription ? 'complete' : 'missing') as ChecklistItem['status'],
+            auto: true,
+            icon: <DescriptionIcon sx={{ fontSize: 18 }} />,
+          } satisfies ChecklistItem,
+        ]),
     {
       id: 'jobBoardPost',
       label: 'Job board posting created',
@@ -475,18 +495,10 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
       onAction: hasJobBoardPost ? undefined : onOpenJobBoard,
       actionLabel: 'Open Jobs Board',
     },
-    {
-      id: 'aiJobDescription',
-      label: 'AI job description generated',
-      description: hasAiJobDescription
-        ? 'An AI-ready job description is saved on at least one jobs board posting.'
-        : 'Use the AI generator on the Jobs Board tab to create a compelling description.',
-      status: hasAiJobDescription ? 'complete' : 'missing',
-      auto: true,
-      icon: <DescriptionIcon sx={{ fontSize: 18 }} />,
-      onAction: hasAiJobDescription ? undefined : onOpenJobBoard,
-      actionLabel: 'Generate with AI',
-    },
+    // 'aiJobDescription' item removed by request — descriptions reach
+    // posts through multiple paths (AI generator, manual entry,
+    // account-level defaults) and the JO checklist shouldn't single
+    // out one of those paths as the canonical step.
     {
       id: 'autoAddUserGroups',
       label: 'Auto-add user group selected',
@@ -499,16 +511,20 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
       onAction: hasAutoAddUserGroup ? undefined : onOpenJobBoard,
       actionLabel: 'Configure auto-add',
     },
-    {
-      id: 'externalJobBoards',
-      label: 'External job board postings linked',
-      description: hasExternalJobPost
-        ? 'At least one external posting (Indeed or Craigslist) is linked to this job order.'
-        : 'Add links to external job board postings (Indeed, Craigslist) so recruiters can jump out quickly.',
-      status: hasExternalJobPost ? 'complete' : 'missing',
-      auto: true,
-      icon: <DescriptionIcon sx={{ fontSize: 18 }} />,
-    },
+    ...(isGigOrder
+      ? []
+      : [
+          {
+            id: 'externalJobBoards',
+            label: 'External job board postings linked',
+            description: hasExternalJobPost
+              ? 'At least one external posting (Indeed or Craigslist) is linked to this job order.'
+              : 'Add links to external job board postings (Indeed, Craigslist) so recruiters can jump out quickly.',
+            status: (hasExternalJobPost ? 'complete' : 'missing') as ChecklistItem['status'],
+            auto: true,
+            icon: <DescriptionIcon sx={{ fontSize: 18 }} />,
+          } satisfies ChecklistItem,
+        ]),
     {
       id: 'shiftCreated',
       label: 'Shift created',

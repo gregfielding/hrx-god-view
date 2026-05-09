@@ -1,5 +1,6 @@
 /**
- * **E.7** — Pure aggregation helper for the unified CSA action queue.
+ * **E.7** — Pure aggregation helper for the unified Onboarding
+ * Specialist action queue.
  *
  * Given the four data sources the queue depends on:
  *
@@ -10,11 +11,11 @@
  *   - `users` (display name / email / phone / avatar)
  *
  * …decide which (if any) action item each (worker × entity) row triggers,
- * and assemble the renderable `CsaActionItem` list.
+ * and assemble the renderable `OnboardingSpecialistActionItem` list.
  *
  * Kept pure (no Firestore / no React) so the rules can be unit-tested
- * deterministically. The hook (`useCsaActionQueueItems`) is a thin
- * subscriber/loader that delegates the join to this helper.
+ * deterministically. The hook (`useOnboardingSpecialistActionQueueItems`)
+ * is a thin subscriber/loader that delegates the join to this helper.
  *
  * Per-row priority: a single (worker × entity) might satisfy multiple
  * action types in a transient state — surface only the highest-priority
@@ -29,15 +30,18 @@
  *   other value ⇒ enabled (matches `EmploymentMinimalOnboardingChecklist`'s
  *   `!== false` check). Defaulting to enabled keeps existing C1 Select
  *   behavior (where the field has historically been omitted).
+ *
+ * History: this helper was renamed from `buildCsaActionItems` when the
+ * CSA role was renamed to Onboarding Specialist. Behavior is unchanged.
  */
 
 import type {
-  CsaActionItem,
-  CsaActionType,
-} from '../../types/csaActionQueue';
+  OnboardingSpecialistActionItem,
+  OnboardingSpecialistActionType,
+} from '../../types/onboardingSpecialistActionQueue';
 import {
-  CSA_ACTION_PRIORITY,
-} from '../../types/csaActionQueue';
+  ONBOARDING_SPECIALIST_ACTION_PRIORITY,
+} from '../../types/onboardingSpecialistActionQueue';
 
 /**
  * Subset of `EntityEmploymentRecord` the aggregator reads. Kept as a
@@ -45,7 +49,7 @@ import {
  * `Record<string, unknown>` straight from a Firestore snapshot — no
  * runtime type assertion required.
  */
-export interface CsaQueueEntityEmploymentLite {
+export interface OnboardingSpecialistQueueEntityEmploymentLite {
   id: string;
   userId: string;
   entityId: string | null;
@@ -70,13 +74,13 @@ export interface CsaQueueEntityEmploymentLite {
 }
 
 /** Subset of `everee_workers.readinessMirror` the aggregator reads. */
-export interface CsaQueueEvereeMirrorLite {
+export interface OnboardingSpecialistQueueEvereeMirrorLite {
   i9SignedAt?: unknown;
   /** Worker has both Section 1 + W-4 done — used to anchor "I-9 fully signed" sub-lines. */
   w4SignedAt?: unknown;
 }
 
-export interface CsaQueueEntityLite {
+export interface OnboardingSpecialistQueueEntityLite {
   id: string;
   name: string;
   /**
@@ -87,7 +91,7 @@ export interface CsaQueueEntityLite {
   everifyRequired?: boolean;
 }
 
-export interface CsaQueueUserLite {
+export interface OnboardingSpecialistQueueUserLite {
   uid: string;
   displayName: string;
   email: string | null;
@@ -95,12 +99,14 @@ export interface CsaQueueUserLite {
   avatarUrl: string | null;
 }
 
-export interface BuildCsaActionItemsInput {
-  entityEmployments: ReadonlyArray<CsaQueueEntityEmploymentLite>;
+export interface BuildOnboardingSpecialistActionItemsInput {
+  entityEmployments: ReadonlyArray<OnboardingSpecialistQueueEntityEmploymentLite>;
   /** Keyed by `${entityId}__${userId}` — same key Everee uses for its doc id. */
-  evereeMirrorByKey: Readonly<Record<string, CsaQueueEvereeMirrorLite | undefined>>;
-  entityById: Readonly<Record<string, CsaQueueEntityLite | undefined>>;
-  userByUid: Readonly<Record<string, CsaQueueUserLite | undefined>>;
+  evereeMirrorByKey: Readonly<
+    Record<string, OnboardingSpecialistQueueEvereeMirrorLite | undefined>
+  >;
+  entityById: Readonly<Record<string, OnboardingSpecialistQueueEntityLite | undefined>>;
+  userByUid: Readonly<Record<string, OnboardingSpecialistQueueUserLite | undefined>>;
   /**
    * When non-null, only items whose `workerUid` is in this set are
    * included (RD.1's My/All toggle). `null` ⇒ no scope filter.
@@ -168,10 +174,10 @@ function isTncStatus(value: unknown): boolean {
  * of the queue without polluting the type list with "no_action".
  */
 export function decideActionType(args: {
-  emp: CsaQueueEntityEmploymentLite;
-  mirror: CsaQueueEvereeMirrorLite | undefined;
-  entity: CsaQueueEntityLite | undefined;
-}): CsaActionType | null {
+  emp: OnboardingSpecialistQueueEntityEmploymentLite;
+  mirror: OnboardingSpecialistQueueEvereeMirrorLite | undefined;
+  entity: OnboardingSpecialistQueueEntityLite | undefined;
+}): OnboardingSpecialistActionType | null {
   const { emp, mirror, entity } = args;
 
   // TNC band — federal 8-day clock; surfaces regardless of other state.
@@ -184,7 +190,8 @@ export function decideActionType(args: {
   const i9Section1Done = isTimestampLike(mirror?.i9SignedAt);
 
   // I-9 Section 2 band — only W-2, Section 1 done by worker, Section 2
-  // not yet stamped by CSA. 1099 contractors (no I-9) never qualify.
+  // not yet stamped by the Onboarding Specialist. 1099 contractors
+  // (no I-9) never qualify.
   if (workerType === 'w2' && i9Section1Done && !section2Done) {
     return 'i9_section_2';
   }
@@ -224,9 +231,9 @@ export function decideActionType(args: {
  * silently disappearing from the band.
  */
 function computeActionableAtMs(args: {
-  actionType: CsaActionType;
-  emp: CsaQueueEntityEmploymentLite;
-  mirror: CsaQueueEvereeMirrorLite | undefined;
+  actionType: OnboardingSpecialistActionType;
+  emp: OnboardingSpecialistQueueEntityEmploymentLite;
+  mirror: OnboardingSpecialistQueueEvereeMirrorLite | undefined;
   nowMs: number;
 }): number {
   const { actionType, emp, mirror, nowMs } = args;
@@ -273,9 +280,9 @@ function computeActionableAtMs(args: {
 
 /** Construct the per-action context bundle the renderer reads inline. */
 function buildContext(args: {
-  emp: CsaQueueEntityEmploymentLite;
-  mirror: CsaQueueEvereeMirrorLite | undefined;
-}): CsaActionItem['context'] {
+  emp: OnboardingSpecialistQueueEntityEmploymentLite;
+  mirror: OnboardingSpecialistQueueEvereeMirrorLite | undefined;
+}): OnboardingSpecialistActionItem['context'] {
   const { emp, mirror } = args;
   // Casts to `Timestamp | null` are intentionally lossy — the renderer
   // formats whatever shape is present, and the helpers in this file
@@ -284,18 +291,24 @@ function buildContext(args: {
   // objects with `toMillis`/`toDate` and the renderer handles them via
   // its own date formatter.
   return {
-    hireDate: (emp.hiredAt as CsaActionItem['context']['hireDate']) ?? null,
+    hireDate:
+      (emp.hiredAt as OnboardingSpecialistActionItem['context']['hireDate']) ?? null,
     i9Section1SignedAt:
-      (mirror?.i9SignedAt as CsaActionItem['context']['i9Section1SignedAt']) ?? null,
+      (mirror?.i9SignedAt as OnboardingSpecialistActionItem['context']['i9Section1SignedAt']) ??
+      null,
     i9FullySignedAt:
-      (emp.i9Section2CompletedAt as CsaActionItem['context']['i9FullySignedAt']) ?? null,
+      (emp.i9Section2CompletedAt as OnboardingSpecialistActionItem['context']['i9FullySignedAt']) ??
+      null,
     everifyTncReceivedAt:
-      (emp.everifyTncReceivedAt as CsaActionItem['context']['everifyTncReceivedAt']) ?? null,
+      (emp.everifyTncReceivedAt as OnboardingSpecialistActionItem['context']['everifyTncReceivedAt']) ??
+      null,
     everifyStatus: typeof emp.everifyStatus === 'string' ? emp.everifyStatus : null,
   };
 }
 
-export function buildCsaActionItems(input: BuildCsaActionItemsInput): CsaActionItem[] {
+export function buildOnboardingSpecialistActionItems(
+  input: BuildOnboardingSpecialistActionItemsInput,
+): OnboardingSpecialistActionItem[] {
   const {
     entityEmployments,
     evereeMirrorByKey,
@@ -305,7 +318,7 @@ export function buildCsaActionItems(input: BuildCsaActionItemsInput): CsaActionI
     nowMs = Date.now(),
   } = input;
 
-  const items: CsaActionItem[] = [];
+  const items: OnboardingSpecialistActionItem[] = [];
 
   for (const emp of entityEmployments) {
     if (emp.active === false) continue;
@@ -339,7 +352,7 @@ export function buildCsaActionItems(input: BuildCsaActionItemsInput): CsaActionI
       entityEmploymentId: emp.id,
       context: buildContext({ emp, mirror }),
       ageMs: Math.max(0, nowMs - actionableAt),
-      priority: CSA_ACTION_PRIORITY[actionType],
+      priority: ONBOARDING_SPECIALIST_ACTION_PRIORITY[actionType],
     });
   }
 

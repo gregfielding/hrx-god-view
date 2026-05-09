@@ -90,6 +90,16 @@ export type UserGroupHiringControlPanelProps = {
  */
 const EVERIFY_REQUIRED_ENTITY_NAME = 'C1 Select LLC';
 
+/**
+ * Display name for the gig-style entity used for catchall / on-call event work. When the user picks
+ * this from the Hiring entity dropdown, sections B / C / D snap to "open the gates" defaults so the
+ * group behaves as a low-friction invite list — see {@link applyC1EventsCatchallDefaultsForCfg}.
+ *
+ * Defaults are applied **only at the moment of selection** (matching the E-Verify auto-flip
+ * pattern); users can still override any field afterwards.
+ */
+const C1_EVENTS_CATCHALL_ENTITY_NAME = 'C1 Events LLC';
+
 const syncAccusourcePackageCatalog = httpsCallable(functions, 'syncAccusourcePackageCatalog');
 
 function parseOptionalInt(raw: string): number | undefined {
@@ -1022,6 +1032,37 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
                       !!hiringEntityId &&
                       label.toLowerCase() === EVERIFY_REQUIRED_ENTITY_NAME.toLowerCase();
                     setEmployment({ hiringEntityId, eVerifyRequired: ev });
+                    // C1 Events catchall: open all gates so the group behaves as an invite list.
+                    // Applied at the moment of selection only; users can still customize after.
+                    if (
+                      label.toLowerCase() === C1_EVENTS_CATCHALL_ENTITY_NAME.toLowerCase()
+                    ) {
+                      setRequirements({
+                        accusourceScreeningRequired: false,
+                        accusourcePackageId: '',
+                        accusourcePackageName: '',
+                        accusourceRequestedServiceIds: [],
+                        requiredCertificationIds: [],
+                      });
+                      setQuality({
+                        preset: 'hire_everyone',
+                        interviewMinimumScoreToAdvance:
+                          GROUP_HIRING_QUALITY_PRESETS.hire_everyone.interviewMinimumScoreToAdvance,
+                        jobFitMinimumScoreToAdvance:
+                          GROUP_HIRING_QUALITY_PRESETS.hire_everyone.jobFitMinimumScoreToAdvance,
+                        minimumJobScoreGateEnabled: false,
+                        jobFitFailAction: 'review',
+                        // Cleared so the resolver's preset default (100 — never block on no-show)
+                        // is what reaches the orchestrator.
+                        maximumNoShowRiskToAdvance: undefined,
+                      });
+                      setTargets({
+                        // Catchall has no specific onboarding cap; leave blank.
+                        targetOnboardingCount: undefined,
+                        maximumAutoAdvances: undefined,
+                        stopWhenTargetReached: false,
+                      });
+                    }
                   }}
                 >
                   <MenuItem value="">
@@ -1037,6 +1078,14 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
                 {auto.hiringActive === true && !emp.hiringEntityId ? (
                   <FormHelperText error>
                     Required while Hiring active is on.
+                  </FormHelperText>
+                ) : null}
+                {selectedHiringEntityOption?.name?.trim().toLowerCase() ===
+                C1_EVENTS_CATCHALL_ENTITY_NAME.toLowerCase() ? (
+                  <FormHelperText>
+                    Catchall mode: this entity opens up B / C / D by default (no screening,{' '}
+                    <strong>Hire everyone · no floor</strong>, no caps). Override any field below if
+                    you need a stricter rule for this group.
                   </FormHelperText>
                 ) : null}
               </FormControl>
@@ -1181,6 +1230,41 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
                     <MenuItem value="custom">Custom</MenuItem>
                   </Select>
                 </FormControl>
+                {(() => {
+                  // Mirrors `readGroupHiringConfigAsAiPartial` in
+                  // `functions/src/workerAiPrescreen/aiHiringPolicyResolution.ts`.
+                  const presetForCopy = qualForm.preset ?? 'custom';
+                  const liftedNoShow =
+                    presetForCopy === 'aggressive' || presetForCopy === 'hire_everyone';
+                  return (
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ display: 'block', lineHeight: 1.4, pt: 0.25 }}
+                    >
+                      For this user group, an AI prescreen &quot;review&quot; recommendation never blocks
+                      on its own — candidates are still gated by the Master score floor, flags,
+                      dynamic answers, job-fit rules (when enabled), and hard &quot;decline&quot;
+                      recommendations. Presets only change how strict those numeric floors are.
+                      {liftedNoShow ? (
+                        <>
+                          {' '}
+                          The <strong>{presetForCopy === 'hire_everyone' ? 'Hire everyone' : 'Aggressive'}</strong>{' '}
+                          preset also lifts the no-show overlay (defaults the maximum allowed
+                          no-show risk to&nbsp;100); set the field below if you want to enforce a
+                          stricter ceiling.
+                        </>
+                      ) : (
+                        <>
+                          {' '}
+                          The no-show overlay defaults to blocking candidates whose risk score is
+                          above 49 (high or critical band); set the field below to a different
+                          ceiling, or pick the <strong>Aggressive</strong> preset to lift it.
+                        </>
+                      )}
+                    </Typography>
+                  );
+                })()}
                 <TextField
                   size="small"
                   label="Minimum Master Recruiter Score to advance"
@@ -1251,7 +1335,7 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
                     }
                     inputProps={{ min: 0, max: 100 }}
                     fullWidth
-                    helperText="Candidates above this risk will NOT be auto-advanced, even if they pass all other criteria."
+                    helperText="Candidates with a no-show risk score strictly above this value are downgraded to “review” by the orchestrator’s no-show overlay. Leave blank to use the preset default (Conservative/Balanced: 49 — block high/critical; Aggressive/Hire-everyone: 100 — never block on no-show alone). Set 100 to disable, 0 to block all but the lowest risk."
                   />
                   {typeof maxNs === 'number' && Number.isFinite(maxNs) ? (
                     <Chip

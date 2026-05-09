@@ -26,6 +26,8 @@ const REASON_LABELS: Record<string, string> = {
   not_in_top_percent: 'Outside top percent pool',
   recommendation_decline: 'Interview recommendation: decline',
   interview_recommendation_review: 'Interview review recommended — hiring decision aligned',
+  interview_recommendation_review_overridden:
+    'Interview review recommended — overridden by group preset (loose) and advanced',
   advance_with_caution_flags: 'Strong score; caution flags recorded on file',
 };
 

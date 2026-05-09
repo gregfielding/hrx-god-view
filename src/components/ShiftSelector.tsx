@@ -40,6 +40,14 @@ interface ShiftSelectorProps {
   tenantId?: string; // For building application URLs
   /** When set, shift title/description use _i18n[language] for display (e.g. guest or worker language) */
   language?: 'en' | 'es';
+  /**
+   * Whether to render the "X spots left" chip on each shift card.
+   * Driven by the post/JO-level toggle (`showWorkersNeeded`) on the
+   * Jobs Board tab — single source of truth, ignores per-shift
+   * `showStaffNeeded` legacy values. Defaults to false so the public
+   * board hides spot counts unless a recruiter explicitly opts in.
+   */
+  showSpots?: boolean;
 }
 
 const ShiftSelector: React.FC<ShiftSelectorProps> = ({
@@ -56,6 +64,7 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
   jobPostId,
   tenantId,
   language = 'en',
+  showSpots = false,
 }) => {
   const t = useT();
   const formatTime = (time: string) => {
@@ -276,7 +285,18 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                     variant="outlined"
                   />
                 )}
-                {shift.showStaffNeeded && (
+                {/*
+                  Spot-count chip is gated by the post-level
+                  `showSpots` prop (sourced from
+                  `posting.showWorkersNeeded` on JobPostingDetail) so
+                  recruiters control visibility from a single toggle on
+                  the Job Order's Jobs Board tab. Per-shift
+                  `showStaffNeeded` is preserved on the doc for
+                  back-compat but no longer drives the public board —
+                  worker-facing posts default to hidden until the JO
+                  recruiter explicitly opts in. May 2026.
+                */}
+                {showSpots && (
                   <Chip
                     label={`${shift.spotsRemaining} spots left`}
                     size="small"

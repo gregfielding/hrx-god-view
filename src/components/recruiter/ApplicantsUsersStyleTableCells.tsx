@@ -34,7 +34,7 @@ export interface ApplicantsUsersStyleMaps {
   latestBackgroundByUserId: Map<string, BackgroundCheckRecord>;
   categoryScoresByUserId: Record<string, PrescreenCategoryScoresV1 | null>;
   groupTitleLookup: Map<string, string>;
-  /** Optional uid -> display name; powers the "CSA: <name>" line on the Person cell. */
+  /** Optional uid -> display name; powers the "Recruiter: <name>" line on the Person cell. */
   recruiterNameByUid?: Map<string, string>;
 }
 

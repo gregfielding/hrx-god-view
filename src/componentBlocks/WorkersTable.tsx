@@ -50,7 +50,6 @@ const chipColorFor = (r: TenantRoleDefault): 'info' | 'success' | 'default' =>
 const chipShortLabel = (r: TenantRoleDefault): string => ({
   hrx_systems_operator: 'HRX Op',
   payroll_coordinator: 'Payroll',
-  csa_fallback: 'CSA fb',
   scheduler_fallback: 'Sched fb',
 }[r]);
 

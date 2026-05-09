@@ -217,13 +217,23 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
         setEditForm(nextMeta);
         lastSavedGroupMetaRef.current = nextMeta;
         setMemberIds(data.memberIds || []);
-        // Prefer the new `roles.csaIds` field — that's the source of truth
-        // the recruiting role model resolver reads. Fall back to the legacy
-        // `groupManagerIds` for groups that haven't been migrated yet so the
-        // panel still shows existing assignments while the backfill runs.
-        const csaIds: string[] = Array.isArray(data?.roles?.csaIds) ? data.roles.csaIds : [];
+        // Prefer the new `roles.onboardingSpecialistIds` field — that's
+        // the source of truth the recruiting role model resolver reads.
+        // Fall back to the legacy `roles.csaIds` (rename transition
+        // window) and then the older `groupManagerIds` for groups that
+        // haven't been migrated yet so the panel still shows existing
+        // assignments while the backfill runs.
+        const onboardingSpecialistIds: string[] = Array.isArray(
+          data?.roles?.onboardingSpecialistIds,
+        )
+          ? data.roles.onboardingSpecialistIds
+          : Array.isArray(data?.roles?.csaIds)
+            ? data.roles.csaIds
+            : [];
         const legacyManagerIds: string[] = Array.isArray(data?.groupManagerIds) ? data.groupManagerIds : [];
-        setGroupManagerIds(csaIds.length > 0 ? csaIds : legacyManagerIds);
+        setGroupManagerIds(
+          onboardingSpecialistIds.length > 0 ? onboardingSpecialistIds : legacyManagerIds,
+        );
       }
     } catch (err: any) {
       setError(err.message || 'Failed to fetch group');
@@ -365,25 +375,31 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   };
 
   const handleManagersChange = async (newValue: any[]) => {
-    // Single picker — now writes "Candidate Success Agents" into the new
-    // `roles.csaIds` field that the recruiting role model uses, while also
-    // dual-writing to the legacy `groupManagerIds` so older readers (the
-    // pre-Phase-4 ownership resolver, the readiness seed runners, anything
-    // we haven't migrated yet) keep working until the bandaid comes off.
-    // Phase 4b's onUserGroupRolesOrMembersChange trigger watches roles.csaIds
-    // and will fan out recomputePrimaryForWorker for every existing member
-    // of the group as soon as this update lands.
+    // Single picker — writes "Onboarding Specialists" into the new
+    // `roles.onboardingSpecialistIds` field that the recruiting role
+    // model resolver reads, while also dual-writing to the legacy
+    // `groupManagerIds` so older readers (the pre-Phase-4 ownership
+    // resolver, the readiness seed runners, anything we haven't
+    // migrated yet) keep working until the bandaid comes off.
+    //
+    // Phase 4b's onUserGroupRolesOrMembersChange trigger watches both
+    // `roles.onboardingSpecialistIds` (preferred) and the legacy
+    // `roles.csaIds` and fans out `recomputePrimaryForWorker` for every
+    // existing member of the group as soon as this update lands. We
+    // intentionally do NOT write the legacy `roles.csaIds` field — the
+    // defensive read pattern at every consumer keeps that data path
+    // alive until the cleanup PR drops it.
     const ids = newValue.map((u: any) => u.id);
     setGroupManagerIds(ids);
     try {
       const groupRef = doc(db, 'tenants', tenantId, 'userGroups', groupId);
       await updateDoc(groupRef, {
-        'roles.csaIds': ids,
+        'roles.onboardingSpecialistIds': ids,
         groupManagerIds: ids, // legacy mirror — drop in a follow-up release
       });
       setSuccess(true);
     } catch (err: any) {
-      setError(err.message || 'Failed to update Candidate Success Agents');
+      setError(err.message || 'Failed to update Onboarding Specialists');
     }
   };
 
@@ -1192,8 +1208,8 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
               }}
             >
               <CardHeader
-                title="Candidate Success Agents"
-                subheader="These users own the relationship for every member of this group."
+                title="Onboarding Specialists"
+                subheader="These users make welcome / onboarding calls for every member of this group."
                 titleTypographyProps={{ fontWeight: 800 }}
                 subheaderTypographyProps={{ variant: 'caption', color: 'text.secondary' }}
               />
@@ -1205,7 +1221,12 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
           value={agencyUsers.filter((u) => groupManagerIds.includes(u.id))}
           onChange={(_, newValue) => handleManagersChange(newValue)}
           renderInput={(params) => (
-                    <TextField {...params} label="Candidate Success Agents" placeholder="Select CSAs" fullWidth />
+                    <TextField
+                      {...params}
+                      label="Onboarding Specialists"
+                      placeholder="Select Onboarding Specialists"
+                      fullWidth
+                    />
           )}
           renderTags={(value, getTagProps) =>
             value.map((option, index) => (

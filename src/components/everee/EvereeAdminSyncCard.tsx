@@ -25,7 +25,7 @@
  * never see this card.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -139,63 +139,110 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
 
   const evereeWorkerId = evereeTenantId ? evereeWorkerIdsMap[evereeTenantId] ?? null : null;
 
-  const handleClick = useCallback(async () => {
-    if (!entityId) {
-      setError('This entity is not yet linked to Everee.');
-      return;
-    }
-    setSyncing(true);
-    setError(null);
-    try {
-      // Resolve worker contact info inline. Field shapes vary across legacy
-      // worker docs; keep this lookup tolerant rather than typing the whole
-      // user schema here.
-      let contact: WorkerContact = {};
+  /**
+   * Core sync action shared by the manual button and the on-mount
+   * auto-run effect below. The `silent` flag suppresses the success
+   * toast and any error toast — the auto-run on every page load
+   * shouldn't spawn a Snackbar each time. Errors still set the inline
+   * `error` Alert state so a failed auto-sync is visible (just not
+   * disruptive). May 2026.
+   */
+  const performSync = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      const silent = opts?.silent === true;
+      if (!entityId) {
+        if (!silent) setError('This entity is not yet linked to Everee.');
+        return;
+      }
+      setSyncing(true);
+      setError(null);
       try {
-        const userSnap = await getDoc(doc(db, `users/${userId}`));
-        const u = (userSnap.data() ?? {}) as Record<string, unknown>;
-        contact = {
-          email: typeof u.email === 'string' ? u.email : undefined,
-          firstName: typeof u.firstName === 'string' ? u.firstName : undefined,
-          lastName: typeof u.lastName === 'string' ? u.lastName : undefined,
-          phone:
-            typeof u.phone === 'string'
-              ? u.phone
-              : typeof u.phoneNumber === 'string'
-                ? (u.phoneNumber as string)
-                : undefined,
-        };
-      } catch {
-        // Non-blocking — server will still create a worker shell with just externalId.
-      }
+        // Resolve worker contact info inline. Field shapes vary across legacy
+        // worker docs; keep this lookup tolerant rather than typing the whole
+        // user schema here.
+        let contact: WorkerContact = {};
+        try {
+          const userSnap = await getDoc(doc(db, `users/${userId}`));
+          const u = (userSnap.data() ?? {}) as Record<string, unknown>;
+          contact = {
+            email: typeof u.email === 'string' ? u.email : undefined,
+            firstName: typeof u.firstName === 'string' ? u.firstName : undefined,
+            lastName: typeof u.lastName === 'string' ? u.lastName : undefined,
+            phone:
+              typeof u.phone === 'string'
+                ? u.phone
+                : typeof u.phoneNumber === 'string'
+                  ? (u.phoneNumber as string)
+                  : undefined,
+          };
+        } catch {
+          // Non-blocking — server will still create a worker shell with just externalId.
+        }
 
-      const result = await evereeEnsureWorker({
-        tenantId,
-        entityId,
-        userId,
-        workerType,
-        ...contact,
-      });
-      const id = result.data?.evereeWorkerId?.trim() || null;
-      if (!id) {
-        throw new Error('Everee did not return a worker id.');
+        const result = await evereeEnsureWorker({
+          tenantId,
+          entityId,
+          userId,
+          workerType,
+          ...contact,
+        });
+        const id = result.data?.evereeWorkerId?.trim() || null;
+        if (!id) {
+          throw new Error('Everee did not return a worker id.');
+        }
+        if (!silent) {
+          setToast({
+            severity: 'success',
+            message: result.data?.created
+              ? `Created Everee worker ${id}`
+              : `Already linked — Everee worker ${id}`,
+          });
+        }
+        onSynced?.(id);
+      } catch (err: unknown) {
+        const msg =
+          formatFirebaseHttpsError(err) || (err instanceof Error ? err.message : String(err));
+        setError(msg);
+        if (!silent) {
+          setToast({ severity: 'error', message: msg });
+        }
+      } finally {
+        setSyncing(false);
       }
-      setToast({
-        severity: 'success',
-        message: result.data?.created
-          ? `Created Everee worker ${id}`
-          : `Already linked — Everee worker ${id}`,
-      });
-      onSynced?.(id);
-    } catch (err: unknown) {
-      const msg =
-        formatFirebaseHttpsError(err) || (err instanceof Error ? err.message : String(err));
-      setError(msg);
-      setToast({ severity: 'error', message: msg });
-    } finally {
-      setSyncing(false);
-    }
-  }, [entityId, onSynced, tenantId, userId, workerType]);
+    },
+    [entityId, onSynced, tenantId, userId, workerType],
+  );
+
+  const handleClick = useCallback(() => performSync(), [performSync]);
+
+  /**
+   * Auto-run the same idempotent sync on mount so the recruiter doesn't
+   * have to click into Employment → scroll → "Re-sync to Everee" on
+   * every visit. The backend is idempotent (`createWorkerIfNeeded`
+   * returns the existing id without re-POSTing when the linkage doc
+   * already maps), so this is safe to fire once per (entity, user)
+   * combo. We track the firing in a ref so HMR / re-renders don't
+   * re-run it; tab-switching between entities still triggers a fresh
+   * auto-run because each entity panel mounts its own card.
+   *
+   * Gates:
+   *   - `canManage`: workers never see this card, so don't auto-run.
+   *   - `entityId` + `evereeTenantId`: skip when the entity isn't
+   *     wired to Everee (matches the disabled-button branch).
+   *
+   * The auto-run is silent on success (no toast — would pop on every
+   * page visit) and silent on error toast too (failures still show in
+   * the inline `error` Alert below). Manual clicks keep their toasts.
+   */
+  const autoSyncedKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!canManage) return;
+    if (!entityId || !evereeTenantId || !userId) return;
+    const key = `${entityId}:${userId}:${evereeTenantId}`;
+    if (autoSyncedKeyRef.current === key) return;
+    autoSyncedKeyRef.current = key;
+    void performSync({ silent: true });
+  }, [canManage, entityId, evereeTenantId, userId, performSync]);
 
   // EE.5 — admin/CSA recovery surface for Firestore deletions of either
   // `worker_onboarding/{userId}__{entityKey}` or
@@ -302,18 +349,26 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
     }
   }, [entityId, tenantId, userId]);
 
-  // Built for the legacy-payroll → Everee migration scenario where a worker
-  // is stuck because their `entity_employments` row is marked
-  // `payrollStatus: 'complete'` from a prior payroll system (today: TempWorks).
-  // That flag silences the Everee payroll step in the My Employment hub AND
-  // tells `processWorkerOnboardingReminders` to skip them — so neither the
-  // worker nor the cadence does anything. Clicking Restart resets the
-  // payroll signal, anchors the cadence at "now", and fires R1 immediately.
+  // Two restart scenarios this button covers:
   //
-  // We require `evereeWorkerId` to be present (i.e. the worker is already
-  // provisioned in Everee) — the backend enforces this too, but we mirror
-  // it here so the button disables before a wasted click. Recruiter sees a
-  // tooltip directing them to "Sync to Everee" first when missing.
+  //  1. Legacy-payroll restart — worker IS in Everee, but their
+  //     `entity_employments` row is stuck with `payrollStatus: 'complete'`
+  //     from a prior payroll system (TempWorks pre-Everee migration today).
+  //     That flag silences the Everee payroll step in the My Employment hub
+  //     AND tells `processWorkerOnboardingReminders` to skip them. Restart
+  //     wipes the flag, anchors the cadence at "now", and fires R1 inline.
+  //
+  //  2. Pre-Everee migration restart (May 2026 +) — worker started
+  //     onboarding on this entity *before* it was wired to Everee, so no
+  //     shell exists yet (`evereeWorkerIds[evereeTenantId]` missing). The
+  //     backend now provisions the shell inline (same idempotent helper as
+  //     the Sync button) and continues with the cadence reset. The result
+  //     carries `evereeShellProvisioned: true` so we can show a richer
+  //     toast — "Provisioned Everee + restarted onboarding". Replaces the
+  //     prior two-click flow ("Sync" then "Restart").
+  //
+  // Both paths are idempotent. `restartEvereeOnboardingCallable` is the
+  // single-call entry point regardless of shell state.
   const handleRestartOnboarding = useCallback(async () => {
     if (!entityId) {
       setError('This entity is not yet linked to an Everee tenant.');
@@ -331,21 +386,26 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
       if (data.ok) {
         const variantLabel =
           data.variant === 'events' ? 'direct Everee payroll link' : 'My Employment link';
+        const prefix = data.evereeShellProvisioned
+          ? 'Provisioned Everee shell + restarted onboarding'
+          : 'Everee onboarding restarted';
         setToast({
           severity: 'success',
-          message: `Everee onboarding restarted — R1 SMS sent (${variantLabel}). R2 in 24h.`,
+          message: `${prefix} — R1 SMS sent (${variantLabel}). R2 in 24h.`,
         });
       } else {
         const reasonLabel = (() => {
           switch (data.reason) {
-            case 'needs_sync':
-              return 'Worker has no Everee shell yet — click "Sync to Everee" first.';
             case 'entity_not_everee':
               return 'This entity is not Everee-enabled.';
             case 'employment_not_found':
               return 'No active employment record for this worker on this entity.';
             case 'user_not_found':
               return 'User document not found.';
+            case 'everee_provision_failed':
+              return `Could not create the Everee worker shell${
+                data.twilioError ? `: ${data.twilioError}` : ''
+              }. Check Everee config + retry.`;
             case 'missing_phone':
               return 'Cadence reset, but no phone on file — copy the link and share manually.';
             case 'invalid_e164':
@@ -406,14 +466,14 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
   const resendTooltip = disabledReason
     ? disabledReason
     : 'Sends the worker an SMS with a direct link to finish their payroll setup. Does not affect the automated reminder cadence.';
-  // The restart button has its own gate: even when sync is fine, we need
-  // the Everee shell to exist before flipping cadence on. If it's missing,
-  // tell the recruiter to click "Sync to Everee" first; otherwise describe
-  // exactly what restart will do so it's not a surprise.
+  // Restart tooltip: same surface for both branches (shell exists vs. doesn't).
+  // The backend handles the missing-shell case inline (provisions Everee +
+  // resets cadence in a single call) so the recruiter doesn't have to do two
+  // clicks anymore. Tooltip copy adapts so it's clear what each click does.
   const restartTooltip = disabledReason
     ? disabledReason
     : !evereeWorkerId
-      ? 'Click "Sync to Everee" first to create the worker shell. Restart needs an Everee worker to send the worker to.'
+      ? 'Pre-Everee migration restart: provisions the Everee worker shell, resets payroll status, schedules a fresh R1–R3 (or R1–R5 for events) cadence, and sends R1 immediately. Use this for workers who started onboarding before this entity was Everee-enabled.'
       : 'Resets payroll status, schedules a fresh R1–R3 (or R1–R5 for events) cadence anchored at right now, and sends R1 immediately. Use this when a worker was onboarded with a prior payroll system (e.g. TempWorks) and never finished payroll setup in Everee.';
 
   return (
@@ -500,8 +560,7 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
                 syncing ||
                 recovering ||
                 resending ||
-                Boolean(disabledReason) ||
-                !evereeWorkerId
+                Boolean(disabledReason)
               }
             >
               Restart onboarding

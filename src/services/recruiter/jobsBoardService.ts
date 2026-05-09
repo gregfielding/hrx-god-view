@@ -16,6 +16,10 @@ import {
 
 import { db } from '../../firebase';
 import { JobOrder } from '../../types/recruiter/jobOrder';
+import {
+  resolveJobOrderRequirementsForPosition,
+  type GigPositionRequirementOverrides,
+} from '../../shared/jobOrder/resolveJobOrderRequirements';
 
 /** Lowercase trim for comparing job order workflow status (open, cancelled, on_hold, …). */
 export function normalizeJobOrderStatusValue(status: unknown): string {
@@ -758,8 +762,21 @@ export class JobsBoardService {
         typeof (jobOrder as { autoCreatedUserGroupId?: string | null }).autoCreatedUserGroupId === 'string'
           ? (jobOrder as { autoCreatedUserGroupId?: string | null }).autoCreatedUserGroupId!.trim()
           : '';
+      // (May 2026) Per-JO recruiter-picked Auto-Add to User Groups —
+      // mirrors the same field on `JobsBoardPost`. Falls into the same
+      // union-merge with the National Account auto-group below so a
+      // post created from this JO inherits ALL of:
+      //   1. caller's `customData.autoAddToUserGroups` (highest precedence)
+      //   2. the JO's `autoAddToUserGroups` (recruiter setting)
+      //   3. the JO's `autoCreatedUserGroupId` (auto-attached if set)
+      // Empty arrays / nulls fall through cleanly.
+      const joAutoAddToUserGroups = normalizeAutoAddGroups(
+        (jobOrder as { autoAddToUserGroups?: string[] | null }).autoAddToUserGroups,
+      );
+      const customAutoGroupsRaw =
+        customData?.autoAddToUserGroups ?? customData?.autoAddToUserGroup;
       const customAutoGroups = normalizeAutoAddGroups(
-        customData?.autoAddToUserGroups ?? customData?.autoAddToUserGroup
+        customAutoGroupsRaw === undefined ? joAutoAddToUserGroups : customAutoGroupsRaw,
       );
       const autoAddGroups = joAutoCreatedUserGroupId
         ? Array.from(new Set([...customAutoGroups, joAutoCreatedUserGroupId]))
@@ -892,15 +909,64 @@ export class JobsBoardService {
     if (!jobOrderDoc.exists()) throw new Error('Job Order not found');
     const jobOrder = { id: jobOrderDoc.id, ...jobOrderDoc.data() } as JobOrder;
     const jobType = (jobOrder as any).jobType || 'gig';
-    const gigPositions = (jobOrder as any).gigPositions as Array<{ jobTitle: string; payRate: string; workersNeeded?: number }> | undefined;
+    /**
+     * Position type extended with the optional `requirements` override map
+     * so the resolver can read it. See
+     * `src/shared/jobOrder/resolveJobOrderRequirements.ts` for the contract
+     * (slice 1 May 2026); this code path is slice 3, snapshotting the
+     * resolved per-position requirements onto each freshly auto-created
+     * post so a never-edited post on the public Jobs Board shows the
+     * right per-position fields.
+     */
+    const gigPositions = (jobOrder as any).gigPositions as
+      | Array<{
+          jobTitle: string;
+          payRate: string;
+          workersNeeded?: number;
+          requirements?: GigPositionRequirementOverrides | null;
+        }>
+      | undefined;
     if (jobType !== 'gig' || !gigPositions?.length) return [];
     const ids: string[] = [];
     for (const position of gigPositions) {
+      const resolved = resolveJobOrderRequirementsForPosition(
+        jobOrder as any,
+        position as any,
+      );
       const id = await this.createPostFromJobOrder(tenantId, jobOrderId, createdBy, {
         positionJobTitle: position.jobTitle,
         jobTitle: position.jobTitle,
         payRate: position.payRate ? parseFloat(position.payRate) || undefined : undefined,
-      });
+        // Slice 3 (May 2026): seed the post's requirement fields from
+        // `resolve(jo, position)` so a freshly auto-created post on the
+        // public Jobs Board shows JO defaults + per-position overrides
+        // without waiting for the recruiter to open and save the form.
+        // Empty arrays (an explicit `[]` override on the position — e.g.
+        // Janitors don't need the JO Food Handler default) are honored
+        // verbatim and replace, not extend, the JO defaults.
+        additionalScreenings: resolved.additionalScreenings,
+        licensesCerts: resolved.licensesCerts,
+        physicalRequirements: resolved.physicalRequirements,
+        requiredPpe: resolved.ppeRequirements,
+        ppeProvidedBy: resolved.ppeProvidedBy || 'company',
+        skills: resolved.skillsRequired,
+        languages: resolved.languagesRequired,
+        // Experience / education are stored as label arrays on the post.
+        // Translation to labels happens in the form's getInitialDataStatic;
+        // raw values are fine here since downstream readers can look up
+        // labels themselves. The post form's overlay handles translation
+        // when the recruiter later opens the form.
+        ...(resolved.experienceRequired ? { experienceLevels: [resolved.experienceRequired] } : {}),
+        ...(resolved.educationRequired ? { educationLevels: [resolved.educationRequired] } : {}),
+        // Uniform requirements (per-position inline fields on the Positions
+        // tab, May 2026). Snapshot the resolved values so a freshly
+        // auto-created post on the public Jobs Board shows them without
+        // waiting for the recruiter to open and save the form.
+        uniformRequirements: resolved.dressCode,
+        ...(resolved.customUniformRequirements
+          ? { customUniformRequirements: resolved.customUniformRequirements }
+          : {}),
+      } as any);
       ids.push(id);
     }
     return ids;

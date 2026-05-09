@@ -75,19 +75,22 @@ export async function recomputePrimaryForWorker(
     return { primaryRecruiterId: null, changed: false, sourceAnchor: null };
   }
 
-  // CSA path first — Recruiting Role Model (docs/RECRUITING_ROLE_MODEL.md §2.1
-  // and §5.4). If any user group this worker belongs to has a populated
-  // `roles.csaIds`, that wins and becomes the primary. Only when no group
-  // has CSAs do we fall through to the legacy anchor-based computation,
-  // so behavior is unchanged for tenants that haven't adopted the role
-  // model yet. Earliest-created group's first CSA wins (§3.1).
-  const csaResult = await tryResolveCsaForWorker(tenantId, workerUid);
-  if (csaResult.primaryRecruiterId !== null) {
-    const writeResult = await writePrimaryIfChanged(workerUid, csaResult.primaryRecruiterId);
+  // Onboarding Specialist path first — Recruiting Role Model
+  // (docs/RECRUITING_ROLE_MODEL.md §2.1 and §5.4). If any user group
+  // this worker belongs to has a populated
+  // `roles.onboardingSpecialistIds` (or the legacy `roles.csaIds` during
+  // the rename transition window), that wins and becomes the primary.
+  // Only when no group has specialists do we fall through to the legacy
+  // anchor-based computation, so behavior is unchanged for tenants that
+  // haven't adopted the role model yet. Earliest-created group's first
+  // specialist wins (§3.1).
+  const onboardingResult = await tryResolveOnboardingSpecialistForWorker(tenantId, workerUid);
+  if (onboardingResult.primaryRecruiterId !== null) {
+    const writeResult = await writePrimaryIfChanged(workerUid, onboardingResult.primaryRecruiterId);
     return {
-      primaryRecruiterId: csaResult.primaryRecruiterId,
+      primaryRecruiterId: onboardingResult.primaryRecruiterId,
       changed: writeResult.changed,
-      // No anchor for CSA-sourced writes — the "source" is the user group.
+      // No anchor for group-sourced writes — the "source" is the user group.
       sourceAnchor: null,
     };
   }
@@ -131,16 +134,23 @@ async function writePrimaryIfChanged(
 }
 
 /**
- * CSA tier resolver — walks the worker's user-group memberships and
- * delegates to the pure `resolveRole('candidate_success_agent', ...)`
- * resolver. Returns `null` when no group has CSAs populated so the
- * caller can fall through to the legacy anchor path.
+ * Onboarding Specialist tier resolver — walks the worker's user-group
+ * memberships and delegates to the pure
+ * `resolveRole('onboarding_specialist', ...)` resolver. Returns `null`
+ * when no group has specialists populated so the caller can fall through
+ * to the legacy anchor path.
+ *
+ * Defensive read pattern: prefers the new
+ * `roles.onboardingSpecialistIds` field; falls back to the legacy
+ * `roles.csaIds` while the rename migration soaks (see
+ * `functions/.scratch/migrateCsaToOnboardingSpecialist.ts`). After the
+ * cleanup PR drops the legacy field, the `?? csaIds` clause goes away.
  *
  * Performance: one query (userGroups where memberIds array-contains
  * workerUid). For a typical worker in 1-3 groups, total read budget
  * stays in single digits.
  */
-async function tryResolveCsaForWorker(
+async function tryResolveOnboardingSpecialistForWorker(
   tenantId: string,
   workerUid: string,
 ): Promise<{ primaryRecruiterId: string | null }> {
@@ -153,10 +163,18 @@ async function tryResolveCsaForWorker(
 
     const groups: ResolveRoleUserGroup[] = snap.docs.map((d) => {
       const data = d.data() as Record<string, unknown>;
-      const roles = (data.roles || {}) as { csaIds?: unknown };
-      const csaIds = Array.isArray(roles?.csaIds)
-        ? (roles.csaIds.filter((x) => typeof x === 'string') as string[])
-        : [];
+      const roles = (data.roles || {}) as {
+        onboardingSpecialistIds?: unknown;
+        csaIds?: unknown;
+      };
+      const rawIds = Array.isArray(roles?.onboardingSpecialistIds)
+        ? roles.onboardingSpecialistIds
+        : Array.isArray(roles?.csaIds)
+          ? roles.csaIds
+          : [];
+      const onboardingSpecialistIds = (rawIds as unknown[]).filter(
+        (x): x is string => typeof x === 'string',
+      );
       const createdAtIso =
         typeof data.createdAt === 'string'
           ? data.createdAt
@@ -169,17 +187,20 @@ async function tryResolveCsaForWorker(
                 }
               })()
             : undefined;
-      return { id: d.id, csaIds, createdAtIso };
+      return { id: d.id, onboardingSpecialistIds, createdAtIso };
     });
 
-    const result = resolveRole({ role: 'candidate_success_agent', userGroups: groups });
+    const result = resolveRole({ role: 'onboarding_specialist', userGroups: groups });
     return { primaryRecruiterId: result.primaryUid };
   } catch (err) {
-    logger.warn('recomputePrimaryForWorker: CSA tier lookup failed; falling back to legacy', {
-      tenantId,
-      workerUid,
-      err: (err as Error).message,
-    });
+    logger.warn(
+      'recomputePrimaryForWorker: Onboarding Specialist tier lookup failed; falling back to legacy',
+      {
+        tenantId,
+        workerUid,
+        err: (err as Error).message,
+      },
+    );
     return { primaryRecruiterId: null };
   }
 }

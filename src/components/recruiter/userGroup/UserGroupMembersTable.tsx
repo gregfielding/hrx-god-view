@@ -119,8 +119,8 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
     return m;
   }, [tenantGroupRows]);
 
-  // Tenant-wide recruiter name map; surfaces "CSA: <name>" on each row
-  // (CSA = `users.{uid}.primaryRecruiterId` per RECRUITING_ROLE_MODEL §4.5).
+  // Tenant-wide recruiter name map; surfaces "Recruiter: <name>" on each row
+  // (Recruiter = `users.{uid}.primaryRecruiterId` per RECRUITING_ROLE_MODEL §5.1).
   const recruiterNameByUid = useTenantRecruiterNamesByUid(tenantId);
 
   const membersInput = useMemo(() => {

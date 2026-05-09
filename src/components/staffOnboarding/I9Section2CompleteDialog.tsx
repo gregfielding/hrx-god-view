@@ -1,12 +1,13 @@
 /**
- * **E.7** — `I9Section2CompleteDialog` — modal that captures the CSA's
- * I-9 Section 2 attestation (employer portion).
+ * **E.7** — `I9Section2CompleteDialog` — modal that captures the
+ * Onboarding Specialist's I-9 Section 2 attestation (employer portion).
  *
  * UX: USCIS requires Section 2 to be completed within 3 business days of
  * the worker's first day of employment, after physically inspecting
  * either ONE List A document OR ONE List B + ONE List C document. The
- * dialog mirrors that legal structure so a CSA cannot accidentally
- * submit an invalid combination (List B without List C, or both List A
+ * dialog mirrors that legal structure so an Onboarding Specialist
+ * cannot accidentally submit an invalid combination (List B without
+ * List C, or both List A
  * + List B+C selected). The submit is gated client-side on a valid
  * combination; the server only validates that `documentTypes` is
  * non-empty (it doesn't enforce I-9 legal combination rules — keeping
@@ -22,8 +23,9 @@
  *   - List C: `list_c_social_security_card`, `list_c_birth_certificate`,
  *     `list_c_other:<desc>`
  *
- * The `:desc` suffix on "Other" entries lets us preserve the CSA's
- * description without inventing a parallel field for it on
+ * The `:desc` suffix on "Other" entries lets us preserve the
+ * Onboarding Specialist's description without inventing a parallel
+ * field for it on
  * `entity_employments`. Display surfaces can parse the prefix later;
  * for now the audit trail is human-readable in the raw value.
  */
@@ -50,12 +52,12 @@ import {
 import { httpsCallable } from 'firebase/functions';
 
 import { functions } from '../../firebase';
-import type { CsaActionItem } from '../../types/csaActionQueue';
+import type { OnboardingSpecialistActionItem } from '../../types/onboardingSpecialistActionQueue';
 
 export interface I9Section2CompleteDialogProps {
   open: boolean;
   /** The action item that triggered the modal — provides worker / entity context. */
-  item: CsaActionItem | null;
+  item: OnboardingSpecialistActionItem | null;
   tenantId: string | undefined;
   onClose: () => void;
   /** Called after a successful submit (for snackbar / refresh hooks). */
@@ -208,7 +210,8 @@ export function computeDocumentTypes(args: ComputeDocumentTypesArgs): string[] {
 
 /**
  * Pure helper — validates the (List A) XOR (List B + List C) shape so
- * the submit button can disable until the CSA's selection is legal.
+ * the submit button can disable until the Onboarding Specialist's
+ * selection is legal.
  *
  * Returns `null` when valid, or a human-readable error message
  * otherwise. Exported for tests + dialog inline rendering.

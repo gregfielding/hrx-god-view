@@ -50,6 +50,13 @@ mirrored_files=(
   # the CRA and admin trees. Keep it here so any drift fails CI before
   # consumers split.
   "jobOrder/getEffectiveJobOrderField.ts"
+  # Per-position requirements resolver — pure, sync, type-self-contained.
+  # Same posture as `getEffectiveJobOrderField`. Slice 1 of the
+  # gig-position requirements override work (May 2026): the helper is
+  # in tree but no consumer calls it yet. Mirror parity matters now so
+  # slice 3 (which rewires Apply / orchestrator / onboarding readers)
+  # can flip them in one PR without re-syncing trees.
+  "jobOrder/resolveJobOrderRequirements.ts"
 )
 
 for filename in "${mirrored_files[@]}"; do

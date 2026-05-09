@@ -113,11 +113,18 @@ export function gatherTierCandidates(input: ResolveOwnershipInput): OwnershipTie
     const seen = new Set<string>();
     const allAssocs: ActionItemOwnershipAssociation[] = [];
     for (const g of input.userGroups) {
-      // Prefer the new `roles.csaIds` field. Fall back to legacy
-      // `groupManagerIds` for groups that haven't been migrated yet —
-      // the UI now dual-writes both, so this fallback is only relevant
-      // for stale groups until the backfill runs.
-      const ids = (g.csaIds && g.csaIds.length > 0) ? g.csaIds : (g.groupManagerIds ?? []);
+      // Prefer the new `roles.onboardingSpecialistIds` field; fall
+      // back to the legacy `roles.csaIds` (rename transition window)
+      // and then the older `groupManagerIds` for groups that haven't
+      // been migrated yet. The UI dual-writes the role-model field +
+      // `groupManagerIds`, so these fallbacks only matter for stale
+      // groups until the migration script lands.
+      const ids =
+        (g.onboardingSpecialistIds && g.onboardingSpecialistIds.length > 0)
+          ? g.onboardingSpecialistIds
+          : (g.csaIds && g.csaIds.length > 0)
+            ? g.csaIds
+            : (g.groupManagerIds ?? []);
       for (const r of ids) {
         if (r) seen.add(r);
       }

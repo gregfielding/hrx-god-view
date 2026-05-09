@@ -418,6 +418,11 @@ export async function composePrescreenAiBundle(args: {
         jobFitScore: extractJobFitScore(applicationFieldsForRisk),
         applicationNoShowBand: applicationNoShowRisk.band,
         assignmentNoShowBand: assignNs.band,
+        applicationNoShowScore:
+          typeof applicationNoShowRisk.score === 'number' && Number.isFinite(applicationNoShowRisk.score)
+            ? applicationNoShowRisk.score
+            : null,
+        assignmentNoShowScore: assignNs.score,
         assignmentIdUsed: assignNs.assignmentId,
         operationalTrust: operationalTrustForEngine,
         gateScoreOverride: groupGateScoreOverride,

@@ -362,7 +362,7 @@ const Layout: React.FC = function Layout() {
     
     // Recruiter routes
     if (pathname.includes('/jobs') || pathname.includes('/recruiter')) {
-      return 'Jobs';
+      return 'Job Orders';
     }
     
     // Dashboard routes

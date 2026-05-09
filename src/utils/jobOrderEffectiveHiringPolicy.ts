@@ -21,6 +21,8 @@ export type ResolvedAiHiringPolicy = {
   minimumJobScoreGateEnabled?: boolean;
   minimumJobScoreToAdvance?: number;
   jobFitFailAction?: 'review' | 'hold';
+  /** See `ResolvedAiHiringPolicy.maximumNoShowRiskToAdvance` in `functions/src/workerAiPrescreen/aiHiringPolicyResolution.ts`. */
+  maximumNoShowRiskToAdvance?: number;
   maximumAutoAdvances?: number;
   targetReadyCount?: number;
   targetOnboardingCount?: number;
@@ -65,6 +67,7 @@ export function readAiHiringPartial(raw: unknown): Partial<ResolvedAiHiringPolic
     minimumJobScoreToAdvance: num(o.minimumJobScoreToAdvance),
     jobFitFailAction:
       o.jobFitFailAction === 'review' || o.jobFitFailAction === 'hold' ? o.jobFitFailAction : undefined,
+    maximumNoShowRiskToAdvance: num(o.maximumNoShowRiskToAdvance),
     maximumAutoAdvances: num(o.maximumAutoAdvances),
     targetReadyCount: num(o.targetReadyCount),
     targetOnboardingCount: num(o.targetOnboardingCount),

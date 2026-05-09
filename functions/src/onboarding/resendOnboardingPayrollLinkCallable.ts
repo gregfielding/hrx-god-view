@@ -34,6 +34,7 @@ import {
 import { userDocHasUsablePhone } from '../workerAiPrescreen/evaluateAiPrescreenEligibility';
 import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
 import { buildOnboardingReminderSmsBody } from './processWorkerOnboardingReminders';
+import { deriveEntityKeyFromName } from './workerOnboardingPipeline';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -125,12 +126,41 @@ export const resendOnboardingPayrollLink = onCall(
       throw new HttpsError('not-found', `Entity ${entityId} not found on tenant ${tenantId}`);
     }
     const entityData = (entitySnap.data() || {}) as Record<string, unknown>;
-    const entityKey = String(entityData.entityKey || '').trim();
+    // May 2026 — entity docs created before the `entityKey` migration may be
+    // missing this field (we saw it on `c1_events_llc`). Derive it from the
+    // entity name (same helper `resolveEntityContext` uses) and backfill so
+    // future calls hit the canonical field. Mirrors the fallback in
+    // `restartEvereeOnboardingCallable`.
+    let entityKey = String(entityData.entityKey || '').trim();
     if (!entityKey) {
-      throw new HttpsError(
-        'failed-precondition',
-        `Entity ${entityId} has no entityKey — cannot reconstruct pipelineId`,
+      const entityName = String(
+        entityData.name || entityData.legalName || entityData.title || '',
       );
+      if (!entityName.trim()) {
+        throw new HttpsError(
+          'failed-precondition',
+          `Entity ${entityId} has no entityKey and no name — cannot reconstruct pipelineId`,
+        );
+      }
+      entityKey = deriveEntityKeyFromName(entityName);
+      try {
+        await entitySnap.ref.update({
+          entityKey,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        logger.info('resendOnboardingPayrollLink: backfilled missing entityKey', {
+          tenantId,
+          entityId,
+          entityKey,
+          derivedFromName: entityName,
+        });
+      } catch (e: unknown) {
+        logger.warn('resendOnboardingPayrollLink: entityKey backfill failed', {
+          tenantId,
+          entityId,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
     }
     const pipelineId = `${userId}__${entityKey}`;
 

@@ -1,27 +1,32 @@
 /**
- * **E.7** — `CsaActionQueue` — unified action-queue tab for the
- * `/staff-onboarding` "To-Do" surface.
+ * **E.7** — `OnboardingSpecialistActionQueue` — unified action-queue
+ * tab for the `/staff-onboarding` "To-Do" surface.
  *
  * Replaces the previous "Tax and Payroll" + "E-Verify" tabs with a
- * single tenant-wide list of (worker × action) pairs the CSA needs to
- * act on. Item types ordered by federal-deadline priority:
+ * single tenant-wide list of (worker × action) pairs the Onboarding
+ * Specialist needs to act on. Item types ordered by federal-deadline
+ * priority:
  *
  *   1. Address E-Verify TNC — 8 federal working days to contest
  *   2. Complete I-9 Section 2 — 3 business days from hire
  *   3. Start E-Verify case — 3 business days from hire (downstream of #2)
  *
- * Data: `useCsaActionQueueItems` provides the aggregated, sorted list.
- * UI: scope toggle (My / All) + name/email/phone search + paginated
- * card-list. The I-9 Section 2 action opens an inline dialog
- * (`I9Section2CompleteDialog`); the E-Verify actions navigate to the
- * worker profile so the existing R.5 surfaces (StartEverifySelectDialog
- * + EverifyComplianceCard TNC flow) handle the rich form work.
+ * Data: `useOnboardingSpecialistActionQueueItems` provides the
+ * aggregated, sorted list. UI: scope toggle (My / All) +
+ * name/email/phone search + paginated card-list. The I-9 Section 2
+ * action opens an inline dialog (`I9Section2CompleteDialog`); the
+ * E-Verify actions navigate to the worker profile so the existing R.5
+ * surfaces (StartEverifySelectDialog + EverifyComplianceCard TNC flow)
+ * handle the rich form work.
  *
  * Live updates: the underlying hook subscribes to `entity_employments`
  * via `onSnapshot`. When the I-9 Section 2 dialog completes, the
  * trigger-driven readiness rewrite + the entity_employments stamp
  * update flow back through the listener and the row disappears without
  * a manual refresh.
+ *
+ * History: this component was renamed from `CsaActionQueue` when the
+ * CSA role was renamed to Onboarding Specialist.
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
@@ -46,13 +51,13 @@ import StandardTablePagination from '../StandardTablePagination';
 import OnboardingQueueWorkerSearchField from './OnboardingQueueWorkerSearchField';
 import I9Section2CompleteDialog from './I9Section2CompleteDialog';
 import { useAuth } from '../../contexts/AuthContext';
-import useCsaActionQueueItems from '../../hooks/useCsaActionQueueItems';
+import useOnboardingSpecialistActionQueueItems from '../../hooks/useOnboardingSpecialistActionQueueItems';
 import {
-  CSA_ACTION_LABELS,
-  csaActionItemMatchesSearch,
-  type CsaActionItem,
-  type CsaActionType,
-} from '../../types/csaActionQueue';
+  ONBOARDING_SPECIALIST_ACTION_LABELS,
+  onboardingSpecialistActionItemMatchesSearch,
+  type OnboardingSpecialistActionItem,
+  type OnboardingSpecialistActionType,
+} from '../../types/onboardingSpecialistActionQueue';
 import { TABLE_AVATAR_SIZE } from '../../utils/uiConstants';
 
 /* ────────────────────────── small helpers ────────────────────────── */
@@ -77,7 +82,7 @@ function formatRelative(ms: number): string {
   return `${months} mo ago`;
 }
 
-function actionTypeChip(actionType: CsaActionType): {
+function actionTypeChip(actionType: OnboardingSpecialistActionType): {
   label: string;
   color: 'error' | 'warning' | 'info';
 } {
@@ -93,7 +98,7 @@ function actionTypeChip(actionType: CsaActionType): {
   }
 }
 
-function buildSubLine(item: CsaActionItem): string {
+function buildSubLine(item: OnboardingSpecialistActionItem): string {
   switch (item.actionType) {
     case 'address_tnc': {
       const tncAge = formatRelative(item.ageMs);
@@ -114,26 +119,29 @@ function buildSubLine(item: CsaActionItem): string {
 
 /* ────────────────────────── component ────────────────────────── */
 
-export interface CsaActionQueueProps {
+export interface OnboardingSpecialistActionQueueProps {
   tenantId: string | undefined;
 }
 
-const CsaActionQueue: React.FC<CsaActionQueueProps> = ({ tenantId }) => {
+const OnboardingSpecialistActionQueue: React.FC<OnboardingSpecialistActionQueueProps> = ({
+  tenantId,
+}) => {
   const { user, securityLevel, isHRX } = useAuth();
   const currentUserUid = user?.uid ?? null;
 
-  // CSAs default to "mine"; HRX admins (security level 7 OR isHRX claim)
-  // default to "all". Stored in component state — no sessionStorage
-  // persistence yet (matches RD.1's decision; storing it would risk a
-  // CSA seeing All on a fresh login when their job is fundamentally
-  // about their own queue).
+  // Onboarding Specialists default to "mine"; HRX admins (security
+  // level 7 OR isHRX claim) default to "all". Stored in component state
+  // — no sessionStorage persistence yet (matches RD.1's decision;
+  // storing it would risk a specialist seeing All on a fresh login when
+  // their job is fundamentally about their own queue).
   const isHrxAdmin = isHRX || securityLevel === '7';
   const [scope, setScope] = useState<'mine' | 'all'>(isHrxAdmin ? 'all' : 'mine');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
 
-  const [section2DialogItem, setSection2DialogItem] = useState<CsaActionItem | null>(null);
+  const [section2DialogItem, setSection2DialogItem] =
+    useState<OnboardingSpecialistActionItem | null>(null);
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     severity: 'success' | 'info' | 'error';
@@ -142,14 +150,14 @@ const CsaActionQueue: React.FC<CsaActionQueueProps> = ({ tenantId }) => {
 
   const navigate = useNavigate();
 
-  const { items, loading, error } = useCsaActionQueueItems({
+  const { items, loading, error } = useOnboardingSpecialistActionQueueItems({
     tenantId,
     currentUserUid,
     scope,
   });
 
   const filtered = useMemo(
-    () => items.filter((it) => csaActionItemMatchesSearch(it, search)),
+    () => items.filter((it) => onboardingSpecialistActionItemMatchesSearch(it, search)),
     [items, search],
   );
 
@@ -172,7 +180,7 @@ const CsaActionQueue: React.FC<CsaActionQueueProps> = ({ tenantId }) => {
   }, []);
 
   const handleStartEverify = useCallback(
-    (item: CsaActionItem) => {
+    (item: OnboardingSpecialistActionItem) => {
       // Navigate to worker profile → Employment tab focused on E-Verify.
       // The existing `StartEverifySelectDialog` lives there and handles
       // the rich form work; bringing it inline would mean duplicating
@@ -191,7 +199,7 @@ const CsaActionQueue: React.FC<CsaActionQueueProps> = ({ tenantId }) => {
   );
 
   const handleAddressTnc = useCallback(
-    (item: CsaActionItem) => {
+    (item: OnboardingSpecialistActionItem) => {
       const params = new URLSearchParams();
       params.set('employmentFocus', 'Employment');
       params.set('employmentScrollTo', 'e_verify');
@@ -204,7 +212,7 @@ const CsaActionQueue: React.FC<CsaActionQueueProps> = ({ tenantId }) => {
   );
 
   const handlePrimaryAction = useCallback(
-    (item: CsaActionItem) => {
+    (item: OnboardingSpecialistActionItem) => {
       switch (item.actionType) {
         case 'i9_section_2':
           setSection2DialogItem(item);
@@ -263,7 +271,7 @@ const CsaActionQueue: React.FC<CsaActionQueueProps> = ({ tenantId }) => {
             gap: 0.5,
           }}
         >
-          <Tooltip title="Workers I'm the Candidate Success Agent for">
+          <Tooltip title="Workers I'm the Onboarding Specialist for">
             <ToggleButton value="mine" aria-label="My users">
               My Users
             </ToggleButton>
@@ -278,7 +286,7 @@ const CsaActionQueue: React.FC<CsaActionQueueProps> = ({ tenantId }) => {
         <Box sx={{ flex: 1 }} />
 
         <OnboardingQueueWorkerSearchField
-          id="csa-action-queue-search"
+          id="onboarding-specialist-action-queue-search"
           value={search}
           onChange={handleSearchChange}
         />
@@ -303,7 +311,7 @@ const CsaActionQueue: React.FC<CsaActionQueueProps> = ({ tenantId }) => {
             gap: 1,
             color: 'text.secondary',
           }}
-          data-testid="csa-action-queue-empty"
+          data-testid="onboarding-specialist-action-queue-empty"
         >
           <CheckCircleOutlineIcon color="success" />
           <Typography variant="subtitle2" fontWeight={600}>
@@ -316,14 +324,18 @@ const CsaActionQueue: React.FC<CsaActionQueueProps> = ({ tenantId }) => {
       ) : null}
 
       {!loading && filtered.length > 0 ? (
-        <Stack spacing={1} sx={{ width: '100%' }} data-testid="csa-action-queue-list">
+        <Stack
+          spacing={1}
+          sx={{ width: '100%' }}
+          data-testid="onboarding-specialist-action-queue-list"
+        >
           {pagedItems.map((item) => {
             const chip = actionTypeChip(item.actionType);
-            const labels = CSA_ACTION_LABELS[item.actionType];
+            const labels = ONBOARDING_SPECIALIST_ACTION_LABELS[item.actionType];
             return (
               <Stack
                 key={item.id}
-                data-testid={`csa-action-queue-item-${item.id}`}
+                data-testid={`onboarding-specialist-action-queue-item-${item.id}`}
                 direction={{ xs: 'column', sm: 'row' }}
                 spacing={1.5}
                 alignItems={{ sm: 'center' }}
@@ -378,7 +390,7 @@ const CsaActionQueue: React.FC<CsaActionQueueProps> = ({ tenantId }) => {
                     size="small"
                     sx={{ textTransform: 'none', whiteSpace: 'nowrap' }}
                     onClick={() => handlePrimaryAction(item)}
-                    data-testid={`csa-action-queue-button-${item.id}`}
+                    data-testid={`onboarding-specialist-action-queue-button-${item.id}`}
                   >
                     {labels.primaryButton}
                   </Button>
@@ -423,4 +435,4 @@ const CsaActionQueue: React.FC<CsaActionQueueProps> = ({ tenantId }) => {
   );
 };
 
-export default CsaActionQueue;
+export default OnboardingSpecialistActionQueue;

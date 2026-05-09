@@ -220,6 +220,24 @@ interface ShiftPlacementsDrawerProps {
    * the table without requiring a manual reload.
    */
   onShiftAdded?: () => void | Promise<void>;
+  /**
+   * Optional pre-selected account for the `pickJobOrderFirst` cascade.
+   * When provided (e.g. by `AccountShiftsTab.tsx` opening the drawer
+   * from the Account Details Shifts tab), the drawer opens with the
+   * Account autocomplete already populated and the Job order
+   * dropdown immediately scoped to that account's JOs. The recruiter
+   * can still change the account inside the drawer if they need to.
+   * Ignored when `pickJobOrderFirst` is false.
+   */
+  initialAccountId?: string | null;
+  /**
+   * Optional display name for the pre-selected account. Used to
+   * synthesize an `accountOptions` entry when the account has no JOs
+   * yet (otherwise the Autocomplete would render a blank value while
+   * `selectedAccountId` is set, since the option list is derived
+   * from the JO query). Pass `account.name` from the caller.
+   */
+  initialAccountName?: string | null;
 }
 
 const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
@@ -230,6 +248,8 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
   onClose,
   pickJobOrderFirst = false,
   onShiftAdded,
+  initialAccountId = null,
+  initialAccountName = null,
 }) => {
   const [jobOrder, setJobOrder] = useState<JobOrder | null>(null);
   const [loading, setLoading] = useState(false);
@@ -354,10 +374,24 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
         parentAccountName: jo.parentAccountName,
       });
     }
+    // Account-Details preseed (May 2026): when the caller pre-selected
+    // an account that has no JOs yet, synthesize an option so the
+    // Autocomplete still renders the account name (otherwise its
+    // `value` lookup falls through to `null` and the field appears
+    // blank while `selectedAccountId` is set). Empty `initialAccountName`
+    // → fall back to the id so something is rendered.
+    if (initialAccountId && !seen.has(initialAccountId)) {
+      seen.set(initialAccountId, {
+        id: initialAccountId,
+        accountName: initialAccountName || initialAccountId,
+        companyName: '',
+        parentAccountName: '',
+      });
+    }
     return Array.from(seen.values()).sort((a, b) =>
       a.accountName.localeCompare(b.accountName),
     );
-  }, [pickerJobOrders]);
+  }, [pickerJobOrders, initialAccountId, initialAccountName]);
 
   // JO options filtered to the selected account. Sorted by JO# desc
   // so the most recently created JOs surface first (matches the JO
@@ -379,8 +413,21 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
       setPickedJobOrderId(null);
       setSelectedAccountId(null);
       setPickerError(null);
+      return;
     }
-  }, [open]);
+    // Seed Account autocomplete from the caller (e.g. Account Details
+    // Shifts tab) so the recruiter doesn't have to re-pick the same
+    // account they're already viewing. We seed even before the JO list
+    // finishes loading — `accountOptions` is derived from the JOs but
+    // the Autocomplete tolerates a value that isn't yet in its options
+    // list (it just renders the id until the option is hydrated, which
+    // takes a beat). Once the JOs land, the option resolves cleanly.
+    // Only applies in the `pickJobOrderFirst` cascade — propJobOrderId
+    // mode doesn't render this picker at all.
+    if (pickJobOrderFirst && initialAccountId) {
+      setSelectedAccountId(initialAccountId);
+    }
+  }, [open, pickJobOrderFirst, initialAccountId]);
 
   useEffect(() => {
     if (!open || !pickJobOrderFirst || !tenantId || pickedJobOrderId) return;

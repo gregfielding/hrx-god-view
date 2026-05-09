@@ -86,17 +86,20 @@ async function resolveCallerSecurityLevel(
  *
  * Allowed when ANY of:
  *   - HRX auto-qualifies.
- *   - Caller is a CSA for any user group that contains this worker
- *     (`userGroup.roles.csaIds`).
+ *   - Caller is an Onboarding Specialist for any user group that
+ *     contains this worker (`userGroup.roles.onboardingSpecialistIds`,
+ *     legacy alias `userGroup.roles.csaIds` during the rename
+ *     transition window).
  *   - Caller is a Scheduler for this account
  *     (`account.roles.schedulerIds`).
  *   - Legacy migration fallback: caller has tenant security level 5–7.
- *     Kept so tenants that haven't populated CSAs/Schedulers yet don't
- *     lose the ability to deactivate. Remove once every tenant has
- *     roles configured.
+ *     Kept so tenants that haven't populated Onboarding Specialists /
+ *     Schedulers yet don't lose the ability to deactivate. Remove once
+ *     every tenant has roles configured.
  *
- * The CSA / Scheduler checks fire against the post-normalization input,
- * so `workerId` and `accountId` are always resolvable at call time.
+ * The Onboarding Specialist / Scheduler checks fire against the
+ * post-normalization input, so `workerId` and `accountId` are always
+ * resolvable at call time.
  */
 async function assertWorkforceAdmin(
   uid: string,
@@ -129,7 +132,14 @@ async function assertWorkforceAdmin(
     });
   }
 
-  // Role-model check #2 — CSA for any user group containing this worker.
+  // Role-model check #2 — Onboarding Specialist for any user group
+  // containing this worker. Defensive read pattern during the CSA →
+  // Onboarding Specialist rename: prefer the new
+  // `roles.onboardingSpecialistIds` field, fall back to the legacy
+  // `roles.csaIds`. The migration script copies the legacy field into
+  // the new one without deleting it, so both reads are safe and a
+  // separate cleanup PR can drop the legacy fallback once every tenant
+  // has migrated.
   try {
     const groupsSnap = await db
       .collection(`tenants/${tenantId}/userGroups`)
@@ -137,13 +147,21 @@ async function assertWorkforceAdmin(
       .get();
     for (const d of groupsSnap.docs) {
       const data = d.data() as Record<string, unknown>;
-      const roles = (data.roles || {}) as { csaIds?: unknown };
-      if (Array.isArray(roles?.csaIds) && roles.csaIds.includes(uid)) {
+      const roles = (data.roles || {}) as {
+        onboardingSpecialistIds?: unknown;
+        csaIds?: unknown;
+      };
+      const ids = Array.isArray(roles?.onboardingSpecialistIds)
+        ? (roles.onboardingSpecialistIds as unknown[])
+        : Array.isArray(roles?.csaIds)
+          ? (roles.csaIds as unknown[])
+          : [];
+      if (ids.includes(uid)) {
         return;
       }
     }
   } catch (err) {
-    logger.warn('assertWorkforceAdmin: CSA check failed', {
+    logger.warn('assertWorkforceAdmin: onboarding specialist check failed', {
       tenantId,
       workerId,
       err: (err as Error).message,
@@ -151,12 +169,13 @@ async function assertWorkforceAdmin(
   }
 
   // Legacy fallback — tenant security level 5/6/7. Keeps deactivation
-  // working for tenants that haven't populated CSA/Scheduler roles yet.
+  // working for tenants that haven't populated Onboarding Specialist /
+  // Scheduler roles yet.
   if (securityLevel >= 5 && securityLevel <= 7) return;
 
   throw new HttpsError(
     'permission-denied',
-    'Deactivating a worker requires you to be a CSA for one of their user groups, a Scheduler for this account, or a tenant admin (security level 5+).',
+    'Deactivating a worker requires you to be an Onboarding Specialist for one of their user groups, a Scheduler for this account, or a tenant admin (security level 5+).',
   );
 }
 

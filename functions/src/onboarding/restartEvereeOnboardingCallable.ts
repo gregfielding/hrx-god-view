@@ -64,6 +64,10 @@ import {
 import { userDocHasUsablePhone } from '../workerAiPrescreen/evaluateAiPrescreenEligibility';
 import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
 import { buildOnboardingReminderSmsBody } from './processWorkerOnboardingReminders';
+import { deriveEntityKeyFromName } from './workerOnboardingPipeline';
+import { createWorkerIfNeeded } from '../integrations/everee/evereeService';
+import { resolveEvereeWorkerTypeForOnCall } from '../integrations/everee/evereeEntityWorkerType';
+import { extractEvereeHomeAddressFromUserDoc } from '../integrations/everee/evereeUserAddress';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -114,8 +118,18 @@ export type RestartEvereeOnboardingResult = {
     r4?: string;
     r5?: string;
   };
-  /** Set when ok=false: needs_sync, entity_not_everee, employment_not_found,
-   *  user_not_found, missing_phone, invalid_e164, missing_link, sms_failed. */
+  /**
+   * True when this restart had to provision the Everee shell inline (the
+   * legacy-pre-Everee migration scenario). The client uses this to show a
+   * richer success message — "Provisioned Everee + restarted onboarding"
+   * vs. the standard "restarted onboarding". When false, the shell already
+   * existed before the call.
+   */
+  evereeShellProvisioned?: boolean;
+  /** Set when ok=false: entity_not_everee, employment_not_found,
+   *  user_not_found, missing_phone, invalid_e164, missing_link, sms_failed,
+   *  everee_provision_failed. (`needs_sync` is no longer returned — the
+   *  callable now provisions inline, see `evereeShellProvisioned`.) */
   reason?: string;
   twilioError?: string;
 };
@@ -165,12 +179,48 @@ export const restartEvereeOnboarding = onCall(
       throw new HttpsError('not-found', `Entity ${entityId} not found on tenant ${tenantId}`);
     }
     const entityData = (entitySnap.data() || {}) as Record<string, unknown>;
-    const entityKey = String(entityData.entityKey || '').trim();
+    // May 2026 — entity docs created before the `entityKey` migration may be
+    // missing this field (we saw it on `c1_events_llc` in production). Rather
+    // than refusing the restart, derive the key from the entity name (same
+    // helper `resolveEntityContext` uses for fresh on-call hires), backfill
+    // the field on the entity doc so future reads have it, and continue. The
+    // ONLY case where we still hard-fail is when the name itself is empty —
+    // which would mean the entity record is malformed beyond what this
+    // recruiter-facing tool should try to repair.
+    let entityKey = String(entityData.entityKey || '').trim();
     if (!entityKey) {
-      throw new HttpsError(
-        'failed-precondition',
-        `Entity ${entityId} has no entityKey — cannot reconstruct pipelineId`,
+      const entityName = String(
+        entityData.name || entityData.legalName || entityData.title || '',
       );
+      if (!entityName.trim()) {
+        throw new HttpsError(
+          'failed-precondition',
+          `Entity ${entityId} has no entityKey and no name — cannot reconstruct pipelineId`,
+        );
+      }
+      entityKey = deriveEntityKeyFromName(entityName);
+      // Best-effort backfill so the next restart / resend / Everee-related
+      // callable hits the canonical field directly. Non-blocking — a write
+      // failure here is logged but shouldn't abort the restart the recruiter
+      // is actively waiting on.
+      try {
+        await entitySnap.ref.update({
+          entityKey,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        logger.info('restartEvereeOnboarding: backfilled missing entityKey', {
+          tenantId,
+          entityId,
+          entityKey,
+          derivedFromName: entityName,
+        });
+      } catch (e: unknown) {
+        logger.warn('restartEvereeOnboarding: entityKey backfill failed', {
+          tenantId,
+          entityId,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
     }
     if (entityData.evereeEnabled !== true) {
       return {
@@ -226,24 +276,90 @@ export const restartEvereeOnboarding = onCall(
       };
     }
     const userData = (userSnap.data() || {}) as Record<string, unknown>;
-    const evereeWorkerIds = (userData.evereeWorkerIds || {}) as Record<string, unknown>;
-    const evereeWorkerId =
-      typeof evereeWorkerIds[evereeTenantId] === 'string'
-        ? String(evereeWorkerIds[evereeTenantId]).trim()
+    const evereeWorkerIdsMap = (userData.evereeWorkerIds || {}) as Record<string, unknown>;
+    let evereeWorkerId =
+      typeof evereeWorkerIdsMap[evereeTenantId] === 'string'
+        ? String(evereeWorkerIdsMap[evereeTenantId]).trim()
         : '';
+
+    // May 2026 — pre-Everee migration support. Workers who started
+    // onboarding on a C1 entity *before* that entity was wired to Everee
+    // (today: c1_events_llc workers carried over from TempWorks) won't
+    // have a shell on the Everee side yet. Previously this callable
+    // returned `needs_sync` and made the recruiter click "Sync to Everee"
+    // first, then "Restart onboarding" — two clicks for what's morally a
+    // single "start over for this user/entity" action.
+    //
+    // We now provision the shell inline using the same idempotent helper
+    // (`createWorkerIfNeeded`) the Sync button calls, then continue with
+    // the cadence reset + R1 send below. Net effect: clicking "Restart
+    // onboarding" on a worker with no shell behaves like a fresh on-call
+    // hire (provision Everee → set up cadence → SMS R1 now), which is
+    // exactly what the recruiter expects when starting an onboarding over.
+    let evereeShellProvisioned = false;
     if (!evereeWorkerId) {
-      // Refuse to flip data if the Everee shell isn't there — the SMS
-      // would just bounce the worker into a payroll iframe with no
-      // worker record on the other side. UI tells the recruiter to click
-      // "Sync to Everee" first.
-      return {
-        ok: false,
-        pipelineId,
-        variant: 'standard',
-        link: '',
-        scheduledReminders: { r1: '', r2: '', r3: '' },
-        reason: 'needs_sync',
-      };
+      try {
+        const workerEvereeType = resolveEvereeWorkerTypeForOnCall(
+          entityId,
+          entityData,
+        );
+        const phone =
+          String(userData.phoneE164 ?? '').trim() ||
+          String(userData.phone ?? '').trim() ||
+          String((userData as { phoneNumber?: unknown }).phoneNumber ?? '').trim();
+        const home = extractEvereeHomeAddressFromUserDoc(userData);
+        const created = await createWorkerIfNeeded({
+          tenantId,
+          entityId,
+          userId,
+          firebaseUid: userId,
+          workerType: workerEvereeType,
+          email: typeof userData.email === 'string' ? userData.email : undefined,
+          firstName: typeof userData.firstName === 'string' ? userData.firstName : undefined,
+          lastName: typeof userData.lastName === 'string' ? userData.lastName : undefined,
+          phone: phone || undefined,
+          ...(home ? { homeAddress: home } : {}),
+          hireDate: new Date().toISOString().slice(0, 10),
+        });
+        evereeWorkerId = created.evereeWorkerId.trim();
+        evereeShellProvisioned = created.created;
+        logger.info('restartEvereeOnboarding: provisioned Everee shell inline', {
+          tenantId,
+          userId,
+          entityId,
+          evereeTenantId,
+          evereeWorkerId,
+          newlyCreated: created.created,
+        });
+      } catch (e: unknown) {
+        const errMsg = e instanceof Error ? e.message : String(e);
+        logger.error('restartEvereeOnboarding: inline Everee provision failed', {
+          tenantId,
+          userId,
+          entityId,
+          evereeTenantId,
+          error: errMsg,
+        });
+        return {
+          ok: false,
+          pipelineId,
+          variant: 'standard',
+          link: '',
+          scheduledReminders: { r1: '', r2: '', r3: '' },
+          reason: 'everee_provision_failed',
+          twilioError: errMsg.slice(0, 320),
+        };
+      }
+      if (!evereeWorkerId) {
+        return {
+          ok: false,
+          pipelineId,
+          variant: 'standard',
+          link: '',
+          scheduledReminders: { r1: '', r2: '', r3: '' },
+          reason: 'everee_provision_failed',
+        };
+      }
     }
 
     // 4. Pick variant + R1 link. Same logic as
@@ -270,6 +386,7 @@ export const restartEvereeOnboarding = onCall(
         link: '',
         scheduledReminders: { r1: '', r2: '', r3: '' },
         reason: 'missing_link',
+        evereeShellProvisioned,
       };
     }
 
@@ -353,6 +470,7 @@ export const restartEvereeOnboarding = onCall(
             : {}),
         },
         reason: 'missing_phone',
+        evereeShellProvisioned,
       };
     }
     const phone = phoneE164FromUser(userData);
@@ -371,6 +489,7 @@ export const restartEvereeOnboarding = onCall(
             : {}),
         },
         reason: 'invalid_e164',
+        evereeShellProvisioned,
       };
     }
     const lang = workerLang(userData);
@@ -446,6 +565,7 @@ export const restartEvereeOnboarding = onCall(
         scheduledReminders,
         reason: 'sms_failed',
         twilioError: result.error || result.status || 'unknown',
+        evereeShellProvisioned,
       };
     }
 
@@ -460,6 +580,7 @@ export const restartEvereeOnboarding = onCall(
       variant,
       link,
       scheduledReminders,
+      evereeShellProvisioned,
     };
   },
 );

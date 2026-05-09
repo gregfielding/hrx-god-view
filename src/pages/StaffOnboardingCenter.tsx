@@ -5,8 +5,9 @@
  * to 2 tabs (To-Do / Background Checks). The "Tax+Payroll" and
  * "E-Verify" tabs were both lists of workers stuck somewhere in their
  * external onboarding pipeline — a recruiter view of "what's not done".
- * E.7 reframes them as a CSA action queue: surface (worker × action)
- * pairs the CSA actually needs to act on (I-9 Section 2, start E-Verify
+ * E.7 reframes them as an Onboarding Specialist action queue: surface
+ * (worker × action) pairs the specialist actually needs to act on
+ * (I-9 Section 2, start E-Verify
  * case, address E-Verify TNC) and route everything else to the worker
  * profile. The two old tabs' data is fully covered by the new "To-Do"
  * tab; the renderer for them is no longer mounted but kept exported
@@ -22,7 +23,7 @@ import { Box, Button, Stack, Tab, Tabs, Typography } from '@mui/material';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../contexts/AuthContext';
 import { StaffOnboardingBackgroundTab } from '../components/staffOnboarding/StaffOnboardingQueueTables';
-import CsaActionQueue from '../components/staffOnboarding/CsaActionQueue';
+import OnboardingSpecialistActionQueue from '../components/staffOnboarding/OnboardingSpecialistActionQueue';
 import { OnCallI9SupportingReminderDialog } from '../components/staffOnboarding/OnCallI9SupportingReminderDialog';
 import type { OnboardingQueuePagination } from '../types/onboardingQueue';
 import {
@@ -111,7 +112,7 @@ const StaffOnboardingCenter: React.FC = () => {
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'flex-start' }} justifyContent="space-between">
         <PageHeader
           title="Onboarding"
-          subtitle="Action items for CSAs — workers waiting on the employer portion of onboarding."
+          subtitle="Action items for Onboarding Specialists — workers waiting on the employer portion of onboarding."
         />
         <Button variant="outlined" size="small" sx={{ mt: { xs: 0, sm: 1 }, flexShrink: 0 }} onClick={() => setI9ReminderOpen(true)}>
           Remind incomplete I-9 uploads
@@ -129,7 +130,7 @@ const StaffOnboardingCenter: React.FC = () => {
         </Tabs>
       </Box>
       <TabPanel value={ui.tab} index={0}>
-        <CsaActionQueue tenantId={tenantId} />
+        <OnboardingSpecialistActionQueue tenantId={tenantId} />
       </TabPanel>
       <TabPanel value={ui.tab} index={1}>
         <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>

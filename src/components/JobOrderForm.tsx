@@ -23,6 +23,9 @@ import {
   IconButton,
   Switch,
   InputAdornment,
+  Tabs,
+  Tab,
+  Tooltip,
 } from '@mui/material';
 import {
   Save as SaveIcon,
@@ -55,6 +58,11 @@ import { getRegistryPath, setDeep, getRegistryIdForField } from '../utils/regist
 import { getOptionsForField } from '../utils/fieldOptions';
 import jobTitlesList from '../data/onetJobTitles.json';
 import { JobsBoardService } from '../services/recruiter/jobsBoardService';
+import {
+  dedupeUserGroupsForUi,
+  autoAddGroupsPickerValue,
+  type UserGroupRow,
+} from '../utils/dedupeUserGroupsForUi';
 import { ensureCityInSmartGroups } from '../services/smartGroupMetroSync';
 import { getRequirementPackIds, JOB_REQUIREMENT_PACKS } from '../data/jobRequirementPacks';
 import { useWorkersCompRatesByJobTitle } from '../hooks/useWorkersCompRatesByJobTitle';
@@ -63,6 +71,9 @@ import {
   resolveWorkersCompModifierAccountId,
 } from '../utils/workersCompRateMaps';
 import { AccusourcePackageSelector } from './recruiter/AccusourcePackageSelector';
+import PositionRequirementsEditor, {
+  type PositionRequirementsOptions,
+} from './recruiter/PositionRequirementsEditor';
 import { useEntity } from '../hooks/useEntity';
 import {
   normalizeStateCode,
@@ -112,6 +123,161 @@ function mergeCareerFormWithPricingPreset(
   return next;
 }
 
+/**
+ * Cascade an account Pricing row's `orderDetails` into a gig
+ * position's `requirements` override map when the recruiter selects
+ * (or commits) that pricing row's job title.
+ *
+ * ## Scope
+ *
+ * Every per-position-overridable field in `GigPositionRequirementOverrides`
+ * (see `src/shared/jobOrder/resolveJobOrderRequirements.ts`) that
+ * also has a 1:1 counterpart in `RecruiterOrderDetailsData`:
+ *
+ *   string[] fields:
+ *     - `additionalScreenings`
+ *     - `licensesCerts`
+ *     - `physicalRequirements`
+ *     - `ppeRequirements`
+ *     - `skillsRequired`
+ *     - `languagesRequired`
+ *     - `dressCode`
+ *
+ *   string fields:
+ *     - `experienceRequired`
+ *     - `educationRequired`
+ *     - `ppeProvidedBy`
+ *     - `customUniformRequirements`
+ *
+ * Fields deliberately NOT cascaded here (handled JO-level only):
+ *   - `screeningPackageId` / `screeningPackageName` — picked at the
+ *     JO level via the screening package selector
+ *   - `requirementPackId`, `backgroundCheckPackages`,
+ *     `drugScreeningPanels` — bundled-pack identifiers, not
+ *     per-position overrides
+ *
+ * ## Precedence rules
+ *
+ *   1. `preset.orderDetails.<field>` — structured value (set via
+ *      `PositionComplianceOverridesDialog` on the Account Pricing
+ *      tab). Maps 1:1 onto `position.requirements.<field>`.
+ *
+ *   2. `preset.uniformRequirements` — LEGACY freeform string at the
+ *      top of the pricing row (the older single-field "Uniform
+ *      Requirements" input on Account Pricing). Folds into
+ *      `customUniformRequirements` ONLY when
+ *      `preset.orderDetails.customUniformRequirements` is empty —
+ *      same precedence `PositionComplianceOverridesDialog` uses on
+ *      its seeding branch (see `seededOrderDetails` in that file,
+ *      ~line 260).
+ *
+ * ## Seeding policy (preserves recruiter edits)
+ *
+ * For every cascaded field we only write into `position.requirements`
+ * when the position is currently empty:
+ *
+ *   - string[] field: missing OR `[]` counts as empty → seed
+ *   - string field: missing OR `''` (after trim) counts as empty → seed
+ *
+ * This means the recruiter can pick the job title, then refine
+ * individual fields without worrying that re-selecting the same job
+ * title (or blurring back into the field) will clobber their edits.
+ * Conversely, if every cascaded field still has its preset value, no
+ * write happens — `requirements` is removed from the row when it
+ * would be empty so we don't generate spurious dirty positions.
+ */
+function applyAccountRequirementsCascadeToPositionRow(
+  row: Record<string, any>,
+  preset: AccountPositionPricing | undefined,
+): Record<string, any> {
+  if (!preset) return row;
+
+  const presetOrderDetails = (preset.orderDetails ?? {}) as Partial<{
+    additionalScreenings: string[];
+    licensesCerts: string[];
+    physicalRequirements: string[];
+    ppeRequirements: string[];
+    skillsRequired: string[];
+    languagesRequired: string[];
+    dressCode: string[];
+    experienceRequired: string;
+    educationRequired: string;
+    ppeProvidedBy: string;
+    customUniformRequirements: string;
+  }>;
+
+  const arrayFields: Array<
+    | 'additionalScreenings'
+    | 'licensesCerts'
+    | 'physicalRequirements'
+    | 'ppeRequirements'
+    | 'skillsRequired'
+    | 'languagesRequired'
+    | 'dressCode'
+  > = [
+    'additionalScreenings',
+    'licensesCerts',
+    'physicalRequirements',
+    'ppeRequirements',
+    'skillsRequired',
+    'languagesRequired',
+    'dressCode',
+  ];
+  const stringFields: Array<
+    'experienceRequired' | 'educationRequired' | 'ppeProvidedBy'
+  > = ['experienceRequired', 'educationRequired', 'ppeProvidedBy'];
+
+  const existingReqs =
+    (row.requirements && typeof row.requirements === 'object' && row.requirements) ||
+    {};
+  const nextReqs: Record<string, unknown> = { ...existingReqs };
+  let didSeed = false;
+
+  for (const key of arrayFields) {
+    const presetValue = Array.isArray(presetOrderDetails[key])
+      ? (presetOrderDetails[key] as string[])
+      : [];
+    if (presetValue.length === 0) continue;
+    const existing = Array.isArray((existingReqs as any)[key])
+      ? ((existingReqs as any)[key] as string[])
+      : [];
+    if (existing.length === 0) {
+      nextReqs[key] = presetValue;
+      didSeed = true;
+    }
+  }
+
+  for (const key of stringFields) {
+    const presetValue = String(presetOrderDetails[key] ?? '').trim();
+    if (!presetValue) continue;
+    const existing = String((existingReqs as any)[key] ?? '').trim();
+    if (!existing) {
+      nextReqs[key] = presetValue;
+      didSeed = true;
+    }
+  }
+
+  // customUniformRequirements: orderDetails first, legacy
+  // `preset.uniformRequirements` as fallback.
+  const presetCustomFromDetails = String(
+    presetOrderDetails.customUniformRequirements ?? '',
+  ).trim();
+  const presetCustomLegacy = String(preset.uniformRequirements ?? '').trim();
+  const presetCustom = presetCustomFromDetails || presetCustomLegacy;
+  if (presetCustom) {
+    const existingCustom = String(
+      (existingReqs as any).customUniformRequirements ?? '',
+    ).trim();
+    if (!existingCustom) {
+      nextReqs.customUniformRequirements = presetCustom;
+      didSeed = true;
+    }
+  }
+
+  if (!didSeed) return row;
+  return { ...row, requirements: nextReqs };
+}
+
 /** Persist SUTA/FUTA as numbers on each gig position (matches account `pricing.positions`). */
 function normalizeGigPositionsForPersist(
   positions: Array<Record<string, unknown> & { sutaRate?: string; futaRate?: string }>,
@@ -127,6 +293,88 @@ function normalizeGigPositionsForPersist(
     futaRate: parseOptPct(pos.futaRate),
   }));
 }
+
+/**
+ * Standard dress-code / uniform options for the per-position
+ * Uniform Requirements field (rendered inline below the JD on each
+ * gig position card, May 2026). Mirrors the hardcoded list in the
+ * (currently hidden) JO-level Uniform Requirements Autocomplete
+ * around line 4570 — keep both in sync if the list ever changes.
+ * Hosted at module scope so the array reference is stable across
+ * renders (avoids re-mounting the Autocomplete on every keystroke).
+ */
+const POSITION_DRESS_CODE_OPTIONS: ReadonlyArray<string> = [
+  'Business Casual',
+  'Business Professional',
+  'Black Bistro',
+  'Casual',
+  'Scrubs',
+  'Uniform Provided',
+  'Black Pants',
+  'White Shirt',
+  'Polo Shirt',
+  'Button-Down Shirt',
+  'Black Button-Down Shirt',
+  'Dress Shirt',
+  'Khaki Pants',
+  'Dress Pants',
+  'Jeans (Dark)',
+  'Jeans (No Holes)',
+  'Slacks',
+  'Skirt/Dress',
+  'Blouse',
+  'Sweater',
+  'Cardigan',
+  'Blazer',
+  'Suit',
+  'Tie Required',
+  'No Tie',
+  'Closed-Toe Shoes',
+  'Steel-Toe Boots',
+  'Non-Slip Shoes',
+  'Dress Shoes',
+  'Sneakers',
+  'Boots',
+  'Sandals Allowed',
+  'No Sandals',
+  'No Flip-Flops',
+  'No Shorts',
+  'No Tank Tops',
+  'No Graphic Tees',
+  'No Hoodies',
+  'No Sweatpants',
+  'No Leggings',
+  'No Yoga Pants',
+  'No Athletic Wear',
+  'No Ripped Clothing',
+  'No Visible Tattoos',
+  'No Facial Piercings',
+  'Minimal Jewelry',
+  'No Jewelry',
+  'Hair Tied Back',
+  'Clean Shaven',
+  'Facial Hair Allowed',
+  'Hair Color Restrictions',
+  'No Hair Color Restrictions',
+  'Coveralls',
+  'Safety Vest',
+  'Hard Hat',
+  'Reflective Clothing',
+  'Weather-Appropriate',
+  'Seasonal Attire',
+  'Formal Occasions',
+  'Customer-Facing',
+  'Back Office',
+  'Laboratory',
+  'Kitchen',
+  'Warehouse',
+  'Construction',
+  'Healthcare',
+  'Food Service',
+  'Retail',
+  'Office',
+  'Other',
+];
 
 // Helper function to remove undefined values from objects (Firestore doesn't allow undefined)
 const removeUndefinedValues = (obj: any): any => {
@@ -213,6 +461,42 @@ interface JobOrderFormProps {
    * Company is limited to that account’s linked companies and auto-filled when only one.
    */
   requireAccountSelection?: boolean;
+  /**
+   * Which section(s) of the form to render. Used by RecruiterJobOrderDetail
+   * to split the form across the Overview / Positions / Requirements
+   * tabs. Defaults to `'all'` so other consumers (NewJobOrder modal,
+   * AddJobOrderModal, etc.) keep rendering the full form.
+   *
+   * - `'overview'` — Basic Information block + Financials
+   * - `'positions'` — Career job-title/pay/markup/WC/shift/JD fields
+   *                    and the Gig multi-position editor
+   * - `'requirements'` — Compliance & Requirements block
+   * - `'all'` — render every section (default; legacy behavior)
+   */
+  section?: 'overview' | 'positions' | 'requirements' | 'all';
+  /**
+   * Optional callback to jump to the Positions tab. When provided
+   * (e.g. by `RecruiterJobOrderDetail.tsx` wiring it to
+   * `setActiveTab('positions')`), the override-summary banner on
+   * the Requirements tab becomes a clickable link that switches
+   * tabs. Without the callback the banner still renders but is
+   * non-interactive. Slice 2 (May 2026) of the per-position
+   * requirements override work.
+   */
+  onJumpToPositionsTab?: () => void;
+  /**
+   * When true, suppress the Compliance & Requirements section even
+   * if it would otherwise render under `section='all'` /
+   * `section='requirements'`. Used by `AddJobOrderModal.tsx`
+   * (May 2026) to keep the create-new-JO dialog focused on the
+   * minimum-viable fields — recruiters fill in compliance/
+   * requirements after the JO exists, on the JO detail page's
+   * "Default Requirements" tab (and per-position overrides on the
+   * "Positions" tab). Defaults to `false` so existing callers
+   * (`NewJobOrder.tsx`, `RecruiterJobOrderDetail.tsx` Requirements
+   * tab, etc.) keep their current behavior.
+   */
+  hideRequirementsSection?: boolean;
 }
 
 const JobOrderForm: React.FC<JobOrderFormProps> = ({ 
@@ -232,7 +516,19 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   groups: propGroups,
   recruiterAccountId: propRecruiterAccountId,
   requireAccountSelection = false,
+  section = 'all',
+  onJumpToPositionsTab,
+  hideRequirementsSection = false,
 }) => {
+  const showOverview = section === 'overview' || section === 'all';
+  const showPositions = section === 'positions' || section === 'all';
+  // `hideRequirementsSection` (May 2026): per-modal opt-out so the
+  // create-new-JO dialog can skip the Compliance & Requirements
+  // block entirely. The Requirements tab on the JO detail page does
+  // NOT pass this flag, so its behavior is unchanged.
+  const showRequirements =
+    !hideRequirementsSection &&
+    (section === 'requirements' || section === 'all');
   const { tenantId: authTenantId, user: authUser } = useAuth();
   const navigate = useNavigate();
   
@@ -362,8 +658,29 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
        *  "Cooks" sharing the same gig JO. Mirrors how account pricing
        *  stores `pricing.positions[i].jobDescriptionFromClient`. */
       jobDescriptionFromClient?: string;
+      /** Per-position Compliance & Requirements overrides — see
+       *  `src/shared/jobOrder/resolveJobOrderRequirements.ts` for the
+       *  contract. Slice 1 (May 2026): the field is in state and round-
+       *  trips to Firestore via `normalizeGigPositionsForPersist` (the
+       *  spread preserves it), but no UI binds to it yet. Slice 2 adds
+       *  the per-position editor on the Positions tab; slice 3 flips
+       *  the readers (Apply / orchestrator / onboarding) to read via
+       *  the resolver. Keeping this in state up front means the form
+       *  schema doesn't move twice. */
+      requirements?: import(
+        '../shared/jobOrder/resolveJobOrderRequirements'
+      ).GigPositionRequirementOverrides | null;
     }>
   >([{ jobTitle: '', workersNeeded: 1, payRate: '' }]); // For gig-type jobs with multiple positions
+  /**
+   * Which gig position is active in the Positions-tab sub-nav. Mirrors
+   * the per-position `<Tabs>` strip on the Jobs Board tab — one sub-tab
+   * per `gigPositions[i]`, active position renders below. Career JOs
+   * don't use this. Index is 0-based and clamped on `gigPositions`
+   * length changes (see effect below) so deleting the active position
+   * doesn't leave the strip pointing at a non-existent index.
+   */
+  const [positionsSubTab, setPositionsSubTab] = useState(0);
   /** Draft text for career Job Title Autocomplete (value commits on blur / pick / Enter — avoids save+re-render each keystroke). */
   const [careerJobTitleInput, setCareerJobTitleInput] = useState('');
   const careerJobTitleInputRef = useRef('');
@@ -373,6 +690,15 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   const [companies, setCompanies] = useState<Company[]>(propCompanies || []);
   const [locations, setLocations] = useState<Location[]>(propLocations || []);
   const [filteredLocations, setFilteredLocations] = useState<Location[]>([]);
+  // User groups for the "Auto-Add to User Groups" Autocomplete on the
+  // Overview section (created modal + JO detail Overview tab). Loaded
+  // once per tenant on mount; mirrors the pattern used by
+  // `JobPostForm.tsx` (`loadUserGroups`). Stored values land on the JO
+  // doc as `autoAddToUserGroups: string[]`. The post-creation cascade
+  // (`JobsBoardService.createPostsForGigJobOrderPositions`) reads the
+  // JO field and seeds each new post's own `autoAddToUserGroups`.
+  const [userGroupsList, setUserGroupsList] = useState<UserGroupRow[]>([]);
+  const [loadingUserGroupsList, setLoadingUserGroupsList] = useState(false);
   const [associatedContacts, setAssociatedContacts] = useState<Contact[]>([]);
   const [companyContacts, setCompanyContacts] = useState<JobOrderContact[]>([]);
   const [loadedContacts, setLoadedContacts] = useState<any[]>([]);
@@ -404,6 +730,41 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     skills,
   } as any;
 
+  /**
+   * Option bundle for the per-position requirements override editor
+   * (`PositionRequirementsEditor` on the Positions tab). Memo'd so we
+   * don't rebuild on every render — `getOptionsForField` allocates
+   * on each call. The editor uses these for its multi-select fields
+   * (licensesCerts, skills, languages); hardcoded physical / PPE
+   * lists live inside the editor itself, so we don't pass those.
+   */
+  const positionRequirementsOptions = useMemo<PositionRequirementsOptions>(
+    () => ({
+      additionalScreenings: Array.isArray(additionalScreeningOptions)
+        ? additionalScreeningOptions.map((o) => o.label)
+        : [],
+      licensesCerts:
+        (getOptionsForField('licensesCerts', companyDefaultsForOptions) as Array<{
+          value: string;
+          label: string;
+        }>) ?? [],
+      skills:
+        (getOptionsForField('skills', companyDefaultsForOptions) as Array<{
+          value: string;
+          label: string;
+        }>) ?? [],
+      languages:
+        (getOptionsForField('languages', companyDefaultsForOptions) as Array<{
+          value: string;
+          label: string;
+        }>) ?? [],
+      experienceLevels: experienceOptions as Array<{ value: string; label: string }>,
+      educationLevels: educationOptions as Array<{ value: string; label: string }>,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- companyDefaultsForOptions is rebuilt on every render but its underlying state only changes when the dependent option arrays change; tracking those leaves directly avoids stale closures.
+    [licensesCerts, skills, languages, experienceLevels, educationLevels],
+  );
+
   const [formData, setFormData] = useState({
     // Basic Information
     jobOrderNumber: '',
@@ -424,6 +785,17 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     endDate: '',
     requirements: '',
     notes: '',
+    /**
+     * User groups whose members get auto-added when an applicant is
+     * hired off this JO. Mirrors `JobsBoardPost.autoAddToUserGroups`
+     * — the post-creation cascade
+     * (`JobsBoardService.createPostsForGigJobOrderPositions` and
+     * `customData.autoAddToUserGroups`) seeds new posts with this
+     * value so the recruiter only sets it once on the JO. Empty
+     * array means "no extra groups beyond the auto-created group
+     * stamped by `onJobOrderCreatedAttachAutoUserGroup`".
+     */
+    autoAddToUserGroups: [] as string[],
     /** Gig Financials (preliminary event budget) */
     poNumber: '',
     gigEstimatedValue: '',
@@ -544,6 +916,60 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   useEffect(() => {
     setCareerJobTitleInput(String(formData.jobTitle ?? ''));
   }, [formData.jobTitle]);
+
+  // Load the tenant's user groups once (for the "Auto-Add to User
+  // Groups" Autocomplete above Financials). Mirrors `loadUserGroups`
+  // in `JobPostForm.tsx`. Permission-denied → empty list, no error
+  // toast (the field is optional and the modal should still load).
+  useEffect(() => {
+    if (!tenantId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoadingUserGroupsList(true);
+        const userGroupsRef = collection(db, 'tenants', tenantId, 'userGroups');
+        const snapshot = await getDocs(userGroupsRef);
+        if (cancelled) return;
+        const rows: UserGroupRow[] = snapshot.docs.map((d) => {
+          const data = d.data() as {
+            title?: string;
+            name?: string;
+            type?: string;
+            autoCreatedFrom?: unknown;
+          };
+          // Mirrors `isAutoUserGroup` used in `RecruiterUserGroups.tsx`:
+          // canonical = `type === 'auto'` OR an `autoCreatedFrom` audit
+          // object exists. Surfaced as the "Auto" chip.
+          const isAuto =
+            data.type === 'auto' ||
+            (data.autoCreatedFrom != null && typeof data.autoCreatedFrom === 'object');
+          return {
+            id: d.id,
+            name: data.title || data.name || 'Unnamed Group',
+            isAuto,
+          };
+        });
+        setUserGroupsList(rows);
+      } catch (err: any) {
+        if (err?.code === 'permission-denied') {
+          if (!cancelled) setUserGroupsList([]);
+        } else {
+          console.error('Error loading user groups for JobOrderForm:', err);
+          if (!cancelled) setUserGroupsList([]);
+        }
+      } finally {
+        if (!cancelled) setLoadingUserGroupsList(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId]);
+
+  const userGroupsListForUi = useMemo(
+    () => dedupeUserGroupsForUi(userGroupsList),
+    [userGroupsList],
+  );
 
   // Load account Pricing positions for gig job title options (after formData / loadedJobOrderData exist)
   useEffect(() => {
@@ -1243,6 +1669,69 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     jobOrderId,
   ]);
 
+  /**
+   * Auto-save gig positions to Firestore on change.
+   *
+   * Other fields auto-save via `handleInputChange` / `handleFieldBlur`,
+   * but gig positions live in their own state array (`gigPositions`) and
+   * mutate via `setGigPositions` directly — so without this effect they
+   * would only persist when the user clicks the Save button. With Save
+   * removed (UI is fully blur-driven), this effect closes the loop.
+   *
+   * The effect debounces by 600ms to coalesce rapid keystrokes, and
+   * tracks the last persisted signature in a ref so the load-time
+   * `setGigPositions(loaded)` call doesn't immediately re-save the same
+   * data back to Firestore.
+   */
+  const gigPositionsLastSavedSigRef = useRef<string | null>(null);
+  const gigPositionsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const formDataRef = useRef(formData);
+  formDataRef.current = formData;
+  useEffect(() => {
+    if (!isEditing || !jobOrderId) return;
+    if (formData.jobType !== 'gig') return;
+    const sig = JSON.stringify(normalizeGigPositionsForPersist(gigPositions as any));
+    // Seed on first observation (initial mount or load) so we don't
+    // re-save the freshly loaded array.
+    if (gigPositionsLastSavedSigRef.current === null) {
+      gigPositionsLastSavedSigRef.current = sig;
+      return;
+    }
+    if (sig === gigPositionsLastSavedSigRef.current) return;
+    if (gigPositionsSaveTimerRef.current) {
+      clearTimeout(gigPositionsSaveTimerRef.current);
+    }
+    gigPositionsSaveTimerRef.current = setTimeout(() => {
+      gigPositionsLastSavedSigRef.current = sig;
+      void saveFieldToFirestore('gigPositions', gigPositions, formDataRef.current);
+    }, 600);
+    return () => {
+      if (gigPositionsSaveTimerRef.current) {
+        clearTimeout(gigPositionsSaveTimerRef.current);
+      }
+    };
+    // saveFieldToFirestore captures latest state via formDataRef; only
+    // trigger on real position / mode changes, not on every formData edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gigPositions, isEditing, jobOrderId, formData.jobType]);
+
+  /**
+   * Keep the Positions-tab sub-nav index valid when the position list
+   * grows / shrinks. Without this, deleting the currently-active
+   * position would leave the strip pointing at a stale index and the
+   * panel below would render nothing. We clamp to the last position;
+   * "Add Position" elsewhere explicitly jumps the strip to the new
+   * tail so the recruiter lands on the position they just created.
+   */
+  useEffect(() => {
+    const last = Math.max(0, gigPositions.length - 1);
+    setPositionsSubTab((prev) => {
+      if (gigPositions.length === 0) return 0;
+      if (prev > last) return last;
+      return prev;
+    });
+  }, [gigPositions.length]);
+
   const loadCompanies = async () => {
     try {
       const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
@@ -1820,6 +2309,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               : '',
           gigEstimatedStartDate: toISODate((data as any).gigEstimatedStartDate) || '',
           gigEstimatedEndDate: toISODate((data as any).gigEstimatedEndDate) || '',
+          autoAddToUserGroups: Array.isArray((data as any).autoAddToUserGroups)
+            ? ((data as any).autoAddToUserGroups as string[]).filter(
+                (id) => typeof id === 'string' && id.trim() !== '',
+              )
+            : [],
         });
 
         const rid = (data as any).recruiterAccountId;
@@ -1849,6 +2343,22 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               sutaRate: p.sutaRate != null && p.sutaRate !== '' ? String(p.sutaRate) : '',
               futaRate: p.futaRate != null && p.futaRate !== '' ? String(p.futaRate) : '',
               jobDescriptionFromClient: jd || undefined,
+              /*
+               * Per-position Compliance & Requirements override map
+               * (slice 1, May 2026). Round-trip the stored value
+               * verbatim so the inline Uniform Requirements +
+               * Custom Uniform Requirements fields (and the
+               * collapsible PositionRequirementsEditor below them)
+               * survive a reload. Without this, saved values would
+               * appear to "not save on blur" — they ARE persisted
+               * by the gigPositions auto-save, but every reload
+               * dropped them because this explicit field-by-field
+               * reconstruction never copied the map across.
+               */
+              requirements:
+                p && typeof p.requirements === 'object' && p.requirements !== null
+                  ? p.requirements
+                  : undefined,
             };
           });
           setGigPositions(loaded);
@@ -2150,6 +2660,15 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           (dataToUse as any).jobType === 'gig'
             ? (dataToUse as any).gigEstimatedEndDate || null
             : undefined,
+        // Per-JO Auto-Add to User Groups (May 2026). The on-blur path
+        // mirrors the bulk save in `handleSave` — empty array is a
+        // valid "clear" (don't strip with `undefined` so removing the
+        // last chip actually clears the field on Firestore).
+        autoAddToUserGroups: Array.isArray((dataToUse as any).autoAddToUserGroups)
+          ? ((dataToUse as any).autoAddToUserGroups as unknown[]).filter(
+              (id): id is string => typeof id === 'string' && id.trim() !== '',
+            )
+          : [],
         estimatedRevenue: (() => {
           if ((dataToUse as any).jobType === 'gig') {
             const ev = toNumberSafe((dataToUse as any).gigEstimatedValue);
@@ -2585,6 +3104,14 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           formData.jobType === 'gig' ? formData.gigEstimatedStartDate || null : undefined,
         gigEstimatedEndDate:
           formData.jobType === 'gig' ? formData.gigEstimatedEndDate || null : undefined,
+        // Per-JO Auto-Add to User Groups (May 2026). Persist even
+        // when empty so removing a group on the JO doc clears it
+        // (vs. `undefined` which `removeUndefinedValues` strips).
+        autoAddToUserGroups: Array.isArray(formData.autoAddToUserGroups)
+          ? formData.autoAddToUserGroups.filter(
+              (id) => typeof id === 'string' && id.trim() !== '',
+            )
+          : [],
         estimatedRevenue: (() => {
           if (formData.jobType === 'gig') {
             const v = parseFloat(String(formData.gigEstimatedValue || ''));
@@ -2778,18 +3305,113 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         </Alert>
       )}
 
-      {/* Comprehensive Form with Section Headers */}
-      <Card>
-        <CardContent>
-          <Grid container spacing={2}>
-            {/* Basic Information Section */}
-            <Grid item xs={12} md={6}>
-              <Typography variant="h6" gutterBottom sx={{ mt: 2, mb: 2, color: 'primary.main' }}>
-                Basic Information
-              </Typography>
-            </Grid>
+      {/*
+        Positions-tab gig sub-nav is hoisted ABOVE the outer Card so
+        the strip sits on the page background — matches the Jobs Board
+        tab layout (`RecruiterJobOrderDetail.tsx` `JobOrderJobsBoardTab`).
+        The strip itself + the per-position cards together replace the
+        outer Card visually; below, the outer Card is rendered
+        transparent in this mode so it doesn't add a duplicate frame.
+        Career JOs and the legacy `section="all"` callers keep the
+        single-Card layout.
+      */}
+      {section === 'positions' && formData.jobType === 'gig' && gigPositions.length > 0 && (
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            borderBottom: 1,
+            borderColor: 'divider',
+            mb: 2,
+          }}
+        >
+          <Tabs
+            value={Math.min(positionsSubTab, Math.max(0, gigPositions.length - 1))}
+            onChange={(_, v) => setPositionsSubTab(v)}
+            variant="scrollable"
+            scrollButtons="auto"
+          >
+            {gigPositions.map((pos, idx) => (
+              <Tab
+                key={idx}
+                label={String(pos.jobTitle ?? '').trim() || `Position ${idx + 1}`}
+                id={`positions-tab-${idx}`}
+                aria-controls={`positions-tabpanel-${idx}`}
+              />
+            ))}
+          </Tabs>
+          <Button
+            size="small"
+            startIcon={<AddIcon />}
+            onClick={() => {
+              setGigPositions((prev) => [
+                ...prev,
+                {
+                  jobTitle: '',
+                  workersNeeded: 1,
+                  payRate: '',
+                  workersCompClassCode: '',
+                  workersCompRate: '',
+                  sutaRate: '',
+                  futaRate: '',
+                  jobDescriptionFromClient: '',
+                },
+              ]);
+              setPositionsSubTab(gigPositions.length);
+            }}
+            sx={{ flexShrink: 0, ml: 2 }}
+          >
+            Add Position
+          </Button>
+        </Box>
+      )}
 
+      {/*
+        Comprehensive Form with Section Headers.
+
+        For the Positions tab on a gig JO the outer Card is rendered
+        flat (no shadow, no background, no border, zero padding) so
+        only the per-position Card frames below are visible — see
+        the conditional sx blocks. We don't drop the Card entirely
+        because that would require duplicating all the inner JSX;
+        making it visually inert is enough.
+      */}
+      <Card
+        elevation={0}
+        sx={
+          section === 'positions' && formData.jobType === 'gig'
+            ? {
+                boxShadow: 'none',
+                backgroundColor: 'transparent',
+                border: 'none',
+                borderRadius: 0,
+                '&:hover': { boxShadow: 'none' },
+              }
+            : undefined
+        }
+      >
+        <CardContent
+          sx={
+            section === 'positions' && formData.jobType === 'gig'
+              ? { p: 0, '&:last-child': { pb: 0 } }
+              : undefined
+          }
+        >
+          <Grid container spacing={2}>
+            {/* Basic Information Section — shown on Overview tab. */}
+            {showOverview && (
+              <Grid item xs={12} md={6}>
+                <Typography variant="h6" gutterBottom sx={{ mt: 2, mb: 2, color: 'primary.main' }}>
+                  Basic Information
+                </Typography>
+              </Grid>
+            )}
+
+            {(showOverview || showPositions) && (
             <Grid container spacing={2} sx={{ mb: 3 }}>
+            {showOverview && (
+              <>
             
               <Grid item xs={12} md={6}>
                 <TextField
@@ -3090,6 +3712,159 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 </>
               )}
 
+              {/*
+                Auto-Add to User Groups (May 2026). Per-JO equivalent of
+                `JobsBoardPost.autoAddToUserGroups` — recruiter picks
+                groups once on the JO and the post-creation cascade
+                (`JobsBoardService.createPostsForGigJobOrderPositions`)
+                seeds each new posting with the same list. Independent
+                of the auto-created National Account group stamped by
+                `onJobOrderCreatedAttachAutoUserGroup` (that one shows
+                separately on Auto Messaging / posts; this is for any
+                ADDITIONAL groups the recruiter wants to auto-add to).
+              */}
+              <Grid item xs={12}>
+                <Autocomplete
+                  multiple
+                  options={userGroupsListForUi}
+                  getOptionLabel={(option) => option.name || 'Unnamed Group'}
+                  isOptionEqualToValue={(opt, val) => opt.id === val.id}
+                  value={autoAddGroupsPickerValue(
+                    formData.autoAddToUserGroups,
+                    userGroupsList,
+                    userGroupsListForUi,
+                  )}
+                  onChange={(_, newValue) => {
+                    const ids = newValue.map((g) => g.id);
+                    // Use the functional setState so we can pass the
+                    // freshly-merged form data into
+                    // `saveFieldToFirestore`. Otherwise its `dataToUse`
+                    // fallback would read the *old* `formData` from
+                    // closure and persist the stale array. Mirrors
+                    // `commitCareerJobTitle` (~line 2758).
+                    setFormData((prev) => {
+                      const next = { ...prev, autoAddToUserGroups: ids };
+                      if (isEditing && jobOrderId) {
+                        void saveFieldToFirestore(
+                          'autoAddToUserGroups',
+                          ids,
+                          next,
+                        );
+                      }
+                      return next;
+                    });
+                  }}
+                  loading={loadingUserGroupsList}
+                  noOptionsText={
+                    loadingUserGroupsList ? 'Loading...' : 'No user groups available'
+                  }
+                  renderTags={(value, getTagProps) =>
+                    value.map((option, index) => {
+                      const tagProps = getTagProps({ index });
+                      const isAuto = (option as { isAuto?: boolean }).isAuto === true;
+                      if (isAuto) {
+                        return (
+                          <Tooltip
+                            key={option.id}
+                            title="Auto-attached: created automatically from the National Account's auto-group setting. Removable, but will be re-attached on the next posting sync if the JO's auto-group is still set."
+                          >
+                            <Chip
+                              {...tagProps}
+                              label={`${option.name || 'Unnamed Group'} \u00b7 Auto`}
+                              size="small"
+                              color="success"
+                              variant="outlined"
+                            />
+                          </Tooltip>
+                        );
+                      }
+                      return (
+                        <Chip
+                          {...tagProps}
+                          key={option.id}
+                          label={option.name || 'Unnamed Group'}
+                          size="small"
+                        />
+                      );
+                    })
+                  }
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Auto-Add to User Groups"
+                      placeholder="Search user groups..."
+                      helperText="Hires from this job order are automatically added to these user groups."
+                    />
+                  )}
+                />
+              </Grid>
+
+              {/* Financials — Gig and Career; placed directly under the
+                  date row. Career still uses the same form state fields
+                  (`gigEstimatedValue`, `gigAverageMarkup`) — the field
+                  names are historical; semantically they're job-order-
+                  level financials regardless of type. */}
+              {(formData.jobType === 'gig' || formData.jobType === 'career') && (
+                <>
+                  <Grid item xs={12}>
+                    <Typography variant="h6" gutterBottom sx={{ mt: 2, mb: 1, color: 'primary.main' }}>
+                      Financials
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <TextField
+                      fullWidth
+                      label="PO Number"
+                      value={formData.poNumber}
+                      onChange={(e) => handleInputChange('poNumber', e.target.value)}
+                      onBlur={(e) => handleFieldBlur('poNumber', e.target.value)}
+                      placeholder="e.g. PO-2025-001"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <TextField
+                      fullWidth
+                      label="Estimated Value"
+                      type="number"
+                      value={formData.gigEstimatedValue}
+                      onChange={(e) => handleInputChange('gigEstimatedValue', e.target.value)}
+                      onBlur={(e) => handleFieldBlur('gigEstimatedValue', e.target.value)}
+                      placeholder="0.00"
+                      inputProps={{ min: 0, step: 0.01 }}
+                      helperText={formData.jobType === 'gig' ? 'Preliminary budget for this event' : 'Preliminary budget for this job order'}
+                      InputProps={{
+                        startAdornment: <InputAdornment position="start">$</InputAdornment>,
+                      }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <TextField
+                      fullWidth
+                      label="Average Markup (%)"
+                      type="number"
+                      value={formData.gigAverageMarkup}
+                      onChange={(e) => handleInputChange('gigAverageMarkup', e.target.value)}
+                      onBlur={(e) => handleFieldBlur('gigAverageMarkup', e.target.value)}
+                      placeholder="e.g. 25"
+                      inputProps={{ min: 0, step: 0.1 }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <TextField
+                      fullWidth
+                      label="Gross Profit"
+                      value={gigGrossProfitDisplay || '—'}
+                      InputProps={{ readOnly: true }}
+                      helperText="Estimate − [estimate ÷ (1 + markup%)]"
+                    />
+                  </Grid>
+                </>
+              )}
+              </>
+            )}
+
+            {showPositions && (
+              <>
               {/* Career Type: Single Job Title and Workers Needed */}
               {formData.jobType === 'career' && (
                 <>
@@ -3151,95 +3926,21 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 </>
               )}
 
-              {/* Financials — Gig only (preliminary event budget); below Basic Information, above Positions & Compliance */}
-              {formData.jobType === 'gig' && (
-                <>
-                  <Grid item xs={12}>
-                    <Typography variant="h6" gutterBottom sx={{ mt: 2, mb: 1, color: 'primary.main' }}>
-                      Financials
-                    </Typography>
-                  </Grid>
-                  <Grid item xs={12} sm={6} md={3}>
-                    <TextField
-                      fullWidth
-                      label="PO Number"
-                      value={formData.poNumber}
-                      onChange={(e) => handleInputChange('poNumber', e.target.value)}
-                      onBlur={(e) => handleFieldBlur('poNumber', e.target.value)}
-                      placeholder="e.g. PO-2025-001"
-                    />
-                  </Grid>
-                  <Grid item xs={12} sm={6} md={3}>
-                    <TextField
-                      fullWidth
-                      label="Estimated Value"
-                      type="number"
-                      value={formData.gigEstimatedValue}
-                      onChange={(e) => handleInputChange('gigEstimatedValue', e.target.value)}
-                      onBlur={(e) => handleFieldBlur('gigEstimatedValue', e.target.value)}
-                      placeholder="0.00"
-                      inputProps={{ min: 0, step: 0.01 }}
-                      helperText="Preliminary budget for this event"
-                      InputProps={{
-                        startAdornment: <InputAdornment position="start">$</InputAdornment>,
-                      }}
-                    />
-                  </Grid>
-                  <Grid item xs={12} sm={6} md={3}>
-                    <TextField
-                      fullWidth
-                      label="Average Markup (%)"
-                      type="number"
-                      value={formData.gigAverageMarkup}
-                      onChange={(e) => handleInputChange('gigAverageMarkup', e.target.value)}
-                      onBlur={(e) => handleFieldBlur('gigAverageMarkup', e.target.value)}
-                      placeholder="e.g. 25"
-                      inputProps={{ min: 0, step: 0.1 }}
-                    />
-                  </Grid>
-                  <Grid item xs={12} sm={6} md={3}>
-                    <TextField
-                      fullWidth
-                      label="Gross Profit"
-                      value={gigGrossProfitDisplay || '—'}
-                      InputProps={{ readOnly: true }}
-                      helperText="Estimate − [estimate ÷ (1 + markup%)]"
-                    />
-                  </Grid>
-                </>
-              )}
-
-              {/* Gig Type: Multiple Positions */}
+              {/*
+                Gig Type: Multiple Positions
+                ----------------------------
+                Each gig position lives in its own sub-tab — same UX
+                as the Jobs Board tab on the Job Order detail page
+                (see `RecruiterJobOrderDetail.tsx` `JobOrderJobsBoardTab`).
+                Recruiter clicks a tab to focus that position; the
+                "Add Position" button on the right of the strip
+                appends a new position and jumps the active tab to it.
+                Career JOs don't use this — they have a single
+                Job Title / Workers Needed pair, no positions array.
+              */}
               {formData.jobType === 'gig' && (
                 <Grid item xs={12}>
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 600 }}>
-                        Positions
-                      </Typography>
-                      <Button
-                        size="small"
-                        startIcon={<AddIcon />}
-                        onClick={() => {
-                          setGigPositions([
-                            ...gigPositions,
-                            {
-                              jobTitle: '',
-                              workersNeeded: 1,
-                              payRate: '',
-                              workersCompClassCode: '',
-                              workersCompRate: '',
-                              sutaRate: '',
-                              futaRate: '',
-                              jobDescriptionFromClient: '',
-                            },
-                          ]);
-                        }}
-                      >
-                        Add Position
-                      </Button>
-                    </Box>
-
                     {showSutaFutaOnGigPositions && (
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
                         <Button
@@ -3258,8 +3959,121 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                       </Box>
                     )}
 
+                    {/*
+                      Per-position sub-nav. For the dedicated
+                      Positions tab (`section === 'positions'`) the
+                      strip is rendered ABOVE the outer Card (see
+                      block higher up in this component) so it sits
+                      on the page background — matches the Jobs Board
+                      tab. For legacy `section === 'all'` callers
+                      (NewJobOrder modal etc.) we still need the
+                      strip in-line; that case is rendered here.
+                      Untitled positions get a "Position N" fallback
+                      label so the tab is always clickable while the
+                      recruiter is mid-typing the title. We use the
+                      array index as key so editing the title doesn't
+                      unmount / remount the active tab on every
+                      keystroke.
+                    */}
+                    {section !== 'positions' && (
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          borderBottom: 1,
+                          borderColor: 'divider',
+                        }}
+                      >
+                        <Tabs
+                          value={Math.min(positionsSubTab, Math.max(0, gigPositions.length - 1))}
+                          onChange={(_, v) => setPositionsSubTab(v)}
+                          variant="scrollable"
+                          scrollButtons="auto"
+                        >
+                          {gigPositions.map((pos, idx) => (
+                            <Tab
+                              key={idx}
+                              label={String(pos.jobTitle ?? '').trim() || `Position ${idx + 1}`}
+                              id={`positions-tab-${idx}`}
+                              aria-controls={`positions-tabpanel-${idx}`}
+                            />
+                          ))}
+                        </Tabs>
+                        <Button
+                          size="small"
+                          startIcon={<AddIcon />}
+                          onClick={() => {
+                            setGigPositions((prev) => [
+                              ...prev,
+                              {
+                                jobTitle: '',
+                                workersNeeded: 1,
+                                payRate: '',
+                                workersCompClassCode: '',
+                                workersCompRate: '',
+                                sutaRate: '',
+                                futaRate: '',
+                                jobDescriptionFromClient: '',
+                              },
+                            ]);
+                            setPositionsSubTab(gigPositions.length);
+                          }}
+                          sx={{ flexShrink: 0, ml: 2 }}
+                        >
+                          Add Position
+                        </Button>
+                      </Box>
+                    )}
+
                     {gigPositions.map((position, index) => (
-                      <Box key={index} sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                      <div
+                        key={index}
+                        role="tabpanel"
+                        hidden={positionsSubTab !== index}
+                        id={`positions-tabpanel-${index}`}
+                        aria-labelledby={`positions-tab-${index}`}
+                      >
+                        {positionsSubTab === index && (
+                      // Per-position panel. On the dedicated Positions
+                      // tab the active position sits below the
+                      // external sub-nav as a single flat panel —
+                      // white bg, rounded, thin border, NO shadow
+                      // and NO hover effect (the outer Card wrapper
+                      // is also rendered visually inert in this mode,
+                      // so a shadow here would read as the second
+                      // half of a card-within-a-card frame). Legacy
+                      // `section === 'all'` callers keep the original
+                      // bordered-Box look (used in the NewJobOrder
+                      // modal etc., where multiple positions render
+                      // inline under one outer wrapping Card).
+                      <Box
+                        sx={
+                          section === 'positions'
+                            ? {
+                                display: 'flex',
+                                gap: 2,
+                                alignItems: 'flex-start',
+                                p: 3,
+                                mb: 2,
+                                bgcolor: 'background.paper',
+                                borderRadius: 1,
+                                border: '1px solid',
+                                borderColor: 'divider',
+                                boxShadow: 'none',
+                                '&:hover': { boxShadow: 'none', borderColor: 'divider' },
+                              }
+                            : {
+                                display: 'flex',
+                                gap: 2,
+                                alignItems: 'flex-start',
+                                p: 2,
+                                border: '1px solid',
+                                borderColor: 'divider',
+                                borderRadius: 1,
+                              }
+                        }
+                      >
                         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
                           {/* Row 1: Job Title (Workers Needed removed for Gig type) */}
                           <Box sx={{ display: 'flex', gap: 2 }}>
@@ -3324,7 +4138,14 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                                         row.jobDescriptionFromClient = jdFromPreset;
                                       }
                                     }
-                                    updated[index] = row;
+                                    // Cascade account Pricing → position requirements
+                                    // (May 2026). Covers uniform + screenings + licenses +
+                                    // physical / PPE / skills / languages / experience /
+                                    // education. Same "only seed when empty" rule as the JD
+                                    // branch above so the recruiter doesn't lose tweaks when
+                                    // they reselect the title.
+                                    const rowAfterReqs = applyAccountRequirementsCascadeToPositionRow(row, preset);
+                                    updated[index] = rowAfterReqs as typeof updated[number];
                                     return updated;
                                   });
                                 }}
@@ -3396,7 +4217,13 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                                             row.jobDescriptionFromClient = jdFromPreset;
                                           }
                                         }
-                                        updated[index] = row;
+                                        // Mirror the onChange branch — cascade account
+                                        // Pricing → position requirements (uniform +
+                                        // screenings + licenses + physical / PPE / skills /
+                                        // languages / experience / education) when the
+                                        // recruiter free-types a job title and tabs out.
+                                        const rowAfterReqs = applyAccountRequirementsCascadeToPositionRow(row, preset);
+                                        updated[index] = rowAfterReqs as typeof updated[number];
                                         return updated;
                                       });
                                     }}
@@ -3560,6 +4387,125 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                             rows={4}
                             placeholder="Enter the client-provided description for this position..."
                           />
+
+                          {/*
+                            Per-position Uniform Requirements (May 2026).
+                            Hosted inline below the JD because uniforms
+                            are inherently per-role on gig events (Cooks
+                            wear chef coats, Servers wear black bistro,
+                            etc.) — pulling them out of the collapsible
+                            override block makes them tactile without
+                            forcing the recruiter to expand "Customize"
+                            for every position. Both fields write to the
+                            same `position.requirements` map slice 1
+                            introduced (`dressCode` array,
+                            `customUniformRequirements` string) so the
+                            existing resolver / Jobs Board snapshot
+                            wiring (slice 3) picks them up unchanged.
+                          */}
+                          <Autocomplete
+                            multiple
+                            size="small"
+                            options={POSITION_DRESS_CODE_OPTIONS}
+                            value={
+                              Array.isArray((position as any)?.requirements?.dressCode)
+                                ? (position as any).requirements.dressCode
+                                : []
+                            }
+                            onChange={(_e, newValue) => {
+                              setGigPositions((prev) => {
+                                const updated = [...prev];
+                                const prevReqs = (updated[index] as any).requirements ?? {};
+                                updated[index] = {
+                                  ...updated[index],
+                                  requirements: {
+                                    ...prevReqs,
+                                    dressCode: newValue,
+                                  },
+                                };
+                                return updated;
+                              });
+                            }}
+                            renderTags={(value, getTagProps) =>
+                              value.map((option: string, idx: number) => {
+                                const { key, ...chipProps } = getTagProps({ index: idx });
+                                return (
+                                  <Chip
+                                    key={key}
+                                    label={option}
+                                    size="small"
+                                    variant="outlined"
+                                    {...chipProps}
+                                  />
+                                );
+                              })
+                            }
+                            renderInput={(params) => (
+                              <TextField
+                                {...params}
+                                size="small"
+                                label="Uniform Requirements"
+                                placeholder="e.g. Black Bistro, Closed-Toe Shoes"
+                                helperText="Select the dress code / uniform pieces applicants must wear for this position."
+                              />
+                            )}
+                          />
+
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Custom Uniform Requirements"
+                            value={
+                              typeof (position as any)?.requirements?.customUniformRequirements === 'string'
+                                ? (position as any).requirements.customUniformRequirements
+                                : ''
+                            }
+                            onChange={(e) => {
+                              setGigPositions((prev) => {
+                                const updated = [...prev];
+                                const prevReqs = (updated[index] as any).requirements ?? {};
+                                updated[index] = {
+                                  ...updated[index],
+                                  requirements: {
+                                    ...prevReqs,
+                                    customUniformRequirements: e.target.value,
+                                  },
+                                };
+                                return updated;
+                              });
+                            }}
+                            multiline
+                            rows={2}
+                            placeholder="Anything not covered by the standard list (e.g. branded apron, specific shoe color)..."
+                          />
+
+                          {/*
+                            Per-position requirements overrides
+                            (slice 2 of the May 2026 work). Reads JO
+                            defaults from `formData` and writes
+                            position-level overrides to
+                            `gigPositions[index].requirements`. The
+                            existing debounced auto-save (see
+                            `gigPositionsLastSavedSigRef` effect
+                            above) persists the change to Firestore
+                            ~600ms after the recruiter stops editing
+                            — no per-call save needed here.
+                          */}
+                          <PositionRequirementsEditor
+                            jobOrder={formData}
+                            position={position}
+                            options={positionRequirementsOptions}
+                            onChange={(nextRequirements) => {
+                              setGigPositions((prev) => {
+                                const updated = [...prev];
+                                updated[index] = {
+                                  ...updated[index],
+                                  requirements: nextRequirements,
+                                };
+                                return updated;
+                              });
+                            }}
+                          />
                         </Box>
                         {gigPositions.length > 1 && (
                           <IconButton
@@ -3574,6 +4520,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                           </IconButton>
                         )}
                       </Box>
+                        )}
+                      </div>
                     ))}
                   </Box>
                 </Grid>
@@ -3763,15 +4711,53 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 />
               </Grid>
             )}
+              </>
+            )}
 
             </Grid>
+            )}
 
-            {/* Compliance & Requirements Section */}
+            {/* Compliance & Requirements Section — shown on Requirements tab. */}
+            {showRequirements && (<>
             <Grid item xs={12}>
-              <Divider sx={{ my: 3 }} />
+              {section === 'all' && <Divider sx={{ my: 3 }} />}
               <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
                 Compliance & Requirements
               </Typography>
+              {/*
+                Overrides summary banner (slice 2 May 2026). Visible
+                only on gig JOs and only when at least one position
+                has overrides. Tells the recruiter where to find them
+                so the Requirements tab doesn't feel like the only
+                source of truth. Career JOs never trigger this banner
+                because they don't carry positions at this layer.
+                Click jumps to the Positions tab via the optional
+                onJumpToPositionsTab callback (page-level wires it
+                with `setActiveTab('positions')`); without the
+                callback the banner still renders but isn't
+                clickable.
+              */}
+              {formData.jobType === 'gig' && (() => {
+                const positionsWithOverrides = (gigPositions || []).filter(
+                  (p) =>
+                    p?.requirements != null &&
+                    Object.values(p.requirements).some((v) => v !== undefined && v !== null),
+                ).length;
+                if (positionsWithOverrides === 0) return null;
+                return (
+                  <Alert
+                    severity="info"
+                    sx={{ mb: 2, cursor: onJumpToPositionsTab ? 'pointer' : 'default' }}
+                    onClick={() => onJumpToPositionsTab?.()}
+                  >
+                    These defaults apply to every position on this order.{' '}
+                    <strong>{positionsWithOverrides}</strong> of{' '}
+                    <strong>{gigPositions.length}</strong> position
+                    {gigPositions.length === 1 ? '' : 's'} have overrides — review on the
+                    Positions tab.
+                  </Alert>
+                );
+              })()}
             </Grid>
 
             <Grid container spacing={2} sx={{ mb: 3 }}>
@@ -4285,6 +5271,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               </Grid>
             </Grid>
             )}
+            </>)}
 
             {/*
               Company Contacts section was removed from this form by request:
@@ -4301,29 +5288,40 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               pure UI-only removal.
             */}
 
-            {/* Action Buttons */}
-            <Grid item xs={12}>
-              <Divider sx={{ my: 3 }} />
-              <Stack direction="row" spacing={2}>
-                <Button
-                  variant="contained"
-                  startIcon={<SaveIcon />}
-                  onClick={handleSave}
-                  disabled={saving}
-                  sx={{ minWidth: 120 }}
-                >
-                  {saving ? <CircularProgress size={20} /> : (isEditing ? 'Update Job Order' : 'Create Job Order')}
-                </Button>
-                <Button
-                  variant="outlined"
-                  startIcon={<CancelIcon />}
-                  onClick={handleCancel}
-                  disabled={saving}
-                >
-                  Cancel
-                </Button>
-              </Stack>
-            </Grid>
+            {/*
+              Action button row removed — every field auto-saves on
+              change/blur (`handleInputChange`/`handleFieldBlur`), and
+              gig positions are auto-saved via the debounced effect
+              defined alongside `gigPositions` state. The legacy Save /
+              Cancel buttons in the create flow are now mounted by the
+              callers that still create JOs (NewJobOrder, etc.) outside
+              this form's body — see `handleSave` / `handleCancel` which
+              remain exported via the form's effects below.
+            */}
+            {!isEditing && (
+              <Grid item xs={12}>
+                <Divider sx={{ my: 3 }} />
+                <Stack direction="row" spacing={2}>
+                  <Button
+                    variant="contained"
+                    startIcon={<SaveIcon />}
+                    onClick={handleSave}
+                    disabled={saving}
+                    sx={{ minWidth: 120 }}
+                  >
+                    {saving ? <CircularProgress size={20} /> : 'Create Job Order'}
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    startIcon={<CancelIcon />}
+                    onClick={handleCancel}
+                    disabled={saving}
+                  >
+                    Cancel
+                  </Button>
+                </Stack>
+              </Grid>
+            )}
           </Grid>
         </CardContent>
       </Card>

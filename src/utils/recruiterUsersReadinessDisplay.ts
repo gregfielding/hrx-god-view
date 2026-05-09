@@ -1,15 +1,24 @@
 /**
  * Presentation helpers for Recruiter Users table (/users/all): work readiness, breakdown, top concern.
  *
- * **Onboarding** column (Users + group members tables): mirrors the **Employment** onboarding checklist for the
- * primary entity — Direct deposit, Work auth, I-9, W-4 / 1099 (W-9), E-Verify, Handbook, Policies. **Background
- * screening stays in the Backgrounds column only**, not here.
+ * **Readiness** column (Users + group members tables + UserProfile
+ * header): two rows in May 2026 —
+ *   1. `direct_deposit` — Everee mirror (`readinessMirror.directDepositReady`).
+ *   2. `employer_i9`    — Section 2 (employer portion) status. Reads
+ *      `entity_employments.i9Section2CompletedAt` plus the mirror's
+ *      `i9SignedAt` to decide between "Complete", "Action needed",
+ *      "Waiting on worker", and "N/A".
+ *
+ * Removed in May 2026 (Everee owns these now, HRX no longer tracks):
+ * Work auth, worker I-9 Section 1, W-4, 1099, TIN/SSN, E-Verify (has
+ * its own column), Handbook, Policies. Indeed Flex / Fieldglass live
+ * as separate checkboxes in the column container, not as breakdown
+ * rows.
  *
  * **Backgrounds** column (separate cell): AccuSource line items + legacy orders.
  */
 
 import { hasRecruiterInterviewCompletionEvidence, type ScoreSummary } from './scoreSummary';
-import { getWorkAuthorizedStatus } from './workAuthorizedDisplay';
 import { getEVerifyComfortStatusFromUserData } from './eVerifyComfortDisplay';
 import type { UserListEntityOnboardingItem } from './userListEntityEmploymentStatus';
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
@@ -75,8 +84,12 @@ export function getWorkReadinessOperationalStatus(
   const sec = String(user.securityLevel ?? '0');
   if (sec === '0') return { kind: 'blocked', label: 'Blocked' };
 
-  const auth = getWorkAuthorizedStatus(user);
-  if (auth === 'no') return { kind: 'blocked', label: 'Blocked' };
+  // Work-authorization "no" no longer blocks here (May 2026): Everee
+  // owns work-auth status during external onboarding and HRX has no
+  // authoritative view of it. Surfacing it as a blocker created false
+  // positives when Everee had already cleared the worker. E-Verify
+  // (below) stays as a blocker because HRX still drives that step for
+  // C1 Select.
 
   const ev = getEVerifyComfortStatusFromUserData(user);
   if (ev === 'no') return { kind: 'blocked', label: 'Blocked' };
@@ -95,10 +108,14 @@ export function getWorkReadinessOperationalStatus(
 
   if (sec === '2' || sec === '3') {
     if (!hasInterview) return { kind: 'needs_action', label: 'Needs Action' };
-    if (auth === 'skipped' || ev === 'skipped' || ev === 'maybe') {
+    // Work-auth was previously gated alongside E-Verify here. Removed
+    // (May 2026) for the same reason as the breakdown row and the
+    // top-of-function block: Everee owns work-auth state and HRX no
+    // longer tracks it.
+    if (ev === 'skipped' || ev === 'maybe') {
       return { kind: 'incomplete', label: 'Incomplete' };
     }
-    if (auth === 'yes' && ev === 'yes') {
+    if (ev === 'yes') {
       return { kind: 'ready', label: 'Ready to Work' };
     }
     return { kind: 'incomplete', label: 'Incomplete' };
@@ -358,11 +375,54 @@ function checklistItemToTableLine(
   return `${label}: Not started`;
 }
 
-function formatWorkAuthTableLine(user: RecruiterUserReadinessLike): string {
-  const auth = getWorkAuthorizedStatus(user);
-  if (auth === 'no') return 'Work auth: Not authorized';
-  if (auth === 'skipped') return 'Work auth: Pending';
-  return 'Work auth: Authorized';
+// `formatWorkAuthTableLine` was removed in May 2026: work authorization
+// is now collected and verified by Everee during external onboarding,
+// not tracked in HRX. The recruiter Onboarding column should not call
+// out a "Work auth: …" line because HRX has no authoritative state for
+// it — surfacing one created false-positive blockers when Everee had
+// already cleared the worker. Both the Everee-aware row builder and the
+// legacy fallback below now omit the row entirely. If we ever resume
+// HRX-side work-auth tracking, restore this helper and re-insert a
+// `work_auth` row in both builders.
+
+/**
+ * Employer I-9 (Section 2) status line.
+ *
+ * Federal compliance reality: I-9 has two halves.
+ *   - **Section 1** is the worker portion (handled by Everee in their
+ *     onboarding flow, mirrored as `everee_workers.readinessMirror.i9SignedAt`).
+ *   - **Section 2** is the employer portion — the employer (C1 Staffing
+ *     as employer of record) physically inspects the worker's identity
+ *     + work-authorization documents and signs the form within 3
+ *     business days of hire. Federal law assigns this to the employer;
+ *     Everee CANNOT do it for us.
+ *
+ * The Readiness column should make it obvious whether HRX needs to do
+ * the employer-side step. Surfaced states (May 2026):
+ *   - `'Employer I-9: N/A'` — 1099 contractor (no I-9 required)
+ *   - `'Employer I-9: Complete'` — Section 2 completion stamp set
+ *   - `'Employer I-9: Action needed'` — worker signed Section 1 in
+ *     Everee, no Section 2 stamp yet (HRX/CSA owes the work)
+ *   - `'Employer I-9: Waiting on worker'` — worker hasn't signed
+ *     Section 1 yet; no employer action possible yet
+ *   - `'Employer I-9: —'` — no data (legacy fallback, no entity
+ *     employment context)
+ */
+function formatEmployerI9TableLine(ctx: RecruiterUserEmploymentBreakdownContext): string {
+  const ee = ctx.entityEmployment;
+  const wt = String(ee.workerType || '').toLowerCase();
+  if (wt === '1099' || wt === 'contractor') return 'Employer I-9: N/A';
+  // Mirror's `i9Applicable: false` is the same signal — contractor in
+  // Everee even if the HRX record disagrees. Trust the mirror when present.
+  const mirror = ctx.evereeReadinessMirror ?? null;
+  if (mirror && mirror.i9Applicable === false) return 'Employer I-9: N/A';
+
+  if (ee.i9Section2CompletedAt) return 'Employer I-9: Complete';
+
+  const workerSignedSection1 = mirror && mirror.i9Applicable && mirror.i9SignedAt != null;
+  if (workerSignedSection1) return 'Employer I-9: Action needed';
+
+  return 'Employer I-9: Waiting on worker';
 }
 
 function formatEverifyTableLineEmployment(
@@ -396,61 +456,55 @@ function getReadinessBreakdownRowsFromEmployment(
     ? mirrorDirectDepositLine(mirror)
     : checklistItemToTableLine('Direct deposit', directDeposit, steps.direct_deposit ?? null);
 
-  const workAuthLine = formatWorkAuthTableLine(user);
-
-  const { i9, w4OrW9 } = buildTaxIdentityChecklistItems(overview);
-  const i9Line = mirror
-    ? mirrorI9Line(mirror)
-    : checklistItemToTableLine('I-9', i9, steps.i9_employee_section ?? null);
-
-  const taxKey = overview.workerType === '1099' ? 'contractor_tax_form_w9' : 'tax_withholding_forms';
-  const taxRec = steps[taxKey] ?? null;
-
-  let w4Line: string;
-  let form1099Line: string;
-  if (mirror) {
-    // Mirror's applicability flags are authoritative — they reflect
-    // Everee's `employmentType` rather than HRX's worker-type override.
-    w4Line = mirrorW4Line(mirror);
-    form1099Line = mirror1099Line(mirror);
-  } else if (overview.workerType === '1099') {
-    w4Line = 'W-4: N/A';
-    form1099Line = checklistItemToTableLine('1099', w4OrW9, taxRec);
-  } else {
-    w4Line = checklistItemToTableLine('W-4', w4OrW9, taxRec);
-    form1099Line = '1099: N/A';
-  }
-
-  const everifyLine = formatEverifyTableLineEmployment(ctx, user);
-
-  const { handbook, policies } = buildHandbookPoliciesItems(overview);
-  const handbookLine = mirror
-    ? mirrorHandbookLine(mirror)
-    : checklistItemToTableLine('Handbook', handbook, steps.handbook_acknowledgment ?? null);
-  const policiesLine = mirror
-    ? mirrorPoliciesLine(mirror)
-    : checklistItemToTableLine('Policies', policies, steps.policies_acknowledgment ?? null);
+  // May 2026 — Readiness column slimmed down. HRX no longer tracks the
+  // worker-side onboarding items it doesn't actually own (Work auth,
+  // worker I-9 Section 1, W-4, 1099, TIN/SSN, Handbook, Policies are all
+  // Everee-managed). Showing them here created visual noise + suggested
+  // HRX had follow-up work it doesn't actually have. Two surviving rows:
+  //
+  //   1. `direct_deposit` — Everee mirror tells us Pay setup is done.
+  //   2. `employer_i9`    — Section 2 is the *only* remaining I-9 step
+  //                          HRX (CSA / employer of record) physically
+  //                          owns. Section 1 (worker portion) is on
+  //                          Everee. The new "Employer I-9" line makes
+  //                          it obvious when CSA action is needed.
+  //
+  // The remaining surfaces (Indeed Flex / Fieldglass checkboxes) live
+  // in the column container itself, not as breakdown rows.
+  //
+  // The unused `mirrorI9Line` / `mirrorW4Line` / `mirror1099Line` /
+  // `mirrorTinLine` / `mirrorHandbookLine` / `mirrorPoliciesLine`
+  // helpers + `formatEverifyTableLineEmployment` and the
+  // `buildTaxIdentityChecklistItems` / `buildHandbookPoliciesItems`
+  // step branches above are intentionally **kept in module scope** so a
+  // future PR can resurrect any of these rows by uncommenting a single
+  // entry below — no archeology required.
+  void user; // keep param for signature parity with prior shape
+  void steps; // ensure step records remain in scope for resurrection use
+  void mirrorI9Line;
+  void mirrorW4Line;
+  void mirror1099Line;
+  void mirrorTinLine;
+  void mirrorHandbookLine;
+  void mirrorPoliciesLine;
+  void buildTaxIdentityChecklistItems;
+  void buildHandbookPoliciesItems;
+  void formatEverifyTableLineEmployment;
 
   const rows: ReadinessBreakdownRow[] = [
     { key: 'direct_deposit', text: directDepositLine },
-    { key: 'work_auth', text: workAuthLine },
-    { key: 'i9', text: i9Line },
-    { key: 'w4', text: w4Line },
-    { key: 'tax_1099', text: form1099Line },
+    { key: 'employer_i9', text: formatEmployerI9TableLine(ctx) },
+    // Rows removed in May 2026 (kept here as comments so the order is
+    // obvious if any are restored):
+    //   { key: 'work_auth', text: ... }   // Everee owns work auth
+    //   { key: 'i9',        text: ... }   // Section 1 = Everee
+    //   { key: 'w4',        text: ... }   // Everee
+    //   { key: 'tax_1099',  text: ... }   // Everee
+    //   { key: 'tin',       text: ... }   // Everee
+    //   { key: 'everify',   text: ... }   // available via separate eVerify column
+    //   { key: 'handbook',  text: ... }   // Everee
+    //   { key: 'policies',  text: ... }   // Everee
   ];
-
-  // RD.2 — TIN/SSN row inserted between W-4/1099 and E-Verify. Only
-  // shown when the Everee mirror is present; tenants without an Everee
-  // snapshot keep the legacy 8-row layout (no regression).
-  if (mirror) {
-    rows.push({ key: 'tin', text: mirrorTinLine(mirror) });
-  }
-
-  rows.push(
-    { key: 'everify', text: everifyLine },
-    { key: 'handbook', text: handbookLine },
-    { key: 'policies', text: policiesLine },
-  );
 
   return rows;
 }
@@ -459,17 +513,31 @@ function getReadinessBreakdownRowsLegacy(
   user: RecruiterUserReadinessLike & RecruiterUserBreakdownExtras,
   entityItems?: UserListEntityOnboardingItem[],
 ): ReadinessBreakdownRow[] {
+  // May 2026 — same trim as the Everee path above. Without an
+  // employment-breakdown context we can't compute the employer-side
+  // I-9 status with confidence (we don't know workerType or whether
+  // Section 1 was signed), so we show an em-dash placeholder. Once a
+  // worker has an `entity_employments` row the Everee path takes over
+  // and produces a real status line.
   const ot = String(user.onboardingType || '').toLowerCase();
   const is1099 = ot === '1099' || ot === 'contractor';
+  void user; // params retained for signature stability
+  void entityItems;
+  void formatI9BreakdownLine;
+  void formatEverifyBreakdownLineShort;
+
   return [
     { key: 'direct_deposit', text: 'Direct deposit: —' },
-    { key: 'work_auth', text: formatWorkAuthTableLine(user) },
-    { key: 'i9', text: formatI9BreakdownLine(user, entityItems) },
-    { key: 'w4', text: is1099 ? 'W-4: N/A' : 'W-4: —' },
-    { key: 'tax_1099', text: is1099 ? '1099: —' : '1099: N/A' },
-    { key: 'everify', text: formatEverifyBreakdownLineShort(user) },
-    { key: 'handbook', text: 'Handbook: —' },
-    { key: 'policies', text: 'Policies: —' },
+    { key: 'employer_i9', text: is1099 ? 'Employer I-9: N/A' : 'Employer I-9: —' },
+    // Rows removed in May 2026 (Everee-owned items hidden from the
+    // legacy/em-dash view too — same rationale as the breakdown path):
+    //   { key: 'work_auth' }
+    //   { key: 'i9' }   // worker-side; Everee owns
+    //   { key: 'w4' }
+    //   { key: 'tax_1099' }
+    //   { key: 'everify' }
+    //   { key: 'handbook' }
+    //   { key: 'policies' }
   ];
 }
 

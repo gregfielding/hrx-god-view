@@ -1000,17 +1000,17 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                 </Box>
               )}
 
-              {/* Candidate Success Agent — surfaced from the denormalized
+              {/* Recruiter — surfaced from the denormalized
                   `users.{uid}.primaryRecruiterId` scalar. Under the
-                  recruiting role model the field semantically narrows to
-                  "the worker's CSA" (resolved via user group membership);
-                  see `docs/RECRUITING_ROLE_MODEL.md` §2.1. Null means no
-                  CSA resolves — rendered as "Unassigned" so absence is
-                  visible rather than silent. Clicking opens the CSA's
-                  profile. */}
+                  recruiting role model this is the durable per-worker
+                  Recruiter relationship; see
+                  `docs/RECRUITING_ROLE_MODEL.md` §5.1. Null means no
+                  Recruiter resolves — rendered as "Unassigned" so
+                  absence is visible rather than silent. Clicking opens
+                  the Recruiter's profile. */}
               <Box sx={{ mt: 1.25 }}>
                 <Typography component="span" sx={recordHeaderColumnTitleSx}>
-                  Candidate Success Agent
+                  Recruiter
                 </Typography>
                 <Box sx={{ mt: 0.35 }}>
                   {primaryRecruiterId ? (

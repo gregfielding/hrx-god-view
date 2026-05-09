@@ -75,6 +75,11 @@ const AddJobOrderModal: React.FC<AddJobOrderModalProps> = ({
           jobTitles={jobTitleOptions}
           recruiterAccountId={recruiterAccountId ?? undefined}
           requireAccountSelection={requireAccountSelection}
+          // Compliance & Requirements is filled in AFTER the JO exists,
+          // on the JO detail page's "Default Requirements" tab (and per
+          // gig position on the "Positions" tab). Keep the create
+          // dialog focused on minimum-viable fields. May 2026.
+          hideRequirementsSection
         />
       </DialogContent>
     </Dialog>

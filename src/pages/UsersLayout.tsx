@@ -9,7 +9,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Box, Button, IconButton, Tooltip } from '@mui/material';
+import { Box, Button, Divider, IconButton, Tooltip } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
@@ -35,6 +35,16 @@ export interface UsersLayoutOutletContext {
   setShowFavoritesOnly?: (value: boolean) => void;
   openCreateGroupForm?: boolean;
   setOpenCreateGroupForm?: (value: boolean) => void;
+  /**
+   * Show/hide state for the inline filter row on the All Users / My Users
+   * tabs. Lifted up here (mirrors `/jobs/job-orders` and `/shifts/list`) so
+   * the toggle button can live in the layout's tab strip rather than the
+   * page body. Optional because list pages without inline filters (Smart
+   * Groups, etc.) don't surface a button. The button only appears when
+   * `usersTab === 'all' || usersTab === 'my'`.
+   */
+  filtersExpanded?: boolean;
+  setFiltersExpanded?: (value: boolean) => void;
   /**
    * Detail outlet pages (e.g. `SavedSmartGroupDetailPage`) can register a node
    * here to be rendered in the tabs row's right-actions slot. When set, this
@@ -68,6 +78,11 @@ const UsersLayout: React.FC = () => {
   // Smart Groups). No favorites companion — see `usersLayoutPersistence.ts`.
   const [smartGroupsSearch, setSmartGroupsSearch] = useState(persisted.smartGroupsSearch);
   const [openCreateGroupForm, setOpenCreateGroupForm] = useState(false);
+  // Mirrors `/jobs/job-orders`: the inline filter row on All Users / My
+  // Users is collapsed by default and toggled from this layout's tab
+  // strip. Resets when the user switches between the two tabs so each
+  // starts clean.
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
   // Slot for child outlet pages to inject their own right-side actions into
   // the tabs row. Cleared when the child unmounts. See `UsersLayoutOutletContext`.
   const [outletRightActions, setOutletRightActions] = useState<React.ReactNode | null>(null);
@@ -99,6 +114,18 @@ const UsersLayout: React.FC = () => {
   // own thing and doesn't get a header search.
   const isSmartGroupsListTab = activeTab === 'all-smart-groups' || activeTab === 'my-smart-groups';
 
+  // Reset filter visibility when the user crosses the Users boundary
+  // (entering or leaving All / My Users) so the next visit always starts
+  // collapsed — mirrors the parallel reset in <RecruiterDashboard>.
+  useEffect(() => {
+    if (!isUsersTab && filtersExpanded) {
+      setFiltersExpanded(false);
+    }
+    // Intentionally only depends on `isUsersTab` so we don't keep
+    // re-collapsing while the user toggles within Users tabs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isUsersTab]);
+
   const outletContext: UsersLayoutOutletContext = {
     usersTab: activeTab,
     ...(isUsersTab && {
@@ -106,6 +133,8 @@ const UsersLayout: React.FC = () => {
       setSearch: setUsersSearch,
       showFavoritesOnly: usersShowFavoritesOnly,
       setShowFavoritesOnly: setUsersShowFavoritesOnly,
+      filtersExpanded,
+      setFiltersExpanded,
     }),
     ...(isUserGroupsTab && {
       search: groupsSearch,
@@ -261,6 +290,45 @@ const UsersLayout: React.FC = () => {
                 </Button>
               );
             })}
+
+            {/* Show/Hide filters — design copied from `/jobs/job-orders`
+                (which itself mirrors `/shifts/list`). The matching
+                collapsible filter row lives in <RecruiterUsers> and
+                reads `filtersExpanded` from outlet context. The toggle
+                only appears on the All Users / My Users tabs because
+                User Groups / Smart Groups don't have an inline filter
+                row. */}
+            {isUsersTab && (
+              <>
+                <Divider
+                  orientation="vertical"
+                  flexItem
+                  sx={{ mx: 0.5, my: 0.5, borderColor: 'rgba(0, 0, 0, 0.08)' }}
+                />
+                <Button
+                  variant="text"
+                  onClick={() => setFiltersExpanded(!filtersExpanded)}
+                  sx={{
+                    textTransform: 'none',
+                    borderRadius: '999px',
+                    fontSize: '13px',
+                    fontWeight: 500,
+                    color: '#0057B8',
+                    bgcolor: 'rgba(0, 87, 184, 0.06)',
+                    px: 1.25,
+                    py: 0.5,
+                    minHeight: 30,
+                    minWidth: 'auto',
+                    lineHeight: 1.2,
+                    '&:hover': {
+                      bgcolor: 'rgba(0, 87, 184, 0.1)',
+                    },
+                  }}
+                >
+                  {filtersExpanded ? 'Hide Filters' : 'Show Filters'}
+                </Button>
+              </>
+            )}
           </Box>
         }
         rightActions={rightActions}

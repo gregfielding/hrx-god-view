@@ -1,11 +1,12 @@
 /**
  * Tenant-wide map of recruiter uid -> display name.
  *
- * Backs the "CSA: <name>" line on the recruiter Users / group members /
- * applicants tables. The CSA scalar lives on `users.{uid}.primaryRecruiterId`
- * (per `docs/RECRUITING_ROLE_MODEL.md` §4.5), but rows only carry the uid;
- * tables need a name to render. Rather than each row issuing its own getDoc,
- * we fetch the full recruiter picker list once per tenant and reuse it.
+ * Backs the "Recruiter: <name>" line on the recruiter Users / group members /
+ * applicants tables. The Recruiter scalar lives on
+ * `users.{uid}.primaryRecruiterId` (per `docs/RECRUITING_ROLE_MODEL.md` §5.1),
+ * but rows only carry the uid; tables need a name to render. Rather than each
+ * row issuing its own getDoc, we fetch the full recruiter picker list once
+ * per tenant and reuse it.
  *
  * Module-level promise cache keeps multiple tables (Users + group/smart group
  * details + applicants) from re-fetching the same list when they mount in
@@ -34,8 +35,9 @@ function getOrFetch(tenantId: string): Promise<RecruiterPickerOption[]> {
 }
 
 /**
- * Returns a `Map<uid, displayName>` for every recruiter eligible to be a CSA
- * in the given tenant. Empty until the underlying fetch resolves.
+ * Returns a `Map<uid, displayName>` for every recruiter eligible to be a
+ * worker's `primaryRecruiterId` in the given tenant. Empty until the
+ * underlying fetch resolves.
  */
 export function useTenantRecruiterNamesByUid(tenantId: string | null | undefined): Map<string, string> {
   const [names, setNames] = useState<Map<string, string>>(() => new Map());

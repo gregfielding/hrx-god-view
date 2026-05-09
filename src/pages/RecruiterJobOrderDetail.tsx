@@ -70,7 +70,6 @@ import {
   Visibility as VisibilityIcon,
   Settings as SettingsIcon,
   Save as SaveIcon,
-  Edit as EditIcon,
   ContentCopy as ContentCopyIcon,
   Language as ExternalLinkIcon,
   Email as EmailIcon,
@@ -195,6 +194,11 @@ import { computeComplianceSummary } from '../utils/complianceSummary';
 import { hasJobBoardSyndicationUrl } from '../utils/jobBoardSyndicationUrls';
 import { fetchRecruiterPickerOptions } from '../utils/fetchRecruiterPickerOptions';
 import JobBoardSyndicationIconRow from '../components/JobBoardSyndicationIconRow';
+import {
+  isPositionRequirementOverridden,
+  resolveJobOrderRequirementsForPosition,
+  type GigPositionRequirementOverrides,
+} from '../shared/jobOrder/resolveJobOrderRequirements';
 import {
   DEFAULT_JOB_ORDER_DETAIL_TAB,
   type JobOrderDetailTabKey,
@@ -2588,7 +2592,22 @@ const JobOrderDefaultsTab: React.FC<{
   );
 };
 
-type GigPosition = { jobTitle: string; payRate: string; workersNeeded?: number };
+type GigPosition = {
+  jobTitle: string;
+  payRate: string;
+  workersNeeded?: number;
+  /**
+   * Optional per-position requirement overrides. Sparse map; keys
+   * present (incl. `[]` and `''`) mean explicit overrides, missing
+   * keys inherit JO defaults. See
+   * `src/shared/jobOrder/resolveJobOrderRequirements.ts` for the
+   * full contract. Slice 1 introduced the field on the data model;
+   * slice 2 wired the editor; slice 3 (this change, May 2026) hooks
+   * up the Jobs Board posting form so JO defaults + position
+   * overrides flow through to the public posting.
+   */
+  requirements?: GigPositionRequirementOverrides | null;
+};
 
 // Job Order Jobs Board Tab - uses JobPostForm with job order data pre-populated; Gig jobs get one sub-tab per position
 const JobOrderJobsBoardTab: React.FC<{
@@ -2746,17 +2765,76 @@ const JobOrderJobsBoardTab: React.FC<{
       map[position.jobTitle] = getInitialDataStatic(existingPost, position);
     });
     return map;
+    // worksiteId / companyId / worksiteName are in the dep list because
+    // JobPostForm reads them out of `initialData.worksiteId` to drive its
+    // own `selectedCompanyId` / `selectedLocationId` state. Without them
+    // here, editing the JO's worksite on the Overview tab leaves the
+    // Jobs Board tab pointing at the previous (stale) worksite — and
+    // since the worksite picker is disabled when `hideJobOrderConnection`
+    // is true, the user has no way to push the new value through. See
+    // bug repro 2026-05-09.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- initialDataByPositionKey and jobOrderEntity drive recompute
-  }, [initialDataByPositionKey, jobOrder?.id, jobOrderEntity?.everifyRequired, accountPricingSeedKey]);
+  }, [
+    initialDataByPositionKey,
+    jobOrder?.id,
+    jobOrder?.companyId,
+    jobOrder?.worksiteId,
+    jobOrder?.worksiteName,
+    jobOrderEntity?.everifyRequired,
+    accountPricingSeedKey,
+  ]);
 
   const initialDataSingle = useMemo(
     () => getInitialDataStatic(existingPostSingle, null),
+    // See note on `initialDataMap` above for why worksite / company are
+    // in the dep list.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- recompute when post loads, job order or entity changes
-    [existingPostSingle?.id ?? 'new', jobOrder?.id, jobOrderEntity?.everifyRequired, accountPricingSeedKey]
+    [
+      existingPostSingle?.id ?? 'new',
+      jobOrder?.id,
+      jobOrder?.companyId,
+      jobOrder?.worksiteId,
+      jobOrder?.worksiteName,
+      jobOrderEntity?.everifyRequired,
+      accountPricingSeedKey,
+    ]
   );
 
   // Convert job order data to JobPostForm initialData format (optionally for a specific Gig position)
   function getInitialDataStatic(existingPostForForm: JobsBoardPost | null | undefined, position: GigPosition | null | undefined): any {
+    /**
+     * Slice 3 (May 2026): position-aware requirement resolution.
+     *
+     * Computed at the top so BOTH branches (existing post + new
+     * post) can fall back to position-resolved values for
+     * requirement fields. The resolver is pure and cheap; each
+     * caller path uses the helpers it needs and ignores the rest.
+     *
+     * For gig job orders without an explicit position argument,
+     * `firstPosition` lets us still apply per-position overrides
+     * for the first position (matching the existing JD/payRate
+     * fallback the rest of this function uses). Career JOs pass
+     * `null` for position; the resolver returns JO defaults
+     * unchanged in that case.
+     */
+    const firstPositionForRequirements: GigPosition | null =
+      gigPositions && gigPositions.length > 0 ? gigPositions[0] : null;
+    const positionForRequirements: GigPosition | null =
+      position ?? firstPositionForRequirements;
+    const positionResolvedReqs = resolveJobOrderRequirementsForPosition(
+      jobOrder as any,
+      positionForRequirements as any,
+    );
+    const reqOverride = <T,>(
+      key: keyof GigPositionRequirementOverrides,
+      fromResolved: () => T,
+    ): T | null => {
+      if (!positionForRequirements) return null;
+      return isPositionRequirementOverridden(positionForRequirements as any, key)
+        ? fromResolved()
+        : null;
+    };
+
     if (existingPostForForm) {
       const savedDesc =
         typeof existingPostForForm.jobDescription === 'string' ? existingPostForForm.jobDescription.trim() : '';
@@ -2770,14 +2848,152 @@ const JobOrderJobsBoardTab: React.FC<{
         typeof existingPostForForm.jobDescriptionPrompt === 'string'
           ? existingPostForForm.jobDescriptionPrompt.trim()
           : '';
+
+      /**
+       * Slice 3 (May 2026): position-aware fallback for legacy posts.
+       *
+       * When a post was created earlier (before slice 1+2 shipped)
+       * its requirement fields may be missing or empty. In that
+       * case, fall back to `resolve(jobOrder, position)` so the
+       * form shows JO defaults + position overrides instead of an
+       * empty box. Saved non-empty values keep winning to preserve
+       * any recruiter customization on the post itself — we treat
+       * the post doc as authoritative when it carries data.
+       *
+       * `pickArr` returns the saved value when non-empty, otherwise
+       * the resolved value. `pickStr` does the same for single
+       * strings. Keeps "post sticks if customized" while filling
+       * empty slots from the position.
+       */
+      /**
+       * `pickArr` accepts the legacy "single-string saved as array
+       * field" shape — a few older post docs in production carry
+       * `skills` / `uniformRequirements` as a bare string instead of
+       * `string[]`. Coerce to a single-element array before checking
+       * non-empty, matching the original existing-post-branch
+       * behavior we replaced.
+       */
+      const pickArr = (saved: any, fallback: string[]): string[] => {
+        if (Array.isArray(saved) && saved.length > 0) return saved;
+        if (typeof saved === 'string' && saved.trim().length > 0) return [saved];
+        return fallback;
+      };
+      const pickStr = (saved: any, fallback: string): string => {
+        if (typeof saved === 'string' && saved.trim().length > 0) return saved;
+        return fallback;
+      };
+
+      const overlaidRequirements = {
+        physicalRequirements: pickArr(
+          (existingPostForForm as any).physicalRequirements,
+          positionResolvedReqs.physicalRequirements,
+        ),
+        showPhysicalRequirements:
+          (existingPostForForm as any).showPhysicalRequirements ??
+          positionResolvedReqs.physicalRequirements.length > 0,
+        licensesCerts: pickArr(
+          (existingPostForForm as any).licensesCerts,
+          positionResolvedReqs.licensesCerts,
+        ),
+        showLicensesCerts:
+          (existingPostForForm as any).showLicensesCerts ??
+          positionResolvedReqs.licensesCerts.length > 0,
+        additionalScreenings: pickArr(
+          (existingPostForForm as any).additionalScreenings,
+          positionResolvedReqs.additionalScreenings,
+        ),
+        showAdditionalScreenings:
+          (existingPostForForm as any).showAdditionalScreenings ??
+          positionResolvedReqs.additionalScreenings.length > 0,
+        skills: pickArr(
+          (existingPostForForm as any).skills,
+          positionResolvedReqs.skillsRequired,
+        ),
+        showSkills:
+          (existingPostForForm as any).showSkills ??
+          positionResolvedReqs.skillsRequired.length > 0,
+        languages: pickArr(
+          (existingPostForForm as any).languages,
+          positionResolvedReqs.languagesRequired,
+        ),
+        showLanguages:
+          (existingPostForForm as any).showLanguages ??
+          positionResolvedReqs.languagesRequired.length > 0,
+        // Experience / education are stored as label arrays on the post but as single string values
+        // in the resolved requirements. Translate via the lookup tables when filling from the position.
+        experienceLevels:
+          Array.isArray((existingPostForForm as any).experienceLevels) &&
+          (existingPostForForm as any).experienceLevels.length > 0
+            ? (existingPostForForm as any).experienceLevels
+            : positionResolvedReqs.experienceRequired
+              ? [
+                  experienceOptions.find((opt) => opt.value === positionResolvedReqs.experienceRequired)?.label ||
+                    positionResolvedReqs.experienceRequired,
+                ]
+              : [],
+        showExperience:
+          (existingPostForForm as any).showExperience ??
+          !!positionResolvedReqs.experienceRequired,
+        educationLevels:
+          Array.isArray((existingPostForForm as any).educationLevels) &&
+          (existingPostForForm as any).educationLevels.length > 0
+            ? (existingPostForForm as any).educationLevels
+            : positionResolvedReqs.educationRequired
+              ? [
+                  educationOptions.find((opt) => opt.value === positionResolvedReqs.educationRequired)?.label ||
+                    positionResolvedReqs.educationRequired,
+                ]
+              : [],
+        showEducation:
+          (existingPostForForm as any).showEducation ??
+          !!positionResolvedReqs.educationRequired,
+        requiredPpe: pickArr(
+          (existingPostForForm as any).requiredPpe,
+          positionResolvedReqs.ppeRequirements,
+        ),
+        showRequiredPpe:
+          (existingPostForForm as any).showRequiredPpe ??
+          positionResolvedReqs.ppeRequirements.length > 0,
+        ppeProvidedBy: pickStr(
+          (existingPostForForm as any).ppeProvidedBy,
+          positionResolvedReqs.ppeProvidedBy || 'company',
+        ),
+        // Uniform Requirements: inline per-position field on the
+        // Positions tab writes to `position.requirements.dressCode`
+        // and `position.requirements.customUniformRequirements`. The
+        // post form's field is `uniformRequirements` (the array) and
+        // `customUniformRequirements` (the free-text). Pull from the
+        // resolved values when the saved post is empty so a freshly
+        // viewed post reflects what the recruiter set on the
+        // position. Saved non-empty values still win to preserve any
+        // post-level customization.
+        uniformRequirements: pickArr(
+          (existingPostForForm as any).uniformRequirements,
+          positionResolvedReqs.dressCode,
+        ),
+        showUniformRequirements:
+          (existingPostForForm as any).showUniformRequirements ??
+          positionResolvedReqs.dressCode.length > 0,
+        customUniformRequirements: pickStr(
+          (existingPostForForm as any).customUniformRequirements,
+          positionResolvedReqs.customUniformRequirements || '',
+        ),
+        showCustomUniformRequirements:
+          (existingPostForForm as any).showCustomUniformRequirements ??
+          (positionResolvedReqs.customUniformRequirements || '').length > 0,
+      };
+
       return {
         ...existingPostForForm,
+        // `overlaidRequirements` covers all the position-aware fallback fields, including `skills`
+        // (which used to have inline string-coercion below). Spread last so the position-aware
+        // values win over the bare `existingPostForForm` fields above.
+        ...overlaidRequirements,
         startDate: formatDateForInput(existingPostForForm.startDate),
         endDate: formatDateForInput(existingPostForForm.endDate),
         expDate: formatDateForInput(existingPostForForm.expDate),
         payRate: existingPostForForm.payRate?.toString() || '',
         showWorkersNeeded: existingPostForForm.showWorkersNeeded !== undefined ? existingPostForForm.showWorkersNeeded : false,
-        skills: Array.isArray(existingPostForForm.skills) ? existingPostForForm.skills : (existingPostForForm.skills ? [existingPostForForm.skills] : []),
         uniformRequirements: Array.isArray(existingPostForForm.uniformRequirements) ? existingPostForForm.uniformRequirements : (existingPostForForm.uniformRequirements ? [existingPostForForm.uniformRequirements] : []),
         // CC.B (2026-05-05): client-provided / position-level JD belongs in
         // the prompt, NOT the public-facing `jobDescription`. The public
@@ -2787,14 +3003,31 @@ const JobOrderJobsBoardTab: React.FC<{
         // the auto-create flow now populates from the same cascade chain.
         jobDescription: savedDesc,
         jobDescriptionPrompt: savedPrompt || orderClientJd || accountJd || '',
+        // The Jobs Board form here is rendered with `hideJobOrderConnection={true}`,
+        // which means the company / worksite picker is locked to whatever
+        // the JO's currently set worksite is. If the recruiter changes the
+        // JO worksite on the Overview tab AFTER an initial post was saved,
+        // the post's stored worksite goes stale (and because the picker is
+        // disabled, there's no UI path to repair it). Override the post's
+        // saved company/worksite with the JO's authoritative values so the
+        // form always matches the JO. The stored doc gets updated next
+        // time the recruiter hits Save / autoSave fires. See bug repro
+        // 2026-05-09 (FIFA Fan Festival KC → Riviera CC → reverted JO
+        // worksite, post stuck on Riviera).
+        companyId: jobOrder?.companyId || (existingPostForForm as any).companyId || '',
+        companyName: jobOrder?.companyName || (existingPostForForm as any).companyName || '',
+        worksiteId: jobOrder?.worksiteId || (existingPostForForm as any).worksiteId || '',
+        worksiteName: jobOrder?.worksiteName || (existingPostForForm as any).worksiteName || '',
       };
     }
 
     const scoping = jobOrder?.deal?.stageData?.scoping || {};
     const compliance = scoping.compliance || {};
     const isGigJob = jobOrder.jobType === 'gig';
-    const firstPosition = gigPositions && gigPositions.length > 0 ? gigPositions[0] : null;
-    const positionForPrefill = position ?? firstPosition;
+    // `positionForPrefill` is the same object the requirements resolver above uses; aliased here to keep
+    // the existing pricing / payRate / jobTitle reads (which use `firstPosition`-style fallback) readable.
+    const positionForPrefill = positionForRequirements;
+    const firstPosition = firstPositionForRequirements;
 
     // Combine requiredLicenses and requiredCertifications
     // JobOrderForm (Overview) saves to deal.stageData.scoping.compliance; also check scoping and top-level
@@ -2802,7 +3035,9 @@ const JobOrderJobsBoardTab: React.FC<{
     const topLevelCerts = jobOrder.requiredCertifications || [];
     const complianceLicensesCerts = Array.isArray(compliance.licensesCerts) ? compliance.licensesCerts : [];
     const scopingLicensesCerts = scoping.licensesCerts || [];
-    const allLicensesCerts = Array.from(new Set([
+    // Slice 3: position override (if set) replaces the JO merge; otherwise the JO-side multi-source merge below stands.
+    const licensesCertsOverride = reqOverride('licensesCerts', () => positionResolvedReqs.licensesCerts);
+    const allLicensesCerts = licensesCertsOverride ?? Array.from(new Set([
       ...topLevelLicenses,
       ...topLevelCerts,
       ...complianceLicensesCerts,
@@ -2813,7 +3048,9 @@ const JobOrderJobsBoardTab: React.FC<{
     const skillsFromCompliance = Array.isArray(compliance.skills) ? compliance.skills : [];
     const skillsFromScoping = Array.isArray(scoping.skills) ? scoping.skills : [];
     const skillsFromTopLevel = Array.isArray(jobOrder.skillsRequired) ? jobOrder.skillsRequired : [];
-    const allSkills = Array.from(new Set([...skillsFromCompliance, ...skillsFromScoping, ...skillsFromTopLevel]));
+    // Slice 3: position override (key `skillsRequired` in the override map) replaces the JO merge; falls through otherwise.
+    const skillsOverride = reqOverride('skillsRequired', () => positionResolvedReqs.skillsRequired);
+    const allSkills = skillsOverride ?? Array.from(new Set([...skillsFromCompliance, ...skillsFromScoping, ...skillsFromTopLevel]));
 
     // Uniform requirements are stored in deal.stageData.scoping.uniformRequirements
     // Prefer scoping, but merge and deduplicate
@@ -2884,6 +3121,8 @@ const JobOrderJobsBoardTab: React.FC<{
       })(),
       // Additional screenings from scoping (preferred) or top-level, deduplicated
       additionalScreenings: (() => {
+        const ov = reqOverride('additionalScreenings', () => positionResolvedReqs.additionalScreenings);
+        if (ov !== null) return ov;
         const scopingAdditional = Array.isArray(compliance.additionalScreenings) ? compliance.additionalScreenings : [];
         const topLevelAdditional = Array.isArray((jobOrder as any).additionalScreenings) ? (jobOrder as any).additionalScreenings : [];
         // Prefer scoping, but merge and deduplicate
@@ -2896,12 +3135,16 @@ const JobOrderJobsBoardTab: React.FC<{
       showSkills: allSkills.length > 0,
       // Languages: Overview saves to scoping.compliance.languages; merge with scoping and top-level
       languages: (() => {
+        const ov = reqOverride('languagesRequired', () => positionResolvedReqs.languagesRequired);
+        if (ov !== null) return ov;
         const complianceLanguages = Array.isArray(compliance.languages) ? compliance.languages : [];
         const scopingLanguages = Array.isArray(scoping.languages) ? scoping.languages : [];
         const topLevelLanguages = Array.isArray(jobOrder.languagesRequired) ? jobOrder.languagesRequired : [];
         return Array.from(new Set([...complianceLanguages, ...scopingLanguages, ...topLevelLanguages]));
       })(),
       showLanguages: (() => {
+        const ov = reqOverride('languagesRequired', () => positionResolvedReqs.languagesRequired.length > 0);
+        if (ov !== null) return ov;
         const complianceLanguages = Array.isArray(compliance.languages) ? compliance.languages : [];
         const scopingLanguages = Array.isArray(scoping.languages) ? scoping.languages : [];
         const topLevelLanguages = Array.isArray(jobOrder.languagesRequired) ? jobOrder.languagesRequired : [];
@@ -2909,22 +3152,48 @@ const JobOrderJobsBoardTab: React.FC<{
       })(),
       // Experience: Overview saves to compliance.experience; also scoping and top-level
       experienceLevels: (() => {
+        // Slice 3: position override is a single string (`experienceRequired` on the override map).
+        // The post form expects an array of LABELS (translated via experienceOptions). When the
+        // position overrides this field, run the same value→label translation we apply to the JO
+        // value below.
+        const overrideValue = reqOverride('experienceRequired', () => positionResolvedReqs.experienceRequired);
+        if (overrideValue !== null) {
+          if (!overrideValue) return [];
+          const expOption = experienceOptions.find(opt => opt.value === overrideValue);
+          return expOption ? [expOption.label] : [overrideValue];
+        }
         const expValue = compliance.experience || scoping.experience || jobOrder.experienceRequired;
         if (!expValue) return [];
         const expOption = experienceOptions.find(opt => opt.value === expValue);
         return expOption ? [expOption.label] : [expValue];
       })(),
-      showExperience: !!(compliance.experience || scoping.experience || jobOrder.experienceRequired),
+      showExperience: (() => {
+        const ov = reqOverride('experienceRequired', () => !!positionResolvedReqs.experienceRequired);
+        if (ov !== null) return ov;
+        return !!(compliance.experience || scoping.experience || jobOrder.experienceRequired);
+      })(),
       // Education: Overview saves to compliance.education; also top-level jobOrder.educationRequired
       educationLevels: (() => {
+        const overrideValue = reqOverride('educationRequired', () => positionResolvedReqs.educationRequired);
+        if (overrideValue !== null) {
+          if (!overrideValue) return [];
+          const eduOption = educationOptions.find(opt => opt.value === overrideValue);
+          return eduOption ? [eduOption.label] : [overrideValue];
+        }
         const eduValue = compliance.education || jobOrder.educationRequired;
         if (!eduValue) return [];
         const eduOption = educationOptions.find(opt => opt.value === eduValue);
         return eduOption ? [eduOption.label] : [eduValue];
       })(),
-      showEducation: !!(compliance.education || jobOrder.educationRequired),
+      showEducation: (() => {
+        const ov = reqOverride('educationRequired', () => !!positionResolvedReqs.educationRequired);
+        if (ov !== null) return ov;
+        return !!(compliance.education || jobOrder.educationRequired);
+      })(),
       // Physical requirements: Overview saves to compliance.physicalRequirements; merge with scoping and top-level
       physicalRequirements: (() => {
+        const ov = reqOverride('physicalRequirements', () => positionResolvedReqs.physicalRequirements);
+        if (ov !== null) return ov;
         const compliancePhysical = Array.isArray(compliance.physicalRequirements) ? compliance.physicalRequirements : [];
         const scopingPhysical = Array.isArray(scoping.physicalRequirements) ? scoping.physicalRequirements : [];
         const topLevelPhysical = jobOrder.physicalRequirements
@@ -2933,6 +3202,8 @@ const JobOrderJobsBoardTab: React.FC<{
         return Array.from(new Set([...compliancePhysical, ...scopingPhysical, ...topLevelPhysical]));
       })(),
       showPhysicalRequirements: (() => {
+        const ov = reqOverride('physicalRequirements', () => positionResolvedReqs.physicalRequirements.length > 0);
+        if (ov !== null) return ov;
         const compliancePhysical = Array.isArray(compliance.physicalRequirements) ? compliance.physicalRequirements : [];
         const scopingPhysical = Array.isArray(scoping.physicalRequirements) ? scoping.physicalRequirements : [];
         const topLevelPhysical = jobOrder.physicalRequirements
@@ -2941,13 +3212,33 @@ const JobOrderJobsBoardTab: React.FC<{
         return compliancePhysical.length > 0 || scopingPhysical.length > 0 || topLevelPhysical.length > 0;
       })(),
       // Uniform requirements from scoping (preferred) or top-level
-      uniformRequirements: allUniformRequirements,
-      showUniformRequirements: allUniformRequirements.length > 0,
+      uniformRequirements: (() => {
+        const ov = reqOverride('dressCode', () => positionResolvedReqs.dressCode);
+        if (ov !== null) return ov;
+        return allUniformRequirements;
+      })(),
+      showUniformRequirements: (() => {
+        const ov = reqOverride('dressCode', () => positionResolvedReqs.dressCode.length > 0);
+        if (ov !== null) return ov;
+        return allUniformRequirements.length > 0;
+      })(),
       // Custom uniform requirements from scoping or top-level
-      customUniformRequirements: scoping.customUniformRequirements || (jobOrder as any).customUniformRequirements || '',
-      showCustomUniformRequirements: !!(scoping.customUniformRequirements || (jobOrder as any).customUniformRequirements),
+      customUniformRequirements: (() => {
+        const ov = reqOverride('customUniformRequirements', () => positionResolvedReqs.customUniformRequirements);
+        if (ov !== null) return ov;
+        return scoping.customUniformRequirements || (jobOrder as any).customUniformRequirements || '';
+      })(),
+      showCustomUniformRequirements: (() => {
+        const ov = reqOverride('customUniformRequirements', () => !!positionResolvedReqs.customUniformRequirements);
+        if (ov !== null) return ov;
+        return !!(scoping.customUniformRequirements || (jobOrder as any).customUniformRequirements);
+      })(),
       // PPE requirements: Overview saves to scoping.compliance.ppe; merge with scoping and top-level
       requiredPpe: (() => {
+        // Slice 3: post field name is `requiredPpe` but the override key is `ppeRequirements`
+        // (matches the JO Compliance & Requirements field). Different surfaces, same data.
+        const ov = reqOverride('ppeRequirements', () => positionResolvedReqs.ppeRequirements);
+        if (ov !== null) return ov;
         const compliancePpe = Array.isArray(compliance.ppe) ? compliance.ppe : [];
         const scopingPpe = Array.isArray(scoping.ppe) ? scoping.ppe : [];
         const topLevelPpe = jobOrder.ppeRequirements
@@ -2956,6 +3247,8 @@ const JobOrderJobsBoardTab: React.FC<{
         return Array.from(new Set([...compliancePpe, ...scopingPpe, ...topLevelPpe]));
       })(),
       showRequiredPpe: (() => {
+        const ov = reqOverride('ppeRequirements', () => positionResolvedReqs.ppeRequirements.length > 0);
+        if (ov !== null) return ov;
         const compliancePpe = Array.isArray(compliance.ppe) ? compliance.ppe : [];
         const scopingPpe = Array.isArray(scoping.ppe) ? scoping.ppe : [];
         const topLevelPpe = jobOrder.ppeRequirements
@@ -2963,7 +3256,11 @@ const JobOrderJobsBoardTab: React.FC<{
           : [];
         return compliancePpe.length > 0 || scopingPpe.length > 0 || topLevelPpe.length > 0;
       })(),
-      ppeProvidedBy: compliance.ppeProvidedBy || (jobOrder as any).ppeProvidedBy || 'company',
+      ppeProvidedBy: (() => {
+        const ov = reqOverride('ppeProvidedBy', () => positionResolvedReqs.ppeProvidedBy);
+        if (ov !== null) return ov || 'company';
+        return compliance.ppeProvidedBy || (jobOrder as any).ppeProvidedBy || 'company';
+      })(),
       // Map shiftType from job order to shift array for job post
       shift: (jobOrder as any).shiftType ? (Array.isArray((jobOrder as any).shiftType) ? (jobOrder as any).shiftType : [(jobOrder as any).shiftType]) : [],
       showShift: !!(jobOrder as any).shiftType,
@@ -3019,7 +3316,10 @@ const JobOrderJobsBoardTab: React.FC<{
     }
   };
 
-  const handleCancel = () => {};
+  // No-op `handleCancel` removed (May 2026): the Cancel button is now
+  // suppressed in `JobPostForm` when no `onCancel` prop is provided
+  // (see comment at JobPostForm.tsx ~line 2890), so passing a no-op
+  // here just rendered dead UI under the Jobs Board tab.
 
   const postForCopy = isGigWithPositions && gigPositions?.length
     ? posts.find((p) => p.positionJobTitle === gigPositions[jobsBoardSubTab]?.jobTitle) ?? null
@@ -3051,10 +3351,24 @@ const JobOrderJobsBoardTab: React.FC<{
             <Button
               variant="outlined"
               size="small"
-              startIcon={<ContentCopyIcon />}
+              startIcon={<ContentCopyIcon sx={{ fontSize: 16 }} />}
               onClick={handleCopyLink}
               disabled={!copyUrl}
-              sx={{ textTransform: 'none', borderRadius: '24px', height: '36px', px: 2, whiteSpace: 'nowrap', flexShrink: 0 }}
+              // Sized to match the JO detail tab strip pills
+              // (`JOB_ORDER_DETAIL_TAB_STRIP` rendered around line 4830).
+              // `minHeight: 32`, `fontSize: 0.8125rem`, `py: 0.5`,
+              // `borderRadius: 999px` keeps it visually consistent with the
+              // tabbed nav so the row reads as a single horizontal strip.
+              sx={{
+                textTransform: 'none',
+                borderRadius: '999px',
+                fontSize: '0.8125rem',
+                minHeight: 32,
+                py: 0.5,
+                px: 1.5,
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+              }}
             >
               Copy Jobs Board Link
             </Button>
@@ -3069,7 +3383,6 @@ const JobOrderJobsBoardTab: React.FC<{
                       <JobPostForm
                         initialData={initialDataMap[position.jobTitle]}
                         onSave={(data) => handleSave(data, existingPostForPosition, position)}
-                        onCancel={handleCancel}
                         loading={loading}
                         mode={existingPostForPosition ? 'edit' : 'create'}
                         hideJobOrderConnection={true}
@@ -3092,10 +3405,21 @@ const JobOrderJobsBoardTab: React.FC<{
             <Button
               variant="outlined"
               size="small"
-              startIcon={<ContentCopyIcon />}
+              startIcon={<ContentCopyIcon sx={{ fontSize: 16 }} />}
               onClick={handleCopyLink}
               disabled={!copyUrl}
-              sx={{ textTransform: 'none', borderRadius: '24px', height: '36px', px: 2, whiteSpace: 'nowrap' }}
+              // Matches the gig-positions sub-nav variant above (and the
+              // top-level JO detail tab strip pills) so the toolbar
+              // reads as a single horizontal pill row.
+              sx={{
+                textTransform: 'none',
+                borderRadius: '999px',
+                fontSize: '0.8125rem',
+                minHeight: 32,
+                py: 0.5,
+                px: 1.5,
+                whiteSpace: 'nowrap',
+              }}
             >
               Copy Jobs Board Link
             </Button>
@@ -3105,7 +3429,6 @@ const JobOrderJobsBoardTab: React.FC<{
               <JobPostForm
                 initialData={initialDataSingle}
                 onSave={(data) => handleSave(data, existingPostSingle, null)}
-                onCancel={handleCancel}
                 loading={loading}
                 mode={existingPostSingle ? 'edit' : 'create'}
                 hideJobOrderConnection={true}
@@ -3241,10 +3564,18 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [selectedRecruiterIds, setSelectedRecruiterIds] = useState<string[]>([]);
   const [loadingRecruiters, setLoadingRecruiters] = useState(false);
   const [shifts, setShifts] = useState<any[]>([]);
+  /**
+   * Total shift count for this JO regardless of date — drives the
+   * checklist's "Shift created" item. Stays separate from `shifts`
+   * (the filtered upcoming list used by Applications / Placements
+   * tabs and the page's per-shift selectors) so the checklist
+   * doesn't read "Missing" once every shift on the JO is in the
+   * past. May 2026.
+   */
+  const [allShiftsCount, setAllShiftsCount] = useState<number>(0);
   const [applicantsCount, setApplicantsCount] = useState<number>(0);
   const [candidateCount, setCandidateCount] = useState<number>(0);
   const [assignmentsCount, setAssignmentsCount] = useState<number>(0);
-  const [isEditingJobOrderDetails, setIsEditingJobOrderDetails] = useState(false);
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
   const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
   const [showCreateTaskDialog, setShowCreateTaskDialog] = useState(false);
@@ -3588,6 +3919,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
     const fetchShifts = async () => {
       if (!jobOrder || !jobOrderId || !tenantId) {
         setShifts([]);
+        setAllShiftsCount(0);
         return;
       }
 
@@ -3596,21 +3928,27 @@ const RecruiterJobOrderDetail: React.FC = () => {
         const shiftsRef = collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts');
         const q = query(shiftsRef);
         const snapshot = await getDocs(q);
-        
+
+        // Total count for the JO checklist — independent of any
+        // upcoming-only filter so "Shift created" stays complete
+        // even after the JO's last shift has passed.
+        setAllShiftsCount(snapshot.size);
+
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         // Format as YYYY-MM-DD in local timezone (not UTC)
         const todayISO = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-        
+
         const shiftsData = snapshot.docs
           .map(doc => ({ id: doc.id, ...doc.data(), shiftDate: doc.data().shiftDate }))
           .filter((shift: any) => shift.shiftDate >= todayISO)
           .sort((a: any, b: any) => a.shiftDate.localeCompare(b.shiftDate));
-        
+
         setShifts(shiftsData);
       } catch (error) {
         console.error('Error fetching shifts:', error);
         setShifts([]);
+        setAllShiftsCount(0);
       }
     };
 
@@ -4316,7 +4654,9 @@ const RecruiterJobOrderDetail: React.FC = () => {
     associatedContacts,
     recruiterUsers,
     jobPosts: connectedJobPosts,
-    shiftsCount: shifts.length,
+    // Use total shift count (not filtered upcoming) so "Shift created"
+    // stays complete even when every shift is in the past.
+    shiftsCount: allShiftsCount,
     indeedUrl: (jobOrder as any)?.indeedUrl,
     craigslistUrl: (jobOrder as any)?.craigslistUrl,
   });
@@ -4515,8 +4855,11 @@ const RecruiterJobOrderDetail: React.FC = () => {
                   {(jobOrderWorksiteHeaderTitle || jobOrderWorksiteHeaderAddress) && (
                     <Box
                       sx={{
-                        mt: 0.35,
-                        mb: 0.5,
+                        // Vertical rhythm in the JO header is owned by
+                        // the parent column's `gap: 0.75` (line 4712);
+                        // local `mt`/`mb` here just compounded with the
+                        // gap and pushed the checklist row visibly far
+                        // below the address. Leave gap-only spacing.
                         display: 'flex',
                         flexDirection: 'column',
                         gap: 0.25,
@@ -4734,7 +5077,12 @@ const RecruiterJobOrderDetail: React.FC = () => {
                     useFlexGap
                     alignItems="center"
                     sx={{
-                      mt: 0.35,
+                      // Spacing above the checklist row is owned by the
+                      // parent column's `gap: 0.75` (line 4712). The
+                      // previous `mt: 0.35` here compounded with the
+                      // address block's `mb` and the parent gap and
+                      // produced the visible extra band between the
+                      // address and "Order setup".
                       gap: 0.5,
                       rowGap: 0.65,
                     }}
@@ -4815,7 +5163,17 @@ const RecruiterJobOrderDetail: React.FC = () => {
         }
         rightActions={
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-            <Button
+            {/*
+              Delete button hidden by request. The confirm dialog,
+              `handleConfirmDeleteJobOrder` callable, and the
+              `setDeleteJobOrderDialogOpen` state are all kept in
+              place so re-enabling later is just an un-comment.
+              Recruiters delete job orders from the bulk Job Orders
+              list (`/jobs/job-orders`) instead of from this detail
+              page. See `setDeleteJobOrderDialogOpen` references for
+              the rest of the (intentionally retained) wiring.
+            */}
+            {/* <Button
               variant="outlined"
               color="error"
               size="small"
@@ -4832,7 +5190,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
               }}
             >
               Delete
-            </Button>
+            </Button> */}
           </Box>
         }
       />
@@ -4880,370 +5238,19 @@ const RecruiterJobOrderDetail: React.FC = () => {
           {/* Left Column - Basic Information Card (70%) */}
           <Grid item xs={12} md={8}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Basic Information Card */}
-              {isEditingJobOrderDetails ? (
-                // Edit Mode - Show JobOrderForm without outer Card wrapper
-                <JobOrderForm
-                  jobOrderId={jobOrderId}
-                  dealId={jobOrder?.dealId}
-                  recruiterAccountId={(jobOrder as any)?.recruiterAccountId ?? linkedAccount?.id ?? null}
-                  onSave={() => {
-                    setIsEditingJobOrderDetails(false);
-                    fetchJobOrder();
-                  }}
-                  onCancel={() => {
-                    setIsEditingJobOrderDetails(false);
-                  }}
-                />
-              ) : (
-                <Card>
-                  <CardHeader 
-                    title="Basic Information" 
-                    titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                    action={
-                      <IconButton
-                        size="small"
-                        onClick={() => setIsEditingJobOrderDetails(!isEditingJobOrderDetails)}
-                        sx={{ 
-                          color: isEditingJobOrderDetails ? 'primary.main' : 'text.secondary',
-                          '&:hover': {
-                            bgcolor: 'action.hover'
-                          }
-                        }}
-                      >
-                        <EditIcon fontSize="small" />
-                      </IconButton>
-                    }
-                  />
-                  <CardContent sx={{ p: 2 }}>
-                    {/* View Mode - Show as Text with Better Visual Hierarchy */}
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                      {/* Basic Details Section */}
-                      <Box>
-                        <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                          Basic Details
-                        </Typography>
-                        <Grid container spacing={2}>
-                          {jobOrder?.jobOrderName && (
-                            <Grid item xs={12} sm={6}>
-                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                                <BriefcaseIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                                <Box sx={{ flex: 1, minWidth: 0 }}>
-                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                    Job Order Name
-                                  </Typography>
-                                  <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
-                                    {jobOrder.jobOrderName}
-                                  </Typography>
-                                </Box>
-                              </Box>
-                            </Grid>
-                          )}
-
-                          {jobOrder?.status && (
-                            <Grid item xs={12} sm={6}>
-                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                                <InfoIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                                <Box sx={{ flex: 1, minWidth: 0 }}>
-                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                    Status
-                                  </Typography>
-                                  <Box sx={{ mt: 0.25 }}>
-                                    <Chip
-                                      label={jobOrder.status}
-                                      size="small"
-                                      color={jobOrder.status === 'open' ? 'success' : jobOrder.status === 'on_hold' ? 'warning' : jobOrder.status === 'cancelled' ? 'error' : 'default'}
-                                      sx={{ height: 24, fontSize: '0.75rem', fontWeight: 500 }}
-                                    />
-                                  </Box>
-                                </Box>
-                              </Box>
-                            </Grid>
-                          )}
-
-                          {jobOrder?.jobType && (
-                            <Grid item xs={12} sm={6}>
-                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                                <WorkIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                                <Box sx={{ flex: 1, minWidth: 0 }}>
-                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                    Job Type
-                                  </Typography>
-                                  <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
-                                    {jobOrder.jobType === 'gig' ? 'Gig' : jobOrder.jobType === 'career' ? 'Career' : 'Not set'}
-                                  </Typography>
-                                </Box>
-                              </Box>
-                            </Grid>
-                          )}
-
-                          {(jobOrder?.companyName || company?.companyName || company?.name) && (
-                            <Grid item xs={12} sm={6}>
-                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                                <BusinessIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                                <Box sx={{ flex: 1, minWidth: 0 }}>
-                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                    Account
-                                  </Typography>
-                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
-                                    {(jobOrder?.companyId || company?.id) ? (
-                                      <MUILink
-                                        href={`/companies/${jobOrder?.companyId || company?.id}`}
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          navigate(`/companies/${jobOrder?.companyId || company?.id}`);
-                                        }}
-                                        color="primary"
-                                        underline="hover"
-                                        sx={{ fontWeight: 500 }}
-                                      >
-                                        {jobOrder?.companyName || company?.companyName || company?.name}
-                                      </MUILink>
-                                    ) : (
-                                      <span style={{ fontWeight: 500 }}>{jobOrder?.companyName || company?.companyName || company?.name}</span>
-                                    )}
-                                  </Typography>
-                                </Box>
-                              </Box>
-                            </Grid>
-                          )}
-
-                          {/* Account Type, E-Verify, Hiring Entity from linked recruiter account */}
-                          <Grid item xs={12} sm={6}>
-                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                              <BusinessIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                              <Box sx={{ flex: 1, minWidth: 0 }}>
-                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                  Account Type
-                                </Typography>
-                                <Typography variant="body1" sx={{ mt: 0.25 }}>
-                                  {linkedAccount?.accountType === 'national'
-                                    ? 'National account'
-                                    : linkedAccount?.accountType === 'child'
-                                      ? 'Child account'
-                                      : linkedAccount != null
-                                        ? 'Standalone'
-                                        : '—'}
-                                </Typography>
-                              </Box>
-                            </Box>
-                          </Grid>
-                          <Grid item xs={12} sm={6}>
-                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                              <SecurityIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                              <Box sx={{ flex: 1, minWidth: 0 }}>
-                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                  E-Verify
-                                </Typography>
-                                <Typography variant="body1" sx={{ mt: 0.25 }}>
-                                  {linkedAccount != null
-                                    ? (linkedAccountEntity?.everifyRequired ?? linkedAccount?.defaults?.eVerify?.eVerifyRequired ?? false)
-                                      ? 'Yes'
-                                      : 'No'
-                                    : '—'}
-                                </Typography>
-                              </Box>
-                            </Box>
-                          </Grid>
-                          <Grid item xs={12} sm={6}>
-                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                              <WorkIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                              <Box sx={{ flex: 1, minWidth: 0 }}>
-                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                  Hiring Entity
-                                </Typography>
-                                <Typography variant="body1" sx={{ mt: 0.25 }}>
-                                  {linkedAccount != null
-                                    ? (linkedAccountEntity?.name ?? '—')
-                                    : '—'}
-                                </Typography>
-                              </Box>
-                            </Box>
-                          </Grid>
-
-                          {/* Mirrors the header's fallback chain
-                              (`worksiteName || loadedLocationName ||
-                              dealLocationName`). Older JOs created before
-                              the create-path fix only persisted
-                              `locationName`, so without the fallback the
-                              Overview was blank even though the linked
-                              location existed. */}
-                          {jobOrderWorksiteHeaderTitle && (
-                            <Grid item xs={12} sm={6}>
-                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                                <LocationIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                                <Box sx={{ flex: 1, minWidth: 0 }}>
-                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                    Worksite
-                                  </Typography>
-                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
-                                    {worksiteId && company?.id ? (
-                                      <MUILink
-                                        href={`/companies/${company.id}?tab=locations`}
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          navigate(`/companies/${company.id}?tab=locations`);
-                                        }}
-                                        color="primary"
-                                        underline="hover"
-                                        sx={{ fontWeight: 500 }}
-                                      >
-                                        {jobOrderWorksiteHeaderTitle}
-                                      </MUILink>
-                                    ) : (
-                                      <span style={{ fontWeight: 500 }}>{jobOrderWorksiteHeaderTitle}</span>
-                                    )}
-                                  </Typography>
-                                </Box>
-                              </Box>
-                            </Grid>
-                          )}
-                        </Grid>
-                      </Box>
-
-                      {/* Job Details Section (Career only) */}
-                      {jobOrder?.jobType === 'career' && (jobOrder?.jobTitle || jobOrder?.workersNeeded || jobOrder?.startDate || jobOrder?.endDate) && (
-                        <Box>
-                          <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            Job Details
-                          </Typography>
-                          <Grid container spacing={2}>
-                            {jobOrder?.jobTitle && (
-                              <Grid item xs={12} sm={6}>
-                                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                                  <BriefcaseIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                      Job Title
-                                    </Typography>
-                                    <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
-                                      {jobOrder.jobTitle}
-                                    </Typography>
-                                  </Box>
-                                </Box>
-                              </Grid>
-                            )}
-
-                            {jobOrder?.workersNeeded && (
-                              <Grid item xs={12} sm={6}>
-                                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                                  <GroupIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                      Workers Needed
-                                    </Typography>
-                                    <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
-                                      {jobOrder.workersNeeded}
-                                    </Typography>
-                                  </Box>
-                                </Box>
-                              </Grid>
-                            )}
-
-                            {jobOrder?.startDate && (
-                              <Grid item xs={12} sm={6}>
-                                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                                  <CalendarIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                      Start Date
-                                    </Typography>
-                                    <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
-                                      {typeof jobOrder.startDate === 'string' 
-                                        ? format(new Date(jobOrder.startDate), 'MMM dd, yyyy')
-                                        : safeToDate(jobOrder.startDate) 
-                                          ? format(safeToDate(jobOrder.startDate)!, 'MMM dd, yyyy')
-                                          : 'Not set'}
-                                    </Typography>
-                                  </Box>
-                                </Box>
-                              </Grid>
-                            )}
-
-                            {jobOrder?.endDate && (
-                              <Grid item xs={12} sm={6}>
-                                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                                  <CalendarIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                      End Date
-                                    </Typography>
-                                    <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
-                                      {typeof jobOrder.endDate === 'string' 
-                                        ? format(new Date(jobOrder.endDate), 'MMM dd, yyyy')
-                                        : safeToDate(jobOrder.endDate) 
-                                          ? format(safeToDate(jobOrder.endDate)!, 'MMM dd, yyyy')
-                                          : 'Not set'}
-                                    </Typography>
-                                  </Box>
-                                </Box>
-                              </Grid>
-                            )}
-                          </Grid>
-                        </Box>
-                      )}
-
-                      {/* Financial Information Section */}
-                      {(jobOrder?.payRate || (jobOrder as any)?.markup || (jobOrder as any)?.billRate) && (
-                        <Box>
-                          <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            Financial Information
-                          </Typography>
-                          <Grid container spacing={2}>
-                            {jobOrder?.payRate && (
-                              <Grid item xs={12} sm={6}>
-                                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                                  <MoneyIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                      Pay Rate
-                                    </Typography>
-                                    <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
-                                      ${parseFloat(jobOrder.payRate.toString()).toFixed(2)}
-                                    </Typography>
-                                  </Box>
-                                </Box>
-                              </Grid>
-                            )}
-
-                            {(jobOrder as any)?.markup && (
-                              <Grid item xs={12} sm={6}>
-                                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                                  <MoneyIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                      Markup
-                                    </Typography>
-                                    <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
-                                      {(jobOrder as any).markup}%
-                                    </Typography>
-                                  </Box>
-                                </Box>
-                              </Grid>
-                            )}
-
-                            {(jobOrder as any)?.billRate && (
-                              <Grid item xs={12} sm={6}>
-                                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                                  <MoneyIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                      Bill Rate
-                                    </Typography>
-                                    <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
-                                      ${parseFloat((jobOrder as any).billRate.toString()).toFixed(2)}
-                                    </Typography>
-                                  </Box>
-                                </Box>
-                              </Grid>
-                            )}
-                          </Grid>
-                        </Box>
-                      )}
-                    </Box>
-                  </CardContent>
-                </Card>
-              )}
+              {/* Overview slice of the form — Basic Information + Financials.
+                  The Positions and Requirements tabs render their own
+                  JobOrderForm instance with `section="positions"` /
+                  `section="requirements"` respectively. */}
+              <JobOrderForm
+                jobOrderId={jobOrderId}
+                dealId={jobOrder?.dealId}
+                recruiterAccountId={(jobOrder as any)?.recruiterAccountId ?? linkedAccount?.id ?? null}
+                section="overview"
+                onSave={() => {
+                  fetchJobOrder();
+                }}
+              />
             </Box>
           </Grid>
 
@@ -5554,6 +5561,37 @@ const RecruiterJobOrderDetail: React.FC = () => {
         </Grid>
       </TabPanel>
 
+      <TabPanel value={activeTab} index="positions">
+        <JobOrderForm
+          jobOrderId={jobOrderId}
+          dealId={jobOrder?.dealId}
+          recruiterAccountId={(jobOrder as any)?.recruiterAccountId ?? linkedAccount?.id ?? null}
+          section="positions"
+          onSave={() => {
+            fetchJobOrder();
+          }}
+        />
+      </TabPanel>
+
+      <TabPanel value={activeTab} index="requirements">
+        <JobOrderForm
+          jobOrderId={jobOrderId}
+          dealId={jobOrder?.dealId}
+          recruiterAccountId={(jobOrder as any)?.recruiterAccountId ?? linkedAccount?.id ?? null}
+          section="requirements"
+          onSave={() => {
+            fetchJobOrder();
+          }}
+          // Slice 2 (May 2026): the override-summary banner on the
+          // Requirements tab becomes a clickable shortcut to the
+          // Positions tab. Goes through `setTabAndPersist` (the
+          // existing tab-storage helper) so the navigation honours
+          // localStorage persistence and URL sync the same way
+          // every other tab switch does.
+          onJumpToPositionsTab={() => setTabAndPersist('positions')}
+        />
+      </TabPanel>
+
       <TabPanel value={activeTab} index="checklist">
         <JobOrderChecklist
           jobOrder={jobOrder}
@@ -5565,7 +5603,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
           jobOrderId={jobOrderId || ''}
           applicantsCount={applicantsCount}
           candidateCount={candidateCount}
-          shiftsCount={shifts.length}
+          shiftsCount={allShiftsCount}
           assignmentsCount={assignmentsCount}
           onEditLocation={handleEditLocation}
           onEditContacts={() => setManageContactsOpen(true)}

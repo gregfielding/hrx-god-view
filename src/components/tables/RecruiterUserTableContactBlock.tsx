@@ -70,7 +70,7 @@ export type RecruiterUserTableContactBlockProps = {
   };
   latestNote: RecruiterUserTableLatestNote;
   groupTitleLookup: Map<string, string>;
-  /** Optional uid -> display name map; surfaces the worker's CSA on a "CSA: <name>" line. */
+  /** Optional uid -> display name map; surfaces the worker's Recruiter on a "Recruiter: <name>" line. */
   recruiterNameByUid?: Map<string, string>;
   formatDate: (d: unknown) => string;
 };
@@ -125,15 +125,17 @@ const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockPro
 
   const noteMeta = [latestNote?.timestamp?.toLocaleString(), latestNote?.authorName].filter(Boolean).join(' · ');
 
-  // CSA = the worker's `primaryRecruiterId` scalar (per RECRUITING_ROLE_MODEL §4.5).
-  // Tables only carry the uid; the parent passes a tenant-wide name map so each
-  // row can resolve "CSA: <name>" without its own getDoc.
-  const csaUidRaw = typeof user.primaryRecruiterId === 'string' ? user.primaryRecruiterId.trim() : '';
-  const csaUid = csaUidRaw || null;
-  const csaName = csaUid ? recruiterNameByUid?.get(csaUid) ?? csaUid : null;
+  // The user-profile header surfaces the worker's `primaryRecruiterId`
+  // scalar — that's the durable per-worker Recruiter relationship per
+  // RECRUITING_ROLE_MODEL §5.1. Tables only carry the uid; the parent
+  // passes a tenant-wide name map so each row can resolve
+  // "Recruiter: <name>" without its own getDoc.
+  const recruiterUidRaw = typeof user.primaryRecruiterId === 'string' ? user.primaryRecruiterId.trim() : '';
+  const recruiterUid = recruiterUidRaw || null;
+  const recruiterName = recruiterUid ? recruiterNameByUid?.get(recruiterUid) ?? recruiterUid : null;
 
   // Renderable city/state pair — pulled out so the new vertical order
-  // (city → phone → email → joined → icons → CSA) reads top-to-bottom.
+  // (city → phone → email → joined → icons → Recruiter) reads top-to-bottom.
   const cityState = [
     user.city ?? (user.address as { city?: string })?.city,
     user.state ?? (user.address as { state?: string })?.state,
@@ -313,7 +315,7 @@ const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockPro
         </Box>
       </Box>
 
-      {csaName && (
+      {recruiterName && (
         <Typography
           variant="caption"
           color="text.secondary"
@@ -321,7 +323,7 @@ const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockPro
           sx={{ ...tightCaptionSx, mt: 0.125 }}
           noWrap
         >
-          CSA: {csaName}
+          Recruiter: {recruiterName}
         </Typography>
       )}
 

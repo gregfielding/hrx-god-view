@@ -1,6 +1,6 @@
 /**
- * **E.7** — `useCsaActionQueueItems` — live data hook for the unified
- * /staff-onboarding "To-Do" tab.
+ * **E.7** — `useOnboardingSpecialistActionQueueItems` — live data hook
+ * for the unified /staff-onboarding "To-Do" tab.
  *
  * Subscribes to `tenants/{tid}/entity_employments` (the source of truth
  * for action signals: workerType, i9Section2CompletedAt, everifyStatus,
@@ -12,9 +12,9 @@
  *   - `users` — display name / email / phone / avatar
  *
  * The pure aggregation / decision logic lives in
- * `src/utils/csaActionQueue/buildCsaActionItems.ts` so it stays
- * unit-testable without Firestore mocking. This hook is a thin live
- * wrapper.
+ * `src/utils/onboardingSpecialistActionQueue/buildOnboardingSpecialistActionItems.ts`
+ * so it stays unit-testable without Firestore mocking. This hook is a
+ * thin live wrapper.
  *
  * **Live aspect.** Only the `entity_employments` query subscribes via
  * `onSnapshot` — that's where the action-state mutations land (Section
@@ -51,28 +51,28 @@ import {
 import { db } from '../firebase';
 import { p } from '../data/firestorePaths';
 import {
-  buildCsaActionItems,
-  type CsaQueueEntityEmploymentLite,
-  type CsaQueueEntityLite,
-  type CsaQueueEvereeMirrorLite,
-  type CsaQueueUserLite,
-} from '../utils/csaActionQueue/buildCsaActionItems';
+  buildOnboardingSpecialistActionItems,
+  type OnboardingSpecialistQueueEntityEmploymentLite,
+  type OnboardingSpecialistQueueEntityLite,
+  type OnboardingSpecialistQueueEvereeMirrorLite,
+  type OnboardingSpecialistQueueUserLite,
+} from '../utils/onboardingSpecialistActionQueue/buildOnboardingSpecialistActionItems';
 import {
-  compareCsaActionItems,
-  type CsaActionItem,
-} from '../types/csaActionQueue';
+  compareOnboardingSpecialistActionItems,
+  type OnboardingSpecialistActionItem,
+} from '../types/onboardingSpecialistActionQueue';
 import useMyWorkerUids from './useMyWorkerUids';
 
 const ENTITY_EMPLOYMENT_QUERY_LIMIT = 2000;
 
-export interface UseCsaActionQueueItemsParams {
+export interface UseOnboardingSpecialistActionQueueItemsParams {
   tenantId: string | undefined;
   currentUserUid: string | null;
   scope: 'mine' | 'all';
 }
 
-export interface UseCsaActionQueueItemsResult {
-  items: CsaActionItem[];
+export interface UseOnboardingSpecialistActionQueueItemsResult {
+  items: OnboardingSpecialistActionItem[];
   loading: boolean;
   error: string | null;
 }
@@ -90,7 +90,7 @@ function pickStringOrNull(value: unknown): string | null {
 function entityEmploymentLiteFromDoc(
   id: string,
   data: Record<string, unknown>,
-): CsaQueueEntityEmploymentLite {
+): OnboardingSpecialistQueueEntityEmploymentLite {
   return {
     id,
     userId: pickString(data.userId),
@@ -107,7 +107,10 @@ function entityEmploymentLiteFromDoc(
   };
 }
 
-function userLiteFromDoc(uid: string, data: Record<string, unknown>): CsaQueueUserLite {
+function userLiteFromDoc(
+  uid: string,
+  data: Record<string, unknown>,
+): OnboardingSpecialistQueueUserLite {
   const first = pickString(data.firstName);
   const last = pickString(data.lastName);
   const fallbackName = pickString(data.displayName) || pickString(data.fullName) || uid;
@@ -121,7 +124,10 @@ function userLiteFromDoc(uid: string, data: Record<string, unknown>): CsaQueueUs
   };
 }
 
-function entityLiteFromDoc(id: string, data: Record<string, unknown>): CsaQueueEntityLite {
+function entityLiteFromDoc(
+  id: string,
+  data: Record<string, unknown>,
+): OnboardingSpecialistQueueEntityLite {
   const everifyRequiredRaw = data.everifyRequired;
   return {
     id,
@@ -130,27 +136,37 @@ function entityLiteFromDoc(id: string, data: Record<string, unknown>): CsaQueueE
   };
 }
 
-const useCsaActionQueueItems = ({
+const useOnboardingSpecialistActionQueueItems = ({
   tenantId,
   currentUserUid,
   scope,
-}: UseCsaActionQueueItemsParams): UseCsaActionQueueItemsResult => {
-  const [employments, setEmployments] = useState<CsaQueueEntityEmploymentLite[]>([]);
+}: UseOnboardingSpecialistActionQueueItemsParams): UseOnboardingSpecialistActionQueueItemsResult => {
+  const [employments, setEmployments] = useState<OnboardingSpecialistQueueEntityEmploymentLite[]>([]);
   const [employmentsLoaded, setEmploymentsLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [evereeMirrorByKey, setEvereeMirrorByKey] = useState<
-    Record<string, CsaQueueEvereeMirrorLite | undefined>
+    Record<string, OnboardingSpecialistQueueEvereeMirrorLite | undefined>
   >({});
-  const [userByUid, setUserByUid] = useState<Record<string, CsaQueueUserLite | undefined>>({});
-  const [entityById, setEntityById] = useState<Record<string, CsaQueueEntityLite | undefined>>({});
+  const [userByUid, setUserByUid] = useState<
+    Record<string, OnboardingSpecialistQueueUserLite | undefined>
+  >({});
+  const [entityById, setEntityById] = useState<
+    Record<string, OnboardingSpecialistQueueEntityLite | undefined>
+  >({});
 
   // Caches survive across snapshot ticks — refetching every entity / user
   // doc on every entity_employments delta would thrash the read budget.
   // The cache is keyed per-tenant (resets when tenantId changes).
-  const userCacheRef = useRef<Record<string, CsaQueueUserLite | undefined>>({});
-  const entityCacheRef = useRef<Record<string, CsaQueueEntityLite | undefined>>({});
-  const mirrorCacheRef = useRef<Record<string, CsaQueueEvereeMirrorLite | undefined>>({});
+  const userCacheRef = useRef<
+    Record<string, OnboardingSpecialistQueueUserLite | undefined>
+  >({});
+  const entityCacheRef = useRef<
+    Record<string, OnboardingSpecialistQueueEntityLite | undefined>
+  >({});
+  const mirrorCacheRef = useRef<
+    Record<string, OnboardingSpecialistQueueEvereeMirrorLite | undefined>
+  >({});
   const cacheTenantRef = useRef<string | undefined>(undefined);
 
   const { myWorkerUids } = useMyWorkerUids({ currentUserUid, scope });
@@ -200,7 +216,10 @@ const useCsaActionQueueItems = ({
       },
       (err) => {
         // eslint-disable-next-line no-console
-        console.error('[useCsaActionQueueItems] entity_employments listener failed', err);
+        console.error(
+          '[useOnboardingSpecialistActionQueueItems] entity_employments listener failed',
+          err,
+        );
         setError(err.message || 'Failed to load action queue.');
         setEmployments([]);
         setEmploymentsLoaded(true);
@@ -355,14 +374,14 @@ const useCsaActionQueueItems = ({
   // four caches (or the My/All filter) changes.
   const items = useMemo(() => {
     if (!employmentsLoaded) return [];
-    const built = buildCsaActionItems({
+    const built = buildOnboardingSpecialistActionItems({
       entityEmployments: employments,
       evereeMirrorByKey,
       entityById,
       userByUid,
       myWorkerUids,
     });
-    built.sort(compareCsaActionItems);
+    built.sort(compareOnboardingSpecialistActionItems);
     return built;
   }, [
     employmentsLoaded,
@@ -381,7 +400,7 @@ const useCsaActionQueueItems = ({
   );
 };
 
-export default useCsaActionQueueItems;
+export default useOnboardingSpecialistActionQueueItems;
 
 /** Re-exported for tests + consumers that need the action-item shape. */
-export type { CsaActionItem };
+export type { OnboardingSpecialistActionItem };

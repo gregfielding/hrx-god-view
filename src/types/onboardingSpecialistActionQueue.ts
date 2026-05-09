@@ -1,18 +1,24 @@
 /**
- * **E.7** — Unified CSA action-queue item shape.
+ * **E.7** — Unified Onboarding Specialist action-queue item shape.
  *
  * The `/staff-onboarding` "To-Do" tab is a single tenant-wide queue that
- * surfaces (worker × action) pairs the CSA needs to act on. Each row is
- * derived from multiple data sources — `entity_employments`,
- * `everee_workers`, plus user/entity display lookups — and joined into
- * this single shape so the UI can render uniformly and sort across types.
+ * surfaces (worker × action) pairs the Onboarding Specialist needs to
+ * act on. Each row is derived from multiple data sources —
+ * `entity_employments`, `everee_workers`, plus user/entity display
+ * lookups — and joined into this single shape so the UI can render
+ * uniformly and sort across types.
  *
- * Per-action contracts live in `src/hooks/useCsaActionQueueItems.ts`
- * (the aggregator) and `src/components/staffOnboarding/CsaActionQueue.tsx`
+ * Per-action contracts live in
+ * `src/hooks/useOnboardingSpecialistActionQueueItems.ts` (the
+ * aggregator) and
+ * `src/components/staffOnboarding/OnboardingSpecialistActionQueue.tsx`
  * (the renderer). When a new action type is added (e.g. AccuSource
- * adjudication needs-review), extend `CsaActionType` here, set a priority
- * in `CSA_ACTION_PRIORITY`, and the queue scaffolding picks it up
- * automatically.
+ * adjudication needs-review), extend `OnboardingSpecialistActionType`
+ * here, set a priority in `ONBOARDING_SPECIALIST_ACTION_PRIORITY`, and
+ * the queue scaffolding picks it up automatically.
+ *
+ * History: this module was renamed from `csaActionQueue` when the CSA
+ * role was renamed to Onboarding Specialist. Behavior is unchanged.
  */
 
 import type { Timestamp } from 'firebase/firestore';
@@ -22,7 +28,7 @@ import type { Timestamp } from 'firebase/firestore';
  * exhaustively). Adding a new action type forces compile-time updates
  * everywhere downstream.
  */
-export type CsaActionType =
+export type OnboardingSpecialistActionType =
   | 'i9_section_2'
   | 'start_everify'
   | 'address_tnc';
@@ -35,7 +41,10 @@ export type CsaActionType =
  * 3 business days, but only after Section 2 is complete, so volume is
  * higher and the deadline is downstream of the other two.
  */
-export const CSA_ACTION_PRIORITY: Record<CsaActionType, number> = {
+export const ONBOARDING_SPECIALIST_ACTION_PRIORITY: Record<
+  OnboardingSpecialistActionType,
+  number
+> = {
   address_tnc: 0,
   i9_section_2: 1,
   start_everify: 2,
@@ -46,8 +55,8 @@ export const CSA_ACTION_PRIORITY: Record<CsaActionType, number> = {
  * label requires touching a single file rather than hunting through the
  * UI tree.
  */
-export const CSA_ACTION_LABELS: Record<
-  CsaActionType,
+export const ONBOARDING_SPECIALIST_ACTION_LABELS: Record<
+  OnboardingSpecialistActionType,
   { title: string; primaryButton: string }
 > = {
   i9_section_2: {
@@ -64,14 +73,14 @@ export const CSA_ACTION_LABELS: Record<
   },
 };
 
-export interface CsaActionItem {
+export interface OnboardingSpecialistActionItem {
   /**
    * Composite id — `${actionType}__${entityId}__${userId}`. Stable
    * across renders (no UUIDs) so React's reconciliation diffs cleanly
    * when the queue mutates.
    */
   id: string;
-  actionType: CsaActionType;
+  actionType: OnboardingSpecialistActionType;
 
   /** The worker the action is about. */
   workerUid: string;
@@ -118,7 +127,7 @@ export interface CsaActionItem {
    */
   ageMs: number;
 
-  /** Mirror of `CSA_ACTION_PRIORITY[actionType]` for inline sort access. */
+  /** Mirror of `ONBOARDING_SPECIALIST_ACTION_PRIORITY[actionType]` for inline sort access. */
   priority: number;
 }
 
@@ -127,7 +136,10 @@ export interface CsaActionItem {
  * actionable within each band. Ties broken by composite id for stable
  * ordering.
  */
-export function compareCsaActionItems(a: CsaActionItem, b: CsaActionItem): number {
+export function compareOnboardingSpecialistActionItems(
+  a: OnboardingSpecialistActionItem,
+  b: OnboardingSpecialistActionItem,
+): number {
   if (a.priority !== b.priority) return a.priority - b.priority;
   if (a.ageMs !== b.ageMs) return b.ageMs - a.ageMs;
   return a.id.localeCompare(b.id);
@@ -137,7 +149,10 @@ export function compareCsaActionItems(a: CsaActionItem, b: CsaActionItem): numbe
  * Substring matcher for the search bar — case-insensitive on
  * name/email/phone. Returns true when `query` is empty (no filtering).
  */
-export function csaActionItemMatchesSearch(item: CsaActionItem, query: string): boolean {
+export function onboardingSpecialistActionItemMatchesSearch(
+  item: OnboardingSpecialistActionItem,
+  query: string,
+): boolean {
   const q = query.trim().toLowerCase();
   if (q.length === 0) return true;
   const haystacks = [item.workerName, item.workerEmail ?? '', item.workerPhone ?? ''];

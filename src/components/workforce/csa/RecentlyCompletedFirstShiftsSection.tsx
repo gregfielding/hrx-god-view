@@ -86,7 +86,7 @@ const RecentlyCompletedFirstShiftsSection: React.FC<
         <TableRow sx={{ bgcolor: 'rgba(0,0,0,0.02)' }}>
           <TableCell sx={headerCellSx}>Worker</TableCell>
           <TableCell sx={headerCellSx}>Shift</TableCell>
-          <TableCell sx={headerCellSx}>CSA</TableCell>
+          <TableCell sx={headerCellSx}>Onboarding Specialist</TableCell>
           <TableCell sx={headerCellSx}>Status</TableCell>
         </TableRow>
       </TableHead>

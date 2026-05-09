@@ -210,18 +210,33 @@ async function loadOwnershipInput(args: {
         .get();
       gsnap.docs.forEach((d) => {
         const data = d.data() as Record<string, unknown>;
-        // Prefer the new `roles.csaIds` field; fall back to legacy
-        // `groupManagerIds` for groups that haven't been migrated yet.
-        // The UI dual-writes both, so once a group is touched the two
-        // arrays are in sync — this fallback only matters for stale data.
+        // Prefer the new `roles.onboardingSpecialistIds` field; fall
+        // back to the legacy `roles.csaIds` (rename transition window)
+        // and then the older `groupManagerIds` for groups that haven't
+        // been migrated yet. The UI dual-writes the role-model field +
+        // `groupManagerIds`, so once a group is touched the two arrays
+        // are in sync — these fallbacks only matter for stale data.
         const rolesObj = (data.roles && typeof data.roles === 'object')
           ? (data.roles as Record<string, unknown>)
           : null;
-        const csaIds = uniqueStringList((rolesObj?.csaIds as unknown[]) ?? []);
-        const legacyIds = uniqueStringList((data.groupManagerIds as unknown[]) ?? []);
-        const ids = csaIds.length > 0 ? csaIds : legacyIds;
+        const onboardingSpecialistIds = uniqueStringList(
+          (rolesObj?.onboardingSpecialistIds as unknown[]) ?? [],
+        );
+        const legacyCsaIds = uniqueStringList((rolesObj?.csaIds as unknown[]) ?? []);
+        const legacyGroupManagerIds = uniqueStringList((data.groupManagerIds as unknown[]) ?? []);
+        const ids =
+          onboardingSpecialistIds.length > 0
+            ? onboardingSpecialistIds
+            : legacyCsaIds.length > 0
+              ? legacyCsaIds
+              : legacyGroupManagerIds;
         if (ids.length > 0) {
-          userGroups.push({ id: d.id, csaIds, groupManagerIds: legacyIds });
+          userGroups.push({
+            id: d.id,
+            onboardingSpecialistIds,
+            csaIds: legacyCsaIds,
+            groupManagerIds: legacyGroupManagerIds,
+          });
         }
       });
     } catch (err) {

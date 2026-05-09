@@ -23,7 +23,10 @@ export type ActionItemOwnershipPrimarySource =
   | 'job_order'
   /** From `account.associations.recruiterIds`. */
   | 'account'
-  /** From `userGroup.roles.csaIds` (or legacy `groupManagerIds`) on one of the worker's groups. */
+  /**
+   * From `userGroup.roles.onboardingSpecialistIds` (or the legacy
+   * `roles.csaIds` / `groupManagerIds`) on one of the worker's groups.
+   */
   | 'user_group'
   /** From `tenants/{tid}/messagingConfig/ownershipDefaults.defaultRecruiterId`. */
   | 'tenant_default'
@@ -103,19 +106,32 @@ export type ResolveOwnershipInput = {
     recruiterIds: string[];
     recruiterAssociations?: ActionItemOwnershipAssociation[];
   };
-  /** User-group memberships relevant to the worker (+ their CSAs). */
+  /**
+   * User-group memberships relevant to the worker (+ their Onboarding
+   * Specialists, the role formerly known as CSA).
+   */
   userGroups?: Array<{
     id: string;
     /**
-     * Preferred: `tenants/{tid}/userGroups/{id}.roles.csaIds` — the recruiting
-     * role model's source of truth. Resolver consults this first.
+     * Preferred:
+     * `tenants/{tid}/userGroups/{id}.roles.onboardingSpecialistIds` —
+     * the recruiting role model's source of truth. Resolver consults
+     * this first.
+     */
+    onboardingSpecialistIds?: string[];
+    /**
+     * Legacy alias retained for the rename transition window:
+     * `tenants/{tid}/userGroups/{id}.roles.csaIds`. Resolver falls
+     * back to this when `onboardingSpecialistIds` is absent so docs
+     * written before the migration script ran still resolve.
      */
     csaIds?: string[];
     /**
      * Legacy: `tenants/{tid}/userGroups/{id}.groupManagerIds`. Kept as a
      * fallback for groups that haven't been migrated yet. The UI now
-     * dual-writes both fields, so this will always match `csaIds` for
-     * groups updated under the new model.
+     * dual-writes the role-model field + `groupManagerIds`, so this
+     * field will always match the role-model field for groups updated
+     * under the new model.
      */
     groupManagerIds: string[];
     recruiterAssociations?: ActionItemOwnershipAssociation[];

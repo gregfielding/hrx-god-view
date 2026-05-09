@@ -10,6 +10,8 @@ const REASON_HUMAN: Record<string, string> = {
   operational_hard_block: 'Hard gate — cannot auto-advance until cleared',
   gig_path_eligible: 'Gig path noted — main hire path may still need review',
   interview_recommendation_review: 'Interview flagged for recruiter review before auto-advance',
+  interview_recommendation_review_overridden:
+    'Interview review flag overridden by group preset — score gates still applied',
   recommendation_decline: 'Interview recommendation is decline',
   failed_score_threshold: 'Score below configured threshold for auto-advance',
   moderate_flags_present: 'Moderate screening flags — review before auto-advance',

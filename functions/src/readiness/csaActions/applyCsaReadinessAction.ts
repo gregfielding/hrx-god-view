@@ -123,7 +123,10 @@ export async function applyCsaReadinessAction(
 ): Promise<CsaReadinessActionResult> {
   const transition = TRANSITIONS[kind];
   if (!transition) {
-    throw new HttpsError('internal', `Unknown CSA action kind: ${String(kind)}`);
+    throw new HttpsError(
+      'internal',
+      `Unknown readiness action kind: ${String(kind)}`,
+    );
   }
 
   const { tenantId, itemId, collection, note } = validateInput(input, transition.noteRequired);
