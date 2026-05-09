@@ -5061,7 +5061,14 @@ const RecruiterJobOrderDetail: React.FC = () => {
                             </Box>
                           </Grid>
 
-                          {jobOrder?.worksiteName && (
+                          {/* Mirrors the header's fallback chain
+                              (`worksiteName || loadedLocationName ||
+                              dealLocationName`). Older JOs created before
+                              the create-path fix only persisted
+                              `locationName`, so without the fallback the
+                              Overview was blank even though the linked
+                              location existed. */}
+                          {jobOrderWorksiteHeaderTitle && (
                             <Grid item xs={12} sm={6}>
                               <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
                                 <LocationIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
@@ -5070,7 +5077,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
                                     Worksite
                                   </Typography>
                                   <Typography variant="body1" sx={{ mt: 0.25 }}>
-                                    {jobOrder.worksiteId && company?.id ? (
+                                    {worksiteId && company?.id ? (
                                       <MUILink
                                         href={`/companies/${company.id}?tab=locations`}
                                         onClick={(e) => {
@@ -5081,10 +5088,10 @@ const RecruiterJobOrderDetail: React.FC = () => {
                                         underline="hover"
                                         sx={{ fontWeight: 500 }}
                                       >
-                                        {jobOrder.worksiteName}
+                                        {jobOrderWorksiteHeaderTitle}
                                       </MUILink>
                                     ) : (
-                                      <span style={{ fontWeight: 500 }}>{jobOrder.worksiteName}</span>
+                                      <span style={{ fontWeight: 500 }}>{jobOrderWorksiteHeaderTitle}</span>
                                     )}
                                   </Typography>
                                 </Box>

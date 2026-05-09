@@ -39,8 +39,13 @@ export const DEFAULT_JOB_ORDER_DETAIL_TAB: JobOrderDetailTabKey = 'checklist';
 export const JOB_ORDER_DETAIL_TAB_STRIP: ReadonlyArray<{ key: JobOrderDetailTabKey; label: string }> = [
   { key: 'overview', label: 'Overview' },
   { key: 'checklist', label: 'Checklist' },
-  { key: 'cascading_data', label: 'Cascading Data' },
-  { key: 'hiring', label: 'Hiring' },
+  // Cascading Data + Hiring + Activity tabs hidden from the nav strip.
+  // Their keys remain in JOB_ORDER_DETAIL_TAB_KEYS and their TabPanels
+  // are still rendered so any bookmarked URLs (e.g. `?tab=hiring`) and
+  // any stored localStorage values don't break — they just aren't
+  // reachable from the strip until we re-enable them.
+  // { key: 'cascading_data', label: 'Cascading Data' },
+  // { key: 'hiring', label: 'Hiring' },
   { key: 'defaults', label: 'Defaults' },
   { key: 'staff_instructions', label: 'Staff Instructions' },
   { key: 'jobs_board', label: 'Jobs Board' },
@@ -49,7 +54,7 @@ export const JOB_ORDER_DETAIL_TAB_STRIP: ReadonlyArray<{ key: JobOrderDetailTabK
   { key: 'applications', label: 'Applications' },
   { key: 'placements', label: 'Placements' },
   { key: 'notes', label: 'Notes' },
-  { key: 'activity', label: 'Activity' },
+  // { key: 'activity', label: 'Activity' },
 ];
 
 const LS_KEY_PREFIX = 'recruiter_job_order_tab_';

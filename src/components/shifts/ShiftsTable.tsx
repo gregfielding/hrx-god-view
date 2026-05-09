@@ -47,6 +47,7 @@ import {
   type ShiftRow,
   type ShiftStatus,
 } from '../../utils/shifts/shiftRow';
+import { isC1UnemploymentPricingEntity } from '../../utils/shifts/sutaFutaAccountHydration';
 import type { ShiftsJobTypeFilter, ShiftsStatusFilter } from '../../pages/Shifts';
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
@@ -799,10 +800,22 @@ const ShiftsTable: React.FC<ShiftsTableProps> = ({
                         )}
                       </TableCell>
                       <TableCell>
-                        {jobOrder.worksiteName || street || cityStateZip ? (
+                        {/* Prefer the location-specific name (e.g.
+                            "Distribution Hall" for a standalone Contigo
+                            Catering site, or "Los Angeles Convention Center"
+                            for a national CORT child). `useActiveShifts`
+                            backfills `worksiteName` from the location doc's
+                            `nickname || name` when the JO didn't persist it,
+                            so this column reads the location label first
+                            and only falls back to `companyName` when neither
+                            the JO nor the location has a name on file. */}
+                        {(() => {
+                          const primary = jobOrder.worksiteName || jobOrder.companyName;
+                          return primary || street || cityStateZip;
+                        })() ? (
                           <Stack spacing={0.25}>
                             <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                              {jobOrder.worksiteName || '—'}
+                              {jobOrder.worksiteName || jobOrder.companyName || '—'}
                             </Typography>
                             {street && (
                               <Typography variant="caption" color="text.secondary">
@@ -953,33 +966,50 @@ const ShiftsTable: React.FC<ShiftsTableProps> = ({
                         })()}
                       </TableCell>
                       <TableCell>
-                        {jobOrder.payRate != null ||
-                        jobOrder.billRate != null ||
-                        jobOrder.wcRate != null ||
-                        jobOrder.sutaRate != null ||
-                        jobOrder.futaRate != null ? (
-                          <Stack spacing={0.25}>
-                            <Typography variant="body2" sx={{ whiteSpace: 'nowrap' }}>
-                              Pay: {fmtMoney(jobOrder.payRate)} · Bill:{' '}
-                              {fmtMoney(jobOrder.billRate)}
-                              {jobOrder.markupPercent != null &&
-                                Number.isFinite(jobOrder.markupPercent) && (
-                                  <> ({fmtPct(jobOrder.markupPercent)})</>
+                        {(() => {
+                          // FUTA + SUTA are W2 employer payroll taxes. For 1099
+                          // hiring entities (today: C1 Events LLC) they don't
+                          // apply at all, so we only show WC alongside Pay/Bill
+                          // and skip the unemployment-tax line entirely. Mirrors
+                          // the JO form gate (`showSutaFutaOnGigPositions`) and
+                          // the EditShiftForm gate (`showSutaFutaForJo`).
+                          const showUnemploymentTaxes =
+                            isC1UnemploymentPricingEntity(jobOrder.hiringEntityName);
+                          const hasFinancials =
+                            jobOrder.payRate != null ||
+                            jobOrder.billRate != null ||
+                            jobOrder.wcRate != null ||
+                            (showUnemploymentTaxes &&
+                              (jobOrder.sutaRate != null || jobOrder.futaRate != null));
+                          if (!hasFinancials) return '—';
+                          return (
+                            <Stack spacing={0.25}>
+                              <Typography variant="body2" sx={{ whiteSpace: 'nowrap' }}>
+                                Pay: {fmtMoney(jobOrder.payRate)} · Bill:{' '}
+                                {fmtMoney(jobOrder.billRate)}
+                                {jobOrder.markupPercent != null &&
+                                  Number.isFinite(jobOrder.markupPercent) && (
+                                    <> ({fmtPct(jobOrder.markupPercent)})</>
+                                  )}
+                              </Typography>
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                                sx={{ whiteSpace: 'nowrap' }}
+                              >
+                                {showUnemploymentTaxes ? (
+                                  <>
+                                    FUTA: {renderRateValue(jobOrder.futaRate)} · SUTA:{' '}
+                                    {renderRateValue(jobOrder.sutaRate)} · WC:{' '}
+                                    {renderRateValue(jobOrder.wcRate)}
+                                  </>
+                                ) : (
+                                  <>WC: {renderRateValue(jobOrder.wcRate)}</>
                                 )}
-                            </Typography>
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{ whiteSpace: 'nowrap' }}
-                            >
-                              FUTA: {renderRateValue(jobOrder.futaRate)} · SUTA:{' '}
-                              {renderRateValue(jobOrder.sutaRate)} · WC:{' '}
-                              {renderRateValue(jobOrder.wcRate)}
-                            </Typography>
-                          </Stack>
-                        ) : (
-                          '—'
-                        )}
+                              </Typography>
+                            </Stack>
+                          );
+                        })()}
                       </TableCell>
                       {/* Instructions column temporarily hidden while we clean up the shifts list view.
                       <TableCell sx={{ maxWidth: 240 }}>

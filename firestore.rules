@@ -277,18 +277,32 @@ service cloud.firestore {
         allow delete: if false;
       }
 
-      // Placements: recruiter staging (placed but not yet offered - no Assignment created)
+      // Placements: recruiter staging (placed but not yet offered - no Assignment created).
+      //
+      // Original rule (pre-fix) gated create/update/delete on a JWT-claim
+      // shape (`request.auth.token.roles[tenantId].role in [...]`) that
+      // never matched normal team members — only HRX (which short-circuits
+      // via isHRX()) could place workers. Recruiters and managers got
+      // permission-denied. Aligning with `recruiter_placements` (line ~1374)
+      // and the rest of the recruiter-tooling rules: profile-based
+      // `hasRecruiterAccess()` + tenant assignment, retaining HRX/admin
+      // bypass and the tenantId-integrity check on writes.
       match /placements/{placementId} {
-        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId));
+        allow read: if request.auth != null && (
+          isHRX() ||
+          isTenantAdmin(tenantId) ||
+          (isAssignedToTenant(tenantId) && hasRecruiterAccess()) ||
+          isAssignedToTenant(tenantId)
+        );
         allow create, update: if request.auth != null && (
           isHRX() ||
-          (request.auth.token.roles != null && tenantId in request.auth.token.roles && 
-           request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager', 'Admin'])
+          isTenantAdmin(tenantId) ||
+          (isAssignedToTenant(tenantId) && hasRecruiterAccess())
         ) && request.resource.data.tenantId == tenantId;
         allow delete: if request.auth != null && (
           isHRX() ||
-          (request.auth.token.roles != null && tenantId in request.auth.token.roles && 
-           request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager', 'Admin'])
+          isTenantAdmin(tenantId) ||
+          (isAssignedToTenant(tenantId) && hasRecruiterAccess())
         );
       }
 
@@ -1619,7 +1633,24 @@ service cloud.firestore {
         allow update: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
         allow delete: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
       }
-      
+
+      // CRMNotesTab builds the collection name as `${entityType}_notes` (see
+      // src/components/CRMNotesTab.tsx). When entityType === 'account' (used
+      // by RecruiterAccountDetails), the collection is `account_notes`.
+      // Mirror the location_notes/company_notes/deal_notes/contact_notes
+      // shape — same fields (authorId), same access pattern.
+      match /account_notes/{noteId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow read: if isAssignedToTenant(tenantId);
+        allow create: if isAuthenticated() && (
+          (isAssignedToTenant(tenantId) && hasCRMAccess()) ||
+          hasSecurityLevel(tenantId, 5)
+        );
+        allow update: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
+        allow delete: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
+      }
+
       // 🆕 UNIVERSAL ASSOCIATIONS SYSTEM
       match /crm_associations/{associationId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);

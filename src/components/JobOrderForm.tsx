@@ -357,6 +357,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       workersCompRate?: string;
       sutaRate?: string;
       futaRate?: string;
+      /** Per-position client-provided job description. Each position gets
+       *  its own — a "Food Servers" position's JD shouldn't apply to
+       *  "Cooks" sharing the same gig JO. Mirrors how account pricing
+       *  stores `pricing.positions[i].jobDescriptionFromClient`. */
+      jobDescriptionFromClient?: string;
     }>
   >([{ jobTitle: '', workersNeeded: 1, payRate: '' }]); // For gig-type jobs with multiple positions
   /** Draft text for career Job Title Autocomplete (value commits on blur / pick / Enter — avoids save+re-render each keystroke). */
@@ -792,9 +797,15 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     const ids = acc.companyIds.filter(Boolean);
     setFormData((prev) => {
       if (ids.length === 1) {
-        return prev.companyId === ids[0] && prev.worksiteId === ''
-          ? prev
-          : { ...prev, companyId: ids[0], worksiteId: '' };
+        // Preserve worksiteId whenever companyId already matches the
+        // single allowed company. The previous short-circuit only kept
+        // `prev` when `prev.worksiteId === ''`, which silently wiped a
+        // saved worksite the moment `pickedRecruiterAccountId` resolved
+        // during `loadJobOrder` — that's the "Worksite doesn't save"
+        // symptom on JOs whose recruiter-account expands to exactly one
+        // CRM company (the most common case).
+        if (prev.companyId === ids[0]) return prev;
+        return { ...prev, companyId: ids[0], worksiteId: '' };
       }
       if (ids.length > 1) {
         if (prev.companyId && ids.includes(prev.companyId)) return prev;
@@ -1605,6 +1616,36 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         const customUniformResolved =
           typeof customUniformForForm === 'string' ? customUniformForForm : '';
 
+        // Worksite / Company resolution mirrors `RecruiterJobOrderDetail`'s
+        // sidebar Location card. Older JOs (created before the
+        // `JobOrderForm` create path was fixed to denormalize
+        // `companyId` / `worksiteId` / `companyName` / `worksiteName` onto
+        // the JO doc) only persist some of these:
+        //   - `accountId` / `locationId` (the "new" mirror fields), or
+        //   - `deal.companyId` / `deal.worksiteId`, or
+        //   - `deal.locations[0].id` (legacy multi-location deals).
+        // Without this fallback, the Worksite Autocomplete on a perfectly
+        // valid JO renders empty even though the right-sidebar Location
+        // card resolves the location fine — exactly the symptom the user
+        // saw on the "Distribution Hall Gigs" JO. We hydrate from any
+        // available source so the form mirrors the rest of the UI.
+        const dealEmbedded = (data as any).deal as Record<string, any> | undefined;
+        const dealLocations = Array.isArray(dealEmbedded?.locations) ? dealEmbedded?.locations : [];
+        const firstDealLocation = (dealLocations as any[])[0] as Record<string, any> | undefined;
+        const resolvedCompanyId =
+          (data as any).companyId ||
+          (data as any).accountId ||
+          dealEmbedded?.companyId ||
+          firstDealLocation?.companyId ||
+          '';
+        const resolvedWorksiteId =
+          (data as any).worksiteId ||
+          (data as any).locationId ||
+          dealEmbedded?.worksiteId ||
+          firstDealLocation?.id ||
+          firstDealLocation?.locationId ||
+          '';
+
         setFormData({
           // Basic Information
           jobOrderNumber: data.jobOrderNumber || '',
@@ -1612,8 +1653,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           jobTitle: (data as any).jobTitle || (stageData.discovery?.jobTitles?.[0] || ''),
           description: data.jobOrderDescription || '',
           jobDescriptionFromClient: (data as any).jobDescriptionFromClient || '',
-          companyId: (data as any).companyId || '',
-          worksiteId: (data as any).worksiteId || '',
+          companyId: resolvedCompanyId,
+          worksiteId: resolvedWorksiteId,
           status: data.status || 'draft',
           jobType: (data as any).jobType || 'career',
           workersNeeded: data.workersNeeded || 1,
@@ -1788,17 +1829,28 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         
         // Load gig positions if job type is gig
         if ((data as any).jobType === 'gig' && (data as any).gigPositions) {
-          const loaded = ((data as any).gigPositions as any[]).map((p: any) => ({
-            jobTitle: p.jobTitle ?? '',
-            workersNeeded: p.workersNeeded ?? 1,
-            payRate: String(p.payRate ?? ''),
-            markup: p.markup,
-            billRate: p.billRate,
-            workersCompClassCode: p.workersCompClassCode ?? '',
-            workersCompRate: p.workersCompRate != null ? String(p.workersCompRate) : '',
-            sutaRate: p.sutaRate != null && p.sutaRate !== '' ? String(p.sutaRate) : '',
-            futaRate: p.futaRate != null && p.futaRate !== '' ? String(p.futaRate) : '',
-          }));
+          // Top-level `jobDescriptionFromClient` is the legacy single-field
+          // version; pre-existing JOs created before per-position descriptions
+          // shipped only have it set on the JO doc. Migrate it to position[0]
+          // on first load so the recruiter sees their description in-place
+          // rather than blank. Subsequent saves persist per-position.
+          const legacyTopLevelJd = String((data as any).jobDescriptionFromClient || '').trim();
+          const loaded = ((data as any).gigPositions as any[]).map((p: any, idx: number) => {
+            const persistedJd = String(p.jobDescriptionFromClient ?? '').trim();
+            const jd = persistedJd || (idx === 0 ? legacyTopLevelJd : '');
+            return {
+              jobTitle: p.jobTitle ?? '',
+              workersNeeded: p.workersNeeded ?? 1,
+              payRate: String(p.payRate ?? ''),
+              markup: p.markup,
+              billRate: p.billRate,
+              workersCompClassCode: p.workersCompClassCode ?? '',
+              workersCompRate: p.workersCompRate != null ? String(p.workersCompRate) : '',
+              sutaRate: p.sutaRate != null && p.sutaRate !== '' ? String(p.sutaRate) : '',
+              futaRate: p.futaRate != null && p.futaRate !== '' ? String(p.futaRate) : '',
+              jobDescriptionFromClient: jd || undefined,
+            };
+          });
           setGigPositions(loaded);
         } else if ((data as any).jobType === 'gig') {
           // If gig type but no positions saved, initialize with data from main fields
@@ -1812,11 +1864,17 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             workersCompRate: (data as any).workersCompRate != null ? String((data as any).workersCompRate) : '',
             sutaRate: '',
             futaRate: '',
+            jobDescriptionFromClient: (data as any).jobDescriptionFromClient || undefined,
           } as any]);
         }
         
-        // Load locations for the company if companyId is set
-        const companyForLocations = (data as any).companyId;
+        // Load locations for the company. Use the same fallback chain as
+        // the form-state hydration above — a legacy JO that only has
+        // `accountId` / `deal.companyId` would otherwise leave the
+        // locations list empty and the Worksite dropdown would never
+        // resolve a real entry (only the "Current Location" stub from
+        // `setFilteredLocations`).
+        const companyForLocations = resolvedCompanyId || (data as any).companyId;
         if (companyForLocations) {
           await loadLocations(companyForLocations);
         }
@@ -2033,11 +2091,21 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       const numericMarkup = toNumberSafe((dataToUse as any).markup) ?? 0;
       const computedBill = numericMarkup > 0 && numericPay > 0 ? Number((numericPay * (1 + numericMarkup / 100)).toFixed(2)) : 0;
 
+      // For gigs, per-position descriptions live on `gigPositions[i]`; the
+      // top-level field is mirrored from position[0] so legacy consumers
+      // (`RecruiterJobOrderDetail` summary, `JobOrderChecklist`,
+      // `useActiveShifts`) keep rendering a description without per-consumer
+      // changes. For careers, the top-level field IS the source of truth.
+      const topLevelJdFromClient =
+        (dataToUse as any).jobType === 'gig'
+          ? (String(gigPositions[0]?.jobDescriptionFromClient || '').trim() || undefined)
+          : (dataToUse.jobDescriptionFromClient || undefined);
+
       const updates = {
         tenantId,
         jobOrderName: dataToUse.jobOrderName,
         jobOrderDescription: dataToUse.description,
-        jobDescriptionFromClient: dataToUse.jobDescriptionFromClient || undefined,
+        jobDescriptionFromClient: topLevelJdFromClient,
         status: dataToUse.status,
         jobType: dataToUse.jobType || 'career',
         workersNeeded: toNumberSafe(dataToUse.workersNeeded) ?? 1,
@@ -2406,13 +2474,23 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         ? Number((numericPayForCreate * (1 + numericMarkupForCreate / 100)).toFixed(2))
         : 0;
 
+      // Top-level JD from client mirrors position[0] for gigs so legacy
+      // consumers reading the JO doc directly (Detail summary, Checklist,
+      // active-shifts hook) keep working without per-consumer changes.
+      // Per-position descriptions are also persisted on `gigPositions[i]`
+      // via `normalizeGigPositionsForPersist` (spread preserves the new field).
+      const topLevelJdFromClient =
+        formData.jobType === 'gig'
+          ? (String(gigPositions[0]?.jobDescriptionFromClient || '').trim() || undefined)
+          : (formData.jobDescriptionFromClient || undefined);
+
       const jobOrderData = {
         // Job Order specific fields
         tenantId,
         jobOrderName: formData.jobOrderName,
         jobTitle: formData.jobType === 'gig' ? (gigPositions[0]?.jobTitle || '') : formData.jobTitle,
         jobOrderDescription: formData.description,
-        jobDescriptionFromClient: formData.jobDescriptionFromClient || undefined,
+        jobDescriptionFromClient: topLevelJdFromClient,
         status: formData.status,
         jobType: formData.jobType || 'career',
         workersNeeded: formData.jobType === 'gig' 
@@ -2420,6 +2498,16 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           : (parseInt(formData.workersNeeded.toString()) || 1),
         companyId: formData.companyId || '',
         worksiteId: formData.worksiteId || '',
+        // Denormalize the company + worksite names directly onto the JO
+        // doc. The Detail page Overview, the JO Checklist, the Shifts
+        // table, and `useActiveShifts` all read `companyName` /
+        // `worksiteName` first — without these the Overview shows no
+        // worksite even though the underlying `worksiteId` is correct
+        // and the JO list (which falls back to `deal.locationName`) does
+        // render it. The edit path already writes both names; mirror it
+        // here so create + edit produce the same shape.
+        companyName: companyName || undefined,
+        worksiteName: worksiteName || undefined,
         accountId: formData.companyId || undefined,
         parentAccountId: parentAccountId ?? undefined,
         locationId: formData.worksiteId || undefined,
@@ -3143,6 +3231,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                               workersCompRate: '',
                               sutaRate: '',
                               futaRate: '',
+                              jobDescriptionFromClient: '',
                             },
                           ]);
                         }}
@@ -3228,23 +3317,16 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                                       if (preset.futaRate != null && !Number.isNaN(Number(preset.futaRate))) {
                                         row.futaRate = String(preset.futaRate);
                                       }
+                                      // Per-position JD from account pricing. Only seed when the
+                                      // position's JD is empty so we don't clobber recruiter edits
+                                      // when they re-select the same preset later.
+                                      if (jdFromPreset && !String(row.jobDescriptionFromClient || '').trim()) {
+                                        row.jobDescriptionFromClient = jdFromPreset;
+                                      }
                                     }
                                     updated[index] = row;
                                     return updated;
                                   });
-                                  if (index === 0 && jdFromPreset) {
-                                    setFormData((fd) => {
-                                      const next = { ...fd, jobDescriptionFromClient: jdFromPreset };
-                                      if (isEditing && jobOrderId) {
-                                        void saveFieldToFirestore(
-                                          'jobDescriptionFromClient',
-                                          jdFromPreset,
-                                          next
-                                        );
-                                      }
-                                      return next;
-                                    });
-                                  }
                                 }}
                                 renderInput={(params) => (
                                   <TextField
@@ -3309,23 +3391,14 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                                           if (preset.futaRate != null && !Number.isNaN(Number(preset.futaRate))) {
                                             row.futaRate = String(preset.futaRate);
                                           }
+                                          // Same per-position seeding rule as the `onChange` branch above.
+                                          if (jdFromPreset && !String(row.jobDescriptionFromClient || '').trim()) {
+                                            row.jobDescriptionFromClient = jdFromPreset;
+                                          }
                                         }
                                         updated[index] = row;
                                         return updated;
                                       });
-                                      if (index === 0 && jdFromPreset) {
-                                        setFormData((fd) => {
-                                          const next = { ...fd, jobDescriptionFromClient: jdFromPreset };
-                                          if (isEditing && jobOrderId) {
-                                            void saveFieldToFirestore(
-                                              'jobDescriptionFromClient',
-                                              jdFromPreset,
-                                              next
-                                            );
-                                          }
-                                          return next;
-                                        });
-                                      }
                                     }}
                                   />
                                 )}
@@ -3463,6 +3536,30 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                               </Box>
                             </Box>
                           )}
+
+                          {/*
+                            Per-position client-provided job description.
+                            Auto-seeded from the account's
+                            `pricing.positions[i].jobDescriptionFromClient`
+                            when the recruiter picks a job title preset
+                            (see the Autocomplete onChange / onBlur above);
+                            free-form editable so a recruiter can tailor
+                            the language for this specific gig.
+                          */}
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Job Description from Client"
+                            value={(position as any).jobDescriptionFromClient ?? ''}
+                            onChange={(e) => {
+                              const updated = [...gigPositions];
+                              (updated[index] as any).jobDescriptionFromClient = e.target.value;
+                              setGigPositions(updated);
+                            }}
+                            multiline
+                            rows={4}
+                            placeholder="Enter the client-provided description for this position..."
+                          />
                         </Box>
                         {gigPositions.length > 1 && (
                           <IconButton
@@ -3644,19 +3741,28 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               </Grid>
             )}
 
-            {/* Job Description from Client */}
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Job Description from Client"
-                value={formData.jobDescriptionFromClient}
-                onChange={(e) => handleInputChange('jobDescriptionFromClient', e.target.value)}
-                onBlur={(e) => handleFieldBlur('jobDescriptionFromClient', e.target.value)}
-                multiline
-                rows={4}
-                placeholder="Enter the job description provided by the client..."
-              />
-            </Grid>
+            {/*
+              JO-level "Job Description from Client" is career-only.
+              Gigs have a per-position description inside each position
+              card (see the Positions section above) — a single shared
+              field at the JO level meant a "Food Servers" description
+              also displayed on a sibling "Cooks" position, which was
+              the bug that triggered this refactor.
+            */}
+            {formData.jobType === 'career' && (
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Job Description from Client"
+                  value={formData.jobDescriptionFromClient}
+                  onChange={(e) => handleInputChange('jobDescriptionFromClient', e.target.value)}
+                  onBlur={(e) => handleFieldBlur('jobDescriptionFromClient', e.target.value)}
+                  multiline
+                  rows={4}
+                  placeholder="Enter the job description provided by the client..."
+                />
+              </Grid>
+            )}
 
             </Grid>
 
@@ -4180,252 +4286,20 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             </Grid>
             )}
 
-            <Grid item xs={12} md={6}>
-              <Typography variant="h6" gutterBottom sx={{ mt: 2, mb: 3, color: 'primary.main' }}>
-                Company Contacts
-              </Typography>
-            </Grid>
-
-            <Grid container spacing={2} sx={{ mb: 3 }}>
-
-            <Grid item xs={12} md={6}>
-                <Autocomplete
-                  fullWidth
-                  options={loadedContacts}
-                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
-                  value={loadedContacts.find(contact => contact.id === formData.decisionMaker) || null}
-                  onChange={(event, newValue) => handleInputChange('decisionMaker', newValue?.id || '')}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label="Decision Maker"
-                      placeholder="Search by name or email..."
-                    />
-                  )}
-                  renderOption={(props, option) => (
-                    <li {...props}>
-                      {option.fullName || option.name} {option.title && `(${option.title})`}
-                    </li>
-                  )}
-                  disabled={loadedContacts.length === 0}
-                />
-                {loadedContacts.length === 0 && formData.companyId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    No contacts found for this company. Add contacts to the company first.
-                  </Typography>
-                )}
-                {!formData.companyId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    Select a company to load contacts.
-                  </Typography>
-                )}
-              </Grid>
-            </Grid>
-            <Grid container spacing={2} sx={{ mb: 3 }}>
-              <Grid item xs={12} md={6}>
-                <Autocomplete
-                  fullWidth
-                  options={loadedContacts}
-                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
-                  value={loadedContacts.find(contact => contact.id === formData.hrContactId) || null}
-                  onChange={(event, newValue) => handleInputChange('hrContactId', newValue?.id || '')}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label="HR Contact"
-                      placeholder="Search by name or email..."
-                    />
-                  )}
-                  renderOption={(props, option) => (
-                    <li {...props}>
-                      {option.fullName || option.name} {option.title && `(${option.title})`}
-                    </li>
-                  )}
-                  disabled={loadedContacts.length === 0}
-                />
-                {loadedContacts.length === 0 && formData.companyId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    No contacts found for this company. Add contacts to the company first.
-                  </Typography>
-                )}
-                {!formData.companyId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    Select a company to load contacts.
-                  </Typography>
-                )}
-              </Grid>
-
-              {/* Additional Contact Roles */}
-              <Grid item xs={12} md={6}>
-                <Autocomplete
-                  fullWidth
-                  options={loadedContacts}
-                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
-                  value={loadedContacts.find(contact => contact.id === formData.operationsContactId) || null}
-                  onChange={(event, newValue) => handleInputChange('operationsContactId', newValue?.id || '')}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label="Operations Contact"
-                      placeholder="Search by name or email..."
-                    />
-                  )}
-                  renderOption={(props, option) => (
-                    <li {...props}>
-                      {option.fullName || option.name} {option.title && `(${option.title})`}
-                    </li>
-                  )}
-                  disabled={loadedContacts.length === 0}
-                />
-                {loadedContacts.length === 0 && formData.companyId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    No contacts found for this company. Add contacts to the company first.
-                  </Typography>
-                )}
-                {!formData.companyId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    Select a company to load contacts.
-                  </Typography>
-                )}
-              </Grid>
-            </Grid>
-
-            <Grid container spacing={2} sx={{ mb: 3 }}>
-              <Grid item xs={12} md={6}>
-                <Autocomplete
-                  fullWidth
-                  options={loadedContacts}
-                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
-                  value={loadedContacts.find(contact => contact.id === formData.procurementContactId) || null}
-                  onChange={(event, newValue) => handleInputChange('procurementContactId', newValue?.id || '')}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label="Procurement Contact"
-                      placeholder="Search by name or email..."
-                    />
-                  )}
-                  renderOption={(props, option) => (
-                    <li {...props}>
-                      {option.fullName || option.name} {option.title && `(${option.title})`}
-                    </li>
-                  )}
-                  disabled={loadedContacts.length === 0}
-                />
-                {loadedContacts.length === 0 && formData.companyId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    No contacts found for this company. Add contacts to the company first.
-                  </Typography>
-                )}
-                {!formData.companyId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    Select a company to load contacts.
-                  </Typography>
-                )}
-              </Grid>
-
-              <Grid item xs={12} md={6}>
-                <Autocomplete
-                  fullWidth
-                  options={loadedContacts}
-                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
-                  value={loadedContacts.find(contact => contact.id === formData.billingContactId) || null}
-                  onChange={(event, newValue) => handleInputChange('billingContactId', newValue?.id || '')}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label="Billing Contact"
-                      placeholder="Search by name or email..."
-                    />
-                  )}
-                  renderOption={(props, option) => (
-                    <li {...props}>
-                      {option.fullName || option.name} {option.title && `(${option.title})`}
-                    </li>
-                  )}
-                  disabled={loadedContacts.length === 0}
-                />
-                {loadedContacts.length === 0 && formData.companyId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    No contacts found for this company. Add contacts to the company first.
-                  </Typography>
-                )}
-                {!formData.companyId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    Select a company to load contacts.
-                  </Typography>
-                )}
-              </Grid>
-            </Grid>
-
-            <Grid container spacing={2} sx={{ mb: 3 }}>
-              <Grid item xs={12} md={6}>
-                <Autocomplete
-                  fullWidth
-                  options={loadedContacts}
-                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
-                  value={loadedContacts.find(contact => contact.id === formData.safetyContactId) || null}
-                  onChange={(event, newValue) => handleInputChange('safetyContactId', newValue?.id || '')}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label="Safety Contact"
-                      placeholder="Search by name or email..."
-                    />
-                  )}
-                  renderOption={(props, option) => (
-                    <li {...props}>
-                      {option.fullName || option.name} {option.title && `(${option.title})`}
-                    </li>
-                  )}
-                  disabled={loadedContacts.length === 0}
-                />
-                {loadedContacts.length === 0 && formData.companyId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    No contacts found for this company. Add contacts to the company first.
-                  </Typography>
-                )}
-                {!formData.companyId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    Select a company to load contacts.
-                  </Typography>
-                )}
-              </Grid>
-
-              <Grid item xs={12} md={6}>
-                <Autocomplete
-                  fullWidth
-                  options={loadedContacts}
-                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
-                  value={loadedContacts.find(contact => contact.id === formData.invoiceContactId) || null}
-                  onChange={(event, newValue) => handleInputChange('invoiceContactId', newValue?.id || '')}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label="Invoice Contact"
-                      placeholder="Search by name or email..."
-                    />
-                  )}
-                  renderOption={(props, option) => (
-                    <li {...props}>
-                      {option.fullName || option.name} {option.title && `(${option.title})`}
-                    </li>
-                  )}
-                  disabled={loadedContacts.length === 0}
-                />
-                {loadedContacts.length === 0 && formData.companyId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    No contacts found for this company. Add contacts to the company first.
-                  </Typography>
-                )}
-                {!formData.companyId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    Select a company to load contacts.
-                  </Typography>
-                )}
-              </Grid>
-            </Grid>
-
+            {/*
+              Company Contacts section was removed from this form by request:
+              the seven role pickers (Decision Maker, HR, Operations,
+              Procurement, Billing, Safety, Invoice) were noisy on the JO
+              create surface and recruiters edit them on the Account /
+              Contact pages instead. Form-state fields
+              (`decisionMaker`, `hrContactId`, `operationsContactId`,
+              `procurementContactId`, `billingContactId`,
+              `safetyContactId`, `invoiceContactId`) are intentionally kept
+              in `formData` and in the create / edit write paths — JOs
+              created from a deal still inherit those role IDs from the
+              deal doc, and the JO Detail page surfaces them. This is a
+              pure UI-only removal.
+            */}
 
             {/* Action Buttons */}
             <Grid item xs={12}>

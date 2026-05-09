@@ -37,6 +37,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
+import { doc, getDoc } from 'firebase/firestore';
 import { p } from '../data/firestorePaths';
 import PageHeader from '../components/PageHeader';
 import {
@@ -45,6 +46,7 @@ import {
   DEFAULT_SUTA_RATE_ON_PAY,
   expandGigShiftToOccurrences,
 } from '../utils/gigFinanceFromShifts';
+import { isC1UnemploymentPricingEntity } from '../utils/shifts/sutaFutaAccountHydration';
 
 const WEEKS_COUNT = 12;
 
@@ -169,6 +171,32 @@ interface GigJobOrderRow {
   gigPositions?: any[];
   poNumber?: string;
   status?: string;
+  /** Hydrated from `tenants/{tid}/entities/{id}.name` (or `legalName`); used to
+   *  decide whether FUTA / SUTA enter the Net column. 1099 entities (today:
+   *  C1 Events LLC) skip both — independent contractors don't owe employer
+   *  unemployment tax, so leaving the placeholder rates in would understate
+   *  Net by ~1.5% for a substantial slice of the gig book. */
+  hiringEntityName?: string | null;
+}
+
+/** True when the JO's hiring entity owes employer unemployment tax (W2 payroll). */
+function appliesUnemploymentTax(jo: GigJobOrderRow): boolean {
+  return isC1UnemploymentPricingEntity(jo.hiringEntityName ?? undefined);
+}
+
+/** Match the rate signature `computeJobOrderWeekShiftFinance` expects: real
+ *  defaults for W2 entities, zero-rates for 1099. Centralized so the three
+ *  call sites (week totals, has-figures gate, in-row calc) stay in sync. */
+function rateAssumptionsFor(
+  jo: GigJobOrderRow,
+): { futaRate: number; sutaRate: number } {
+  if (!appliesUnemploymentTax(jo)) {
+    return { futaRate: 0, sutaRate: 0 };
+  }
+  return {
+    futaRate: DEFAULT_FUTA_RATE_ON_PAY,
+    sutaRate: DEFAULT_SUTA_RATE_ON_PAY,
+  };
 }
 
 /** Career jobs store pay/bill on the job order root; shift finance helpers expect gigPositions-shaped entries. */
@@ -253,12 +281,13 @@ function weekFinancialTotals(
     const { start: startStr, end: endStr } = getBudgetingEventRange(jo, shifts);
     const evWeek = proratedEstimateForWeek(jo.gigEstimatedValue, weekMonday, startStr, endStr);
     const estGross = grossProfitFromEvMarkup(evWeek ?? undefined, jo.gigAverageMarkup);
+    const { futaRate, sutaRate } = rateAssumptionsFor(jo);
     const calc = computeJobOrderWeekShiftFinance(
       { gigPositions: jo.gigPositions },
       shifts,
       weekMonday,
-      DEFAULT_FUTA_RATE_ON_PAY,
-      DEFAULT_SUTA_RATE_ON_PAY
+      futaRate,
+      sutaRate
     );
     if (calc.occurrenceCount > 0) {
       sumBill += Number(calc.billTotal) || 0;
@@ -281,12 +310,13 @@ function jobOrderHasBudgetFiguresForWeek(jo: GigJobOrderRow, weekMonday: Date, s
   const { start: eventStart, end: eventEnd } = getBudgetingEventRange(jo, shifts);
   const evWeek = proratedEstimateForWeek(jo.gigEstimatedValue, weekMonday, eventStart, eventEnd);
   const estGross = grossProfitFromEvMarkup(evWeek ?? undefined, jo.gigAverageMarkup);
+  const { futaRate, sutaRate } = rateAssumptionsFor(jo);
   const calc = computeJobOrderWeekShiftFinance(
     { gigPositions: jo.gigPositions },
     shifts,
     weekMonday,
-    DEFAULT_FUTA_RATE_ON_PAY,
-    DEFAULT_SUTA_RATE_ON_PAY
+    futaRate,
+    sutaRate
   );
   if (calc.occurrenceCount > 0) return true;
   if (evWeek != null && Number(evWeek) > 0) return true;
@@ -326,7 +356,8 @@ const FinancesBudgetingPage: React.FC = () => {
       const ref = collection(db, p.jobOrders(tenantId));
       const q = query(ref, where('jobType', 'in', ['gig', 'career']));
       const snap = await getDocs(q);
-      const rows: GigJobOrderRow[] = snap.docs
+      type LoadedJobOrder = GigJobOrderRow & { hiringEntityId?: string };
+      const rows: LoadedJobOrder[] = snap.docs
         .map((d) => {
           const data = d.data() as Record<string, unknown>;
           return {
@@ -343,23 +374,64 @@ const FinancesBudgetingPage: React.FC = () => {
             gigPositions: buildGigPositionsForFinance(data),
             poNumber: data.poNumber as string | undefined,
             status: data.status as string | undefined,
+            hiringEntityId:
+              typeof data.hiringEntityId === 'string' && data.hiringEntityId.trim()
+                ? data.hiringEntityId.trim()
+                : undefined,
           };
         })
         .filter((jo) => !isJobOrderCancelledForBudget(jo.status));
 
+      // Cache entity-name reads so a tenant with 100 JOs sharing 3 entities
+      // collapses to 3 doc reads. Mirrors `useActiveShifts.fetchHiringEntityName`.
+      const entityNameCache = new Map<string, Promise<string | null>>();
+      const fetchEntityName = (entityId: string): Promise<string | null> => {
+        let pending = entityNameCache.get(entityId);
+        if (!pending) {
+          pending = (async (): Promise<string | null> => {
+            try {
+              const entSnap = await getDoc(
+                doc(db, 'tenants', tenantId, 'entities', entityId),
+              );
+              if (!entSnap.exists()) return null;
+              const ed = entSnap.data() as Record<string, unknown>;
+              const pick = (v: unknown): string =>
+                typeof v === 'string' && v.trim() ? v.trim() : '';
+              return pick(ed.name) || pick(ed.legalName) || pick(ed.title) || null;
+            } catch (err) {
+              console.warn('FinancesBudgeting: entity name load failed for', entityId, err);
+              return null;
+            }
+          })();
+          entityNameCache.set(entityId, pending);
+        }
+        return pending;
+      };
+
       const shiftMap: Record<string, any[]> = {};
-      await Promise.all(
-        rows.map(async (jo) => {
-          try {
-            const shiftsRef = collection(db, p.shifts(tenantId, jo.id));
-            const shiftSnap = await getDocs(shiftsRef);
-            shiftMap[jo.id] = shiftSnap.docs.map((sd) => ({ id: sd.id, ...sd.data() }));
-          } catch (e) {
-            console.warn('FinancesBudgeting: shifts load failed for', jo.id, e);
-            shiftMap[jo.id] = [];
-          }
-        })
-      );
+      await Promise.all([
+        // Hydrate hiring-entity name onto each row in parallel with the
+        // shifts subcollection load. The name decides whether FUTA / SUTA
+        // are folded into Net (via `rateAssumptionsFor`).
+        Promise.all(
+          rows.map(async (jo) => {
+            if (!jo.hiringEntityId) return;
+            jo.hiringEntityName = await fetchEntityName(jo.hiringEntityId);
+          }),
+        ),
+        Promise.all(
+          rows.map(async (jo) => {
+            try {
+              const shiftsRef = collection(db, p.shifts(tenantId, jo.id));
+              const shiftSnap = await getDocs(shiftsRef);
+              shiftMap[jo.id] = shiftSnap.docs.map((sd) => ({ id: sd.id, ...sd.data() }));
+            } catch (e) {
+              console.warn('FinancesBudgeting: shifts load failed for', jo.id, e);
+              shiftMap[jo.id] = [];
+            }
+          }),
+        ),
+      ]);
 
       setJobOrders(rows);
       setShiftsByJobOrderId(shiftMap);
@@ -402,9 +474,13 @@ const FinancesBudgetingPage: React.FC = () => {
             workers comp rates on the job order.
           </Typography>
           <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-            Gross = bill − pay. Net also subtracts WC (% of pay), plus placeholder FUTA ({(DEFAULT_FUTA_RATE_ON_PAY * 100).toFixed(1)}%)
-            and SUTA ({(DEFAULT_SUTA_RATE_ON_PAY * 100).toFixed(1)}%) on pay — replace with tenant rules later. Timesheets
-            and travel will refine this further.
+            Gross = bill − pay. Net also subtracts WC (% of pay). For W2 hiring
+            entities (e.g. C1 Workforce / C1 Select), Net additionally subtracts
+            placeholder FUTA ({(DEFAULT_FUTA_RATE_ON_PAY * 100).toFixed(1)}%) and
+            SUTA ({(DEFAULT_SUTA_RATE_ON_PAY * 100).toFixed(1)}%) on pay — replace
+            with tenant rules later. 1099 entities (C1 Events LLC) skip both
+            because independent contractors don't owe employer unemployment tax.
+            Timesheets and travel will refine this further.
           </Typography>
         </Box>
       }
@@ -542,12 +618,14 @@ const FinancesBudgetingPage: React.FC = () => {
                   const jobOrderPayload = {
                     gigPositions: jo.gigPositions,
                   };
+                  const { futaRate: rowFutaRate, sutaRate: rowSutaRate } =
+                    rateAssumptionsFor(jo);
                   const calc = computeJobOrderWeekShiftFinance(
                     jobOrderPayload,
                     shifts,
                     weekMonday,
-                    DEFAULT_FUTA_RATE_ON_PAY,
-                    DEFAULT_SUTA_RATE_ON_PAY
+                    rowFutaRate,
+                    rowSutaRate
                   );
                   const hasShiftCalc = calc.occurrenceCount > 0;
 

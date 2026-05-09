@@ -67,7 +67,10 @@ import type { ShiftPlacementsDrawerSummary } from '../../utils/shifts/shiftRow';
 import EditShiftForm, { type ShiftFormShift } from './EditShiftForm';
 import { useAuth } from '../../contexts/AuthContext';
 import { useEntity } from '../../hooks/useEntity';
-import { persistMissingSutaFutaForJobOrderAndAccount } from '../../utils/shifts/sutaFutaAccountHydration';
+import {
+  isC1UnemploymentPricingEntity,
+  persistMissingSutaFutaForJobOrderAndAccount,
+} from '../../utils/shifts/sutaFutaAccountHydration';
 
 // Instructions tab section config. Mirrors the JO Detail page's
 // "Staff Instructions" tab (`RecruiterJobOrderDetail.tsx`) so the
@@ -1230,38 +1233,61 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
               (the upstream wrap already enforces snapshot precedence
               for the value displayed below). */}
           <HeaderField label="Financials" sx={{ minWidth: 200 }}>
-            {shift &&
-            (shift.payRate != null ||
-              shift.billRate != null ||
-              shift.wcRate != null ||
-              shift.sutaRate != null ||
-              shift.futaRate != null) ? (
-              <>
-                <Typography
-                  variant="body2"
-                  sx={{ fontWeight: 500, whiteSpace: 'nowrap' }}
-                >
-                  Pay: {fmtMoney(shift.payRate)} · Bill: {fmtMoney(shift.billRate)}
-                  {shift.markupPercent != null &&
-                    Number.isFinite(shift.markupPercent) && (
-                      <> ({fmtPct(shift.markupPercent)})</>
+            {(() => {
+              // FUTA + SUTA are W2 employer payroll taxes. For 1099 hiring
+              // entities (today: C1 Events LLC) they don't apply, so we
+              // drop the unemployment-tax line and show only WC alongside
+              // Pay/Bill. Mirrors the form-side gates in `JobOrderForm`
+              // (`showSutaFutaOnGigPositions`) and `EditShiftForm`
+              // (`showSutaFutaForJo`).
+              const showUnemploymentTaxes = isC1UnemploymentPricingEntity(
+                hiringEntity?.name,
+              );
+              const hasFinancials =
+                shift &&
+                (shift.payRate != null ||
+                  shift.billRate != null ||
+                  shift.wcRate != null ||
+                  (showUnemploymentTaxes &&
+                    (shift.sutaRate != null || shift.futaRate != null)));
+              if (!hasFinancials) {
+                return (
+                  <Typography variant="body2" color="text.secondary">
+                    —
+                  </Typography>
+                );
+              }
+              return (
+                <>
+                  <Typography
+                    variant="body2"
+                    sx={{ fontWeight: 500, whiteSpace: 'nowrap' }}
+                  >
+                    Pay: {fmtMoney(shift.payRate)} · Bill:{' '}
+                    {fmtMoney(shift.billRate)}
+                    {shift.markupPercent != null &&
+                      Number.isFinite(shift.markupPercent) && (
+                        <> ({fmtPct(shift.markupPercent)})</>
+                      )}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ whiteSpace: 'nowrap' }}
+                  >
+                    {showUnemploymentTaxes ? (
+                      <>
+                        FUTA: {renderRateValue(shift.futaRate)} · SUTA:{' '}
+                        {renderRateValue(shift.sutaRate)} · WC:{' '}
+                        {renderRateValue(shift.wcRate)}
+                      </>
+                    ) : (
+                      <>WC: {renderRateValue(shift.wcRate)}</>
                     )}
-                </Typography>
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  sx={{ whiteSpace: 'nowrap' }}
-                >
-                  FUTA: {renderRateValue(shift.futaRate)} · SUTA:{' '}
-                  {renderRateValue(shift.sutaRate)} · WC:{' '}
-                  {renderRateValue(shift.wcRate)}
-                </Typography>
-              </>
-            ) : (
-              <Typography variant="body2" color="text.secondary">
-                —
-              </Typography>
-            )}
+                  </Typography>
+                </>
+              );
+            })()}
           </HeaderField>
         </Box>
       </Box>

@@ -6195,25 +6195,24 @@ const RecruiterAccountDetails: React.FC = () => {
         titleRightActions={
           <>
             {tabValue === 9 && (
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                onClick={() => setShowNewJobOrderModal(true)}
-                sx={{
-                  textTransform: 'none',
-                  borderRadius: '24px',
-                  height: '40px',
-                  px: 2.5,
-                  whiteSpace: 'nowrap',
-                  flexShrink: 0,
-                  fontWeight: 500,
-                  fontSize: '14px',
-                  bgcolor: '#0057B8',
-                  '&:hover': { bgcolor: '#004a9f' },
-                }}
-              >
-                New Order
-              </Button>
+              // Universal icon-only Add button — matches the canonical
+              // pattern on /accounts, /contacts, and /users/user-groups
+              // so every top-of-page Add action looks identical.
+              <Tooltip title="Add job order">
+                <IconButton
+                  onClick={() => setShowNewJobOrderModal(true)}
+                  sx={{
+                    width: 32,
+                    height: 32,
+                    bgcolor: '#0057B8',
+                    color: '#fff',
+                    flexShrink: 0,
+                    '&:hover': { bgcolor: '#004a9f' },
+                  }}
+                >
+                  <AddIcon sx={{ fontSize: 18 }} />
+                </IconButton>
+              </Tooltip>
             )}
             {account.accountType === 'national' && companyIds.length > 0 && (
               <Tooltip title="Sync locations to children — create a child account for each company location under your linked companies. Skips locations that already have a child account.">
@@ -9295,62 +9294,58 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                                 <TableCell>
                                   {(() => {
                                     const locName = jobOrder.locationName || 'No Location';
-                                    // Sub accounts view: worksite name on top, then two
-                                    // lines of smaller secondary text — street on line 2,
-                                    // "city, state zip" on line 3. Each line only renders
-                                    // when its parts are populated so partial addresses
-                                    // don't leave empty gaps.
-                                    if (variant === 'grouped') {
-                                      const addr = (jobOrder as any).worksiteAddress as
-                                        | {
-                                            street?: string;
-                                            city?: string;
-                                            state?: string;
-                                            zipCode?: string;
-                                          }
-                                        | undefined;
-                                      const street = addr?.street?.trim() || '';
-                                      const cityStateZip = [
-                                        [addr?.city?.trim(), addr?.state?.trim()]
-                                          .filter(Boolean)
-                                          .join(', '),
-                                        addr?.zipCode?.trim(),
-                                      ]
+                                    // Worksite name on top, then two lines of smaller
+                                    // secondary text — street on line 2, "city, state
+                                    // zip" on line 3. Each line only renders when its
+                                    // parts are populated so partial addresses don't
+                                    // leave empty gaps. Same shape for both `flat`
+                                    // (standalone / child accounts) and `grouped`
+                                    // (national sub-accounts roll-up) so a recruiter
+                                    // can disambiguate two Contigo Catering sites
+                                    // without opening the JO.
+                                    const addr = (jobOrder as any).worksiteAddress as
+                                      | {
+                                          street?: string;
+                                          city?: string;
+                                          state?: string;
+                                          zipCode?: string;
+                                        }
+                                      | undefined;
+                                    const street = addr?.street?.trim() || '';
+                                    const cityStateZip = [
+                                      [addr?.city?.trim(), addr?.state?.trim()]
                                         .filter(Boolean)
-                                        .join(' ');
-                                      return (
-                                        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.5, minWidth: 0 }}>
-                                          <LocationOnIcon sx={{ fontSize: 16, color: 'text.secondary', mt: '2px', flexShrink: 0 }} />
-                                          <Box sx={{ minWidth: 0 }}>
-                                            <Typography variant="body2" sx={{ lineHeight: 1.3 }}>
-                                              {locName}
-                                            </Typography>
-                                            {street && (
-                                              <Typography
-                                                variant="caption"
-                                                color="text.secondary"
-                                                sx={{ display: 'block', lineHeight: 1.3 }}
-                                              >
-                                                {street}
-                                              </Typography>
-                                            )}
-                                            {cityStateZip && (
-                                              <Typography
-                                                variant="caption"
-                                                color="text.secondary"
-                                                sx={{ display: 'block', lineHeight: 1.3 }}
-                                              >
-                                                {cityStateZip}
-                                              </Typography>
-                                            )}
-                                          </Box>
-                                        </Box>
-                                      );
-                                    }
+                                        .join(', '),
+                                      addr?.zipCode?.trim(),
+                                    ]
+                                      .filter(Boolean)
+                                      .join(' ');
                                     return (
-                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                        <LocationOnIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
-                                        <Typography variant="body2">{locName}</Typography>
+                                      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.5, minWidth: 0 }}>
+                                        <LocationOnIcon sx={{ fontSize: 16, color: 'text.secondary', mt: '2px', flexShrink: 0 }} />
+                                        <Box sx={{ minWidth: 0 }}>
+                                          <Typography variant="body2" sx={{ lineHeight: 1.3 }}>
+                                            {locName}
+                                          </Typography>
+                                          {street && (
+                                            <Typography
+                                              variant="caption"
+                                              color="text.secondary"
+                                              sx={{ display: 'block', lineHeight: 1.3 }}
+                                            >
+                                              {street}
+                                            </Typography>
+                                          )}
+                                          {cityStateZip && (
+                                            <Typography
+                                              variant="caption"
+                                              color="text.secondary"
+                                              sx={{ display: 'block', lineHeight: 1.3 }}
+                                            >
+                                              {cityStateZip}
+                                            </Typography>
+                                          )}
+                                        </Box>
                                       </Box>
                                     );
                                   })()}

@@ -44,12 +44,19 @@ import {
   normalizeStateCode,
 } from '../utils/unemploymentRates';
 import { isExcludedFromPlacementsApplicantPool } from '../utils/applicationStatusNormalize';
+import { isC1UnemploymentPricingEntity } from '../utils/shifts/sutaFutaAccountHydration';
 
 interface AddressParts {
   street?: string;
   city?: string;
   state?: string;
   zipCode?: string;
+  /** Location's display name (`nickname || name`). Used to backfill
+   *  `jobOrder.worksiteName` for older / standalone-account JOs that
+   *  never persisted it — without this, the Shifts table's Account
+   *  column falls back to the company name and a recruiter can't tell
+   *  one Contigo Catering location from another. */
+  name?: string;
 }
 
 const trimOrUndef = (v: unknown): string | undefined => {
@@ -547,6 +554,11 @@ const useActiveShifts = (
                     addrAsObject.zipCode ??
                     addrAsObject.zip,
                 ),
+                // Mirror `JobOrderForm`'s resolution: the recruiter-facing
+                // worksite label is the location's nickname when present,
+                // otherwise its formal name (e.g. "Distribution Hall" /
+                // "Los Angeles Convention Center").
+                name: trimOrUndef(ld.nickname ?? ld.name),
               };
             } catch (err) {
               console.warn(
@@ -597,19 +609,33 @@ const useActiveShifts = (
       };
 
       // Fan-out six independent batches in parallel:
-      //  1. Address hydration       (mutates entries[i].jo.worksiteAddress)
+      //  1. Address hydration       (mutates entries[i].jo.worksiteAddress
+      //                              and back-fills entries[i].jo.worksiteName
+      //                              from the location doc's nickname/name)
       //  2. Company-logo hydration  (mutates entries[i].jo.companyLogoUrl)
       //  3. Hiring-entity name      (mutates entries[i].jo.hiringEntityName)
       //  4. Recruiter account name   (mutates entries[i].jo.accountName from accounts/{id})
       //  5. Applicant tallies       (populates `tallyByShift` above)
       //  6. The per-JO shifts subcollection load.
+      //
+      // After Promise.all completes, a small post-fan-out sweep gates
+      // the SUTA/FUTA estimate by the now-known hiring entity (W2 vs.
+      // 1099) and clears stored values for 1099 JOs. We can't fold
+      // that into batch 1 because the entity name is fetched in batch
+      // 3 — both run in parallel.
+      //
       // Then assemble the final rows.
       const [, , , , , shiftLists] = await Promise.all([
         Promise.all(
           entries.map(async (entry) => {
             const wa = entry.jo.worksiteAddress ?? {};
             const fullyHydrated = wa.street && wa.city && wa.state && wa.zipCode;
-            if (!fullyHydrated && entry.companyId && entry.worksiteId) {
+            // Hydrate when ANY of: address is incomplete, OR `worksiteName`
+            // is missing on the JO (older / standalone JOs often don't
+            // persist it). The fetch is cached per `${companyId}:${worksiteId}`,
+            // so repeated calls collapse to one read.
+            const needsName = !entry.jo.worksiteName;
+            if ((!fullyHydrated || needsName) && entry.companyId && entry.worksiteId) {
               const loc = await fetchLocationAddress(entry.companyId, entry.worksiteId);
               entry.jo.worksiteAddress = {
                 street: wa.street || loc.street,
@@ -617,34 +643,20 @@ const useActiveShifts = (
                 state: wa.state || loc.state,
                 zipCode: wa.zipCode || loc.zipCode,
               };
-            }
-            // Post-address-hydration SUTA/FUTA estimate. `readJoFinancials`
-            // ran during the initial JO sync (before `worksiteAddress` was
-            // hydrated from the location doc), so cross-account worksites
-            // miss the state-based estimate the first time around. Re-run
-            // the estimate now that the state is reliable, but keep stored
-            // values intact — recruiters who saved an explicit JO/position
-            // SUTA/FUTA always win over the new-employer estimate.
-            const stateCode = normalizeStateCode(
-              typeof entry.jo.worksiteAddress?.state === 'string'
-                ? entry.jo.worksiteAddress.state
-                : '',
-            )
-              .trim()
-              .toUpperCase();
-            if (!stateCode) return;
-            if (entry.jo.sutaRate == null) {
-              const est = getSutaRateByState(stateCode);
-              if (est != null && Number.isFinite(est)) {
-                entry.jo.sutaRate = est;
+              // Only fill in `worksiteName` when the location actually has
+              // a meaningful label. Empty / whitespace stays empty so the
+              // renderer's `worksiteName || companyName` fallback still
+              // surfaces the company name as a last resort.
+              if (!entry.jo.worksiteName && loc.name) {
+                entry.jo.worksiteName = loc.name;
               }
             }
-            if (entry.jo.futaRate == null) {
-              const est = getFutaRateByState(stateCode);
-              if (est != null && Number.isFinite(est)) {
-                entry.jo.futaRate = est;
-              }
-            }
+            // SUTA/FUTA estimation is intentionally NOT done here. It
+            // depends on the hiring entity (W2 entities pay unemployment
+            // tax on payroll; 1099 entities like C1 Events LLC do not),
+            // and the entity-name fetch runs in a sibling fan-out below.
+            // We apply the estimate (and clear values for 1099 entities)
+            // in a post-fan-out sweep once `hiringEntityName` is known.
           }),
         ),
         Promise.all(
@@ -784,6 +796,57 @@ const useActiveShifts = (
           }),
         ),
       ]);
+
+      // Post-fan-out SUTA/FUTA gate. Now that `hiringEntityName` is
+      // hydrated for every entry, decide per-JO whether unemployment
+      // tax rates apply at all.
+      //
+      //   - W2 payroll entities (today: C1 Workforce / C1 Select LLC,
+      //     gated by `isC1UnemploymentPricingEntity`) get the
+      //     state-based estimate `readJoFinancials` couldn't reach
+      //     during the initial sync (the worksite address came from
+      //     the location doc in the address fan-out above).
+      //   - 1099 entities (today: C1 Events LLC) explicitly clear any
+      //     stored SUTA/FUTA values on the row. Independent contractors
+      //     don't owe employer unemployment tax, so surfacing 0.6% /
+      //     2.7% in the Shifts table financials caption (or in the
+      //     Finances net-profit math) is just misleading.
+      //
+      // Stored values from a recruiter who hand-typed an explicit rate
+      // on a W2 JO still win — we only fill gaps, never overwrite. JO
+      // form gates already prevent typing SUTA/FUTA on a 1099 JO, so
+      // the clear branch is a belt-and-suspenders safety against
+      // entity-switched JOs.
+      for (const entry of entries) {
+        const entityApplies = isC1UnemploymentPricingEntity(
+          entry.jo.hiringEntityName,
+        );
+        if (!entityApplies) {
+          entry.jo.sutaRate = undefined;
+          entry.jo.futaRate = undefined;
+          continue;
+        }
+        const stateCode = normalizeStateCode(
+          typeof entry.jo.worksiteAddress?.state === 'string'
+            ? entry.jo.worksiteAddress.state
+            : '',
+        )
+          .trim()
+          .toUpperCase();
+        if (!stateCode) continue;
+        if (entry.jo.sutaRate == null) {
+          const est = getSutaRateByState(stateCode);
+          if (est != null && Number.isFinite(est)) {
+            entry.jo.sutaRate = est;
+          }
+        }
+        if (entry.jo.futaRate == null) {
+          const est = getFutaRateByState(stateCode);
+          if (est != null && Number.isFinite(est)) {
+            entry.jo.futaRate = est;
+          }
+        }
+      }
 
       const built: ShiftRow[] = [];
       entries.forEach((entry, idx) => {
