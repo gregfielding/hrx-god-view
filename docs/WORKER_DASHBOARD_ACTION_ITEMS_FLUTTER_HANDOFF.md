@@ -1,6 +1,6 @@
 # Worker dashboard “Action Items” — Flutter parity handoff
 
-> **Canonical contract:** `docs/WORKER_DASHBOARD_ACTION_ITEMS_SPEC.md` — IDs, predicates, sort order, dismiss/snooze, empty state, and home vs readiness. This handoff is a shorter migration note; if anything disagrees, **follow the spec**.
+> **Canonical contract:** `docs/WORKER_DASHBOARD_ACTION_ITEMS_CONTRACT.md` — IDs, predicates, sort order, dismiss/snooze, empty state, home vs readiness, and (§6) the V2 server-written snapshot at `users/{uid}.workerDashboardActionItemsV1`. This handoff is a shorter migration note; if anything disagrees, **follow the contract**.
 
 ## What changed (web)
 

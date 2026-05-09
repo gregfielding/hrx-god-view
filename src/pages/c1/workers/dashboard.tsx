@@ -30,9 +30,26 @@ import {
   readTempworksOnboardingFromUserDoc,
   type WorkerDashboardJobSignals,
 } from '../../../utils/workerJobRequirementSignals';
+import {
+  applyClientOnlyWorkerDashboardActionItemPersonalization,
+  useWorkerDashboardActionItemsV1,
+  workerDashboardActionItemsV1ToLegacy,
+} from '../../../hooks/useWorkerDashboardActionItemsV1';
 import { getLanguage, useT } from '../../../i18n';
 
 const C1_TENANT_ID = 'BCiP2bQ9CgVOCTfV6MhD';
+
+/**
+ * Feature flag for the V2 server-written snapshot
+ * (`users/{uid}.workerDashboardActionItemsV1`). When `true`, the dashboard
+ * reads the snapshot via `useWorkerDashboardActionItemsV1`. When `false` (or
+ * the snapshot is missing for this worker — no recompute has run yet), the
+ * dashboard falls back to the legacy in-memory builder.
+ *
+ * See `docs/WORKER_ACTION_ITEMS_V2_CURSOR_BRIEF.md` §3 for the rollout plan.
+ */
+const WORKER_DASHBOARD_ACTION_ITEMS_V2_ENABLED =
+  process.env.REACT_APP_WORKER_DASHBOARD_ACTION_ITEMS_V2 === 'true';
 
 function toStartAt(data: Record<string, unknown>): number {
   const startDate = data.startDate;
@@ -201,7 +218,11 @@ const WorkerDashboard: React.FC = () => {
     };
   }, [user?.uid, tenantId, jobContextTick, userDoc]);
 
-  const dashboardActionItems = useMemo(
+  const v1Snapshot = useWorkerDashboardActionItemsV1(
+    WORKER_DASHBOARD_ACTION_ITEMS_V2_ENABLED ? user?.uid ?? null : null,
+  );
+
+  const legacyActionItems = useMemo(
     () =>
       buildWorkerDashboardActionItems({
         userDoc,
@@ -212,6 +233,48 @@ const WorkerDashboard: React.FC = () => {
       }),
     [userDoc, avatarUrl, user?.photoURL, smsSnoozedUntilMs, jobSignals, workerAiPrescreenItems]
   );
+
+  /**
+   * Server snapshot when present, legacy builder otherwise. The fallback
+   * matters during rollout — the user-doc trigger only runs the first time
+   * a worker's user doc is touched after the deploy, so workers who
+   * haven't been written to recently won't have a snapshot for a few
+   * minutes / hours / days. We prefer "show legacy" over "show empty".
+   */
+  const dashboardActionItems = useMemo(() => {
+    if (WORKER_DASHBOARD_ACTION_ITEMS_V2_ENABLED && v1Snapshot.items && user?.uid) {
+      const personalised = applyClientOnlyWorkerDashboardActionItemPersonalization(
+        v1Snapshot.items,
+        { uid: user.uid },
+      );
+      // eslint-disable-next-line no-console
+      console.debug('[WorkerDashboardActionItemsV2]', {
+        uid: user.uid,
+        source: 'snapshot',
+        itemCount: personalised.length,
+        rawCount: v1Snapshot.items.length,
+        inputsHash: v1Snapshot.inputsHash,
+        updatedAt: v1Snapshot.updatedAt?.toISOString?.() ?? null,
+      });
+      return workerDashboardActionItemsV1ToLegacy(personalised);
+    }
+    if (WORKER_DASHBOARD_ACTION_ITEMS_V2_ENABLED && user?.uid) {
+      // eslint-disable-next-line no-console
+      console.debug('[WorkerDashboardActionItemsV2]', {
+        uid: user.uid,
+        source: v1Snapshot.loading ? 'loading_fallback' : 'fallback',
+        itemCount: legacyActionItems.length,
+      });
+    }
+    return legacyActionItems;
+  }, [
+    legacyActionItems,
+    user?.uid,
+    v1Snapshot.items,
+    v1Snapshot.inputsHash,
+    v1Snapshot.updatedAt,
+    v1Snapshot.loading,
+  ]);
 
   useEffect(() => {
     if (!user?.uid || !tenantId) {

@@ -510,6 +510,20 @@ export {
 // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
 const hrxReadinessSnapshot = require('./readiness/syncHrxReadinessSnapshotV1.cjs');
 export const syncHrxReadinessSnapshotV1 = hrxReadinessSnapshot.syncHrxReadinessSnapshotV1;
+
+// Worker home dashboard action items V1 — server-written snapshot at
+// `users/{uid}.workerDashboardActionItemsV1`. See
+// `docs/WORKER_DASHBOARD_ACTION_ITEMS_CONTRACT.md` and the brief at
+// `docs/WORKER_ACTION_ITEMS_V2_CURSOR_BRIEF.md`.
+export {
+  syncWorkerDashboardActionItemsOnUserWrite,
+  syncWorkerDashboardActionItemsOnAssignmentWrite,
+  syncWorkerDashboardActionItemsOnBackgroundCheckWrite,
+  syncWorkerDashboardActionItemsOnEverifyCaseWrite,
+  syncWorkerDashboardActionItemsOnApplicationWrite,
+  syncWorkerDashboardActionItemsOnInterviewWrite,
+  syncWorkerDashboardActionItemsV1,
+} from './readiness/workerDashboardActionItemsTriggers';
 export { workerSupportAssistant } from './workerSupportAssistant';
 export {
   triggerWorkerOnboardingPipeline,
