@@ -14,7 +14,7 @@ import { useNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { db } from '../../../firebase';
-import jobTitles from '../../../data/onetJobTitles.json';
+import { useTenantJobTitleOptions } from '../../../hooks/useTenantJobTitles';
 import AddWorkerForm from '../../../componentBlocks/AddWorkerForm';
 import CSVUpload from '../../../components/CSVUpload';
 import WorkersTable from '../../../componentBlocks/WorkersTable';
@@ -40,6 +40,7 @@ const securityLevels = ['Admin', 'Manager', 'Staffer'];
 
 const WorkforceTab: React.FC<WorkforceTabProps> = ({ tenantId, ...props }) => {
   const isTenant = !!tenantId;
+  const jobTitles = useTenantJobTitleOptions(tenantId);
   const [form, setForm] = useState({
     firstName: '',
     lastName: '',

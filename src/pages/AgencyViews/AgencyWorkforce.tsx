@@ -16,7 +16,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import jobTitles from '../../data/onetJobTitles.json';
+import { useTenantJobTitleOptions } from '../../hooks/useTenantJobTitles';
 import BroadcastDialog from '../../components/BroadcastDialog';
 import AddWorkerForm from '../../componentBlocks/AddWorkerForm';
 import CSVUpload from '../../components/CSVUpload';
@@ -38,6 +38,7 @@ function formatPhoneNumber(value: string) {
 const AgencyWorkforce: React.FC = () => {
   const { tenantId } = useAuth();
   const navigate = useNavigate();
+  const jobTitles = useTenantJobTitleOptions();
   
   const [form, setForm] = useState({
     firstName: '',

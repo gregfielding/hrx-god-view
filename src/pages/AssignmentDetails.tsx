@@ -225,7 +225,10 @@ const AssignmentDetails: React.FC = () => {
     shiftMode?: 'single' | 'multi';
     shiftDate?: string;
     endDate?: string;
-    weeklySchedule?: Record<string, { enabled: boolean; startTime: string; endTime: string }>;
+    weeklySchedule?: Record<
+      string,
+      { enabled: boolean; startTime: string; endTime: string; workersNeeded?: number; overstaff?: number }
+    >;
     dateSchedule?: Record<string, { startTime: string; endTime: string }>;
     defaultStartTime?: string;
     defaultEndTime?: string;
@@ -292,7 +295,9 @@ const AssignmentDetails: React.FC = () => {
             shiftMode: d.shiftMode as 'single' | 'multi' | undefined,
             shiftDate: typeof d.shiftDate === 'string' ? d.shiftDate : undefined,
             endDate: typeof d.endDate === 'string' ? d.endDate : undefined,
-            weeklySchedule: d.weeklySchedule as Record<string, { enabled: boolean; startTime: string; endTime: string }> | undefined,
+            weeklySchedule: d.weeklySchedule as
+              | Record<string, { enabled: boolean; startTime: string; endTime: string; workersNeeded?: number; overstaff?: number }>
+              | undefined,
             dateSchedule: d.dateSchedule as Record<string, { startTime: string; endTime: string }> | undefined,
             defaultStartTime: typeof d.defaultStartTime === 'string' ? d.defaultStartTime : undefined,
             defaultEndTime: typeof d.defaultEndTime === 'string' ? d.defaultEndTime : undefined,

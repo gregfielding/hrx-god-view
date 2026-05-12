@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Box, Card, CardContent, CardHeader, Stack } from '@mui/material';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../../../firebase';
@@ -152,6 +152,17 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
     Boolean(evereeWorkerId) &&
     Boolean(overview.entityEmployment?.entityId);
 
+  // Stable identity for the EvereeAdminSyncCard `onSynced` callback so its
+  // internal `performSync` `useCallback` doesn't churn on every parent
+  // render. Without this, the auto-run effect's deps see a new
+  // `performSync` each render, which is harmless on its own (the
+  // `autoSyncedKeyRef` gate stops re-fires) but is also unnecessary
+  // overhead and made the original "screen flashing" bug harder to
+  // trace. May 2026 — see EvereeAdminSyncCard fix notes.
+  const handleEvereeSynced = useCallback(() => {
+    onRefresh?.();
+  }, [onRefresh]);
+
   return (
     <Stack spacing={0}>
       <Box id={EMPLOYMENT_V2_ANCHOR_ONBOARDING} sx={{ scrollMarginTop: 96 }}>
@@ -213,7 +224,7 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
             entityId={overview.entityEmployment?.entityId ?? null}
             userId={profileUserId}
             workerType={overview.workerType === '1099' ? 'contractor' : 'employee'}
-            onSynced={() => onRefresh?.()}
+            onSynced={handleEvereeSynced}
           />
         ) : null}
 

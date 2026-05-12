@@ -42,9 +42,7 @@ import { p, workersCompRateDocId } from '../../../data/firestorePaths';
 import { useAuth } from '../../../contexts/AuthContext';
 import type { RecruiterAccount, WorkersCompRateByState } from '../../../types/recruiter/account';
 import { US_STATE_CODES } from '../../../utils/unemploymentRates';
-import jobTitlesData from '../../../data/onetJobTitles.json';
-
-const jobTitlesList = Array.isArray(jobTitlesData) ? (jobTitlesData as string[]) : [];
+import { useTenantJobTitleOptions } from '../../../hooks/useTenantJobTitles';
 
 type Row = WorkersCompRateByState & { id: string };
 
@@ -67,6 +65,7 @@ const WorkersCompRatesPage: React.FC<WorkersCompRatesPageProps> = ({
 }) => {
   const { activeTenant, tenantId: authTenantId, user } = useAuth();
   const tenantId = tenantIdProp ?? activeTenant?.id ?? authTenantId;
+  const jobTitlesList = useTenantJobTitleOptions(tenantId);
 
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);

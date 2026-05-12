@@ -306,13 +306,13 @@ export const userGroupHirePassedCandidates = onCall(
     const tenantSnap = await db.doc(`tenants/${tenantId}`).get();
     const tenantData = (tenantSnap.data() || {}) as Record<string, unknown>;
 
-    const entitiesSnap = await db.collection(`tenants/${tenantId}/entities`).get();
-    const entities = entitiesSnap.docs.map((d) => ({
-      id: d.id,
-      name: String((d.data() as { name?: string }).name || ''),
-      entityCode: (d.data() as { entityCode?: string }).entityCode,
-    }));
-    const c1SelectEntityId = resolveC1SelectEntityId(entities);
+    // Note: prior implementations enumerated `tenants/{t}/entities` here to
+    // resolve a C1 Select entity id used by the active-employment hire block.
+    // The block is gone (May 2026 cross-entity hire policy) so the entities
+    // fetch + `c1SelectEntityId` resolution is gone too. The response shape
+    // still carries `c1SelectEntityId: null, c1SelectResolved: false` for
+    // backwards compatibility with audit-log readers.
+    const c1SelectEntityId: string | null = null;
 
     const groupData = (groupSnap.data() || {}) as Record<string, unknown>;
     const memberIds: string[] = Array.isArray(groupData.memberIds)
@@ -358,41 +358,15 @@ export const userGroupHirePassedCandidates = onCall(
       });
     }
 
-    const userIds = new Set<string>();
     const memberIdsWithApplication = new Set<string>();
     for (const { data } of appRows) {
       const uid = String(data.userId || data.candidateId || '').trim();
-      if (uid) {
-        userIds.add(uid);
-        memberIdsWithApplication.add(uid);
-      }
-    }
-    // Catchall-group case: a recruiter may add workers to `memberIds` without
-    // any application existing. We still want to know if those members are
-    // blocked by C1 Select employment so the synthetic eligibility row reflects
-    // it, so include them in the employment-fetch uid set.
-    for (const m of memberIds) {
-      const t = m.trim();
-      if (t) userIds.add(t);
+      if (uid) memberIdsWithApplication.add(uid);
     }
 
-    const c1EmploymentByUser = new Map<string, Array<Record<string, unknown>>>();
-    const uidList = [...userIds];
-    for (let i = 0; i < uidList.length; i += 10) {
-      const chunk = uidList.slice(i, i + 10);
-      if (chunk.length === 0) continue;
-      const emSnap = await db
-        .collection(`tenants/${tenantId}/entity_employments`)
-        .where('userId', 'in', chunk)
-        .get();
-      for (const ed of emSnap.docs) {
-        const u = String((ed.data() as { userId?: string }).userId || '').trim();
-        if (!u) continue;
-        const arr = c1EmploymentByUser.get(u) ?? [];
-        arr.push({ id: ed.id, ...(ed.data() as Record<string, unknown>) });
-        c1EmploymentByUser.set(u, arr);
-      }
-    }
+    // Note: prior implementations preloaded `entity_employments` for every
+    // user in `memberIds` here to support the active-C1-Select hire block.
+    // That block is gone (May 2026); we no longer need the preload.
 
     const rows: UserGroupHirePassedRow[] = [];
     let eligibleCount = 0;
@@ -527,39 +501,25 @@ export const userGroupHirePassedCandidates = onCall(
         continue;
       }
 
-      const c1recs = c1EmploymentByUser.get(userId) ?? [];
-      let blockedByC1 = false;
-      for (const rec of c1recs) {
-        if (!isC1SelectEmployment(rec, c1SelectEntityId)) continue;
-        const { blocks, detail } = c1EmploymentBlocksHire(rec);
-        if (blocks) {
-          blockedByC1 = true;
-          reasons.push(detail);
-          break;
-        }
-      }
-
-      if (blockedByC1) {
-        excludedCount += 1;
-        rows.push({
-          applicationId,
-          userId,
-          displayNameHint: nameHint,
-          outcome: 'excluded',
-          reasons,
-          orchestratorDecision: effectiveOrch ?? storedOrch,
-          applicationStatus: appStatus || null,
-        });
-        continue;
-      }
+      // Cross-entity employment is allowed (May 2026 policy change). A worker
+      // already active at C1 Select can be concurrently hired at C1 Events
+      // (or any other entity). Each entity has its own Everee tenant, its own
+      // entity_employments doc, and its own everee_workers link doc keyed by
+      // `{entityId}__{userId}`, so multi-entity employment is naturally
+      // modeled. The previous block lived here and in
+      // `userGroupHiringAutoOnboardCore.ts`; both were removed in the same
+      // change. The C1-Select detection helpers (`isC1SelectEmployment`,
+      // `c1EmploymentBlocksHire`) are kept exported because interview-invite
+      // and profile-reminder validators use them for messaging gates — those
+      // are unaffected by this hire-side relaxation.
 
       eligibleCount += 1;
       const eligibleReasons: string[] = [
         hireEveryone
-          ? 'Eligible: group quality preset is “hire_everyone” — interview & orchestrator gates bypassed; no blocking C1 Select employment.'
+          ? 'Eligible: group quality preset is “hire_everyone” — interview & orchestrator gates bypassed.'
           : eligibilityMode === 'current_policy'
-            ? 'Eligible under current tenant + group hiring policy (orchestrator advance) and no blocking C1 Select employment'
-            : 'Passed AI interview (orchestrator advance) and no blocking C1 Select employment row',
+            ? 'Eligible under current tenant + group hiring policy (orchestrator advance).'
+            : 'Passed AI interview (orchestrator advance).',
       ];
       if (
         !hireEveryone &&
@@ -612,32 +572,9 @@ export const userGroupHirePassedCandidates = onCall(
         continue;
       }
 
-      const c1recs = c1EmploymentByUser.get(uid) ?? [];
-      let blockedByC1 = false;
-      let blockDetail = '';
-      for (const rec of c1recs) {
-        if (!isC1SelectEmployment(rec, c1SelectEntityId)) continue;
-        const { blocks, detail } = c1EmploymentBlocksHire(rec);
-        if (blocks) {
-          blockedByC1 = true;
-          blockDetail = detail;
-          break;
-        }
-      }
-
-      if (blockedByC1) {
-        excludedCount += 1;
-        rows.push({
-          applicationId: synthAppId,
-          userId: uid,
-          displayNameHint: '—',
-          outcome: 'excluded',
-          reasons: [`No application linked; ${blockDetail}.`],
-          orchestratorDecision: null,
-          applicationStatus: null,
-        });
-        continue;
-      }
+      // Cross-entity employment is allowed (see note in the per-application
+      // loop above). Catchall-group catchall members with active C1 Select
+      // employment can be hired at C1 Events too.
 
       eligibleCount += 1;
       rows.push({

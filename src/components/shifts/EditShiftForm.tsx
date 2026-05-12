@@ -112,7 +112,10 @@ export interface ShiftFormShift {
   shiftDate: string;
   shiftMode?: 'single' | 'multi';
   endDate?: string;
-  weeklySchedule?: Record<string, { enabled: boolean; startTime: string; endTime: string }>;
+  weeklySchedule?: Record<
+    string,
+    { enabled: boolean; startTime: string; endTime: string; workersNeeded?: number; overstaff?: number }
+  >;
   dateSchedule?: Record<
     string,
     { startTime: string; endTime: string; workersNeeded?: number; overstaff?: number }
@@ -635,7 +638,10 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
     shiftMode: 'single' | 'multi';
     shiftDate: string;
     endDate: string;
-    weeklySchedule: Record<string, { enabled: boolean; startTime: string; endTime: string }>;
+    weeklySchedule: Record<
+      string,
+      { enabled: boolean; startTime: string; endTime: string; workersNeeded?: number; overstaff?: number }
+    >;
     dateSchedule: Record<
       string,
       { startTime: string; endTime: string; workersNeeded?: number; overstaff?: number }
@@ -1764,14 +1770,32 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
                 label="Total Staff Requested"
                 type="number"
                 value={formData.totalStaffRequested}
-                onChange={(e) =>
+                onChange={(e) => {
+                  const next = parseInt(e.target.value) || 1;
+                  const oldDefault = formData.totalStaffRequested ?? 1;
+                  // Cascade to weekly-schedule days that still hold the old
+                  // default (per-day overrides are preserved). Days without
+                  // an explicit value pick up the new default via fallback
+                  // on next render.
+                  const prev = formData.weeklySchedule || {};
+                  const out: typeof prev = { ...prev };
+                  for (const k of Object.keys(out)) {
+                    const entry = out[k];
+                    if (!entry) continue;
+                    if (entry.workersNeeded == null || entry.workersNeeded === oldDefault) {
+                      out[k] = { ...entry };
+                      delete out[k].workersNeeded;
+                    }
+                  }
                   setFormData({
                     ...formData,
-                    totalStaffRequested: parseInt(e.target.value) || 1,
-                  })
-                }
+                    totalStaffRequested: next,
+                    weeklySchedule: out,
+                  });
+                }}
                 inputProps={{ min: 1 }}
                 required
+                helperText="Default for each weekly day; per-day Workers below can override."
               />
             </Grid>
             <Grid item xs={12} md={4}>
@@ -1780,12 +1804,25 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
                 label="Overstaff (extra)"
                 type="number"
                 value={formData.overstaffCount}
-                onChange={(e) =>
+                onChange={(e) => {
+                  const next = parseInt(e.target.value) || 0;
+                  const oldDefault = formData.overstaffCount ?? 0;
+                  const prev = formData.weeklySchedule || {};
+                  const out: typeof prev = { ...prev };
+                  for (const k of Object.keys(out)) {
+                    const entry = out[k];
+                    if (!entry) continue;
+                    if (entry.overstaff == null || entry.overstaff === oldDefault) {
+                      out[k] = { ...entry };
+                      delete out[k].overstaff;
+                    }
+                  }
                   setFormData({
                     ...formData,
-                    overstaffCount: parseInt(e.target.value) || 0,
-                  })
-                }
+                    overstaffCount: next,
+                    weeklySchedule: out,
+                  });
+                }}
                 inputProps={{ min: 0 }}
                 helperText={`Filled target: ${Math.max(
                   1,
@@ -1920,67 +1957,137 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
         )}
 
         {/* Time Fields */}
-        {!(isGigJob && formData.shiftMode === 'single' && formData.shiftDate) && (
-          <Box sx={{ display: 'flex', gap: 2 }}>
-            <TextField
-              fullWidth
-              label="Default Start Time"
-              type="time"
-              value={formData.defaultStartTime}
-              onChange={(e) => {
-                const next = e.target.value;
-                const nextSchedule =
-                  formData.shiftMode === 'multi'
-                    ? (() => {
-                        const prev = formData.weeklySchedule || {};
+        {!(isGigJob && formData.shiftMode === 'single' && formData.shiftDate) && (() => {
+          const showGigDefaults = isGigJob && formData.shiftMode === 'multi';
+          const timeColMd = showGigDefaults ? 4 : 6;
+          return (
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={6} md={timeColMd}>
+                <TextField
+                  fullWidth
+                  label="Default Start Time"
+                  type="time"
+                  value={formData.defaultStartTime}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    const nextSchedule =
+                      formData.shiftMode === 'multi'
+                        ? (() => {
+                            const prev = formData.weeklySchedule || {};
+                            const out: typeof prev = { ...prev };
+                            for (const k of Object.keys(out)) {
+                              if (!out[k]) continue;
+                              if (!out[k].startTime)
+                                out[k] = { ...out[k], startTime: next };
+                            }
+                            return out;
+                          })()
+                        : formData.weeklySchedule;
+                    setFormData({
+                      ...formData,
+                      defaultStartTime: next,
+                      weeklySchedule: nextSchedule,
+                    });
+                  }}
+                  InputLabelProps={{ shrink: true }}
+                  required={!isGigJob}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6} md={timeColMd}>
+                <TextField
+                  fullWidth
+                  label="Default End Time"
+                  type="time"
+                  value={formData.defaultEndTime}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    const nextSchedule =
+                      formData.shiftMode === 'multi'
+                        ? (() => {
+                            const prev = formData.weeklySchedule || {};
+                            const out: typeof prev = { ...prev };
+                            for (const k of Object.keys(out)) {
+                              if (!out[k]) continue;
+                              if (!out[k].endTime) out[k] = { ...out[k], endTime: next };
+                            }
+                            return out;
+                          })()
+                        : formData.weeklySchedule;
+                    setFormData({
+                      ...formData,
+                      defaultEndTime: next,
+                      weeklySchedule: nextSchedule,
+                    });
+                  }}
+                  InputLabelProps={{ shrink: true }}
+                  required={!isGigJob}
+                />
+              </Grid>
+              {showGigDefaults && (
+                <>
+                  <Grid item xs={6} md={2}>
+                    <TextField
+                      fullWidth
+                      label="Default Over"
+                      type="number"
+                      inputProps={{ min: 0, max: 999 }}
+                      value={formData.overstaffCount ?? 0}
+                      onChange={(e) => {
+                        const next = Math.max(0, parseInt(e.target.value, 10) || 0);
+                        const oldDefault = formData.overstaffCount ?? 0;
+                        const prev = formData.dateSchedule || {};
                         const out: typeof prev = { ...prev };
                         for (const k of Object.keys(out)) {
-                          if (!out[k]) continue;
-                          if (!out[k].startTime)
-                            out[k] = { ...out[k], startTime: next };
+                          const entry = out[k];
+                          if (!entry) continue;
+                          if ((entry.overstaff ?? oldDefault) === oldDefault) {
+                            out[k] = { ...entry, overstaff: next };
+                          }
                         }
-                        return out;
-                      })()
-                    : formData.weeklySchedule;
-                setFormData({
-                  ...formData,
-                  defaultStartTime: next,
-                  weeklySchedule: nextSchedule,
-                });
-              }}
-              InputLabelProps={{ shrink: true }}
-              required={!isGigJob}
-            />
-            <TextField
-              fullWidth
-              label="Default End Time"
-              type="time"
-              value={formData.defaultEndTime}
-              onChange={(e) => {
-                const next = e.target.value;
-                const nextSchedule =
-                  formData.shiftMode === 'multi'
-                    ? (() => {
-                        const prev = formData.weeklySchedule || {};
+                        setFormData({
+                          ...formData,
+                          overstaffCount: next,
+                          dateSchedule: out,
+                        });
+                      }}
+                      InputLabelProps={{ shrink: true }}
+                      helperText="Applies to dates not yet customized"
+                    />
+                  </Grid>
+                  <Grid item xs={6} md={2}>
+                    <TextField
+                      fullWidth
+                      label="Default Workers"
+                      type="number"
+                      inputProps={{ min: 1, max: 999 }}
+                      value={formData.totalStaffRequested ?? 1}
+                      onChange={(e) => {
+                        const next = Math.max(1, parseInt(e.target.value, 10) || 1);
+                        const oldDefault = formData.totalStaffRequested ?? 1;
+                        const prev = formData.dateSchedule || {};
                         const out: typeof prev = { ...prev };
                         for (const k of Object.keys(out)) {
-                          if (!out[k]) continue;
-                          if (!out[k].endTime) out[k] = { ...out[k], endTime: next };
+                          const entry = out[k];
+                          if (!entry) continue;
+                          if ((entry.workersNeeded ?? oldDefault) === oldDefault) {
+                            out[k] = { ...entry, workersNeeded: next };
+                          }
                         }
-                        return out;
-                      })()
-                    : formData.weeklySchedule;
-                setFormData({
-                  ...formData,
-                  defaultEndTime: next,
-                  weeklySchedule: nextSchedule,
-                });
-              }}
-              InputLabelProps={{ shrink: true }}
-              required={!isGigJob}
-            />
-          </Box>
-        )}
+                        setFormData({
+                          ...formData,
+                          totalStaffRequested: next,
+                          dateSchedule: out,
+                        });
+                      }}
+                      InputLabelProps={{ shrink: true }}
+                      helperText="Applies to dates not yet customized"
+                    />
+                  </Grid>
+                </>
+              )}
+            </Grid>
+          );
+        })()}
 
         {/* GIG single-day boxed row */}
         {isGigJob && formData.shiftMode === 'single' && formData.shiftDate && (
@@ -2099,8 +2206,8 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
                     formData.dateSchedule?.[iso] ?? {
                       startTime: formData.defaultStartTime,
                       endTime: formData.defaultEndTime,
-                      workersNeeded: 1,
-                      overstaff: 0,
+                      workersNeeded: formData.totalStaffRequested ?? 1,
+                      overstaff: formData.overstaffCount ?? 0,
                     };
                   return (
                     <React.Fragment key={iso}>
@@ -2218,6 +2325,8 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               Choose which days are worked and set start/end times per day (e.g., Wed 10–6).
+              Workers / Over default to the shift-level totals above; override per day if your
+              staffing varies (e.g., 5 dishwashers Mon–Fri, 3 on Sat).
             </Typography>
             <Grid container spacing={1} sx={{ alignItems: 'center' }}>
               {DOWS.map(({ dow, short }) => {
@@ -2228,9 +2337,11 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
                     startTime: formData.defaultStartTime,
                     endTime: formData.defaultEndTime,
                   };
+                const dayWorkers = day.workersNeeded ?? formData.totalStaffRequested ?? 1;
+                const dayOver = day.overstaff ?? formData.overstaffCount ?? 0;
                 return (
                   <React.Fragment key={key}>
-                    <Grid item xs={12} md={3}>
+                    <Grid item xs={12} md={2}>
                       <FormControlLabel
                         control={
                           <Checkbox
@@ -2240,6 +2351,7 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
                               const nextSchedule = {
                                 ...(formData.weeklySchedule || {}),
                                 [key]: {
+                                  ...day,
                                   enabled,
                                   startTime: day.startTime || formData.defaultStartTime,
                                   endTime: day.endTime || formData.defaultEndTime,
@@ -2252,7 +2364,7 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
                         label={short}
                       />
                     </Grid>
-                    <Grid item xs={6} md={4.5}>
+                    <Grid item xs={6} md={3}>
                       <TextField
                         fullWidth
                         size="small"
@@ -2270,7 +2382,7 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
                         disabled={!day.enabled}
                       />
                     </Grid>
-                    <Grid item xs={6} md={4.5}>
+                    <Grid item xs={6} md={3}>
                       <TextField
                         fullWidth
                         size="small"
@@ -2285,6 +2397,44 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
                           setFormData({ ...formData, weeklySchedule: nextSchedule });
                         }}
                         InputLabelProps={{ shrink: true }}
+                        disabled={!day.enabled}
+                      />
+                    </Grid>
+                    <Grid item xs={6} md={2}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Over"
+                        type="number"
+                        inputProps={{ min: 0, max: 999 }}
+                        value={dayOver}
+                        onChange={(e) => {
+                          const v = Math.max(0, parseInt(e.target.value, 10) || 0);
+                          const nextSchedule = {
+                            ...(formData.weeklySchedule || {}),
+                            [key]: { ...day, overstaff: v },
+                          };
+                          setFormData({ ...formData, weeklySchedule: nextSchedule });
+                        }}
+                        disabled={!day.enabled}
+                      />
+                    </Grid>
+                    <Grid item xs={6} md={2}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Workers"
+                        type="number"
+                        inputProps={{ min: 1, max: 999 }}
+                        value={dayWorkers}
+                        onChange={(e) => {
+                          const v = Math.max(1, parseInt(e.target.value, 10) || 1);
+                          const nextSchedule = {
+                            ...(formData.weeklySchedule || {}),
+                            [key]: { ...day, workersNeeded: v },
+                          };
+                          setFormData({ ...formData, weeklySchedule: nextSchedule });
+                        }}
                         disabled={!day.enabled}
                       />
                     </Grid>

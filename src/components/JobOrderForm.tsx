@@ -56,7 +56,7 @@ import { getFieldDef } from '../fields/useFieldDef';
 import { toNumberSafe, toISODate, coerceSelect } from '../utils/fieldCoercions';
 import { getRegistryPath, setDeep, getRegistryIdForField } from '../utils/registryHelpers';
 import { getOptionsForField } from '../utils/fieldOptions';
-import jobTitlesList from '../data/onetJobTitles.json';
+import { useTenantJobTitleOptions } from '../hooks/useTenantJobTitles';
 import { JobsBoardService } from '../services/recruiter/jobsBoardService';
 import {
   dedupeUserGroupsForUi,
@@ -536,6 +536,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   const tenantId = propTenantId || authTenantId;
   const user = propCreatedBy ? { uid: propCreatedBy } : authUser;
   const wcMaps = useWorkersCompRatesByJobTitle(tenantId);
+  const jobTitlesList = useTenantJobTitleOptions(tenantId);
 
   /** Account Pricing tab positions (child → national fallback); empty ⇒ use O*NET unless propJobTitles overrides */
   const [resolvedAccountPositions, setResolvedAccountPositions] = useState<AccountPositionPricing[]>([]);
@@ -560,7 +561,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       return [...new Set(titles)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
     }
     return jobTitlesList as string[];
-  }, [propJobTitles, resolvedAccountPositions]);
+  }, [propJobTitles, resolvedAccountPositions, jobTitlesList]);
 
   const [loading, setLoading] = useState(propLoading ?? !!jobOrderId); // Loading if editing
   const [saving, setSaving] = useState(false);

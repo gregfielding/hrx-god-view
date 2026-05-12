@@ -415,7 +415,10 @@ export async function buildAssignmentDetailsEmail(
     // Shift (schedule) + raw shift doc for cascaded staff instructions (matches worker Assignment Details)
     let scheduleShift: {
       shiftMode?: string;
-      weeklySchedule?: Record<string, { enabled?: boolean; startTime?: string; endTime?: string }>;
+      weeklySchedule?: Record<
+        string,
+        { enabled?: boolean; startTime?: string; endTime?: string; workersNeeded?: number; overstaff?: number }
+      >;
       defaultStartTime?: string;
       defaultEndTime?: string;
       endDate?: string;

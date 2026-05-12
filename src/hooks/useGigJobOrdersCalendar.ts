@@ -529,7 +529,12 @@ export function useGigJobOrdersCalendar({
             if (rangeEvent) calendarEvents.push(rangeEvent);
           }
 
-          const occurrences: Array<{ dateStr: string; startTime: string; endTime: string }> = [];
+          const occurrences: Array<{
+            dateStr: string;
+            startTime: string;
+            endTime: string;
+            workersNeeded?: number;
+          }> = [];
 
           if (isMulti) {
             const startD = parseLocalYyyyMmDd(shift.shiftDate);
@@ -540,7 +545,13 @@ export function useGigJobOrdersCalendar({
             if (dateSched && typeof dateSched === 'object') {
               const entries = getDateScheduleEntriesWithHours(dateSched, shift.shiftDate, (shift as any).endDate);
               for (const e of entries) {
-                occurrences.push({ dateStr: e.date, startTime: e.startTime, endTime: e.endTime });
+                const wn = typeof (e as any).workersNeeded === 'number' ? Number((e as any).workersNeeded) : undefined;
+                occurrences.push({
+                  dateStr: e.date,
+                  startTime: e.startTime,
+                  endTime: e.endTime,
+                  workersNeeded: wn,
+                });
               }
             } else {
               for (const day of eachDayOfInterval({ start: startD, end: endD })) {
@@ -549,10 +560,15 @@ export function useGigJobOrdersCalendar({
                 const sched = (shift as any).weeklySchedule?.[dowKey];
                 if (sched && sched.enabled === false) continue;
 
+                const wn =
+                  sched && typeof sched.workersNeeded === 'number'
+                    ? Number(sched.workersNeeded)
+                    : undefined;
                 occurrences.push({
                   dateStr,
                   startTime: (sched?.startTime || shift.defaultStartTime || '00:00') as string,
                   endTime: (sched?.endTime || shift.defaultEndTime || '23:59') as string,
+                  workersNeeded: wn,
                 });
               }
             }
@@ -596,8 +612,15 @@ export function useGigJobOrdersCalendar({
             };
             const event = shiftToCalendarEvent(syntheticShift, jobOrder, jobOrderColor);
             if (event) {
+              // Per-day workersNeeded (from weeklySchedule[dow] or
+              // dateSchedule[iso]) takes precedence over the shift-level
+              // totalStaffRequested for calendar display.
               const requestedStaff =
-                typeof shift?.totalStaffRequested === 'number' ? shift.totalStaffRequested : undefined;
+                typeof occ.workersNeeded === 'number' && Number.isFinite(occ.workersNeeded)
+                  ? occ.workersNeeded
+                  : typeof shift?.totalStaffRequested === 'number'
+                    ? shift.totalStaffRequested
+                    : undefined;
               event.hrx = {
                 gigShiftId: shift.id,
                 gigShiftRange: false,

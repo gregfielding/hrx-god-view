@@ -172,6 +172,14 @@ export type WeeklyScheduleEntry = {
   enabled: boolean;
   startTime: string;
   endTime: string;
+  /**
+   * Optional per-day staffing override for Career (recurring) shifts.
+   * Falls back to shift-level `totalStaffRequested` / `overstaffCount` when
+   * unset. Captures recruiter intent for finance/calendar/email display;
+   * shift-fill automation remains shift-level.
+   */
+  workersNeeded?: number;
+  overstaff?: number;
 };
 
 export type WeeklySchedule = Record<string, WeeklyScheduleEntry>;
@@ -234,7 +242,19 @@ export function validateWeeklySchedule(raw: unknown): WeeklySchedule | null {
       // missing times are fine; the grid won't render them anyway.
       continue;
     }
-    cleaned[k] = {enabled, startTime, endTime};
+    const cleanedEntry: WeeklyScheduleEntry = {enabled, startTime, endTime};
+    // Preserve optional per-day staffing overrides when they're sane
+    // integers. Recorded for display/finance only — shift-fill automation
+    // is unaware of these values.
+    if (typeof e.workersNeeded === "number" && Number.isFinite(e.workersNeeded)) {
+      const w = Math.floor(e.workersNeeded);
+      if (w >= 1 && w <= 999) cleanedEntry.workersNeeded = w;
+    }
+    if (typeof e.overstaff === "number" && Number.isFinite(e.overstaff)) {
+      const o = Math.floor(e.overstaff);
+      if (o >= 0 && o <= 999) cleanedEntry.overstaff = o;
+    }
+    cleaned[k] = cleanedEntry;
     if (enabled && startTime && endTime) anyEnabledWithTimes = true;
   }
 

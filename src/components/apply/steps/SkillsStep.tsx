@@ -18,7 +18,6 @@ import { AddCircle, CheckCircle, Star } from '@mui/icons-material';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../../../firebase';
 import onetSkills from '../../../data/onetSkills.json';
-import onetJobTitles from '../../../data/onetJobTitles.json';
 
 type Props = {
   value: any;

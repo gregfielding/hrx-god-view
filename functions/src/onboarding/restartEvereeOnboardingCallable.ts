@@ -62,7 +62,6 @@ import {
   buildWorkerPayrollEvereeTenantUrl,
 } from '../utils/workerUrls';
 import { userDocHasUsablePhone } from '../workerAiPrescreen/evaluateAiPrescreenEligibility';
-import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
 import { buildOnboardingReminderSmsBody } from './processWorkerOnboardingReminders';
 import { deriveEntityKeyFromName } from './workerOnboardingPipeline';
 import { createWorkerIfNeeded } from '../integrations/everee/evereeService';
@@ -363,21 +362,16 @@ export const restartEvereeOnboarding = onCall(
     }
 
     // 4. Pick variant + R1 link. Same logic as
-    //    `processWorkerOnboardingReminders.sendOnboardingReminderSms`.
+    //    `processWorkerOnboardingReminders.sendOnboardingReminderSms`:
+    //    URL goes to the direct Everee payroll embed for any Everee-enabled
+    //    entity (`evereeTenantId` was already required upfront on this
+    //    callable, so we always have one here); body wording stays gated
+    //    on entityKey === 'events' so 1099 copy doesn't mention I-9.
     const eventsEntity = isEventsEntityKey(entityKey);
-    let link = '';
-    let variant: 'standard' | 'events' = 'standard';
-    if (eventsEntity) {
-      const directUrl = buildWorkerPayrollEvereeTenantUrl(evereeTenantId);
-      if (directUrl) {
-        link = directUrl;
-        variant = 'events';
-      } else {
-        link = buildWorkerEntityEmploymentUrl(pipelineId);
-      }
-    } else {
-      link = buildWorkerEntityEmploymentUrl(pipelineId);
-    }
+    const variant: 'standard' | 'events' = eventsEntity ? 'events' : 'standard';
+    const link =
+      buildWorkerPayrollEvereeTenantUrl(evereeTenantId) ||
+      buildWorkerEntityEmploymentUrl(pipelineId);
     if (!link) {
       return {
         ok: false,

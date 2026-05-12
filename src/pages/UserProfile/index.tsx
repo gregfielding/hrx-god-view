@@ -65,7 +65,6 @@ import { db, functions, storage } from '../../firebase'; // adjust path
 import ImageCropDialog from '../../components/common/ImageCropDialog';
 import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import onetSkills from '../../data/onetSkills.json';
-import onetJobTitles from '../../data/onetJobTitles.json';
 import { useAuth } from '../../contexts/AuthContext';
 import { calculateProfileScore, calculateCompletenessScore } from '../../utils/applicantScoring';
 import { userProfileBatcher, flushProfileUpdates } from '../../utils/userProfileBatching';

@@ -46,6 +46,15 @@ export interface RateLimitCheckArgs {
   userId: string;
   messageTypeId: string;
   channel: Channel;
+  /**
+   * `MessageContext.source`. When `'recruiter'`, the send is initiated by a
+   * human operator (MessageDrawer bulk send, recruiter inbox reply,
+   * `senderVerification` flow, etc.) and the per-user cap is skipped — the
+   * tenant-hourly cap still applies. The per-user cap is intended to stop
+   * automated triggers from looping on a single user, not to throttle a
+   * recruiter sending one message to each of N recipients in a smart group.
+   */
+  source?: string;
 }
 
 export type RateLimitResult =
@@ -202,12 +211,18 @@ async function countTenantMessages(
 export async function checkRateLimits(
   args: RateLimitCheckArgs
 ): Promise<RateLimitResult> {
-  const { tenantId, userId, messageTypeId, channel } = args;
+  const { tenantId, userId, messageTypeId, channel, source } = args;
 
   try {
-    // Transactional application status messages are exempt from per-user limits
-    // so status updates (waitlisted, rejected, etc.) always reach the user
-    if (RATE_LIMIT_EXEMPT_MESSAGE_TYPES.has(messageTypeId)) {
+    // Recruiter-initiated sends bypass the per-user cap. The cap is intended
+    // to stop automated triggers from spamming a single user; a recruiter
+    // explicitly choosing recipients (MessageDrawer bulk to a smart group,
+    // inbox reply, senderVerification handshake) is a different shape — each
+    // recipient typically gets exactly one message from the batch. Tenant-
+    // hourly cap below still applies as the runaway-protection backstop.
+    // Same fall-through structure as RATE_LIMIT_EXEMPT_MESSAGE_TYPES so the
+    // tenant cap stays consistent across exempt branches.
+    if (RATE_LIMIT_EXEMPT_MESSAGE_TYPES.has(messageTypeId) || source === 'recruiter') {
       // Still enforce tenant-level limits to prevent abuse
       const config = await getRateLimitConfig(tenantId);
       const now = admin.firestore.Timestamp.now();

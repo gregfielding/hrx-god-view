@@ -26,7 +26,7 @@ import { collection, addDoc, getDocs, query, where, serverTimestamp } from 'fire
 import { useNavigate } from 'react-router-dom';
 
 import { db } from '../../../firebase';
-import jobTitles from '../../../data/onetJobTitles.json';
+import { useTenantJobTitleOptions } from '../../../hooks/useTenantJobTitles';
 
 interface ContactsTabProps {
   tenantId?: string;
@@ -46,6 +46,7 @@ function formatPhoneNumber(value: string) {
 const securityLevels = ['Admin', 'Manager'];
 
 const ContactsTab: React.FC<ContactsTabProps> = ({ tenantId }) => {
+  const jobTitles = useTenantJobTitleOptions(tenantId);
   const [form, setForm] = useState({
     firstName: '',
     lastName: '',

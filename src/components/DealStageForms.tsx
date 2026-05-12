@@ -67,7 +67,7 @@ import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage
 import { useAuth } from '../contexts/AuthContext';
 import { db, storage } from '../firebase';
 import { getOptionsForField } from '../utils/fieldOptions';
-import jobTitlesList from '../data/onetJobTitles.json';
+import { useTenantJobTitleOptions } from '../hooks/useTenantJobTitles';
 import { getFieldDef } from '../fields/useFieldDef';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
 import { additionalScreeningOptions } from '../data/screeningsOptions';
@@ -335,6 +335,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
   associatedContacts = []
 }) => {
   const { user } = useAuth();
+  const jobTitlesList = useTenantJobTitleOptions(tenantId);
   const [activeStep, setActiveStep] = useState(STAGES.findIndex(s => s.key === currentStage));
   const [expandedStep, setExpandedStep] = useState<number | false>(false);
   const [saving, setSaving] = useState(false);

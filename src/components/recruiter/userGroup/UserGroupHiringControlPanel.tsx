@@ -1455,7 +1455,7 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
           <DialogContentText variant="caption" color="text.secondary" sx={{ mb: 1 }}>
             Catchall groups: with the quality preset set to <strong>"Hire everyone · no floor"</strong>,
             members who never created an application are also onboarded — useful when the group is
-            being used as an invite list. Active C1 Select employment still blocks hiring at C1 Events.
+            being used as an invite list. Workers can be hired across multiple entities concurrently.
           </DialogContentText>
           <DialogContentText variant="caption" color="text.secondary" sx={{ mb: 2 }}>
             Tip: save any pending changes above first — the scan uses what's stored on the

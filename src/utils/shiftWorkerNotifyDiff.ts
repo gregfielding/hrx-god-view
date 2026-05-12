@@ -79,7 +79,10 @@ export function buildScheduleNotifyText(
     defaultStartTime?: string;
     defaultEndTime?: string;
     dateSchedule?: Record<string, { startTime: string; endTime: string }>;
-    weeklySchedule?: Record<string, { enabled?: boolean; startTime: string; endTime: string }>;
+    weeklySchedule?: Record<
+      string,
+      { enabled?: boolean; startTime: string; endTime: string; workersNeeded?: number; overstaff?: number }
+    >;
   },
   formatTime: (t: string) => string
 ): string {

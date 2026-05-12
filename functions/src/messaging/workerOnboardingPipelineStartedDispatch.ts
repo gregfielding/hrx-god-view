@@ -5,11 +5,7 @@
  */
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
-import {
-  buildWorkerEntityEmploymentUrl,
-  buildWorkerPayrollEvereeTenantUrl,
-} from '../utils/workerUrls';
-import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
+import { resolveWorkerOnboardingLink } from '../integrations/everee/resolveWorkerOnboardingLink';
 import { markLifecycleEventIfFirst } from './lifecycleDedupe';
 import { dispatchSystemMessage } from './systemMessageDispatcher';
 import { SYSTEM_TRIGGER_KEYS } from './triggerRegistry';
@@ -86,32 +82,23 @@ export async function dispatchWorkerOnboardingPipelineStarted(args: {
   const isEventsEntity = String(entityKey || '').trim().toLowerCase() === 'events';
   const i9SupportingDocumentsApplicable = !isEventsEntity;
 
-  // Same pattern as `dispatchOnCallEmploymentStarted`: for events / 1099
-  // workers we resolve the entity's `evereeTenantId` and substitute the
-  // direct payroll iframe URL for the standard My Employment hub URL.
-  // Templates referencing `{{workerEntityEmploymentUrl}}` keep working with
-  // no edits; new templates can opt into the explicit `{{workerPayrollUrl}}`
-  // variable. Falls back to the hub URL if Everee isn't configured on the
-  // entity — preserves the previous behavior for that case.
-  const fallbackHubUrl = buildWorkerEntityEmploymentUrl(pipelineId);
-  let workerPayrollUrl = '';
-  if (isEventsEntity && entityId) {
-    try {
-      const cfg = await getEvereeConfigForEntity(tenantId, entityId);
-      const evereeTenantId = cfg?.evereeTenantId?.trim() || '';
-      if (evereeTenantId) {
-        workerPayrollUrl = buildWorkerPayrollEvereeTenantUrl(evereeTenantId);
-      }
-    } catch (e: unknown) {
-      logger.warn('worker_onboarding_pipeline_started: evereeTenantId resolve failed', {
-        tenantId,
-        entityId,
-        error: e instanceof Error ? e.message : String(e),
-      });
-    }
-  }
-  const workerEntityEmploymentUrl =
-    isEventsEntity && workerPayrollUrl ? workerPayrollUrl : fallbackHubUrl;
+  // Same pattern as `dispatchOnCallEmploymentStarted`: prefer the direct
+  // Everee payroll iframe URL whenever the hiring entity has an
+  // `evereeTenantId` (works for both W2 employees and 1099 contractors —
+  // Everee's embedded onboarding handles I-9, W-4, banking, and W-9
+  // inside the iframe). Templates referencing `{{workerEntityEmploymentUrl}}`
+  // keep working without edits; templates can opt into the explicit
+  // `{{workerPayrollUrl}}` variable when they want to call out payroll
+  // separately. Falls back to the My Employment hub URL when the entity
+  // isn't on Everee at all.
+  const resolved = await resolveWorkerOnboardingLink({
+    tenantId,
+    entityId: entityId ?? null,
+    pipelineId,
+    context: 'worker_onboarding_pipeline_started',
+  });
+  const workerEntityEmploymentUrl = resolved.link;
+  const workerPayrollUrl = resolved.isEvereeDirect ? resolved.link : '';
 
   const result = await dispatchSystemMessage({
     tenantId,

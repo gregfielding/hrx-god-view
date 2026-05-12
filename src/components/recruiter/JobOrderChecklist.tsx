@@ -13,7 +13,7 @@ import { JobOrder } from '../../types/recruiter/jobOrder';
 import type { JobsBoardPost } from '../../services/recruiter/jobsBoardService';
 import { db } from '../../firebase';
 import { doc, updateDoc } from 'firebase/firestore';
-import jobTitlesList from '../../data/onetJobTitles.json';
+import { useTenantJobTitleOptions } from '../../hooks/useTenantJobTitles';
 
 interface JobOrderChecklistProps {
   jobOrder: JobOrder | null;
@@ -47,13 +47,18 @@ interface ChecklistItem {
   actionLabel?: string;
 }
 
-const normalizedJobTitles = (jobTitlesList as string[]).map((title) => title.toLowerCase());
-
-const isStandardJobTitleValue = (title?: string | null): boolean => {
+const isStandardJobTitleValue = (
+  title: string | null | undefined,
+  jobTitles: readonly string[],
+): boolean => {
   if (!title || typeof title !== 'string') return false;
   const trimmed = title.trim();
   if (!trimmed) return false;
-  return normalizedJobTitles.includes(trimmed.toLowerCase());
+  const needle = trimmed.toLowerCase();
+  for (const candidate of jobTitles) {
+    if (typeof candidate === 'string' && candidate.toLowerCase() === needle) return true;
+  }
+  return false;
 };
 
 const isValidUrlValue = (value: string, kind: 'indeed' | 'craigslist'): boolean => {
@@ -80,6 +85,14 @@ export function getJobOrderChecklistProgress(input: {
   shiftsCount?: number;
   indeedUrl?: string;
   craigslistUrl?: string;
+  /**
+   * Tenant's curated Job Titles list (from `useTenantJobTitleOptions`).
+   * If omitted, the "Job title selected" row falls back to a simple
+   * non-empty check so the summary still renders before the hook
+   * resolves; callers that want the strict "must be in the tenant's
+   * list" check should pass titles through.
+   */
+  jobTitles?: readonly string[];
 }): {
   total: number;
   completed: number;
@@ -94,21 +107,29 @@ export function getJobOrderChecklistProgress(input: {
     shiftsCount = 0,
     indeedUrl,
     craigslistUrl,
+    jobTitles,
   } = input;
 
-  // Standard job title
+  const hasJobTitlesList = Array.isArray(jobTitles) && jobTitles.length > 0;
+  const titleQualifies = (title: string | null | undefined): boolean => {
+    if (!title || typeof title !== 'string') return false;
+    const trimmed = title.trim();
+    if (!trimmed) return false;
+    // Without a curated list, treat any non-empty title as "selected"
+    // so we don't regress the summary while the hook is hydrating.
+    return hasJobTitlesList ? isStandardJobTitleValue(trimmed, jobTitles!) : true;
+  };
+
   const hasStandardJobTitle = (() => {
     if (!jobOrder) return false;
 
-    // Career jobs: use the single jobTitle field
-    if ((jobOrder as any).jobType !== 'gig' && isStandardJobTitleValue((jobOrder as any).jobTitle)) {
+    if ((jobOrder as any).jobType !== 'gig' && titleQualifies((jobOrder as any).jobTitle)) {
       return true;
     }
 
-    // Gig jobs: check gigPositions array if present
     const gigPositions = (jobOrder as any).gigPositions as Array<{ jobTitle?: string }> | undefined;
     if (Array.isArray(gigPositions)) {
-      return gigPositions.some((pos) => isStandardJobTitleValue(pos.jobTitle || ''));
+      return gigPositions.some((pos) => titleQualifies(pos.jobTitle || ''));
     }
 
     return false;
@@ -312,6 +333,7 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
   shiftsCount = 0,
   assignmentsCount = 0,
 }) => {
+  const jobTitlesList = useTenantJobTitleOptions(tenantId);
   const [indeedUrl, setIndeedUrl] = useState<string>('');
   const [craigslistUrl, setCraigslistUrl] = useState<string>('');
   const [savingExternal, setSavingExternal] = useState(false);
@@ -355,14 +377,14 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
     if (!jobOrder) return false;
 
     // Career jobs: use the single jobTitle field
-    if ((jobOrder as any).jobType !== 'gig' && isStandardJobTitleValue((jobOrder as any).jobTitle)) {
+    if ((jobOrder as any).jobType !== 'gig' && isStandardJobTitleValue((jobOrder as any).jobTitle, jobTitlesList)) {
       return true;
     }
 
     // Gig jobs: check gigPositions array if present
     const gigPositions = (jobOrder as any).gigPositions as Array<{ jobTitle?: string }> | undefined;
     if (Array.isArray(gigPositions)) {
-      return gigPositions.some((pos) => isStandardJobTitleValue(pos.jobTitle || ''));
+      return gigPositions.some((pos) => isStandardJobTitleValue(pos.jobTitle || '', jobTitlesList));
     }
 
     return false;

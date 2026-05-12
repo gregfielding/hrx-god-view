@@ -33,7 +33,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import Autocomplete from '@mui/material/Autocomplete';
 import CircularProgress from '@mui/material/CircularProgress';
 
-import jobTitlesData from '../../data/onetJobTitles.json';
+import { useTenantJobTitleOptions } from '../../hooks/useTenantJobTitles';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { toChipLabel } from '../../utils/chipLabel';
@@ -72,6 +72,7 @@ const shiftTypeOptions = [
 
 const FlexPositions: React.FC = () => {
   const { tenantId } = useAuth();
+  const jobTitleOptions = useTenantJobTitleOptions(tenantId);
   const [jobTitleInput, setJobTitleInput] = useState('');
   const [jobDescriptionInput, setJobDescriptionInput] = useState('');
   const [experienceInput, setExperienceInput] = useState('');
@@ -518,7 +519,7 @@ const FlexPositions: React.FC = () => {
         <Box display="flex" flexDirection="column" gap={2} mb={4}>
           <Box display="flex" gap={2}>
             <Autocomplete
-              options={jobTitlesData}
+              options={jobTitleOptions}
               value={jobTitleInput}
               onChange={(_, newValue) => {
                 console.log('Autocomplete onChange triggered with:', newValue);

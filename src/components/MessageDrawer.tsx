@@ -124,6 +124,18 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  /**
+   * Informational message for partial-success / all-skipped sends.
+   *
+   * The per-recipient `sendMessageApi` flow returns `success: false` whenever
+   * the recipient is skipped for a *user-state* reason (no phone, opted out
+   * via STOP, all channels disabled in their preferences). Treating those as
+   * hard errors made every recruiter bulk send look like a failure even when
+   * Twilio actually delivered to most of the group. `notice` separates that
+   * "delivered with skips / nothing to deliver" UX from real outage errors —
+   * rendered as an info Alert (blue) instead of error (red).
+   */
+  const [notice, setNotice] = useState<string | null>(null);
   const [senderOptions, setSenderOptions] = useState<SenderOption[]>([]);
   const [selectedSenderId, setSelectedSenderId] = useState<string>('system');
   const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
@@ -788,6 +800,7 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
     setLoading(true);
     setError(null);
     setSuccess(false);
+    setNotice(null);
 
     try {
       if (!effectiveTenantId?.trim()) {
@@ -1193,28 +1206,98 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
       });
 
       const results = await Promise.all(sendPromises);
-      const allSuccess = results.every(r => r.success);
       const dispatchedChannels = results[0]?.dispatchedChannels || channels;
-      const allWarnings = results.flatMap(r => (r.warnings || []) as string[]);
-      
-      const result = {
-        success: allSuccess,
-        dispatchedChannels,
-        messageLogIds: results.flatMap(r => r.messageLogIds || []),
-        warnings: allWarnings.length > 0 ? allWarnings : undefined,
-      };
+      const messageLogIds = results.flatMap(r => r.messageLogIds || []);
 
-      if (result.success) {
+      /**
+       * Classify per-recipient `sendMessageApi` warnings into "soft skip"
+       * (recipient-state issues that aren't actionable here — no phone,
+       * opted out via STOP, channel preferences disabled) vs "hard failure"
+       * (provider outage, missing config, unknown error).
+       *
+       * The router doesn't return structured per-channel outcomes to the
+       * client, so we string-match the messages it composes in
+       * `messagingApi.ts` (`Skipped {channel}: {reason}`,
+       * `{channel}: {error}`, plus the bare `routingDecision.reason`).
+       * Anything not matched is treated as a hard failure so we don't
+       * silently swallow real outages (e.g. the "Twilio credentials not
+       * configured" wave we just fixed would still surface as an error).
+       */
+      const SOFT_SKIP_PATTERNS: RegExp[] = [
+        /all channels (disabled|blocked)/i,
+        /user (preferences|has blocked)/i,
+        /stop keyword/i,
+        /no phone number/i,
+        /params\[['"]to['"]\] missing/i,
+        /opted out/i,
+        /channel disabled/i,
+        /no destination phone/i,
+      ];
+      const isSoftSkipWarning = (w: string): boolean =>
+        SOFT_SKIP_PATTERNS.some((p) => p.test(w));
+
+      let successCount = 0;
+      let softSkipCount = 0;
+      let hardFailCount = 0;
+      const hardFailReasons: string[] = [];
+      const softSkipReasons: string[] = [];
+
+      results.forEach((r, idx) => {
+        const recName = internalRecipients[idx]?.name || `Recipient ${idx + 1}`;
+        if (r.success) {
+          successCount++;
+          return;
+        }
+        const ws: string[] = (r.warnings || []) as string[];
+        const unknownWs = ws.filter((w) => !isSoftSkipWarning(w));
+        if (unknownWs.length > 0) {
+          hardFailCount++;
+          hardFailReasons.push(`${recName}: ${unknownWs.join(' · ')}`);
+        } else {
+          softSkipCount++;
+          softSkipReasons.push(
+            `${recName}: ${ws.join(' · ') || 'no deliverable channel'}`,
+          );
+        }
+      });
+
+      const total = results.length;
+      const truncate = (arr: string[]): string =>
+        arr.slice(0, 3).join(' | ') + (arr.length > 3 ? '…' : '');
+
+      if (hardFailCount > 0) {
+        const summary =
+          successCount > 0
+            ? `Sent to ${successCount} of ${total}. ${hardFailCount} failed: ${truncate(hardFailReasons)}`
+            : `Failed for all ${total} recipient${total === 1 ? '' : 's'}: ${truncate(hardFailReasons)}`;
+        setError(summary);
+        if (onSend) {
+          onSend({ success: false, dispatchedChannels, messageLogIds });
+        }
+      } else if (successCount === 0) {
+        // All recipients soft-skipped. Show info (not error) and keep the
+        // drawer open so the recruiter understands why nothing went out.
+        setNotice(
+          `No messages sent. ${softSkipCount} recipient${softSkipCount === 1 ? '' : 's'} could not be reached on the selected channel${channels.length === 1 ? '' : 's'}: ${truncate(softSkipReasons)}`,
+        );
+        if (onSend) {
+          onSend({ success: false, dispatchedChannels, messageLogIds });
+        }
+      } else if (softSkipCount > 0) {
+        // Partial success: some delivered, some legitimately skipped.
+        setNotice(
+          `Sent to ${successCount} of ${total}. ${softSkipCount} skipped (no phone, opted out, or notifications disabled).`,
+        );
+        if (onSend) {
+          onSend({ success: true, dispatchedChannels, messageLogIds });
+        }
+        closeAfterSend('generic-partial');
+      } else {
         setSuccess(true);
         if (onSend) {
-          onSend(result);
+          onSend({ success: true, dispatchedChannels, messageLogIds });
         }
         closeAfterSend('generic');
-      } else {
-        setError(
-          result.warnings?.filter(Boolean).join(' · ') ||
-            'Message could not be sent on any channel. For email, confirm SendGrid/system mail is configured; for SMS, check the recipient phone number.'
-        );
       }
     } catch (err: any) {
       setError(err.message || 'Failed to send message');
@@ -1703,10 +1786,15 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
               </Box>
             )}
 
-            {/* Error/Success Messages */}
+            {/* Error/Success/Info Messages */}
             {error && (
               <Alert severity="error" onClose={() => setError(null)}>
                 {error}
+              </Alert>
+            )}
+            {notice && !error && (
+              <Alert severity="info" onClose={() => setNotice(null)}>
+                {notice}
               </Alert>
             )}
             {success && (

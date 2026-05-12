@@ -166,7 +166,7 @@ import AddAccountModal from '../components/recruiter/AddAccountModal';
 import DefaultGigSettings from '../components/recruiter/DefaultGigSettings';
 import { PositionComplianceOverridesDialog } from '../components/recruiter/PositionComplianceOverridesDialog';
 import type { JobOrder } from '../types/Phase1Types';
-import jobTitlesData from '../data/onetJobTitles.json';
+import { useTenantJobTitleOptions } from '../hooks/useTenantJobTitles';
 import { JobsBoardService, type JobsBoardPost } from '../services/recruiter/jobsBoardService';
 import { getSutaRateByState, getFutaRateByState, normalizeStateCode, US_STATE_CODES } from '../utils/unemploymentRates';
 import {
@@ -1436,6 +1436,7 @@ const RecruiterAccountDetails: React.FC = () => {
   const canAccessInvoicing = canAccessAccountInvoicingTab(currentClaimsSecurityLevel ?? securityLevel);
   const navigate = useNavigate();
   const { isFavorite, toggleFavorite } = useFavorites('accounts');
+  const jobTitlesData = useTenantJobTitleOptions(tenantId);
 
   const tabFromUrl = useMemo(() => {
     const tab = searchParams.get('tab');

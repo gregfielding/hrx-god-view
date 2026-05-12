@@ -709,6 +709,7 @@ async function deliverSMS(
           userId: context.userId,
           messageTypeId: context.messageTypeId,
           channel: 'sms',
+          source: context.source,
         });
 
     if (!rateLimitCheck.allowed && 'reason' in rateLimitCheck && 'details' in rateLimitCheck) {
@@ -1112,6 +1113,7 @@ async function deliverEmail(
         userId: context.userId,
         messageTypeId: context.messageTypeId,
         channel: 'email',
+        source: context.source,
       });
 
       if (!rateLimitCheck.allowed && 'reason' in rateLimitCheck && 'details' in rateLimitCheck) {
@@ -1352,6 +1354,7 @@ async function deliverEmail(
       userId: context.userId,
       messageTypeId: context.messageTypeId,
       channel: 'email',
+      source: context.source,
     });
 
     if (!rateLimitCheck.allowed && 'reason' in rateLimitCheck && 'details' in rateLimitCheck) {
@@ -1698,6 +1701,7 @@ async function deliverPush(
       userId: context.userId,
       messageTypeId: context.messageTypeId,
       channel: 'push',
+      source: context.source,
     });
 
     if (!rateLimitCheck.allowed && 'reason' in rateLimitCheck && 'details' in rateLimitCheck) {

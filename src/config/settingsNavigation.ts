@@ -20,6 +20,7 @@ export type CoreSettingsTab =
   | 'compliance-library'
   | 'credential-types'
   | 'screening-types'
+  | 'job-titles'
   | 'benefits-programs'
   | 'payroll-providers'
   | 'workers-comp'
@@ -60,6 +61,7 @@ export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
     label: 'Hiring & AI',
     items: [
       { key: 'ai-signals', label: 'AI Interview & Hiring' },
+      { key: 'job-titles', label: 'Job Titles' },
       { key: 'screening-types', label: 'Screening Types' },
       { key: 'credential-types', label: 'Credential Types' },
       { key: 'compliance-library', label: 'Compliance Library' },

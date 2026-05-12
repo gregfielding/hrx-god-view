@@ -60,7 +60,7 @@ import FavoritesFilter from '../../components/FavoritesFilter';
 import { BreadcrumbNav } from '../../components/BreadcrumbNav';
 import StandardTablePagination from '../../components/StandardTablePagination';
 import type { RecruiterOutletContext } from '../RecruiterDashboard';
-import jobTitlesList from '../../data/onetJobTitles.json';
+import { useTenantJobTitleOptions } from '../../hooks/useTenantJobTitles';
 import onetSkills from '../../data/onetSkills.json';
 import credentialsSeed from '../../data/credentialsSeed.json';
 import { experienceOptions, educationOptions } from '../../data/experienceOptions';
@@ -106,6 +106,7 @@ const JobsBoard: React.FC = () => {
   const { tenantId, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const jobTitlesList = useTenantJobTitleOptions();
   
   // Check if we're accessing from the recruiter module
   const isFromRecruiter = location.pathname.includes('/jobs/jobs-board');

@@ -27,12 +27,8 @@ import {
   TWILIO_MESSAGING_PHONE_NUMBER,
   TWILIO_A2P_CAMPAIGN,
 } from '../messaging/twilioSecrets';
-import {
-  buildWorkerEntityEmploymentUrl,
-  buildWorkerPayrollEvereeTenantUrl,
-} from '../utils/workerUrls';
 import { userDocHasUsablePhone } from '../workerAiPrescreen/evaluateAiPrescreenEligibility';
-import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
+import { resolveWorkerOnboardingLink } from '../integrations/everee/resolveWorkerOnboardingLink';
 import { buildOnboardingReminderSmsBody } from './processWorkerOnboardingReminders';
 import { deriveEntityKeyFromName } from './workerOnboardingPipeline';
 
@@ -195,34 +191,20 @@ export const resendOnboardingPayrollLink = onCall(
     }
     const userData = (userSnap.data() || {}) as Record<string, unknown>;
 
-    // Variant + URL selection — mirrors `sendOnboardingReminderSms`. Keep
-    // these two implementations in lockstep: any future tweak (e.g. a third
-    // variant for a new entity type) must land in both places, otherwise
-    // automated and manual SMS will diverge.
+    // URL + body variant — kept in lockstep with `sendOnboardingReminderSms`
+    // (the scheduler's R1–R5 sender) via the shared
+    // `resolveWorkerOnboardingLink` helper. URL: Everee direct for any
+    // entity with an `evereeTenantId` (W2 + 1099); My Employment hub
+    // fallback when the entity isn't on Everee at all. Body wording: still
+    // 'events' for 1099 (no I-9 mention) vs 'standard' for W2.
     const eventsEntity = isEventsEntityKey(entityKey);
-    let link = '';
-    let variant: 'standard' | 'events' = 'standard';
-    if (eventsEntity) {
-      try {
-        const cfg = await getEvereeConfigForEntity(tenantId, entityId);
-        const evereeTenantId = cfg?.evereeTenantId?.trim() || '';
-        if (evereeTenantId) {
-          link = buildWorkerPayrollEvereeTenantUrl(evereeTenantId);
-          variant = 'events';
-        }
-      } catch (e: unknown) {
-        logger.warn('resendOnboardingPayrollLink: evereeTenantId resolve failed', {
-          tenantId,
-          entityId,
-          error: e instanceof Error ? e.message : String(e),
-        });
-      }
-      if (!link) {
-        link = buildWorkerEntityEmploymentUrl(pipelineId);
-      }
-    } else {
-      link = buildWorkerEntityEmploymentUrl(pipelineId);
-    }
+    const variant: 'standard' | 'events' = eventsEntity ? 'events' : 'standard';
+    const { link } = await resolveWorkerOnboardingLink({
+      tenantId,
+      entityId,
+      pipelineId,
+      context: 'resendOnboardingPayrollLink',
+    });
     if (!link) {
       return { ok: false, pipelineId, variant, link: '', reason: 'missing_link' };
     }

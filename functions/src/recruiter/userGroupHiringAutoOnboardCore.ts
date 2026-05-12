@@ -34,14 +34,11 @@ import type { WorkerOnboardingPipelineTriggerSource } from '../onboarding/worker
 
 import { evaluateCurrentPolicyOrchestratorDecision } from './reevaluateHirePassedPolicy';
 import {
-  c1EmploymentBlocksHire,
   EXCLUSION_CATEGORY_LABELS,
   extractOrchestratorDecision,
-  isC1SelectEmployment,
   isGroupHireEveryonePreset,
   readGroupOnCallHiringContext,
   resolveAccusourceScreeningFromGroupHiringConfig,
-  resolveC1SelectEntityId,
   TERMINAL_APPLICATION,
 } from './userGroupHirePassedCandidates';
 
@@ -80,15 +77,8 @@ export interface EvaluateGroupHiringEligibilityArgs {
    * (member is in `memberIds` but no application exists).
    */
   applicationDoc: { id: string; data: Record<string, unknown> } | null;
-  c1SelectEntityId: string | null;
   /** Defaults to `'current_policy'` (re-runs orchestrator with today's tenant + group rules). */
   eligibilityMode?: GroupAutoOnboardEligibilityMode;
-  /**
-   * Optional preloaded employments for this user. When omitted the evaluator
-   * issues its own query — fine for one-off trigger paths, wasteful for batch
-   * scans (the manual callable supplies its own preloaded map).
-   */
-  preloadedC1Employments?: Array<Record<string, unknown>>;
 }
 
 /**
@@ -106,9 +96,7 @@ export async function evaluateGroupHiringEligibilityForUser(
     tenantData,
     userId,
     applicationDoc,
-    c1SelectEntityId,
     eligibilityMode = 'current_policy',
-    preloadedC1Employments,
   } = args;
 
   const trimmedUid = String(userId ?? '').trim();
@@ -137,21 +125,10 @@ export async function evaluateGroupHiringEligibilityForUser(
         effectiveOrch: null,
       };
     }
-    const blocking = await isBlockedByActiveC1Select({
-      db,
-      tenantId,
-      userId: trimmedUid,
-      c1SelectEntityId,
-      preloadedC1Employments,
-    });
-    if (blocking.blocked) {
-      return {
-        outcome: 'excluded',
-        reasons: [`No application linked; ${blocking.detail}.`],
-        category: 'blocked_by_c1_select',
-        effectiveOrch: null,
-      };
-    }
+    // Cross-entity employment is allowed (May 2026). See the matching note
+    // in `userGroupHirePassedCandidates.ts` — both this auto-onboard core
+    // and the user-driven dialog dropped the active-C1-Select hire block at
+    // the same time.
     return {
       outcome: 'eligible',
       reasons: [
@@ -240,77 +217,30 @@ export async function evaluateGroupHiringEligibilityForUser(
     };
   }
 
-  const blocking = await isBlockedByActiveC1Select({
-    db,
-    tenantId,
-    userId: trimmedUid,
-    c1SelectEntityId,
-    preloadedC1Employments,
-  });
-  if (blocking.blocked) {
-    return {
-      outcome: 'excluded',
-      reasons: [blocking.detail],
-      category: 'blocked_by_c1_select',
-      effectiveOrch,
-    };
-  }
+  // Cross-entity employment is allowed (May 2026). See the per-application
+  // loop in `userGroupHirePassedCandidates.ts` for the rationale.
 
   return {
     outcome: 'eligible',
     reasons: [
       hireEveryone
-        ? 'Eligible: group quality preset is “hire_everyone” — interview & orchestrator gates bypassed; no blocking C1 Select employment.'
+        ? 'Eligible: group quality preset is “hire_everyone” — interview & orchestrator gates bypassed.'
         : eligibilityMode === 'current_policy'
-          ? 'Eligible under current tenant + group hiring policy (orchestrator advance) and no blocking C1 Select employment'
-          : 'Passed AI interview (orchestrator advance) and no blocking C1 Select employment row',
+          ? 'Eligible under current tenant + group hiring policy (orchestrator advance).'
+          : 'Passed AI interview (orchestrator advance).',
     ],
     category: null,
     effectiveOrch,
   };
 }
 
-interface BlockedCheckArgs {
-  db: admin.firestore.Firestore;
-  tenantId: string;
-  userId: string;
-  c1SelectEntityId: string | null;
-  preloadedC1Employments?: Array<Record<string, unknown>>;
-}
-
-async function isBlockedByActiveC1Select(
-  args: BlockedCheckArgs,
-): Promise<{ blocked: boolean; detail: string }> {
-  const { db, tenantId, userId, c1SelectEntityId, preloadedC1Employments } = args;
-
-  let recs: Array<Record<string, unknown>>;
-  if (preloadedC1Employments) {
-    recs = preloadedC1Employments;
-  } else {
-    try {
-      const snap = await db
-        .collection(`tenants/${tenantId}/entity_employments`)
-        .where('userId', '==', userId)
-        .get();
-      recs = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }));
-    } catch (e) {
-      // Fail-closed: if we can't confirm the worker is unblocked, skip the
-      // auto-onboard. The recruiter can still use the manual button.
-      logger.warn('userGroupAutoOnboard.c1_check_failed', {
-        tenantId,
-        userId,
-        error: e instanceof Error ? e.message : String(e),
-      });
-      return { blocked: true, detail: 'Could not verify C1 Select employment status' };
-    }
-  }
-  for (const rec of recs) {
-    if (!isC1SelectEmployment(rec, c1SelectEntityId)) continue;
-    const { blocks, detail } = c1EmploymentBlocksHire(rec);
-    if (blocks) return { blocked: true, detail };
-  }
-  return { blocked: false, detail: '' };
-}
+// Note: `isBlockedByActiveC1Select` (and `BlockedCheckArgs`) lived here until
+// the May 2026 cross-entity hire policy change. They preloaded a worker's
+// `entity_employments` rows and refused to start a new hire if any active C1
+// Select row existed. Both the helper and its call sites were removed when
+// the product confirmed workers can hold concurrent active employments
+// across entities. Git history preserves the original implementation if it
+// ever needs to come back behind a tenant-level toggle.
 
 export interface AutoOnboardArgs {
   db: admin.firestore.Firestore;
@@ -399,13 +329,10 @@ export async function autoOnboardForGroupIfEligible(
   const tenantSnap = await db.doc(`tenants/${tenantId}`).get();
   const tenantData = (tenantSnap.data() ?? {}) as Record<string, unknown>;
 
-  const entitiesSnap = await db.collection(`tenants/${tenantId}/entities`).get();
-  const entities = entitiesSnap.docs.map((d) => ({
-    id: d.id,
-    name: String((d.data() as { name?: string }).name || ''),
-    entityCode: (d.data() as { entityCode?: string }).entityCode,
-  }));
-  const c1SelectEntityId = resolveC1SelectEntityId(entities);
+  // Note: the prior implementation enumerated `tenants/{t}/entities` here
+  // to resolve the C1 Select entity id for the hire-block check. That
+  // block is gone (May 2026 cross-entity hire policy), so the entities
+  // fetch is gone too.
 
   const evaluation = await evaluateGroupHiringEligibilityForUser({
     db,
@@ -415,7 +342,6 @@ export async function autoOnboardForGroupIfEligible(
     tenantData,
     userId,
     applicationDoc,
-    c1SelectEntityId,
     eligibilityMode,
   });
 

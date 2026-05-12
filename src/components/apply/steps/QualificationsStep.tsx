@@ -7,7 +7,7 @@ import { doc, onSnapshot, updateDoc, serverTimestamp, collection, query, where, 
 import { auth, db } from '../../../firebase';
 import { logger } from '../../../utils/logger';
 import onetSkills from '../../../data/onetSkills.json';
-import onetJobTitles from '../../../data/onetJobTitles.json';
+import { useTenantJobTitleOptions } from '../../../hooks/useTenantJobTitles';
 import SkillsTab from '../../../pages/UserProfile/components/SkillsTab/SkillsTab';
 import { EducationSection, WorkExperienceSection } from '../../../pages/UserProfile/components/SkillsTab/index';
 import { mapParsedExperienceToRows } from '../../../utils/resumeToWorkHistory';
@@ -40,6 +40,7 @@ const QualificationsStep: React.FC<Props> = ({
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const effectiveUid = profileUid || auth.currentUser?.uid || null;
+  const onetJobTitles = useTenantJobTitleOptions(tenantId);
   
   const job = jobPosting; // job-driven gating comes from parent (Wizard)
   // Use batched updates instead of immediate writes (imported at top)

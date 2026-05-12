@@ -47,8 +47,10 @@ import PayrollProvidersPlaceholder from './settings/PayrollProvidersPlaceholder'
 import MessagingSequencesPage from './settings/MessagingSequencesPage';
 import AISignalsSettings from './settings/AISignalsSettings';
 import WorkersCompRatesPage from './settings/WorkersCompRatesPage';
+import JobTitlesPage from './settings/JobTitlesPage';
 import ApiServiceDetailContent from './settings/ApisAndServicesPage';
 import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
+import WorkIcon from '@mui/icons-material/Work';
 import ApiOutlinedIcon from '@mui/icons-material/ApiOutlined';
 import {
   APIS_SERVICES_TAB_PREFIX,
@@ -81,6 +83,7 @@ const CORE_TAB_ICONS: Record<CoreSettingsTab, React.ReactNode> = {
   'compliance-library': <VerifiedUserIcon sx={TAB_ICON_SX} />,
   'credential-types': <BadgeIcon sx={TAB_ICON_SX} />,
   'screening-types': <SecurityIcon sx={TAB_ICON_SX} />,
+  'job-titles': <WorkIcon sx={TAB_ICON_SX} />,
   'benefits-programs': <LocalHospitalIcon sx={TAB_ICON_SX} />,
   'payroll-providers': <AccountBalanceWalletIcon sx={TAB_ICON_SX} />,
   'workers-comp': <HealthAndSafetyIcon sx={TAB_ICON_SX} />,
@@ -195,6 +198,10 @@ const SettingsLanding: React.FC = () => {
         return <CredentialTypesPlaceholder />;
       case 'screening-types':
         return <ScreeningTypesPlaceholder />;
+      case 'job-titles':
+        return effectiveTenantId ? (
+          <JobTitlesPage tenantId={effectiveTenantId} embeddedInSettings />
+        ) : null;
       case 'benefits-programs':
         return <BenefitsProgramsPlaceholder />;
       case 'payroll-providers':

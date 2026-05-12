@@ -32,7 +32,14 @@ function toMillis(v: unknown): number {
 
 /**
  * Latest AccuSource `backgroundChecks` doc per user (by candidateId), for recruiter /users/all readiness.
- * When `tenantId` is set, ignores docs whose `tenantId` does not match (cross-tenant safety).
+ *
+ * When `tenantId` is set we constrain the query with `where('tenantId', '==', tenantId)` so the
+ * Firestore rule on `backgroundChecks` (which gates reads per-doc by `resource.data.tenantId`)
+ * can validate the entire list query. Without that filter, a recruiter who isn't HRX trips
+ * `Missing or insufficient permissions` whenever any candidate in the chunk has historical
+ * background-check rows from another tenant they aren't a member of — even though the recruiter
+ * is allowed to see their own tenant's row. When no `tenantId` is provided we keep the
+ * unfiltered query for HRX-staff cross-tenant views (the rule allows `isHRX()` through).
  */
 export function useRecruiterUsersLatestBackgroundChecks(
   tenantId: string | undefined,
@@ -40,6 +47,7 @@ export function useRecruiterUsersLatestBackgroundChecks(
 ): { latestByUserId: Map<string, BackgroundCheckRecord>; loading: boolean } {
   const key = useMemo(() => stableSortedIdsKey(userIds), [userIds]);
   const ids = useMemo(() => (key ? key.split(IDS_FINGERPRINT_SEP).filter(Boolean) : []), [key]);
+  const normalizedTenantId = useMemo(() => (tenantId ?? '').trim(), [tenantId]);
 
   const [latestByUserId, setLatestByUserId] = useState<Map<string, BackgroundCheckRecord>>(new Map());
   const [loading, setLoading] = useState(false);
@@ -62,7 +70,10 @@ export function useRecruiterUsersLatestBackgroundChecks(
         const coll = collection(db, 'backgroundChecks');
 
         for (const chunk of chunks) {
-          const snap = await getDocs(query(coll, where('candidateId', 'in', [...chunk]), limit(500)));
+          const constraints = normalizedTenantId
+            ? [where('candidateId', 'in', [...chunk]), where('tenantId', '==', normalizedTenantId), limit(500)]
+            : [where('candidateId', 'in', [...chunk]), limit(500)];
+          const snap = await getDocs(query(coll, ...constraints));
           if (cancelled) return;
 
           const perCandidate: Record<string, BackgroundCheckRecord[]> = {};
@@ -70,7 +81,7 @@ export function useRecruiterUsersLatestBackgroundChecks(
             const data = d.data() as Record<string, unknown>;
             if (data.provider && data.provider !== 'accusource') return;
             const docTenant = data.tenantId != null ? String(data.tenantId).trim() : '';
-            if (tenantId && docTenant && docTenant !== tenantId) return;
+            if (normalizedTenantId && docTenant && docTenant !== normalizedTenantId) return;
             const cid = String(data.candidateId || '').trim();
             if (!cid) return;
             const rec: BackgroundCheckRecord = { id: d.id, ...data } as BackgroundCheckRecord;
@@ -98,7 +109,7 @@ export function useRecruiterUsersLatestBackgroundChecks(
     return () => {
       cancelled = true;
     };
-  }, [key, tenantId]);
+  }, [key, normalizedTenantId]);
 
   return { latestByUserId, loading };
 }

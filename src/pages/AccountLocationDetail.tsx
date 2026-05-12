@@ -83,7 +83,7 @@ import { db, storage } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { p } from '../data/firestorePaths';
 import type { RecruiterAccount, AccountPositionPricing } from '../types/recruiter/account';
-import jobTitlesData from '../data/onetJobTitles.json';
+import { useTenantJobTitleOptions } from '../hooks/useTenantJobTitles';
 import { getSutaRateByState, getFutaRateByState, normalizeStateCode, US_STATE_CODES } from '../utils/unemploymentRates';
 import {
   buildWorkersCompRatesMapsFromSnapshot,
@@ -162,6 +162,7 @@ export default function AccountLocationDetail() {
   const navigate = useNavigate();
   const { tenantId, user, currentClaimsSecurityLevel, securityLevel } = useAuth();
   const canAccessInvoicing = canAccessAccountInvoicingTab(currentClaimsSecurityLevel ?? securityLevel);
+  const jobTitlesData = useTenantJobTitleOptions(tenantId);
   const [account, setAccount] = useState<RecruiterAccount | null>(null);
   const [locationDoc, setLocationDoc] = useState<LocationDoc | null>(null);
   const [resolvedCompanyId, setResolvedCompanyId] = useState<string | null>(null);

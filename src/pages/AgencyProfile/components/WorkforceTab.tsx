@@ -27,7 +27,7 @@ import { useNavigate } from 'react-router-dom';
 import { Autocomplete as GoogleMapsAutocomplete } from '@react-google-maps/api';
 
 import { db } from '../../../firebase';
-import jobTitles from '../../../data/onetJobTitles.json';
+import { useTenantJobTitleOptions } from '../../../hooks/useTenantJobTitles';
 import { geocodeAddress } from '../../../utils/geocodeAddress';
 import BroadcastDialog from '../../../components/BroadcastDialog';
 
@@ -48,6 +48,7 @@ function formatPhoneNumber(value: string) {
 }
 
 const WorkforceTab: React.FC<WorkforceTabProps> = ({ tenantId }) => {
+  const jobTitles = useTenantJobTitleOptions(tenantId);
   const [form, setForm] = useState({
     firstName: '',
     lastName: '',

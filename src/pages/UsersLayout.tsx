@@ -11,10 +11,12 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Button, Divider, IconButton, Tooltip } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
+import PersonAddAlt1OutlinedIcon from '@mui/icons-material/PersonAddAlt1Outlined';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 // import { OnCallI9SupportingReminderDialog } from '../components/staffOnboarding/OnCallI9SupportingReminderDialog';
 import UniversalSearchBar from '../components/UniversalSearchBar';
+import AddWorkerManuallyWizard from '../components/users/AddWorkerManuallyWizard';
 import {
   USERS_LAYOUT_TAB_CONFIG,
   getActiveUsersTab,
@@ -59,8 +61,26 @@ const UsersLayout: React.FC = () => {
   const location = useLocation();
   const pathname = location.pathname;
   const activeTab = getActiveUsersTab(pathname);
-  const { activeTenant } = useAuth();
+  const { activeTenant, isHRX, currentClaimsRole, securityLevel } = useAuth();
   // const [i9MasterReminderOpen, setI9MasterReminderOpen] = useState(false);
+
+  // "Create Worker on Behalf" wizard — opens from the Users tab right-actions
+  // slot when the active tab is All Users / My Users. Server-side
+  // permission gate (`canManageEveree`) is the source of truth; mirror
+  // it here so the button is hidden when the recruiter wouldn't be able
+  // to use it. Numeric coercion tolerates the historical string/number
+  // mix on `securityLevel` (see `evereeAccessGate.ts`).
+  const [showCreateWorkerWizard, setShowCreateWorkerWizard] = useState(false);
+  const numericSecurityLevel = (() => {
+    const n = parseInt(String(securityLevel ?? '0').trim(), 10);
+    return Number.isFinite(n) ? n : 0;
+  })();
+  const canCreateWorkerOnBehalf =
+    isHRX ||
+    currentClaimsRole === 'Admin' ||
+    currentClaimsRole === 'Manager' ||
+    currentClaimsRole === 'Recruiter' ||
+    numericSecurityLevel >= 5;
 
   /* Temporary prescreen backfill (triggerRecentUserInterviewBackfill) — restore if needed:
   const [backfillLoading, setBackfillLoading] = useState(false);
@@ -170,6 +190,20 @@ const UsersLayout: React.FC = () => {
           </Button>
         </Tooltip>
         */}
+        {canCreateWorkerOnBehalf && (
+          <Tooltip title="Create the worker's HRX account directly (no email link). Use when the worker can't sign up themselves.">
+            <Button
+              variant="outlined"
+              color="primary"
+              size="small"
+              startIcon={<PersonAddAlt1OutlinedIcon />}
+              onClick={() => setShowCreateWorkerWizard(true)}
+              sx={{ textTransform: 'none', whiteSpace: 'nowrap', flexShrink: 0 }}
+            >
+              Create Worker on Behalf
+            </Button>
+          </Tooltip>
+        )}
         <UniversalSearchBar
           value={usersSearch}
           onChange={setUsersSearch}
@@ -363,6 +397,18 @@ const UsersLayout: React.FC = () => {
       >
         <Outlet context={outletContext} />
       </Box>
+      {/* Wizard for "Create Worker on Behalf". Mounted at the layout level
+          so it's available from any of the Users tabs (All / My / etc.).
+          Active tenant is sourced from `useAuth().activeTenant.id` — every
+          callable invocation needs a tenantId, and the layout already
+          gates the button on the tenant being present. */}
+      {activeTenant?.id && (
+        <AddWorkerManuallyWizard
+          open={showCreateWorkerWizard}
+          onClose={() => setShowCreateWorkerWizard(false)}
+          tenantId={activeTenant.id}
+        />
+      )}
     </Box>
   );
 };

@@ -67,6 +67,24 @@ export interface EvereeAdminSyncCardProps {
   onSynced?: (evereeWorkerId: string) => void;
 }
 
+/**
+ * Module-level dedupe for the silent auto-sync. Keyed by
+ * `${entityId}:${userId}:${evereeTenantId}`. The instance-level
+ * `autoSyncedKeyRef` (below) handles the common case, but a parent
+ * unmount/remount cycle (e.g. EmploymentV2Tab toggling its centered
+ * spinner mid-flight) wipes the ref. Without this set, an erroneous
+ * `created=true` response from the server — or any future regression
+ * that causes parent refetches mid-auto-sync — would re-fire the
+ * silent sync on every remount and visually flash the panel.
+ *
+ * Lifetime: page tab. Cleared by full reload. We deliberately don't
+ * use sessionStorage because (a) the dedupe only needs to survive
+ * remounts within the same SPA session, and (b) we don't want stale
+ * entries blocking a manual user-triggered refresh after navigating
+ * away and back.
+ */
+const silentAutoSyncFiredKeys = new Set<string>();
+
 interface WorkerContact {
   email?: string;
   firstName?: string;
@@ -81,15 +99,61 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
   workerType,
   onSynced,
 }) => {
-  const { isHRX, currentClaimsRole } = useAuth();
-  const canManage = useMemo(
-    () =>
-      isHRX ||
+  const {
+    isHRX,
+    currentClaimsRole,
+    claimsRoles,
+    securityLevel,
+    tenantRolesFromProfile,
+    legacyUserSecurityLevel,
+  } = useAuth();
+  // Mirrors backend `canManageEveree` (`functions/src/integrations/everee/
+  // evereeAccessGate.ts`). Resolution order:
+  //   1. HRX bypass.
+  //   2. Active-tenant claims role in Admin/Manager/Recruiter (fast path).
+  //   3. Per-tenant Firestore role for THIS card's tenant in admin/manager.
+  //   4. Per-tenant Firestore securityLevel for THIS card's tenant >= 5.
+  //   5. Top-level user securityLevel fallback >= 5.
+  // The previous gate stopped at (2) which hid the card from tenant
+  // admins/recruiters whose `setTenantRole` claim-sync had never run —
+  // they had `securityLevel: '5'`/`'6'`/`'7'` in Firestore but no
+  // `currentClaimsRole`, so backend allowed them but the UI never
+  // rendered the buttons. May 2026.
+  const canManage = useMemo(() => {
+    if (isHRX) return true;
+    if (
       currentClaimsRole === 'Admin' ||
       currentClaimsRole === 'Recruiter' ||
-      currentClaimsRole === 'Manager',
-    [isHRX, currentClaimsRole],
-  );
+      currentClaimsRole === 'Manager'
+    ) {
+      return true;
+    }
+    const profileRole = String(tenantRolesFromProfile[tenantId]?.role || '')
+      .trim()
+      .toLowerCase();
+    if (profileRole === 'admin' || profileRole === 'manager' || profileRole === 'super_admin') {
+      return true;
+    }
+    const levels: Array<unknown> = [
+      claimsRoles[tenantId]?.securityLevel,
+      tenantRolesFromProfile[tenantId]?.securityLevel,
+      securityLevel,
+      legacyUserSecurityLevel,
+    ];
+    for (const raw of levels) {
+      const n = Number.parseInt(String(raw ?? '0').trim(), 10);
+      if (Number.isFinite(n) && n >= 5) return true;
+    }
+    return false;
+  }, [
+    isHRX,
+    currentClaimsRole,
+    claimsRoles,
+    tenantRolesFromProfile,
+    securityLevel,
+    legacyUserSecurityLevel,
+    tenantId,
+  ]);
 
   const [evereeTenantId, setEvereeTenantId] = useState<string | null>(null);
   const [evereeWorkerIdsMap, setEvereeWorkerIdsMap] = useState<Record<string, string>>({});
@@ -190,15 +254,29 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
         if (!id) {
           throw new Error('Everee did not return a worker id.');
         }
+        const created = !!result.data?.created;
         if (!silent) {
           setToast({
             severity: 'success',
-            message: result.data?.created
+            message: created
               ? `Created Everee worker ${id}`
               : `Already linked — Everee worker ${id}`,
           });
         }
-        onSynced?.(id);
+        // Bug fix (2026-05-11): the silent auto-run on mount used to fire
+        // `onSynced` unconditionally, which triggers a parent refetch
+        // (`EmploymentV2Tab` shows a centered <CircularProgress /> while
+        // loading, which UNMOUNTS this card). On re-mount, the
+        // `autoSyncedKeyRef` is fresh and the auto-run fires again →
+        // re-mount loop = visible "screen flashing" on the Employment tab
+        // for any worker already linked to Everee. Skip the parent
+        // refetch when this is the silent auto-run AND nothing was
+        // actually created — a no-op sync has nothing for the parent to
+        // re-read. Manual clicks (`silent === false`) still notify so
+        // recruiters see the panel refresh after a real action.
+        if (!silent || created) {
+          onSynced?.(id);
+        }
       } catch (err: unknown) {
         const msg =
           formatFirebaseHttpsError(err) || (err instanceof Error ? err.message : String(err));
@@ -240,7 +318,15 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
     if (!entityId || !evereeTenantId || !userId) return;
     const key = `${entityId}:${userId}:${evereeTenantId}`;
     if (autoSyncedKeyRef.current === key) return;
+    // Belt-and-suspenders against remount loops: even across
+    // unmount/remount cycles within this page session, only auto-fire
+    // the silent sync once per (entity, user, evereeTenantId) combo.
+    if (silentAutoSyncFiredKeys.has(key)) {
+      autoSyncedKeyRef.current = key;
+      return;
+    }
     autoSyncedKeyRef.current = key;
+    silentAutoSyncFiredKeys.add(key);
     void performSync({ silent: true });
   }, [canManage, entityId, evereeTenantId, userId, performSync]);
 

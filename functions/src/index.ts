@@ -568,6 +568,7 @@ export { restartEvereeOnboarding } from './onboarding/restartEvereeOnboardingCal
 // Auth Functions
 export { setTenantRole } from './auth/setTenantRole';
 export { inviteUser } from './auth/inviteUser';
+export { adminCreateWorker } from './auth/adminCreateWorker';
 export { companyLocationMirrorStats };
 export { deleteDuplicateCompanies };
 export { cleanupContactCompanyAssociations, cleanupContactCompanyAssociationsHttp };

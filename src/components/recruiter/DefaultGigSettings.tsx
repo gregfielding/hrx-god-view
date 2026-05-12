@@ -30,7 +30,7 @@ import {
   Typography,
 } from '@mui/material';
 
-import jobTitlesData from '../../data/onetJobTitles.json';
+import { useTenantJobTitleOptions } from '../../hooks/useTenantJobTitles';
 
 interface DefaultGigSettingsProps {
   title: string;
@@ -61,7 +61,8 @@ export const DefaultGigSettings: React.FC<DefaultGigSettingsProps> = ({
   onSaveTitle,
   onSaveDescription,
 }) => {
-  const titleOptionsOnet = useMemo(() => jobTitlesData as string[], []);
+  const jobTitlesData = useTenantJobTitleOptions();
+  const titleOptionsOnet = useMemo(() => jobTitlesData as string[], [jobTitlesData]);
   const trimmedTitle = title.trim();
 
   const mergedPositionTitleOptions = useMemo(() => {

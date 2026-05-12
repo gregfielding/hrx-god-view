@@ -15,13 +15,14 @@ import { useAuth } from '../../contexts/AuthContext';
 import AddWorkerForm from '../../componentBlocks/AddWorkerForm';
 import CSVUpload from '../../components/CSVUpload';
 import { CSVWorkerData } from '../../utils/csvUpload';
-import jobTitles from '../../data/onetJobTitles.json';
+import { useTenantJobTitleOptions } from '../../hooks/useTenantJobTitles';
 
 const AddWorkers: React.FC = () => {
   const { tenantId, activeTenant } = useAuth();
   const navigate = useNavigate();
   
   const effectiveTenantId = activeTenant?.id || tenantId;
+  const jobTitles = useTenantJobTitleOptions(effectiveTenantId);
   
   const [form, setForm] = useState({
     // Basic Identity

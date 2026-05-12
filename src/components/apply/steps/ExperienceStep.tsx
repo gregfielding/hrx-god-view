@@ -19,7 +19,7 @@ import { AddCircle } from '@mui/icons-material';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../../../firebase';
 import onetSkills from '../../../data/onetSkills.json';
-import onetJobTitles from '../../../data/onetJobTitles.json';
+import { useTenantJobTitleOptions } from '../../../hooks/useTenantJobTitles';
 
 type Props = {
   value: any;
@@ -65,6 +65,7 @@ const quickAddExperience = [
 const ExperienceStep: React.FC<Props> = ({ value, onChange, context = 'application', tenantId, jobId, jobPosting }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const onetJobTitles = useTenantJobTitleOptions(tenantId);
   
   const [educationDialogOpen, setEducationDialogOpen] = useState(false);
   const [experienceDialogOpen, setExperienceDialogOpen] = useState(false);

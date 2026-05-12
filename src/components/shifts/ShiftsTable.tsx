@@ -519,6 +519,22 @@ const ShiftsTable: React.FC<ShiftsTableProps> = ({
   // to the bottom regardless of direction.
   const [poSortDir, setPoSortDir] = useState<'asc' | 'desc' | null>(null);
 
+  // 3-state Date sort: null → 'asc' → 'desc' → null. Only enabled when the
+  // toolbar's Job Type filter is set to `gig` — date sorting is meaningless
+  // for the career/ongoing rows (every career shift sorts to +Infinity in
+  // `ShiftRow.sortKey` and would clump at the bottom regardless). Mutually
+  // exclusive with PO# sort: clicking either clears the other so the
+  // user always sees a single primary sort.
+  const [dateSortDir, setDateSortDir] = useState<'asc' | 'desc' | null>(null);
+
+  // If the toolbar leaves the Gig filter, drop any active date sort so the
+  // table doesn't keep an invisible sort the user can no longer toggle off.
+  useEffect(() => {
+    if (jobTypeFilter !== 'gig' && dateSortDir !== null) {
+      setDateSortDir(null);
+    }
+  }, [jobTypeFilter, dateSortDir]);
+
   const handlePoSaved = (joId: string, shiftId: string, value: string) => {
     setPoOverrides((prev) => ({ ...prev, [`${joId}:${shiftId}`]: value }));
   };
@@ -597,11 +613,35 @@ const ShiftsTable: React.FC<ShiftsTableProps> = ({
     if (page > maxPage) setPage(0);
   }, [filteredRows.length, rowsPerPage, page]);
 
-  // Sort phase. Mirrors the resolution used by the cell renderer:
-  // optimistic override → shift PO → JO PO → empty. Numeric compare wins
-  // when both values parse as finite numbers; otherwise we fall back to
-  // a numeric-aware locale compare for mixed alphanumeric POs.
+  // Sort phase. PO# and Date sorts are mutually exclusive; whichever is
+  // non-null wins (only one column can be the primary sort at a time —
+  // header click handlers below clear the other state).
+  //
+  // PO# resolution mirrors the cell renderer: optimistic override → shift
+  // PO → JO PO → empty. Numeric compare wins when both values parse as
+  // finite numbers; otherwise we fall back to a numeric-aware locale
+  // compare for mixed alphanumeric POs.
+  //
+  // Date sort uses `ShiftRow.sortKey` — already computed by
+  // `useActiveShifts` as the earliest in-window date for the shift, with
+  // career/ongoing rows pinned to +Infinity. We only enable the toggle
+  // when the Gig filter is selected (career rows would otherwise clump
+  // at the bottom regardless of direction, which reads as broken).
   const sortedFilteredRows = useMemo(() => {
+    if (dateSortDir !== null) {
+      const dir = dateSortDir === 'asc' ? 1 : -1;
+      return [...filteredRows].sort((a, b) => {
+        const av = Number.isFinite(a.sortKey) ? a.sortKey : Number.POSITIVE_INFINITY;
+        const bv = Number.isFinite(b.sortKey) ? b.sortKey : Number.POSITIVE_INFINITY;
+        // Pin missing/career rows (Infinity) to the bottom regardless of dir;
+        // mirrors the empty-PO handling above so undated rows never jump
+        // to the top in `desc`.
+        if (av === Number.POSITIVE_INFINITY && bv === Number.POSITIVE_INFINITY) return 0;
+        if (av === Number.POSITIVE_INFINITY) return 1;
+        if (bv === Number.POSITIVE_INFINITY) return -1;
+        return (av - bv) * dir;
+      });
+    }
     if (poSortDir === null) return filteredRows;
     const dir = poSortDir === 'asc' ? 1 : -1;
     const resolvePo = (r: ShiftRow): string => {
@@ -622,7 +662,7 @@ const ShiftsTable: React.FC<ShiftsTableProps> = ({
       if (Number.isFinite(an) && Number.isFinite(bn)) return (an - bn) * dir;
       return av.localeCompare(bv, undefined, { numeric: true, sensitivity: 'base' }) * dir;
     });
-  }, [filteredRows, poSortDir, poOverrides]);
+  }, [filteredRows, dateSortDir, poSortDir, poOverrides]);
 
   const pagedRows = useMemo(
     () => sortedFilteredRows.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
@@ -680,6 +720,7 @@ const ShiftsTable: React.FC<ShiftsTableProps> = ({
                     active={poSortDir !== null}
                     direction={poSortDir ?? 'asc'}
                     onClick={() => {
+                      setDateSortDir(null);
                       setPoSortDir((prev) => {
                         if (prev === null) return 'asc';
                         if (prev === 'asc') return 'desc';
@@ -690,7 +731,29 @@ const ShiftsTable: React.FC<ShiftsTableProps> = ({
                     PO#
                   </TableSortLabel>
                 </TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Date</TableCell>
+                <TableCell
+                  sx={{ fontWeight: 600 }}
+                  sortDirection={dateSortDir ?? false}
+                >
+                  {jobTypeFilter === 'gig' ? (
+                    <TableSortLabel
+                      active={dateSortDir !== null}
+                      direction={dateSortDir ?? 'asc'}
+                      onClick={() => {
+                        setPoSortDir(null);
+                        setDateSortDir((prev) => {
+                          if (prev === null) return 'asc';
+                          if (prev === 'asc') return 'desc';
+                          return null;
+                        });
+                      }}
+                    >
+                      Date
+                    </TableSortLabel>
+                  ) : (
+                    'Date'
+                  )}
+                </TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Job</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Requirements</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Financials</TableCell>

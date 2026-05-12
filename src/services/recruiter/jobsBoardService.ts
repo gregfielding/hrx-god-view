@@ -186,7 +186,10 @@ export interface JobBoardShift {
    * Optional weekly schedule for multi-day shifts (Career).
    * Keys are JS day-of-week numbers as strings: 0=Sun ... 6=Sat
    */
-  weeklySchedule?: Record<string, { enabled: boolean; startTime: string; endTime: string }>;
+  weeklySchedule?: Record<
+    string,
+    { enabled: boolean; startTime: string; endTime: string; workersNeeded?: number; overstaff?: number }
+  >;
   /**
    * Per-date schedule for GIG multi-day shifts. Keys are YYYY-MM-DD.
    * When present, worker views show only dates that have start/end times.

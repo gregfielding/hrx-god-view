@@ -12,6 +12,12 @@ import { sendMessage, MessageContext } from './routingOrchestrator';
 import { getTemplate, renderTemplate, MessageTemplate } from './templateEngine';
 import { Channel } from './messageTypesRegistry';
 import type { LanguageCode } from './templateEngine';
+import {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_MESSAGING_PHONE_NUMBER,
+  TWILIO_A2P_CAMPAIGN,
+} from './twilioSecrets';
 
 /**
  * POST /api/messaging/send
@@ -24,8 +30,10 @@ export const sendMessageApi = onRequest(
   {
     cors: true, // Enable CORS handling - Firebase will handle OPTIONS automatically
     invoker: 'public', // Allow unauthenticated calls for CORS preflight
-    // Note: SendGrid secrets are accessed via environment variables (set globally)
-    // The emailProviderFactory falls back to process.env if secrets aren't available
+    // Twilio secrets must be bound or TwilioSmsProvider.initialize() throws
+    // "Twilio credentials not configured". SendGrid is intentionally read from
+    // process.env via emailProviderFactory and is not bound here.
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
   },
   async (request, response) => {
     // Set CORS headers

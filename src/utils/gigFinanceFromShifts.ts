@@ -114,7 +114,10 @@ function ymdFromDate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-type WeeklyScheduleShape = Record<string, { enabled?: boolean; startTime?: string; endTime?: string }>;
+type WeeklyScheduleShape = Record<
+  string,
+  { enabled?: boolean; startTime?: string; endTime?: string; workersNeeded?: number; overstaff?: number }
+>;
 
 /**
  * Career open-ended shifts: `weeklySchedule` only (no `dateSchedule`). Expand into occurrences
@@ -134,7 +137,8 @@ function expandWeeklyScheduleToOccurrences(
   horizonEnd.setDate(horizonEnd.getDate() + WEEKLY_RECURRING_FINANCE_HORIZON_DAYS);
   const absoluteEnd = endCap && endCap < horizonEnd ? endCap : horizonEnd;
 
-  const headcount = Math.max(1, Number(shift.totalStaffRequested) || 1);
+  const shiftWorkers = Math.max(1, Number(shift.totalStaffRequested) || 1);
+  const shiftOver = Math.max(0, Number(shift.overstaffCount) || 0);
 
   const pushIfScheduled = (d: Date, out: ShiftOccurrence[]) => {
     const dayStart = stripTime(d);
@@ -148,6 +152,20 @@ function expandWeeklyScheduleToOccurrences(
     if (!st || !et) return;
     const hours = hoursBetweenHHmm(st, et);
     if (hours <= 0) return;
+    // Per-day workers/over override the shift-level totals when set.
+    // When EITHER per-day field is present, headcount = workers + overstaff
+    // (matches the gig dateSchedule branch). When neither is set, preserve
+    // the legacy fallback: shift-level workers only (no overstaff added),
+    // so finance numbers don't shift for shifts that haven't opted in.
+    const hasPerDay = day.workersNeeded != null || day.overstaff != null;
+    const headcount = hasPerDay
+      ? (day.workersNeeded != null && Number.isFinite(Number(day.workersNeeded))
+          ? Math.max(1, Number(day.workersNeeded))
+          : shiftWorkers) +
+        (day.overstaff != null && Number.isFinite(Number(day.overstaff))
+          ? Math.max(0, Number(day.overstaff))
+          : shiftOver)
+      : shiftWorkers;
     out.push({ dateStr: ymdFromDate(dayStart), hours, headcount });
   };
 

@@ -25,7 +25,7 @@ import { AddCircle, Delete as DeleteIcon, ExpandMore, Business, CalendarToday } 
 import { doc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../../../firebase';
 import { useT } from '../../../i18n';
-import onetJobTitles from '../../../data/onetJobTitles.json';
+import { useTenantJobTitleOptions } from '../../../hooks/useTenantJobTitles';
 import { experienceOptions } from '../../../data/experienceOptions';
 
 type Props = {
@@ -51,6 +51,7 @@ const WorkExperienceStep: React.FC<Props> = ({
   resumeData: _resumeData,
 }) => {
   const t = useT();
+  const onetJobTitles = useTenantJobTitleOptions(_tenantId);
   const [experienceDialogOpen, setExperienceDialogOpen] = useState(false);
   
   const [newExperience, setNewExperience] = useState({

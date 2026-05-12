@@ -64,9 +64,14 @@ export interface Shift {
   endDate?: string; // ISO date string (only for multi-day)
   /**
    * Weekly schedule for multi-day shifts (Career recurring).
-   * Keys are JS day-of-week numbers as strings: 0=Sun ... 6=Sat
+   * Keys are JS day-of-week numbers as strings: 0=Sun ... 6=Sat.
+   * `workersNeeded` and `overstaff` are optional per-day staffing overrides;
+   * fall back to shift-level `totalStaffRequested` / `overstaffCount` when unset.
    */
-  weeklySchedule?: Record<string, { enabled: boolean; startTime: string; endTime: string }>;
+  weeklySchedule?: Record<
+    string,
+    { enabled: boolean; startTime: string; endTime: string; workersNeeded?: number; overstaff?: number }
+  >;
   /**
    * Per-date schedule for GIG multi-day shifts. Keys are YYYY-MM-DD.
    * When present, worker views show only these dates (with hours).

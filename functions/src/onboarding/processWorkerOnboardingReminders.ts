@@ -7,11 +7,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import { sendWorkerMessageInternal } from '../twilio';
 import { userDocHasUsablePhone } from '../workerAiPrescreen/evaluateAiPrescreenEligibility';
-import {
-  buildWorkerEntityEmploymentUrl,
-  buildWorkerPayrollEvereeTenantUrl,
-} from '../utils/workerUrls';
-import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
+import { resolveWorkerOnboardingLink } from '../integrations/everee/resolveWorkerOnboardingLink';
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -221,32 +217,6 @@ function scheduleReminderDueFields(
   return fields;
 }
 
-/** Resolve the Everee tenant id (e.g. `3138` for C1 Events LLC) for a hiring
- *  entity. Returns null when the entity isn't Everee-enabled or has no
- *  `evereeTenantId` configured — the caller falls back to the standard My
- *  Employment URL in that case. Wraps `getEvereeConfigForEntity` so the
- *  scheduler stays consistent with how callables / dispatches read entity
- *  Everee config; if a future migration moves the field, only one place needs
- *  to change. */
-async function resolveEvereeTenantIdForEntity(
-  tenantId: string,
-  entityId: string | null | undefined,
-): Promise<string | null> {
-  const eid = String(entityId || '').trim();
-  if (!eid) return null;
-  try {
-    const cfg = await getEvereeConfigForEntity(tenantId, eid);
-    return cfg?.evereeTenantId?.trim() || null;
-  } catch (e: unknown) {
-    logger.warn('resolveEvereeTenantIdForEntity: failed', {
-      tenantId,
-      entityId: eid,
-      error: e instanceof Error ? e.message : String(e),
-    });
-    return null;
-  }
-}
-
 async function writeAudit(args: {
   tenantId: string;
   userId: string;
@@ -283,31 +253,22 @@ async function sendOnboardingReminderSms(args: {
 }): Promise<{ success: boolean; error?: string }> {
   const { tenantId, userId, pipelineId, userData, emp } = args;
 
-  // Pick the right variant + link by entity. For events (1099), prefer the
-  // direct Everee payroll iframe URL so the worker isn't bounced through the
-  // generic My Employment list. If we can't resolve `evereeTenantId` (entity
-  // doc missing the field, network blip, etc.), fall back to the standard
-  // My Employment URL — better to send a working-but-extra-hop link than
-  // skip the reminder entirely.
+  // URL: prefer the direct Everee payroll embed for any Everee-enabled
+  // entity (C1 Events 1099 OR C1 Select W2 OR future entities) — Everee
+  // surfaces I-9 + W-4 + W-9 + banking inside its iframe so it's strictly
+  // fewer hops than the My Employment hub. Falls back to the hub URL when
+  // the entity isn't on Everee at all.
+  //
+  // Body wording: still gated on `entityKey === 'events'` so 1099 copy
+  // doesn't say "I-9 and payroll" — that's the W2-specific phrasing.
   const eventsEntity = isEventsEntityKey(emp.entityKey);
-  let link = '';
-  let variant: 'standard' | 'events' = 'standard';
-  if (eventsEntity) {
-    const eid = String(emp.entityId || '').trim() || null;
-    const evereeTenantId = await resolveEvereeTenantIdForEntity(tenantId, eid);
-    const directUrl = evereeTenantId ? buildWorkerPayrollEvereeTenantUrl(evereeTenantId) : '';
-    if (directUrl) {
-      link = directUrl;
-      variant = 'events';
-    } else {
-      link = buildWorkerEntityEmploymentUrl(pipelineId);
-      // Keep `variant` = 'standard' so the body says "complete your onboarding"
-      // instead of "Everee payroll setup" — the My Employment hub UI handles
-      // both surfaces and the events-specific copy would be misleading.
-    }
-  } else {
-    link = buildWorkerEntityEmploymentUrl(pipelineId);
-  }
+  const variant: 'standard' | 'events' = eventsEntity ? 'events' : 'standard';
+  const { link } = await resolveWorkerOnboardingLink({
+    tenantId,
+    entityId: (emp.entityId as string) || null,
+    pipelineId,
+    context: 'processWorkerOnboardingReminders',
+  });
   if (!link) {
     return { success: false, error: 'missing_worker_entity_url' };
   }

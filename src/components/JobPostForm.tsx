@@ -36,7 +36,7 @@ import { AccusourcePackageSelector } from './recruiter/AccusourcePackageSelector
 import { useAccusourceCatalog } from '../hooks/useAccusourceCatalog';
 import { getAccusourcePackageServiceDisplayNames } from '../utils/accusourceCatalogHelpers';
 import { useAuth } from '../contexts/AuthContext';
-import jobTitlesList from '../data/onetJobTitles.json';
+import { useTenantJobTitleOptions } from '../hooks/useTenantJobTitles';
 import onetSkills from '../data/onetSkills.json';
 import credentialsSeed from '../data/credentialsSeed.json';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
@@ -201,6 +201,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
 }) => {
   const { tenantId, user } = useAuth();
   const { catalog } = useAccusourceCatalog();
+  const jobTitlesList = useTenantJobTitleOptions();
   const [error, setError] = useState<string | null>(null);
   const [generatingDescription, setGeneratingDescription] = useState(false);
   const [copySnackbarOpen, setCopySnackbarOpen] = useState(false);

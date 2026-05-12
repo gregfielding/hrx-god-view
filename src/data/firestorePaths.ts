@@ -291,6 +291,15 @@ export const p = {
   flex: (tid: string) => `tenants/${tid}/settings/flex`,
   smartGroups: (tid: string) => `tenants/${tid}/settings/smartGroups`,
   /**
+   * HRX Flex module sub-collections. Job titles + their defaults
+   * (description, uniform) live here per tenant. Reads also fall back to
+   * a `jobTitles[]` array on the parent `modules/hrx-flex` doc for legacy
+   * tenants — see scripts/addJobTitle.ts.
+   */
+  flexJobTitles: (tid: string) => `tenants/${tid}/modules/hrx-flex/jobTitles`,
+  flexJobTitle: (tid: string, id: string) => `tenants/${tid}/modules/hrx-flex/jobTitles/${id}`,
+  flexModule: (tid: string) => `tenants/${tid}/modules/hrx-flex`,
+  /**
    * Recruiting role defaults (HRX Systems Operator, Payroll Coordinator,
    * plus CSA/Scheduler fallbacks). See `docs/RECRUITING_ROLE_MODEL.md` §4.3.
    * Single doc per tenant.

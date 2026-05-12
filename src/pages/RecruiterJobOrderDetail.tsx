@@ -184,6 +184,7 @@ import {
 import type { AccountPositionPricing } from '../types/recruiter/account';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
 import JobOrderChecklist, { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderChecklist';
+import { useTenantJobTitleOptions } from '../hooks/useTenantJobTitles';
 import JobOrderCascadingDataTab from '../components/recruiter/JobOrderCascadingDataTab';
 import JobOrderAutoMessagingTab from '../components/recruiter/JobOrderAutoMessagingTab';
 import CreateTaskDialog from '../components/CreateTaskDialog';
@@ -3464,6 +3465,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user, tenantId } = useAuth();
+  const tenantJobTitleOptions = useTenantJobTitleOptions(tenantId);
   /** One syncGigJobOrderStatusFromShifts invoke per job order visit (ref avoids duplicate calls after auto status flip). */
   const gigStatusSyncOnceRef = useRef<string | null>(null);
 
@@ -4659,6 +4661,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
     shiftsCount: allShiftsCount,
     indeedUrl: (jobOrder as any)?.indeedUrl,
     craigslistUrl: (jobOrder as any)?.craigslistUrl,
+    jobTitles: tenantJobTitleOptions,
   });
 
   const linkedRecruiterAccountId =
