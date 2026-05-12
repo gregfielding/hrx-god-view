@@ -20,7 +20,40 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-const BATCH_LIMIT = 200;
+/**
+ * Per-tick scan budget. Bumped from 200 → 500 (May 2026) so the scheduler
+ * can drain the C1 Events backlog (~4,500 in-progress on_call_pool rows
+ * at peak) without taking days. Most rows in a typical batch don't fire
+ * an SMS (they're either past R5, between due times, or the user has no
+ * usable phone), so 500 reads + maybe 50–150 sends comfortably fits in
+ * the 300s timeout. We also early-exit at ~270s elapsed (see
+ * `EARLY_EXIT_BUDGET_MS`) so we never overshoot.
+ */
+const BATCH_LIMIT = 500;
+
+/** Safety stop — abandon the rest of the tick once we hit this budget so
+ *  we never blow past `timeoutSeconds: 300`. The scheduler runs every
+ *  60 minutes; if we early-exit, the next tick simply resumes from the
+ *  cursor where this one left off. */
+const EARLY_EXIT_BUDGET_MS = 270 * 1000;
+
+/**
+ * Cursor doc — persists the `__name__` (collection-group document path)
+ * of the last `entity_employments` row processed in the previous tick.
+ * On the next tick we resume with `.startAfter(cursor)` so we eventually
+ * visit EVERY in-progress / on_call_pool row across all tenants, even
+ * when the universe is larger than `BATCH_LIMIT`. When a tick scans
+ * fewer than `BATCH_LIMIT` rows we wrap back to the start (cursor
+ * cleared) so the next tick begins fresh.
+ *
+ * Pre-fix the scheduler had no `orderBy` and no `startAfter`, so
+ * Firestore consistently returned the SAME first 200 rows by document
+ * ID every tick — the C1 Events backlog of ~4,400 stalled events
+ * employments past doc-ID position 200 was functionally unreachable
+ * until those first 200 cleared (which they don't, because the
+ * workers are stuck in onboarding). Bug surfaced by Mark on 2026-05-12.
+ */
+const CURSOR_DOC_PATH = 'scheduler_state/processWorkerOnboardingReminders';
 
 const REMINDER_1_MS = 2 * 60 * 60 * 1000;
 const REMINDER_2_MS = 24 * 60 * 60 * 1000;
@@ -335,31 +368,103 @@ export const processWorkerOnboardingReminders = onSchedule(
     timeoutSeconds: 300,
   },
   async () => {
-    const now = Date.now();
+    const tickStartedAt = Date.now();
+    const now = tickStartedAt;
+
+    // Cursor-based pagination across the entity_employments
+    // collection-group — see `CURSOR_DOC_PATH` doc-comment for the bug
+    // this fixes. We orderBy `__name__` (Firestore's implicit doc-key
+    // ordering) so consecutive ticks see a stable, complete sequence;
+    // `lastDocPath` is the previous tick's last visited doc path
+    // (collection-group `.path` is the full slash-separated reference,
+    // e.g. `tenants/{tid}/entity_employments/{pipelineId}`). When a
+    // tick scans fewer than `BATCH_LIMIT`, we treat that as "wrapped
+    // to the end" and clear the cursor so the next tick restarts.
+    const cursorRef = db.doc(CURSOR_DOC_PATH);
+    let lastDocPath: string | null = null;
+    try {
+      const cursorSnap = await cursorRef.get();
+      const raw = cursorSnap.data()?.lastDocPath;
+      if (typeof raw === 'string' && raw.trim()) {
+        lastDocPath = raw.trim();
+      }
+    } catch (err: unknown) {
+      // Non-fatal: just start from the beginning this tick.
+      logger.warn('processWorkerOnboardingReminders: cursor read failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
     let q: admin.firestore.QuerySnapshot;
     try {
-      q = await db
+      let baseQuery: admin.firestore.Query = db
         .collectionGroup('entity_employments')
         .where('onboardingPhase', '==', 'in_progress')
         .where('employmentEntryMode', '==', 'on_call_pool')
-        .limit(BATCH_LIMIT)
-        .get();
+        .orderBy(admin.firestore.FieldPath.documentId());
+      if (lastDocPath) {
+        // `startAfter` on a `__name__` orderBy expects a DocumentReference,
+        // not the raw path string. Round-tripping through `db.doc()`
+        // accepts the full collection-group path.
+        try {
+          const cursorDocRef = db.doc(lastDocPath);
+          baseQuery = baseQuery.startAfter(cursorDocRef);
+        } catch (err: unknown) {
+          // If the saved cursor path is malformed, just start from the
+          // beginning this tick and clear the cursor below.
+          logger.warn('processWorkerOnboardingReminders: invalid cursor path, restarting', {
+            lastDocPath,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          lastDocPath = null;
+        }
+      }
+      q = await baseQuery.limit(BATCH_LIMIT).get();
     } catch (err: unknown) {
       logger.error('processWorkerOnboardingReminders: query failed', {
         error: err instanceof Error ? err.message : String(err),
+        lastDocPath,
       });
       throw err;
     }
 
+    // Persist the cursor advance regardless of how many rows we end up
+    // actually processing inside the loop — what matters is the LAST
+    // doc the query returned, not how much work each row triggered.
+    // If the result set was smaller than BATCH_LIMIT, treat that as
+    // "wrapped" and clear the cursor so next tick starts over.
+    const wrapped = q.size < BATCH_LIMIT;
+    const newCursorPath = wrapped ? null : q.docs[q.docs.length - 1]?.ref.path || null;
+
     if (q.empty) {
+      // Reset the cursor — the in-progress universe is empty (or our
+      // cursor pointed past the end). Next tick starts fresh.
+      try {
+        await cursorRef.set(
+          { lastDocPath: null, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+          { merge: true },
+        );
+      } catch {
+        /* non-fatal */
+      }
       return;
     }
 
     let initCount = 0;
     let sent = 0;
     let errors = 0;
+    let earlyExit = false;
+    let lastVisitedPath: string | null = null;
 
     for (const docSnap of q.docs) {
+      // Early-exit guard so we never overshoot timeoutSeconds=300 on a
+      // pathologically expensive batch (e.g. one where most rows fire
+      // SMS sequentially). Next tick resumes from `lastVisitedPath`.
+      if (Date.now() - tickStartedAt > EARLY_EXIT_BUDGET_MS) {
+        earlyExit = true;
+        break;
+      }
+      lastVisitedPath = docSnap.ref.path;
       const tenantId = tenantIdFromEmploymentRef(docSnap.ref);
       const pipelineId = docSnap.id;
       if (!tenantId) {
@@ -479,12 +584,37 @@ export const processWorkerOnboardingReminders = onSchedule(
       }
     }
 
-    if (initCount || sent || errors) {
+    // Persist the cursor so the next tick resumes from the right spot.
+    // Early-exit case: save the LAST visited row in this loop (not the
+    // last doc of the query result), otherwise we'd skip the tail of
+    // this batch.
+    const cursorToSave = earlyExit ? lastVisitedPath : newCursorPath;
+    try {
+      await cursorRef.set(
+        {
+          lastDocPath: cursorToSave,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastTickScanned: q.size,
+          lastTickEarlyExit: earlyExit,
+        },
+        { merge: true },
+      );
+    } catch (err: unknown) {
+      logger.warn('processWorkerOnboardingReminders: cursor write failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    if (initCount || sent || errors || earlyExit) {
       logger.info('processWorkerOnboardingReminders tick', {
         scanned: q.size,
         initSchedules: initCount,
         sent,
         errors,
+        earlyExit,
+        elapsedMs: Date.now() - tickStartedAt,
+        cursorAdvancedTo: cursorToSave,
+        wrapped,
       });
     }
   },
