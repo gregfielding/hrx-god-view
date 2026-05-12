@@ -1424,14 +1424,51 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
 
       const diff = computeShiftNotifyDiff(editingShift as any, plainNext);
       if (shouldPromptShiftWorkerNotify(diff)) {
-        setPendingWorkerSave({
-          shiftData,
-          plainNext,
-          diff,
-          shiftId: editingShift.id,
-        });
-        setWorkerNotifyDialogOpen(true);
-        return;
+        // Pre-check assignments. Toggling single -> multi (or any
+        // schedule edit) makes `scheduleChanged === true`, which used
+        // to ALWAYS open the "Notify assigned workers?" dialog — even
+        // for an `open` shift with zero placements. The dialog had
+        // a backdrop-dismiss handler that cleared `pendingWorkerSave`,
+        // so a stray click outside the dialog silently aborted the
+        // save and the user's edits were lost. We now skip the prompt
+        // entirely when no assignments exist for this shift; the
+        // backdrop-dismiss handler is also hardened separately so the
+        // remaining "real" prompts can't lose data.
+        // (Bug surfaced 2026-05-12 toggling 1d -> 5d on BTS Stanford.)
+        let hasAssignedWorkers = false;
+        try {
+          const assignmentsSnap = await getDocs(
+            query(
+              collection(db, 'tenants', tenantId, 'assignments'),
+              where('jobOrderId', '==', jobOrderId),
+              where('shiftId', '==', editingShift.id),
+              fsLimit(1),
+            ),
+          );
+          hasAssignedWorkers = !assignmentsSnap.empty;
+        } catch (preErr) {
+          console.warn(
+            'EditShiftForm: assignments pre-check failed, defaulting to prompt',
+            preErr,
+          );
+          // Conservative fallback: if the count query fails, fall back
+          // to showing the prompt rather than silently skipping the
+          // notify path. Avoids losing the chance to notify real
+          // workers when Firestore returned a transient error.
+          hasAssignedWorkers = true;
+        }
+
+        if (hasAssignedWorkers) {
+          setPendingWorkerSave({
+            shiftData,
+            plainNext,
+            diff,
+            shiftId: editingShift.id,
+          });
+          setWorkerNotifyDialogOpen(true);
+          return;
+        }
+        // Fall through and save directly when no one is assigned.
       }
 
       await updateDoc(
@@ -2547,14 +2584,28 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
       {/* Worker-notify follow-up dialog. We keep it inside the form so
           it travels with the component — both the original
           `ShiftSetupTab` dialog and the drawer Settings tab pick this
-          up automatically. */}
+          up automatically.
+
+          Backdrop / Esc are intentionally a no-op now (`reason` filter
+          below). Pre-fix, dismissing this dialog cleared
+          `pendingWorkerSave` and silently aborted the save — easy to
+          trigger by mistake when this dialog stacks on top of the
+          parent Edit Shift dialog. Users now have to make an explicit
+          choice via the three buttons in the footer (Cancel /
+          Don't notify / Notify), so a stray click can't lose their
+          edits. The pre-check in `handleSubmit` further suppresses
+          this dialog entirely for shifts with zero assignments, which
+          was the most common path to "I clicked Update and nothing
+          happened". */}
       <Dialog
         open={workerNotifyDialogOpen}
-        onClose={() => {
+        onClose={(_event, reason) => {
           if (workerNotifySaving) return;
+          if (reason === 'backdropClick' || reason === 'escapeKeyDown') return;
           setWorkerNotifyDialogOpen(false);
           setPendingWorkerSave(null);
         }}
+        disableEscapeKeyDown
         maxWidth="sm"
         fullWidth
       >
@@ -2567,17 +2618,27 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button
+            onClick={() => {
+              if (workerNotifySaving) return;
+              setWorkerNotifyDialogOpen(false);
+              setPendingWorkerSave(null);
+            }}
+            disabled={workerNotifySaving}
+          >
+            Cancel
+          </Button>
+          <Button
             onClick={() => handleWorkerNotifyChoice(false)}
             disabled={workerNotifySaving}
           >
-            No, don&apos;t notify
+            Save without notifying
           </Button>
           <Button
             variant="contained"
             onClick={() => handleWorkerNotifyChoice(true)}
             disabled={workerNotifySaving}
           >
-            Yes, notify workers
+            Save and notify workers
           </Button>
         </DialogActions>
       </Dialog>
