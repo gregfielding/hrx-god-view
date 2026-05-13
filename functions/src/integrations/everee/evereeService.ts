@@ -159,47 +159,97 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
     evereeTenantId: config.evereeTenantId,
   };
 
-  // (1) Fast-path idempotency via the user-record map.
+  // Idempotency. Read both the canonical linkage doc and the user-record
+  // map up front so we can detect drift between them — the failure mode we
+  // hit in May 2026 was: an entity was re-pointed at a new Everee tenant
+  // (sandbox 2320 → production 3133) AFTER some workers had already been
+  // provisioned. The old linkage doc still has `evereeTenantId: 2320` and
+  // an `externalWorkerId` that exists ONLY in 2320, but our previous fast
+  // path returned that id and mirrored it onto `users.evereeWorkerIds.3133`,
+  // which then 404'd every downstream call to Everee tenant 3133.
+  //
+  // New rule: the canonical linkage doc is authoritative ONLY when its
+  // recorded `evereeTenantId` matches the entity's CURRENT
+  // `config.evereeTenantId`. If they disagree, we treat the linkage as
+  // drifted (entity was re-pointed) and fall through to provision a
+  // fresh worker on the current tenant. The user-map fast path is now a
+  // strict fallback used only when no linkage doc exists yet — never
+  // trusted on its own to skip a verifiable cross-check.
+  let linkSnap;
   try {
-    const userSnap = await userRef.get();
-    const userMap = (userSnap.data()?.evereeWorkerIds ?? null) as
-      | Record<string, string>
-      | null;
-    const existingForTenant = userMap?.[config.evereeTenantId];
-    if (existingForTenant) {
-      logger.info('[everee.createWorker] skipping — user-map already linked', {
-        ...logCtx,
-        evereeWorkerId: existingForTenant,
-        source: 'users.evereeWorkerIds',
-      });
-      return {
-        evereeWorkerId: existingForTenant,
-        created: false,
-      };
-    }
+    linkSnap = await linkRef.get();
   } catch (err) {
-    // Don't block on the fast-path read — fall through to the canonical check.
-    logger.warn('[everee.createWorker] user-map fast-path read failed', {
+    logger.warn('[everee.createWorker] linkage-doc read failed; proceeding to create', {
       ...logCtx,
       error: err instanceof Error ? err.message : String(err),
     });
+    linkSnap = undefined;
   }
+  const linkData = linkSnap?.data() as
+    | { externalWorkerId?: string; evereeTenantId?: string }
+    | undefined;
+  const linkTenantId = String(linkData?.evereeTenantId ?? '').trim();
+  const linkValidForCurrentTenant =
+    !!linkData?.externalWorkerId && linkTenantId === config.evereeTenantId;
 
-  // (2) Canonical idempotency via the linkage doc.
-  const linkSnap = await linkRef.get();
-  const existing = linkSnap.data() as { externalWorkerId?: string } | undefined;
-  if (existing?.externalWorkerId) {
+  if (linkValidForCurrentTenant) {
+    const existingId = String(linkData!.externalWorkerId);
     logger.info('[everee.createWorker] skipping — linkage doc already linked', {
       ...logCtx,
-      evereeWorkerId: existing.externalWorkerId,
+      evereeWorkerId: existingId,
       source: 'everee_workers',
     });
-    // Backfill the user-record map so the next call hits the fast path.
-    await mirrorEvereeWorkerIdToUser(userRef, config.evereeTenantId, existing.externalWorkerId, logCtx);
+    // Backfill the user-record map so the worker-detail card / payroll-link
+    // builder hit the fast path next time.
+    await mirrorEvereeWorkerIdToUser(userRef, config.evereeTenantId, existingId, logCtx);
     return {
-      evereeWorkerId: existing.externalWorkerId,
+      evereeWorkerId: existingId,
       created: false,
     };
+  }
+
+  if (linkData?.externalWorkerId && !linkValidForCurrentTenant) {
+    logger.warn('[everee.createWorker] linkage drift — entity re-pointed; provisioning fresh worker', {
+      ...logCtx,
+      storedEvereeTenantId: linkTenantId,
+      expectedEvereeTenantId: config.evereeTenantId,
+      staleWorkerId: linkData.externalWorkerId,
+    });
+    // Fall through to POST and create a fresh worker on the CURRENT Everee
+    // tenant. The new linkage-doc write below uses `merge: true` so it will
+    // overwrite the stale `externalWorkerId` / `evereeTenantId` fields with
+    // the new authoritative values. We deliberately do NOT mirror the stale
+    // id onto the user map in this branch.
+  } else {
+    // No linkage doc at all yet — last-resort fallback to the user-record
+    // map. Used by legacy users (mostly back-of-envelope sandbox tests)
+    // that have a `evereeWorkerIds` entry but never had a linkage doc
+    // written. Cross-check is implicit: the map is keyed by Everee tenant
+    // id, so a hit on `[config.evereeTenantId]` is necessarily for the
+    // right tenant.
+    try {
+      const userSnap = await userRef.get();
+      const userMap = (userSnap.data()?.evereeWorkerIds ?? null) as
+        | Record<string, string>
+        | null;
+      const existingForTenant = userMap?.[config.evereeTenantId];
+      if (existingForTenant) {
+        logger.info('[everee.createWorker] skipping — user-map already linked (no linkage doc)', {
+          ...logCtx,
+          evereeWorkerId: existingForTenant,
+          source: 'users.evereeWorkerIds',
+        });
+        return {
+          evereeWorkerId: existingForTenant,
+          created: false,
+        };
+      }
+    } catch (err) {
+      logger.warn('[everee.createWorker] user-map fallback read failed', {
+        ...logCtx,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // W2 (employee): POST /api/v2/embedded/workers/employee — full compensation +
