@@ -31,14 +31,29 @@ const WorkerBottomSheet: React.FC<WorkerBottomSheetProps> = ({
       onClose={onClose}
       PaperProps={{
         sx: {
+          // Anchor explicitly + clamp width so a stray min-width child can never push the sheet
+          // off-screen horizontally on small mobile viewports (was clipping the Confirm/Cancel
+          // buttons for some workers).
+          left: 0,
+          right: 0,
+          width: '100%',
+          maxWidth: '100vw',
+          boxSizing: 'border-box',
           borderTopLeftRadius: 16,
           borderTopRightRadius: 16,
-          maxHeight: '88vh',
-          overflow: 'hidden',
+          // 100dvh keeps the footer visible on iOS Safari when the URL bar is showing; vh
+          // would let it slip below the live viewport.
+          maxHeight: '88dvh',
+          // Vertical scroll lives on the body Box below; clamp horizontal here so wide
+          // children (long location strings, checkbox labels) wrap instead of overflowing.
+          overflowX: 'hidden',
+          overflowY: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
         },
       }}
     >
-      <Box sx={{ px: 2, pt: 1.5 }}>
+      <Box sx={{ px: 2, pt: 1.5, width: '100%', boxSizing: 'border-box', flexShrink: 0 }}>
         <Box sx={{ display: 'flex', justifyContent: 'center', mb: 1 }}>
           <Box
             sx={{
@@ -50,7 +65,7 @@ const WorkerBottomSheet: React.FC<WorkerBottomSheetProps> = ({
           />
         </Box>
         <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
-          <Typography variant="h6" sx={{ fontWeight: 700 }}>
+          <Typography variant="h6" sx={{ fontWeight: 700, minWidth: 0, wordBreak: 'break-word' }}>
             {title}
           </Typography>
           <IconButton aria-label={t('common.close')} onClick={onClose} size="small">
@@ -59,7 +74,18 @@ const WorkerBottomSheet: React.FC<WorkerBottomSheetProps> = ({
         </Stack>
       </Box>
 
-      <Box sx={{ px: 2, pb: 2, overflowY: 'auto', flex: 1 }}>
+      <Box
+        sx={{
+          px: 2,
+          pb: 2,
+          width: '100%',
+          boxSizing: 'border-box',
+          overflowX: 'hidden',
+          overflowY: 'auto',
+          flex: 1,
+          minHeight: 0,
+        }}
+      >
         {children}
       </Box>
 
@@ -67,10 +93,16 @@ const WorkerBottomSheet: React.FC<WorkerBottomSheetProps> = ({
         <Box
           sx={{
             px: 2,
-            py: 1.5,
+            pt: 1.5,
+            // Reserve space for the iOS home indicator / Android nav bar so the buttons stay
+            // tappable inside a PWA. Falls back to 12px on browsers without env() support.
+            pb: 'calc(env(safe-area-inset-bottom, 0px) + 12px)',
+            width: '100%',
+            boxSizing: 'border-box',
             borderTop: 1,
             borderColor: 'divider',
             bgcolor: 'background.paper',
+            flexShrink: 0,
           }}
         >
           {footer}

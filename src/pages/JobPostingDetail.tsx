@@ -3049,12 +3049,17 @@ const JobPostingDetail: React.FC = () => {
         onClose={closeOfferConfirmationSheet}
             title={t('jobs.confirmYourShift')}
         footer={
-          <Stack direction="row" spacing={1.25}>
+          <Stack
+            direction={{ xs: 'column-reverse', sm: 'row' }}
+            spacing={1.25}
+            sx={{ width: '100%', minWidth: 0 }}
+          >
             <Button
               variant="outlined"
               fullWidth
               onClick={closeOfferConfirmationSheet}
               disabled={offerConfirmSubmitting || assignmentDecisionLoading}
+              sx={{ minWidth: 0 }}
             >
               {t('common.cancel')}
             </Button>
@@ -3064,6 +3069,7 @@ const JobPostingDetail: React.FC = () => {
               onClick={handleSubmitOfferConfirmation}
               disabled={!offerConfirmReady || offerConfirmSubmitting || assignmentDecisionLoading}
               startIcon={offerConfirmSubmitting ? <CircularProgress size={18} color="inherit" /> : null}
+              sx={{ minWidth: 0 }}
             >
               {offerConfirmSubmitting ? t('jobs.confirmingShift') : t('jobs.confirmShift')}
             </Button>

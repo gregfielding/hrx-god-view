@@ -579,7 +579,7 @@
         "prompt": "Optional: if you shared a criminal record, was it generally a misdemeanor or a felony? (You can skip this if you prefer.)"
       },
       "background_offense_when": {
-        "prompt": "Optional: roughly when did that happen (year or timeframe)? We focus on roughly the last 7\u201310 years for staffing."
+        "prompt": "Optional: roughly when did that happen (year or timeframe)? We focus on roughly the last 7–10 years for staffing."
       },
       "supervisor_feedback": {
         "prompt": "What would your last supervisor say about you? Include:\n- one strength they might mention\n- one area you were working on (if any)"
@@ -867,7 +867,7 @@
     "continueWithoutPhoto": "Continue without photo",
     "addResumeLater": "Add résumé later",
     "continueWithoutResume": "Continue without résumé",
-    "skipForNow": "Skip for Now",
+    "skipForNow": "Skip for now",
     "thanksSubmitted": "Thanks — your application has been submitted!",
     "submittingApplication": "Submitting your application…",
     "completePersonalInfo": "Please complete the Personal Info step to create your account before submitting.",
@@ -952,7 +952,6 @@
     "download": "Download",
     "uploadNewResume": "Upload New Resume",
     "resumeOptional": "Resume is optional. You can skip this step and continue, or upload your resume below.",
-    "skipForNow": "Skip for now",
     "resumeUploaded": "Resume uploaded",
     "clickToOpen": "click to open",
     "uploadingNewReplaces": "Uploading a new resume will replace your current resume.",
@@ -996,7 +995,7 @@
     "progressVerification": "Verification",
     "progressFinal": "Final",
     "applicationSubmittedMessage": "Your application has been submitted.",
-    "settingUpPayroll": "Taking you to your payroll setup\u2026",
+    "settingUpPayroll": "Taking you to your payroll setup…",
     "settingUpPayrollHelper": "If you're not redirected automatically, you can find it later under My Payroll.",
     "viewMyApplications": "View My Applications",
     "browseMoreJobs": "Browse More Jobs",
@@ -1840,6 +1839,27 @@
       "s8P2": "Continued use of our Services after an update constitutes acknowledgment of the revised Notice.",
       "s9Title": "9. Contact Us",
       "s9P1": "If you have questions or concerns regarding Mobile Communications or privacy, contact us at:"
+    }
+  },
+  "avatarVerification": {
+    "verifiedBadge": "Photo verified",
+    "checkingCompact": "Checking photo…",
+    "checkingFull": "We're checking your profile photo. This usually takes a few seconds.",
+    "approvedAlert": "Your profile photo is verified — you're all set to apply for and confirm shifts.",
+    "retakeButton": "Retake photo",
+    "tryAgainButton": "Try again",
+    "errorRetry": "We couldn't check your photo. Please try uploading it again.",
+    "gateMissing": "Add a profile photo before confirming this shift. Open your profile to take a quick selfie.",
+    "gateRejectedGeneric": "Your profile photo needs a retake before you can confirm this shift.",
+    "rejection": {
+      "no_face": "We couldn't find a face in your photo. Please retake with your face clearly visible.",
+      "multiple_faces": "Your photo shows more than one person. Please retake with just you in the frame.",
+      "face_too_small": "Your face is too small in the frame. Hold the camera closer so your face fills most of the photo.",
+      "too_blurry": "Your photo looks blurry. Please retake with a steady hand in good light.",
+      "too_dark": "Your photo is too dark. Please retake in better lighting — natural daylight works best.",
+      "inappropriate": "Your photo was flagged for review. Please upload a clear, professional headshot.",
+      "manual_override": "A recruiter asked you to reupload your photo. Please take a new, clear headshot.",
+      "verification_error": "We couldn't check your photo right now. Please try uploading again in a moment."
     }
   }
 }

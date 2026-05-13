@@ -576,10 +576,10 @@
         "prompt": "Indicaste que podría aparecer algo en una verificación de antecedentes. Explica brevemente qué debemos saber. Si elegiste Sí por error, vuelve atrás para cambiar tu respuesta."
       },
       "background_offense_class": {
-        "prompt": "Opcional: si compartiste un antecedente penal, \u00bffue generalmente un delito menor (misdemeanor) o un delito grave (felony)? (Puedes omitir esto si lo prefieres.)"
+        "prompt": "Opcional: si compartiste un antecedente penal, ¿fue generalmente un delito menor (misdemeanor) o un delito grave (felony)? (Puedes omitir esto si lo prefieres.)"
       },
       "background_offense_when": {
-        "prompt": "Opcional: \u00bfaproximadamente cu\u00e1ndo ocurri\u00f3 eso (a\u00f1o o per\u00edodo)? Para colocaciones nos enfocamos aproximadamente en los \u00faltimos 7\u201310 a\u00f1os."
+        "prompt": "Opcional: ¿aproximadamente cuándo ocurrió eso (año o período)? Para colocaciones nos enfocamos aproximadamente en los últimos 7–10 años."
       },
       "supervisor_feedback": {
         "prompt": "¿Qué diría tu último supervisor sobre ti? Incluye:\n- una fortaleza que podría mencionar\n- un área en la que estabas trabajando (si aplica)"
@@ -952,7 +952,6 @@
     "download": "Descargar",
     "uploadNewResume": "Subir nuevo currículum",
     "resumeOptional": "El currículum es opcional. Puedes omitir este paso y continuar, o subir tu currículum abajo.",
-    "skipForNow": "Omitir por ahora",
     "resumeUploaded": "Currículum subido",
     "clickToOpen": "clic para abrir",
     "uploadingNewReplaces": "Subir un nuevo currículum reemplazará tu currículum actual.",
@@ -996,8 +995,8 @@
     "progressVerification": "Verificación",
     "progressFinal": "Final",
     "applicationSubmittedMessage": "Tu solicitud ha sido enviada.",
-    "settingUpPayroll": "Te llevamos a la configuración de tu n\u00f3mina\u2026",
-    "settingUpPayrollHelper": "Si no eres redirigido autom\u00e1ticamente, puedes encontrarlo m\u00e1s tarde en Mi N\u00f3mina.",
+    "settingUpPayroll": "Te llevamos a la configuración de tu nómina…",
+    "settingUpPayrollHelper": "Si no eres redirigido automáticamente, puedes encontrarlo más tarde en Mi Nómina.",
     "viewMyApplications": "Ver mis solicitudes",
     "browseMoreJobs": "Ver más trabajos",
     "progressPersonal": "Personal",
@@ -1840,6 +1839,27 @@
       "s8P2": "El uso continuo de nuestros servicios tras una actualización constituye reconocimiento del Aviso revisado.",
       "s9Title": "9. Contáctanos",
       "s9P1": "Si tienes preguntas o inquietudes sobre Comunicaciones móviles o privacidad, contáctanos en:"
+    }
+  },
+  "avatarVerification": {
+    "verifiedBadge": "Foto verificada",
+    "checkingCompact": "Revisando foto…",
+    "checkingFull": "Estamos revisando tu foto de perfil. Suele tardar solo unos segundos.",
+    "approvedAlert": "Tu foto de perfil está verificada — ya puedes postularte y confirmar turnos.",
+    "retakeButton": "Tomar foto de nuevo",
+    "tryAgainButton": "Intentar de nuevo",
+    "errorRetry": "No pudimos revisar tu foto. Por favor, vuelve a subirla.",
+    "gateMissing": "Agrega una foto de perfil antes de confirmar este turno. Abre tu perfil para tomarte una selfie rápida.",
+    "gateRejectedGeneric": "Tu foto de perfil necesita una nueva toma antes de que puedas confirmar este turno.",
+    "rejection": {
+      "no_face": "No pudimos detectar un rostro en tu foto. Por favor, vuelve a tomarla con tu cara claramente visible.",
+      "multiple_faces": "Tu foto muestra a más de una persona. Por favor, vuelve a tomarla solo contigo en el cuadro.",
+      "face_too_small": "Tu cara se ve demasiado pequeña. Acerca la cámara para que tu rostro ocupe la mayor parte de la foto.",
+      "too_blurry": "Tu foto se ve borrosa. Por favor, vuelve a tomarla con buena luz y mano firme.",
+      "too_dark": "Tu foto está muy oscura. Por favor, vuelve a tomarla con mejor iluminación — la luz natural funciona mejor.",
+      "inappropriate": "Tu foto fue marcada para revisión. Por favor, sube una foto profesional y clara.",
+      "manual_override": "Un reclutador te pidió que vuelvas a subir tu foto. Por favor, toma una nueva foto clara.",
+      "verification_error": "No pudimos revisar tu foto en este momento. Por favor, intenta subirla de nuevo en un momento."
     }
   }
 }
