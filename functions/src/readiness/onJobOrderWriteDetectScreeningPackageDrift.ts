@@ -363,7 +363,13 @@ export const onJobOrderWriteDetectScreeningPackageDrift = onDocumentWritten(
     document: 'tenants/{tenantId}/job_orders/{jobOrderId}',
     region: 'us-central1',
     maxInstances: 5,
-    memory: '256MiB',
+    // Bumped from 256 MiB -> 512 MiB on May 12 2026: the function was
+    // failing the Cloud Run STARTUP TCP probe (worker container OOMs
+    // before reaching the function body, ~270-280 MiB used vs 256 MiB
+    // limit). Imports alone push past 256 MiB on cold start, so 256
+    // wasn't survivable. Matches the global default; trim back later
+    // only if profiling shows real headroom.
+    memory: '512MiB',
     retry: false,
   },
   async (event) => {
