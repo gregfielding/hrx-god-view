@@ -69,7 +69,7 @@ import { p } from '../../data/firestorePaths';
 import { JobsBoardService } from '../../services/recruiter/jobsBoardService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useEntity } from '../../hooks/useEntity';
-import { getDateRange, formatDayAndDate, dateHasHours } from '../../utils/dateSchedule';
+import { getDateRange, formatDayAndDate } from '../../utils/dateSchedule';
 import { formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
 import {
   getFutaRateByState,
@@ -1143,14 +1143,36 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
         if (isGigJob) {
           const range = getDateRange(formData.shiftDate, formData.endDate);
           const dateSchedule = formData.dateSchedule || {};
-          const withHours = range.filter((iso) => dateHasHours(dateSchedule[iso]));
+          // Resolve the same effective row the save (line ~1354) and
+          // the per-day editor UI (line ~2241) use: a date is "set"
+          // when its dateSchedule entry has start+end OR when the
+          // form's default times will fill in for it. Pre-fix, the
+          // UI rendered 08:00 AM / 08:00 PM for every untouched day
+          // (sourced from defaultStart/EndTime), but the validator
+          // only counted dates the user had typed into — so a user
+          // who flipped 1-day -> multi-day, eyeballed the inherited
+          // defaults, and hit Update saw "Enter start and end times
+          // for at least one date" with all five rows visibly filled.
+          // (Greg, 2026-05-12, BTS Stanford "Prep Chef" Gig shift.)
+          const effectiveStart = (iso: string): string => {
+            const v = dateSchedule[iso]?.startTime?.trim();
+            if (v) return v;
+            return formData.defaultStartTime?.trim() || '';
+          };
+          const effectiveEnd = (iso: string): string => {
+            const v = dateSchedule[iso]?.endTime?.trim();
+            if (v) return v;
+            return formData.defaultEndTime?.trim() || '';
+          };
+          const withHours = range.filter(
+            (iso) => !!effectiveStart(iso) && !!effectiveEnd(iso),
+          );
           if (withHours.length === 0) {
             setError('Enter start and end times for at least one date in the range');
             return;
           }
           for (const iso of withHours) {
-            const d = dateSchedule[iso];
-            if (!d?.startTime?.trim() || !d?.endTime?.trim()) {
+            if (!effectiveStart(iso) || !effectiveEnd(iso)) {
               setError(`Start and end times are required for ${formatDayAndDate(iso)}`);
               return;
             }
