@@ -1,18 +1,29 @@
 /**
- * Universal Accept-shift gate: every worker, every job, must have an auto-verified headshot
- * (`users/{uid}.avatarVerification.status === 'approved'`) before an assignment can flip to
- * `confirmed`. Called from:
- *   - `placementsApi.respondToAssignment` when decision === 'accept'
- *   - `placementsApi.confirmAssignmentForWorker` (recruiter-acting-on-behalf-of-worker path)
+ * Worker-self Accept-shift headshot gate.
  *
- * When the gate fails, we throw a typed `HttpsError('failed-precondition', ...)` carrying a
- * stable `code` string in the details payload so the worker app can swap in the right UX
- * (retake-camera CTA, "still processing" spinner, or "recruiter will review" copy).
+ * **Scope (May 15 2026 — narrowed):**
+ *   Only the worker-self-accept path (`placementsApi.respondToAssignment`
+ *   with decision='accept') routes through this gate. Workers must have an
+ *   approved (or, for now, any uploaded) headshot before they can confirm
+ *   their own shift.
  *
- * Phase 5 recruiter manual-approve is the pressure-release valve for accommodation edge
- * cases — a recruiter can flip any worker's status to 'approved' via the admin UI, which
- * immediately unblocks this gate. That's why we treat `status === 'approved'` as the single
- * source of truth rather than re-running Vision here.
+ *   The recruiter-acting-on-behalf path
+ *   (`placementsApi.confirmAssignmentForWorker`) used to call this gate too,
+ *   but no longer does. The recruiter clicking "Confirm" is itself the
+ *   human override — see the comment on that callable for the policy
+ *   rationale and the audit fields written when the bypass is exercised.
+ *
+ * When the gate fails (worker-self path), we throw a typed
+ * `HttpsError('failed-precondition', ...)` carrying a stable `code` string
+ * in the details payload so the worker app can swap in the right UX
+ * (retake-camera CTA, "still processing" spinner, or "recruiter will
+ * review" copy).
+ *
+ * Phase 5 recruiter manual-approve is still available as a separate
+ * pressure-release valve for ops who want to pre-clear a worker before
+ * any specific shift confirm — it sets `avatarVerification.status =
+ * 'approved'` on the user doc, which makes both this gate and the worker
+ * UI's "needs photo" banner go quiet.
  */
 import * as admin from 'firebase-admin';
 import { HttpsError } from 'firebase-functions/v2/https';

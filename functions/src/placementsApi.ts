@@ -1082,12 +1082,69 @@ export const confirmAssignmentForWorker = onCall(
     const now = admin.firestore.FieldValue.serverTimestamp();
     const uid = request.auth.uid;
 
-    // Phase 4: universal headshot gate also applies when a recruiter confirms on behalf of
-    // a worker. Recruiter can clear this by manually approving the worker's photo in the
-    // Phase 5 admin UI (which sets avatarVerification.status = 'approved').
+    // Headshot policy on this path:
+    //   The worker-self-accept path (`respondToAssignment`, decision='accept')
+    //   keeps the universal headshot gate (`assertWorkerHeadshotApproved`) —
+    //   workers must have an approved photo before they can self-confirm.
+    //
+    //   The recruiter-on-behalf path (this callable) intentionally does NOT
+    //   gate on headshot status. Originally (Phase 4) we enforced the gate
+    //   on both paths and pointed recruiters at the Phase 5 manual-approve
+    //   UI as the escape hatch. In practice a recruiter manually confirming
+    //   on behalf of a worker is itself the human override (e.g. CORT-style
+    //   placements where ops have reviewed the candidate face-to-face and
+    //   the photo verification pipeline isn't trusted enough to block ops),
+    //   and routing them through a second admin surface just to flip a flag
+    //   was friction without value. (May 15 2026 — confirmed this policy
+    //   with the product owner after recruiter-side complaints.)
+    //
+    //   We still capture an audit trail on the assignment doc so a later
+    //   sweep can find recruiter-confirms that bypassed the gate, and we
+    //   log to function logs at info level for live observability.
     const targetWorkerId = String(assignment.userId || assignment.candidateId || '').trim();
+    let headshotBypassDetails: {
+      bypassed: boolean;
+      reason: string | null;
+      avatarStatus: string | null;
+    } = { bypassed: false, reason: null, avatarStatus: null };
     if (targetWorkerId) {
-      await assertWorkerHeadshotApproved(targetWorkerId);
+      try {
+        const userSnap = await db.doc(`users/${targetWorkerId}`).get();
+        const userData = userSnap.exists ? userSnap.data() ?? null : null;
+        const verification = (userData?.avatarVerification ?? null) as {
+          status?: string | null;
+        } | null;
+        const avatarStatus = (verification?.status ?? null) as string | null;
+        const hasAvatar =
+          typeof userData?.avatar === 'string' && userData.avatar.trim().length > 0;
+        const wouldHaveBlocked = avatarStatus !== 'approved' && !hasAvatar;
+        if (wouldHaveBlocked) {
+          headshotBypassDetails = {
+            bypassed: true,
+            reason: avatarStatus ? `status=${avatarStatus}` : 'no_avatar',
+            avatarStatus,
+          };
+          logger.info('confirmAssignmentForWorker: bypassing headshot gate', {
+            tenantId,
+            assignmentId,
+            workerUid: targetWorkerId,
+            recruiterUid: uid,
+            avatarStatus,
+            hasAvatar,
+          });
+        } else {
+          headshotBypassDetails.avatarStatus = avatarStatus;
+        }
+      } catch (err) {
+        // Non-fatal — we never want headshot diagnostics to block a manual
+        // confirm. Just log and continue with `bypassed=false` defaults.
+        logger.warn('confirmAssignmentForWorker: headshot diagnostic read failed', {
+          tenantId,
+          assignmentId,
+          workerUid: targetWorkerId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     await assignmentRef.set(
@@ -1097,6 +1154,22 @@ export const confirmAssignmentForWorker = onCall(
         confirmedBy: uid,
         updatedAt: now,
         updatedBy: uid,
+        // Audit: recruiter-acted-on-behalf metadata so downstream surfaces
+        // (and post-hoc compliance sweeps) can distinguish a manual
+        // recruiter confirm from a worker self-confirm. The
+        // `headshotBypass` block is only set when this confirm would have
+        // failed the worker-self-accept gate.
+        confirmedBySource: 'recruiter_manual',
+        ...(headshotBypassDetails.bypassed
+          ? {
+              headshotBypass: {
+                at: now,
+                byUid: uid,
+                reason: headshotBypassDetails.reason,
+                avatarStatus: headshotBypassDetails.avatarStatus,
+              },
+            }
+          : {}),
       },
       { merge: true },
     );
@@ -1108,6 +1181,7 @@ export const confirmAssignmentForWorker = onCall(
           confirmedBy: uid,
           updatedAt: now,
           updatedBy: uid,
+          confirmedBySource: 'recruiter_manual',
         },
         { merge: true },
       );
