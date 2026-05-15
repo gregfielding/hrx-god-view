@@ -3355,7 +3355,6 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const deletePlacement = async (worker: Worker) => {
     if (!tenantId || !selectedShiftId) return;
     if (!worker.isPlacementOnly) return;
-    const placementId = `${selectedShiftId}__${worker.id}`;
     try {
       setError(null);
       // Optimistic update: remove from Assignments immediately
@@ -3364,8 +3363,30 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         next.delete(worker.id);
         return next;
       });
-      const placementRef = doc(db, 'tenants', tenantId, 'placements', placementId);
-      await deleteDoc(placementRef);
+      // Also clear any pending-add bookkeeping so the placements snapshot
+      // listener doesn't re-add this worker via pendingPlacementAddsRef.
+      pendingPlacementAddsRef.current.delete(worker.id);
+      // Placement docs may exist under multiple ID schemes for the same
+      // (shift, user) pair:
+      //   - simple: `${shiftId}__${userId}` (created by the UI)
+      //   - day-scoped: `${shiftId}__${userId}__${yyyy-mm-dd}` (recreated by
+      //     `placementsCancelAssignment` when an assignment is cancelled)
+      // Deleting only the simple ID leaves the day-scoped doc behind, so the
+      // placements listener re-hydrates the worker on refresh. Query by
+      // `shiftId` + `userId` and batch-delete every match.
+      const placementsRef = collection(db, 'tenants', tenantId, 'placements');
+      const matchesQuery = query(
+        placementsRef,
+        where('shiftId', '==', selectedShiftId),
+        where('userId', '==', worker.id),
+      );
+      const matchesSnap = await getDocs(matchesQuery);
+      if (matchesSnap.empty) {
+        // Nothing to delete on the server (already gone). The optimistic
+        // update is enough.
+        return;
+      }
+      await Promise.all(matchesSnap.docs.map((d) => deleteDoc(d.ref)));
     } catch (err: any) {
       console.error('Error removing placement:', err);
       setError(err?.message || 'Failed to remove placement');
