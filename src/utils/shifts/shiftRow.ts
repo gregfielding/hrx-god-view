@@ -9,7 +9,7 @@
  * unit-testable.
  */
 
-export type ShiftStatus = 'open' | 'closed' | 'filled' | 'cancelled';
+export type ShiftStatus = 'open' | 'closed' | 'filled' | 'cancelled' | 'pending_indeed_approval';
 export type ShiftMode = 'single' | 'multi';
 
 /** Canonical shift statuses for filters and editor menus — keep in sync across `/shifts`, account tabs, and tables. */
@@ -52,6 +52,17 @@ export interface ShiftDoc {
     string,
     { startTime?: string; endTime?: string; workersNeeded?: number; overstaff?: number }
   >;
+  /**
+   * Provenance markers for shifts ingested from external systems
+   * (Indeed Flex inbound email, Fieldglass, etc.). Set by the
+   * ingestion path; never edited by recruiters. Distinguishes
+   * ingested shifts from manually-created ones for audit / reporting.
+   * The external system's job id (e.g. Indeed Flex's `ID: 509668`)
+   * lives in `poNumber`, not here — see `IndeedFlexExternalRef` docs.
+   */
+  externalRefs?: {
+    indeedFlex?: import('../../shared/indeedFlex/types').IndeedFlexExternalRef;
+  };
 }
 
 export interface JobOrderLite {

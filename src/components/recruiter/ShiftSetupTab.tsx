@@ -46,7 +46,7 @@ import { JobsBoardService } from '../../services/recruiter/jobsBoardService';
 import { useAuth } from '../../contexts/AuthContext';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, addMonths, subMonths, startOfWeek, endOfWeek, isToday } from 'date-fns';
 import EditShiftForm from '../shifts/EditShiftForm';
-export type ShiftStatus = 'open' | 'closed' | 'filled' | 'cancelled';
+export type ShiftStatus = 'open' | 'closed' | 'filled' | 'cancelled' | 'pending_indeed_approval';
 
 export interface Shift {
   id: string;
