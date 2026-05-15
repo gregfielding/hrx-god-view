@@ -200,12 +200,15 @@ export const evereeEnsureWorker = onCall(async (request) => {
   // `firebaseUid` is forwarded to Everee as the partner-side external id (custom
   // field). Use the *worker's* uid (== user doc id), not the caller's, so a
   // recruiter-initiated sync still tags the worker correctly in Everee.
+  // Per-call approval group override (string per Everee API). Coerce a legacy
+  // numeric input to string so older clients that pass `approvalGroupId: 7900`
+  // still work after the May 2026 type migration.
   const approvalGroupRaw = d?.approvalGroupId;
   const approvalGroupId =
-    typeof approvalGroupRaw === 'number' && Number.isFinite(approvalGroupRaw)
-      ? approvalGroupRaw
-      : typeof approvalGroupRaw === 'string' && /^\d+$/.test(approvalGroupRaw.trim())
-        ? parseInt(approvalGroupRaw.trim(), 10)
+    typeof approvalGroupRaw === 'string' && approvalGroupRaw.trim()
+      ? approvalGroupRaw.trim()
+      : typeof approvalGroupRaw === 'number' && Number.isFinite(approvalGroupRaw)
+        ? String(approvalGroupRaw)
         : undefined;
 
   // May 2026 — fall back to `users/{uid}` for any identity field the
@@ -235,6 +238,105 @@ export const evereeEnsureWorker = onCall(async (request) => {
   });
 });
 
+/**
+ * Reuse-window for embed sessions, in milliseconds. When a callable invocation
+ * arrives within this window of the previous session-creation for the same
+ * (tenant, entity, user) triple AND the cached URL still has at least
+ * `EMBED_SESSION_MIN_REMAINING_MS` of life left, we hand back the cached URL
+ * instead of asking Everee to mint a fresh one.
+ *
+ * Why this exists (May 14, 2026 incident — Andrew Freeman):
+ *   The worker payroll page (`WorkerPayrollEvereeTenant.tsx`) calls this
+ *   callable on every component mount. A worker who refreshes the page,
+ *   navigates away and back, or has a flaky connection that causes React to
+ *   re-render can easily generate 3+ session-creates in 30s. Everee's
+ *   anti-fraud engine flags rapid session-create activity from one
+ *   externalWorkerId as account-takeover and flips
+ *   `accountAccessPermitted: false` on the worker, which then renders the
+ *   "Your onboarding has been locked due to a possible security risk"
+ *   message inside the iframe — a state we cannot remediate without
+ *   contacting Everee support.
+ *
+ * The cache is server-side only (linkage doc fields, see below) so it
+ * works across devices, doesn't require client cookies, and never hands
+ * out a pre-existing URL to a different user.
+ */
+const EMBED_SESSION_REUSE_WINDOW_MS = 60 * 1000; // 60s
+/**
+ * Minimum remaining lifetime on a cached URL before we'll reuse it. Everee's
+ * embed sessions live ~5min today; we reuse only when the cached one still has
+ * over a minute left so the worker doesn't get a near-expired URL.
+ */
+const EMBED_SESSION_MIN_REMAINING_MS = 60 * 1000; // 60s
+
+interface CachedEmbedSession {
+  url: string;
+  origin: string;
+  sessionId: string;
+  experienceType: EvereeEmbedExperienceType;
+  experienceVersion: string;
+  eventHandlerName: string;
+  expiresAtMs: number;
+  createdAtMs: number;
+  experienceCacheKey: string;
+}
+
+function buildExperienceCacheKey(
+  experienceType: EvereeEmbedExperienceType | null,
+  experienceVersion: string | null,
+): string {
+  return `${experienceType ?? 'DEFAULT'}__${experienceVersion ?? 'DEFAULT'}`;
+}
+
+function readCachedEmbedSession(
+  data: FirebaseFirestore.DocumentData | undefined,
+): CachedEmbedSession | null {
+  if (!data) return null;
+  const cache = data.embedSessionCache as Record<string, unknown> | undefined;
+  if (!cache || typeof cache !== 'object') return null;
+  const url = typeof cache.url === 'string' ? cache.url : null;
+  const origin = typeof cache.origin === 'string' ? cache.origin : null;
+  const sessionId = typeof cache.sessionId === 'string' ? cache.sessionId : null;
+  const eventHandlerName =
+    typeof cache.eventHandlerName === 'string' ? cache.eventHandlerName : null;
+  const experienceType = (
+    typeof cache.experienceType === 'string' ? cache.experienceType : null
+  ) as EvereeEmbedExperienceType | null;
+  const experienceVersion =
+    typeof cache.experienceVersion === 'string' ? cache.experienceVersion : null;
+  const expiresAtMs =
+    typeof cache.expiresAtMs === 'number' && Number.isFinite(cache.expiresAtMs)
+      ? cache.expiresAtMs
+      : null;
+  const createdAtMs =
+    typeof cache.createdAtMs === 'number' && Number.isFinite(cache.createdAtMs)
+      ? cache.createdAtMs
+      : null;
+  if (
+    !url ||
+    !origin ||
+    !sessionId ||
+    !eventHandlerName ||
+    !experienceType ||
+    !experienceVersion ||
+    expiresAtMs === null ||
+    createdAtMs === null
+  ) {
+    return null;
+  }
+  return {
+    url,
+    origin,
+    sessionId,
+    eventHandlerName,
+    experienceType,
+    experienceVersion,
+    expiresAtMs,
+    createdAtMs,
+    experienceCacheKey: buildExperienceCacheKey(experienceType, experienceVersion),
+  };
+}
+
 export const evereeCreateOnboardingSession = onCall(async (request) => {
   requireAuth(request);
   const d = request.data as Record<string, unknown> | null;
@@ -251,6 +353,64 @@ export const evereeCreateOnboardingSession = onCall(async (request) => {
   await requireEvereeEnabledEntity(tenantId, entityId);
   const experienceType = coerceEmbedExperienceType(d?.experienceType);
   const experienceVersion = coerceEmbedExperienceVersion(d?.experienceVersion);
+  const requestedKey = buildExperienceCacheKey(
+    experienceType ?? null,
+    experienceVersion ?? null,
+  );
+
+  // Reuse a cached embed session if one was minted very recently for the
+  // same (tenant, entity, user, experience) tuple. Prevents the
+  // burst-of-session-creates pattern that triggers Everee's account-access
+  // lock (see EMBED_SESSION_REUSE_WINDOW_MS comment).
+  const linkRef = admin
+    .firestore()
+    .doc(`tenants/${tenantId}/everee_workers/${entityId}__${userId}`);
+  const linkSnap = await linkRef.get().catch(() => null);
+  const cached = readCachedEmbedSession(linkSnap?.data());
+  const nowMs = Date.now();
+  if (
+    cached &&
+    cached.experienceCacheKey === requestedKey &&
+    nowMs - cached.createdAtMs <= EMBED_SESSION_REUSE_WINDOW_MS &&
+    cached.expiresAtMs - nowMs >= EMBED_SESSION_MIN_REMAINING_MS
+  ) {
+    logger.info('[evereeCreateOnboardingSession] reusing cached session', {
+      tenantId,
+      entityId,
+      userId,
+      sessionId: cached.sessionId,
+      ageMs: nowMs - cached.createdAtMs,
+      remainingMs: cached.expiresAtMs - nowMs,
+      experienceCacheKey: cached.experienceCacheKey,
+      reason: 'within_reuse_window',
+    });
+    // Best-effort reuse-counter bump for ops visibility — never block the
+    // response on a counter write.
+    linkRef
+      .set(
+        {
+          embedSessionCache: {
+            lastReusedAtMs: nowMs,
+            reuseCount: admin.firestore.FieldValue.increment(1),
+          },
+        },
+        { merge: true },
+      )
+      .catch(() => undefined);
+    return {
+      url: cached.url,
+      origin: cached.origin,
+      sessionId: cached.sessionId,
+      expiresInMs: cached.expiresAtMs - nowMs,
+      experienceType: cached.experienceType,
+      experienceVersion: cached.experienceVersion,
+      eventHandlerName: cached.eventHandlerName,
+      embedUrl: cached.url,
+      expiresAt: new Date(cached.expiresAtMs).toISOString(),
+      reusedFromCache: true,
+    };
+  }
+
   try {
     const session = await createOnboardingSession({
       tenantId,
@@ -261,10 +421,39 @@ export const evereeCreateOnboardingSession = onCall(async (request) => {
       ...(experienceType ? { experienceType } : {}),
       ...(experienceVersion ? { experienceVersion } : {}),
     });
+    const expiresAtMs = nowMs + session.expiresInMs;
+    // Persist the freshly-minted session for the reuse window. Best-effort —
+    // a failed cache write should not block the response.
+    linkRef
+      .set(
+        {
+          embedSessionCache: {
+            url: session.url,
+            origin: session.origin,
+            sessionId: session.sessionId,
+            experienceType: session.experienceType,
+            experienceVersion: session.experienceVersion,
+            eventHandlerName: session.eventHandlerName,
+            expiresAtMs,
+            createdAtMs: nowMs,
+            createCount: admin.firestore.FieldValue.increment(1),
+          },
+        },
+        { merge: true },
+      )
+      .catch((err) => {
+        logger.warn('[evereeCreateOnboardingSession] cache write failed', {
+          tenantId,
+          entityId,
+          userId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
     return {
       ...session,
       embedUrl: session.url,
-      expiresAt: new Date(Date.now() + session.expiresInMs).toISOString(),
+      expiresAt: new Date(expiresAtMs).toISOString(),
+      reusedFromCache: false,
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

@@ -63,8 +63,12 @@ export interface HiringEntity {
   name: string;
   workerType: HiringEntityWorkerType;
 
-  /** Everee approval-group id, set during entity onboarding into Everee. */
-  evereeApprovalGroupId?: number;
+  /**
+   * Everee approval-group id (string per Everee API contract — pass "7900"
+   * not 7900). Set during entity onboarding into Everee. Used by
+   * `createWorkerIfNeeded` for both employee + contractor provisioning.
+   */
+  evereeApprovalGroupId?: string;
   /** Name of the Everee Embed event handler this entity uses. */
   evereeEmbedEventHandlerName?: string;
 

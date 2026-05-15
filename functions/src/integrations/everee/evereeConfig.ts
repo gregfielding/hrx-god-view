@@ -20,7 +20,18 @@ export interface EvereeEntityConfig {
    * Optional on the entity doc — thread through when C1 Events (1099) auto-
    * provision ships (Stage 2).
    */
-  evereeApprovalGroupId?: number;
+  /**
+   * Everee approval group id (string in the Everee API — see
+   * developer.everee.com/reference/list-approval-groups). Stored as string
+   * even when the value is all digits ("7900"); we never do math on it. Used
+   * by `createWorkerIfNeeded` (both employee + contractor) and the
+   * `evereeAssignApprovalGroup` callable.
+   *
+   * Resolved per entity today; future versions may resolve per location /
+   * pay cycle to support tenants that use approval groups for branch
+   * routing (e.g. "Kansas City Branch - Weekly - Friday").
+   */
+  evereeApprovalGroupId?: string;
   /**
    * Name the Everee embed will look up on the host as `window[name].postMessage`
    * to deliver UI events (V2_0 SDK). The host bridge in
@@ -158,12 +169,14 @@ export async function getEvereeConfigForEntity(
   const baseUrl =
     (data?.evereeApiBaseUrl as string)?.trim() ||
     (env === 'production' ? DEFAULT_PROD_BASE : DEFAULT_SANDBOX_BASE);
+  // Everee's API types `approvalGroupId` as string — keep it that way end-to-end.
+  // Accept legacy `number` shapes (from before the May 2026 migration) and coerce.
   const rawApproval = data?.evereeApprovalGroupId ?? data?.approvalGroupId;
-  let evereeApprovalGroupId: number | undefined;
-  if (typeof rawApproval === 'number' && Number.isFinite(rawApproval)) {
-    evereeApprovalGroupId = rawApproval;
-  } else if (typeof rawApproval === 'string' && /^\d+$/.test(rawApproval.trim())) {
-    evereeApprovalGroupId = parseInt(rawApproval.trim(), 10);
+  let evereeApprovalGroupId: string | undefined;
+  if (typeof rawApproval === 'string' && rawApproval.trim()) {
+    evereeApprovalGroupId = rawApproval.trim();
+  } else if (typeof rawApproval === 'number' && Number.isFinite(rawApproval)) {
+    evereeApprovalGroupId = String(rawApproval);
   }
   // Validate at every source: an admin can paste a placeholder onto the entity
   // doc, an env var can be misconfigured, etc. We sanitize each candidate

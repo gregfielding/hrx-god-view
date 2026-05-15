@@ -276,6 +276,12 @@ export {
   evereeAdminClearStaleStamps,
   evereeAdminRecreateWorkerOnboarding,
   evereeAdminReconcileWorker,
+  // Phase B (May 2026) — runtime approval-group control.
+  evereeListApprovalGroups,
+  evereeAssignApprovalGroup,
+  evereeReassignAllWorkersToGroup,
+  evereeGetHostedOnboardingUrl,
+  evereeSendHostedOnboardingLink,
   evereeReconcileCron,
   evereeWebhook,
   onEvereeWebhookEventCreated,

@@ -71,6 +71,18 @@ export const evereeAdminRecreateWorkerOnboarding =
 // E.1 + E.2 — readiness snapshot reconcile callable + 2h cron sweep.
 export const evereeAdminReconcileWorker =
   everee?.evereeAdminReconcileWorker ?? stubCallable;
+// Phase B (May 2026) — approval-group runtime control.
+export const evereeListApprovalGroups =
+  everee?.evereeListApprovalGroups ?? stubCallable;
+export const evereeAssignApprovalGroup =
+  everee?.evereeAssignApprovalGroup ?? stubCallable;
+export const evereeReassignAllWorkersToGroup =
+  everee?.evereeReassignAllWorkersToGroup ?? stubCallable;
+// May 14 2026 — hosted-onboarding remediation (account-access lockout escape hatch).
+export const evereeGetHostedOnboardingUrl =
+  everee?.evereeGetHostedOnboardingUrl ?? stubCallable;
+export const evereeSendHostedOnboardingLink =
+  everee?.evereeSendHostedOnboardingLink ?? stubCallable;
 export const evereeReconcileCron = everee?.evereeReconcileCron ?? stubSchedule;
 export const evereeWebhook = everee?.evereeWebhook ?? stubWebhook;
 export const onEvereeWebhookEventCreated =

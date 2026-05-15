@@ -9,7 +9,7 @@
  *   - evereeEnabled: true
  *   - evereeTenantId: <numeric Everee tenant id, as string>
  *   - evereeEnvironment: "sandbox" | "production"  (default: production)
- *   - evereeApprovalGroupId: <number>              (optional, for contractors)
+ *   - evereeApprovalGroupId: <string>              (optional; routes both W2 + 1099 to a group)
  *   - evereeWorkerKind:    "employee" | "contractor"  (optional override; defaults
  *                          to `resolveEvereeWorkerTypeForOnCall(entityId)` server-side)
  *
@@ -114,7 +114,9 @@ const patch = {
   updatedAt: admin.firestore.FieldValue.serverTimestamp(),
 };
 if (args.workerKind) patch.evereeWorkerKind = args.workerKind;
-if (args.approvalGroupId) patch.evereeApprovalGroupId = parseInt(args.approvalGroupId, 10);
+// Everee API types `approvalGroupId` as string — store it that way even when
+// the value is all digits ("7900"). May 2026 type migration.
+if (args.approvalGroupId) patch.evereeApprovalGroupId = String(args.approvalGroupId).trim();
 
 async function main() {
   const ref = db.doc(`tenants/${args.tenantId}/entities/${args.entityId}`);

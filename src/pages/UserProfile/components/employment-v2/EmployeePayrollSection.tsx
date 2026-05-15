@@ -19,14 +19,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  AlertTitle,
   Box,
+  Button,
   Card,
   CardContent,
   CardHeader,
   Chip,
   CircularProgress,
   Divider,
+  Link as MuiLink,
   Skeleton,
+  Snackbar,
   Stack,
   Table,
   TableBody,
@@ -39,13 +43,16 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import HourglassTopIcon from '@mui/icons-material/HourglassTop';
+import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import SmsIcon from '@mui/icons-material/Sms';
 
 import {
   evereeAdminGetWorker,
   evereeAdminGetWorkerDocuments,
   evereeAdminGetWorkerW4,
   evereeAdminGetWorkerW9,
+  evereeSendHostedOnboardingLink,
   type EvereeAdminGetWorkerDocumentsResult,
   type EvereeAdminGetWorkerResult,
   type EvereeAdminGetWorkerTaxFormResult,
@@ -111,6 +118,22 @@ interface EvereeWorkerResponse {
   availablePaymentMethods?: { directDeposit?: boolean | null; payCard?: boolean | null } | null;
   preferredPaymentMethod?: string | null;
   bankAccounts?: EvereeBankAccount[] | null;
+  /**
+   * `false` means Everee's anti-fraud engine has locked the worker's
+   * account — every embed-session URL we mint will render the "Your
+   * onboarding has been locked due to a possible security risk" message
+   * inside the iframe, regardless of how fresh the token is.
+   *
+   * Trigger: too many embedded session creates from one externalWorkerId
+   * in a short window (we observed 12 in 36h with 3-in-30s clusters
+   * tripping the flag for Andrew Freeman, 2026-05-14).
+   *
+   * Remediation: send the worker the Everee-hosted account-setup URL
+   * (different signing context, often bypasses the lock) — see
+   * `evereeSendHostedOnboardingLink`. Or escalate to Everee support to
+   * clear the flag.
+   */
+  accountAccessPermitted?: boolean | null;
 }
 
 function pickWorker(raw: unknown): EvereeWorkerResponse {
@@ -393,6 +416,18 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
   const [workerError, setWorkerError] = useState<string | null>(null);
   const [workerLoading, setWorkerLoading] = useState<boolean>(true);
 
+  // Hosted-link remediation (May 14 2026 — Andrew Freeman incident).
+  // Surfaced when the live Everee record reports `accountAccessPermitted: false`.
+  // We don't try to clear the lock from here (Everee admin-only); we send the
+  // worker the hosted account-setup URL, which uses a different signing context
+  // and consistently bypasses the embed-session lock.
+  const [hostedLinkSending, setHostedLinkSending] = useState<boolean>(false);
+  const [hostedLinkResult, setHostedLinkResult] = useState<{
+    severity: 'success' | 'error' | 'warning';
+    message: string;
+  } | null>(null);
+  const [snackbarOpen, setSnackbarOpen] = useState<boolean>(false);
+
   const [documentsResult, setDocumentsResult] = useState<EvereeAdminGetWorkerDocumentsResult | null>(
     null,
   );
@@ -650,6 +685,71 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
       ? w4Result.error
       : null;
 
+  /**
+   * `false` here means Everee anti-fraud has locked the account; every
+   * embed-session URL we mint will hit the iframe lock screen. We surface a
+   * dedicated remediation banner with a single working escape hatch (hosted
+   * URL) — and a clipboard fallback so admins can DM the link if the
+   * worker's SMS is bouncing.
+   */
+  const accountLockedByEveree = worker?.accountAccessPermitted === false;
+
+  const handleSendHostedLink = async () => {
+    if (hostedLinkSending) return;
+    setHostedLinkSending(true);
+    setHostedLinkResult(null);
+    try {
+      const res = await evereeSendHostedOnboardingLink({
+        tenantId,
+        entityId,
+        userId,
+      });
+      const data = res?.data;
+      if (data?.ok) {
+        setHostedLinkResult({
+          severity: 'success',
+          message: 'Sent a fresh Everee onboarding link to the worker via SMS.',
+        });
+      } else if (data?.ok === false && data.reason === 'twilio_failed' && data.hostedUrl) {
+        // We did mint a URL, just couldn't SMS it. Auto-copy so the admin
+        // can paste it elsewhere (Slack, internal note, second SMS).
+        try {
+          await navigator.clipboard.writeText(data.hostedUrl);
+        } catch {
+          /* clipboard may be unavailable — admin can still use the link in the alert below */
+        }
+        setHostedLinkResult({
+          severity: 'warning',
+          message:
+            'Generated a fresh link but the SMS failed. The URL has been copied to your clipboard.',
+        });
+      } else if (data?.ok === false) {
+        const reasonMap: Record<string, string> = {
+          user_not_found: 'Worker user record not found.',
+          missing_phone: 'Worker has no phone number on file — add one first.',
+          invalid_e164: 'Worker phone is not in a valid format.',
+        };
+        setHostedLinkResult({
+          severity: 'error',
+          message: reasonMap[data.reason] ?? `Failed: ${data.reason}`,
+        });
+      } else {
+        setHostedLinkResult({
+          severity: 'error',
+          message: 'Unexpected response from Everee hosted-link callable.',
+        });
+      }
+    } catch (err: unknown) {
+      const msg =
+        formatFirebaseHttpsError(err) ||
+        (err instanceof Error ? err.message : 'Could not send hosted onboarding link.');
+      setHostedLinkResult({ severity: 'error', message: msg });
+    } finally {
+      setHostedLinkSending(false);
+      setSnackbarOpen(true);
+    }
+  };
+
   return (
     <Card variant="outlined" sx={{ mt: 2 }}>
       <CardHeader
@@ -673,6 +773,69 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
             Could not load worker details from Everee — {workerError}
           </Alert>
         ) : null}
+        {accountLockedByEveree ? (
+          <Alert
+            severity="warning"
+            icon={<LockOutlinedIcon fontSize="small" />}
+            sx={{ mb: 2 }}
+          >
+            <AlertTitle>Account locked by Everee</AlertTitle>
+            <Typography variant="body2" sx={{ mb: 1.25 }}>
+              Everee&apos;s anti-fraud system has flipped <code>accountAccessPermitted</code>{' '}
+              to <code>false</code> on this worker. Every embedded onboarding link we
+              issue will render the &quot;onboarding has been locked due to a possible
+              security risk&quot; message inside the iframe — sending another reminder
+              SMS won&apos;t fix it.
+            </Typography>
+            <Typography variant="body2" sx={{ mb: 1.5 }}>
+              <strong>Recommended:</strong> send the worker the Everee-hosted
+              account-setup URL. It uses a different signing context than the embed
+              tokens and consistently bypasses the lock — workers complete
+              onboarding in Everee&apos;s branded UI and webhooks land in HRX
+              normally. If that also fails, escalate to{' '}
+              <MuiLink href="mailto:support@everee.com">support@everee.com</MuiLink>{' '}
+              with the worker id <code>{evereeWorkerId}</code> and ask them to clear
+              the flag.
+            </Typography>
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              <Button
+                variant="contained"
+                color="warning"
+                size="small"
+                startIcon={
+                  hostedLinkSending ? (
+                    <CircularProgress size={14} color="inherit" />
+                  ) : (
+                    <SmsIcon fontSize="small" />
+                  )
+                }
+                onClick={handleSendHostedLink}
+                disabled={hostedLinkSending}
+              >
+                {hostedLinkSending ? 'Sending…' : 'Send Everee-hosted link via SMS'}
+              </Button>
+            </Stack>
+          </Alert>
+        ) : null}
+        <Snackbar
+          open={snackbarOpen}
+          autoHideDuration={6000}
+          onClose={() => setSnackbarOpen(false)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          {hostedLinkResult ? (
+            <Alert
+              onClose={() => setSnackbarOpen(false)}
+              severity={hostedLinkResult.severity}
+              variant="filled"
+              sx={{ width: '100%' }}
+            >
+              {hostedLinkResult.message}
+            </Alert>
+          ) : (
+            <span />
+          )}
+        </Snackbar>
         {workerLoading ? (
           <Stack spacing={1}>
             <Skeleton variant="text" width="40%" />

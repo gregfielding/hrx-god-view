@@ -64,8 +64,7 @@ export interface CreateWorkerInput {
    * thread real worker address + compensation from profile / assignment data.
    *
    * **1099 contractors** use `POST /api/v2/onboarding/contractor` instead —
-   * minimal fields; optional `approvalGroupId` may also be set on the entity
-   * doc (`evereeApprovalGroupId`).
+   * minimal fields; same `approvalGroupId` resolution applies.
    */
   payType?: 'HOURLY' | 'SALARY';
   payRate?: EvereeMoney;
@@ -73,8 +72,13 @@ export interface CreateWorkerInput {
   /** ISO 8601 date (YYYY-MM-DD); defaults to today when omitted. */
   hireDate?: string;
   homeAddress?: EvereeAddress;
-  /** Contractor onboarding — overrides entity `evereeApprovalGroupId` when set. */
-  approvalGroupId?: number;
+  /**
+   * Per-call override of the entity-default `evereeApprovalGroupId`. Applied
+   * to BOTH the W2 (`/embedded/workers/employee`) and 1099
+   * (`/onboarding/contractor`) create paths. String type matches Everee's
+   * API contract — pass "7900" not `7900`.
+   */
+  approvalGroupId?: string;
 }
 
 /**
@@ -266,10 +270,20 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
   let path: string;
   let requestBody: Record<string, unknown>;
 
+  // Resolve approval group once for both worker types — Everee accepts
+  // `approvalGroupId` (string) on both `/embedded/workers/employee` and
+  // `/onboarding/contractor`. Per-call input wins over the entity default,
+  // so a callable can override (e.g. for branch routing in a future revision)
+  // without touching the entity doc.
+  const resolvedApprovalGroupId = (() => {
+    const raw = input.approvalGroupId ?? config.evereeApprovalGroupId;
+    if (typeof raw !== 'string') return undefined;
+    const trimmed = raw.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  })();
+
   if (input.workerType === 'contractor') {
     path = '/api/v2/onboarding/contractor';
-    const approvalGroupId =
-      input.approvalGroupId ?? config.evereeApprovalGroupId;
     requestBody = {
       firstName: input.firstName,
       lastName: input.lastName,
@@ -281,9 +295,6 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
     };
     if (input.homeAddress) {
       (requestBody as Record<string, unknown>).homeAddress = input.homeAddress;
-    }
-    if (approvalGroupId !== undefined && Number.isFinite(approvalGroupId)) {
-      requestBody.approvalGroupId = approvalGroupId;
     }
   } else {
     path = '/api/v2/embedded/workers/employee';
@@ -306,6 +317,10 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
       homeAddress,
       externalWorkerId: input.firebaseUid,
     };
+  }
+
+  if (resolvedApprovalGroupId !== undefined) {
+    requestBody.approvalGroupId = resolvedApprovalGroupId;
   }
 
   const fullUrl = `${baseUrl.replace(/\/$/, '')}${path}`;
@@ -347,7 +362,60 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
     responseBodyJson: response,
   });
 
-  const evereeWorkerId = extractEvereeWorkerId(response);
+  // Extract canonical Everee worker UUID. Two endpoint shapes in the wild:
+  //
+  //   - `/api/v2/onboarding/contractor` returns the full worker record
+  //     including `workerId: <UUID>` and `externalWorkerId: <ours>`. The
+  //     parser picks up `workerId` cleanly; no follow-up needed.
+  //
+  //   - `/api/v2/embedded/workers/employee` (production, May 2026) returns
+  //     a *minimal* response with only `id: <externalWorkerId>` — i.e. it
+  //     just echoes back the HRX UID we sent and DOES NOT include the
+  //     canonical UUID `workerId`. If we naively store `id` we end up with
+  //     `evereeWorkerId == HRX UID`, which 404s on every subsequent
+  //     `/api/v2/workers/<id>`, `/api/v2/workers/files?worker-id=<id>`,
+  //     etc. (see May 14 2026 incident: 7 c1_select_llc workers had
+  //     `evereeWorkerId == userId`, "Could not load worker details from
+  //     Everee" in the admin UI).
+  //
+  // Resolution: prefer an inline UUID; otherwise call the lookup endpoint
+  // `GET /api/v2/workers/external/<externalWorkerId>` to fetch the
+  // canonical record, which always includes `workerId: <UUID>`. The
+  // follow-up adds one extra API call only on the employee path.
+  let evereeWorkerId = extractEvereeWorkerId(response);
+  if (!evereeWorkerId || evereeWorkerId === input.firebaseUid) {
+    try {
+      const lookup = await evereeRequest<unknown>(
+        config,
+        'GET',
+        `/api/v2/workers/external/${encodeURIComponent(input.firebaseUid)}`,
+      );
+      const lookupObj = (lookup && typeof lookup === 'object' ? lookup : {}) as Record<
+        string,
+        unknown
+      >;
+      const lookupId =
+        typeof lookupObj.workerId === 'string' && lookupObj.workerId
+          ? (lookupObj.workerId as string)
+          : typeof lookupObj.id === 'string' && lookupObj.id
+            ? (lookupObj.id as string)
+            : null;
+      if (lookupId) {
+        logger.info('[everee.createWorker] resolved canonical workerId via /workers/external', {
+          ...logCtx,
+          inlineId: evereeWorkerId,
+          canonicalWorkerId: lookupId,
+        });
+        evereeWorkerId = lookupId;
+      }
+    } catch (err) {
+      logger.warn('[everee.createWorker] external lookup failed; keeping inline id', {
+        ...logCtx,
+        inlineId: evereeWorkerId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
   if (!evereeWorkerId) {
     logger.error('[everee.createWorker] no worker id in response', {
       ...logCtx,
@@ -370,6 +438,12 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
       evereeWorkerId,
       workerType: input.workerType,
       status: 'created',
+      // Audit trail for which approval group we routed this worker into so a
+      // future re-assign / drift-detector can compare against the entity
+      // default. Omitted when no group was passed (== entity default unset).
+      ...(resolvedApprovalGroupId !== undefined
+        ? { approvalGroupId: resolvedApprovalGroupId }
+        : {}),
       createdAt: nowIso,
       updatedAt: nowIso,
     },
@@ -448,16 +522,28 @@ async function mirrorEvereeWorkerIdToUser(
  * embedded worker create; same field name on contractor onboarding. Also try
  * `id` and nested `data.*` for forward compatibility.
  */
+/**
+ * Best-effort inline worker-id extraction from a `createWorkerIfNeeded`
+ * response. Production employee endpoint (May 2026) returns ONLY
+ * `id: <externalWorkerId>` (echoes the HRX UID we sent) and NO `workerId`,
+ * so this can return the externalWorkerId. The caller is responsible for
+ * detecting that case (`result === input.firebaseUid`) and falling back to
+ * a `/api/v2/workers/external/<id>` lookup to get the canonical UUID.
+ *
+ * Order matters: prefer `workerId` (the canonical UUID, present on
+ * contractor onboarding responses) over `id` (which the embedded employee
+ * endpoint reuses for externalWorkerId).
+ */
 function extractEvereeWorkerId(response: unknown): string | null {
   if (!response || typeof response !== 'object') return null;
   const r = response as Record<string, unknown>;
-  if (typeof r.id === 'string' && r.id) return r.id;
   if (typeof r.workerId === 'string' && r.workerId) return r.workerId;
+  if (typeof r.id === 'string' && r.id) return r.id;
   const data = r.data;
   if (data && typeof data === 'object') {
     const d = data as Record<string, unknown>;
-    if (typeof d.id === 'string' && d.id) return d.id;
     if (typeof d.workerId === 'string' && d.workerId) return d.workerId;
+    if (typeof d.id === 'string' && d.id) return d.id;
   }
   return null;
 }

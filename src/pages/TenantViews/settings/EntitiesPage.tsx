@@ -35,6 +35,7 @@ import EntityCostCentersTab from './EntityCostCentersTab';
 import EntityComplianceTab from './EntityComplianceTab';
 import EntityDocumentsTab from './EntityDocumentsTab';
 import EntityWorkersCompTab from './EntityWorkersCompTab';
+import EvereeApprovalGroupControl from '../../../components/everee/EvereeApprovalGroupControl';
 import type { PayrollSettings as PayrollSettingsType } from '../../../types/payroll';
 import {
   ONBOARDING_WORKFLOW_STEPS,
@@ -112,6 +113,13 @@ export interface Entity {
   evereeTenantId?: string;
   evereeEnvironment?: 'sandbox' | 'production';
   evereeApiBaseUrl?: string;
+  /**
+   * Default approval group for newly-provisioned workers (Phase A May 2026).
+   * String per Everee API contract (e.g. "7900"). Edited via
+   * `EvereeApprovalGroupControl`; consumed server-side by
+   * `createWorkerIfNeeded`.
+   */
+  evereeApprovalGroupId?: string | null;
   createdAt?: any;
   updatedAt?: any;
 }
@@ -312,6 +320,13 @@ const EntitiesPage: React.FC = () => {
         evereeTenantId: form.evereeTenantId?.trim() || null,
         evereeEnvironment: form.evereeEnvironment || null,
         evereeApiBaseUrl: form.evereeApiBaseUrl?.trim() || null,
+        // Phase A — string id, may be null to clear. `undefined` here would
+        // skip the field on merge; we want explicit nulls to clear.
+        evereeApprovalGroupId:
+          typeof form.evereeApprovalGroupId === 'string' &&
+          form.evereeApprovalGroupId.trim()
+            ? form.evereeApprovalGroupId.trim()
+            : null,
         updatedAt: serverTimestamp(),
       };
       if (form.payrollProvider === 'tempworks' && form.payrollSettings) {
@@ -833,6 +848,28 @@ const EntitiesPage: React.FC = () => {
                             fullWidth
                             placeholder="Leave blank for default sandbox/production URL"
                           />
+                          {/*
+                           * Approval-group control. Hidden until the entity has Everee
+                           * actually configured — without `evereeEnabled` + a tenant id
+                           * there's no Everee API to talk to and the callable would just
+                           * 412.
+                           */}
+                          {tenantId &&
+                          selectedEntity?.id &&
+                          form.evereeEnabled &&
+                          form.evereeTenantId?.trim() ? (
+                            <EvereeApprovalGroupControl
+                              tenantId={tenantId}
+                              entityId={selectedEntity.id}
+                              evereeTenantId={form.evereeTenantId.trim()}
+                              value={selectedEntity.evereeApprovalGroupId ?? null}
+                              pendingValue={form.evereeApprovalGroupId ?? null}
+                              onChange={(next) =>
+                                setForm((f) => ({ ...f, evereeApprovalGroupId: next }))
+                              }
+                              disabled={saving}
+                            />
+                          ) : null}
                         </>
                       )}
                       <Button
