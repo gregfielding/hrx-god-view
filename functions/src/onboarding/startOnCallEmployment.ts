@@ -347,11 +347,24 @@ export async function runStartOnCallEmploymentFlow(
   const screeningServiceIdsNormalized = Array.isArray(screeningRequestedServiceIds)
     ? screeningRequestedServiceIds.map((x) => String(x).trim()).filter(Boolean)
     : [];
+
+  // System actors (e.g. `system:auto_user_group_member_added`) are internal
+  // trigger flows, not human callers. `ensureAccusourceAdmin` is a *human*
+  // caller guardrail — it `get`s the user doc and rejects when missing.
+  // Synthetic system uids have no user doc, so they used to silently drop
+  // bg-check orders (caught by the try/catch below) → "User profile not
+  // found." in the dispatch log. We trust system actors by definition; the
+  // wrapping flows already enforce their own authn / authz.
+  const initiatedBySystemActor =
+    typeof initiatedByUid === "string" && initiatedByUid.startsWith("system:");
+
   if (pkg || screeningServiceIdsNormalized.length > 0) {
     try {
       const { createBackgroundCheckInternal } = await import("../integrations/accusource/createBackgroundCheck");
-      const { ensureAccusourceAdmin } = await import("../integrations/accusource/accusourceAdminGate");
-      await ensureAccusourceAdmin(initiatedByUid, tenantId);
+      if (!initiatedBySystemActor) {
+        const { ensureAccusourceAdmin } = await import("../integrations/accusource/accusourceAdminGate");
+        await ensureAccusourceAdmin(initiatedByUid, tenantId);
+      }
 
       const userSnap = await db.doc(`users/${trimmedUser}`).get();
       const u = userSnap.exists ? userSnap.data() || {} : {};
@@ -433,6 +446,30 @@ export async function runStartOnCallEmploymentFlow(
         },
       });
     }
+  } else {
+    // Audit explicitly that we intentionally did NOT order a bg check. Before
+    // this row existed the no-package branch was completely silent — a hire
+    // into a group with no `accusourcePackageId` looked identical in the
+    // dispatch log to a hire into a group that should have ordered. That made
+    // the 553-hires-no-orders C1 Events pattern invisible until it was
+    // diagnosed by cross-referencing `backgroundChecks` to dispatch logs.
+    // Recording the skip here makes the intent observable in the audit
+    // dashboard with a stable `skipReason` for filtering.
+    await writeOnboardingAutomationDispatchLog({
+      tenantId,
+      eventType: "on_call_screening_skipped",
+      correlationKey: `on_call_screening_skipped__${ON_CALL_AUDIT_V}__${tenantId}__${pipelineId}`,
+      assignmentId: "",
+      userId: trimmedUser,
+      outcome: "skipped",
+      hiringEntityId: trimmedEntity,
+      skipReason: "no_package_configured",
+      details: {
+        packageId: null,
+        requestedServiceIds: null,
+        initiatedBySystemActor,
+      },
+    });
   }
 
   let evereeProvisionWarning: string | null = null;
