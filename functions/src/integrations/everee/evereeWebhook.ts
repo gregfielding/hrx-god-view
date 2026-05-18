@@ -651,6 +651,27 @@ async function processEvent(tenantId: string, data: StoredEvent): Promise<string
     case 'worker.onboarding-completed':
     case 'worker.onboarding_completed':
       return handleWorkerOnboardingCompleted(tenantId, data, payload);
+
+    // TS.1.P4 Slice 5 — Payables / payment lifecycle.
+    //
+    // Each of these events references one or more `payableExternalIds`
+    // we minted at orchestration time. Their format is documented in
+    // `evereePayables.ts:buildPayableExternalId` (4-part) and
+    // `buildAdjustmentExternalId` (2-part); the parser below recovers
+    // the originating doc id without an explicit reverse-lookup table.
+    //
+    // Batch-level rollup (flipping `timesheet_batches.status` to
+    // 'success' once every entry is terminal) is intentionally deferred
+    // to Slice 7's reconciler cron, which is a better fit: it's
+    // idempotent, doesn't race with concurrent webhook events, and is
+    // already responsible for catching dropped webhooks.
+    case 'payment.deposit-returned':
+      return handlePaymentDepositReturned(tenantId, data, payload);
+    case 'payment.paid':
+      return handlePaymentPaid(tenantId, data, payload);
+    case 'payment-payables.status-changed':
+      return handlePayablesStatusChanged(tenantId, data, payload);
+
     default:
       return [`Unhandled event type: ${data.type}`];
   }
@@ -781,5 +802,364 @@ async function handleWorkerOnboardingCompleted(
     actions.push(`Updated onboarding_instances/${instDoc.id}`);
   }
 
+  return actions;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// TS.1.P4 Slice 5 — Payables / payment-lifecycle handlers
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Parse a payable externalId back to the originating doc reference. The
+ * orchestrator mints externalIds via two pinned formats (see
+ * `evereePayables.ts:buildPayableExternalId` and
+ * `buildAdjustmentExternalId`):
+ *
+ *   Payable     — `{tenantId}::{assignmentId}::{workDate}::{KIND}`   (4 parts)
+ *   Adjustment  — `{tenantId}::{adjustmentId}`                       (2 parts)
+ *
+ * The webhook handler uses this to recover the right Firestore doc
+ * without an explicit reverse-lookup table. Pure helper; no Firestore
+ * access here.
+ */
+export type ParsedPayableExternalId =
+  | {
+      kind: 'payable';
+      tenantId: string;
+      assignmentId: string;
+      workDate: string;
+      payableKind: string;
+      /** Deterministic id of the `timesheet_entries` doc the payable was
+       *  derived from — caller can `get` it directly. */
+      entryDocId: string;
+    }
+  | { kind: 'adjustment'; tenantId: string; adjustmentId: string }
+  | null;
+
+export function parsePayableExternalId(externalId: string | null | undefined): ParsedPayableExternalId {
+  if (!externalId || typeof externalId !== 'string') return null;
+  const parts = externalId.split('::');
+  if (parts.length === 4) {
+    const [tenantId, assignmentId, workDate, payableKind] = parts;
+    if (!tenantId || !assignmentId || !workDate || !payableKind) return null;
+    return {
+      kind: 'payable',
+      tenantId,
+      assignmentId,
+      workDate,
+      payableKind,
+      entryDocId: `${assignmentId}_${workDate}`,
+    };
+  }
+  if (parts.length === 2) {
+    const [tenantId, adjustmentId] = parts;
+    if (!tenantId || !adjustmentId) return null;
+    return { kind: 'adjustment', tenantId, adjustmentId };
+  }
+  return null;
+}
+
+/**
+ * Pull the externalIds out of an event payload. Accepts either the
+ * documented array shape (`payableExternalIds: string[]`) or the
+ * singular `externalId` that `payment-payables.status-changed` uses.
+ * Returns an empty array if neither is present.
+ */
+function extractExternalIds(payload: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const arr = payload.payableExternalIds;
+  if (Array.isArray(arr)) {
+    for (const v of arr) if (typeof v === 'string' && v.trim()) out.push(v.trim());
+  }
+  const single = payload.externalId;
+  if (typeof single === 'string' && single.trim()) out.push(single.trim());
+  return out;
+}
+
+/**
+ * Apply a per-entry status mutation. Idempotent — the per-event-id
+ * dedup at the webhook entry point already prevents replay, but this
+ * is additionally safe to re-call because the writes are unconditional
+ * `set(..., { merge: true })`.
+ */
+async function applyEntryStatusUpdate(
+  tenantId: string,
+  entryDocId: string,
+  patch: {
+    status: 'paid' | 'error';
+    evereeStatus?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    lastWebhookEventId: string;
+  },
+): Promise<boolean> {
+  const ref = db().doc(`tenants/${tenantId}/timesheet_entries/${entryDocId}`);
+  const snap = await ref.get();
+  if (!snap.exists) return false;
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  await ref.set(
+    {
+      status: patch.status,
+      everee: {
+        status: patch.evereeStatus,
+        errorCode: patch.errorCode,
+        errorMessage: patch.errorMessage,
+        respondedAt: now,
+      },
+      lastWebhookEventId: patch.lastWebhookEventId,
+      updatedAt: now,
+    },
+    { merge: true },
+  );
+  return true;
+}
+
+/**
+ * Same shape as `applyEntryStatusUpdate` but for adjustments. Kept
+ * separate so the field paths stay obvious (adjustment.everee vs
+ * entry.everee — same nested shape, different parent collection).
+ */
+async function applyAdjustmentStatusUpdate(
+  tenantId: string,
+  adjustmentId: string,
+  patch: {
+    status: 'paid' | 'error';
+    evereeStatus?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    lastWebhookEventId: string;
+  },
+): Promise<boolean> {
+  const ref = db().doc(`tenants/${tenantId}/timesheet_adjustments/${adjustmentId}`);
+  const snap = await ref.get();
+  if (!snap.exists) return false;
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  await ref.set(
+    {
+      status: patch.status,
+      everee: {
+        status: patch.evereeStatus,
+        error: patch.errorMessage,
+        respondedAt: now,
+      },
+      lastWebhookEventId: patch.lastWebhookEventId,
+      updatedAt: now,
+    },
+    { merge: true },
+  );
+  return true;
+}
+
+/**
+ * `payment.deposit-returned` — Everee initiated a payment but the bank
+ * returned the ACH (bad routing/account, closed account, frozen, etc.).
+ * The worker didn't get paid. Surface this as an `error` state on the
+ * affected entries/adjustments so the recruiter is prompted to fix
+ * banking info before re-batching.
+ *
+ * **Default-on event** per Everee — fires without requiring company-
+ * instance enablement, unlike `payment.paid` and
+ * `payment-payables.status-changed`.
+ */
+async function handlePaymentDepositReturned(
+  tenantId: string,
+  data: StoredEvent,
+  payload: Record<string, unknown>,
+): Promise<string[]> {
+  const actions: string[] = [];
+  const externalIds = extractExternalIds(payload);
+  if (externalIds.length === 0) {
+    actions.push('payment.deposit-returned: no payableExternalIds in payload — nothing to update.');
+    return actions;
+  }
+  const reason =
+    typeof payload.errorMessage === 'string' && payload.errorMessage
+      ? payload.errorMessage
+      : 'ACH deposit returned by bank';
+  for (const externalId of externalIds) {
+    const parsed = parsePayableExternalId(externalId);
+    if (!parsed) {
+      actions.push(`Skipped unparseable externalId: ${externalId}`);
+      continue;
+    }
+    if (parsed.kind === 'payable') {
+      const updated = await applyEntryStatusUpdate(parsed.tenantId, parsed.entryDocId, {
+        status: 'error',
+        evereeStatus: 'DEPOSIT_RETURNED',
+        errorCode: 'deposit_returned',
+        errorMessage: reason,
+        lastWebhookEventId: data.eventId,
+      });
+      actions.push(
+        updated
+          ? `Marked entry ${parsed.entryDocId} as error (deposit_returned)`
+          : `Entry ${parsed.entryDocId} not found; skipped.`,
+      );
+    } else {
+      const updated = await applyAdjustmentStatusUpdate(parsed.tenantId, parsed.adjustmentId, {
+        status: 'error',
+        evereeStatus: 'DEPOSIT_RETURNED',
+        errorCode: 'deposit_returned',
+        errorMessage: reason,
+        lastWebhookEventId: data.eventId,
+      });
+      actions.push(
+        updated
+          ? `Marked adjustment ${parsed.adjustmentId} as error (deposit_returned)`
+          : `Adjustment ${parsed.adjustmentId} not found; skipped.`,
+      );
+    }
+  }
+  return actions;
+}
+
+/**
+ * `payment.paid` — Everee successfully transferred funds to the worker.
+ * Flip every referenced entry/adjustment to `paid`.
+ *
+ * **Requires Everee company-instance enablement** (see addendum §11
+ * preconditions — Everee enabled this on all 3 C1 instances per
+ * 2026-05-07 Piers email; webhook URLs still need to be configured in
+ * each portal before events start arriving, Slice 5 operational task).
+ *
+ * Batch-level finalization (flipping `timesheet_batches.status` to
+ * 'success' once every entry is terminal) is deferred to Slice 7's
+ * reconciler cron — see comment in `processEvent`.
+ */
+async function handlePaymentPaid(
+  tenantId: string,
+  data: StoredEvent,
+  payload: Record<string, unknown>,
+): Promise<string[]> {
+  const actions: string[] = [];
+  const externalIds = extractExternalIds(payload);
+  if (externalIds.length === 0) {
+    actions.push('payment.paid: no payableExternalIds in payload — nothing to update.');
+    return actions;
+  }
+  for (const externalId of externalIds) {
+    const parsed = parsePayableExternalId(externalId);
+    if (!parsed) {
+      actions.push(`Skipped unparseable externalId: ${externalId}`);
+      continue;
+    }
+    if (parsed.kind === 'payable') {
+      const updated = await applyEntryStatusUpdate(parsed.tenantId, parsed.entryDocId, {
+        status: 'paid',
+        evereeStatus: 'PAID',
+        lastWebhookEventId: data.eventId,
+      });
+      actions.push(
+        updated
+          ? `Marked entry ${parsed.entryDocId} as paid`
+          : `Entry ${parsed.entryDocId} not found; skipped.`,
+      );
+    } else {
+      const updated = await applyAdjustmentStatusUpdate(parsed.tenantId, parsed.adjustmentId, {
+        status: 'paid',
+        evereeStatus: 'PAID',
+        lastWebhookEventId: data.eventId,
+      });
+      actions.push(
+        updated
+          ? `Marked adjustment ${parsed.adjustmentId} as paid`
+          : `Adjustment ${parsed.adjustmentId} not found; skipped.`,
+      );
+    }
+  }
+  return actions;
+}
+
+/**
+ * `payment-payables.status-changed` — Everee updated the lifecycle
+ * status of a single payable. Maps to:
+ *
+ *   PAID                → entry/adjustment.status = 'paid'
+ *   ERROR               → entry/adjustment.status = 'error'
+ *   UNPAYABLE_WORKER    → entry/adjustment.status = 'error' (worker
+ *                         can't receive funds — typically blocked
+ *                         banking info or compliance hold)
+ *
+ * Any other status is recorded on `everee.status` but doesn't flip our
+ * top-level `status` — those are intermediate Everee states (PENDING,
+ * IN_PROGRESS, etc.) that don't terminate the entry's lifecycle.
+ *
+ * Fires per-payable, so the payload carries a single `externalId` (not
+ * an array). The extractor handles both forms defensively.
+ */
+async function handlePayablesStatusChanged(
+  tenantId: string,
+  data: StoredEvent,
+  payload: Record<string, unknown>,
+): Promise<string[]> {
+  const actions: string[] = [];
+  const externalIds = extractExternalIds(payload);
+  const evereeStatus =
+    typeof payload.paymentStatus === 'string'
+      ? payload.paymentStatus
+      : typeof payload.status === 'string'
+        ? payload.status
+        : '';
+  const errorMessage =
+    typeof payload.errorMessage === 'string' ? payload.errorMessage : undefined;
+  if (externalIds.length === 0) {
+    actions.push('payment-payables.status-changed: no externalIds in payload — nothing to update.');
+    return actions;
+  }
+
+  // Map Everee status → our top-level entry/adjustment status. Anything
+  // that isn't a terminal mapping just gets stamped onto everee.status
+  // without flipping the local lifecycle.
+  let nextLocalStatus: 'paid' | 'error' | null = null;
+  let errorCode: string | undefined;
+  const upperStatus = evereeStatus.toUpperCase();
+  if (upperStatus === 'PAID') {
+    nextLocalStatus = 'paid';
+  } else if (upperStatus === 'ERROR' || upperStatus === 'UNPAYABLE_WORKER') {
+    nextLocalStatus = 'error';
+    errorCode = upperStatus === 'UNPAYABLE_WORKER' ? 'unpayable_worker' : 'payable_error';
+  }
+
+  for (const externalId of externalIds) {
+    const parsed = parsePayableExternalId(externalId);
+    if (!parsed) {
+      actions.push(`Skipped unparseable externalId: ${externalId}`);
+      continue;
+    }
+    if (!nextLocalStatus) {
+      // Non-terminal Everee status — stamp everee.status only.
+      actions.push(
+        `Non-terminal Everee status '${evereeStatus}' for ${externalId} — no local status change.`,
+      );
+      continue;
+    }
+    if (parsed.kind === 'payable') {
+      const updated = await applyEntryStatusUpdate(parsed.tenantId, parsed.entryDocId, {
+        status: nextLocalStatus,
+        evereeStatus: upperStatus,
+        errorCode,
+        errorMessage,
+        lastWebhookEventId: data.eventId,
+      });
+      actions.push(
+        updated
+          ? `Marked entry ${parsed.entryDocId} as ${nextLocalStatus} (everee=${upperStatus})`
+          : `Entry ${parsed.entryDocId} not found; skipped.`,
+      );
+    } else {
+      const updated = await applyAdjustmentStatusUpdate(parsed.tenantId, parsed.adjustmentId, {
+        status: nextLocalStatus,
+        evereeStatus: upperStatus,
+        errorCode,
+        errorMessage,
+        lastWebhookEventId: data.eventId,
+      });
+      actions.push(
+        updated
+          ? `Marked adjustment ${parsed.adjustmentId} as ${nextLocalStatus} (everee=${upperStatus})`
+          : `Adjustment ${parsed.adjustmentId} not found; skipped.`,
+      );
+    }
+  }
   return actions;
 }
