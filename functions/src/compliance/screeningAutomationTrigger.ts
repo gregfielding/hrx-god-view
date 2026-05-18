@@ -118,6 +118,62 @@ export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
 
     const hiringEntityIdResolved = await resolveHiringEntityId(tenantId, after, null);
 
+    /**
+     * Per-tenant entity allowlist: when set on
+     * `tenants/{tid}/config/screeningAutomation.entityIdAllowlist`, only
+     * auto-order for assignments whose resolved `hiringEntityId` is in the
+     * list. Lets us roll automation out one entity at a time under a single
+     * tenant (e.g. C1 Select before C1 Events).
+     *
+     * We log + audit + dispatch the skip so it's visible in the screening
+     * automation dashboard, matching the existing skipped-shape elsewhere
+     * in this function. If the assignment somehow has no resolvable
+     * hiringEntityId at all, we also skip (no entity → can't possibly be in
+     * the allowlist).
+     */
+    if (cfg.entityIdAllowlist && cfg.entityIdAllowlist.length > 0) {
+      const inAllowlist =
+        typeof hiringEntityIdResolved === 'string' &&
+        hiringEntityIdResolved.trim().length > 0 &&
+        cfg.entityIdAllowlist.includes(hiringEntityIdResolved.trim());
+      if (!inAllowlist) {
+        logger.info('[screeningAutomation] entity not in allowlist — skipping', {
+          tenantId,
+          assignmentId,
+          hiringEntityId: hiringEntityIdResolved ?? null,
+          entityIdAllowlist: cfg.entityIdAllowlist,
+        });
+        const candidateForSkip = String(after.candidateId || after.userId || '').trim();
+        await writeAudit(tenantId, {
+          assignmentId,
+          candidateId: candidateForSkip || null,
+          hiringEntityId: hiringEntityIdResolved || null,
+          outcome: 'skipped_entity_not_allowlisted',
+          reasonSummary:
+            'Assignment confirmed for an entity not in the tenant screeningAutomation.entityIdAllowlist; auto-ordering deliberately scoped.',
+          entityIdAllowlist: cfg.entityIdAllowlist,
+          dryRun: cfg.dryRun,
+        });
+        if (candidateForSkip) {
+          await logScreeningAutomationDispatch({
+            tenantId,
+            assignmentId,
+            userId: candidateForSkip,
+            hiringEntityId: hiringEntityIdResolved,
+            messageTypeId: 'screening_auto_skipped',
+            outcome: 'skipped',
+            fingerprint: 'entity_not_allowlisted',
+            skipReason: 'entity_not_allowlisted',
+            details: {
+              hiringEntityId: hiringEntityIdResolved || null,
+              entityIdAllowlist: cfg.entityIdAllowlist,
+            },
+          });
+        }
+        return;
+      }
+    }
+
     const runRef = db
       .collection('tenants')
       .doc(tenantId)
