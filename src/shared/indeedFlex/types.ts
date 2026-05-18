@@ -77,3 +77,107 @@ export interface IndeedFlexExternalRef {
    */
   importedAt: string;
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Inbound-email staging (Slice 1)
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Processing state of a row in `tenants/{tid}/external_ingest_events`.
+ *
+ * Slice 1 (the inbound webhook) writes the first three statuses only.
+ * Slice 2 (the parser worker) flips `received` rows to `parsed` or
+ * `parse_failed` after extracting `IndeedFlexEvent[]` from the raw
+ * payload.
+ *
+ * - `received`             — webhook accepted the email and persisted
+ *                            it. Awaiting parse.
+ * - `rejected_dkim`        — webhook persisted the raw payload but
+ *                            won't process it further because DKIM
+ *                            verification failed against the expected
+ *                            sender domain. Kept on disk for audit.
+ * - `rejected_duplicate`   — never written; idempotency hit. Listed
+ *                            here for documentation completeness.
+ * - `parsed`               — Slice 2 extracted events successfully.
+ * - `parse_failed`         — Slice 2 ran but extraction errored out.
+ *                            Raw payload stays for retry / debug.
+ */
+export type ExternalIngestEventStatus =
+  | 'received'
+  | 'rejected_dkim'
+  | 'rejected_duplicate'
+  | 'parsed'
+  | 'parse_failed';
+
+/**
+ * Result of DKIM / SPF verification performed at the webhook edge.
+ * Captured into Firestore alongside the raw payload so a spoofing
+ * attempt is auditable after the fact.
+ */
+export interface ExternalIngestEventAuthVerification {
+  /** DKIM result aggregated across all signatures on the message. */
+  dkim: 'pass' | 'fail' | 'none' | 'unknown';
+  /** Domains that signed the message (lowercased). */
+  dkimDomains: string[];
+  /** SPF result for the SMTP envelope sender. */
+  spf: 'pass' | 'softfail' | 'fail' | 'none' | 'unknown';
+  /** Raw RFC5322 From header value, e.g. `"Indeed Flex <x@y.com>"`. */
+  sender: string;
+  /** Lowercased domain extracted from the From header. */
+  senderDomain: string;
+  /** Source IP per SendGrid's `sender_ip` field, if present. */
+  senderIp?: string;
+}
+
+/**
+ * The trimmed-and-truncated raw payload we persist for each inbound
+ * email. Body fields (`text`, `html`) are capped to keep the Firestore
+ * doc under the 1MB limit — Indeed Flex notification emails are tiny
+ * in practice (~1KB), so this cap is defensive.
+ */
+export interface ExternalIngestEventRaw {
+  /** RFC5322 From header. */
+  from: string;
+  /** RFC5322 To header. */
+  to: string;
+  /** Subject line. */
+  subject: string;
+  /** Plain-text body. Capped to 256KB. */
+  text?: string;
+  /** HTML body. Capped to 256KB. */
+  html?: string;
+  /** Raw headers blob (line-joined). Capped to 64KB. */
+  headers?: string;
+  /** SendGrid's `envelope` JSON string. */
+  envelope?: string;
+  /** Count of file attachments (their content is not persisted in
+   *  Slice 1; attachments are not in scope for Indeed Flex parsing). */
+  attachmentCount?: number;
+  /** True when any body field had to be truncated to fit. */
+  truncated?: boolean;
+}
+
+/**
+ * One inbound email's row in `tenants/{tid}/external_ingest_events`.
+ *
+ * Doc ID == `eventHash` (sha256, see `computeEventHash`). Slice 1
+ * persists `provider: 'indeed_flex'` rows; future providers (Fieldglass,
+ * Indeed Flex partner API if it ships, etc.) get sibling provider
+ * values.
+ */
+export interface ExternalIngestEvent {
+  /** Provider identifier. Slice 1 always writes `'indeed_flex'`. */
+  provider: 'indeed_flex';
+  /** sha256 of stable email content; used as Firestore doc ID. */
+  eventHash: string;
+  /**
+   * ISO-8601 timestamp of when the webhook received the email.
+   * Callers convert to / from Firestore Timestamp at the IO boundary.
+   */
+  receivedAt: string;
+  authVerification: ExternalIngestEventAuthVerification;
+  raw: ExternalIngestEventRaw;
+  status: ExternalIngestEventStatus;
+  /** Set when `status` starts with `rejected_`. Free-form code. */
+  rejectionReason?: string;
+}

@@ -12284,6 +12284,13 @@ export type { EmailProvider, SendEmailOptions, EmailSendResult } from './messagi
 // Unified Messaging Framework - SendGrid Webhook
 export { sendGridWebhook } from './messaging/sendGridWebhook';
 
+// Indeed Flex inbound-email ingestion (SendGrid Inbound Parse webhook).
+// Slice 1 — receives + persists raw emails to
+// `tenants/{tid}/external_ingest_events/{eventHash}`. No parsing yet
+// (Slice 2 handles extraction); no writes to shifts / JOs / assignments
+// (deferred to post-validation slices 3-5).
+export { indeedFlexInboundWebhook } from './integrations/indeedFlex/indeedFlexInboundWebhook';
+
 // Recruiter Number Management
 export {
   getAvailableTwilioNumbers,
