@@ -150,6 +150,108 @@ function pickEvereeWorkerIdFromUserMap(
 }
 
 /**
+ * Fallback resolver for when `users/{uid}.evereeWorkerIds` is missing or
+ * stale: query the authoritative `everee_workers` linkage docs and pick
+ * the matching `evereeWorkerId` for this tenant.
+ *
+ * `WorkerPayrollIndex` has done this fallback since launch; this per-tenant
+ * page did not, which manifested as workers seeing "No payroll account
+ * found for this employer" any time their user-doc denorm drifted from the
+ * linkage source of truth (provisioning write race, sandbox→prod tenant
+ * re-point, partial migration). The query reuses the same firestore.rules
+ * read path (`resource.data.firebaseUid == request.auth.uid`).
+ *
+ * `evereeTenantId` is matched as both string and number form because
+ * existing linkage docs store the value either way.
+ */
+async function resolveEvereeWorkerIdFromLinkage(
+  tenantId: string,
+  uid: string,
+  evereeTenantId: string,
+): Promise<string | null> {
+  try {
+    const q = query(
+      collection(db, 'tenants', tenantId, 'everee_workers'),
+      where('firebaseUid', '==', uid),
+    );
+    const snap = await getDocs(q);
+    const targetTid = evereeTenantId.trim();
+    const targetTidNumeric = /^\d+$/.test(targetTid) ? String(parseInt(targetTid, 10)) : '';
+    for (const d of snap.docs) {
+      const data = d.data() as {
+        evereeTenantId?: string | number;
+        evereeWorkerId?: string;
+        externalWorkerId?: string;
+      };
+      const docTidRaw = data.evereeTenantId;
+      const docTid =
+        typeof docTidRaw === 'number' && Number.isFinite(docTidRaw)
+          ? String(docTidRaw)
+          : typeof docTidRaw === 'string'
+            ? docTidRaw.trim()
+            : '';
+      if (docTid && (docTid === targetTid || docTid === targetTidNumeric)) {
+        const wid = String(data.evereeWorkerId || data.externalWorkerId || '').trim();
+        if (wid) return wid;
+      }
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[everee.linkageFallback] query failed', {
+      tenantId,
+      uid,
+      evereeTenantId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  return null;
+}
+
+/**
+ * Fire-and-forget self-heal: when the linkage fallback succeeds, backfill
+ * `users/{uid}.evereeWorkerIds[evereeTenantId]` so the next page load hits
+ * the fast path and any other surfaces that consume the denorm (the index
+ * picker, dashboard chips, the readiness queue) start agreeing with reality
+ * without waiting for the ops backfill script.
+ *
+ * The write goes through the `request.auth.uid == userId` rule on
+ * `users/{uid}` so no callable is needed. Failures are logged but
+ * non-blocking — the page render itself doesn't depend on this succeeding.
+ */
+async function selfHealEvereeWorkerIdsMap(
+  uid: string,
+  evereeTenantId: string,
+  evereeWorkerId: string,
+): Promise<void> {
+  try {
+    await setDoc(
+      doc(db, 'users', uid),
+      {
+        evereeWorkerIds: { [evereeTenantId]: evereeWorkerId },
+        evereeWorkerIdsSelfHealedAt: serverTimestamp(),
+      },
+      { merge: true },
+    );
+    // eslint-disable-next-line no-console
+    console.info('[everee.selfHeal] backfilled users/{uid}.evereeWorkerIds entry', {
+      uid,
+      evereeTenantId,
+      evereeWorkerId,
+    });
+  } catch (err) {
+    // Non-fatal — page render path is independent of this write succeeding,
+    // and the ops backfill script (`backfillEvereeWorkerIdsFromLinkage.js`)
+    // is the safety net for accounts whose rules block the client write.
+    // eslint-disable-next-line no-console
+    console.warn('[everee.selfHeal] failed', {
+      uid,
+      evereeTenantId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
  * EE.4 Phase 2 — kept for diagnostic logging only. Pre-EE.4 this fed
  * `localHintSaysComplete` into the experience-type decision matrix; that
  * fallback is gone (see `decideExperienceType` — API truth wins, API
@@ -391,9 +493,36 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
       const userSnap = await getDoc(doc(db, 'users', uid));
       if (isStale()) return;
       const ewMap = (userSnap.data()?.evereeWorkerIds ?? {}) as Record<string, unknown>;
-      const evereeWorkerId = pickEvereeWorkerIdFromUserMap(ewMap, evereeTenantId);
+      let evereeWorkerId = pickEvereeWorkerIdFromUserMap(ewMap, evereeTenantId);
+
       if (!evereeWorkerId) {
-        setPhase({ state: 'forbidden' });
+        // Denorm-drift fallback: read linkage docs directly (the index page
+        // does this; this page didn't, hence the "No payroll account found"
+        // dead-end). On success, fire-and-forget a self-heal write so the
+        // user-doc denorm catches up.
+        const fallbackWorkerId = await resolveEvereeWorkerIdFromLinkage(
+          scopeTenantId,
+          uid,
+          evereeTenantId,
+        );
+        if (isStale()) return;
+        if (fallbackWorkerId) {
+          evereeWorkerId = fallbackWorkerId;
+          void selfHealEvereeWorkerIdsMap(uid, evereeTenantId, fallbackWorkerId);
+        }
+      }
+
+      if (!evereeWorkerId) {
+        // The worker has no Everee linkage for this specific tenant id.
+        // Three cohorts land here, all recoverable via the index route:
+        //   1. Has linkages for OTHER tenants → picker (or auto-redirect to
+        //      the correct tenant when only one exists).
+        //   2. Has NO linkage anywhere (signup-only / shell account that
+        //      never made it into the hiring funnel) → index empty state.
+        //   3. Generally in an unexpected state → at worst bounces between
+        //      the routes, which is preferable to the bare terminal error.
+        // Replaces the previous `setPhase({ state: 'forbidden' })` dead-end.
+        navigate('/c1/workers/payroll', { replace: true });
         return;
       }
       const resolved = await resolveEntityForEvereeTenant(scopeTenantId, evereeTenantId);
