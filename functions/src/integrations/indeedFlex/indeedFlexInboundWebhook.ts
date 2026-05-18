@@ -48,7 +48,7 @@ import type {
   ExternalIngestEvent,
   ExternalIngestEventAuthVerification,
   ExternalIngestEventRaw,
-} from '../../../../shared/indeedFlex/types';
+} from '../../shared/indeedFlex/types';
 
 const FieldValue = admin.firestore.FieldValue;
 
@@ -207,18 +207,26 @@ function extractSenderDomain(from: string): string {
 /**
  * Apply the policy: DKIM must `pass` AND must include a signature from
  * {@link EXPECTED_SENDER_DOMAIN} (or a subdomain thereof).
+ *
+ * Returns `null` when the policy is satisfied. Returns a rejection
+ * reason string when it isn't.
+ *
+ * We use `string | null` rather than a discriminated union here because
+ * `functions/tsconfig.json` has `strict: false`, which weakens
+ * control-flow narrowing on literal-typed unions. The simpler return
+ * shape narrows cleanly under non-strict mode.
  */
-function verifyDkim(dkim: ReturnType<typeof parseDkimField>): { ok: true } | { ok: false; reason: string } {
+function verifyDkim(dkim: ReturnType<typeof parseDkimField>): string | null {
   if (dkim.result !== 'pass') {
-    return { ok: false, reason: `dkim_${dkim.result}` };
+    return `dkim_${dkim.result}`;
   }
   const passing = dkim.domains.some(
     (d) => d === EXPECTED_SENDER_DOMAIN || d.endsWith(`.${EXPECTED_SENDER_DOMAIN}`),
   );
   if (!passing) {
-    return { ok: false, reason: 'dkim_unexpected_domain' };
+    return 'dkim_unexpected_domain';
   }
-  return { ok: true };
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -336,9 +344,9 @@ export const indeedFlexInboundWebhook = onRequest(
       .collection('external_ingest_events')
       .doc(eventHash);
 
-    const dkimPolicy = verifyDkim(dkim);
+    const dkimRejectionReason = verifyDkim(dkim);
 
-    if (!dkimPolicy.ok) {
+    if (dkimRejectionReason !== null) {
       // Persist for audit so we can see exactly what was rejected and
       // why, but don't process further.
       const eventDoc: Omit<ExternalIngestEvent, 'receivedAt'> & {
@@ -351,13 +359,13 @@ export const indeedFlexInboundWebhook = onRequest(
         authVerification,
         raw,
         status: 'rejected_dkim',
-        rejectionReason: dkimPolicy.reason,
+        rejectionReason: dkimRejectionReason,
         actor: ACTOR,
       };
       await docRef.set(eventDoc, { merge: true });
       logger.warn('indeedFlexInboundWebhook: dkim rejected', {
         eventHash,
-        reason: dkimPolicy.reason,
+        reason: dkimRejectionReason,
         senderDomain,
         dkimDomains: dkim.domains,
       });
