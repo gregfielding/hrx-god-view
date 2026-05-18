@@ -93,6 +93,9 @@ const TRIGGER_MANAGED_STRING_FIELDS = [
   "worksiteState",
   "worksiteDisplayName",
   "workerDisplayName",
+  // TS.1.P4 Slice 5.5 — denormalized from `JobOrder.recruiterAccountId`
+  // (or `accountId` as fallback). Powers the batch-scope=account flow.
+  "accountId",
 ] as const;
 const TRIGGER_MANAGED_NUMBER_FIELDS = ["shiftBreakDefaultMinutes"] as const;
 /**
