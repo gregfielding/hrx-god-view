@@ -277,6 +277,68 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      // TS.1.P4 — Timesheet batches. One doc per Everee submission;
+      // wraps N entry ids and tracks aggregate Everee state. All writes
+      // are server-only — the orchestrator (`submitTimesheetBatch`)
+      // creates them, the webhook handler advances `status`, and the
+      // reconciler cron may update `everee.*` fields. No client write
+      // path exists by design: batch lifecycle is a server-managed
+      // state machine.
+      //
+      // Reads are recruiter-band only. Workers don't need direct batch
+      // access — per-entry status (with `everee.payRunId` denormalized)
+      // surfaces the same payment info on their own `timesheet_entries`
+      // documents.
+      match /timesheet_batches/{batchId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          (request.auth.token.roles != null && hasTenantRole(tenantId, request.auth.token.roles)) ||
+          isTenantAdmin(tenantId) ||
+          hasSecurityLevel(tenantId, 5)
+        );
+        allow create, update, delete: if false;
+      }
+
+      // TS.1.P4 — Timesheet adjustments. Sibling-of-entry corrections
+      // that ride the next Everee submission via the Payables endpoint
+      // (separate from worked-shifts because Everee locks shifts after
+      // payment).
+      //
+      // Read surface mirrors `timesheet_entries`: recruiter band + HRX
+      // + tenant role/admin + worker self-read via the denormalized
+      // workerId field.
+      //
+      // Updates are surgical — recruiter can only edit the authoring-
+      // surface fields, and only while `status in ['draft', 'error']`.
+      // Status transitions (draft → approved → sent_to_everee → paid)
+      // are server-managed (callable on approve, orchestrator on submit,
+      // webhook on Everee response). Creates + deletes go through the
+      // adjustment-authoring callable (Slice 10), not the client.
+      match /timesheet_adjustments/{adjustmentId} {
+        allow read: if request.auth != null && (
+          resource.data.workerId == request.auth.uid ||
+          isHRX() ||
+          (request.auth.token.roles != null && hasTenantRole(tenantId, request.auth.token.roles)) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5)
+        );
+
+        allow update: if request.auth != null
+          && (isHRX() || hasSecurityLevel(tenantId, 5))
+          && resource.data.status in ['draft', 'error']
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'adjustmentType',
+               'reason',
+               'hoursDelta',
+               'amountDelta',
+               'updatedAt',
+               'updatedBy'
+             ]);
+
+        allow create: if false;
+        allow delete: if false;
+      }
+
       // Placements: recruiter staging (placed but not yet offered - no Assignment created).
       //
       // Original rule (pre-fix) gated create/update/delete on a JWT-claim
@@ -708,10 +770,32 @@ service cloud.firestore {
         allow read, write: if isTenantAdmin(resource.data.tenantId);
       }
       
+      // --- ACTIVITY LOGS (per-user, viewed in ProfileOverview "Activity & touchpoints") ---
+      //
+      // Visibility policy (May 15 2026): mirror the /notes pattern so any
+      // internal team member (securityLevel 5/6/7) on the *target user's*
+      // tenant can read/write activity logs. The previous rule only granted
+      // access via `isTenantAdmin(resource.data.tenantId)`, which (a) requires
+      // an Admin (level 7) role specifically and (b) silently fails for any
+      // activity log doc missing a `tenantId` field — both surfaced as
+      // "Missing or insufficient permissions" for level-5/6 admins viewing a
+      // worker profile.
       match /activityLogs/{logId} {
+        function activityTargetTenantId() {
+          let target = get(/databases/$(database)/documents/users/$(userId)).data;
+          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+        }
         allow read, write: if isAuthenticated() && request.auth.uid == userId;
         allow read, write: if isHRX();
+        // Backward-compatible: tenant Admin on the log doc's own tenantId.
         allow read, write: if isTenantAdmin(resource.data.tenantId);
+        // Internal team (securityLevel 5/6/7) on the target user's tenant.
+        // Doesn't depend on `resource.data.tenantId`, so it works for list
+        // queries even when individual log docs predate the tenantId field.
+        allow read, write: if isAuthenticated() && (
+          activityTargetTenantId() != null &&
+          hasSecurityLevel(activityTargetTenantId(), 5)
+        );
       }
 
       // --- CERTIFICATION RECORDS (Phase 1 canonical worker certs) ---
