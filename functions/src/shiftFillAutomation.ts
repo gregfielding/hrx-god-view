@@ -4,7 +4,7 @@ import { logger } from 'firebase-functions/v2';
 
 const db = admin.firestore();
 
-type ShiftStatus = 'open' | 'closed' | 'filled' | 'cancelled';
+type ShiftStatus = 'open' | 'closed' | 'filled' | 'cancelled' | 'pending_indeed_approval';
 
 function norm(v: unknown): string {
   return String(v || '').trim().toLowerCase();
