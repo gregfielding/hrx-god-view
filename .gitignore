@@ -42,6 +42,12 @@ service-account-key.json
 functions/service-account-key.json
 **/service-account-key.json
 
+# PII bulk-import CSVs (Tempworks exports — SSN-last-4, phone, email).
+# Uppercase-only on purpose: the legit tracked .csv files under src/data/,
+# scripts/, and scripts/data/ are app data, NOT PII; matching `*.csv`
+# broadly would hide them. Tempworks ships its exports as `.CSV`.
+*.CSV
+
 # Claude/Cursor scratch output (logs, query dumps, etc. — never commit)
 .scratch/
 
