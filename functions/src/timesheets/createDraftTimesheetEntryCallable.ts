@@ -303,7 +303,13 @@ async function resolveDenormFallbacks(
   tenantId: string,
   assignmentId: string,
   assignmentData: Record<string, unknown>,
-): Promise<{ hiringEntityId: string | null; worksiteState: string | null }> {
+): Promise<{
+  hiringEntityId: string | null;
+  worksiteState: string | null;
+  /** TS.1.P4 Slice 5.5 — read directly from JO.recruiterAccountId /
+   *  accountId via the shared resolver. Snapshotted onto the entry. */
+  accountId: string | null;
+}> {
   const directHiringEntityId =
     typeof assignmentData.hiringEntityId === 'string' &&
     assignmentData.hiringEntityId.trim().length > 0
@@ -314,9 +320,18 @@ async function resolveDenormFallbacks(
     assignmentData.worksiteState.trim().length > 0
       ? assignmentData.worksiteState.trim()
       : null;
+  const directAccountId =
+    typeof assignmentData.accountId === 'string' &&
+    assignmentData.accountId.trim().length > 0
+      ? assignmentData.accountId.trim()
+      : null;
 
-  if (directHiringEntityId && directWorksiteState) {
-    return { hiringEntityId: directHiringEntityId, worksiteState: directWorksiteState };
+  if (directHiringEntityId && directWorksiteState && directAccountId) {
+    return {
+      hiringEntityId: directHiringEntityId,
+      worksiteState: directWorksiteState,
+      accountId: directAccountId,
+    };
   }
 
   // At least one denorm field is missing. Run the shared resolver
@@ -337,7 +352,11 @@ async function resolveDenormFallbacks(
       assignmentId,
       error: err instanceof Error ? err.message : String(err),
     });
-    return { hiringEntityId: directHiringEntityId, worksiteState: directWorksiteState };
+    return {
+      hiringEntityId: directHiringEntityId,
+      worksiteState: directWorksiteState,
+      accountId: directAccountId,
+    };
   }
 
   const fallbackHiringEntityId =
@@ -350,10 +369,16 @@ async function resolveDenormFallbacks(
     resolved.updates.worksiteState.trim().length > 0
       ? resolved.updates.worksiteState.trim()
       : null;
+  const fallbackAccountId =
+    typeof resolved.updates.accountId === 'string' &&
+    resolved.updates.accountId.trim().length > 0
+      ? resolved.updates.accountId.trim()
+      : null;
 
   return {
     hiringEntityId: directHiringEntityId ?? fallbackHiringEntityId,
     worksiteState: directWorksiteState ?? fallbackWorksiteState,
+    accountId: directAccountId ?? fallbackAccountId,
   };
 }
 
@@ -455,12 +480,24 @@ export const createDraftTimesheetEntryCallable = onCall(
         ? (assignmentData.billRate as number)
         : 0;
 
+    // TS.1.P4 Slice 5.5 — snapshot shiftId from the assignment doc
+    // (placementsApi writes it on every create). accountId comes from
+    // the resolved denorm chain (JO.recruiterAccountId / JO.accountId).
+    // Both fields default to '' rather than undefined so reads can do
+    // direct equality without `?? ''` dance.
+    const shiftId =
+      typeof assignmentData.shiftId === 'string' && assignmentData.shiftId.trim().length > 0
+        ? assignmentData.shiftId.trim()
+        : '';
+
     const entryData: Record<string, unknown> = {
       id: entryId,
       tenantId: input.tenantId,
       assignmentId: input.assignmentId,
       jobOrderId,
       hiringEntityId: denormResolved.hiringEntityId ?? '',
+      shiftId,
+      accountId: denormResolved.accountId ?? '',
       workerId: candidateId,
       workDate: input.workDate,
       workState: denormResolved.worksiteState ?? '',

@@ -140,6 +140,23 @@ export interface TimesheetEntryV2 {
   /** Denormalized from JobOrder for entity-scoped queries + the entity
    *  filter on `/timesheets`. */
   hiringEntityId: string;
+  /**
+   * Denormalized from `Assignment.shiftId` (TS.1.P4 Slice 5.5). Lets
+   * the orchestrator filter entries by shift in one query without a
+   * join, which powers the `kind: 'shift'` and per-shift batch scopes.
+   * Optional during the migration window; populated by
+   * `createDraftTimesheetEntryCallable` for new entries and the
+   * one-shot backfill script for existing ones.
+   */
+  shiftId?: string;
+  /**
+   * Denormalized from `JobOrder.recruiterAccountId` (or `accountId` as
+   * fallback), captured at entry creation via the assignment-denorm
+   * trigger. Powers the `kind: 'account'` batch scope plus account-
+   * scoped grid filters. Optional during migration; populated by the
+   * Slice 5.5 backfill script for legacy entries.
+   */
+  accountId?: string;
   workerId: string;
   /** YYYY-MM-DD in the worksite's local time. */
   workDate: string;
@@ -218,11 +235,43 @@ export interface TimesheetEntryV2 {
   updatedAt: Date | FieldValue;
 }
 
-/** Scope of a batch — what slice of entries it represents. Drives the
- *  CSV export filename and the period inputs for `createPayRun`. */
+/**
+ * Scope of a batch — what slice of entries it represents. Drives the
+ * CSV export filename and the period inputs for the Everee submission.
+ *
+ * **Important separation of concerns.** The batch's `scope` is **metadata**
+ * (used for display, CSV filename, audit trail). The actual list of
+ * entries in the batch lives in `entryIds[]`. The orchestrator never
+ * re-runs a scope query at submit time — it operates on the materialized
+ * entryIds. Same orchestrator code handles every scope.
+ *
+ * Expanded in TS.1.P4 Slice 5.5 to cover the full set of natural
+ * groupings a recruiter could pick from the grid:
+ *
+ *   - `shift`         — every entry attached to one shift
+ *   - `jobOrder`      — every entry under one job order (optionally
+ *                       bounded by period)
+ *   - `account`       — every entry under one customer account
+ *                       (optionally bounded by period)
+ *   - `entity_period` — every entry for one hiring entity in a date range
+ *                       (the canonical weekly payroll close)
+ *   - `day`           — every entry for one hiring entity on one date
+ *                       (the daily C1 Events cadence)
+ *   - `worker`        — one worker's entries over a period (emergency
+ *                       same-day pay, dispute resolution)
+ *   - `manual`        — recruiter hand-picked some entries that don't
+ *                       fit a canonical scope. Period is optional
+ *                       metadata.
+ *
+ * The previous `kind: 'custom'` was renamed to `manual` for clarity —
+ * "custom" was misleading because it suggested customization of the
+ * payload, when it really just meant "hand-picked." No production
+ * batches have shipped yet so the rename is safe.
+ */
 export type TimesheetBatchScope =
   | { kind: 'shift'; refId: string }
-  | { kind: 'jobOrder'; refId: string }
+  | { kind: 'jobOrder'; refId: string; periodStart?: string; periodEnd?: string }
+  | { kind: 'account'; refId: string; periodStart?: string; periodEnd?: string }
   | {
       kind: 'entity_period';
       /** Inclusive YYYY-MM-DD. */
@@ -230,7 +279,21 @@ export type TimesheetBatchScope =
       periodEnd: string;
     }
   | {
-      kind: 'custom';
+      kind: 'day';
+      /** YYYY-MM-DD. */
+      date: string;
+      /** Optional — scope-by-entity-on-date. Omit for cross-entity
+       *  daily close (uncommon but supported). */
+      hiringEntityId?: string;
+    }
+  | {
+      kind: 'worker';
+      workerId: string;
+      periodStart: string;
+      periodEnd: string;
+    }
+  | {
+      kind: 'manual';
       periodStart?: string;
       periodEnd?: string;
     };

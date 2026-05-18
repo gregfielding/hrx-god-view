@@ -635,6 +635,9 @@ export interface ResolveMissingResult {
     workerDisplayName: FieldOutcome;
     shiftBreakDefaultMinutes: FieldOutcome;
     weeklySchedule: FieldOutcome;
+    /** TS.1.P4 Slice 5.5 — JO.recruiterAccountId / accountId mirrored
+     *  onto the assignment for fast batch-scope=account queries. */
+    accountId: FieldOutcome;
   };
   /** Whether at least one field was missing on the doc when we entered. */
   hadMissingFields: boolean;
@@ -653,6 +656,7 @@ export async function resolveMissingDenormUpdates(
       workerDisplayName: "skipped",
       shiftBreakDefaultMinutes: "skipped",
       weeklySchedule: "skipped",
+      accountId: "skipped",
     },
     hadMissingFields: false,
   };
@@ -808,7 +812,56 @@ export async function resolveMissingDenormUpdates(
     result.outcomes.weeklySchedule = "already_set";
   }
 
+  // accountId (TS.1.P4 Slice 5.5) — read from JO. `recruiterAccountId`
+  // is the canonical staffing-customer reference; legacy JOs without it
+  // fall back to `accountId`. Skipped (not "unresolvable") when the JO
+  // genuinely has neither — a job order without any account ref is a
+  // data-quality issue separate from the denorm; surfacing it through
+  // the outcome label keeps the ops report honest.
+  if (!pickStringField(assignmentData, ["accountId"])) {
+    result.hadMissingFields = true;
+    try {
+      const v = await resolveAccountId(args0);
+      if (v) {
+        result.updates.accountId = v;
+        result.outcomes.accountId = "stamped";
+      } else {
+        result.outcomes.accountId = "unresolvable";
+      }
+    } catch (e) {
+      result.outcomes.accountId = "unresolvable";
+      logger.warn("[TS.1.P4.5.5] accountId resolver threw", {
+        tenantId,
+        assignmentId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  } else {
+    result.outcomes.accountId = "already_set";
+  }
+
   return result;
+}
+
+/**
+ * Resolve the staffing-customer account id for an assignment. Prefers
+ * `JO.recruiterAccountId` (the cascade-chain canonical field used by
+ * the auto-create chain + AccountWorkforce gates), falls back to
+ * `JO.accountId` for legacy JOs.
+ *
+ * Returns the empty string when neither is set on the JO; the caller
+ * converts to `unresolvable`.
+ */
+async function resolveAccountId(args: ResolverArgs): Promise<string | null> {
+  const {fdb, tenantId, assignmentData, caches} = args;
+  const jobOrderId = pickStringField(assignmentData, ["jobOrderId"]);
+  const jo = await readJoDoc(fdb, tenantId, jobOrderId, caches);
+  if (!jo) return null;
+  const fromRecruiter = pickStringField(jo, ["recruiterAccountId"]);
+  if (fromRecruiter) return fromRecruiter;
+  const fromLegacy = pickStringField(jo, ["accountId"]);
+  if (fromLegacy) return fromLegacy;
+  return null;
 }
 
 /* -------------------------------------------------------------------------
@@ -858,6 +911,7 @@ async function processOneAssignment(args: {
         workerDisplayName: dryAdapt(resolved.outcomes.workerDisplayName),
         shiftBreakDefaultMinutes: dryAdapt(resolved.outcomes.shiftBreakDefaultMinutes),
         weeklySchedule: dryAdapt(resolved.outcomes.weeklySchedule),
+        accountId: dryAdapt(resolved.outcomes.accountId),
       } :
       resolved.outcomes,
     hadMissingFields: resolved.hadMissingFields,
@@ -975,6 +1029,7 @@ export async function runBackfillAssignmentDenormFieldsPage(
               workerDisplayName: "unresolvable" as const,
               shiftBreakDefaultMinutes: "unresolvable" as const,
               weeklySchedule: "unresolvable" as const,
+              accountId: "unresolvable" as const,
             },
             hadMissingFields: true,
             error: e instanceof Error ? e.message : String(e),
