@@ -55,10 +55,25 @@ import { ensureCustomPayCode, type CreatePayCodeBody } from '../evereePayCodes';
 
 const TENANT_ID = 'BCiP2bQ9CgVOCTfV6MhD';
 
+// Everee's `earningType` is a fixed enum. There is no custom MEAL_PREMIUM
+// or REST_PREMIUM enum value — the custom-ness is in `apiKey` (= our
+// `code`) and `displayLabel` (= our `label`). For Piers's "taxed like
+// regular wages, not bonuses" recommendation, REGULAR_HOURLY is the
+// matching enum value.
+//
+// Caveat: pay-stub display behaviour with this earningType is TBD —
+// Everee may aggregate the premium hours with regular hours on the
+// stub rather than surfacing as a discrete line. The displayLabel
+// should still tag the entry for §226.7 substantiation regardless;
+// verify on the first test pay run. If aggregation turns out to defeat
+// §226.7 compliance, the alternative is `earningType: 'BONUS'` (right
+// pay-stub display but wrong tax treatment per Piers — not recommended)
+// or asking Everee to whitelist a custom enum value.
 const CUSTOM_PAY_CODES: CreatePayCodeBody[] = [
   {
     code: 'MEAL_PREMIUM',
     label: 'Meal Break Premium (CA §226.7)',
+    earningType: 'REGULAR_HOURLY',
     category: 'TAXABLE_WAGE',
     active: true,
     externalId: 'MEAL_PREMIUM',
@@ -66,6 +81,7 @@ const CUSTOM_PAY_CODES: CreatePayCodeBody[] = [
   {
     code: 'REST_PREMIUM',
     label: 'Rest Break Premium (CA §226.7)',
+    earningType: 'REGULAR_HOURLY',
     category: 'TAXABLE_WAGE',
     active: true,
     externalId: 'REST_PREMIUM',
