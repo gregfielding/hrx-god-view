@@ -46,6 +46,74 @@ const DEFAULT_SMS_FOOTER: SmsFooterConfig = {
 };
 
 /**
+ * Sentinel string used to "tombstone" a template without deleting the doc.
+ * Operators can set a template's `subject` and/or `body`/`htmlBody` to this
+ * marker (typically alongside `active: false`) to keep the doc around for
+ * audit/history references while guaranteeing it can never render real
+ * content. See the May 2026 "fefvsfv" incident — a stale bulk_message email
+ * template was selected as the only candidate for every shift-posted email
+ * for ~25 days. The neutered doc carries an audit stamp documenting why.
+ */
+export const TEMPLATE_DISABLED_MARKER = '[DISABLED-DO-NOT-USE]';
+
+/**
+ * Validate that a fetched template can safely render content. Returns
+ * `{ usable: false, reason }` when:
+ *   - the doc is somehow null/undefined
+ *   - subject or body equals (or trivially equals) the disabled tombstone
+ *   - email channel is missing both `subject` AND any body content
+ *   - all body fields are empty / whitespace-only
+ *
+ * `active: false` is enforced by the Firestore query (`where('active','==',true)`)
+ * so we don't re-check it here — but if it ever slips through, the guard
+ * still catches it.
+ *
+ * The Firestore-query active filter is the first line of defense; this is
+ * the second. They cover different failure modes: `active:false` requires
+ * an operator to have flipped the bit, the marker catches templates that
+ * were *technically* still `active:true` but had been hand-scrubbed.
+ */
+function isTemplateUsable(
+  template: MessageTemplate | null | undefined,
+): { usable: boolean; reason?: string } {
+  if (!template) return { usable: false, reason: 'null_template' };
+
+  if (template.active === false) {
+    return { usable: false, reason: 'inactive' };
+  }
+
+  const normalize = (s: unknown): string =>
+    typeof s === 'string' ? s.trim() : '';
+  const subject = normalize(template.subject);
+  const body = normalize(template.body);
+  const htmlBody = normalize(template.htmlBody);
+
+  // Tombstone marker in any user-visible field → reject.
+  if (
+    subject === TEMPLATE_DISABLED_MARKER ||
+    body === TEMPLATE_DISABLED_MARKER ||
+    htmlBody === TEMPLATE_DISABLED_MARKER
+  ) {
+    return { usable: false, reason: 'disabled_marker' };
+  }
+
+  // Email-channel templates must have a non-empty subject AND some body
+  // content. Without the subject check, a hand-scrubbed template with an
+  // empty subject would have sent emails with subject "" — Gmail and most
+  // clients render that as the body's first line, which is its own UX bug.
+  if (template.channel === 'email') {
+    if (!subject) return { usable: false, reason: 'email_empty_subject' };
+    if (!body && !htmlBody) {
+      return { usable: false, reason: 'email_empty_body' };
+    }
+  } else {
+    if (!body) return { usable: false, reason: 'empty_body' };
+  }
+
+  return { usable: true };
+}
+
+/**
  * Get SMS footer configuration
  */
 async function getSmsFooterConfig(tenantId: string): Promise<SmsFooterConfig> {
@@ -140,10 +208,20 @@ async function getTemplateExact(
     }
     
     const doc = snapshot.docs[0];
-    return {
+    const template = {
       id: doc.id,
       ...doc.data(),
     } as MessageTemplate;
+
+    const check = isTemplateUsable(template);
+    if (!check.usable) {
+      logger.warn(
+        `Template ${doc.id} matched exact lookup but is unusable (${check.reason}); ` +
+          `skipping. tenantId=${tenantId} messageTypeId=${messageTypeId} channel=${channel} language=${language}`,
+      );
+      return null;
+    }
+    return template;
   } catch (error: any) {
     logger.error(`Error getting exact template:`, error);
     return null;
@@ -159,6 +237,10 @@ async function getTemplateAnyLanguage(
   channel: Channel
 ): Promise<MessageTemplate | null> {
   try {
+    // Scan up to a handful of candidates so the usability guard can skip
+    // tombstoned templates without falling out of the whole fallback chain.
+    // (limit(1) here previously meant a single neutered template at the top
+    // of the version order would silently block the lookup.)
     const snapshot = await db
       .collection('tenants')
       .doc(tenantId)
@@ -167,18 +249,29 @@ async function getTemplateAnyLanguage(
       .where('channel', '==', channel)
       .where('active', '==', true)
       .orderBy('version', 'desc')
-      .limit(1)
+      .limit(5)
       .get();
     
     if (snapshot.empty) {
       return null;
     }
-    
-    const doc = snapshot.docs[0];
-    return {
-      id: doc.id,
-      ...doc.data(),
-    } as MessageTemplate;
+
+    for (const doc of snapshot.docs) {
+      const template = {
+        id: doc.id,
+        ...doc.data(),
+      } as MessageTemplate;
+      const check = isTemplateUsable(template);
+      if (check.usable) {
+        return template;
+      }
+      logger.warn(
+        `Template ${doc.id} matched any-language lookup but is unusable (${check.reason}); ` +
+          `trying next candidate. tenantId=${tenantId} messageTypeId=${messageTypeId} channel=${channel}`,
+      );
+    }
+
+    return null;
   } catch (error: any) {
     logger.error(`Error getting any-language template:`, error);
     return null;
