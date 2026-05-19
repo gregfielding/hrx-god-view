@@ -151,6 +151,7 @@ import RecruiterDashboard from './pages/RecruiterDashboard';
 import Shifts from './pages/Shifts';
 import ShiftsList from './pages/ShiftsList';
 import ShiftsCalendar from './pages/ShiftsCalendar';
+import ShiftsLog from './pages/ShiftsLog';
 import Timesheets from './pages/Timesheets';
 import Workforce from './pages/Workforce';
 import WorkforceEmployeeReadiness from './pages/WorkforceEmployeeReadiness';
@@ -1339,6 +1340,7 @@ function App() {
           <Route index element={<Navigate to="/shifts/list" replace />} />
           <Route path="list" element={<ShiftsList />} />
           <Route path="calendar" element={<ShiftsCalendar />} />
+          <Route path="log" element={<ShiftsLog />} />
           {/* Legacy `/shifts/active` URL — kept as a redirect to the new
               `/shifts/list` view. The Active tab was the original v1 of
               this dashboard before the List/Calendar split. Safe to drop

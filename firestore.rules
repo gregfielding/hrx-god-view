@@ -289,6 +289,44 @@ service cloud.firestore {
       // access — per-entry status (with `everee.payRunId` denormalized)
       // surfaces the same payment info on their own `timesheet_entries`
       // documents.
+      // Indeed Flex Slice 1 — raw inbound email staging. Webhook
+      // (admin SDK) is the only writer; recruiters can read for
+      // audit/debugging but never write.
+      match /external_ingest_events/{eventHash} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          isTenantAdmin(tenantId) ||
+          hasSecurityLevel(tenantId, 5)
+        );
+        allow create, update, delete: if false;
+      }
+
+      // Indeed Flex Slice 2-4 — parsed events queued for recruiter
+      // review. Reads: recruiter band. Writes: server-only EXCEPT
+      // the Slice 4 status flip from `needs_review` to `applied` or
+      // `rejected` (clears the entry from the inbox queue).
+      //
+      // The status flip is narrowly scoped — recruiters can update
+      // status/decidedBy/decidedAt/decisionReason/updatedAt only, and
+      // only on the `needs_review` → `applied`/`rejected` transition.
+      // Everything else (match results, event payload, ingest backlink)
+      // stays server-managed by Slices 2-3 triggers.
+      match /external_shift_requests/{requestId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          isTenantAdmin(tenantId) ||
+          hasSecurityLevel(tenantId, 5)
+        );
+        allow create, delete: if false;
+        allow update: if request.auth != null
+          && (isHRX() || isTenantAdmin(tenantId) || hasSecurityLevel(tenantId, 5))
+          && resource.data.status == 'needs_review'
+          && request.resource.data.status in ['applied', 'rejected']
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status', 'decidedBy', 'decidedAt', 'decisionReason', 'updatedAt'])
+          && request.resource.data.decidedBy == request.auth.uid;
+      }
+
       match /timesheet_batches/{batchId} {
         allow read: if request.auth != null && (
           isHRX() ||

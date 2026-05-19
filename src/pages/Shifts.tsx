@@ -35,6 +35,7 @@ import {
   Add as AddIcon,
   ViewList as ViewListIcon,
   CalendarMonth as CalendarMonthIcon,
+  Inbox as InboxIcon,
 } from '@mui/icons-material';
 
 import PageHeader from '../components/PageHeader';
@@ -55,7 +56,7 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 
-export type ShiftsTab = 'list' | 'calendar';
+export type ShiftsTab = 'list' | 'calendar' | 'log';
 
 /** "all" or one of the canonical ShiftStatus values. */
 export type ShiftsStatusFilter = 'all' | ShiftStatus;
@@ -130,6 +131,7 @@ const shiftsDatePickerSlotProps = {
 const TABS: Array<{ id: ShiftsTab; label: string; icon: React.ReactNode }> = [
   { id: 'list', label: 'List', icon: <ViewListIcon fontSize="small" /> },
   { id: 'calendar', label: 'Calendar', icon: <CalendarMonthIcon fontSize="small" /> },
+  { id: 'log', label: 'Log', icon: <InboxIcon fontSize="small" /> },
 ];
 
 const Shifts: React.FC = () => {
@@ -139,6 +141,7 @@ const Shifts: React.FC = () => {
 
   const getActiveTab = (): ShiftsTab => {
     if (location.pathname.includes('/shifts/calendar')) return 'calendar';
+    if (location.pathname.includes('/shifts/log')) return 'log';
     return 'list';
   };
 
