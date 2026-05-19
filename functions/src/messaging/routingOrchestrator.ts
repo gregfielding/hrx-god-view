@@ -1309,7 +1309,27 @@ async function deliverEmail(
     } as TemplateVariableContext;
     
     // Resolve variables
-    const variables = await resolveTemplateVariables(templateContext);
+    const resolved = await resolveTemplateVariables(templateContext);
+    // `resolveTemplateVariables` returns an *allow-listed* set (firstName,
+    // jobTitle, locationCity, …) and silently drops unknown keys. Legacy
+    // helpers (sendLegacyGroupMessage / sendLegacyShiftMessage /
+    // sendLegacyBroadcastMessage) stash the actual message body under
+    // `_rawMessage` and a per-call subject override under `_subject` — both
+    // get dropped without this merge, which is why every bulk_message
+    // email template rendered empty unless authored to ignore the message
+    // content (root cause of the "fefvsfv" incident). Resolved values win
+    // over caller-supplied ones so userData stays authoritative for known
+    // fields. `rawMessage` is exposed as a cleaner alias for template
+    // authors who shouldn't have to know about the underscore convention.
+    const rawMessageValue =
+      typeof (context.variables as any)?._rawMessage === 'string'
+        ? ((context.variables as any)._rawMessage as string)
+        : '';
+    const variables: Record<string, any> = {
+      ...(context.variables || {}),
+      ...resolved,
+      rawMessage: rawMessageValue,
+    };
     
     // 3. Render template (use HTML body for email when present so variables and links render correctly)
     const renderedBody = await renderTemplate(template, variables, context.tenantId);

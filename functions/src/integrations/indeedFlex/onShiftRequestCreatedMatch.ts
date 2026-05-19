@@ -35,6 +35,7 @@ import { logger } from 'firebase-functions/v2';
 
 import { createFirestoreReader } from './matcher/firestoreReader';
 import { matchShiftRequest } from './matcher/matchShiftRequest';
+import { recommendedActionFor } from './matcher/recommendedAction';
 import type {
   ExternalShiftRequest,
   IndeedFlexEvent,
@@ -93,6 +94,7 @@ export const onShiftRequestCreatedMatch = onDocumentCreated(
         matchConfidence: 'none',
         matchedAt: new Date().toISOString(),
         matchNotes: `match_failed: ${message}`,
+        recommendedAction: recommendedActionFor(data.eventType, 'none'),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
       return;
@@ -101,6 +103,7 @@ export const onShiftRequestCreatedMatch = onDocumentCreated(
     const updates: Record<string, unknown> = {
       matchConfidence: result.matchConfidence,
       matchedAt: new Date().toISOString(),
+      recommendedAction: recommendedActionFor(data.eventType, result.matchConfidence),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
     if (result.matchedShiftId) updates.matchedShiftId = result.matchedShiftId;

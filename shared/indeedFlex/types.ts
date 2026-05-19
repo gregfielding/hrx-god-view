@@ -333,6 +333,23 @@ export type ExternalShiftRequestConfidence = 'high' | 'medium' | 'low';
 export type ExternalShiftRequestParseSource = 'regex' | 'llm' | 'hybrid';
 
 /**
+ * Apply-gate recommendation Slice 3 stamps after matching. Drives
+ * how the Recruiter UI surfaces each entry in the `/shifts/log` tab,
+ * and pre-stages Slice 5's auto-apply rollout:
+ *
+ *   - `auto`         — High-confidence additive event safe enough
+ *                      to auto-apply once Slice 5 ships. Today the UI
+ *                      still requires recruiter approval.
+ *   - `review`       — High-confidence change. Recommended for
+ *                      recruiter approval; Slice 5 won't auto-apply
+ *                      even when activated.
+ *   - `manual-only`  — Low confidence, destructive (cancel/no_show),
+ *                      or no HRX match. Slice 5 will never auto-apply
+ *                      these — recruiter must apply manually.
+ */
+export type ExternalShiftRequestRecommendedAction = 'auto' | 'review' | 'manual-only';
+
+/**
  * One row in `tenants/{tid}/external_shift_requests`. Created by
  * Slice 2, decided by a recruiter, applied by Slices 3-5.
  *
@@ -394,6 +411,13 @@ export interface ExternalShiftRequest {
   /** Free-form note from the matcher — strategy used, why a fallback
    *  fired, candidate count, etc. Visible in the recruiter UI. */
   matchNotes?: string;
+  /**
+   * Slice 3's apply-gate hint, computed from `eventType` +
+   * `matchConfidence`. The /shifts/log tab uses this to color-code
+   * entries (auto = green, review = blue, manual-only = red).
+   * Absent when Slice 3 hasn't run yet for a given request.
+   */
+  recommendedAction?: ExternalShiftRequestRecommendedAction;
 
   status: ExternalShiftRequestStatus;
   /** uid of the recruiter who decided. Empty until decision. */

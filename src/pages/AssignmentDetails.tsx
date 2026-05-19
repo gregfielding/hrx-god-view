@@ -258,6 +258,26 @@ const AssignmentDetails: React.FC = () => {
     return resolvedWorksiteAddress || fromAssignment || '';
   }, [assignment?.worksiteAddress, resolvedWorksiteAddress]);
 
+  /**
+   * True when the signed-in viewer is internal tenant staff (Admin /
+   * Manager / Recruiter, or a recruiter-enabled account) on the
+   * assignment's tenant. We re-derive it from the same helper used to
+   * gate the assignment fetch (`canViewAssignmentAsTenantStaff`) so the
+   * "is this a worker or staff?" answer is consistent across access
+   * control and UI gating. Used to suppress internal-only sections
+   * (no-show risk score, AI-decision rationale, etc.) on the worker app
+   * surface (`/c1/workers/assignments/:id`).
+   */
+  const viewerIsTenantStaff = useMemo(() => {
+    if (!assignment?.tenantId) return false;
+    return canViewAssignmentAsTenantStaff(assignment.tenantId, {
+      activeTenantId: activeTenant?.id,
+      tenantIds,
+      recruiterEnabled,
+      claimsRoles,
+    });
+  }, [assignment?.tenantId, activeTenant?.id, tenantIds, recruiterEnabled, claimsRoles]);
+
   useEffect(() => {
     console.debug('[AssignmentDetails] init', {
       route: '/c1/workers/assignments/:assignmentId',
@@ -1353,7 +1373,8 @@ const AssignmentDetails: React.FC = () => {
           </CardContent>
         </Card>
 
-        {assignment.noShowRiskPredictionV1 &&
+        {viewerIsTenantStaff &&
+        assignment.noShowRiskPredictionV1 &&
         (assignment.noShowRiskPredictionV1.score != null || assignment.noShowRiskPredictionV1.band) ? (
           <Card elevation={0} sx={{ borderRadius: 0 }}>
             <CardContent>
