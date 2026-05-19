@@ -362,12 +362,38 @@ export interface ExternalShiftRequest {
    *  required"). Not displayed in the recruiter UI; ops debugging only. */
   parseNotes?: string;
 
-  /** Matched shift doc id from the HRX side, when matching succeeded
-   *  in the parser. When absent, the recruiter UI surfaces the
-   *  fallback fields (venue + role + date + time) so the recruiter
-   *  can pick the right shift themselves. */
+  /** Matched shift doc id from the HRX side, when Slice 3 matching
+   *  succeeded. When absent, the recruiter UI surfaces the fallback
+   *  fields (venue + role + date + time) so the recruiter can pick
+   *  the right shift themselves. */
   matchedShiftId?: string;
   matchedJobOrderId?: string;
+  /**
+   * Slice 3: for events that target specific workers
+   * (`cancel_booking`, `no_show`), the matched
+   * `tenants/{tid}/assignments/{id}` docs. Order matches the order
+   * of `event.workerNames[]` for `cancel_booking`. Empty when no
+   * worker assignments were resolved.
+   */
+  matchedAssignmentIds?: string[];
+  /**
+   * Slice 3 match confidence:
+   *   - `exact`    — Indeed Job ID matched a JO's `poNumber` (and
+   *                  we found a unique shift under it for shift-level
+   *                  events).
+   *   - `fuzzy`    — venue + role + date + time produced exactly one
+   *                  shift candidate.
+   *   - `multiple` — fallback matched 2+ candidates; recruiter must
+   *                  pick. `matchedShiftId` left undefined.
+   *   - `none`     — no HRX shift could be resolved. Recruiter creates
+   *                  from scratch (new_request) or routes manually.
+   */
+  matchConfidence?: 'exact' | 'fuzzy' | 'multiple' | 'none';
+  /** ISO-8601 timestamp set when Slice 3 ran the match. */
+  matchedAt?: string;
+  /** Free-form note from the matcher — strategy used, why a fallback
+   *  fired, candidate count, etc. Visible in the recruiter UI. */
+  matchNotes?: string;
 
   status: ExternalShiftRequestStatus;
   /** uid of the recruiter who decided. Empty until decision. */

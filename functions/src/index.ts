@@ -12315,6 +12315,13 @@ export { indeedFlexInboundWebhook } from './integrations/indeedFlex/indeedFlexIn
 // `needs_review` and waits for recruiter approval before Slices 3-5
 // actually mutate any shift / JO / assignment.
 export { onIngestEventCreatedParse } from './integrations/indeedFlex/onIngestEventCreatedParse';
+// **Indeed Flex Slice 3** — onCreate trigger that matches a newly-
+// parsed external_shift_request to an HRX shift / JO / assignment.
+// Strategy table: jobId-first via JobOrder.poNumber; venue+date+time
+// fallback when no Job ID; worker-name → assignment match for
+// cancel_booking + no_show. Idempotent — only runs once per request
+// (gated on `matchConfidence` being unset).
+export { onShiftRequestCreatedMatch } from './integrations/indeedFlex/onShiftRequestCreatedMatch';
 
 // Recruiter Number Management
 export {
