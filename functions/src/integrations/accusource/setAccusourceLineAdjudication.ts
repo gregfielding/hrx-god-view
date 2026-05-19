@@ -78,21 +78,20 @@ export const setAccusourceLineAdjudication = onCall(
       );
     }
 
-    // collectionGroup lookup: `backgroundChecks` lives under several parents.
-    const byId = await db
-      .collectionGroup('backgroundChecks')
-      .where('__name__', '==', backgroundCheckId)
-      .limit(1)
-      .get()
-      .catch(() => null);
-
-    let snap: admin.firestore.QueryDocumentSnapshot | admin.firestore.DocumentSnapshot | null = null;
-    if (byId && !byId.empty) {
-      snap = byId.docs[0];
-    } else {
-      const topLevel = await db.collection('backgroundChecks').doc(backgroundCheckId).get();
-      if (topLevel.exists) snap = topLevel;
-    }
+    // Resolve the backgroundCheck doc. In this codebase `backgroundChecks` is
+    // a *top-level* collection (see createBackgroundCheckInternal +
+    // accusourceWebhooks), so the document id alone is enough. An earlier
+    // version of this function tried a `collectionGroup('backgroundChecks')`
+    // + `where('__name__', '==', backgroundCheckId)` fallback, but
+    // Firestore validates that filter synchronously and requires a *full
+    // document path* (even number of segments) — passing a single id throws
+    // before `.get()` is awaited, surfacing as INTERNAL 500 in the client.
+    // The catch was a no-op for that synchronous throw. We do the
+    // top-level lookup directly; if a future migration nests
+    // `backgroundChecks` under a parent we'll add a proper
+    // `parentTenantId`/`parentEntityId` hint to the callable input instead.
+    const topLevel = await db.collection('backgroundChecks').doc(backgroundCheckId).get();
+    const snap: admin.firestore.DocumentSnapshot | null = topLevel.exists ? topLevel : null;
     if (!snap || !snap.exists) {
       throw new HttpsError('not-found', 'Background check not found.');
     }
