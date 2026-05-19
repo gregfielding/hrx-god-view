@@ -12308,6 +12308,13 @@ export { sendGridWebhook } from './messaging/sendGridWebhook';
 // (Slice 2 handles extraction); no writes to shifts / JOs / assignments
 // (deferred to post-validation slices 3-5).
 export { indeedFlexInboundWebhook } from './integrations/indeedFlex/indeedFlexInboundWebhook';
+// **Indeed Flex Slice 2** — onCreate trigger that parses an inbound
+// ingest event (Slice 1's webhook write) into typed
+// `external_shift_requests` docs. Hybrid parser: regex first, gpt-5
+// fallback for missing fields. Every parsed event lands in
+// `needs_review` and waits for recruiter approval before Slices 3-5
+// actually mutate any shift / JO / assignment.
+export { onIngestEventCreatedParse } from './integrations/indeedFlex/onIngestEventCreatedParse';
 
 // Recruiter Number Management
 export {

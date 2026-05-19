@@ -180,4 +180,210 @@ export interface ExternalIngestEvent {
   status: ExternalIngestEventStatus;
   /** Set when `status` starts with `rejected_`. Free-form code. */
   rejectionReason?: string;
+  /**
+   * Slice 2: when parsing succeeds, this lists the
+   * `external_shift_requests` doc ids that this email produced. Empty
+   * array when the email parsed but produced zero events (e.g. an
+   * empty digest). Absent when status is still `received` /
+   * `rejected_*`.
+   */
+  parsedRequestIds?: string[];
+  /** Slice 2: free-form code surfaced when status is `parse_failed`. */
+  parseFailureReason?: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Parsed events (Slice 2) — the discriminated union the parser
+// returns. One inbound email can produce many events (digests).
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Shared fields on every parsed event. The doc that wraps an event
+ * (`ExternalShiftRequest`) carries the ingest + lifecycle metadata;
+ * the event itself only carries the extracted business payload.
+ */
+interface IndeedFlexEventBase {
+  /**
+   * Indeed Flex's Job ID when present in the email body
+   * (`ID: 509668` line on `new_request` and `change_time`). Absent on
+   * `cancel_booking`, `change_headcount`, and `no_show` — Indeed has
+   * acknowledged the gap and plans to fix it upstream. Until then,
+   * downstream matching falls back to venue + role + date + time.
+   */
+  jobId?: string;
+  /** The venue / location name as it appears in the email body. Used
+   *  for fallback matching when `jobId` is absent. */
+  venueName?: string;
+  /** The role / position description as it appears in the email body. */
+  roleName?: string;
+  /** Worksite date (YYYY-MM-DD, venue-local). Used for fallback matching. */
+  workDate?: string;
+  /** Start time of the shift in venue-local HH:mm. */
+  startTime?: string;
+  /** End time of the shift in venue-local HH:mm. */
+  endTime?: string;
+}
+
+export interface IndeedFlexEventNewRequest extends IndeedFlexEventBase {
+  type: 'new_request';
+  jobId: string;
+  /** Headcount requested for this job. */
+  headcount: number;
+  /** Pay rate quoted in the email, in USD per hour. Optional — some
+   *  templates omit it. */
+  payRateUsd?: number;
+}
+
+export interface IndeedFlexEventChangeHeadcount extends IndeedFlexEventBase {
+  type: 'change_headcount';
+  /** Previous headcount before the change. Sometimes omitted. */
+  previousHeadcount?: number;
+  /** New headcount after the change. */
+  newHeadcount: number;
+}
+
+export interface IndeedFlexEventChangeTime extends IndeedFlexEventBase {
+  type: 'change_time';
+  jobId: string;
+  /** Previous shift window (HH:mm). Sometimes omitted. */
+  previousStartTime?: string;
+  previousEndTime?: string;
+  /** New shift window. At least one of start/end is required. */
+  newStartTime?: string;
+  newEndTime?: string;
+}
+
+export interface IndeedFlexEventCancelBooking extends IndeedFlexEventBase {
+  type: 'cancel_booking';
+  /** Worker(s) whose booking was cancelled — sometimes the email lists
+   *  more than one. Each entry is the literal name string from the body. */
+  workerNames: string[];
+  /** Cancellation reason if the email surfaces one. Free-form text. */
+  reason?: string;
+}
+
+export interface IndeedFlexEventNoShow extends IndeedFlexEventBase {
+  type: 'no_show';
+  /** The worker who failed to show up (literal string from the email body). */
+  workerName: string;
+}
+
+export interface IndeedFlexEventDailyDigestExpired extends IndeedFlexEventBase {
+  type: 'daily_digest_expired';
+  /** List of (jobId, venueName) pairs that expired. Both fields are
+   *  optional — Indeed's digest sometimes lists venue alone. */
+  expiredJobs: Array<{ jobId?: string; venueName?: string }>;
+}
+
+/**
+ * Discriminated union of every event shape the parser can return.
+ * Downstream code switches on `event.type` to apply the right handler.
+ */
+export type IndeedFlexEvent =
+  | IndeedFlexEventNewRequest
+  | IndeedFlexEventChangeHeadcount
+  | IndeedFlexEventChangeTime
+  | IndeedFlexEventCancelBooking
+  | IndeedFlexEventNoShow
+  | IndeedFlexEventDailyDigestExpired;
+
+// ─────────────────────────────────────────────────────────────────────
+// external_shift_requests (Slice 2)
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Lifecycle of a row in `tenants/{tid}/external_shift_requests`.
+ *
+ *   needs_review  — Slice 2 parsed the event and wrote it here.
+ *                   Awaiting a recruiter decision in the Recruiter UI.
+ *   approved      — Recruiter approved the proposed action; Slices 3-5
+ *                   pick it up and apply to the shift/JO/assignment.
+ *                   Stays `approved` while the apply path is in-flight.
+ *   applied       — The apply path successfully wrote the change to
+ *                   the target shift. Terminal state.
+ *   rejected      — Recruiter rejected the proposed action. Terminal.
+ *   superseded    — A later inbound event from the same provider
+ *                   replaced this one before review (e.g. two
+ *                   change_headcount emails for the same shift in a
+ *                   short window). The newer doc is the canonical one;
+ *                   this one stays for audit. Terminal.
+ */
+export type ExternalShiftRequestStatus =
+  | 'needs_review'
+  | 'approved'
+  | 'applied'
+  | 'rejected'
+  | 'superseded';
+
+/**
+ * Confidence level the parser assigns to the extracted payload.
+ *
+ *   high    — regex extracted every required field; no LLM needed.
+ *   medium  — regex extracted some fields; LLM filled the rest.
+ *   low     — regex found the event type but no fields; LLM extracted
+ *             everything OR LLM also missed something. Recruiter
+ *             should review carefully.
+ */
+export type ExternalShiftRequestConfidence = 'high' | 'medium' | 'low';
+
+/**
+ * Which layer produced the final payload — useful when comparing
+ * extraction reliability across email formats or debugging a misparse.
+ */
+export type ExternalShiftRequestParseSource = 'regex' | 'llm' | 'hybrid';
+
+/**
+ * One row in `tenants/{tid}/external_shift_requests`. Created by
+ * Slice 2, decided by a recruiter, applied by Slices 3-5.
+ *
+ * Doc ID is `${ingestEventHash}__${eventIndex}` so re-parsing the
+ * same ingest event produces the same doc id (idempotent — if Slice
+ * 2 retries, it overwrites the previous parse rather than creating
+ * a duplicate).
+ */
+export interface ExternalShiftRequest {
+  id: string;
+  tenantId: string;
+  provider: 'indeed_flex';
+  /** FK back to `external_ingest_events/{eventHash}`. */
+  sourceIngestEventHash: string;
+  /** Position of this event in the source email's `events[]`. Zero-based. */
+  eventIndex: number;
+
+  eventType: IndeedFlexEventType;
+  /** The extracted payload. Discriminated by `event.type` which equals
+   *  the top-level `eventType`. */
+  event: IndeedFlexEvent;
+
+  confidence: ExternalShiftRequestConfidence;
+  parseSource: ExternalShiftRequestParseSource;
+  /** Free-form notes the parser attaches when something looked
+   *  unusual (e.g. "regex matched 2 of 4 fields", "LLM JSON repair
+   *  required"). Not displayed in the recruiter UI; ops debugging only. */
+  parseNotes?: string;
+
+  /** Matched shift doc id from the HRX side, when matching succeeded
+   *  in the parser. When absent, the recruiter UI surfaces the
+   *  fallback fields (venue + role + date + time) so the recruiter
+   *  can pick the right shift themselves. */
+  matchedShiftId?: string;
+  matchedJobOrderId?: string;
+
+  status: ExternalShiftRequestStatus;
+  /** uid of the recruiter who decided. Empty until decision. */
+  decidedBy?: string;
+  /** ISO-8601 timestamp at decision time. */
+  decidedAt?: string;
+  /** Free-form note the recruiter left when approving or rejecting. */
+  decisionReason?: string;
+
+  /** ISO-8601 timestamp when Slices 3-5 successfully applied the change. */
+  appliedAt?: string;
+  /** Set by Slices 3-5 when application succeeded; references the
+   *  target HRX shift/assignment that was modified. */
+  appliedTargetId?: string;
+
+  /** ISO-8601 timestamp. Mirrors Firestore createdAt. */
+  createdAt: string;
+  updatedAt: string;
 }
