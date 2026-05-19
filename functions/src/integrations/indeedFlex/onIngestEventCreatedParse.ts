@@ -56,7 +56,10 @@ export const onIngestEventCreatedParse = onDocumentCreated(
     memory: '512MiB',
     timeoutSeconds: 120,
     maxInstances: 4,
-    secrets: ['OPENAI_API_KEY'],
+    // OPENAI_API_KEY comes via process.env (set in functions/.env files)
+    // rather than a `secrets:` binding — Firebase rejects declaring the
+    // same key in both places, and the env-var path is what every other
+    // AI consumer in this codebase (appAi.ts, etc.) already uses.
   },
   async (event) => {
     const { tenantId, eventHash } = event.params as {
