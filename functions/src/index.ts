@@ -390,6 +390,24 @@ export { onTimesheetEntryWriteUpdateAssignmentLatestStatus } from './timesheets/
 // skip-when-equal write-back bounds fan-out — only entries whose
 // breakdown actually changed get written.
 export { onTimesheetEntryWriteRecomputePayBreakdown } from './timesheets/onTimesheetEntryWriteRecomputePayBreakdown';
+// **TS.1 Phase 4 Slice 6b** — Everee batch submission orchestrator.
+// `submitTimesheetBatch` (onCall) validates, pre-flights each entry,
+// flips the batch to `submitting`, and fans out one Cloud Task per
+// entry to `submitTimesheetEntryWorker` (onTaskDispatched). The worker
+// composes via Slice 6a, calls the Slice 2 wrappers, and stamps
+// per-entry status. The last task wins the finalize claim (via a
+// transactional counter decrement) and calls `requestPayablePayout`,
+// rolling the batch up to `success` / `partial` / `failed`.
+//
+// Adjustments use the same shape (callable + task worker) but ride
+// the Everee Payables endpoint exclusively — worked-shifts get locked
+// after pay run, so post-pay corrections always go through Payables.
+export { submitTimesheetBatch } from './payroll/submitTimesheetBatch';
+export { submitTimesheetEntryWorker } from './payroll/submitTimesheetEntryWorker';
+export {
+  submitTimesheetAdjustment,
+  submitTimesheetAdjustmentWorker,
+} from './payroll/submitTimesheetAdjustments';
 // **R.16.1 Phase 5** — Push-to-Active. `previewPushToActiveCallable`
 // is read-only and powers the dialog's affected-JO list. The write
 // twin `pushToActiveJobOrdersCallable` re-runs the preview server-
