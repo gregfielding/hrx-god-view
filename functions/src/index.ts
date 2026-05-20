@@ -581,6 +581,12 @@ export { backfillPrescreenCategoryScores } from './workerAiPrescreen/backfillPre
 export { userGroupHirePassedCandidates } from './recruiter/userGroupHirePassedCandidates';
 export { userGroupEvaluateMembersNextStep } from './recruiter/userGroupEvaluateMembersNextStep';
 export { userGroupInterviewInviteSend } from './recruiter/userGroupInterviewInviteSend';
+// Recruiter-facing bulk invite from a CSV of external job applicants
+// (e.g. Indeed Sponsored Jobs export). UI lives on the user-group
+// detail header (icon next to copy-apply-link). Each candidate gets
+// one SMS with the group's apply URL. Per-recipient idempotency
+// stamp in tenants/{tid}/bulk_invite_log so re-uploads are safe.
+export { userGroupBulkInviteCandidates } from './recruiter/userGroupBulkInviteCandidates';
 export { triggerUserGroupInterviewInvites } from './recruiter/triggerUserGroupInterviewInvites';
 export { userGroupProfileReminderSend } from './recruiter/userGroupProfileReminderSend';
 export { searchRecruiterTableUsers } from './recruiter/searchRecruiterTableUsers';

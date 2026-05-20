@@ -36,6 +36,8 @@ import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
+import BulkInviteFromCsvDialog from '../../../components/recruiter/BulkInviteFromCsvDialog';
 import EmailIcon from '@mui/icons-material/Email';
 import SmsIcon from '@mui/icons-material/Sms';
 import MessageDrawer, { type MessageRecipient } from '../../../components/MessageDrawer';
@@ -103,6 +105,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   const [membersSearch, setMembersSearch] = useState('');
   const [membersShowFavoritesOnly, setMembersShowFavoritesOnly] = useState(false);
   const [addMemberOpen, setAddMemberOpen] = useState(false);
+  const [bulkInviteOpen, setBulkInviteOpen] = useState(false);
   const [membersPage, setMembersPage] = useState(0);
   const [membersRowsPerPage, setMembersRowsPerPage] = useState(20);
   const [membersSortBy, setMembersSortBy] = useState<GroupMembersSortKey>('hrxSignup');
@@ -1042,6 +1045,24 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                 </Tooltip>
               </>
             )}
+            <Tooltip title="Bulk invite from CSV">
+              <IconButton
+                onClick={() => setBulkInviteOpen(true)}
+                sx={{
+                  width: 32,
+                  height: 32,
+                  border: '1px solid',
+                  borderColor: 'rgba(0, 87, 184, 0.5)',
+                  color: '#0057B8',
+                  '&:hover': {
+                    borderColor: '#0057B8',
+                    bgcolor: 'rgba(0, 87, 184, 0.04)',
+                  },
+                }}
+              >
+                <UploadFileIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Tooltip>
             <Tooltip title="Copy application link">
               <IconButton
                 onClick={async () => {
@@ -1309,6 +1330,14 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
           </Button>
         </DialogActions>
       </Dialog>
+
+      <BulkInviteFromCsvDialog
+        open={bulkInviteOpen}
+        onClose={() => setBulkInviteOpen(false)}
+        tenantId={tenantId}
+        groupId={groupId}
+        groupLabel={group?.title || group?.name || undefined}
+      />
 
       <Dialog open={addMemberOpen} onClose={() => setAddMemberOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Add member</DialogTitle>
