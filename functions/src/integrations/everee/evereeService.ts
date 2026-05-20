@@ -18,7 +18,9 @@ import {
 } from './evereeConfig';
 import { evereeRequest } from './evereeHttp';
 import { listPayables } from './evereePayables';
+import { listPayments } from './evereePayments';
 import { mapPayablesToPayHistory } from './payHistory/mapPayHistory';
+import { mapPaymentsToPayHistory } from './payHistory/mapPayments';
 import { resolveExternalWorkerId } from '../../payroll/workerContextResolver';
 import type {
   EvereeGetPayHistoryEnvelope,
@@ -744,21 +746,107 @@ export async function getPayHistory(
     return { items: [], nextCursor: null };
   }
 
+  // Two data sources, merged:
+  //   1. /api/v2/payments  — settled pay runs (this is where C1's
+  //                          historical one-off payments live, ~498
+  //                          records on C1 Select alone). One row per
+  //                          worker × pay period with gross / net /
+  //                          period dates / status / tax breakdown.
+  //                          Filtering by externalWorkerId server-side
+  //                          is silently ignored, so we filter
+  //                          client-side after fetching the page.
+  //   2. /api/v2/payables   — line items (wages / tips / etc.) that
+  //                          compose payments. Mostly empty in prod
+  //                          today; the surface that mostly carries
+  //                          UNPAYABLE_WORKER stuck items + ad-hoc
+  //                          additive earnings. Kept as a fallback /
+  //                          merge so we don't miss pending wages
+  //                          before they roll into a payment record.
+  //
+  // Errors from either source are logged and tolerated — pay history
+  // is read-mostly recruiter convenience; a transient outage
+  // shouldn't break the profile page.
+  // Filter candidate keys for the payments mapper. Linkage data is
+  // mixed: some workers' `externalWorkerId` on Everee is the HRX uid,
+  // others have the Everee UUID (set as a side-effect of older
+  // onboarding paths). Pass both so we hit either shape.
+  const candidateKeys = userId === externalWorkerId
+    ? [userId]
+    : [userId, externalWorkerId];
+
+  const [payments, payables] = await Promise.all([
+    safeMapPayments(config, candidateKeys, tenantId, entityId, userId),
+    safeMapPayables(config, externalWorkerId, tenantId, entityId, userId),
+  ]);
+
+  // Merge by statementId so a payment + its component payable don't
+  // double-count. Payments win on conflict because they carry the
+  // authoritative net + period.
+  const byId = new Map<string, EvereePayHistoryItem>();
+  for (const it of payables.items) byId.set(it.statementId, it);
+  for (const it of payments.items) byId.set(it.statementId, it);
+  const items = [...byId.values()].sort((a, b) => {
+    const aKey = a.payDate ?? a.periodEnd ?? '';
+    const bKey = b.payDate ?? b.periodEnd ?? '';
+    return bKey.localeCompare(aKey);
+  });
+
+  logger.info('[getPayHistory] ok', {
+    tenantId,
+    entityId,
+    userId,
+    paymentItems: payments.items.length,
+    payableItems: payables.items.length,
+    mergedItems: items.length,
+  });
+  return { items, nextCursor: null };
+}
+
+async function safeMapPayments(
+  config: Awaited<ReturnType<typeof getEvereeConfigForEntity>>,
+  candidateKeys: string[],
+  tenantId: string,
+  entityId: string,
+  userId: string,
+): Promise<{ items: EvereePayHistoryItem[]; nextCursor: string | null }> {
+  if (!config) return { items: [], nextCursor: null };
   try {
-    const raw = await listPayables(config, {
-      externalWorkerIds: [externalWorkerId],
-      includeWorkersOnRegularPayCycle: false,
+    // Page size sized to capture the tenant's full active payment set
+    // in one round-trip. C1 Select's ~500 records fit; if a tenant
+    // grows past this, swap to server-side employee-id filter (needs
+    // a worker-id → employee-id lookup we don't have today).
+    const raw = await listPayments(config, {
+      pageSize: 500,
+      includeWorkersOnRegularPayCycle: true,
     });
-    const mapped = mapPayablesToPayHistory(raw);
-    logger.info('[getPayHistory] ok', {
+    return mapPaymentsToPayHistory(raw, candidateKeys);
+  } catch (err) {
+    logger.warn('[getPayHistory] /api/v2/payments fetch failed', {
       tenantId,
       entityId,
       userId,
-      itemCount: mapped.items.length,
+      err: err instanceof Error ? err.message : String(err),
     });
-    return mapped;
+    return { items: [], nextCursor: null };
+  }
+}
+
+async function safeMapPayables(
+  config: Awaited<ReturnType<typeof getEvereeConfigForEntity>>,
+  externalWorkerId: string,
+  tenantId: string,
+  entityId: string,
+  userId: string,
+): Promise<{ items: EvereePayHistoryItem[]; nextCursor: string | null }> {
+  if (!config) return { items: [], nextCursor: null };
+  try {
+    const raw = await listPayables(config, {
+      externalWorkerIds: [externalWorkerId],
+      includeWorkersOnRegularPayCycle: true,
+    });
+    return mapPayablesToPayHistory(raw);
   } catch (err) {
-    logger.warn('[getPayHistory] Everee fetch failed', {
+    logger.warn('[getPayHistory] /api/v2/payables fetch failed', {
       tenantId,
       entityId,
       userId,
