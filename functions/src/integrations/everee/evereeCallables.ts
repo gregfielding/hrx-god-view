@@ -482,6 +482,8 @@ export const evereeGetPayHistory = onCall(async (request) => {
     throw new HttpsError('permission-denied', 'Not allowed to view pay history for this user');
   }
   await requireEvereeEnabledEntity(tenantId, entityId);
+  // Service returns { items, nextCursor } — matches the client's
+  // EvereeGetPayHistoryResult envelope, no transformation needed.
   return getPayHistory(tenantId, entityId, userId);
 });
 

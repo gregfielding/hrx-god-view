@@ -116,6 +116,7 @@ import type { ProfileUpdateReminderControls } from './MessagesTab';
 
 import AddressFormFields, { type AddressFormFieldsHandle } from './AddressTab/AddressFormFields';
 import MapWithMarkers from './AddressTab/MapWithMarkers';
+import RecentPayCard from '../../../components/everee/RecentPayCard';
 type Props = {
   uid: string;
   onTabChange?: (tab: string) => void;
@@ -2125,6 +2126,14 @@ const transportOptions: Array<{
                   activitiesError={overviewActivityLogsError}
                 />
               </Grid>
+              {/* Recruiter-band only: pay history surfacing for "where's
+               *  my last paycheck?" without leaving HRX. Server callable
+               *  still enforces canSelfOrManageEveree as defense-in-depth. */}
+              {viewerSecurityLevel >= 5 && (
+                <Grid item xs={12}>
+                  <RecentPayCard uid={uid} />
+                </Grid>
+              )}
             </>
           )}
 
