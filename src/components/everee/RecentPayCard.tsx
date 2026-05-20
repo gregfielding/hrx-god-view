@@ -61,9 +61,13 @@ const RecentPayCard: React.FC<RecentPayCardProps> = ({ uid, limit = 3 }) => {
     tenantId,
   });
 
-  // Pick first Everee-enabled entity the worker has employment on.
-  const entity = useMemo<ResolvedEntity | null>(() => {
-    if (!byEntityKey) return null;
+  // Collect every Everee-enabled entity the worker has employment on.
+  // Workers with employment across multiple C1 entities (Select / Events
+  // / Workforce) get a chip selector at the top of the card so the
+  // recruiter can switch contexts; single-entity workers see no selector.
+  const entities = useMemo<ResolvedEntity[]>(() => {
+    if (!byEntityKey) return [];
+    const out: ResolvedEntity[] = [];
     for (const key of ['select', 'events', 'workforce'] as const) {
       const overview = byEntityKey[key];
       const settings = overview?.entitySettings;
@@ -71,11 +75,33 @@ const RecentPayCard: React.FC<RecentPayCardProps> = ({ uid, limit = 3 }) => {
       const evereeOn = settings?.evereeEnabled === true;
       const hasEmployment = Boolean(overview?.entityEmployment);
       if (entityId && evereeOn && hasEmployment) {
-        return { entityId, entityLabel: settings?.entityName || overview.headerEntityName || entityId };
+        out.push({
+          entityId,
+          entityLabel: settings?.entityName || overview.headerEntityName || entityId,
+        });
       }
     }
-    return null;
+    return out;
   }, [byEntityKey]);
+
+  // Active entity — starts at the first; recruiter can switch via chips.
+  const [activeEntityId, setActiveEntityId] = useState<string | null>(null);
+  useEffect(() => {
+    if (entities.length === 0) {
+      setActiveEntityId(null);
+      return;
+    }
+    // Default to first; preserve existing selection if it's still valid.
+    setActiveEntityId((prev) => {
+      if (prev && entities.some((e) => e.entityId === prev)) return prev;
+      return entities[0].entityId;
+    });
+  }, [entities]);
+
+  const entity = useMemo(
+    () => entities.find((e) => e.entityId === activeEntityId) ?? null,
+    [entities, activeEntityId],
+  );
 
   const [items, setItems] = useState<EvereePayHistoryItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -128,18 +154,38 @@ const RecentPayCard: React.FC<RecentPayCardProps> = ({ uid, limit = 3 }) => {
         backgroundColor: 'background.paper',
       }}
     >
-      <Stack direction="row" alignItems="center" spacing={1} mb={1.5}>
+      <Stack direction="row" alignItems="center" spacing={1} mb={1.5} flexWrap="wrap">
         <PaymentsIcon fontSize="small" color="action" />
         <Typography variant="subtitle2" fontWeight={700}>
           Recent Pay
         </Typography>
-        {entity && (
+        {/* Single entity → static chip. Multiple → clickable selector.
+         *  Recruiter clicks a chip to switch the pay history context. */}
+        {entities.length === 1 && entity && (
           <Chip
             label={entity.entityLabel}
             size="small"
             variant="outlined"
             sx={{ ml: 0.5 }}
           />
+        )}
+        {entities.length > 1 && (
+          <Stack direction="row" spacing={0.5} sx={{ ml: 0.5 }}>
+            {entities.map((e) => {
+              const isActive = e.entityId === activeEntityId;
+              return (
+                <Chip
+                  key={e.entityId}
+                  label={e.entityLabel}
+                  size="small"
+                  color={isActive ? 'primary' : 'default'}
+                  variant={isActive ? 'filled' : 'outlined'}
+                  onClick={() => setActiveEntityId(e.entityId)}
+                  clickable
+                />
+              );
+            })}
+          </Stack>
         )}
         <Box flex={1} />
         {entity && items.length > 0 && (
