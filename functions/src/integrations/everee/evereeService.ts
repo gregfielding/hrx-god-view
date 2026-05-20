@@ -17,7 +17,14 @@ import {
   sanitizeEvereeEmbedHandlerName,
 } from './evereeConfig';
 import { evereeRequest } from './evereeHttp';
-import type { EvereePayHistoryItem, EvereePayStatementSummary } from './evereeSchemas';
+import { listPayables } from './evereePayables';
+import { mapPayablesToPayHistory } from './payHistory/mapPayHistory';
+import { resolveExternalWorkerId } from '../../payroll/workerContextResolver';
+import type {
+  EvereeGetPayHistoryEnvelope,
+  EvereePayHistoryItem,
+  EvereePayStatementSummary,
+} from './evereeSchemas';
 
 /**
  * Money shape per Everee API spec — `amount` is a decimal string (e.g.
@@ -700,27 +707,95 @@ export async function createOnboardingSession(input: CreateOnboardingSessionInpu
   return { ...parsed, experienceType, experienceVersion, eventHandlerName };
 }
 
-/** Get pay history (list). Stub. */
+/**
+ * Get pay history for a worker as N pay-run summary rows.
+ *
+ * Resolves the worker's `externalWorkerId` via the same denorm-first /
+ * linkage-fallback chain Slice 6b's orchestrator uses, then calls
+ * Everee's `/api/v2/payables` filtered by `externalWorkerIds`. The
+ * pure mapper groups the per-payable line items into payment-level
+ * rows.
+ *
+ * Returns an empty envelope when:
+ *   - The entity isn't Everee-enabled
+ *   - The worker has no Everee linkage on that entity
+ *   - Everee returns zero payables (e.g. the worker hasn't been paid
+ *     yet — common right after C1 first onboards them)
+ *
+ * Logs but does NOT throw on Everee errors — pay history is a
+ * read-mostly recruiter convenience, not a payroll-critical surface.
+ * A transient Everee outage shouldn't break the user-profile page.
+ */
 export async function getPayHistory(
   tenantId: string,
   entityId: string,
-  userId: string
-): Promise<EvereePayHistoryItem[]> {
+  userId: string,
+): Promise<EvereeGetPayHistoryEnvelope> {
   const config = await getEvereeConfigForEntity(tenantId, entityId);
-  if (!config) return [];
-  return [];
+  if (!config) return { items: [], nextCursor: null };
+
+  const externalWorkerId = await resolveExternalWorkerId(
+    tenantId,
+    userId,
+    config.evereeTenantId,
+  );
+  if (!externalWorkerId) {
+    logger.info('[getPayHistory] no Everee linkage', { tenantId, entityId, userId });
+    return { items: [], nextCursor: null };
+  }
+
+  try {
+    const raw = await listPayables(config, {
+      externalWorkerIds: [externalWorkerId],
+      includeWorkersOnRegularPayCycle: false,
+    });
+    const mapped = mapPayablesToPayHistory(raw);
+    logger.info('[getPayHistory] ok', {
+      tenantId,
+      entityId,
+      userId,
+      itemCount: mapped.items.length,
+    });
+    return mapped;
+  } catch (err) {
+    logger.warn('[getPayHistory] Everee fetch failed', {
+      tenantId,
+      entityId,
+      userId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return { items: [], nextCursor: null };
+  }
 }
 
-/** Get single pay statement. Stub. */
+/**
+ * Get a single pay statement (a grouped payment row + its line items).
+ *
+ * Today this re-fetches the worker's full payable list and filters
+ * for the requested `statementId` (= our paymentId group key). When
+ * Everee surfaces a per-payment detail endpoint with deductions /
+ * taxes / PDF link, this is the place to swap to it.
+ */
 export async function getPayStatement(
   tenantId: string,
   entityId: string,
   userId: string,
-  statementId: string
+  statementId: string,
 ): Promise<EvereePayStatementSummary | null> {
-  const config = await getEvereeConfigForEntity(tenantId, entityId);
-  if (!config) return null;
-  return null;
+  if (!statementId) return null;
+  const history = await getPayHistory(tenantId, entityId, userId);
+  const match = history.items.find((it) => it.statementId === statementId);
+  if (!match) return null;
+  // Earnings/deductions/taxes are not surfaced from the payable list
+  // alone — leave them null until the dedicated statement endpoint is
+  // wired. The panel handles null gracefully.
+  return {
+    ...match,
+    pdfUrl: null,
+    earnings: null,
+    deductions: null,
+    taxes: null,
+  };
 }
 
 /** Admin: push shift to Everee. Stub. */
