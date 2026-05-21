@@ -408,6 +408,12 @@ export {
   submitTimesheetAdjustment,
   submitTimesheetAdjustmentWorker,
 } from './payroll/submitTimesheetAdjustments';
+// `createTimesheetBatch` (onCall) — recruiter-UI entry point. Validates
+// entries, creates the timesheet_batches doc with status='pending',
+// returns the batchId. UI then calls submitTimesheetBatch to kick the
+// orchestrator. Two-step split keeps doc creation off the client
+// (Firestore rules block direct client writes to timesheet_batches).
+export { createTimesheetBatch } from './payroll/createTimesheetBatch';
 // **R.16.1 Phase 5** — Push-to-Active. `previewPushToActiveCallable`
 // is read-only and powers the dialog's affected-JO list. The write
 // twin `pushToActiveJobOrdersCallable` re-runs the preview server-

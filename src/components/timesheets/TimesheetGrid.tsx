@@ -518,7 +518,13 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({ filter }) => {
   return (
     <TimesheetEditorProvider>
       <Stack spacing={2}>
-        <TimesheetTotalsHeader rows={rows} loading={loading} />
+        <TimesheetTotalsHeader
+          rows={rows}
+          loading={loading}
+          tenantId={tenantId}
+          filter={filter}
+          onSubmitted={refresh}
+        />
 
         {error ? (
           <Alert severity="error">
