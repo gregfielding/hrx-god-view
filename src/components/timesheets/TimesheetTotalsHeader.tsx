@@ -38,6 +38,8 @@ import {
   displayStatusForRow,
   scheduledHoursForRow,
 } from './timesheetGridResolver';
+import SubmitBatchToEvereeButton from './SubmitBatchToEvereeButton';
+import type { TimesheetFilter } from '../../types/recruiter/timesheet';
 
 export interface TimesheetTotalsHeaderProps {
   rows: TimesheetGridRow[];
@@ -46,6 +48,15 @@ export interface TimesheetTotalsHeaderProps {
    *  in the grid does its own thing. The header just renders zeros
    *  consistently. */
   loading?: boolean;
+  /** TS.1.P4 Slice 6b — passed through to the Submit-to-Everee
+   *  button so it knows the tenant + scope for batch creation. The
+   *  button hides itself when these aren't set or when there are no
+   *  approved entries to submit. */
+  tenantId?: string | null;
+  filter?: TimesheetFilter | null;
+  /** Fires after a successful batch submission so the parent can
+   *  refresh the grid. */
+  onSubmitted?: () => void;
 }
 
 interface TotalsBreakdown {
@@ -141,6 +152,9 @@ const STATUS_ORDER: ChipStatus[] = [
 export const TimesheetTotalsHeader: React.FC<TimesheetTotalsHeaderProps> = ({
   rows,
   loading,
+  tenantId,
+  filter,
+  onSubmitted,
 }) => {
   const totals = useMemo(() => deriveTotals(rows), [rows]);
 
@@ -209,6 +223,18 @@ export const TimesheetTotalsHeader: React.FC<TimesheetTotalsHeaderProps> = ({
               />
             );
           })}
+
+          {/* TS.1.P4 Slice 6b — submit-to-Everee button. Renders only
+           *  when we have tenant + filter context. Internally disabled
+           *  when there are 0 approved rows in the current view. */}
+          {tenantId && filter && (
+            <SubmitBatchToEvereeButton
+              tenantId={tenantId}
+              filter={filter}
+              rows={rows}
+              onSubmitted={onSubmitted}
+            />
+          )}
         </Stack>
       </Stack>
 
