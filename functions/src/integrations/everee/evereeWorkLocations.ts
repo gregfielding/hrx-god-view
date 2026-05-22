@@ -91,21 +91,25 @@ export function buildEvereeWorkLocationDocId(
 }
 
 /**
- * The Everee POST body shape per the docs. `externalId` is what makes
- * the call idempotent on the Everee side — repeated POSTs with the
- * same externalId return the existing location instead of creating a
- * new one.
+ * The Everee POST body shape (verified against the live sandbox on
+ * 2026-05-22). `externalId` is what makes the call idempotent on the
+ * Everee side — repeated POSTs with the same externalId return the
+ * existing location instead of creating a new one.
+ *
+ * **Wire shape gotcha** (discovered via Slice 6b sandbox smoke):
+ * address fields are FLAT at the top level — NOT nested under an
+ * `address` key — and the street-line field is `line1` (not
+ * `addressLine1`, despite what other Everee endpoints accept). Both
+ * shapes were tried; only this one is accepted as of May 2026.
  */
 interface CreateWorkLocationBody {
   externalId: string;
   name: string;
-  address?: {
-    addressLine1?: string;
-    city?: string;
-    state?: string;
-    postalCode?: string;
-    country?: string;
-  };
+  line1?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  country?: string;
 }
 
 /**
@@ -151,19 +155,19 @@ export async function ensureEvereeWorkLocation(
     );
   }
 
-  // Create on miss.
+  // Create on miss. Address fields are FLAT on this endpoint (see
+  // CreateWorkLocationBody docstring above — verified against the
+  // live sandbox).
   const body: CreateWorkLocationBody = {
     externalId: worksite.worksiteId,
     name: worksite.name,
   };
   if (worksite.address) {
-    body.address = {
-      addressLine1: worksite.address.street,
-      city: worksite.address.city,
-      state: worksite.address.state,
-      postalCode: worksite.address.zip,
-      country: 'US',
-    };
+    if (worksite.address.street) body.line1 = worksite.address.street;
+    if (worksite.address.city) body.city = worksite.address.city;
+    if (worksite.address.state) body.state = worksite.address.state;
+    if (worksite.address.zip) body.postalCode = worksite.address.zip;
+    body.country = 'US';
   }
 
   const raw = await evereeRequest<Record<string, unknown>>(
