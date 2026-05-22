@@ -408,6 +408,11 @@ export {
   submitTimesheetAdjustment,
   submitTimesheetAdjustmentWorker,
 } from './payroll/submitTimesheetAdjustments';
+// **TS.1 Phase 4 Slice 7** — reconciler cron. Backstop for webhook
+// drops + orchestrator crashes. Every 15 min, walks stuck batches
+// (status in submitting/partial, untouched >30 min), queries Everee
+// for authoritative state, updates HRX entry+batch state.
+export { reconcileTimesheetBatchesCron } from './payroll/reconcileTimesheetBatches';
 // `createTimesheetBatch` (onCall) — recruiter-UI entry point. Validates
 // entries, creates the timesheet_batches doc with status='pending',
 // returns the batchId. UI then calls submitTimesheetBatch to kick the
