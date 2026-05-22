@@ -38,33 +38,61 @@ import type { WorkerKind } from './composeTimesheetBatchPayloads';
 
 /**
  * Resolve the Everee `externalWorkerId` for a (workerId, evereeTenantId)
- * pair. Mirrors the fallback pattern that PR #8 added to
- * `WorkerPayrollEvereeTenant.tsx` — denorm map first, linkage docs as
- * fallback when the denorm is stale.
+ * pair.
  *
- * Returns the externalWorkerId on success, or `null` if neither the
- * user-doc map nor the linkage doc has an entry. The orchestrator's
- * pre-flight should mark such entries as `error` with a clear reason
- * rather than letting them silently fail the Everee POST.
+ * **What "externalWorkerId" means in Everee's vocabulary.** It's the
+ * partner-system id Everee stores on its worker record — for us, the
+ * HRX uid. Verified against live sandbox `GET /api/v2/workers/<uuid>`
+ * on 2026-05-22: the response carries `externalWorkerId: <HRX uid>`,
+ * NOT the Everee UUID. Subsequent worked-shift POSTs identify the
+ * worker by sending that HRX uid as `externalWorkerId` in the body —
+ * sending the UUID (which was our previous behavior) returned
+ * `404: resource does not exist`.
+ *
+ * **What this function does**: confirm that a linkage exists between
+ * the (workerId, evereeTenantId) pair, then return `workerId` — the
+ * HRX uid — as the value to send to Everee. Returns `null` when no
+ * linkage exists so the orchestrator's pre-flight can mark the entry
+ * as `error` with `missing_everee_worker_id`.
+ *
+ * Existing legacy callers (e.g. PR #8's `WorkerPayrollEvereeTenant.tsx`)
+ * use the same pattern — denorm map first, linkage docs as fallback —
+ * but historically returned the Everee UUID. Returning the HRX uid
+ * here is the correct semantic per Everee's API contract; UUID-based
+ * downstream calls (e.g. `GET /api/v2/workers/{uuid}`) should use
+ * the new `resolveEvereeWorkerUuid` helper below.
  */
 export async function resolveExternalWorkerId(
   tenantId: string,
   workerId: string,
   evereeTenantId: string,
 ): Promise<string | null> {
-  const db = admin.firestore();
+  const exists = await hasEvereeLinkage(tenantId, workerId, evereeTenantId);
+  return exists ? workerId : null;
+}
 
-  // Fast path: user-doc denorm.
+/**
+ * Resolve the Everee-internal `workerId` (UUID/numeric) for a
+ * (workerId, evereeTenantId) pair. This is what downstream `GET
+ * /api/v2/workers/{id}` and reconcile paths key on — distinct from
+ * `externalWorkerId` (which is the HRX uid Everee stores on the
+ * worker record).
+ *
+ * Returns the UUID string from the denorm map or linkage doc, or
+ * `null` when no linkage exists.
+ */
+export async function resolveEvereeWorkerUuid(
+  tenantId: string,
+  workerId: string,
+  evereeTenantId: string,
+): Promise<string | null> {
+  const db = admin.firestore();
   const userSnap = await db.collection('users').doc(workerId).get();
   if (userSnap.exists) {
     const ewMap = (userSnap.data()?.evereeWorkerIds ?? {}) as Record<string, unknown>;
     const fromMap = pickEvereeWorkerIdFromMap(ewMap, evereeTenantId);
     if (fromMap) return fromMap;
   }
-
-  // Fallback: query authoritative linkage docs (workers can read their
-  // own linkage via firestore.rules; admin SDK bypasses the rules
-  // anyway).
   try {
     const q = await db
       .collection('tenants').doc(tenantId)
@@ -94,11 +122,25 @@ export async function resolveExternalWorkerId(
       }
     }
   } catch {
-    // Defensive — linkage query failure shouldn't break the resolver.
-    // Caller treats `null` return as "mark entry as error."
+    // swallow
   }
-
   return null;
+}
+
+/**
+ * True when a linkage exists for this (workerId, evereeTenantId)
+ * pair — either via the user-doc denorm or the authoritative
+ * `everee_workers` linkage doc.
+ *
+ * Used by `resolveExternalWorkerId` to gate the HRX-uid return.
+ */
+async function hasEvereeLinkage(
+  tenantId: string,
+  workerId: string,
+  evereeTenantId: string,
+): Promise<boolean> {
+  const uuid = await resolveEvereeWorkerUuid(tenantId, workerId, evereeTenantId);
+  return uuid !== null;
 }
 
 /**
