@@ -114,6 +114,14 @@ export interface Worker {
    * forcing them to swap pools.
    */
   isCandidate?: boolean;
+  /**
+   * Group-context preference status, set only when the Worker Pool
+   * dropdown has a group selected (`group_<id>`). Source: the group
+   * doc's `memberStatusById` map. Unset (undefined) when not in a
+   * group context — the tile uses presence-of-value as the signal to
+   * render the 4th "group status" chip.
+   */
+  groupPrefStatus?: 'preferred' | 'member' | 'not_preferred';
   isAssignedToShift?: boolean; // In Assignments column (placed or assigned)
   isPlacementOnly?: boolean;   // Placed but not yet offered - no Assignment, no messages
   assignmentStatus?: string;
@@ -755,9 +763,10 @@ function PlacementReadinessChipsRow({
       {/*
        * "Candidate" tag — purely informational chip that appears
        * when the underlying application is flagged
-       * `candidate === true`. Distinct visual treatment (purple) so
-       * it reads as a tag, not a readiness state — green/yellow/red
-       * are reserved for Employee + Job.
+       * `candidate === true`. Royal blue (#0057B8) — the brand blue
+       * already used by the Preferred-status chip elsewhere — so it
+       * reads as a tag, not a readiness state. Green/yellow/red are
+       * reserved for Employee + Job.
        *
        * Now that the "All Applicants" pool includes candidates
        * (2026-05-23 change in PlacementsTab's workforce filter),
@@ -774,12 +783,63 @@ function PlacementReadinessChipsRow({
             label="Candidate"
             sx={{
               ...tileReadinessChipSx,
-              bgcolor: 'rgba(126, 87, 194, 1)', // deep purple 400 — clearly distinct from green/yellow/red.
+              bgcolor: '#0057B8', // brand royal blue — same as Preferred chip in user-group views.
               color: '#fff',
               '& .MuiChip-label': {
                 ...tileReadinessChipSx['& .MuiChip-label'],
                 color: '#fff',
               },
+            }}
+          />
+        </Tooltip>
+      )}
+      {/*
+       * Group preference status — only renders when the Worker Pool
+       * dropdown has a group selected (the workforce loader sets
+       * `worker.groupPrefStatus` only in that case). Reuses the chip
+       * styling from the canonical Group Members table so the colors
+       * stay consistent across pages:
+       *   - Preferred     → royal blue   (#0057B8)
+       *   - Member        → neutral outlined
+       *   - Not Preferred → red          (#D14343)
+       */}
+      {worker.groupPrefStatus && (
+        <Tooltip
+          title={
+            worker.groupPrefStatus === 'preferred'
+              ? 'Preferred in the selected group'
+              : worker.groupPrefStatus === 'not_preferred'
+                ? 'Marked Not Preferred in the selected group'
+                : 'Standard member of the selected group'
+          }
+          {...placementTileTooltipSlotProps}
+        >
+          <Chip
+            size="small"
+            label={
+              worker.groupPrefStatus === 'preferred'
+                ? 'Preferred'
+                : worker.groupPrefStatus === 'not_preferred'
+                  ? 'Not Preferred'
+                  : 'Member'
+            }
+            variant={worker.groupPrefStatus === 'member' ? 'outlined' : 'filled'}
+            sx={{
+              ...tileReadinessChipSx,
+              ...(worker.groupPrefStatus === 'preferred' && {
+                bgcolor: '#0057B8',
+                color: '#fff',
+                '& .MuiChip-label': { ...tileReadinessChipSx['& .MuiChip-label'], color: '#fff' },
+              }),
+              ...(worker.groupPrefStatus === 'not_preferred' && {
+                bgcolor: '#D14343',
+                color: '#fff',
+                '& .MuiChip-label': { ...tileReadinessChipSx['& .MuiChip-label'], color: '#fff' },
+              }),
+              ...(worker.groupPrefStatus === 'member' && {
+                borderColor: 'divider',
+                color: 'text.secondary',
+              }),
             }}
           />
         </Tooltip>

@@ -1451,21 +1451,37 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           const groupId = selectedWorkforce.replace('group_', '');
           const groupRef = doc(db, 'tenants', tenantId, 'userGroups', groupId);
           const groupSnap = await getDoc(groupRef);
-          
+
           if (groupSnap.exists()) {
             const groupData = groupSnap.data();
             const memberIds = groupData.memberIds || groupData.members || [];
-            
+            /**
+             * Per-member preference status keyed by userId. Source: the
+             * group doc's `memberStatusById` map. Surfaced on each
+             * `Worker.groupPrefStatus` so the tile can render the 4th
+             * "group status" chip (Preferred / Member / Not Preferred).
+             * Falls back to `'member'` when the user is in `memberIds`
+             * but missing from `memberStatusById` (legacy data shape
+             * before the per-member status field existed).
+             */
+            const rawStatusMap = (groupData.memberStatusById ?? {}) as Record<string, string>;
+            const normalizePrefStatus = (raw: string | undefined): 'preferred' | 'member' | 'not_preferred' => {
+              if (raw === 'preferred' || raw === 'not_preferred') return raw;
+              return 'member';
+            };
+
             // Load user documents with full profile data
             const userPromises = memberIds.map(async (userId: string): Promise<Worker | null> => {
               const userRef = doc(db, 'users', userId);
               const userSnap = await getDoc(userRef);
-              if (userSnap.exists()) {
-                return extractWorkerData(userSnap.data(), userId);
-              }
-              return null;
+              if (!userSnap.exists()) return null;
+              const base = extractWorkerData(userSnap.data(), userId);
+              return {
+                ...base,
+                groupPrefStatus: normalizePrefStatus(rawStatusMap[userId]),
+              };
             });
-            
+
             const users = await Promise.all(userPromises);
             workforceUsers = users.filter((u): u is Worker => u !== null);
           }
