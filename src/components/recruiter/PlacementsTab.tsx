@@ -1294,16 +1294,49 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           return true;
         };
 
-        if (workforce === 'all_applicants' || workforce === 'shift_applicants') {
+        // **Phase 4** — "Selected Day Applicants" pool: applied to *any*
+        // shift on the JO whose date range overlaps `selectedDay`. Job-
+        // level apps with no shift metadata are excluded (same as the
+        // shift-scoped pools) so the day-scoped list doesn't silently
+        // accumulate generic applications. Multi-day shifts require the
+        // app's day metadata to include `selectedDay`.
+        const selectedDayShiftIds = selectedDay
+          ? shifts
+              .filter((s) => {
+                const start = (s as any).shiftDate as string | undefined;
+                const end = ((s as any).endDate as string | undefined) ?? start;
+                if (!start) return false;
+                return selectedDay >= start && selectedDay <= (end as string);
+              })
+              .map((s) => s.id)
+          : [];
+        const includeApplicantForSelectedDay = (data: any) => {
+          if (!selectedDay) return false;
+          if (selectedDayShiftIds.length === 0) return false;
+          if (!applicationHasShiftMetadata(data)) return false;
+          if (!applicationMatchesAnyShift(data, selectedDayShiftIds)) return false;
+          return applicationMatchesSelectedDay(data, selectedDay);
+        };
+
+        if (
+          workforce === 'all_applicants' ||
+          workforce === 'shift_applicants' ||
+          workforce === 'selected_day_applicants'
+        ) {
           const applicationDocs = applicationDocsBundle;
           const userIds = new Set<string>();
-          const filterByShift = workforce === 'shift_applicants';
           applicationDocs.forEach(({ data }) => {
             if (!data.userId) return;
             if (data.candidate === true) return;
             if (isExcludedFromPlacementsApplicantPool(data.status)) return;
-            if (filterByShift && !includeApplicantByShift(data)) return;
-            if (!filterByShift && !isCareerJob && !includeApplicantForAllDays(data)) return;
+            if (workforce === 'shift_applicants') {
+              if (!includeApplicantByShift(data)) return;
+            } else if (workforce === 'selected_day_applicants') {
+              if (!includeApplicantForSelectedDay(data)) return;
+            } else if (!isCareerJob) {
+              // all_applicants on a Gig — match any shift / any day
+              if (!includeApplicantForAllDays(data)) return;
+            }
             userIds.add(data.userId);
           });
           const userPromises = Array.from(userIds).map(async (userId): Promise<Worker | null> => {
@@ -1830,7 +1863,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   );
   const workforceOptions = useMemo(
     () => getWorkforceOptions(),
-    [jobOrder, userGroups, sessionPickedGroups],
+    // `selectedDay` is in the dep list because `getWorkforceOptions`
+    // conditionally surfaces the "Selected Day Applicants" entry only
+    // when a day filter is active (Phase 4). Without this dep, switching
+    // the day filter wouldn't refresh the dropdown.
+    [jobOrder, userGroups, sessionPickedGroups, selectedDay],
   );
   const safeSelectedShiftId = shifts.some((s) => s.id === selectedShiftId) ? selectedShiftId : '';
   // For Gig, map legacy persisted 'applicants'/'candidates' to shift_applicants/shift_candidates
@@ -1881,8 +1918,16 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   };
 
-  // Build workforce options. For Gigs: All Applicants, All Candidates, Shift Applicants, Shift Candidates, then groups.
-  // For non-Gigs: Applicants, Candidates, then groups.
+  // Build workforce options. For Gigs: All Applicants, All Candidates,
+  // (optional) Selected Day Applicants, Shift Applicants, Shift Candidates,
+  // then groups. For non-Gigs: Applicants, Candidates, then groups.
+  //
+  // **Phase 4** — when a day filter is active on a multi-day Gig we
+  // surface a `selected_day_applicants` option scoped to *all* shifts on
+  // that day (not just the expanded one). That's the missing middle
+  // ground between "All Applicants" (ignore day) and "Shift Applicants"
+  // (one specific shift). Hidden when no day is selected so the dropdown
+  // doesn't accumulate a confusing dead option.
   function getWorkforceOptions() {
     const jobType = String((jobOrder as any)?.jobType || '').toLowerCase();
     const isGig = jobType === 'gig';
@@ -1891,6 +1936,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       ? [
           { value: 'all_applicants', label: 'All Applicants' },
           { value: 'all_candidates', label: 'All Candidates' },
+          // Inserted only when there's a day to be scoped to — see
+          // header doc-comment above for rationale.
+          ...(selectedDay
+            ? [{ value: 'selected_day_applicants', label: 'Selected Day Applicants' }]
+            : []),
           { value: 'shift_applicants', label: 'Shift Applicants' },
           { value: 'shift_candidates', label: 'Shift Candidates' },
         ]
