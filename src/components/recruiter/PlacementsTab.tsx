@@ -2389,6 +2389,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     (selectedShift as any).dateSchedule &&
     (selectedShift as any).endDate &&
     (selectedShift as any).endDate !== (selectedShift as any).shiftDate;
+  /**
+   * Days inside the *currently-expanded* multi-day shift's `dateSchedule`.
+   * Used by `ShiftAssignmentCard` for the per-day staff/overstaff lookup
+   * — that read is meaningful only when one shift spans multiple days,
+   * so it stays scoped to the expanded shift.
+   */
   const dayOptions = useMemo(() => {
     if (!isGigMultiDay || !selectedShift) return [];
     return getDateScheduleEntriesWithHours(
@@ -2397,15 +2403,67 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       (selectedShift as any).endDate,
     );
   }, [isGigMultiDay, selectedShift]);
+
+  /**
+   * **JO-wide day picker (2026-05-23)** — union of every distinct day
+   * touched by any shift on this JO. Single-day shifts contribute their
+   * `shiftDate`; multi-day shifts contribute every day in their
+   * `dateSchedule`. Powers the top "Day" filter so a JO with many
+   * single-day shifts on different dates (e.g. Loader/Crew shifts
+   * spread across April–June) gets a usable day filter — previously
+   * the picker only showed when the expanded shift was itself
+   * multi-day, leaving JOs with many separate single-day shifts with
+   * no day-narrowing UI.
+   *
+   * Returns `{ date, dayLabel }[]` sorted ascending by date.
+   */
+  const joDayOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    const formatLabel = (yyyyMmDd: string) => {
+      const [y, m, d] = yyyyMmDd.split('-').map(Number);
+      if (!y || !m || !d) return yyyyMmDd;
+      const date = new Date(y, m - 1, d);
+      return date.toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      });
+    };
+    shifts.forEach((shift) => {
+      const dateSchedule = (shift as any).dateSchedule;
+      const start = (shift as any).shiftDate as string | undefined;
+      const end = ((shift as any).endDate as string | undefined) ?? start;
+      if (dateSchedule && end && start && end !== start) {
+        // Multi-day shift → enumerate via the existing helper.
+        const entries = getDateScheduleEntriesWithHours(dateSchedule, start, end);
+        entries.forEach((entry) => {
+          if (entry?.date && !seen.has(entry.date)) {
+            seen.set(entry.date, entry.dayLabel ?? formatLabel(entry.date));
+          }
+        });
+      } else if (start) {
+        if (!seen.has(start)) seen.set(start, formatLabel(start));
+      }
+    });
+    return Array.from(seen.entries())
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([date, dayLabel]) => ({ date, dayLabel }));
+  }, [shifts]);
+
   useEffect(() => {
-    if (dayOptions.length === 0) {
+    // Validate `selectedDay` against the JO-wide day set instead of the
+    // per-shift `dayOptions` — the picker UI surface is JO-wide now.
+    // Per-shift narrowing inside a multi-day shift still uses
+    // `dayOptions` downstream (passed into `ShiftAssignmentCard`).
+    if (joDayOptions.length === 0) {
       if (selectedDay) setSelectedDay('');
       return;
     }
     if (!selectedDay) return;
-    const valid = dayOptions.some((d) => d.date === selectedDay);
+    const valid = joDayOptions.some((d) => d.date === selectedDay);
     if (!valid) setSelectedDay('');
-  }, [selectedShiftId, selectedDay, dayOptions]);
+  }, [selectedShiftId, selectedDay, joDayOptions]);
   const showContent = true; // Grid always visible; Workforce selector is in Worker Pool card, Shift selector is in Shift Details card
   // Assignments column: workers placed/assigned for this shift. When a specific day is selected (multi-day gig), show only that day.
   const assignedWorkers = assignmentWorkersList;
@@ -3109,7 +3167,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
               </Select>
             </FormControl>
           )}
-          {isGigMultiDay && dayOptions.length > 0 && (
+          {/* Day picker — JO-wide (2026-05-23). Shows whenever the JO
+              spans more than one calendar day, whether that's from a
+              single multi-day shift OR from many single-day shifts on
+              different dates. The visibleShifts useMemo upstream
+              already filters cards by selectedDay. */}
+          {joDayOptions.length > 1 && !lockedShiftId && (
             <FormControl size="small" sx={{ minWidth: 200 }}>
               <InputLabel>Day</InputLabel>
               <Select
@@ -3117,12 +3180,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                 label="Day"
                 onChange={(e) => setSelectedDay(e.target.value === '__all__' ? '' : e.target.value)}
                 disabled={loading}
-                renderValue={(v) => (v === '__all__' || !v ? 'All days' : dayOptions.find((d) => d.date === v)?.dayLabel ?? v)}
+                renderValue={(v) => (v === '__all__' || !v ? 'All days' : joDayOptions.find((d) => d.date === v)?.dayLabel ?? v)}
               >
                 <MenuItem value="__all__">
                   <em>All days</em>
                 </MenuItem>
-                {dayOptions.map((opt) => (
+                {joDayOptions.map((opt) => (
                   <MenuItem key={opt.date} value={opt.date}>
                     {opt.dayLabel}
                   </MenuItem>
