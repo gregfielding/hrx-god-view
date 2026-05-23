@@ -150,7 +150,17 @@ export async function llmExtract(input: LlmExtractInput): Promise<LlmExtractResu
       { role: 'system', content: system },
       { role: 'user', content: user },
     ],
-    temperature: 0,
+    // **2026-05-23 fix** — gpt-5 (and the o-series reasoning models)
+    // only accept the default `temperature: 1` and reject any other
+    // value with `400 Unsupported value: 'temperature' does not
+    // support 0 with this model`. Result: every LLM fallback call
+    // since the model upgrade was failing silently, leaving the
+    // partial regex event as the final extraction (no venueName /
+    // roleName / payRateUsd) — exactly the symptom Greg flagged on
+    // the Recruiter shift log. Omitting `temperature` entirely
+    // restores deterministic JSON extraction (model's default is fine
+    // because `response_format: json_object` already constrains the
+    // sampling; we don't actually need 0 for this task).
     response_format: { type: 'json_object' },
     max_completion_tokens: 800,
   });
