@@ -5,11 +5,11 @@
  * no Firestore I/O, no useState — so this component renders identically
  * regardless of how the parent groups workers across shifts.
  *
- * Phase 2 will render N of these (one per shift in the current
- * `visibleShifts` set), each receiving its own slice of the assignment
- * + placement maps. Until then the parent renders exactly one card
- * driven by `selectedShiftId`, matching the prior single-shift UI
- * pixel-for-pixel.
+ * Phase 2: parent renders N cards (one per shift in the current
+ * `visibleShifts` set) and drives expand/collapse via `isExpanded` +
+ * `onToggleExpand`. Accordion behavior (only one card expanded at a
+ * time) lives in the parent so the "Shift Applicants" worker-pool
+ * filter has an unambiguous anchor.
  */
 import React from 'react';
 import {
@@ -21,6 +21,7 @@ import {
   Checkbox,
   Chip,
   CircularProgress,
+  Collapse,
   IconButton,
   Paper,
   Stack,
@@ -34,6 +35,8 @@ import {
   Edit as EditIcon,
   Email as EmailIcon,
   Error as ErrorIcon,
+  ExpandLess as ExpandLessIcon,
+  ExpandMore as ExpandMoreIcon,
   GetApp as GetAppIcon,
   Lock as LockedIcon,
   LockOpen as UnlockedIcon,
@@ -157,6 +160,17 @@ export interface ShiftAssignmentCardProps {
 
   // ── Pure helper passthrough ─────────────────────────────────────────
   formatDateDisplay: (raw: string | undefined | null) => string;
+
+  // ── Phase 2: accordion expand/collapse ──────────────────────────────
+  /**
+   * When `undefined`, the card renders its full body always-expanded
+   * (Phase 1 single-shift behavior + drawer mode). When set, the
+   * parent owns the expanded state; the card body collapses behind
+   * a `<Collapse>` and the header gains an expand/collapse chevron.
+   */
+  isExpanded?: boolean;
+  /** Called when the user clicks the header to toggle this card. */
+  onToggleExpand?: () => void;
 }
 
 export function ShiftAssignmentCard({
@@ -207,7 +221,14 @@ export function ShiftAssignmentCard({
   onOpenLicenses,
   onOpenCerts,
   formatDateDisplay,
+  isExpanded,
+  onToggleExpand,
 }: ShiftAssignmentCardProps) {
+  // Accordion mode = parent passed in a defined `isExpanded` (Phase 2).
+  // Legacy single-shift mode (Phase 1 + drawer) leaves it undefined and
+  // we render the body always-expanded with no chevron.
+  const isAccordionMode = isExpanded !== undefined;
+  const showBody = !isAccordionMode || isExpanded;
   return (
     <Card
       elevation={0}
@@ -243,14 +264,44 @@ export function ShiftAssignmentCard({
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', mb: 0.5, overflow: 'visible' }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, flex: '0 1 auto' }}>
-            {selectedShiftId && displayedAssignedWorkers.length > 0 && (
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1,
+              minWidth: 0,
+              flex: '0 1 auto',
+              ...(isAccordionMode && {
+                cursor: 'pointer',
+                '&:hover': { opacity: 0.85 },
+              }),
+            }}
+            onClick={isAccordionMode ? onToggleExpand : undefined}
+          >
+            {isAccordionMode && (
+              <IconButton
+                size="small"
+                aria-label={isExpanded ? 'Collapse' : 'Expand'}
+                sx={{ p: 0.25 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleExpand?.();
+                }}
+              >
+                {isExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+              </IconButton>
+            )}
+            {/* The bulk-select checkbox only makes sense when the card is
+                expanded (it acts on the visible tile list). Hide it when
+                the body is collapsed so it doesn't toggle invisible rows. */}
+            {showBody && selectedShiftId && displayedAssignedWorkers.length > 0 && (
               <Checkbox
                 indeterminate={isSomeAssignmentsSelected && !isAllAssignmentsSelected}
                 checked={isAllAssignmentsSelected}
                 onChange={onSelectAllAssignments}
                 size="small"
                 aria-label="select all assignees"
+                onClick={(e) => e.stopPropagation()}
               />
             )}
             {/* Two-line shift summary replaces the prior "Assignments (#)"
@@ -344,6 +395,7 @@ export function ShiftAssignmentCard({
             </Button>
           </Box>
         </Box>
+        <Collapse in={showBody} timeout="auto" unmountOnExit={false}>
         {isSomeAssignmentsSelected && (
           <Box
             sx={{
@@ -694,6 +746,7 @@ export function ShiftAssignmentCard({
             </Stack>
           )}
         </Box>
+        </Collapse>
       </CardContent>
     </Card>
   );

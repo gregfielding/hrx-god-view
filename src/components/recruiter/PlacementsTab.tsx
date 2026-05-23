@@ -274,6 +274,14 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const [isAssignmentDragOver, setIsAssignmentDragOver] = useState(false);
   const [isWorkerPoolDragOver, setIsWorkerPoolDragOver] = useState(false);
   type AssignmentRow = {
+    /**
+     * Phase 2: each row carries the shiftId it belongs to so the
+     * Assignments column can render multiple cards (one per visible
+     * shift) by grouping rows by `shiftId`. Sourced from
+     * `assignments/{aid}.shiftId` (already denormalized; see Slice 5.5
+     * for the parallel `timesheetEntries.shiftId` denorm).
+     */
+    shiftId: string;
     userId: string;
     assignmentId: string;
     status: string;
@@ -1446,6 +1454,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             };
           }
           rows.push({
+            shiftId: String(data?.shiftId || selectedShiftId),
             userId,
             assignmentId: docSnap.id,
             status,
@@ -2181,6 +2190,68 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   };
 
   const selectedShift = shifts.find(s => s.id === selectedShiftId);
+
+  /**
+   * Phase 2: shifts that should appear as cards in the Assignments
+   * column. Default = all shifts on the JO. When a day filter is set,
+   * narrow to shifts whose date range includes that day (single-day
+   * shifts → equality; multi-day gigs → date in [shiftDate, endDate]).
+   *
+   * Drawer mode (`lockedShiftId`) collapses to the single pinned
+   * shift so the drawer's mental model stays per-shift.
+   */
+  const visibleShifts = useMemo(() => {
+    if (lockedShiftId) {
+      const locked = shifts.find((s) => s.id === lockedShiftId);
+      return locked ? [locked] : [];
+    }
+    if (!selectedDay) return shifts;
+    return shifts.filter((shift) => {
+      const start = (shift as any).shiftDate as string | undefined;
+      const end = ((shift as any).endDate as string | undefined) ?? start;
+      if (!start) return false;
+      // Inclusive bounds; YYYY-MM-DD strings compare lexically.
+      return selectedDay >= start && selectedDay <= (end as string);
+    });
+  }, [shifts, selectedDay, lockedShiftId]);
+
+  /**
+   * Phase 2 accordion: only one card is expanded at a time. The
+   * expanded card is the data anchor — its shiftId is also pushed
+   * into `selectedShiftId` so the existing listeners + Worker Pool
+   * "Shift Applicants" filter keep working. Default = first visible
+   * shift expanded, rest collapsed (matches the "first card expanded"
+   * UX Greg confirmed).
+   */
+  const [expandedShiftId, setExpandedShiftId] = useState<string | null>(null);
+  // Keep `expandedShiftId` valid when `visibleShifts` changes: if the
+  // currently expanded shift drops out (e.g. day filter changes),
+  // fall back to the first visible shift. If none are visible, null.
+  useEffect(() => {
+    if (visibleShifts.length === 0) {
+      if (expandedShiftId !== null) setExpandedShiftId(null);
+      return;
+    }
+    const stillVisible = expandedShiftId && visibleShifts.some((s) => s.id === expandedShiftId);
+    if (!stillVisible) {
+      setExpandedShiftId(visibleShifts[0].id);
+    }
+  }, [visibleShifts, expandedShiftId]);
+  // Keep `selectedShiftId` in sync with the expanded card so the
+  // legacy single-shift data layer (listeners, displayedAssignedWorkers,
+  // Worker Pool's "Shift Applicants" filter) follows the expanded card.
+  // Phase 5 reframes `selectedShiftId` semantically as "the anchor for
+  // shift-scoped Worker Pool filters" — this sync is the first step.
+  useEffect(() => {
+    if (expandedShiftId && expandedShiftId !== selectedShiftId) {
+      setSelectedShiftId(expandedShiftId);
+    }
+  }, [expandedShiftId, selectedShiftId]);
+
+  const handleToggleShiftExpand = useCallback((shiftId: string) => {
+    setExpandedShiftId((prev) => (prev === shiftId ? null : shiftId));
+  }, []);
+
   const jobType = String((jobOrder as any)?.jobType || '').toLowerCase();
   const isGigMultiDay =
     jobType === 'gig' &&
@@ -2954,74 +3025,108 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             keeps the elevated Card look. */}
         {showContent && (
           <Grid container spacing={lockedShiftId ? 1.5 : 3}>
-            {/* Left: Assignments — extracted to <ShiftAssignmentCard>.
-                Phase 2 will render N of these (one per visible shift),
-                each receiving its own slice of the assignment maps. */}
+            {/* Left: Assignments — one <ShiftAssignmentCard> per visible
+                shift (Phase 2). Accordion expansion: only the card whose
+                shiftId matches `expandedShiftId` shows its body + data.
+                Collapsed cards render the header only.
+                `selectedShiftId` follows `expandedShiftId` automatically
+                so the existing single-shift listeners / Worker Pool's
+                "Shift Applicants" filter follow the expanded card. */}
             <Grid item xs={12} lg={6}>
-              <ShiftAssignmentCard
-                lockedShiftId={lockedShiftId}
-                selectedShiftId={selectedShiftId}
-                selectedShift={selectedShift}
-                selectedDay={selectedDay}
-                dayOptions={dayOptions}
-                jobOrder={jobOrder}
-                displayedAssignedWorkers={displayedAssignedWorkers}
-                shiftStartDateStr={shiftStartDateStr}
-                selectedAssignmentWorkerIds={selectedAssignmentWorkerIds}
-                isAllAssignmentsSelected={isAllAssignmentsSelected}
-                isSomeAssignmentsSelected={isSomeAssignmentsSelected}
-                onSelectAllAssignments={handleSelectAllAssignments}
-                onSelectOneAssignment={handleSelectOneAssignment}
-                onClearAssignmentSelection={() => setSelectedAssignmentWorkerIds(new Set())}
-                bulkAcceptBusy={bulkAcceptBusy}
-                bulkCancelBusy={bulkCancelBusy}
-                onBulkAccept={handleBulkAccept}
-                onBulkCancel={handleBulkCancel}
-                onOpenBulkEmailDrawer={() => {
-                  setBulkDrawerChannel('email');
-                  setBulkDrawerOpen(true);
-                }}
-                onOpenBulkSmsDrawer={() => {
-                  setBulkDrawerChannel('sms');
-                  setBulkDrawerOpen(true);
-                }}
-                onExportAssignmentsCsv={handleExportAssignmentsCsv}
-                onPreviewEmail={handlePreviewEmail}
-                isAssignmentDragOver={isAssignmentDragOver}
-                onAssignmentsDragOver={handleAssignmentsDragOver}
-                onAssignmentsDragLeave={() => setIsAssignmentDragOver(false)}
-                onAssignmentsDrop={handleAssignmentsDrop}
-                onWorkerDragStart={handleWorkerDragStart}
-                confirmingPlacementUserId={confirmingPlacementUserId}
-                confirmLoadingAssignmentId={confirmLoadingAssignmentId}
-                resendLoadingAssignmentId={resendLoadingAssignmentId}
-                resendCooldownUntilByAssignmentId={resendCooldownUntilByAssignmentId}
-                onConfirmPlacement={handleConfirmPlacement}
-                onConfirmForWorker={handleConfirmForWorker}
-                onResendOffer={handleResendOffer}
-                onCancelAssignment={(worker) => setCancelAssignmentWorker(worker)}
-                onOpenEditStartDate={handleOpenEditStartDate}
-                hiringEntityName={hiringEntityName}
-                entityEmploymentByUserId={entityEmploymentByUserId}
-                placementEntityEmploymentLoading={placementEntityEmploymentLoading}
-                blockerLabelsForAssignmentId={placementBlockerLabelsForAssignmentId}
-                onboardingMissingLabelsForAssignmentId={placementOnboardingMissingLabelsForAssignmentId}
-                jobReadinessChipDataForAssignmentId={placementJobReadinessChipDataForAssignmentId}
-                onJobReadinessItemClick={handlePlacementJobReadinessItemClick}
-                onOpenResume={(url, fileName) => {
-                  setSelectedResume({ url, fileName });
-                  setResumeModalOpen(true);
-                }}
-                onOpenLicenses={(licenses) => {
-                  setSelectedLicenses(licenses);
-                  setLicenseModalOpen(true);
-                }}
-                onOpenCerts={(certs) => {
-                  setSelectedCerts(certs);
-                  setCertModalOpen(true);
-                }}
-                formatDateDisplay={formatDateDisplay}
-              />
+              <Stack spacing={lockedShiftId ? 1 : 1.5}>
+                {visibleShifts.length === 0 ? (
+                  <Alert severity="info">
+                    {selectedDay
+                      ? 'No shifts on this date.'
+                      : 'No shifts on this job order yet.'}
+                  </Alert>
+                ) : (
+                  visibleShifts.map((shift) => {
+                    const isExpanded = shift.id === expandedShiftId;
+                    // Only the expanded card gets real data — collapsed
+                    // cards just need their `shift` for the header. This
+                    // sidesteps a multi-shift data-layer refactor for
+                    // Phase 2 while still delivering the multi-card UX.
+                    // Phase 2b (deferred) can optimize to per-shift
+                    // listeners when needed for performance.
+                    const cardDisplayedWorkers = isExpanded ? displayedAssignedWorkers : [];
+                    return (
+                      <ShiftAssignmentCard
+                        key={shift.id}
+                        lockedShiftId={lockedShiftId}
+                        selectedShiftId={isExpanded ? selectedShiftId : shift.id}
+                        selectedShift={shift}
+                        selectedDay={selectedDay}
+                        dayOptions={isExpanded ? dayOptions : []}
+                        jobOrder={jobOrder}
+                        displayedAssignedWorkers={cardDisplayedWorkers}
+                        shiftStartDateStr={isExpanded ? shiftStartDateStr : ''}
+                        selectedAssignmentWorkerIds={isExpanded ? selectedAssignmentWorkerIds : new Set()}
+                        isAllAssignmentsSelected={isExpanded ? isAllAssignmentsSelected : false}
+                        isSomeAssignmentsSelected={isExpanded ? isSomeAssignmentsSelected : false}
+                        onSelectAllAssignments={handleSelectAllAssignments}
+                        onSelectOneAssignment={handleSelectOneAssignment}
+                        onClearAssignmentSelection={() => setSelectedAssignmentWorkerIds(new Set())}
+                        bulkAcceptBusy={bulkAcceptBusy}
+                        bulkCancelBusy={bulkCancelBusy}
+                        onBulkAccept={handleBulkAccept}
+                        onBulkCancel={handleBulkCancel}
+                        onOpenBulkEmailDrawer={() => {
+                          setBulkDrawerChannel('email');
+                          setBulkDrawerOpen(true);
+                        }}
+                        onOpenBulkSmsDrawer={() => {
+                          setBulkDrawerChannel('sms');
+                          setBulkDrawerOpen(true);
+                        }}
+                        onExportAssignmentsCsv={handleExportAssignmentsCsv}
+                        onPreviewEmail={handlePreviewEmail}
+                        isAssignmentDragOver={isAssignmentDragOver && isExpanded}
+                        onAssignmentsDragOver={handleAssignmentsDragOver}
+                        onAssignmentsDragLeave={() => setIsAssignmentDragOver(false)}
+                        onAssignmentsDrop={handleAssignmentsDrop}
+                        onWorkerDragStart={handleWorkerDragStart}
+                        confirmingPlacementUserId={confirmingPlacementUserId}
+                        confirmLoadingAssignmentId={confirmLoadingAssignmentId}
+                        resendLoadingAssignmentId={resendLoadingAssignmentId}
+                        resendCooldownUntilByAssignmentId={resendCooldownUntilByAssignmentId}
+                        onConfirmPlacement={handleConfirmPlacement}
+                        onConfirmForWorker={handleConfirmForWorker}
+                        onResendOffer={handleResendOffer}
+                        onCancelAssignment={(worker) => setCancelAssignmentWorker(worker)}
+                        onOpenEditStartDate={handleOpenEditStartDate}
+                        hiringEntityName={hiringEntityName}
+                        entityEmploymentByUserId={entityEmploymentByUserId}
+                        placementEntityEmploymentLoading={placementEntityEmploymentLoading}
+                        blockerLabelsForAssignmentId={placementBlockerLabelsForAssignmentId}
+                        onboardingMissingLabelsForAssignmentId={placementOnboardingMissingLabelsForAssignmentId}
+                        jobReadinessChipDataForAssignmentId={placementJobReadinessChipDataForAssignmentId}
+                        onJobReadinessItemClick={handlePlacementJobReadinessItemClick}
+                        onOpenResume={(url, fileName) => {
+                          setSelectedResume({ url, fileName });
+                          setResumeModalOpen(true);
+                        }}
+                        onOpenLicenses={(licenses) => {
+                          setSelectedLicenses(licenses);
+                          setLicenseModalOpen(true);
+                        }}
+                        onOpenCerts={(certs) => {
+                          setSelectedCerts(certs);
+                          setCertModalOpen(true);
+                        }}
+                        formatDateDisplay={formatDateDisplay}
+                        // Phase 2 accordion props — single-shift drawer
+                        // mode (one visible shift) renders always-expanded
+                        // by passing `undefined` instead.
+                        isExpanded={lockedShiftId ? undefined : isExpanded}
+                        onToggleExpand={
+                          lockedShiftId ? undefined : () => handleToggleShiftExpand(shift.id)
+                        }
+                      />
+                    );
+                  })
+                )}
+              </Stack>
             </Grid>
 
             {/* Right: Worker Pool */}
