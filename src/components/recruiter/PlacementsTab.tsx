@@ -252,6 +252,21 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   };
 
   const persistedFilters = loadPersistedFilters();
+  /**
+   * **Phase 5 semantics** — `selectedShiftId` is the *anchor* for
+   * shift-scoped data: which shift the legacy single-shift assignment/
+   * placement listeners are subscribed to, and which shift the Worker
+   * Pool's "Shift Applicants" filter resolves against. It is no longer
+   * the user-facing "selected" shift — instead it follows whichever
+   * card the recruiter has expanded in the Assignments column (the
+   * `expandedShiftId` sync, below). Direct `setSelectedShiftId` calls
+   * are reserved for plumbing — UI interactions go through
+   * `handleJumpToShift` or `handleToggleShiftExpand`, which drive
+   * `expandedShiftId` and let the sync update this anchor.
+   *
+   * Persistence: still keyed by `shiftId` for backwards compat with
+   * previously-saved JO Detail filter prefs.
+   */
   const [selectedShiftId, setSelectedShiftId] = useState<string>(persistedFilters.shiftId);
   // In drawer mode (`lockedShiftId`) the worker pool is always
   // scoped to a specific shift, so default the Workforce filter to
@@ -2337,6 +2352,36 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     });
   }, []);
 
+  /**
+   * **Phase 5** — top-of-page shift picker becomes a "jump to + expand"
+   * shortcut. Picking a shift in the dropdown expands that card in the
+   * Assignments column (and collapses any other open one). When the
+   * picked shift isn't currently in `visibleShifts` (e.g. the day
+   * filter excludes it), we also clear `selectedDay` so the card
+   * becomes visible — otherwise the user would pick a shift and see
+   * nothing change.
+   *
+   * Picking the empty value (the "Select shift" placeholder) collapses
+   * the accordion and sets `userExplicitlyCollapsedRef.current = true`
+   * so the auto-bump effect doesn't immediately re-expand the first
+   * card.
+   */
+  const handleJumpToShift = useCallback((shiftId: string) => {
+    if (!shiftId) {
+      userExplicitlyCollapsedRef.current = true;
+      setExpandedShiftId(null);
+      return;
+    }
+    // If the picked shift isn't in the current visibleShifts (day
+    // filter excludes it), clear the day filter so the card appears.
+    const inVisible = visibleShifts.some((s) => s.id === shiftId);
+    if (!inVisible && selectedDay) {
+      setSelectedDay('');
+    }
+    userExplicitlyCollapsedRef.current = false;
+    setExpandedShiftId(shiftId);
+  }, [visibleShifts, selectedDay]);
+
   const jobType = String((jobOrder as any)?.jobType || '').toLowerCase();
   const isGigMultiDay =
     jobType === 'gig' &&
@@ -3021,7 +3066,14 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
               <Select
                 value={safeSelectedShiftId}
                 label="Shift"
-                onChange={(e) => setSelectedShiftId(e.target.value)}
+                // Phase 5: the top picker is a "jump to + expand" shortcut,
+                // not a separate selection. `handleJumpToShift` expands
+                // the picked card in the Assignments column (and clears
+                // any day filter that would otherwise hide it). The
+                // existing `expandedShiftId → selectedShiftId` sync keeps
+                // the legacy single-shift data layer + Worker Pool "Shift
+                // Applicants" filter following the picker too.
+                onChange={(e) => handleJumpToShift(e.target.value)}
                 disabled={loading}
                 renderValue={(value) => {
                   if (!value) {
