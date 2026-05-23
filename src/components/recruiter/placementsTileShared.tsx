@@ -105,6 +105,15 @@ export interface Worker {
   placementJobFitScore?: number;
   /** Application- or assignment-level no-show risk for Placements tiles (`aiAutomation.noShowRisk` or assignment `noShowRiskPredictionV1`). */
   placementNoShowRisk?: PlacementApplicationNoShowRisk & { source?: 'application' | 'assignment' };
+  /**
+   * True when any application this worker has for the JO has
+   * `candidate === true`. The "All Applicants" pool now includes
+   * candidates (Greg, 2026-05-23), so the tile uses this flag to
+   * surface a "Candidate" tag chip alongside the readiness chips —
+   * lets the recruiter still distinguish at a glance without
+   * forcing them to swap pools.
+   */
+  isCandidate?: boolean;
   isAssignedToShift?: boolean; // In Assignments column (placed or assigned)
   isPlacementOnly?: boolean;   // Placed but not yet offered - no Assignment, no messages
   assignmentStatus?: string;
@@ -743,6 +752,38 @@ function PlacementReadinessChipsRow({
       <Tooltip title={renderTooltip(job)} {...placementTileTooltipSlotProps}>
         <Chip size="small" label="Job" sx={tileChipStyle(job.state)} />
       </Tooltip>
+      {/*
+       * "Candidate" tag — purely informational chip that appears
+       * when the underlying application is flagged
+       * `candidate === true`. Distinct visual treatment (purple) so
+       * it reads as a tag, not a readiness state — green/yellow/red
+       * are reserved for Employee + Job.
+       *
+       * Now that the "All Applicants" pool includes candidates
+       * (2026-05-23 change in PlacementsTab's workforce filter),
+       * this is how the recruiter still spots which entries are
+       * candidate-marked without having to swap dropdowns.
+       */}
+      {worker.isCandidate && (
+        <Tooltip
+          title="Marked as a candidate on at least one application for this job order"
+          {...placementTileTooltipSlotProps}
+        >
+          <Chip
+            size="small"
+            label="Candidate"
+            sx={{
+              ...tileReadinessChipSx,
+              bgcolor: 'rgba(126, 87, 194, 1)', // deep purple 400 — clearly distinct from green/yellow/red.
+              color: '#fff',
+              '& .MuiChip-label': {
+                ...tileReadinessChipSx['& .MuiChip-label'],
+                color: '#fff',
+              },
+            }}
+          />
+        </Tooltip>
+      )}
     </Box>
   );
 }

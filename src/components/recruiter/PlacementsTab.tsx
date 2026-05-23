@@ -1263,12 +1263,33 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         setPlacementJobFitByUserId(jobFitMap);
         setPlacementAppNoShowRiskByUserId(appNoShowMap);
 
+        /**
+         * Per-userId candidate flag derived from the application docs.
+         * True if ANY application that user has for this JO has
+         * `candidate === true`. Used by `mergePoolWorker` to set
+         * `Worker.isCandidate`, which the tile renders as a purple
+         * "Candidate" chip alongside the readiness chips.
+         *
+         * Why this Set exists: the "All Applicants" pool now includes
+         * candidates (2026-05-23 change — Greg's request was for
+         * Applicants to be the superset). Without this flag the
+         * recruiter would lose the at-a-glance candidate signal
+         * when viewing the unified pool.
+         */
+        const candidateUserIdSet = new Set<string>();
+        applicationDocsBundle.forEach(({ data }) => {
+          if (data?.userId && data?.candidate === true) {
+            candidateUserIdSet.add(String(data.userId));
+          }
+        });
+
         const mergePoolWorker = (base: Worker, uid: string): Worker => {
           const jf = jobFitMap.get(uid);
           const ns = appNoShowMap.get(uid);
           let next: Worker = base;
           if (jf !== undefined) next = { ...next, placementJobFitScore: jf };
           if (ns) next = { ...next, placementNoShowRisk: { ...ns, source: 'application' } };
+          if (candidateUserIdSet.has(uid)) next = { ...next, isCandidate: true };
           return next;
         };
 
@@ -1342,7 +1363,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           const userIds = new Set<string>();
           applicationDocs.forEach(({ data }) => {
             if (!data.userId) return;
-            if (data.candidate === true) return;
+            // **2026-05-23, Greg's request** — Applicants pool is now a
+            // superset that includes candidates. Removed the prior
+            // `if (data.candidate === true) return;` exclusion. The
+            // "Candidate" chip on the tile (see `Worker.isCandidate`)
+            // still surfaces which entries are candidate-marked.
             if (isExcludedFromPlacementsApplicantPool(data.status)) return;
             if (workforce === 'shift_applicants') {
               if (!includeApplicantByShift(data)) return;
@@ -1382,12 +1407,16 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           const users = await Promise.all(userPromises);
           workforceUsers = users.filter((u): u is Worker => u !== null);
         } else if (workforce === 'applicants') {
-          // Non-Gig: applicants for this job order and selected shift
+          // Non-Gig: applicants for this job order and selected shift.
+          // **2026-05-23** — Applicants is now a superset that
+          // includes candidates (see the Gig branch above for the
+          // same change + rationale). The Worker.isCandidate flag
+          // routes through `mergePoolWorker` so the tile still tags
+          // candidate-marked entries.
           const applicationDocs = applicationDocsBundle;
           const userIds = new Set<string>();
           applicationDocs.forEach(({ data }) => {
             if (!data.userId) return;
-            if (data.candidate === true) return;
             if (isExcludedFromPlacementsApplicantPool(data.status)) return;
             if (!includeApplicantByShift(data)) return;
             userIds.add(data.userId);
