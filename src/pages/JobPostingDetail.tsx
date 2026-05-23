@@ -2718,8 +2718,14 @@ const JobPostingDetail: React.FC = () => {
           inside the main content), so a sidebar generic-Apply card is wrong
           for gigs whether or not shifts have loaded. Only career postings
           surface the sidebar quick-apply card.
+
+          **Exception (2026-05-23, bug fix)** — when the worker arrives via
+          the SMS offer-response link (`?assignmentId=X&intent=assignment_response`),
+          they need the Accept/Decline buttons regardless of jobType. The
+          generic-apply suppression was hiding the offer-response UI for
+          Gig postings entirely. Force the sidebar visible in that mode.
         */}
-        {posting.jobType !== 'gig' && (
+        {(posting.jobType !== 'gig' || isAssignmentResponseMode) && (
           <Box
             sx={{
               position: 'sticky',
