@@ -271,7 +271,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const [placementAppNoShowRiskByUserId, setPlacementAppNoShowRiskByUserId] = useState<
     Map<string, PlacementApplicationNoShowRisk>
   >(() => new Map());
-  const [isAssignmentDragOver, setIsAssignmentDragOver] = useState(false);
+  /**
+   * Phase 3: per-card drop tracking. Each <ShiftAssignmentCard> has
+   * its own drop zone (the whole Card root) and reports which shiftId
+   * is currently being hovered. `null` = nothing being dragged over.
+   * Replaces the prior single-boolean `isAssignmentDragOver`.
+   */
+  const [dragOverShiftId, setDragOverShiftId] = useState<string | null>(null);
   const [isWorkerPoolDragOver, setIsWorkerPoolDragOver] = useState(false);
   type AssignmentRow = {
     /**
@@ -2749,43 +2755,72 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     event.dataTransfer.effectAllowed = 'move';
   };
 
-  const handleAssignmentsDragOver = (event: React.DragEvent) => {
+  /**
+   * Phase 3: drop-over fires from each card. The bound `shiftId` is
+   * the card's shift, not necessarily the expanded card. We also
+   * stop propagation to prevent the global pool drop-zone from
+   * stealing the event.
+   */
+  const handleAssignmentsDragOver = (shiftId: string, event: React.DragEvent) => {
     event.preventDefault();
     event.stopPropagation();
     event.dataTransfer.dropEffect = 'move';
-    setIsAssignmentDragOver(true);
+    if (dragOverShiftId !== shiftId) setDragOverShiftId(shiftId);
   };
 
   const [doubleBookConfirmWorker, setDoubleBookConfirmWorker] = useState<Worker | null>(null);
+  // When a double-book confirm popover is open, the user confirms
+  // placement on a specific shift — capture it so `createPlacement`
+  // (called from the confirm button) hits the right shiftId.
+  const [pendingPlacementShiftId, setPendingPlacementShiftId] = useState<string | null>(null);
 
-  const handleAssignmentsDrop = (event: React.DragEvent) => {
+  /**
+   * Phase 3: per-shift drop handler. Bound by each card to its own
+   * shiftId so dropping on card X creates a placement on shift X
+   * (NOT on the legacy `selectedShiftId`). After a successful drop
+   * we also auto-expand that card so the recruiter sees the new
+   * placement land — even if they dropped on a previously-collapsed
+   * card.
+   */
+  const handleAssignmentsDrop = (shiftId: string, event: React.DragEvent) => {
     event.preventDefault();
     event.stopPropagation();
-    setIsAssignmentDragOver(false);
+    setDragOverShiftId(null);
     const workerId = event.dataTransfer.getData(WORKER_DRAG_MIME) || event.dataTransfer.getData('text/plain');
     if (!workerId) return;
     const worker = availableWorkers.find((w) => w.id === workerId);
-    if (worker) {
-      tryPlaceWorker(worker);
+    if (!worker) return;
+    // Auto-expand the dropped-on card so the recruiter sees the
+    // new placement land. Mirrors the "click to expand" UX but
+    // triggered by the drop instead of a header click.
+    if (expandedShiftId !== shiftId) {
+      userExplicitlyCollapsedRef.current = false;
+      setExpandedShiftId(shiftId);
     }
+    tryPlaceWorker(worker, shiftId);
   };
 
-  const tryPlaceWorker = (worker: Worker) => {
+  const tryPlaceWorker = (worker: Worker, targetShiftId: string) => {
     const conflicts = sameDayConflictByUserId.get(worker.id);
     if (conflicts && conflicts.length > 0) {
+      // Stash the target shift so the confirm button creates the
+      // placement on the right shiftId (not selectedShiftId).
+      setPendingPlacementShiftId(targetShiftId);
       setDoubleBookConfirmWorker(worker);
       return;
     }
-    createPlacement(worker);
+    createPlacement(worker, targetShiftId);
   };
 
-  const createPlacement = async (worker: Worker) => {
-    if (!tenantId || !selectedShiftId || !jobOrderId || !user?.uid) {
+  const createPlacement = async (worker: Worker, targetShiftId?: string) => {
+    const shiftId = targetShiftId ?? pendingPlacementShiftId ?? selectedShiftId;
+    if (!tenantId || !shiftId || !jobOrderId || !user?.uid) {
       setError('Missing required information to place worker');
       return;
     }
     setDoubleBookConfirmWorker(null);
-    const placementId = `${selectedShiftId}__${worker.id}`;
+    setPendingPlacementShiftId(null);
+    const placementId = `${shiftId}__${worker.id}`;
     try {
       setError(null);
       pendingPlacementAddsRef.current.add(worker.id);
@@ -2794,7 +2829,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       await setDoc(placementRef, {
         tenantId,
         jobOrderId,
-        shiftId: selectedShiftId,
+        shiftId,
         userId: worker.id,
         createdBy: user.uid,
         createdAt: serverTimestamp(),
@@ -3110,10 +3145,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         }}
                         onExportAssignmentsCsv={handleExportAssignmentsCsv}
                         onPreviewEmail={handlePreviewEmail}
-                        isAssignmentDragOver={isAssignmentDragOver && isExpanded}
-                        onAssignmentsDragOver={handleAssignmentsDragOver}
-                        onAssignmentsDragLeave={() => setIsAssignmentDragOver(false)}
-                        onAssignmentsDrop={handleAssignmentsDrop}
+                        isAssignmentDragOver={dragOverShiftId === shift.id}
+                        onAssignmentsDragOver={(e) => handleAssignmentsDragOver(shift.id, e)}
+                        onAssignmentsDragLeave={() => {
+                          if (dragOverShiftId === shift.id) setDragOverShiftId(null);
+                        }}
+                        onAssignmentsDrop={(e) => handleAssignmentsDrop(shift.id, e)}
                         onWorkerDragStart={handleWorkerDragStart}
                         confirmingPlacementUserId={confirmingPlacementUserId}
                         confirmLoadingAssignmentId={confirmLoadingAssignmentId}
@@ -3733,7 +3770,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             </Typography>
           </DialogContent>
           <DialogActions>
-            <Button onClick={() => setDoubleBookConfirmWorker(null)}>Cancel</Button>
+            <Button onClick={() => {
+              // Clear the stashed target shift too so a future drop
+              // doesn't accidentally re-use this cancelled target.
+              setDoubleBookConfirmWorker(null);
+              setPendingPlacementShiftId(null);
+            }}>Cancel</Button>
             <Button variant="contained" onClick={() => doubleBookConfirmWorker && createPlacement(doubleBookConfirmWorker)}>
               Place anyway
             </Button>

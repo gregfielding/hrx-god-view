@@ -232,6 +232,13 @@ export function ShiftAssignmentCard({
   return (
     <Card
       elevation={0}
+      // Phase 3: per-card drop target. The whole Card root accepts
+      // the drop (not just the body) so collapsed cards are valid
+      // drop targets too — the parent auto-expands the card after a
+      // successful drop to surface the new placement.
+      onDragOver={onAssignmentsDragOver}
+      onDragLeave={onAssignmentsDragLeave}
+      onDrop={onAssignmentsDrop}
       sx={{
         height: '100%',
         // Strip the theme's `MuiCard.styleOverrides` chrome:
@@ -245,6 +252,15 @@ export function ShiftAssignmentCard({
         //   trick — the column cards stay flat
         boxShadow: 'none !important',
         padding: '0 !important',
+        // Phase 3: drag-over visual feedback on the whole card,
+        // visible even when the body is collapsed so the recruiter
+        // can confirm the drop target before releasing.
+        transition: 'border-color 0.15s ease, background-color 0.15s ease',
+        ...(isAssignmentDragOver && {
+          borderColor: 'primary.main !important',
+          backgroundColor: 'rgba(0,87,184,0.04) !important',
+          boxShadow: '0 0 0 1px var(--mui-palette-primary-main) !important',
+        }),
         '&:hover': {
           boxShadow: 'none !important',
           border: 'none !important',
@@ -467,10 +483,11 @@ export function ShiftAssignmentCard({
             </Button>
           </Box>
         )}
+        {/* Phase 3: drop handlers moved up to the Card root so the
+            whole card (header included) is a drop target. This inner
+            Box keeps its visible affordance (dashed border + hint
+            text) but no longer owns the event listeners. */}
         <Box
-          onDragOver={onAssignmentsDragOver}
-          onDragLeave={onAssignmentsDragLeave}
-          onDrop={onAssignmentsDrop}
           sx={{
             borderRadius: 1,
             // Drawer mode keeps the dropzone visually flat:
