@@ -58,6 +58,101 @@ import { useSetTopBarTitle } from '../contexts/TopBarTitleContext';
 
 type MemberStatus = 'preferred' | 'member' | 'not_preferred';
 
+/**
+ * Row shape this page hydrates from `users/{uid}` docs. Kept lightweight
+ * so the helper below has one signature, not three near-duplicates.
+ */
+interface SmartGroupMemberRow {
+  id: string;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
+  avatar?: string;
+  city?: string;
+  state?: string;
+  createdAt?: any;
+  resume?: Record<string, unknown> | null;
+  scoreSummary?: any;
+  recruiterScoreSnapshot?: unknown;
+  recruiterMasterScore?: unknown;
+  riskProfile?: unknown;
+  securityLevel?: string;
+  skills?: string[];
+  comfortableEVerify?: string;
+  workerAttestations?: { eVerifyWillingness?: string };
+  employeeOnboardStatus?: string;
+  contractorOnboardStatus?: string;
+  onboardingType?: string;
+  hasWorkerAiPrescreenInterview?: boolean;
+  interviewStatus?: string;
+  lastInterviewCompletedAt?: any;
+  recruiterOrderInterviewSmsLastSentAt?: any;
+  workHistoryJobTitles?: string[];
+}
+
+/**
+ * Hydrate the table rows for an array of member uids. Chunked-parallel
+ * across `users/{uid}` docs — was strictly sequential, which made the
+ * "Update results" refresh visibly hang for 30s+ on tenants with a few
+ * dozen members. (Greg, 2026-05-23: "the spinner is just spinning and
+ * spinning"; root cause was three identical `for (const uid …) await
+ * getDoc(...)` loops in this file.) 50-doc parallel chunks cut wall
+ * time by ~chunkSize for the same network volume.
+ *
+ * Falls back to `{ id: uid }` placeholder rows when the user doc doesn't
+ * exist, matching the prior behavior.
+ */
+const HYDRATE_CHUNK_SIZE = 50;
+async function hydrateSmartGroupMembers(
+  tenantId: string,
+  uids: string[],
+): Promise<SmartGroupMemberRow[]> {
+  const out: SmartGroupMemberRow[] = [];
+  for (let i = 0; i < uids.length; i += HYDRATE_CHUNK_SIZE) {
+    const slice = uids.slice(i, i + HYDRATE_CHUNK_SIZE);
+    const chunkRows = await Promise.all(
+      slice.map(async (uid): Promise<SmartGroupMemberRow> => {
+        const userSnap = await getDoc(doc(db, 'users', uid));
+        if (!userSnap.exists()) return { id: uid };
+        const d = userSnap.data() as any;
+        const tenantData = d?.tenantIds?.[tenantId] || {};
+        const addr = d?.addressInfo || d?.address || {};
+        return {
+          id: uid,
+          firstName: d?.firstName,
+          lastName: d?.lastName,
+          email: d?.email,
+          phone: d?.phone,
+          avatar: d?.avatar || tenantData?.avatar,
+          city: addr?.city ?? d?.city,
+          state: addr?.state ?? d?.state,
+          createdAt: d?.createdAt,
+          resume: d?.resume ?? null,
+          scoreSummary: d?.scoreSummary,
+          recruiterScoreSnapshot: d?.recruiterScoreSnapshot,
+          recruiterMasterScore: d?.recruiterMasterScore,
+          riskProfile: d?.riskProfile,
+          securityLevel: String(tenantData?.securityLevel ?? d?.securityLevel ?? '0'),
+          skills: Array.isArray(d?.skills) ? d.skills : [],
+          comfortableEVerify: d?.comfortableEVerify,
+          workerAttestations: d?.workerAttestations,
+          employeeOnboardStatus: d?.employeeOnboardStatus,
+          contractorOnboardStatus: d?.contractorOnboardStatus,
+          onboardingType: d?.onboardingType,
+          hasWorkerAiPrescreenInterview: d?.hasWorkerAiPrescreenInterview === true,
+          interviewStatus: d?.interviewStatus,
+          lastInterviewCompletedAt: d?.lastInterviewCompletedAt,
+          recruiterOrderInterviewSmsLastSentAt: d?.recruiterOrderInterviewSmsLastSentAt,
+          workHistoryJobTitles: buildWorkHistoryJobTitles(d),
+        };
+      }),
+    );
+    out.push(...chunkRows);
+  }
+  return out;
+}
+
 export interface SavedSmartGroupDetailPageProps {
   hideHeader?: boolean;
 }
@@ -259,75 +354,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
           setMembersData([]);
           return;
         }
-        const users: Array<{
-          id: string;
-          firstName?: string;
-          lastName?: string;
-          email?: string;
-          phone?: string;
-          avatar?: string;
-          city?: string;
-          state?: string;
-          createdAt?: any;
-          resume?: Record<string, unknown> | null;
-          scoreSummary?: any;
-          recruiterScoreSnapshot?: unknown;
-          recruiterMasterScore?: unknown;
-          riskProfile?: unknown;
-          securityLevel?: string;
-          skills?: string[];
-          comfortableEVerify?: string;
-          workerAttestations?: { eVerifyWillingness?: string };
-          employeeOnboardStatus?: string;
-          contractorOnboardStatus?: string;
-          onboardingType?: string;
-          hasWorkerAiPrescreenInterview?: boolean;
-          interviewStatus?: string;
-          lastInterviewCompletedAt?: any;
-          recruiterOrderInterviewSmsLastSentAt?: any;
-          workHistoryJobTitles?: string[];
-        }> = [];
-        for (const uid of memberIds) {
-          const userSnap = await getDoc(doc(db, 'users', uid));
-          if (!mounted) return;
-          if (userSnap.exists()) {
-            const d = userSnap.data() as any;
-            const tenantData = d?.tenantIds?.[tenantId] || {};
-            const addr = d?.addressInfo || d?.address || {};
-            users.push({
-              id: uid,
-              firstName: d?.firstName,
-              lastName: d?.lastName,
-              email: d?.email,
-              phone: d?.phone,
-              avatar: d?.avatar || tenantData?.avatar,
-              city: addr?.city ?? d?.city,
-              state: addr?.state ?? d?.state,
-              createdAt: d?.createdAt,
-              resume: d?.resume ?? null,
-              scoreSummary: d?.scoreSummary,
-              recruiterScoreSnapshot: d?.recruiterScoreSnapshot,
-              recruiterMasterScore: d?.recruiterMasterScore,
-              riskProfile: d?.riskProfile,
-              securityLevel: String(tenantData?.securityLevel ?? d?.securityLevel ?? '0'),
-              skills: Array.isArray(d?.skills) ? d.skills : [],
-              comfortableEVerify: d?.comfortableEVerify,
-              workerAttestations: d?.workerAttestations,
-              employeeOnboardStatus: d?.employeeOnboardStatus,
-              contractorOnboardStatus: d?.contractorOnboardStatus,
-              onboardingType: d?.onboardingType,
-              hasWorkerAiPrescreenInterview: d?.hasWorkerAiPrescreenInterview === true,
-              interviewStatus: d?.interviewStatus,
-              lastInterviewCompletedAt: d?.lastInterviewCompletedAt,
-              recruiterOrderInterviewSmsLastSentAt: d?.recruiterOrderInterviewSmsLastSentAt,
-              // Precompute the table's job-titles column so we don't have
-              // to ship the entire `workExperience` array down per row.
-              workHistoryJobTitles: buildWorkHistoryJobTitles(d),
-            });
-          } else {
-            users.push({ id: uid });
-          }
-        }
+        const users = await hydrateSmartGroupMembers(tenantId, memberIds);
+        if (!mounted) return;
         setMembersData(users);
       } catch (err: any) {
         if (mounted) setError(err?.message ?? 'Failed to load group');
@@ -409,74 +437,9 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
       });
 
       setGroup({ ...group, name: trimmedName, filters, memberIds: newMemberIds, memberStatusById });
-      
-      // Reload members data
-      const users: Array<{
-        id: string;
-        firstName?: string;
-        lastName?: string;
-        email?: string;
-        phone?: string;
-        avatar?: string;
-        city?: string;
-        state?: string;
-        createdAt?: any;
-        resume?: Record<string, unknown> | null;
-        scoreSummary?: any;
-        recruiterScoreSnapshot?: unknown;
-        recruiterMasterScore?: unknown;
-        riskProfile?: unknown;
-        securityLevel?: string;
-        skills?: string[];
-        comfortableEVerify?: string;
-        workerAttestations?: { eVerifyWillingness?: string };
-        employeeOnboardStatus?: string;
-        contractorOnboardStatus?: string;
-        onboardingType?: string;
-        hasWorkerAiPrescreenInterview?: boolean;
-        interviewStatus?: string;
-        lastInterviewCompletedAt?: any;
-        recruiterOrderInterviewSmsLastSentAt?: any;
-        workHistoryJobTitles?: string[];
-      }> = [];
-      for (const uid of newMemberIds) {
-        const userSnap = await getDoc(doc(db, 'users', uid));
-        if (userSnap.exists()) {
-          const d = userSnap.data() as any;
-          const tenantData = d?.tenantIds?.[tenantId] || {};
-          const addr = d?.addressInfo || d?.address || {};
-          users.push({
-            id: uid,
-            firstName: d?.firstName,
-            lastName: d?.lastName,
-            email: d?.email,
-            phone: d?.phone,
-            avatar: d?.avatar || tenantData?.avatar,
-            city: addr?.city ?? d?.city,
-            state: addr?.state ?? d?.state,
-            createdAt: d?.createdAt,
-            resume: d?.resume ?? null,
-            scoreSummary: d?.scoreSummary,
-            recruiterScoreSnapshot: d?.recruiterScoreSnapshot,
-            recruiterMasterScore: d?.recruiterMasterScore,
-            riskProfile: d?.riskProfile,
-            securityLevel: String(tenantData?.securityLevel ?? d?.securityLevel ?? '0'),
-            skills: Array.isArray(d?.skills) ? d.skills : [],
-            comfortableEVerify: d?.comfortableEVerify,
-            workerAttestations: d?.workerAttestations,
-            employeeOnboardStatus: d?.employeeOnboardStatus,
-            contractorOnboardStatus: d?.contractorOnboardStatus,
-            onboardingType: d?.onboardingType,
-            hasWorkerAiPrescreenInterview: d?.hasWorkerAiPrescreenInterview === true,
-            interviewStatus: d?.interviewStatus,
-            lastInterviewCompletedAt: d?.lastInterviewCompletedAt,
-            recruiterOrderInterviewSmsLastSentAt: d?.recruiterOrderInterviewSmsLastSentAt,
-            workHistoryJobTitles: buildWorkHistoryJobTitles(d),
-          });
-        } else {
-          users.push({ id: uid });
-        }
-      }
+
+      // Reload members data — chunked-parallel hydration.
+      const users = await hydrateSmartGroupMembers(tenantId, newMemberIds);
       setMembersData(users);
       setEditDialogOpen(false);
     } catch (err: any) {
@@ -575,72 +538,7 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
         newMemberIds.every((id) => membersData.some((m) => m.id === id));
       if (allRowsHydrated) return;
 
-      const users: Array<{
-        id: string;
-        firstName?: string;
-        lastName?: string;
-        email?: string;
-        phone?: string;
-        avatar?: string;
-        city?: string;
-        state?: string;
-        createdAt?: any;
-        resume?: Record<string, unknown> | null;
-        scoreSummary?: any;
-        recruiterScoreSnapshot?: unknown;
-        recruiterMasterScore?: unknown;
-        riskProfile?: unknown;
-        securityLevel?: string;
-        skills?: string[];
-        comfortableEVerify?: string;
-        workerAttestations?: { eVerifyWillingness?: string };
-        employeeOnboardStatus?: string;
-        contractorOnboardStatus?: string;
-        onboardingType?: string;
-        hasWorkerAiPrescreenInterview?: boolean;
-        interviewStatus?: string;
-        lastInterviewCompletedAt?: any;
-        recruiterOrderInterviewSmsLastSentAt?: any;
-        workHistoryJobTitles?: string[];
-      }> = [];
-      for (const uid of newMemberIds) {
-        const userSnap = await getDoc(doc(db, 'users', uid));
-        if (userSnap.exists()) {
-          const d = userSnap.data() as any;
-          const tenantData = d?.tenantIds?.[tenantId] || {};
-          const addr = d?.addressInfo || d?.address || {};
-          users.push({
-            id: uid,
-            firstName: d?.firstName,
-            lastName: d?.lastName,
-            email: d?.email,
-            phone: d?.phone,
-            avatar: d?.avatar || tenantData?.avatar,
-            city: addr?.city ?? d?.city,
-            state: addr?.state ?? d?.state,
-            createdAt: d?.createdAt,
-            resume: d?.resume ?? null,
-            scoreSummary: d?.scoreSummary,
-            recruiterScoreSnapshot: d?.recruiterScoreSnapshot,
-            recruiterMasterScore: d?.recruiterMasterScore,
-            riskProfile: d?.riskProfile,
-            securityLevel: String(tenantData?.securityLevel ?? d?.securityLevel ?? '0'),
-            skills: Array.isArray(d?.skills) ? d.skills : [],
-            comfortableEVerify: d?.comfortableEVerify,
-            workerAttestations: d?.workerAttestations,
-            employeeOnboardStatus: d?.employeeOnboardStatus,
-            contractorOnboardStatus: d?.contractorOnboardStatus,
-            onboardingType: d?.onboardingType,
-            hasWorkerAiPrescreenInterview: d?.hasWorkerAiPrescreenInterview === true,
-            interviewStatus: d?.interviewStatus,
-            lastInterviewCompletedAt: d?.lastInterviewCompletedAt,
-            recruiterOrderInterviewSmsLastSentAt: d?.recruiterOrderInterviewSmsLastSentAt,
-            workHistoryJobTitles: buildWorkHistoryJobTitles(d),
-          });
-        } else {
-          users.push({ id: uid });
-        }
-      }
+      const users = await hydrateSmartGroupMembers(tenantId, newMemberIds);
       setMembersData(users);
     } catch (err: any) {
       const errorMessage = err?.message ?? 'Failed to update results';

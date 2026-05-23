@@ -102,6 +102,46 @@ function normalizeFilters(filters: SavedSmartGroupFilters): SavedSmartGroupFilte
   return next;
 }
 
+/**
+ * Hydrate `users/{uid}` docs for an array of uids in parallel, in
+ * chunks of `chunkSize` so the Firestore client SDK's connection
+ * pool doesn't get hammered. Per-user predicate decides inclusion.
+ *
+ * **Why this exists (2026-05-23, Greg's report — Richmond, VA smart
+ * group spins forever)**: the previous implementation iterated
+ * applicants with `for (const uid of userIds) { await getDoc(...) }`
+ * — strictly sequential, ~100ms per RTT, so a tenant with 1,000+
+ * applicants legitimately spent 2–3 minutes on a single "Update
+ * results" click. The auto-refresh on mount hit the same path,
+ * making the spinner appear to spin forever. Chunked parallel
+ * fetches cut wall time by ~chunkSize, putting us at 2–4 seconds
+ * for the same 1,000-applicant scan.
+ */
+async function filterUsersChunked<T>(
+  userIds: Iterable<string>,
+  chunkSize: number,
+  predicate: (uid: string, data: any) => T | null,
+): Promise<T[]> {
+  const ids = Array.from(userIds);
+  const out: T[] = [];
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const slice = ids.slice(i, i + chunkSize);
+    const settled = await Promise.all(
+      slice.map(async (uid) => {
+        const snap = await getDoc(doc(db, 'users', uid));
+        if (!snap.exists()) return null;
+        return predicate(uid, snap.data());
+      }),
+    );
+    for (const v of settled) {
+      if (v !== null && v !== undefined) out.push(v);
+    }
+  }
+  return out;
+}
+
+const USER_HYDRATE_CHUNK_SIZE = 50;
+
 export async function runSavedSmartGroupSearch(
   tenantId: string,
   rawFilters: SavedSmartGroupFilters,
@@ -128,14 +168,9 @@ export async function runSavedSmartGroupSearch(
   const selectedCertifications = filters.selectedCertifications ?? [];
 
   if (filters.filterMode === 'application') {
-    const memberIds: string[] = [];
-    for (const uid of userIds) {
-      const userRef = doc(db, 'users', uid);
-      const userSnap = await getDoc(userRef);
-      if (!userSnap.exists()) continue;
-      const userData = userSnap.data();
+    const memberIds = await filterUsersChunked(userIds, USER_HYDRATE_CHUNK_SIZE, (uid, userData) => {
       const smartGroupData = userData?.smartGroupData as SmartGroupData | undefined;
-      if (!smartGroupData?.byApplication || Object.keys(smartGroupData.byApplication).length === 0) continue;
+      if (!smartGroupData?.byApplication || Object.keys(smartGroupData.byApplication).length === 0) return null;
       for (const entry of Object.values(smartGroupData.byApplication) as SmartGroupEntry[]) {
         const matchMetro = !filters.metroFilter
           ? true
@@ -154,11 +189,11 @@ export async function runSavedSmartGroupSearch(
         const matchSkills = selectedSkills.length === 0 || selectedSkills.some((s) => entrySkills.includes(s));
         const matchCerts = selectedCertifications.length === 0 || selectedCertifications.some((c) => entryCerts.includes(c));
         if (matchMetro && matchArea && matchCity && matchCategory && matchSkills && matchCerts) {
-          memberIds.push(uid);
-          break;
+          return uid;
         }
       }
-    }
+      return null;
+    });
     return [...new Set(memberIds)];
   }
 
@@ -177,37 +212,29 @@ export async function runSavedSmartGroupSearch(
       throw new Error(`Radius search for "${address}" is missing saved coordinates. Re-open the Smart Group, select the address from Google suggestions again, and save it.`);
     }
     const radiusMiles = filters.radiusMiles ?? 10;
-    for (const uid of userIds) {
-      const userRef = doc(db, 'users', uid);
-      const userSnap = await getDoc(userRef);
-      if (!userSnap.exists()) continue;
-      const userData = userSnap.data();
+    const radiusMatches = await filterUsersChunked(userIds, USER_HYDRATE_CHUNK_SIZE, (uid, userData) => {
       const residence = getUserResidenceData(userData);
       const lat = residence.lat;
       const lng = residence.lng;
-      if (typeof lat !== 'number' || typeof lng !== 'number') continue;
-      if (calculateDistance(geo.lat, geo.lng, lat, lng) > radiusMiles) continue;
+      if (typeof lat !== 'number' || typeof lng !== 'number') return null;
+      if (calculateDistance(geo.lat, geo.lng, lat, lng) > radiusMiles) return null;
       const skills = Array.isArray(userData?.skills) ? userData.skills : [];
       const certifications = Array.isArray(userData?.certifications)
         ? (userData.certifications as any[]).map((c: any) => (typeof c === 'string' ? c : c?.name || '')).filter(Boolean)
         : [];
       const matchSkills = selectedSkills.length === 0 || selectedSkills.some((s) => skills.includes(s));
       const matchCerts = selectedCertifications.length === 0 || selectedCertifications.some((c) => certifications.includes(c));
-      if (matchSkills && matchCerts) memberIds.push(uid);
-    }
-    return memberIds;
+      return matchSkills && matchCerts ? uid : null;
+    });
+    return radiusMatches;
   }
 
   // Residence area
-  for (const uid of userIds) {
-    const userRef = doc(db, 'users', uid);
-    const userSnap = await getDoc(userRef);
-    if (!userSnap.exists()) continue;
-    const userData = userSnap.data();
+  const areaMatches = await filterUsersChunked(userIds, USER_HYDRATE_CHUNK_SIZE, (uid, userData) => {
     const residence = getUserResidenceData(userData);
     const city = String(residence.city || '').trim();
     const state = String(residence.state || '').trim();
-    if (!city && !state) continue;
+    if (!city && !state) return null;
     const hierarchy = getGeoHierarchy({ city, state });
     const matchMetro = !filters.metroFilter
       ? true
@@ -224,7 +251,7 @@ export async function runSavedSmartGroupSearch(
       : [];
     const matchSkills = selectedSkills.length === 0 || selectedSkills.some((s) => skills.includes(s));
     const matchCerts = selectedCertifications.length === 0 || selectedCertifications.some((c) => certifications.includes(c));
-    if (matchMetro && matchArea && matchCity && matchSkills && matchCerts) memberIds.push(uid);
-  }
-  return memberIds;
+    return matchMetro && matchArea && matchCity && matchSkills && matchCerts ? uid : null;
+  });
+  return areaMatches;
 }
