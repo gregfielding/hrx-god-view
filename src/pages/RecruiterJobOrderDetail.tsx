@@ -4747,21 +4747,25 @@ const RecruiterJobOrderDetail: React.FC = () => {
                 )}
               </Box>
 
-              {/* Indeed/Craigslist + quick actions — same band as Account Details icon row */}
+              {/*
+               * Header icon row + meta chips on one band. Greg, 2026-05-22.
+               *
+               * Order: [account · note · task · log-activity] | [indeed · craigslist]
+               *        · [#JO · type · status]
+               *
+               * Why this order: the action icons are recruiter-driven (most
+               * used), syndication icons are reference (open the public
+               * posting), and the meta chips are passive identifiers. Reading
+               * left-to-right matches frequency-of-use, and pulling the
+               * chips up here reclaims a whole row of vertical space above
+               * the tabs.
+               */}
               <Stack
                 direction="row"
                 alignItems="center"
                 flexWrap="wrap"
                 sx={{ gap: 0.5, mt: 0.35, width: '100%' }}
               >
-                {jobOrderHeaderSyndicationVisible ? (
-                  <JobBoardSyndicationIconRow
-                    indeedUrl={connectedPostSyndicationUrls.indeedUrl}
-                    craigslistUrl={connectedPostSyndicationUrls.craigslistUrl}
-                    inline
-                    sx={{ mt: 0, flexShrink: 0 }}
-                  />
-                ) : null}
                 <Stack
                   direction="row"
                   spacing={0.5}
@@ -4769,12 +4773,6 @@ const RecruiterJobOrderDetail: React.FC = () => {
                     alignItems: 'center',
                     flexWrap: 'wrap',
                     gap: 0.5,
-                    pl: jobOrderHeaderSyndicationVisible ? { xs: 0, sm: 0.75 } : 0,
-                    ml: jobOrderHeaderSyndicationVisible ? { xs: 0, sm: 0.25 } : 0,
-                    borderLeft: jobOrderHeaderSyndicationVisible
-                      ? { xs: 'none', sm: '1px solid' }
-                      : 'none',
-                    borderColor: 'divider',
                   }}
                 >
                   {linkedRecruiterAccountId ? (
@@ -4817,42 +4815,64 @@ const RecruiterJobOrderDetail: React.FC = () => {
                     <CheckCircleIcon />
                   </RecordHeaderActionIcon>
                 </Stack>
+                {jobOrderHeaderSyndicationVisible ? (
+                  <JobBoardSyndicationIconRow
+                    indeedUrl={connectedPostSyndicationUrls.indeedUrl}
+                    craigslistUrl={connectedPostSyndicationUrls.craigslistUrl}
+                    inline
+                    sx={{
+                      mt: 0,
+                      flexShrink: 0,
+                      pl: { xs: 0, sm: 0.75 },
+                      ml: { xs: 0, sm: 0.25 },
+                      borderLeft: { xs: 'none', sm: '1px solid' },
+                      borderColor: 'divider',
+                    }}
+                  />
+                ) : null}
+                <Box
+                  sx={{
+                    display: 'inline-flex',
+                    flexWrap: 'wrap',
+                    gap: 0.5,
+                    alignItems: 'center',
+                    pl: { xs: 0, sm: 0.75 },
+                    ml: { xs: 0, sm: 0.25 },
+                    borderLeft: { xs: 'none', sm: '1px solid' },
+                    borderColor: 'divider',
+                  }}
+                >
+                  <Chip
+                    label={`#${jobOrder.jobOrderNumber || ''}`}
+                    size="small"
+                    sx={jobOrderMetaChipSx}
+                  />
+                  {jobTypeLabel && (
+                    <Chip label={jobTypeLabel} size="small" sx={jobOrderMetaChipSx} />
+                  )}
+                  {jobOrder.status && (
+                    <Chip
+                      label={jobOrder.status}
+                      size="small"
+                      sx={{
+                        ...jobOrderMetaChipSx,
+                        bgcolor: 'rgba(0, 180, 90, 0.12)',
+                        color: '#0A7A3B',
+                        fontWeight: 700,
+                        '& .MuiChip-label': { fontWeight: 700 },
+                      }}
+                    />
+                  )}
+                </Box>
               </Stack>
 
-              <Stack spacing={1.15} sx={{ width: '100%', alignItems: 'flex-start', mt: 0.35 }}>
-                <Box sx={{ width: '100%' }}>
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      gap: 0.5,
-                      alignItems: 'center',
-                      mt: 0.35,
-                    }}
-                  >
-                    <Chip
-                      label={`#${jobOrder.jobOrderNumber || ''}`}
-                      size="small"
-                      sx={jobOrderMetaChipSx}
-                    />
-                    {jobTypeLabel && (
-                      <Chip label={jobTypeLabel} size="small" sx={jobOrderMetaChipSx} />
-                    )}
-                    {jobOrder.status && (
-                      <Chip
-                        label={jobOrder.status}
-                        size="small"
-                        sx={{
-                          ...jobOrderMetaChipSx,
-                          bgcolor: 'rgba(0, 180, 90, 0.12)',
-                          color: '#0A7A3B',
-                          fontWeight: 700,
-                          '& .MuiChip-label': { fontWeight: 700 },
-                        }}
-                      />
-                    )}
-                  </Box>
-                </Box>
+              {/* spacing reduced from 1.15 -> 0.25 once the chips moved up
+                  to the icon row band. With chips gone, the Stack's two
+                  remaining visible children (worksite address + order-setup
+                  checklist) were sitting too far apart; 0.25 tightens the
+                  gap to match Greg's "no extra padding above order setup"
+                  ask without losing the breath between blocks. */}
+              <Stack spacing={0.25} sx={{ width: '100%', alignItems: 'flex-start' }}>
 
                 <Box sx={{ width: '100%' }}>
                   {(jobOrderWorksiteHeaderTitle || jobOrderWorksiteHeaderAddress) && (
