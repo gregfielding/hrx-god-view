@@ -2222,18 +2222,36 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
    * "Shift Applicants" filter keep working. Default = first visible
    * shift expanded, rest collapsed (matches the "first card expanded"
    * UX Greg confirmed).
+   *
+   * The `userExplicitlyCollapsedRef` distinguishes "initial null
+   * before visibleShifts loads" from "user clicked to collapse the
+   * expanded card". Without this guard the auto-bump effect below
+   * would treat any null as "no current expand → set to first" and
+   * collapsing the only-open card would snap right back open.
    */
   const [expandedShiftId, setExpandedShiftId] = useState<string | null>(null);
-  // Keep `expandedShiftId` valid when `visibleShifts` changes: if the
-  // currently expanded shift drops out (e.g. day filter changes),
-  // fall back to the first visible shift. If none are visible, null.
+  const userExplicitlyCollapsedRef = useRef(false);
+  // Auto-bump cases:
+  //   1) No visible shifts → null
+  //   2) Initial load with visibleShifts populated and user hasn't
+  //      interacted yet → expand the first one
+  //   3) Currently expanded shift dropped out of visibleShifts (e.g.
+  //      day filter changed) → fall back to the first visible shift
+  // Explicit user-collapse (null AND userExplicitlyCollapsedRef true)
+  // is respected and left alone.
   useEffect(() => {
     if (visibleShifts.length === 0) {
       if (expandedShiftId !== null) setExpandedShiftId(null);
       return;
     }
-    const stillVisible = expandedShiftId && visibleShifts.some((s) => s.id === expandedShiftId);
-    if (!stillVisible) {
+    if (expandedShiftId !== null) {
+      const stillVisible = visibleShifts.some((s) => s.id === expandedShiftId);
+      if (!stillVisible) setExpandedShiftId(visibleShifts[0].id);
+      return;
+    }
+    // expandedShiftId === null. Only auto-expand on initial load;
+    // after the user has explicitly collapsed, leave it null.
+    if (!userExplicitlyCollapsedRef.current) {
       setExpandedShiftId(visibleShifts[0].id);
     }
   }, [visibleShifts, expandedShiftId]);
@@ -2249,7 +2267,18 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   }, [expandedShiftId, selectedShiftId]);
 
   const handleToggleShiftExpand = useCallback((shiftId: string) => {
-    setExpandedShiftId((prev) => (prev === shiftId ? null : shiftId));
+    setExpandedShiftId((prev) => {
+      if (prev === shiftId) {
+        // User collapsed the open card — mark so the auto-bump effect
+        // doesn't immediately re-expand it.
+        userExplicitlyCollapsedRef.current = true;
+        return null;
+      }
+      // Expanding a different card clears the collapsed-flag — auto-
+      // bump is welcome again if this new shift later drops out.
+      userExplicitlyCollapsedRef.current = false;
+      return shiftId;
+    });
   }, []);
 
   const jobType = String((jobOrder as any)?.jobType || '').toLowerCase();
