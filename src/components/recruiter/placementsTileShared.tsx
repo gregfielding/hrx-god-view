@@ -55,7 +55,6 @@ import type {
   JobReadinessChipContributor,
   JobReadinessChipData,
 } from '../../shared/jobReadinessChip/types';
-import { JobReadinessChip } from './readiness';
 import WorkforceInactiveElsewhereChip from './WorkforceInactiveElsewhereChip';
 
 /** Dark tooltip body: force white copy for contrast (Placements tiles). */
@@ -154,11 +153,10 @@ function resolvePlacementTransport(raw: string | null | undefined): { Icon: SvgI
   return PLACEMENT_TRANSPORT_BY_VALUE[key] ?? { Icon: TransportOtherIcon, label: key };
 }
 
-const placementQualChipSx = { height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } };
-
 /**
- * Action chips/buttons in the bottom row (status, Confirm, Assign) sized to match
- * `placementQualChipSx` so the bottom row reads as one consistent chip strip.
+ * Action chips/buttons in the bottom row (status, Confirm, Assign).
+ * Sized to match `tileReadinessChipSx` (further below) so the bottom
+ * row reads as one consistent chip strip.
  */
 export const placementActionChipSx = {
   height: 20,
@@ -477,12 +475,221 @@ function PlacementTileReadinessIconRow({
   );
 }
 
-function PlacementQualificationChipsRow({
+/**
+ * The two-chip readiness model that every tile renders, regardless of
+ * column. Greg's spec (2026-05-22):
+ *   - Employee chip = "is this worker onboarded with the hiring entity
+ *     for this job order?"
+ *   - Job chip = "do they meet the JO's requirements — certs,
+ *     background, drug, etc?"
+ * Three states each. Hover tooltip lists the specific issues.
+ *
+ * State mapping
+ *   green  → all clear / Active / matched
+ *   yellow → in progress / pending / not yet on file / no record
+ *   red    → terminated / failed / hard blocker
+ *
+ * Color drift is the danger here — every signal we ingest has to map
+ * cleanly into one of these three states. The compute helpers below
+ * make those mappings explicit so they're easy to audit.
+ */
+type TileReadinessState = 'green' | 'yellow' | 'red' | 'loading';
+
+interface TileReadinessChipModel {
+  state: TileReadinessState;
+  summary: string;
+  /** Bulleted detail lines for the tooltip body (excludes the summary). */
+  issues: string[];
+}
+
+const tileReadinessChipSx = {
+  height: 20,
+  fontWeight: 600,
+  '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem', letterSpacing: 0.2 },
+} as const;
+
+function tileChipStyle(state: TileReadinessState) {
+  // Solid color fills so the state reads instantly across both columns.
+  // Loading uses outlined neutral so the chip doesn't shout while data
+  // is still flowing in.
+  if (state === 'green') {
+    return {
+      ...tileReadinessChipSx,
+      bgcolor: 'success.main',
+      color: '#fff',
+      '& .MuiChip-label': { ...tileReadinessChipSx['& .MuiChip-label'], color: '#fff' },
+    };
+  }
+  if (state === 'yellow') {
+    return {
+      ...tileReadinessChipSx,
+      bgcolor: 'warning.main',
+      color: '#fff',
+      '& .MuiChip-label': { ...tileReadinessChipSx['& .MuiChip-label'], color: '#fff' },
+    };
+  }
+  if (state === 'red') {
+    return {
+      ...tileReadinessChipSx,
+      bgcolor: 'error.main',
+      color: '#fff',
+      '& .MuiChip-label': { ...tileReadinessChipSx['& .MuiChip-label'], color: '#fff' },
+    };
+  }
+  return { ...tileReadinessChipSx, bgcolor: 'grey.200', color: 'text.secondary' };
+}
+
+/**
+ * Employee chip = onboarded status with the hiring entity.
+ *
+ * State mapping:
+ *   - employmentChip.color === 'success' AND no missing items AND no
+ *     blockers → green
+ *   - employmentChip.color === 'error' (terminated / inactive) → red
+ *   - everything else (Onboarding, no record, pending, blocked) →
+ *     yellow
+ *
+ * Tooltip lines: the canonical employment tooltip first, then the
+ * onboarding-missing list, then any non-cert / non-screening blocker
+ * labels (those go in the Job chip instead).
+ */
+function computeEmployeeChip(
+  employmentLoading: boolean,
+  employmentChip: PlacementEmploymentChipModel,
+  onboardingMissingLabels: string[],
+  blockerLabels: string[],
+): TileReadinessChipModel {
+  if (employmentLoading) {
+    return { state: 'loading', summary: 'Checking entity employment…', issues: [] };
+  }
+  const baseSummary = employmentChip.tooltip || employmentChip.label;
+  const issues: string[] = [];
+  onboardingMissingLabels.forEach((l) => issues.push(l));
+
+  // Route generic blockers that aren't cert / screening-shaped into the
+  // Employee bucket. Keep the heuristic narrow so we don't accidentally
+  // surface a cert blocker here too.
+  blockerLabels.forEach((l) => {
+    const lower = l.toLowerCase();
+    const isCertOrScreening =
+      lower.includes('cert') ||
+      lower.includes('license') ||
+      lower.includes('background') ||
+      lower.includes('drug');
+    if (!isCertOrScreening && !issues.includes(l)) issues.push(l);
+  });
+
+  let state: TileReadinessState;
+  if (employmentChip.color === 'success' && issues.length === 0) {
+    state = 'green';
+  } else if (employmentChip.color === 'error') {
+    state = 'red';
+  } else {
+    state = 'yellow';
+  }
+
+  return { state, summary: baseSummary, issues };
+}
+
+/**
+ * Job chip = JO requirement compliance (certs, background, drug, etc.).
+ *
+ * Inputs:
+ *   - `requiredCertStatuses` — array of `{ label, matched }` for each
+ *     cert the JO requires; matched=true means present on the worker's
+ *     profile. Missing certs → yellow (not red, because the cert isn't
+ *     "failed" — it just hasn't been provided yet).
+ *   - `bgState` / `drugState` — coarse screening status from the
+ *     worker's BG / drug orders. `'ok'` → green-contributing,
+ *     `'pending'` / `'missing'` → yellow-contributing, `'issue'` → red.
+ *   - `blockerLabels` — cert/screening blockers route here.
+ *
+ * Worst-wins aggregation: any red → red. Else any yellow → yellow.
+ * Else green.
+ */
+function computeJobChip(
+  jobOrder: JobOrder | null,
+  worker: Worker,
+  requiredCertStatuses: PlacementRequiredCertStatus[],
+  blockerLabels: string[],
+): TileReadinessChipModel {
+  const issues: string[] = [];
+  let worst: 'green' | 'yellow' | 'red' = 'green';
+  const bump = (next: 'yellow' | 'red') => {
+    if (worst === 'red') return;
+    if (next === 'red') worst = 'red';
+    else if (worst === 'green') worst = 'yellow';
+  };
+
+  // Missing certs → yellow.
+  requiredCertStatuses.forEach(({ label, matched }) => {
+    if (!matched) {
+      issues.push(`Missing cert: ${label}`);
+      bump('yellow');
+    }
+  });
+
+  // Screening signals (only if the JO requires them).
+  const flags = jobOrder ? placementJobOrderScreeningFlags(jobOrder) : { bgRequired: false, drugRequired: false, certCount: 0 };
+  if (flags.bgRequired) {
+    const bg = coarseScreeningFromOrders(worker.backgroundCheckOrders);
+    if (bg === 'issue') {
+      issues.push('Background check: needs review');
+      bump('red');
+    } else if (bg === 'pending') {
+      issues.push('Background check: in progress');
+      bump('yellow');
+    } else if (bg === 'missing') {
+      issues.push('Background check: not started');
+      bump('yellow');
+    }
+  }
+  if (flags.drugRequired) {
+    const drug = coarseScreeningFromOrders(worker.drugScreeningOrders);
+    if (drug === 'issue') {
+      issues.push('Drug screen: needs review');
+      bump('red');
+    } else if (drug === 'pending') {
+      issues.push('Drug screen: in progress');
+      bump('yellow');
+    } else if (drug === 'missing') {
+      issues.push('Drug screen: not started');
+      bump('yellow');
+    }
+  }
+
+  // Cert / screening-shaped blockers route into the Job tooltip too.
+  blockerLabels.forEach((l) => {
+    const lower = l.toLowerCase();
+    const isCertOrScreening =
+      lower.includes('cert') ||
+      lower.includes('license') ||
+      lower.includes('background') ||
+      lower.includes('drug');
+    if (isCertOrScreening && !issues.includes(l)) {
+      issues.push(l);
+      bump('yellow');
+    }
+  });
+
+  const summary =
+    worst === 'green'
+      ? 'Meets all job requirements'
+      : worst === 'red'
+        ? 'Critical job-readiness issue'
+        : 'Job readiness: some items pending';
+
+  return { state: worst, summary, issues };
+}
+
+function PlacementReadinessChipsRow({
   employmentLoading,
   employmentChip,
   blockerLabels,
   requiredCertStatuses = [],
   onboardingMissingLabels = [],
+  jobOrder,
+  worker,
 }: {
   employmentLoading: boolean;
   employmentChip: PlacementEmploymentChipModel;
@@ -490,83 +697,52 @@ function PlacementQualificationChipsRow({
   requiredCertStatuses?: PlacementRequiredCertStatus[];
   /** Specific incomplete entity-onboarding requirements to surface in the chip's tooltip. */
   onboardingMissingLabels?: string[];
+  jobOrder: JobOrder | null;
+  worker: Worker;
 }) {
-  // Build a richer tooltip for the employment chip when we know the
-  // specific items still outstanding. Falls back to the canonical
-  // chip tooltip when nothing is missing (or it's already Active).
-  const employmentTooltip: React.ReactNode = (() => {
-    const baseText = employmentChip.tooltip || employmentChip.label;
-    if (!onboardingMissingLabels.length) return baseText;
-    return (
-      <Box sx={{ maxWidth: 320 }}>
-        <Typography variant="caption" sx={{ display: 'block', fontWeight: 600, color: '#fff', mb: 0.5 }}>
-          {baseText}
-        </Typography>
-        <Typography variant="caption" sx={{ display: 'block', fontWeight: 700, color: '#fff' }}>
-          Outstanding ({onboardingMissingLabels.length}):
-        </Typography>
+  const employee = computeEmployeeChip(
+    employmentLoading,
+    employmentChip,
+    onboardingMissingLabels,
+    blockerLabels,
+  );
+  const job = computeJobChip(jobOrder, worker, requiredCertStatuses, blockerLabels);
+
+  const renderTooltip = (model: TileReadinessChipModel) => (
+    <Box sx={{ maxWidth: 320 }}>
+      <Typography variant="caption" sx={{ display: 'block', fontWeight: 700, color: '#fff', mb: 0.5 }}>
+        {model.summary}
+      </Typography>
+      {model.issues.length > 0 && (
         <Box component="ul" sx={{ pl: 2, m: 0, color: '#fff' }}>
-          {onboardingMissingLabels.slice(0, 8).map((lab) => (
+          {model.issues.slice(0, 10).map((issue) => (
             <Typography
-              key={lab}
+              key={issue}
               component="li"
               variant="caption"
               sx={{ color: '#fff', lineHeight: 1.35 }}
             >
-              {lab}
+              {issue}
             </Typography>
           ))}
-          {onboardingMissingLabels.length > 8 && (
+          {model.issues.length > 10 && (
             <Typography component="li" variant="caption" sx={{ color: '#fff', fontStyle: 'italic' }}>
-              + {onboardingMissingLabels.length - 8} more…
+              + {model.issues.length - 10} more…
             </Typography>
           )}
         </Box>
-      </Box>
-    );
-  })();
+      )}
+    </Box>
+  );
 
   return (
     <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
-      {employmentLoading ? (
-        <Chip size="small" label="…" variant="outlined" sx={placementQualChipSx} />
-      ) : (
-        <Tooltip title={employmentTooltip} {...placementTileTooltipSlotProps}>
-          <Chip
-            size="small"
-            label={employmentChip.label}
-            color={employmentChip.color}
-            variant="outlined"
-            sx={placementQualChipSx}
-          />
-        </Tooltip>
-      )}
-      {requiredCertStatuses.map(({ label, matched }, idx) => (
-        <Tooltip
-          key={`${label}-${idx}`}
-          title={matched ? 'Matched to profile' : 'Required on job — not matched on profile'}
-          {...placementTileTooltipSlotProps}
-        >
-          <Chip
-            size="small"
-            label={label.length > 32 ? `${label.slice(0, 30)}…` : label}
-            sx={{
-              ...placementQualChipSx,
-              maxWidth: 200,
-              fontWeight: 600,
-              border: 'none',
-              bgcolor: matched ? 'success.main' : 'error.main',
-              color: '#fff',
-              '& .MuiChip-label': { color: '#fff' },
-            }}
-          />
-        </Tooltip>
-      ))}
-      {blockerLabels.map((bl) => (
-        <Tooltip key={bl} title={bl} {...placementTileTooltipSlotProps}>
-          <Chip size="small" label={bl} color="error" variant="outlined" sx={placementQualChipSx} />
-        </Tooltip>
-      ))}
+      <Tooltip title={renderTooltip(employee)} {...placementTileTooltipSlotProps}>
+        <Chip size="small" label="Employee" sx={tileChipStyle(employee.state)} />
+      </Tooltip>
+      <Tooltip title={renderTooltip(job)} {...placementTileTooltipSlotProps}>
+        <Chip size="small" label="Job" sx={tileChipStyle(job.state)} />
+      </Tooltip>
     </Box>
   );
 }
@@ -752,28 +928,25 @@ export function PlacementWorkerTileMainColumn({
       */}
       {row3}
       <PlacementTileReadinessIconRow jobOrder={jobOrder} worker={worker} leadingSlot={profileActionIcons} />
-      {/* Bottom row: Job Readiness chip + qualification chips on the left,
-          action buttons right-justified. The Job Readiness chip aggregates
-          assignment + employee readiness items (cross-collection) via the
-          persisted snapshot.jobReadinessChip; pure presentation here. */}
+      {/* Bottom row (rewritten 2026-05-23 per Greg's chip-redesign spec):
+          exactly two chips — Employee + Job — regardless of column or
+          assignment status. Tooltip-only details, no popover drill-in.
+          The legacy `JobReadinessChip` (assignment-only popover) and the
+          multi-cert / multi-blocker `PlacementQualificationChipsRow`
+          were removed; both flows are now collapsed into the two-state
+          tile chips that work for Worker Pool tiles as well.
+          `jobReadinessChipData` / `onJobReadinessItemClick` props are
+          preserved on the interface for caller back-compat but are no
+          longer read here. */}
       <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.5 }}>
-        {worker.assignmentId ? (
-          <JobReadinessChip
-            data={jobReadinessChipData ?? null}
-            size="sm"
-            onItemClick={
-              onJobReadinessItemClick
-                ? (c) => onJobReadinessItemClick(worker.id, worker.assignmentId, c)
-                : undefined
-            }
-          />
-        ) : null}
-        <PlacementQualificationChipsRow
+        <PlacementReadinessChipsRow
           employmentLoading={placementEntityEmploymentLoading}
           employmentChip={employmentChip}
           blockerLabels={blockerLabels}
           requiredCertStatuses={requiredCertStatuses}
           onboardingMissingLabels={onboardingMissingLabels}
+          jobOrder={jobOrder}
+          worker={worker}
         />
         {row4End}
         {actions ? (
