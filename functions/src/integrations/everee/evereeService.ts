@@ -307,6 +307,35 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
     }
   } else {
     path = '/api/v2/embedded/workers/employee';
+    /**
+     * **Anti-fraud lockout guard (2026-05-23, Greg's incident report)** —
+     * Refuse to send the sandbox stub address to a production Everee
+     * tenant. Everee's anti-fraud engine flags repeated worker creations
+     * with the same home address as synthetic-identity / account-
+     * takeover and locks the new accounts with the
+     * "suspicious activity" message. We hit this once already when
+     * many new W-2 records were created via the embed dialog without
+     * the caller threading a real address (the stub "1 Sandbox Way"
+     * went out for every one of them).
+     *
+     * Sandbox tenant 2320 is the ONLY tenant where the stub is OK; any
+     * other tenant id is treated as production and we throw rather
+     * than poison Everee with the stub. Caller is expected to fail
+     * gracefully (currently `evereeEnsureWorker` pre-checks the
+     * address from `users/{uid}.addressInfo` and throws an
+     * `HttpsError('failed-precondition', …)` upstream so the user
+     * sees a clear message rather than a 500).
+     */
+    const isSandboxEvereeTenant = String(config.evereeTenantId) === '2320';
+    if (!input.homeAddress && !isSandboxEvereeTenant) {
+      throw new Error(
+        `Refusing to create Everee W-2 worker with sandbox stub home address ` +
+          `on production tenant ${config.evereeTenantId}. Caller must thread a real ` +
+          `homeAddress from users/{uid}.addressInfo. ` +
+          `Sending an identical stub address for every new worker tripped Everee's ` +
+          `anti-fraud lockout once already — see createWorkerIfNeeded doc-comment.`,
+      );
+    }
     const homeAddress = input.homeAddress ?? {
       line1: '1 Sandbox Way',
       city: 'San Francisco',

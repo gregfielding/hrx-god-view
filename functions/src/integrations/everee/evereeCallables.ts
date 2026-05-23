@@ -17,6 +17,7 @@ import {
   type EvereeEmbedExperienceType,
 } from './evereeService';
 import { mirrorWorkEligibilityFromAuthoritativeSource } from '../../utils/workEligibilityMirror';
+import { extractEvereeHomeAddressFromUserDoc } from './evereeUserAddress';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -42,6 +43,38 @@ if (!admin.apps.length) {
  *   these fields still gets a working POST. Caller-supplied values
  *   always win — the only fields the helper fills are the ones missing.
  */
+/**
+ * **2026-05-23, anti-fraud lockout fix** — `evereeEnsureWorker` was
+ * provisioning every new W-2 worker with the same sandbox stub home
+ * address ("1 Sandbox Way, San Francisco, CA 94105") because the
+ * callable never read `users/{uid}.addressInfo` before posting. Result:
+ * dozens of newly-provisioned production workers had identical home
+ * addresses, and Everee's anti-fraud engine flagged the pattern as
+ * synthetic-identity / account-takeover and locked the accounts.
+ *
+ * This helper centralizes the address read. Returns `null` when the
+ * profile is incomplete; the callable then throws a clear
+ * `failed-precondition` error so the recruiter sees a useful message
+ * (instead of a generic 500 from the lower-level
+ * `createWorkerIfNeeded` guard, which now also refuses to use the
+ * stub on production tenants).
+ */
+async function fetchEvereeHomeAddressFromUserDoc(
+  userId: string,
+): Promise<import('./evereeService').EvereeAddress | null> {
+  try {
+    const snap = await admin.firestore().doc(`users/${userId}`).get();
+    if (!snap.exists) return null;
+    return extractEvereeHomeAddressFromUserDoc(snap.data());
+  } catch (err) {
+    logger.warn('[evereeEnsureWorker] homeAddress fetch failed', {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
 async function fillEvereeIdentityFromUserDoc(
   userId: string,
   current: {
@@ -224,16 +257,47 @@ export const evereeEnsureWorker = onCall(async (request) => {
     phone: typeof d?.phone === 'string' ? d.phone : undefined,
   });
 
+  /**
+   * **2026-05-23, anti-fraud lockout fix** — fetch the worker's real
+   * home address from `users/{uid}.addressInfo` and pass it to
+   * `createWorkerIfNeeded`. Without this, every newly-provisioned
+   * production worker was getting Everee's sandbox stub address
+   * ("1 Sandbox Way, San Francisco, CA 94105") and the resulting
+   * identical-address pattern across W-2 records was tripping
+   * Everee's anti-fraud lockout. See `fetchEvereeHomeAddressFromUserDoc`
+   * docstring + the guard added in `evereeService.createWorkerIfNeeded`.
+   *
+   * Only enforced for the W-2 path. Contractor (1099) provisioning
+   * uses `legalWorkAddress: { useHomeAddress: true }` and does not
+   * include the stub fallback, so it's not affected.
+   */
+  const workerType: 'employee' | 'contractor' =
+    (d?.workerType as 'employee' | 'contractor') || 'employee';
+  let homeAddress: import('./evereeService').EvereeAddress | undefined;
+  if (workerType === 'employee') {
+    const fetched = await fetchEvereeHomeAddressFromUserDoc(userId);
+    if (!fetched) {
+      throw new HttpsError(
+        'failed-precondition',
+        "Worker home address is incomplete. Set the worker's profile address " +
+          '(street, city, state, ZIP) before provisioning to Everee — sending an ' +
+          'identical placeholder address tripped Everee’s anti-fraud lockout on previous attempts.',
+      );
+    }
+    homeAddress = fetched;
+  }
+
   return createWorkerIfNeeded({
     tenantId,
     entityId,
     userId,
     firebaseUid: userId,
-    workerType: (d?.workerType as 'employee' | 'contractor') || 'employee',
+    workerType,
     email: identity.email,
     firstName: identity.firstName,
     lastName: identity.lastName,
     phone: identity.phone,
+    ...(homeAddress ? { homeAddress } : {}),
     ...(approvalGroupId !== undefined ? { approvalGroupId } : {}),
   });
 });
