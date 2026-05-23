@@ -63,6 +63,7 @@ import { experienceOptions, educationOptions } from '../../data/experienceOption
 import { JOB_REQUIREMENT_PACKS } from '../../data/jobRequirementPacks';
 import type { JobOrder } from '../../types/recruiter/jobOrder';
 import { formatDateLabel } from '../../utils/shifts/shiftRow';
+import { formatWorksiteFullAddressLine } from '../../utils/formatWorksiteAddress';
 import type { ShiftPlacementsDrawerSummary } from '../../utils/shifts/shiftRow';
 import EditShiftForm, { type ShiftFormShift } from './EditShiftForm';
 import { useAuth } from '../../contexts/AuthContext';
@@ -322,6 +323,11 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
       status: 'draft' | 'open' | 'on_hold' | 'filled';
       worksiteName: string;
       worksiteCityState: string;
+      // Full one-line address ("Street, City, ST zip") — surfaced as
+      // the third caption line on each Account option to disambiguate
+      // multiple physical sites under the same parent company (e.g.
+      // the half-dozen "CORT *" warehouses across cities).
+      worksiteAddressLine: string;
     }>
   >([]);
   const [pickerLoading, setPickerLoading] = useState(false);
@@ -363,6 +369,12 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
         accountName: string;
         companyName: string;
         parentAccountName: string;
+        // First-seen JO's full address. Multiple JOs under the same
+        // recruiterAccount typically share the same physical site, so
+        // first-seen is a reasonable representative — any drift between
+        // sibling JOs is a data-hygiene issue surfaced elsewhere, not
+        // worth a per-JO sub-grouping in this picker.
+        worksiteAddressLine: string;
       }
     >();
     for (const jo of pickerJobOrders) {
@@ -372,6 +384,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
         accountName: jo.accountName || jo.companyName,
         companyName: jo.companyName,
         parentAccountName: jo.parentAccountName,
+        worksiteAddressLine: jo.worksiteAddressLine,
       });
     }
     // Account-Details preseed (May 2026): when the caller pre-selected
@@ -386,6 +399,9 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
         accountName: initialAccountName || initialAccountId,
         companyName: '',
         parentAccountName: '',
+        // Synthetic preseed has no JO data → no worksite to source from.
+        // Empty string is fine; the picker hides the caption when empty.
+        worksiteAddressLine: '',
       });
     }
     return Array.from(seen.values()).sort((a, b) =>
@@ -462,9 +478,17 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
                 ? status
                 : 'open';
             const addr = (data.worksiteAddress as Record<string, unknown> | undefined) ?? {};
+            const street = String(addr.street ?? '').trim();
             const city = String(addr.city ?? '').trim();
             const state = String(addr.state ?? '').trim();
+            const zipCode = String(addr.zipCode ?? '').trim();
             const worksiteCityState = [city, state].filter(Boolean).join(', ');
+            const worksiteAddressLine = formatWorksiteFullAddressLine({
+              street,
+              city,
+              state,
+              zipCode,
+            });
             const recruiterAccountId =
               String(data.recruiterAccountId ?? '').trim() || `name:${companyName}`;
             return {
@@ -482,6 +506,7 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
               status: normalizedStatus,
               worksiteName: String(data.worksiteName ?? '').trim(),
               worksiteCityState,
+              worksiteAddressLine,
             };
           })
           .filter((r): r is NonNullable<typeof r> => r != null);
@@ -806,10 +831,13 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
                 filterOptions={createFilterOptions<(typeof accountOptions)[number]>({
                   // Match against every name surface the recruiter
                   // might think to type — the linked account, the
-                  // parent company, and (where set) the explicit
-                  // parent-account label.
+                  // parent company, the explicit parent-account
+                  // label, and any portion of the worksite address
+                  // (street, city, state, zip). The address tokens
+                  // turn typing "anaheim" or "12345" into a fast
+                  // path to the matching CORT site.
                   stringify: (o) =>
-                    `${o.accountName} ${o.companyName} ${o.parentAccountName}`,
+                    `${o.accountName} ${o.companyName} ${o.parentAccountName} ${o.worksiteAddressLine}`,
                 })}
                 renderOption={(props, option) => {
                   // Surface the parent company as a caption when it
@@ -832,6 +860,11 @@ const ShiftPlacementsDrawer: React.FC<ShiftPlacementsDrawerProps> = ({
                             {option.parentAccountName
                               ? ` · ${option.parentAccountName}`
                               : ''}
+                          </Typography>
+                        )}
+                        {option.worksiteAddressLine && (
+                          <Typography variant="caption" color="text.secondary">
+                            {option.worksiteAddressLine}
                           </Typography>
                         )}
                       </Stack>
