@@ -37,6 +37,7 @@ import type { IndeedFlexEvent } from '../../../shared/indeedFlex/types';
 
 import { matchByFallback } from './matchByFallback';
 import { matchByJobId } from './matchByJobId';
+import { matchByVenue } from './matchByVenue';
 import { matchWorkerAssignments } from './matchWorkerAssignments';
 import type { MatchResult, Reader } from './types';
 
@@ -63,11 +64,71 @@ async function dispatch(
 
   switch (event.type) {
     case 'new_request': {
-      return matchByJobId(reader, {
+      /**
+       * **2026-05-24 rewrite (Greg's spec)** — `new_request` events
+       * are SINGLE-DAY Gig shifts from Indeed Flex. We do NOT create
+       * a new Job Order for each one. Instead:
+       *
+       *   1. Resolve `venueName` → child account via fuzzy match.
+       *   2. Find that account's "Indeed Flex inbox" Gig JO
+       *      (the rolling open gig JO it should already have).
+       *   3. Stamp the result so the dry-run log can render a full
+       *      "WOULD CREATE shift on {account} / under JO {inbox}"
+       *      breakdown.
+       *
+       * Legacy poNumber→JO match retained as a defensive first try
+       * (some emails do carry a poNumber that matches an existing
+       * JO — e.g. when the recruiter manually pre-created one). If
+       * that hits, we use it. Otherwise we fall through to the
+       * venue path.
+       *
+       * Multi-day Career emails are deferred to a future slice —
+       * Greg is sending a sample so we can fingerprint the shape.
+       */
+      // Defensive jobId-first try (rare but cheap when it hits).
+      if (event.jobId) {
+        const byId = await matchByJobId(reader, {
+          tenantId,
+          jobId: event.jobId,
+          workDate: event.workDate,
+        });
+        if (byId.matchedJobOrderId) {
+          // Promote it: even when the jobId hits, populate
+          // matchedAccountId from the JO so the log can show the account.
+          return byId;
+        }
+      }
+      const venue = await matchByVenue(reader, {
         tenantId,
-        jobId: event.jobId,
-        workDate: event.workDate,
+        venueName: event.venueName,
       });
+      const accountMatched = venue.confidence === 'exact';
+      if (!accountMatched) {
+        // No clear account — surface ambiguity to the recruiter.
+        return {
+          matchConfidence: venue.confidence === 'multiple' ? 'multiple' : 'none',
+          venueKey: venue.venueKey,
+          candidateAccounts: venue.candidates,
+          matchNotes: venue.notes,
+        };
+      }
+      // We have an account. Look up its inbox Gig JO.
+      const inboxJo = await reader.findInboxGigJobOrder({
+        tenantId,
+        accountId: venue.accountId!,
+      });
+      return {
+        matchConfidence: 'exact',
+        matchedAccountId: venue.accountId,
+        matchedAccountName: venue.accountName,
+        venueKey: venue.venueKey,
+        candidateAccounts: venue.candidates,
+        matchedJobOrderId: inboxJo?.id,
+        wouldCreateNewJobOrder: !inboxJo,
+        matchNotes: inboxJo
+          ? `${venue.notes} | inbox Gig JO ${inboxJo.id}`
+          : `${venue.notes} | no open Gig JO on account — would need to create one`,
+      };
     }
 
     case 'change_time': {

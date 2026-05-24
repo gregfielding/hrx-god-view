@@ -110,5 +110,67 @@ export function createFirestoreReader(db: Firestore): Reader {
         .get();
       return snap.docs.map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }));
     },
+
+    /**
+     * **2026-05-24 — venue→account match.** Returns every account
+     * under the tenant. Caller does the fuzzy match in-memory because
+     * Firestore doesn't have case-insensitive substring queries. C1's
+     * largest tenant has ~155 accounts (verified in the field), so a
+     * single full read is cheap and avoids the headache of maintaining
+     * a `nameLower` denorm.
+     */
+    async listAccounts({ tenantId }) {
+      const snap = await db
+        .collection('tenants')
+        .doc(tenantId)
+        .collection('accounts')
+        .get();
+      return snap.docs.map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }));
+    },
+
+    /**
+     * Find the "Indeed Flex inbox" Gig JO for an account. Greg's spec
+     * (2026-05-24): each child account maintains a single rolling
+     * open Gig JO; all single-day Indeed Flex requests for that
+     * account land on it. Lookup: `job_orders` where
+     * `recruiterAccountId == accountId` AND `jobType == 'gig'` AND
+     * `status == 'open'`. When multiple match (legacy data), return
+     * the most recently updated. When none match, return `null` so
+     * the matcher can flag the gap.
+     */
+    async findInboxGigJobOrder({ tenantId, accountId }) {
+      for (const collectionName of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
+        try {
+          const snap = await db
+            .collection('tenants')
+            .doc(tenantId)
+            .collection(collectionName)
+            .where('recruiterAccountId', '==', accountId)
+            .where('jobType', '==', 'gig')
+            .where('status', '==', 'open')
+            .limit(5)
+            .get();
+          if (snap.empty) continue;
+          // Most recently updated wins. Firestore `orderBy` needs a
+          // composite index for the where+order combo; skip the index
+          // requirement and do the sort in-memory over the (small)
+          // result set.
+          const docs = snap.docs
+            .map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }))
+            .sort((a, b) => {
+              const aTs =
+                ((a.data.updatedAt as { toMillis?: () => number } | undefined)?.toMillis?.() ?? 0);
+              const bTs =
+                ((b.data.updatedAt as { toMillis?: () => number } | undefined)?.toMillis?.() ?? 0);
+              return bTs - aTs;
+            });
+          return docs[0] ?? null;
+        } catch {
+          // Walk the next candidate; same defensive shape as
+          // `findJobOrderByPoNumber`.
+        }
+      }
+      return null;
+    },
   };
 }

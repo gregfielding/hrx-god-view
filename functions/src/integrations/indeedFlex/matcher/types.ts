@@ -62,6 +62,27 @@ export interface Reader {
     tenantId: string;
     shiftId: string;
   }): Promise<ReaderDoc[]>;
+
+  /**
+   * **Venue → account match (2026-05-24).** All accounts for the
+   * tenant — caller does the in-memory fuzzy match against
+   * `account.name`. We could push the match into Firestore queries
+   * (where('name', '>=', ...)) but the tenant only has hundreds of
+   * accounts, so a single full read is simpler and more flexible.
+   */
+  listAccounts(args: { tenantId: string }): Promise<ReaderDoc[]>;
+
+  /**
+   * Find the "inbox" Gig JO for an account — i.e. an open JO of type
+   * 'gig' on `account.recruiterAccountId === accountId`. When more
+   * than one matches, returns the most recently created. Used by the
+   * `new_request` matcher to figure out where a single-day shift
+   * would land.
+   */
+  findInboxGigJobOrder(args: {
+    tenantId: string;
+    accountId: string;
+  }): Promise<ReaderDoc | null>;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -84,4 +105,33 @@ export interface MatchResult {
   matchedAssignmentIds?: string[];
   matchConfidence: NonNullable<ExternalShiftRequest['matchConfidence']>;
   matchNotes?: string;
+
+  // ── Phase 2 (2026-05-24) — venue→account routing for `new_request` ─
+  /**
+   * The account this request would land on. Resolved by fuzzy-matching
+   * the Indeed Flex venueName against `account.name` across all
+   * accounts in the tenant. Single-day Gig requests always need an
+   * account; multi-day Career requests will too (when that path lands).
+   */
+  matchedAccountId?: string;
+  matchedAccountName?: string;
+  /**
+   * The "venueKey" we extracted from the email's venueName (after
+   * stripping prefix/suffix codes). Helps the recruiter understand
+   * what we tried to match.
+   */
+  venueKey?: string;
+  /**
+   * Other accounts that came close in the fuzzy match. Surfaced in
+   * the log so the recruiter can pick a different one if our top
+   * match is wrong.
+   */
+  candidateAccounts?: Array<{ id: string; name: string }>;
+  /**
+   * For `new_request`: `true` when no open Gig JO exists on the
+   * matched account (so the recruiter knows the apply step will need
+   * to create one before the shift can land). When `false`, the
+   * matched JO id is in `matchedJobOrderId`.
+   */
+  wouldCreateNewJobOrder?: boolean;
 }

@@ -112,6 +112,16 @@ export const onShiftRequestCreatedMatch = onDocumentCreated(
       updates.matchedAssignmentIds = result.matchedAssignmentIds;
     }
     if (result.matchNotes) updates.matchNotes = result.matchNotes;
+    // Phase 2 (Slice 3b): venue → account routing
+    if (result.matchedAccountId) updates.matchedAccountId = result.matchedAccountId;
+    if (result.matchedAccountName) updates.matchedAccountName = result.matchedAccountName;
+    if (result.venueKey) updates.venueKey = result.venueKey;
+    if (result.candidateAccounts && result.candidateAccounts.length > 0) {
+      updates.candidateAccounts = result.candidateAccounts;
+    }
+    if (result.wouldCreateNewJobOrder !== undefined) {
+      updates.wouldCreateNewJobOrder = result.wouldCreateNewJobOrder;
+    }
 
     await event.data?.ref.update(updates);
 

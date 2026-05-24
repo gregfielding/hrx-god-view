@@ -393,6 +393,32 @@ export interface ExternalShiftRequest {
    * worker assignments were resolved.
    */
   matchedAssignmentIds?: string[];
+
+  // ── Slice 3b (2026-05-24) — venue→account routing ────────────────
+  /**
+   * For `new_request` events: the child account this shift would
+   * land on. Resolved by fuzzy-matching Indeed's `venueName`
+   * against `account.name` across all accounts in the tenant. Greg's
+   * spec: single-day Gig requests are routed to the account's
+   * existing "Indeed Flex inbox" Gig JO (no new JO created per
+   * request).
+   */
+  matchedAccountId?: string;
+  matchedAccountName?: string;
+  /** Normalized venue identity after prefix/suffix stripping (e.g.
+   *  "Woodridge Warehouse" from "CHI - Woodridge Warehouse - SVC07/43/00").
+   *  Surfaced in the log so the recruiter can see what we tried. */
+  venueKey?: string;
+  /** Up to ~3 close-but-rejected fuzzy match candidates. Lets the
+   *  recruiter override our pick from the dry-run log row. */
+  candidateAccounts?: Array<{ id: string; name: string }>;
+  /**
+   * For `new_request`: `true` when no open Gig JO exists on the
+   * matched account, signalling that the apply step will need to
+   * create one before the shift lands. When `false`, the matched
+   * JO id is in `matchedJobOrderId`.
+   */
+  wouldCreateNewJobOrder?: boolean;
   /**
    * Slice 3 match confidence:
    *   - `exact`    — Indeed Job ID matched a JO's `poNumber` (and

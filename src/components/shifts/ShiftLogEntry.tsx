@@ -128,18 +128,55 @@ function ActionDescription({
   matchedShiftId,
   matchedJobOrderId,
   matchedAssignmentIds,
+  matchedAccountName,
+  venueKey,
+  candidateAccounts,
+  wouldCreateNewJobOrder,
 }: {
   event: IndeedFlexEvent;
   matchedShiftId?: string;
   matchedJobOrderId?: string;
   matchedAssignmentIds?: string[];
+  matchedAccountName?: string;
+  venueKey?: string;
+  candidateAccounts?: Array<{ id: string; name: string }>;
+  wouldCreateNewJobOrder?: boolean;
 }): React.ReactElement {
   switch (event.type) {
-    case 'new_request':
+    case 'new_request': {
+      // **2026-05-24 rewrite** — show the full "what would happen"
+      // breakdown that Greg asked for. Resolved account, target
+      // JO, and every field the apply step will use to create the
+      // shift. Falls back gracefully when the matcher didn't
+      // resolve an account.
+      const accountLine = matchedAccountName
+        ? `WOULD CREATE shift on ${matchedAccountName}`
+        : venueKey
+          ? `Cannot route — no account matches venue "${venueKey}"`
+          : 'Cannot route — no venue name extracted from email';
       return (
         <Stack spacing={0.5}>
           <Typography variant="body2" fontWeight={600}>
-            WOULD CREATE shift under JO {matchedJobOrderId ?? '(unmatched)'}
+            {accountLine}
+          </Typography>
+          {matchedAccountName && (
+            <Typography variant="body2" color="text.secondary">
+              • target JO:{' '}
+              {wouldCreateNewJobOrder ? (
+                <Box component="span" sx={{ color: 'warning.main', fontWeight: 600 }}>
+                  ⚠ no open Gig JO on this account yet — would need to create one
+                </Box>
+              ) : matchedJobOrderId ? (
+                <>
+                  <code>{matchedJobOrderId}</code> (Indeed Flex inbox)
+                </>
+              ) : (
+                <em>resolving…</em>
+              )}
+            </Typography>
+          )}
+          <Typography variant="body2" color="text.secondary">
+            • job title: <code>{event.roleName ?? '(no role on email)'}</code>
           </Typography>
           <Typography variant="body2" color="text.secondary">
             • date <code>{event.workDate ?? '?'}</code>, time{' '}
@@ -148,7 +185,7 @@ function ActionDescription({
             </code>
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            • headcount <code>{event.headcount}</code>
+            • workers needed: <code>{event.headcount}</code>
             {event.payRateUsd != null && (
               <>
                 {' '}
@@ -156,11 +193,29 @@ function ActionDescription({
               </>
             )}
           </Typography>
+          {event.venueName && (
+            <Typography variant="body2" color="text.secondary">
+              • venue from email: <code>{event.venueName}</code>
+              {venueKey && venueKey !== event.venueName && (
+                <>
+                  {' '}
+                  → matched as <code>{venueKey}</code>
+                </>
+              )}
+            </Typography>
+          )}
           <Typography variant="body2" color="text.secondary">
-            • <code>poNumber=&quot;{event.jobId}&quot;</code> (Indeed Job ID)
+            • <code>poNumber=&quot;{event.jobId}&quot;</code> (Indeed Job ID — informational only;
+            we route by venue, not poNumber)
           </Typography>
+          {candidateAccounts && candidateAccounts.length > 0 && (
+            <Typography variant="body2" color="text.secondary">
+              • other close matches: {candidateAccounts.map((c) => c.name).join(', ')}
+            </Typography>
+          )}
         </Stack>
       );
+    }
 
     case 'change_time':
       return (
@@ -342,6 +397,10 @@ export default function ShiftLogEntry({ request, onDecide, pending }: Props): Re
             matchedShiftId={request.matchedShiftId}
             matchedJobOrderId={request.matchedJobOrderId}
             matchedAssignmentIds={request.matchedAssignmentIds}
+            matchedAccountName={request.matchedAccountName}
+            venueKey={request.venueKey}
+            candidateAccounts={request.candidateAccounts}
+            wouldCreateNewJobOrder={request.wouldCreateNewJobOrder}
           />
         </Box>
 
