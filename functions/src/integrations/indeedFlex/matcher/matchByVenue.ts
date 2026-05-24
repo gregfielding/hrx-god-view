@@ -52,7 +52,13 @@ export interface VenueMatchOutcome {
   notes: string;
 }
 
-const NOISE_PREFIX_REGEX = /^([A-Z]{2,4})\s*[-–]\s+/u; // "CHI - ", "DAL – "
+// Indeed prepends a 2-4 letter region/venue code, optionally followed
+// by a parenthetical scope (e.g. state abbrev or city), then a dash.
+// Real samples that need to strip cleanly:
+//   "CHI - Woodridge Warehouse - SVC07/43/00"
+//   "CHI (IN) - JW MARRIOTT-INDIANAPOLIS"
+//   "WBI (Hanover, MD) - Maryland Warehouse - SVC07/43/00"
+const NOISE_PREFIX_REGEX = /^[A-Z]{2,4}\s*(?:\([^)]+\)\s*)?[-–]\s+/u;
 const NOISE_SUFFIX_REGEX = /\s*[-–]\s*SVC\d+\/\d+\/\d+\s*$/iu; // " - SVC07/43/00"
 const COMMON_BRAND_PREFIXES = ['CORT'];
 const STOPWORDS = new Set([
