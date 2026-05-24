@@ -292,6 +292,31 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
   })();
 
   if (input.workerType === 'contractor') {
+    /**
+     * **Anti-fraud lockout guard, contractor path (2026-05-24 — Greg's
+     * second incident report)** — Cedrick Henderson and other 1099
+     * contractors were still hitting the lockout even after the W2
+     * fix shipped. Root cause: the contractor path silently omitted
+     * `homeAddress` when not passed (instead of throwing), so Everee
+     * received a contractor record with `legalWorkAddress.useHomeAddress
+     * = true` but no home address to point at — empty `homeAddress.current`
+     * on the worker record, then `accountAccessPermitted: false` once
+     * Everee's anti-fraud engine evaluated the synthetic-shaped record.
+     *
+     * Match the W2 guard: refuse to create a contractor on a production
+     * Everee tenant without a real home address. Sandbox tenant 2320 is
+     * the only place we still allow the no-address shape (for
+     * exploratory testing).
+     */
+    const isSandboxEvereeTenant = String(config.evereeTenantId) === '2320';
+    if (!input.homeAddress && !isSandboxEvereeTenant) {
+      throw new Error(
+        `Refusing to create Everee 1099 contractor without homeAddress ` +
+          `on production tenant ${config.evereeTenantId}. Caller must thread ` +
+          `a real homeAddress from users/{uid}.addressInfo. Without it Everee's ` +
+          `anti-fraud engine flags the empty-home record and locks the account.`,
+      );
+    }
     path = '/api/v2/onboarding/contractor';
     requestBody = {
       firstName: input.firstName,
