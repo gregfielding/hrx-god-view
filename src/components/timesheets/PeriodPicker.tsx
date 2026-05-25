@@ -29,7 +29,6 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   Box,
   Button,
   FormControl,
@@ -391,33 +390,23 @@ export const PeriodPicker: React.FC<PeriodPickerProps> = ({
                   (value && value.start === val ? value : null);
                 if (!selected) return String(val);
                 const isCurrent = selected.start === currentWeekStart;
+                // Single-line label so the Select hugs the canonical
+                // 36px filter height — the MenuItem subtitle still
+                // shows the full date range when expanded.
                 return (
-                  <Box
+                  <Typography
+                    component="span"
                     sx={{
-                      display: 'flex',
-                      alignItems: 'baseline',
-                      gap: 0.75,
-                      minWidth: 0,
+                      fontSize: '0.875rem',
+                      fontWeight: 600,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
                     }}
                   >
-                    <Typography
-                      component="span"
-                      sx={{ fontSize: '0.875rem', fontWeight: 600 }}
-                    >
-                      {formatWeekOfLabel(selected)}
-                    </Typography>
-                    <Typography
-                      component="span"
-                      sx={{
-                        fontSize: '0.75rem',
-                        color: 'text.secondary',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {formatPeriodLabel(selected)}
-                      {isCurrent ? ' · This week' : ''}
-                    </Typography>
-                  </Box>
+                    {formatWeekOfLabel(selected)}
+                    {isCurrent ? ' · This week' : ''}
+                  </Typography>
                 );
               }}
             >
@@ -535,12 +524,11 @@ export const PeriodPicker: React.FC<PeriodPickerProps> = ({
           </Stack>
         ) : null}
 
-        {mode.kind === 'weekly' && mode.isDefault ? (
-          <Alert severity="info" sx={{ py: 0.5 }}>
-            Using default Sun–Sat week. Set <code>payPeriodPolicy</code> on
-            this hiring entity to customize.
-          </Alert>
-        ) : null}
+        {/* The "Using default Sun–Sat week" advisory used to render here
+            when the entity had no `payPeriodPolicy`. Removed per UX
+            cleanup — most production entities still don't have an
+            explicit policy and the banner just added noise to the
+            filter row. The fallback behavior (Sun–Sat) is unchanged. */}
       </Stack>
     </LocalizationProvider>
   );
