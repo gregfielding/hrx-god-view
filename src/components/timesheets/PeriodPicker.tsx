@@ -32,16 +32,13 @@ import {
   Alert,
   Box,
   Button,
-  IconButton,
+  FormControl,
+  InputLabel,
+  MenuItem,
+  Select,
   Stack,
-  Tooltip,
   Typography,
 } from '@mui/material';
-import {
-  ChevronLeft as ChevronLeftIcon,
-  ChevronRight as ChevronRightIcon,
-  Refresh as RefreshIcon,
-} from '@mui/icons-material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
@@ -60,6 +57,28 @@ import {
   DEFAULT_WEEK_END_DOW,
 } from '../../utils/timesheets/dateRange';
 import { isAfter } from 'date-fns';
+
+/**
+ * Mirrors `Timesheets.tsx`'s `filterSelectSx` so the weekly Select reads
+ * as one visual family with the Hiring Entity / Account / Job Order
+ * dropdowns next to it. Duplicated rather than imported to keep the
+ * component self-contained.
+ */
+const filterSelectSx = {
+  height: 36,
+  borderRadius: '6px',
+  backgroundColor: 'white',
+  fontSize: '0.875rem',
+  '& .MuiOutlinedInput-notchedOutline': { borderColor: '#E5E7EB' },
+  '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#D1D5DB' },
+} as const;
+
+/** How many weeks back / forward to surface in the dropdown. Balanced
+ *  for the typical payroll workflow: a few weeks back for close-outs,
+ *  current week, and a small forward window for previewing the next
+ *  pay run. 12 options total → a comfortable dropdown height. */
+const WEEKS_BACK_IN_DROPDOWN = 8;
+const WEEKS_FORWARD_IN_DROPDOWN = 3;
 
 /**
  * Scope context the page passes when the user navigated here from a
@@ -217,19 +236,50 @@ export const PeriodPicker: React.FC<PeriodPickerProps> = ({
   }, [mode]);
 
   /* -------------------------------------------------------------------
-   * Weekly policy controls
+   * Weekly policy controls — dropdown variant
+   *
+   * The dropdown lists a sliding window of weeks centered on the
+   * current week (per the entity's `weekStartDOW` / `weekEndDOW`).
+   *
+   * Edge case: if the user is viewing a period OUTSIDE the window
+   * (e.g. a deep-link from way back), we transparently splice it into
+   * the option list so the Select can still render its current value.
+   * Without this, MUI logs an "out-of-range value" warning and the
+   * field shows blank.
    * ------------------------------------------------------------------- */
-  const handlePrevWeek = () => {
-    if (mode.kind !== 'weekly' || !value) return;
-    onChange(shiftWeeklyPeriod(value, -1));
-  };
-  const handleNextWeek = () => {
-    if (mode.kind !== 'weekly' || !value) return;
-    onChange(shiftWeeklyPeriod(value, 1));
-  };
-  const handleResetToCurrentWeek = () => {
-    if (mode.kind !== 'weekly') return;
-    onChange(currentWeeklyPeriod(mode.weekStartDow, mode.weekEndDow));
+  const weeklyOptions = useMemo(() => {
+    if (mode.kind !== 'weekly') return [];
+    const currentWeek = currentWeeklyPeriod(mode.weekStartDow, mode.weekEndDow);
+    const windowed: PeriodRange[] = [];
+    // Sliding window: oldest first so the dropdown reads top-down
+    // "older → newer" (matches how recruiters scan a week list).
+    for (
+      let delta = -WEEKS_BACK_IN_DROPDOWN;
+      delta <= WEEKS_FORWARD_IN_DROPDOWN;
+      delta++
+    ) {
+      windowed.push(shiftWeeklyPeriod(currentWeek, delta));
+    }
+    // Splice in the active value if it's outside the window. Maintains
+    // the "older → newer" sort order using lexicographic comparison on
+    // `start` (safe because YYYY-MM-DD is zero-padded).
+    if (value && !windowed.some((p) => p.start === value.start)) {
+      const merged = [...windowed, value].sort((a, b) =>
+        a.start < b.start ? -1 : a.start > b.start ? 1 : 0,
+      );
+      return merged;
+    }
+    return windowed;
+  }, [mode, value]);
+
+  const currentWeekStart = useMemo(() => {
+    if (mode.kind !== 'weekly') return null;
+    return currentWeeklyPeriod(mode.weekStartDow, mode.weekEndDow).start;
+  }, [mode]);
+
+  const handleWeeklySelect = (startIso: string) => {
+    const next = weeklyOptions.find((p) => p.start === startIso);
+    if (next) onChange(next);
   };
 
   /* -------------------------------------------------------------------
@@ -314,63 +364,99 @@ export const PeriodPicker: React.FC<PeriodPickerProps> = ({
     <LocalizationProvider dateAdapter={AdapterDateFns}>
       <Stack spacing={1}>
         {mode.kind === 'weekly' ? (
-          <Stack direction="row" alignItems="center" spacing={1}>
-            <Tooltip title="Previous week">
-              <span>
-                <IconButton
-                  size="small"
-                  onClick={handlePrevWeek}
-                  disabled={!value}
-                  aria-label="Previous week"
-                >
-                  <ChevronLeftIcon />
-                </IconButton>
-              </span>
-            </Tooltip>
-            <Box
-              sx={{
-                px: 1.5,
-                py: 0.75,
-                border: 1,
-                borderColor: 'divider',
-                borderRadius: 1,
-                minWidth: 220,
-                textAlign: 'center',
+          <FormControl size="small" sx={{ minWidth: 240, height: 36 }}>
+            <InputLabel shrink sx={{ fontSize: '0.875rem' }}>
+              Week
+            </InputLabel>
+            <Select
+              value={value?.start ?? ''}
+              onChange={(e) => handleWeeklySelect(String(e.target.value))}
+              label="Week"
+              notched
+              displayEmpty
+              sx={filterSelectSx}
+              renderValue={(val) => {
+                if (!val) {
+                  return (
+                    <Typography
+                      component="span"
+                      sx={{ fontSize: '0.875rem', color: 'text.disabled' }}
+                    >
+                      Loading…
+                    </Typography>
+                  );
+                }
+                const selected =
+                  weeklyOptions.find((p) => p.start === val) ??
+                  (value && value.start === val ? value : null);
+                if (!selected) return String(val);
+                const isCurrent = selected.start === currentWeekStart;
+                return (
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'baseline',
+                      gap: 0.75,
+                      minWidth: 0,
+                    }}
+                  >
+                    <Typography
+                      component="span"
+                      sx={{ fontSize: '0.875rem', fontWeight: 600 }}
+                    >
+                      {formatWeekOfLabel(selected)}
+                    </Typography>
+                    <Typography
+                      component="span"
+                      sx={{
+                        fontSize: '0.75rem',
+                        color: 'text.secondary',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {formatPeriodLabel(selected)}
+                      {isCurrent ? ' · This week' : ''}
+                    </Typography>
+                  </Box>
+                );
               }}
             >
-              <Typography variant="body2" fontWeight={600}>
-                {value ? formatWeekOfLabel(value) : 'Loading…'}
-              </Typography>
-              {value ? (
-                <Typography variant="caption" color="text.secondary">
-                  {formatPeriodLabel(value)}
-                </Typography>
-              ) : null}
-            </Box>
-            <Tooltip title="Next week">
-              <span>
-                <IconButton
-                  size="small"
-                  onClick={handleNextWeek}
-                  disabled={!value}
-                  aria-label="Next week"
-                >
-                  <ChevronRightIcon />
-                </IconButton>
-              </span>
-            </Tooltip>
-            <Tooltip title="Jump to current week">
-              <span>
-                <IconButton
-                  size="small"
-                  onClick={handleResetToCurrentWeek}
-                  aria-label="Current week"
-                >
-                  <RefreshIcon />
-                </IconButton>
-              </span>
-            </Tooltip>
-          </Stack>
+              {weeklyOptions.map((p) => {
+                const isCurrent = p.start === currentWeekStart;
+                return (
+                  <MenuItem key={p.start} value={p.start}>
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        py: 0.25,
+                      }}
+                    >
+                      <Typography
+                        component="span"
+                        sx={{
+                          fontSize: '0.875rem',
+                          fontWeight: isCurrent ? 700 : 500,
+                        }}
+                      >
+                        {formatWeekOfLabel(p)}
+                        {isCurrent ? ' · This week' : ''}
+                      </Typography>
+                      <Typography
+                        component="span"
+                        sx={{
+                          fontSize: '0.75rem',
+                          color: 'text.secondary',
+                        }}
+                      >
+                        {formatPeriodLabel(p)}
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                );
+              })}
+            </Select>
+          </FormControl>
         ) : null}
 
         {mode.kind === 'per_event_scoped' ? (
