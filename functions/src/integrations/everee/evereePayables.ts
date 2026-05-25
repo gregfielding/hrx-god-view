@@ -124,6 +124,30 @@ export interface CreatePayableResult {
 }
 
 /**
+ * Everee's `POST /api/v2/payables` deserializes `timestamp` into
+ * `java.time.LocalDateTime`. A raw epoch-seconds integer is rejected
+ * with `"raw timestamp (X) not allowed for java.time.LocalDateTime"`
+ * — see the 2026-05-25 sandbox smoke run that surfaced this on three
+ * synthetic entries. **Convert to ISO-8601 with timezone offset** at
+ * the wire boundary so callers can keep the simpler `timestamp:
+ * number` (epoch seconds) shape internally.
+ *
+ * Note the `worked-shifts` endpoint takes epoch seconds and
+ * accepts them just fine — this conversion is payable-specific.
+ */
+function payableWireBody(input: CreatePayableInput): Record<string, unknown> {
+  const epochMs = input.timestamp * 1000;
+  const iso = new Date(epochMs).toISOString().replace(/\.\d+Z$/, 'Z');
+  // **Everee requires `verified` on every payable** (2026-05-25
+  // sandbox smoke — "Validation failed: 'verified' must not be null"
+  // came back on the second attempt after the LocalDateTime fix).
+  // We always submit on behalf of an authenticated recruiter who has
+  // already approved the entry, so `verified: true` is the correct
+  // default for the partner-submission path.
+  return { verified: true, ...input, timestamp: iso };
+}
+
+/**
  * POST a single payable. Returns the same `externalId` we sent plus
  * any `paymentStatus` Everee chose to surface synchronously (rare —
  * most status transitions arrive via the
@@ -133,7 +157,12 @@ export async function createPayable(
   config: EvereeEntityConfig,
   input: CreatePayableInput,
 ): Promise<CreatePayableResult> {
-  const raw = await evereeRequest<Record<string, unknown>>(config, 'POST', '/api/v2/payables', input);
+  const raw = await evereeRequest<Record<string, unknown>>(
+    config,
+    'POST',
+    '/api/v2/payables',
+    payableWireBody(input),
+  );
   return {
     externalId:
       typeof raw?.externalId === 'string' ? raw.externalId : input.externalId,
@@ -153,11 +182,13 @@ export async function bulkCreatePayables(
   config: EvereeEntityConfig,
   payables: CreatePayableInput[],
 ): Promise<{ externalIds: string[]; raw: unknown }> {
+  // Same LocalDateTime-vs-epoch-int gotcha as the singular path —
+  // see `payableWireBody` above.
   const raw = await evereeRequest<Record<string, unknown>>(
     config,
     'POST',
     '/api/v2/payables/bulk',
-    { payables },
+    { payables: payables.map(payableWireBody) },
   );
   const externalIds = Array.isArray(raw?.externalIds)
     ? (raw.externalIds as unknown[]).filter((s): s is string => typeof s === 'string')
@@ -175,11 +206,13 @@ export async function updatePayable(
   externalId: string,
   input: Omit<CreatePayableInput, 'externalId'>,
 ): Promise<unknown> {
+  // PUT goes through the same LocalDateTime deserializer as POST —
+  // convert timestamp the same way.
   return evereeRequest<unknown>(
     config,
     'PUT',
     `/api/v2/payables/${encodeURIComponent(externalId)}`,
-    input,
+    payableWireBody({ externalId, ...input }),
   );
 }
 
