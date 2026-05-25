@@ -116,6 +116,79 @@ function jaccard(a: Set<string>, b: Set<string>): number {
 }
 
 /**
+ * **IDF-style token weights (2026-05-24, Greg's report)** —
+ * raw token-Jaccard was scoring "Phoenix Warehouse" vs
+ * "Woodridge Warehouse" at 0.50 because both share the single
+ * token `warehouse`, and there are 11 "CORT * Warehouse" accounts
+ * in the tenant. Common tokens like "warehouse" / "cort" /
+ * "convention" should contribute much less to the match than
+ * distinctive tokens like "woodridge" / "indianapolis".
+ *
+ * Compute `weight[token] = log(N / df[token] + 1)` where N is
+ * the number of accounts and df is the document frequency
+ * (how many accounts contain the token). A token in EVERY
+ * account → weight ~0. A token in only one account → weight ~log(N).
+ *
+ * The weighted overlap replaces plain set-intersection counts:
+ *   score = sum(weights of matched tokens) / sum(weights of venue tokens)
+ *
+ * This is recall-flavored — every distinctive venue token must
+ * have a (possibly fuzzy) account-side match. Adding a precision
+ * penalty for over-long account names happens inside the existing
+ * `fuzzyTokenOverlap` path.
+ */
+interface IdfMap {
+  /** Per-token weight; tokens NOT in the corpus get `corpusMax`. */
+  weights: Map<string, number>;
+  /** Weight to use for venue tokens that don't appear in any account
+   *  (they're maximally distinctive — if we can't match them on the
+   *  account side, the venue probably doesn't belong to that account). */
+  corpusMax: number;
+}
+
+function buildTokenIdf(accountTokenSets: Set<string>[]): IdfMap {
+  const N = accountTokenSets.length;
+  const df = new Map<string, number>();
+  for (const ts of accountTokenSets) {
+    for (const t of ts) df.set(t, (df.get(t) ?? 0) + 1);
+  }
+  const weights = new Map<string, number>();
+  let corpusMax = 1;
+  for (const [t, freq] of df) {
+    const w = Math.log(N / (freq + 1)) + 1; // +1 inside log so a token in every account stays at ~1, not 0
+    weights.set(t, w);
+    if (w > corpusMax) corpusMax = w;
+  }
+  return { weights, corpusMax };
+}
+
+function tokenWeight(t: string, idf: IdfMap): number {
+  // **2026-05-24 fix (Greg's report)** — venue tokens with no
+  // account-side counterpart (e.g. "Maryland" when no account has
+  // it in its name) are MAXIMALLY distinctive: failing to match
+  // them should crater the score. Previously they fell back to
+  // weight 1, which let "Maryland Warehouse" vs "Woodbridge Warehouse"
+  // score 0.78 on just the shared "warehouse" token.
+  const w = idf.weights.get(t);
+  return w !== undefined ? w : idf.corpusMax;
+}
+
+function weightedJaccard(
+  venueTokens: Set<string>,
+  acctTokens: Set<string>,
+  idf: IdfMap,
+): number {
+  let venueWeight = 0;
+  for (const t of venueTokens) venueWeight += tokenWeight(t, idf);
+  if (venueWeight === 0) return 0;
+  let matched = 0;
+  for (const t of venueTokens) {
+    if (acctTokens.has(t)) matched += tokenWeight(t, idf);
+  }
+  return matched / venueWeight;
+}
+
+/**
  * **Edit-distance substring boost.** Catches single-character typos
  * like Indeed's `"Woodridge"` vs HRX's `"Woodbridge"` — the token
  * Jaccard alone gives those 0 because the tokens don't match
@@ -151,23 +224,29 @@ function levenshteinAtMostOne(a: string, b: string): boolean {
   return diffs <= 1;
 }
 
-function fuzzyTokenOverlap(venueTokens: Set<string>, acctTokens: Set<string>): number {
+function fuzzyTokenOverlap(
+  venueTokens: Set<string>,
+  acctTokens: Set<string>,
+  idf: IdfMap,
+): number {
   if (venueTokens.size === 0) return 0;
-  let matched = 0;
+  let venueWeight = 0;
+  for (const t of venueTokens) venueWeight += tokenWeight(t, idf);
+  if (venueWeight === 0) return 0;
+  let matchedWeight = 0;
   for (const v of venueTokens) {
+    const vWeight = tokenWeight(v, idf);
     for (const a of acctTokens) {
       if (levenshteinAtMostOne(v, a)) {
-        matched++;
+        matchedWeight += vWeight;
         break;
       }
     }
   }
-  // Penalize accounts that have many extra tokens (so a single
-  // tiny venue doesn't match a huge "Acme Industries Corporation"
-  // account). Use the venueTokens.size as denominator (recall),
-  // then scale by the inverse log of acctTokens.size as a soft
-  // precision penalty.
-  const recall = matched / venueTokens.size;
+  // Recall (weighted) × precision penalty for over-long account
+  // names. Same shape as before; the IDF weighting is the new
+  // signal — the precision penalty stays unchanged.
+  const recall = matchedWeight / venueWeight;
   const precisionPenalty = 1 / (1 + Math.log(1 + Math.max(0, acctTokens.size - venueTokens.size)));
   return recall * precisionPenalty;
 }
@@ -209,18 +288,31 @@ export async function matchByVenue(
     };
   }
 
-  // Score every account. Use both exact-token Jaccard and fuzzy-token
-  // overlap; take the max so a clean substring match (Jaccard) and a
-  // typo-tolerant match (Levenshtein) can both win.
-  const scored: Array<{ doc: ReaderDoc; score: number; name: string }> = [];
+  // Pre-tokenize every account name once. The IDF map is built from
+  // these so the weighting reflects what's actually in the tenant
+  // (common tokens here may differ from another tenant's account list).
+  const acctEntries: Array<{ doc: ReaderDoc; name: string; tokens: Set<string> }> = [];
   for (const a of accounts) {
-    const acctName = stripBrandPrefix(String(a.data.name ?? '').trim());
-    if (!acctName) continue;
-    const acctTokens = tokenize(acctName);
-    const j = jaccard(venueTokens, acctTokens);
-    const fz = fuzzyTokenOverlap(venueTokens, acctTokens);
-    const score = Math.max(j, fz);
-    scored.push({ doc: a, score, name: String(a.data.name ?? acctName) });
+    const rawName = String(a.data.name ?? '').trim();
+    if (!rawName) continue;
+    const stripped = stripBrandPrefix(rawName);
+    acctEntries.push({ doc: a, name: rawName, tokens: tokenize(stripped) });
+  }
+  const idf = buildTokenIdf(acctEntries.map((e) => e.tokens));
+
+  // Score every account with both weighted exact (Jaccard-weighted) and
+  // weighted fuzzy (Levenshtein-tolerant) overlap. Take the max so a
+  // clean substring match and a typo-tolerant match can both win.
+  // Plain Jaccard kept as a tie-breaker for the (rare) case where
+  // every venue token's idf is 0 (e.g. brand-new tenant with one
+  // account).
+  const scored: Array<{ doc: ReaderDoc; score: number; name: string }> = [];
+  for (const e of acctEntries) {
+    const wj = weightedJaccard(venueTokens, e.tokens, idf);
+    const fz = fuzzyTokenOverlap(venueTokens, e.tokens, idf);
+    const fallbackJ = jaccard(venueTokens, e.tokens);
+    const score = Math.max(wj, fz, fallbackJ * 0.5); // halve the fallback so it's a tie-breaker, not a primary signal
+    scored.push({ doc: e.doc, score, name: e.name });
   }
   scored.sort((a, b) => b.score - a.score);
 
