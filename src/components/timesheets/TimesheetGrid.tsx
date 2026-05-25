@@ -25,7 +25,7 @@
  * lives in this component beyond rendering the cells in their slots.
  */
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Alert,
   AlertTitle,
@@ -82,6 +82,17 @@ import {
 
 export interface TimesheetGridProps {
   filter: TimesheetFilter | null;
+  /**
+   * Optional client-side narrowing — when set, only rows whose
+   * `assignment.jobOrderId` is in this set are rendered. The page
+   * computes the set from its Account + Job Order filter dropdowns
+   * (account narrows by JO membership; JO narrows to a single id).
+   *
+   * `null` (the default) means "no narrowing" — render every row the
+   * resolver returned. An empty set means "narrow to nothing" — render
+   * zero rows. Both states are distinct from `undefined`.
+   */
+  narrowJobOrderIds?: Set<string> | null;
 }
 
 /* -------------------------------------------------------------------------
@@ -498,10 +509,13 @@ const EntryRow: React.FC<EntryRowProps> = ({
  * Top-level component
  * ------------------------------------------------------------------------- */
 
-export const TimesheetGrid: React.FC<TimesheetGridProps> = ({ filter }) => {
+export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
+  filter,
+  narrowJobOrderIds = null,
+}) => {
   const { tenantId } = useAuth();
   const {
-    rows,
+    rows: rawRows,
     loading,
     error,
     errors,
@@ -510,6 +524,15 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({ filter }) => {
     mergeEntryUpdate,
     refreshEntry,
   } = useTimesheetGridRows(tenantId, filter);
+
+  // Apply client-side narrowing on top of whatever the resolver returned.
+  // We do this here (vs. inside `useTimesheetGridRows`) so the underlying
+  // `TimesheetFilter` shape — and the resolver's index-friendly query —
+  // doesn't fragment per dropdown. Narrowing is purely a UX layer.
+  const rows = useMemo(() => {
+    if (!narrowJobOrderIds) return rawRows;
+    return rawRows.filter((r) => narrowJobOrderIds.has(r.assignment.jobOrderId));
+  }, [rawRows, narrowJobOrderIds]);
 
   if (!filter) {
     return <EmptyFilterState />;
