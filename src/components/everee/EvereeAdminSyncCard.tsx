@@ -49,6 +49,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import {
   evereeAdminRecreateWorkerOnboarding,
   evereeEnsureWorker,
+  evereeUpdateWorkerAddress,
   type EvereeWorkerType,
 } from '../../services/everee/evereeCallables';
 import {
@@ -161,6 +162,7 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
   const [recovering, setRecovering] = useState(false);
   const [resending, setResending] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const [pushingAddress, setPushingAddress] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ severity: 'success' | 'error'; message: string } | null>(
     null,
@@ -381,6 +383,38 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
   // does NOT update `onboardingReminderNSentAt` so future automated
   // reminders still fire on schedule. Audited as `reminderNumber: 0`
   // (manual sentinel) in `tenants/{tid}/onboarding_reminder_audit`.
+  /**
+   * Push the current HRX home address to Everee for an already-linked
+   * worker. This is the action that fixes the "Everee blocked" chip:
+   * after the recruiter updates the worker's profile address, this
+   * button PUTs the new value to `/api/v2/workers/{id}/address` so
+   * Everee's anti-fraud engine releases the lock on the next session.
+   */
+  const handlePushAddress = useCallback(async () => {
+    if (!entityId) {
+      setError('This entity is not yet linked to an Everee tenant.');
+      return;
+    }
+    setPushingAddress(true);
+    setError(null);
+    try {
+      const result = await evereeUpdateWorkerAddress({ tenantId, entityId, userId });
+      const addr = result.data.address;
+      const fmt =
+        `${addr.line1}${addr.line2 ? ` ${addr.line2}` : ''}, ${addr.city}, ${addr.state} ${addr.postalCode}`;
+      setToast({
+        severity: 'success',
+        message: `Address pushed to Everee: ${fmt}`,
+      });
+    } catch (err: unknown) {
+      const msg = formatFirebaseHttpsError(err) ?? (err instanceof Error ? err.message : String(err));
+      setError(msg);
+      setToast({ severity: 'error', message: msg });
+    } finally {
+      setPushingAddress(false);
+    }
+  }, [entityId, tenantId, userId]);
+
   const handleResendPayrollLink = useCallback(async () => {
     if (!entityId) {
       setError('This entity is not yet linked to an Everee tenant.');
@@ -631,6 +665,42 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
           and the disabled-state below mirrors that gate so a recruiter
           gets a tooltip instead of a wasted callable round-trip.
         */}
+        {/* "Push address to Everee" — pairs with the chip on the User
+            Details header. evereeEnsureWorker is a no-op for already-
+            linked workers (returns the existing id), so a recruiter
+            who just fixed an address has no first-class way to push
+            it. This button calls evereeUpdateWorkerAddress directly.
+            Disabled (with explanatory tooltip) when the worker isn't
+            yet linked — provision via the main Sync button first. */}
+        <Tooltip
+          title={
+            evereeWorkerId
+              ? "Push this worker's current HRX home address to Everee. Use after fixing a stale profile address."
+              : 'Worker is not yet linked to Everee. Use the Sync button first.'
+          }
+        >
+          <span>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={
+                pushingAddress ? <CircularProgress size={14} color="inherit" /> : <SyncIcon />
+              }
+              onClick={handlePushAddress}
+              disabled={
+                !evereeWorkerId ||
+                pushingAddress ||
+                syncing ||
+                recovering ||
+                resending ||
+                restarting ||
+                Boolean(disabledReason)
+              }
+            >
+              Push address to Everee
+            </Button>
+          </span>
+        </Tooltip>
         <Tooltip title={restartTooltip}>
           <span>
             <Button
@@ -646,6 +716,7 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
                 syncing ||
                 recovering ||
                 resending ||
+                pushingAddress ||
                 Boolean(disabledReason)
               }
             >
@@ -669,7 +740,7 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
               variant="outlined"
               startIcon={resending ? <CircularProgress size={14} color="inherit" /> : <SmsIcon />}
               onClick={handleResendPayrollLink}
-              disabled={resending || syncing || recovering || restarting || Boolean(disabledReason)}
+              disabled={resending || syncing || recovering || restarting || pushingAddress || Boolean(disabledReason)}
             >
               Resend payroll link
             </Button>
@@ -682,7 +753,7 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
               variant="contained"
               startIcon={syncing ? <CircularProgress size={14} color="inherit" /> : <SyncIcon />}
               onClick={handleClick}
-              disabled={syncing || recovering || resending || restarting || Boolean(disabledReason)}
+              disabled={syncing || recovering || resending || restarting || pushingAddress || Boolean(disabledReason)}
             >
               {buttonLabel}
             </Button>

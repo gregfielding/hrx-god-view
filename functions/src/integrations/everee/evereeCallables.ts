@@ -161,8 +161,10 @@ function coerceEmbedExperienceVersion(value: unknown): string | undefined {
   }
   return trimmed.toUpperCase();
 }
-import { requireEvereeEnabledEntity } from './evereeConfig';
+import { getEvereeConfigForEntity, requireEvereeEnabledEntity } from './evereeConfig';
 import { evereeRequest } from './evereeHttp';
+import { updateEvereeWorkerAddress } from './evereeService';
+import { getFirestore } from 'firebase-admin/firestore';
 
 function requireAuth(request: { auth?: { uid: string; token?: Record<string, unknown> } | null }) {
   if (!request.auth?.uid) {
@@ -314,6 +316,93 @@ export const evereeEnsureWorker = onCall(async (request) => {
     homeAddress,
     ...(approvalGroupId !== undefined ? { approvalGroupId } : {}),
   });
+});
+
+/**
+ * Push the worker's current HRX home address to Everee for an
+ * ALREADY-PROVISIONED worker.
+ *
+ * Use case (2026-05-26): `evereeEnsureWorker` is a no-op when the
+ * worker is already linked — it returns the existing evereeWorkerId
+ * without re-POSTing anything. So if the recruiter later fixes a
+ * worker's HRX address, there's no first-class action to push that
+ * fix to Everee. This callable closes the gap, mirroring the wire
+ * call the patch-existing-addresses scratch script makes.
+ *
+ * Same auth/permission gate as `evereeEnsureWorker`.
+ */
+export const evereeUpdateWorkerAddress = onCall(async (request) => {
+  requireAuth(request);
+  const d = request.data as Record<string, unknown> | null;
+  const tenantId = typeof d?.tenantId === 'string' ? d.tenantId : '';
+  const entityId = typeof d?.entityId === 'string' ? d.entityId : '';
+  const userId = typeof d?.userId === 'string' ? d.userId : '';
+  if (!tenantId || !entityId || !userId) {
+    throw new HttpsError('invalid-argument', 'tenantId, entityId, userId required');
+  }
+  if (!(await canSelfOrManageEveree(request.auth as any, tenantId, userId))) {
+    throw new HttpsError('permission-denied', 'Not allowed');
+  }
+  await requireEvereeEnabledEntity(tenantId, entityId);
+
+  // 1. Resolve the Everee worker UUID for THIS entity's Everee tenant.
+  //    Reads `users/{uid}.evereeWorkerIds[evereeTenantId]` (the live
+  //    user-map) first, then falls back to the linkage doc if needed.
+  const entityCfg = await getEvereeConfigForEntity(tenantId, entityId);
+  if (!entityCfg) {
+    throw new HttpsError(
+      'failed-precondition',
+      `Entity ${entityId} has no Everee config; cannot push address.`,
+    );
+  }
+  const evereeTenantId = entityCfg.evereeTenantId;
+  const userSnap = await getFirestore().doc(`users/${userId}`).get();
+  if (!userSnap.exists) {
+    throw new HttpsError('not-found', `users/${userId} not found`);
+  }
+  const userData = userSnap.data() ?? {};
+  const idsMap = (userData.evereeWorkerIds ?? {}) as Record<string, unknown>;
+  const evereeWorkerIdRaw = idsMap[evereeTenantId];
+  const evereeWorkerId =
+    typeof evereeWorkerIdRaw === 'string' && evereeWorkerIdRaw.trim()
+      ? evereeWorkerIdRaw.trim()
+      : '';
+  if (!evereeWorkerId) {
+    throw new HttpsError(
+      'failed-precondition',
+      `Worker ${userId} is not linked to Everee tenant ${evereeTenantId}. ` +
+        `Provision via Sync to Everee first.`,
+    );
+  }
+
+  // 2. Extract the HRX home address. Same shared extractor the chip uses,
+  //    so the surface that flags the issue and the surface that fixes it
+  //    can never disagree.
+  const homeAddress = extractEvereeHomeAddressFromUserDoc(
+    userData as Record<string, unknown>,
+  );
+  if (!homeAddress) {
+    throw new HttpsError(
+      'failed-precondition',
+      "Worker home address is incomplete. Set the worker's profile address " +
+        '(street, city, state, ZIP) before pushing to Everee.',
+    );
+  }
+
+  // 3. PUT /api/v2/workers/{id}/address — see evereeService doc-comment
+  //    + memory/feedback_everee_wire_gotchas.md §6 for the wire shape.
+  await updateEvereeWorkerAddress({
+    tenantId,
+    entityId,
+    evereeWorkerId,
+    address: homeAddress,
+  });
+
+  return {
+    ok: true as const,
+    evereeWorkerId,
+    address: homeAddress,
+  };
 });
 
 /**

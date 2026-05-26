@@ -5,6 +5,7 @@
 export {
   evereePing,
   evereeEnsureWorker,
+  evereeUpdateWorkerAddress,
   evereeCreateOnboardingSession,
   evereeGetPayHistory,
   evereeGetPayStatement,

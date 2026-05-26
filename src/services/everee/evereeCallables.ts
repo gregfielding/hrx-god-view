@@ -156,6 +156,40 @@ export const evereeEnsureWorker = httpsCallable<
   EvereeEnsureWorkerResult
 >(functions, 'evereeEnsureWorker');
 
+/**
+ * Push the worker's current HRX home address to Everee for an
+ * ALREADY-PROVISIONED worker. Use when a recruiter has fixed a stale
+ * profile address and needs to PUT the new value to Everee without
+ * recreating the worker record.
+ *
+ * Server: `evereeUpdateWorkerAddress` — same auth/permission gate as
+ * `evereeEnsureWorker`. Throws `failed-precondition` if the worker
+ * isn't yet linked to the entity's Everee tenant, or if the HRX
+ * address extractor still returns null.
+ */
+export interface EvereeUpdateWorkerAddressRequest {
+  tenantId: string;
+  entityId: string;
+  userId: string;
+}
+
+export interface EvereeUpdateWorkerAddressResult {
+  ok: true;
+  evereeWorkerId: string;
+  address: {
+    line1: string;
+    line2?: string;
+    city: string;
+    state: string;
+    postalCode: string;
+  };
+}
+
+export const evereeUpdateWorkerAddress = httpsCallable<
+  EvereeUpdateWorkerAddressRequest,
+  EvereeUpdateWorkerAddressResult
+>(functions, 'evereeUpdateWorkerAddress');
+
 export const evereeCreateOnboardingSession = httpsCallable<
   EvereeCreateOnboardingSessionRequest,
   EvereeCreateOnboardingSessionResult

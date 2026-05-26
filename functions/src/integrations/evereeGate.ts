@@ -52,6 +52,7 @@ if (process.env.EVEREE_ENABLED === 'true') {
 
 export const evereePing = everee?.evereePing ?? stubCallable;
 export const evereeEnsureWorker = everee?.evereeEnsureWorker ?? stubCallable;
+export const evereeUpdateWorkerAddress = everee?.evereeUpdateWorkerAddress ?? stubCallable;
 export const evereeCreateOnboardingSession = everee?.evereeCreateOnboardingSession ?? stubCallable;
 export const evereeGetPayHistory = everee?.evereeGetPayHistory ?? stubCallable;
 export const evereeGetPayStatement = everee?.evereeGetPayStatement ?? stubCallable;
