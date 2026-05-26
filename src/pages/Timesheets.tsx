@@ -17,11 +17,10 @@
  * options (unique JO.companyId → companyName) and the Job Order
  * options (filtered by Account when set) from that list.
  *
- * **Toolbar layout.** Matches `/shifts` — `PageHeader` with
- * `hideHeading`, a Show/Hide Filters button row, and a `<Collapse />`
- * containing the four dropdown filters + Clear filters affordance.
- * The top bar title is set to "Timesheets" (replaces the default
- * tenant-name title).
+ * **Toolbar layout.** `PageHeader` with `hideHeading` and a single
+ * always-visible filter row containing Hiring Entity / Account /
+ * Job Order / Shift / Period / Clear filters. The top bar title is
+ * set to "Timesheets" (replaces the default tenant-name title).
  *
  * Sec 5/6/7 only — gate enforced at `App.tsx` (route) and
  * `menuGenerator.ts` (sidebar). Both must agree.
@@ -32,8 +31,6 @@ import {
   Alert,
   Box,
   Button,
-  Collapse,
-  Divider,
   FormControl,
   InputLabel,
   MenuItem,
@@ -101,7 +98,6 @@ const Timesheets: React.FC = () => {
   const [accountFilter, setAccountFilter] = useState<string>('all');
   const [jobOrderFilter, setJobOrderFilter] = useState<string>('all');
   const [shiftFilter, setShiftFilter] = useState<string>('all');
-  const [filtersExpanded, setFiltersExpanded] = useState(true);
 
   // JO list scoped to the selected entity. Drives the Account dropdown
   // (derived companyId/companyName tuples) and the Job Order dropdown
@@ -450,6 +446,10 @@ const Timesheets: React.FC = () => {
               minWidth: 0,
             }}
           >
+            {/* Filters are always visible per design — no Show/Hide
+                toggle and no collapsed-state summary. The four filter
+                Selects + Period picker + Clear filters fit comfortably
+                in one wrapping row. */}
             <Box
               sx={{
                 display: 'flex',
@@ -459,84 +459,6 @@ const Timesheets: React.FC = () => {
                 rowGap: 1,
               }}
             >
-              <Button
-                variant="text"
-                onClick={() => setFiltersExpanded((o) => !o)}
-                sx={{
-                  textTransform: 'none',
-                  borderRadius: '999px',
-                  fontSize: '13px',
-                  fontWeight: 500,
-                  color: '#0057B8',
-                  bgcolor: 'rgba(0, 87, 184, 0.06)',
-                  px: 1.25,
-                  py: 0.5,
-                  minHeight: 30,
-                  minWidth: 'auto',
-                  lineHeight: 1.2,
-                  '&:hover': {
-                    bgcolor: 'rgba(0, 87, 184, 0.1)',
-                  },
-                }}
-              >
-                {filtersExpanded ? 'Hide Filters' : 'Show Filters'}
-              </Button>
-
-              <Divider
-                orientation="vertical"
-                flexItem
-                sx={{ my: 0.5, borderColor: 'rgba(0, 0, 0, 0.08)' }}
-              />
-
-              {/* When the filter row is collapsed, mirror the current
-                  selection inline so the user isn't blind to what's
-                  loaded. Cheap-and-cheerful: just the entity name. */}
-              {!filtersExpanded && entity ? (
-                <Typography
-                  variant="body2"
-                  sx={{ color: 'rgba(0, 0, 0, 0.7)' }}
-                >
-                  {entity.name}
-                  {accountFilter !== 'all' ? (
-                    <Typography component="span" sx={{ ml: 1, color: 'text.secondary' }}>
-                      ·{' '}
-                      {accountOptions.find((a) => a.companyId === accountFilter)
-                        ?.companyName ?? '…'}
-                    </Typography>
-                  ) : null}
-                  {jobOrderFilter !== 'all' ? (
-                    <Typography component="span" sx={{ ml: 1, color: 'text.secondary' }}>
-                      ·{' '}
-                      {jobOrders.find((j) => j.id === jobOrderFilter)?.name ?? '…'}
-                    </Typography>
-                  ) : null}
-                  {shiftFilter !== 'all' ? (
-                    <Typography component="span" sx={{ ml: 1, color: 'text.secondary' }}>
-                      ·{' '}
-                      {(() => {
-                        const s = shifts.find((sh) => sh.id === shiftFilter);
-                        if (!s) return '…';
-                        return s.date && s.startTime
-                          ? `${s.date} ${s.startTime}`
-                          : s.date ?? s.id;
-                      })()}
-                    </Typography>
-                  ) : null}
-                </Typography>
-              ) : null}
-            </Box>
-
-            <Collapse in={filtersExpanded} timeout="auto" unmountOnExit>
-              <Box
-                sx={{
-                  display: 'flex',
-                  gap: 1.25,
-                  alignItems: 'center',
-                  flexWrap: 'wrap',
-                  rowGap: 1,
-                  pt: 1.25,
-                }}
-              >
                 <FormControl size="small" sx={{ minWidth: 220, height: 36 }}>
                   {/* `shrink` + `notched` keeps the label floating
                       regardless of value so the "Select an entity"
@@ -702,8 +624,7 @@ const Timesheets: React.FC = () => {
                 >
                   Clear filters
                 </Button>
-              </Box>
-            </Collapse>
+            </Box>
           </Box>
         }
       />
