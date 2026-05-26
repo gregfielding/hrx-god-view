@@ -52,6 +52,7 @@ import useMyWorkerUids from '../hooks/useMyWorkerUids';
 import UpcomingFirstShiftsSection from '../components/workforce/csa/UpcomingFirstShiftsSection';
 import RecentlyCompletedFirstShiftsSection from '../components/workforce/csa/RecentlyCompletedFirstShiftsSection';
 import PendingOnboardingCallsSection from '../components/workforce/csa/PendingOnboardingCallsSection';
+import PendingEmployerI9SelectSection from '../components/workforce/csa/PendingEmployerI9SelectSection';
 import type { WorkforceOutletContext } from './Workforce';
 
 const WorkforceEmployeeReadiness: React.FC = () => {
@@ -183,6 +184,17 @@ const WorkforceEmployeeReadiness: React.FC = () => {
         csaUid={currentUserUid}
         scope={scope}
         onTaskUpdated={handleTaskUpdated}
+      />
+      {/* Section 4 — Pending Employer I-9 (C1 Select only for now).
+          Single source of truth: Everee mirror's `i9SignedAt` for the
+          worker portion + entity_employments' `i9Section2CompletedAt`
+          for the employer countersign. Reuses the existing aggregator
+          hook so the same join logic powers both this section and the
+          /staff-onboarding action queue. */}
+      <PendingEmployerI9SelectSection
+        tenantId={tenantId}
+        currentUserUid={currentUserUid}
+        scope={scope}
       />
 
       <Snackbar
