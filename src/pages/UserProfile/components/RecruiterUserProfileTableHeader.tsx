@@ -40,6 +40,7 @@ import FavoriteButton from '../../../components/FavoriteButton';
 import { PhoneVerifiedInlineCheck } from '../../../components/PhoneVerifiedInlineCheck';
 import UserTableIndeedFlexBadge from '../../../components/tables/UserTableIndeedFlexBadge';
 import UserTableFieldglassBadge from '../../../components/tables/UserTableFieldglassBadge';
+import UserTableEvereeAddressBlockedBadge from '../../../components/tables/UserTableEvereeAddressBlockedBadge';
 import { pickResumeFromUserDoc } from '../../../utils/userResumeOpen';
 import { formatPhoneNumber } from '../../../utils/formatPhone';
 import type { ReadinessBreakdownRow } from '../../../utils/recruiterUsersReadinessDisplay';
@@ -487,12 +488,14 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
               <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, ml: 0.25 }}>
                 <UserTableIndeedFlexBadge user={userDocForTableIcons} compact />
                 <UserTableFieldglassBadge user={userDocForTableIcons} compact />
+                <UserTableEvereeAddressBlockedBadge user={userDocForTableIcons} compact />
               </Box>
             </Box>
           ) : (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5, pb: '8px' }}>
               <UserTableIndeedFlexBadge user={userDocForTableIcons} compact />
               <UserTableFieldglassBadge user={userDocForTableIcons} compact />
+              <UserTableEvereeAddressBlockedBadge user={userDocForTableIcons} compact />
             </Box>
           )}
 
