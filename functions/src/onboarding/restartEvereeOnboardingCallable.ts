@@ -307,6 +307,17 @@ export const restartEvereeOnboarding = onCall(
           String(userData.phone ?? '').trim() ||
           String((userData as { phoneNumber?: unknown }).phoneNumber ?? '').trim();
         const home = extractEvereeHomeAddressFromUserDoc(userData);
+        if (!home) {
+          // 2026-05-26 — both W-2 and 1099 paths require a complete
+          // home address. Without it, Everee's anti-fraud engine locks
+          // the new account. Fail with a clear message rather than
+          // silently omitting `homeAddress` and tripping the lockout.
+          throw new Error(
+            `Cannot restart Everee onboarding without a complete home address ` +
+              `on users/${userId}.addressInfo (street, city, state, 5-digit ZIP). ` +
+              `Update the worker profile and retry.`,
+          );
+        }
         const created = await createWorkerIfNeeded({
           tenantId,
           entityId,
@@ -317,7 +328,7 @@ export const restartEvereeOnboarding = onCall(
           firstName: typeof userData.firstName === 'string' ? userData.firstName : undefined,
           lastName: typeof userData.lastName === 'string' ? userData.lastName : undefined,
           phone: phone || undefined,
-          ...(home ? { homeAddress: home } : {}),
+          homeAddress: home,
           hireDate: new Date().toISOString().slice(0, 10),
         });
         evereeWorkerId = created.evereeWorkerId.trim();

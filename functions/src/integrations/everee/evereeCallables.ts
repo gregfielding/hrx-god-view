@@ -267,25 +267,39 @@ export const evereeEnsureWorker = onCall(async (request) => {
    * Everee's anti-fraud lockout. See `fetchEvereeHomeAddressFromUserDoc`
    * docstring + the guard added in `evereeService.createWorkerIfNeeded`.
    *
-   * Only enforced for the W-2 path. Contractor (1099) provisioning
-   * uses `legalWorkAddress: { useHomeAddress: true }` and does not
-   * include the stub fallback, so it's not affected.
+   * **2026-05-26 follow-up — Pamela McDonald (Contractor) lockout** —
+   * the original comment here claimed contractors didn't need the
+   * fetch because `legalWorkAddress: { useHomeAddress: true }` was
+   * enough. That was wrong: the contractor path in `createWorkerIfNeeded`
+   * silently OMITS `homeAddress` from the request body when the input
+   * is missing it (line ~330 of evereeService.ts), so Everee receives
+   * a contractor record with `useHomeAddress: true` pointing at an
+   * EMPTY `homeAddress.current`. Anti-fraud then locks the account
+   * the same way it locks empty-stub W-2s.
+   *
+   * The downstream guard in `createWorkerIfNeeded` does throw in this
+   * case — but `startOnCallEmployment` and similar callers wrap the
+   * call in a `try/catch ... logger.warn` that classifies the failure
+   * as "non-blocking", which means we'd see the lockout in production
+   * and the recruiter only sees a soft warning toast. Failing at the
+   * callable layer (with a typed HttpsError) surfaces the issue to
+   * the UI directly + blocks the bad provision before it hits Everee.
+   *
+   * So: fetch the home address for BOTH paths. Fail-fast on missing.
    */
   const workerType: 'employee' | 'contractor' =
     (d?.workerType as 'employee' | 'contractor') || 'employee';
-  let homeAddress: import('./evereeService').EvereeAddress | undefined;
-  if (workerType === 'employee') {
-    const fetched = await fetchEvereeHomeAddressFromUserDoc(userId);
-    if (!fetched) {
-      throw new HttpsError(
-        'failed-precondition',
-        "Worker home address is incomplete. Set the worker's profile address " +
-          '(street, city, state, ZIP) before provisioning to Everee — sending an ' +
-          'identical placeholder address tripped Everee’s anti-fraud lockout on previous attempts.',
-      );
-    }
-    homeAddress = fetched;
+  const fetchedAddress = await fetchEvereeHomeAddressFromUserDoc(userId);
+  if (!fetchedAddress) {
+    throw new HttpsError(
+      'failed-precondition',
+      "Worker home address is incomplete. Set the worker's profile address " +
+        '(street, city, state, ZIP) before provisioning to Everee — sending ' +
+        'an empty or placeholder address tripped Everee’s anti-fraud lockout ' +
+        'on previous attempts (for both W-2 and 1099 records).',
+    );
   }
+  const homeAddress: import('./evereeService').EvereeAddress = fetchedAddress;
 
   return createWorkerIfNeeded({
     tenantId,
@@ -297,7 +311,7 @@ export const evereeEnsureWorker = onCall(async (request) => {
     firstName: identity.firstName,
     lastName: identity.lastName,
     phone: identity.phone,
-    ...(homeAddress ? { homeAddress } : {}),
+    homeAddress,
     ...(approvalGroupId !== undefined ? { approvalGroupId } : {}),
   });
 });

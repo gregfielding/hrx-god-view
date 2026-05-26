@@ -486,9 +486,22 @@ export async function runStartOnCallEmploymentFlow(
       const u = (userSnap.exists ? userSnap.data() : {}) as Record<string, unknown>;
       const workerEvereeType = resolveEvereeWorkerTypeForOnCall(trimmedEntity, entityDoc as Record<string, unknown>);
       const home = extractEvereeHomeAddressFromUserDoc(u);
-      // Same surface as `evereeEnsureWorker` (EvereeAdminSyncCard): provision whenever
-      // entity + EVEREE_ENABLED allow it — no address gate (W2 uses server stubs when
-      // homeAddress omitted; contractor does not require address on user doc).
+      // 2026-05-26 — the original comment here claimed "no address gate"
+      // because W-2 used a server stub and contractors didn't need it.
+      // Both halves of that turned out to trip Everee's anti-fraud
+      // lockout in production (see `evereeService.createWorkerIfNeeded`
+      // anti-fraud guards). The downstream throw is correct; we just
+      // want to fail with a CLEAR error before reaching it so the
+      // try/catch around this block surfaces the right warning instead
+      // of a vague Everee-side error.
+      if (!home) {
+        throw new Error(
+          `[on_call] Cannot provision Everee worker without a complete home address ` +
+            `on users/${trimmedUser}.addressInfo (street, city, state, 5-digit ZIP). ` +
+            `Both W-2 and 1099 paths require it — Everee locks accounts created with ` +
+            `an empty or placeholder homeAddress.`,
+        );
+      }
       const phone =
         String(u.phoneE164 ?? "").trim() ||
         String(u.phone ?? "").trim() ||
@@ -503,7 +516,7 @@ export async function runStartOnCallEmploymentFlow(
         firstName: String(u.firstName ?? ""),
         lastName: String(u.lastName ?? ""),
         phone,
-        ...(home ? { homeAddress: home } : {}),
+        homeAddress: home,
         hireDate: new Date().toISOString().slice(0, 10),
       });
       evereePostProvisionInvite = {
