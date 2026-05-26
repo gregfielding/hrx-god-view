@@ -269,9 +269,12 @@ function buildAssignmentSnapshot(
   // `shiftId` lives at the top level of newer assignment docs; older
   // shapes occasionally store it on a `shift` sub-object. Read both
   // defensively so this resolver doesn't fragment the read path.
+  // The `Assignment` interface doesn't include shiftId today, so the
+  // cast goes through `unknown` to satisfy strict TS's overlap check.
+  const rawAny = raw as unknown as Record<string, unknown>;
   const rawShiftId =
-    (raw as Record<string, unknown>).shiftId ??
-    ((raw as Record<string, unknown>).shift as Record<string, unknown> | undefined)?.id ??
+    rawAny.shiftId ??
+    (rawAny.shift as Record<string, unknown> | undefined)?.id ??
     null;
 
   return {
