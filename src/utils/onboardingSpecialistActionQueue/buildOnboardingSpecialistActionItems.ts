@@ -73,11 +73,24 @@ export interface OnboardingSpecialistQueueEntityEmploymentLite {
   updatedAt?: unknown;
 }
 
-/** Subset of `everee_workers.readinessMirror` the aggregator reads. */
+/** Subset of `everee_workers.readinessMirror` + adjacent linkage fields the
+ *  aggregator reads. The non-mirror fields (`evereeWorkerId`,
+ *  `evereeTenantId`) sit on the linkage doc itself but are surfaced
+ *  through the same hook lookup, so they're packaged here to avoid
+ *  a second cache. */
 export interface OnboardingSpecialistQueueEvereeMirrorLite {
   i9SignedAt?: unknown;
   /** Worker has both Section 1 + W-4 done — used to anchor "I-9 fully signed" sub-lines. */
   w4SignedAt?: unknown;
+  /**
+   * Canonical Everee worker UUID — needed by row actions that link to
+   * `app.everee.com/workers/details/{id}`. Null when the linkage hasn't
+   * been provisioned yet (rare for rows that even reach this aggregator
+   * since I-9 requires onboarding to have started).
+   */
+  evereeWorkerId?: string | null;
+  /** Everee tenant id (`'2320'` sandbox, `'3133'` C1 Select, etc.). */
+  evereeTenantId?: string | null;
 }
 
 export interface OnboardingSpecialistQueueEntityLite {
@@ -303,6 +316,14 @@ function buildContext(args: {
       (emp.everifyTncReceivedAt as OnboardingSpecialistActionItem['context']['everifyTncReceivedAt']) ??
       null,
     everifyStatus: typeof emp.everifyStatus === 'string' ? emp.everifyStatus : null,
+    evereeWorkerId:
+      typeof mirror?.evereeWorkerId === 'string' && mirror.evereeWorkerId.trim().length > 0
+        ? mirror.evereeWorkerId
+        : null,
+    evereeTenantId:
+      typeof mirror?.evereeTenantId === 'string' && mirror.evereeTenantId.trim().length > 0
+        ? mirror.evereeTenantId
+        : null,
   };
 }
 

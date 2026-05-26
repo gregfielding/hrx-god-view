@@ -39,13 +39,16 @@ import {
   Box,
   Button,
   Chip,
+  IconButton,
   Snackbar,
   TableBody,
   TableCell,
   TableHead,
   TableRow,
+  Tooltip,
   Typography,
 } from '@mui/material';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { useNavigate } from 'react-router-dom';
 
 import CsaSectionTable, { ROWS_PER_PAGE_OPTIONS } from './CsaSectionTable';
@@ -419,22 +422,50 @@ const PendingEmployerI9SelectSection: React.FC<PendingEmployerI9SelectSectionPro
                   <Typography variant="body2">{recruiterName}</Typography>
                 </TableCell>
                 <TableCell sx={cellSx} align="right">
-                  <Button
-                    size="small"
-                    variant="contained"
-                    onClick={() => setDialogItem(item)}
-                    sx={{
-                      textTransform: 'none',
-                      fontSize: 12,
-                      px: 1.5,
-                      py: 0.4,
-                      minHeight: 28,
-                      bgcolor: '#0057B8',
-                      '&:hover': { bgcolor: '#004a9f' },
-                    }}
-                  >
-                    Mark complete
-                  </Button>
+                  <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                    {/* Deep-link to the worker's Everee admin page in
+                        a new tab. Pattern: app.everee.com handles the
+                        tenant context via the recruiter's own Everee
+                        session, so we don't need to include the
+                        evereeTenantId in the URL itself — see
+                        EvereeAdminSyncCard for prior art. */}
+                    {item.context.evereeWorkerId ? (
+                      <Tooltip title="Open in Everee">
+                        <IconButton
+                          size="small"
+                          aria-label={`Open ${item.workerName} in Everee`}
+                          onClick={() =>
+                            window.open(
+                              `https://app.everee.com/workers/details/${encodeURIComponent(
+                                item.context.evereeWorkerId as string,
+                              )}`,
+                              '_blank',
+                              'noopener,noreferrer',
+                            )
+                          }
+                          sx={{ color: 'text.secondary' }}
+                        >
+                          <OpenInNewIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    ) : null}
+                    <Button
+                      size="small"
+                      variant="contained"
+                      onClick={() => setDialogItem(item)}
+                      sx={{
+                        textTransform: 'none',
+                        fontSize: 12,
+                        px: 1.5,
+                        py: 0.4,
+                        minHeight: 28,
+                        bgcolor: '#0057B8',
+                        '&:hover': { bgcolor: '#004a9f' },
+                      }}
+                    >
+                      Mark complete
+                    </Button>
+                  </Box>
                 </TableCell>
               </TableRow>
             );

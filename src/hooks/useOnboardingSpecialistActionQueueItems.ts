@@ -345,14 +345,41 @@ const useOnboardingSpecialistActionQueueItems = ({
           try {
             const snap = await getDoc(doc(db, p.evereeWorker(tenantId, entityId, userId)));
             if (snap.exists()) {
-              const data = snap.data() as { readinessMirror?: Record<string, unknown> } | undefined;
-              const mirror = data?.readinessMirror;
-              next[key] = mirror
-                ? {
-                    i9SignedAt: mirror.i9SignedAt ?? null,
-                    w4SignedAt: mirror.w4SignedAt ?? null,
+              const data = snap.data() as
+                | {
+                    readinessMirror?: Record<string, unknown>;
+                    evereeWorkerId?: unknown;
+                    evereeTenantId?: unknown;
                   }
-                : undefined;
+                | undefined;
+              const mirror = data?.readinessMirror;
+              // Always surface evereeWorkerId / evereeTenantId from the
+              // linkage doc itself (sibling to readinessMirror) so row
+              // actions can deep-link to Everee. Falls back to the legacy
+              // top-level fields when the mirror is absent.
+              const workerId =
+                typeof data?.evereeWorkerId === 'string' ? data.evereeWorkerId : null;
+              const tenantId2 =
+                typeof data?.evereeTenantId === 'string' ? data.evereeTenantId : null;
+              if (mirror) {
+                next[key] = {
+                  i9SignedAt: mirror.i9SignedAt ?? null,
+                  w4SignedAt: mirror.w4SignedAt ?? null,
+                  evereeWorkerId: workerId,
+                  evereeTenantId: tenantId2,
+                };
+              } else if (workerId || tenantId2) {
+                // No mirror yet but linkage exists — still surface ids so
+                // the deep-link works even on freshly-provisioned workers.
+                next[key] = {
+                  i9SignedAt: null,
+                  w4SignedAt: null,
+                  evereeWorkerId: workerId,
+                  evereeTenantId: tenantId2,
+                };
+              } else {
+                next[key] = undefined;
+              }
             } else {
               next[key] = undefined;
             }

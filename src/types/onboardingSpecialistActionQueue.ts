@@ -117,6 +117,14 @@ export interface OnboardingSpecialistActionItem {
     everifyTncReceivedAt: Timestamp | null;
     /** Address TNC — current `everifyStatus` value (covers both `tnc` + `further_action_required`). */
     everifyStatus: string | null;
+    /**
+     * Everee worker UUID — surfaced so row actions can deep-link to
+     * `app.everee.com/workers/details/{id}` (the "Open in Everee" button).
+     * `null` when the linkage hasn't been provisioned yet.
+     */
+    evereeWorkerId?: string | null;
+    /** Everee tenant id (`'2320'` sandbox / `'3133'` C1 Select / etc.). */
+    evereeTenantId?: string | null;
   };
 
   /**
