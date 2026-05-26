@@ -57,3 +57,4 @@ functions/service-account-key.json
 # Local QA cursors (optional; remove from gitignore if you want to commit a team cursor template)
 .qa/
 .firebase/hosting.*.cache
+.claude/
