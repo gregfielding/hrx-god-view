@@ -40,7 +40,9 @@ import {
 import { collection, getDocs, query, where } from 'firebase/firestore';
 
 import PageHeader from '../components/PageHeader';
-import PeriodPicker from '../components/timesheets/PeriodPicker';
+import PeriodPicker, {
+  type PeriodPickerScope,
+} from '../components/timesheets/PeriodPicker';
 import TimesheetGrid from '../components/timesheets/TimesheetGrid';
 import { useAuth } from '../contexts/AuthContext';
 import { useSetTopBarTitle } from '../contexts/TopBarTitleContext';
@@ -65,23 +67,66 @@ const filterSelectSx = {
 } as const;
 
 /** Lightweight shape pulled off each JO doc — enough to drive both the
- *  Account and Job Order dropdowns plus the account→JO narrowing. */
+ *  Account and Job Order dropdowns plus the account→JO narrowing. The
+ *  startDate/endDate fields are normalized to YYYY-MM-DD so they can
+ *  feed PeriodPicker's `scope.autoFillPeriod` for per_event entities. */
 interface JobOrderOption {
   id: string;
   name: string;
   companyId: string;
   companyName: string;
+  startDate: string | null;
+  endDate: string | null;
 }
 
 /** Lightweight shape for a shift under a JO — drives the Shift
  *  dropdown when the recruiter has narrowed to a specific JO. Holds
  *  enough display detail (date + start/end times) that the option
- *  label is self-explanatory in the dropdown menu. */
+ *  label is self-explanatory in the dropdown menu. The optional
+ *  `endDate` field captures multi-day shifts (e.g. a Fri–Sun music
+ *  festival shift); single-day shifts leave it null. */
 interface ShiftOption {
   id: string;
   date: string | null;
+  endDate: string | null;
   startTime: string | null;
   endTime: string | null;
+}
+
+/**
+ * Normalize a JO/shift date field to YYYY-MM-DD. JO docs store dates
+ * as either ISO strings (`"2026-05-25"`), full ISO timestamps
+ * (`"2026-05-25T08:00:00.000Z"`), Firestore Timestamps (with `.toDate()`),
+ * or native Date objects depending on the write path that created them.
+ * This helper coerces whichever shape Firestore handed back into the
+ * single canonical YYYY-MM-DD string the PeriodRange API expects.
+ */
+function toYyyyMmDd(value: unknown): string | null {
+  if (!value) return null;
+  if (typeof value === 'string') {
+    const t = value.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+    // Full ISO timestamp — slice the date prefix.
+    if (/^\d{4}-\d{2}-\d{2}T/.test(t)) return t.slice(0, 10);
+    return null;
+  }
+  // Firestore Timestamp has a .toDate() method; native Dates are
+  // valid as-is. Both go through getFullYear/Month/Date.
+  let d: Date | null = null;
+  if (value instanceof Date) d = value;
+  else if (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { toDate?: () => Date }).toDate === 'function'
+  ) {
+    try {
+      d = (value as { toDate: () => Date }).toDate();
+    } catch {
+      d = null;
+    }
+  }
+  if (!d || Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 const Timesheets: React.FC = () => {
@@ -211,7 +256,14 @@ const Timesheets: React.FC = () => {
               (typeof data.companyName === 'string' && data.companyName.trim()) ||
               (typeof data.accountName === 'string' && data.accountName.trim()) ||
               '(unknown account)';
-            return { id: d.id, name, companyId, companyName };
+            return {
+              id: d.id,
+              name,
+              companyId,
+              companyName,
+              startDate: toYyyyMmDd(data.startDate),
+              endDate: toYyyyMmDd(data.endDate),
+            };
           })
           .sort((a, b) => a.name.localeCompare(b.name));
         setJobOrders(list);
@@ -259,16 +311,19 @@ const Timesheets: React.FC = () => {
           .map((d) => {
             const data = d.data() as Record<string, unknown>;
             const date =
-              (typeof data.shiftDate === 'string' && data.shiftDate.trim()) ||
-              (typeof data.date === 'string' && data.date.trim()) ||
-              null;
+              toYyyyMmDd(data.shiftDate) ?? toYyyyMmDd(data.date);
+            // Multi-day shifts (e.g. a Fri–Sun festival single shift)
+            // carry an `endDate` separate from the start `shiftDate`.
+            // Single-day shifts leave it null and the period collapses
+            // to a one-day range later in the scope mapper.
+            const endDate = toYyyyMmDd(data.endDate);
             const startTime =
               (typeof data.startTime === 'string' && data.startTime.trim()) ||
               null;
             const endTime =
               (typeof data.endTime === 'string' && data.endTime.trim()) ||
               null;
-            return { id: d.id, date, startTime, endTime };
+            return { id: d.id, date, endDate, startTime, endTime };
           })
           .sort((a, b) => {
             // Sort by date asc, then start time asc — matches the
@@ -378,6 +433,16 @@ const Timesheets: React.FC = () => {
     // different shift collection. Reset to "All Shifts" so we don't
     // leave a stale shift id selected against a JO it doesn't belong to.
     setShiftFilter('all');
+    // Clear the period so PeriodPicker re-seeds against the new scope:
+    //   - new JO with dates  → auto-fills to JO's startDate/endDate
+    //   - JO cleared (= 'all')→ falls back to last-7-days for per_event
+    //                            entities, or current week for weekly
+    setPeriod(null);
+  }, []);
+
+  const handleShiftChange = useCallback((nextId: string) => {
+    setShiftFilter(nextId);
+    setPeriod(null); // same re-seed rationale as handleJobOrderChange
   }, []);
 
   useEffect(() => {
@@ -417,6 +482,56 @@ const Timesheets: React.FC = () => {
   /** Single shift id passed to the grid for the third narrowing axis.
    *  `null` means "no shift narrowing" — apply only the JO-set narrow. */
   const narrowShiftId = shiftFilter !== 'all' ? shiftFilter : null;
+
+  /* -------------------------------------------------------------------
+   * PeriodPicker scope — tells the picker that the period should be
+   * derived from a JO or shift's date range rather than a default
+   * weekly/manual cadence.
+   *
+   * Resolution order (most specific wins):
+   *   1. Shift selected (with a known date) → `{ kind: 'shift' }`
+   *   2. JO selected   (with known startDate/endDate) → `{ kind: 'jobOrder' }`
+   *   3. Otherwise → null (PeriodPicker falls back to its own default)
+   *
+   * For per_event entities (e.g. C1 Events), this triggers the
+   * `per_event_scoped` mode in PeriodPicker — the picker auto-fills
+   * the period from `autoFillPeriod` and shows a "Switch to manual"
+   * affordance. For weekly entities (C1 Select / Workforce), the
+   * scope is currently ignored by PeriodPicker so the Week dropdown
+   * remains; JO/shift narrowing still applies via narrowJobOrderIds /
+   * narrowShiftId.
+   * ------------------------------------------------------------------- */
+  const periodScope = useMemo<PeriodPickerScope>(() => {
+    if (shiftFilter !== 'all') {
+      const shift = shifts.find((s) => s.id === shiftFilter);
+      // Multi-day shifts (festivals etc.) span shiftDate → endDate;
+      // single-day shifts collapse to {start, end: start}.
+      const start = shift?.date ?? null;
+      const end = shift?.endDate ?? shift?.date ?? null;
+      // If the shift has no usable dates, fall back to scope=null so
+      // PeriodPicker stays in its policy default rather than getting
+      // stuck on "Resolving scope…". Row narrowing still applies via
+      // narrowShiftId regardless.
+      if (!start || !end) return null;
+      return {
+        kind: 'shift',
+        refId: shiftFilter,
+        autoFillPeriod: { start, end },
+      };
+    }
+    if (jobOrderFilter !== 'all') {
+      const jo = jobOrders.find((j) => j.id === jobOrderFilter);
+      const start = jo?.startDate ?? null;
+      const end = jo?.endDate ?? jo?.startDate ?? null;
+      if (!start || !end) return null;
+      return {
+        kind: 'jobOrder',
+        refId: jobOrderFilter,
+        autoFillPeriod: { start, end },
+      };
+    }
+    return null;
+  }, [shiftFilter, jobOrderFilter, shifts, jobOrders]);
 
   if (!tenantId) {
     return (
@@ -552,7 +667,7 @@ const Timesheets: React.FC = () => {
                   <InputLabel sx={{ fontSize: '0.875rem' }}>Shift</InputLabel>
                   <Select
                     value={shiftFilter}
-                    onChange={(e) => setShiftFilter(String(e.target.value))}
+                    onChange={(e) => handleShiftChange(String(e.target.value))}
                     label="Shift"
                     sx={filterSelectSx}
                   >
@@ -590,7 +705,7 @@ const Timesheets: React.FC = () => {
                     entity={entity}
                     value={period}
                     onChange={setPeriod}
-                    scope={null}
+                    scope={periodScope}
                   />
                 ) : (
                   <Typography
