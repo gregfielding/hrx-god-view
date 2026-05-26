@@ -16,7 +16,7 @@ import {
   type WorkforceStatusFilterId,
 } from './readinessQueue';
 
-export type WorkforceTabId = 'employee-readiness' | 'job-readiness';
+export type WorkforceTabId = 'employee-readiness' | 'job-readiness' | 'i9-signatures';
 
 export type WorkforceScope = 'all' | 'mine';
 

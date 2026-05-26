@@ -24,6 +24,7 @@ import { Box, Button } from '@mui/material';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import AssignmentIndIcon from '@mui/icons-material/AssignmentInd';
 import WorkOutlineIcon from '@mui/icons-material/WorkOutline';
+import HowToRegIcon from '@mui/icons-material/HowToReg';
 
 import PageHeader from '../components/PageHeader';
 import InboxSearchBar from '../components/InboxSearchBar';
@@ -53,6 +54,7 @@ import {
 const WORKFORCE_TAB_PATHS: Record<WorkforceTabId, string> = {
   'employee-readiness': '/readiness/employee-readiness',
   'job-readiness': '/readiness/job-readiness',
+  'i9-signatures': '/readiness/i9-signatures',
 };
 
 const TABS: ReadonlyArray<{ id: WorkforceTabId; label: string; icon: React.ReactNode }> = [
@@ -65,6 +67,11 @@ const TABS: ReadonlyArray<{ id: WorkforceTabId; label: string; icon: React.React
     id: 'job-readiness',
     label: 'Job Readiness',
     icon: <WorkOutlineIcon fontSize="small" />,
+  },
+  {
+    id: 'i9-signatures',
+    label: 'I-9 Signatures Needed',
+    icon: <HowToRegIcon fontSize="small" />,
   },
 ];
 
@@ -98,6 +105,7 @@ const Workforce: React.FC = () => {
 
   const getActiveTab = useCallback((): WorkforceTabId => {
     if (location.pathname.includes('/readiness/job-readiness')) return 'job-readiness';
+    if (location.pathname.includes('/readiness/i9-signatures')) return 'i9-signatures';
     return 'employee-readiness';
   }, [location.pathname]);
 

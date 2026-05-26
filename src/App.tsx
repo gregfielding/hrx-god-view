@@ -156,6 +156,7 @@ import Timesheets from './pages/Timesheets';
 import Workforce from './pages/Workforce';
 import WorkforceEmployeeReadiness from './pages/WorkforceEmployeeReadiness';
 import WorkforceJobReadiness from './pages/WorkforceJobReadiness';
+import WorkforceI9Signatures from './pages/WorkforceI9Signatures';
 import AccountsDashboard from './pages/AccountsDashboard';
 import RecruiterMain from './pages/RecruiterMain';
 // RecruiterMyQueue is no longer routed from App.tsx — `/jobs/my-queue`
@@ -1381,6 +1382,11 @@ function App() {
               (jo_readiness_detail = sub_route). D.4 swaps this stub for the
               real <WorkforceJobReadinessDetail /> page. */}
           <Route path="job-readiness/:jobOrderId" element={<WorkforceJobReadiness />} />
+          {/* 2026-05-26 — I-9 Signatures Needed tab. Promoted from a
+              section on /readiness/employee-readiness (commit def18be4)
+              to its own page so the Section 2 workflow has room to
+              scale (filters, deadline countdowns, bulk-complete). */}
+          <Route path="i9-signatures" element={<WorkforceI9Signatures />} />
         </Route>
 
 
