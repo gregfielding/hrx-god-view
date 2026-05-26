@@ -365,6 +365,7 @@ const useOnboardingSpecialistActionQueueItems = ({
                 next[key] = {
                   i9SignedAt: mirror.i9SignedAt ?? null,
                   w4SignedAt: mirror.w4SignedAt ?? null,
+                  employerI9SignedAt: mirror.employerI9SignedAt ?? null,
                   evereeWorkerId: workerId,
                   evereeTenantId: tenantId2,
                 };

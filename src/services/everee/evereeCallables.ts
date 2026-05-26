@@ -190,6 +190,43 @@ export const evereeUpdateWorkerAddress = httpsCallable<
   EvereeUpdateWorkerAddressResult
 >(functions, 'evereeUpdateWorkerAddress');
 
+/**
+ * Manually trigger a fresh Everee sync for one worker. Re-fetches the
+ * worker doc + W-4/W-9 + files + onboarding-status, recomputes
+ * `everee_workers/{key}.readinessMirror`, and (when applicable)
+ * audit-stamps `entity_employments.i9Section2CompletedAt` from the
+ * mirror's `employerI9SignedAt`.
+ *
+ * Use from the I-9 Signatures Needed page so a recruiter can pull
+ * the latest Everee state without waiting on the cron / webhook.
+ */
+export interface EvereeReconcileWorkerRequest {
+  tenantId: string;
+  entityId: string;
+  userId: string;
+  evereeWorkerId: string;
+  /** Defaults to `'manual'`. `'cron'` is server-side only. */
+  syncSource?: 'manual' | 'webhook' | 'embed';
+}
+
+export interface EvereeReconcileWorkerResult {
+  ok: boolean;
+  reason?: string;
+  error?: string;
+  /** The recomputed mirror snapshot, when `ok: true`. */
+  mirror?: {
+    employerI9SignedAt?: unknown;
+    i9SignedAt?: unknown;
+    onboardingComplete?: boolean;
+    [k: string]: unknown;
+  };
+}
+
+export const evereeAdminReconcileWorker = httpsCallable<
+  EvereeReconcileWorkerRequest,
+  EvereeReconcileWorkerResult
+>(functions, 'evereeAdminReconcileWorker');
+
 export const evereeCreateOnboardingSession = httpsCallable<
   EvereeCreateOnboardingSessionRequest,
   EvereeCreateOnboardingSessionResult

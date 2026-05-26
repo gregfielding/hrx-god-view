@@ -83,6 +83,15 @@ export interface OnboardingSpecialistQueueEvereeMirrorLite {
   /** Worker has both Section 1 + W-4 done — used to anchor "I-9 fully signed" sub-lines. */
   w4SignedAt?: unknown;
   /**
+   * Section 2 (employer countersign) — set by the reconciler when
+   * Everee reports `documentsVerifiedByCompany: true`. Treated as
+   * equivalent to `entity_employments.i9Section2CompletedAt` for the
+   * purposes of deciding whether the I-9 row clears from the queue.
+   * Source of truth is Everee; the entity_employments stamp is an
+   * audit denorm written by the reconciler.
+   */
+  employerI9SignedAt?: unknown;
+  /**
    * Canonical Everee worker UUID — needed by row actions that link to
    * `app.everee.com/workers/details/{id}`. Null when the linkage hasn't
    * been provisioned yet (rare for rows that even reach this aggregator
@@ -199,7 +208,18 @@ export function decideActionType(args: {
   }
 
   const workerType = normalizeWorkerType(emp.workerType);
-  const section2Done = isTimestampLike(emp.i9Section2CompletedAt);
+  // Section 2 is "done" if EITHER:
+  //   - HRX has stamped `entity_employments.i9Section2CompletedAt`
+  //     (legacy manual flow, or audit write-through from the
+  //     reconciler), OR
+  //   - The Everee mirror reports `employerI9SignedAt` (Everee is the
+  //     source of truth as of 2026-05-26 — the employer can now
+  //     countersign Section 2 directly in Everee, and the row resolves
+  //     here automatically once the reconciler picks it up).
+  // Either signal collapses the row; we don't require both.
+  const section2Done =
+    isTimestampLike(emp.i9Section2CompletedAt) ||
+    isTimestampLike(mirror?.employerI9SignedAt);
   const i9Section1Done = isTimestampLike(mirror?.i9SignedAt);
 
   // I-9 Section 2 band — only W-2, Section 1 done by worker, Section 2

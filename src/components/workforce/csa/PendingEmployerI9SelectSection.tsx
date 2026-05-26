@@ -24,9 +24,14 @@
  *   - The hook already honors `scope: 'mine' | 'all'` against
  *     `users.primaryRecruiterId` — same semantics the page-level
  *     toggle uses.
- *   - The Section 2 "mark complete" dialog
- *     (`I9Section2CompleteDialog`) is already built and wired to the
- *     callable that stamps `i9Section2CompletedAt`.
+ *
+ * **Row action (2026-05-26 redesign).** The legacy
+ * `I9Section2CompleteDialog` (HRX-side manual stamp) was retired in
+ * favor of `Sync from Everee` — Everee is now the source of truth
+ * for Section 2 completion via `documentsVerifiedByCompany` on the
+ * worker's onboarding-status. The reconciler also audit-stamps
+ * `entity_employments.i9Section2CompletedAt` from the mirror so
+ * downstream consumers stay consistent.
  *
  * The only thing missing was a place to surface those items on
  * `/readiness/employee-readiness`. This component is that surface,
@@ -39,6 +44,7 @@ import {
   Box,
   Button,
   Chip,
+  CircularProgress,
   IconButton,
   Snackbar,
   TableBody,
@@ -49,13 +55,16 @@ import {
   Typography,
 } from '@mui/material';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import SyncIcon from '@mui/icons-material/Sync';
 import { useNavigate } from 'react-router-dom';
 
 import CsaSectionTable, { ROWS_PER_PAGE_OPTIONS } from './CsaSectionTable';
 import CsaWorkerInfoCell from './CsaWorkerInfoCell';
-import I9Section2CompleteDialog from '../../staffOnboarding/I9Section2CompleteDialog';
 import useOnboardingSpecialistActionQueueItems from '../../../hooks/useOnboardingSpecialistActionQueueItems';
 import { useTenantRecruiterNamesByUid } from '../../../hooks/useTenantRecruiterNamesByUid';
+import { useAuth } from '../../../contexts/AuthContext';
+import { evereeAdminReconcileWorker } from '../../../services/everee/evereeCallables';
+import { formatFirebaseHttpsError } from '../../../utils/firebaseHttpsErrors';
 import type { OnboardingSpecialistActionItem } from '../../../types/onboardingSpecialistActionQueue';
 
 export interface PendingEmployerI9SelectSectionProps {
@@ -268,25 +277,78 @@ const PendingEmployerI9SelectSection: React.FC<PendingEmployerI9SelectSectionPro
     return filtered.slice(start, start + rowsPerPage);
   }, [filtered, page, rowsPerPage]);
 
-  const [dialogItem, setDialogItem] = useState<OnboardingSpecialistActionItem | null>(
-    null,
-  );
+  const { activeTenant } = useAuth();
+  const sectionTenantId = activeTenant?.id ?? tenantId;
+
+  // Per-row sync state. Keyed by item.id so multiple recruiters /
+  // multiple rows in flight don't stomp each other's spinners.
+  const [syncingIds, setSyncingIds] = useState<Set<string>>(() => new Set());
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
-    severity: 'success' | 'error';
+    severity: 'success' | 'info' | 'error';
     message: string;
   }>({ open: false, severity: 'success', message: '' });
 
-  const handleSection2Completed = useCallback(() => {
-    setSnackbar({
-      open: true,
-      severity: 'success',
-      message: 'I-9 Section 2 marked complete.',
-    });
-    // The aggregator's entity_employments listener picks up the new
-    // `i9Section2CompletedAt` and the row disappears from `filtered`
-    // automatically — no manual refresh needed.
-  }, []);
+  const handleSyncFromEveree = useCallback(
+    async (item: OnboardingSpecialistActionItem) => {
+      if (!sectionTenantId) return;
+      const evereeWorkerId = item.context.evereeWorkerId;
+      if (!evereeWorkerId) {
+        setSnackbar({
+          open: true,
+          severity: 'error',
+          message: 'Worker is not linked to Everee yet — cannot sync.',
+        });
+        return;
+      }
+      setSyncingIds((prev) => {
+        const next = new Set(prev);
+        next.add(item.id);
+        return next;
+      });
+      try {
+        const res = await evereeAdminReconcileWorker({
+          tenantId: sectionTenantId,
+          entityId: item.entityId,
+          userId: item.workerUid,
+          evereeWorkerId,
+          syncSource: 'manual',
+        });
+        const data = res.data;
+        if (!data.ok) {
+          setSnackbar({
+            open: true,
+            severity: 'error',
+            message: `Sync failed: ${data.error ?? data.reason ?? 'unknown error'}`,
+          });
+          return;
+        }
+        const employerSigned = !!data.mirror?.employerI9SignedAt;
+        setSnackbar({
+          open: true,
+          severity: employerSigned ? 'success' : 'info',
+          message: employerSigned
+            ? 'Everee shows employer signed Section 2 — row cleared.'
+            : 'Synced from Everee. Section 2 still pending employer signature.',
+        });
+        // When `employerI9SignedAt` is now populated, the aggregator's
+        // mirror listener will re-evaluate `section2Done` and drop the
+        // row from `filtered` on the next render — no manual refresh
+        // needed.
+      } catch (err: unknown) {
+        const msg =
+          formatFirebaseHttpsError(err) ?? (err instanceof Error ? err.message : String(err));
+        setSnackbar({ open: true, severity: 'error', message: `Sync failed: ${msg}` });
+      } finally {
+        setSyncingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(item.id);
+          return next;
+        });
+      }
+    },
+    [sectionTenantId],
+  );
 
   return (
     <>
@@ -449,10 +511,28 @@ const PendingEmployerI9SelectSection: React.FC<PendingEmployerI9SelectSectionPro
                         </IconButton>
                       </Tooltip>
                     ) : null}
+                    {/* "Sync from Everee" — pulls the latest worker
+                        state from Everee (including Section 2 employer
+                        signature). When `documentsVerifiedByCompany` is
+                        true on Everee's side, the reconciler also stamps
+                        `entity_employments.i9Section2CompletedAt`, and
+                        this row clears from the table on the next mirror
+                        re-render. Replaces the legacy "Mark complete"
+                        manual stamp — Everee is now the source of truth. */}
                     <Button
                       size="small"
                       variant="contained"
-                      onClick={() => setDialogItem(item)}
+                      onClick={() => void handleSyncFromEveree(item)}
+                      disabled={
+                        syncingIds.has(item.id) || !item.context.evereeWorkerId
+                      }
+                      startIcon={
+                        syncingIds.has(item.id) ? (
+                          <CircularProgress size={12} color="inherit" />
+                        ) : (
+                          <SyncIcon sx={{ fontSize: 14 }} />
+                        )
+                      }
                       sx={{
                         textTransform: 'none',
                         fontSize: 12,
@@ -463,7 +543,7 @@ const PendingEmployerI9SelectSection: React.FC<PendingEmployerI9SelectSectionPro
                         '&:hover': { bgcolor: '#004a9f' },
                       }}
                     >
-                      Mark complete
+                      Sync from Everee
                     </Button>
                   </Box>
                 </TableCell>
@@ -472,14 +552,6 @@ const PendingEmployerI9SelectSection: React.FC<PendingEmployerI9SelectSectionPro
           })}
         </TableBody>
       </CsaSectionTable>
-
-      <I9Section2CompleteDialog
-        open={dialogItem != null}
-        item={dialogItem}
-        tenantId={tenantId ?? undefined}
-        onClose={() => setDialogItem(null)}
-        onCompleted={handleSection2Completed}
-      />
 
       <Snackbar
         open={snackbar.open}

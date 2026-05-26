@@ -68,6 +68,18 @@ export interface EvereeReadinessMirror {
   // ── I-9 (W-2 only; federal contractors don't sign I-9) ──
   i9SignedAt: Timestamp | null;
   i9Applicable: boolean;
+  /**
+   * Section 2 (employer countersign) — set when Everee reports
+   * `documentsVerifiedByCompany: true` on `/onboarding-status`. Use this
+   * + `i9SignedAt` together to know when the I-9 is FULLY signed by
+   * both parties. Auto-resolves the to-do row on `/readiness/i9-signatures`
+   * without a manual HRX-side stamp.
+   *
+   * The reconciler also stamps `entity_employments.i9Section2CompletedAt`
+   * for audit-trail denorm — but the mirror field stays the source of
+   * truth (Everee).
+   */
+  employerI9SignedAt: Timestamp | null;
 
   // ── W-4 (W-2 only) ──
   w4SignedAt: Timestamp | null;
@@ -194,11 +206,38 @@ export interface MirrorInputFiles {
   files?: EvereeFile[];
 }
 
+/**
+ * `GET /api/v2/workers/{id}/onboarding-status` — only the fields we
+ * read. The critical one is `documentsVerifiedByCompany`, which flips
+ * to true when the employer countersigns I-9 Section 2 inside Everee.
+ */
+export interface EvereeOnboardingStatusApiResponse {
+  /** ISO 8601 — the field doesn't carry a per-flag timestamp, so we
+   *  treat this as the best available "this is when the state changed". */
+  updatedAt?: string;
+  /** I-9 Section 2 employer-countersign signal. False until the
+   *  employer marks documents verified in Everee. */
+  documentsVerifiedByCompany?: boolean;
+  [k: string]: unknown;
+}
+
+export interface MirrorInputOnboardingStatus {
+  applicable: boolean;
+  data?: EvereeOnboardingStatusApiResponse;
+}
+
 export interface ComputeEvereeReadinessMirrorInput {
   worker: EvereeWorkerApiResponse;
   w4: MirrorInputW4;
   w9: MirrorInputW9;
   files: MirrorInputFiles;
+  /**
+   * Worker onboarding-status response. Optional on the input side for
+   * backwards compat — callers that haven't been updated yet pass
+   * nothing, and the compute defaults `employerI9SignedAt` to null
+   * (which is the same as "Everee hasn't told us yet").
+   */
+  onboardingStatus?: MirrorInputOnboardingStatus;
   syncSource: EvereeReadinessSyncSource;
   /**
    * Optional clock injection for tests. Defaults to `Timestamp.now()` so
@@ -402,6 +441,26 @@ export function computeEvereeReadinessMirror(
   );
   const i9SignedAt = i9File ? isoToTimestampOrNull(i9File.publishedAt) : null;
 
+  // Section 2 (employer countersign) — read from the onboarding-status
+  // response when present. `documentsVerifiedByCompany` is the boolean
+  // signal Everee exposes; the response doesn't carry a per-flag stamp,
+  // so we use the response's own `updatedAt` (which Everee touches on
+  // any change to onboarding state — close enough for "when did this
+  // change to true" given we re-fetch on a cron + webhook). Only set
+  // for W-2 workers; contractors don't have an I-9 Section 2 step.
+  const onboardingStatusData = input.onboardingStatus?.applicable
+    ? input.onboardingStatus.data
+    : undefined;
+  const employerI9SignedAt =
+    isEmployee && onboardingStatusData?.documentsVerifiedByCompany === true
+      ? isoToTimestampOrNull(onboardingStatusData.updatedAt) ??
+        // Fall back to the snapshot's "now" timestamp when Everee
+        // didn't include an updatedAt — better to have *some* stamp
+        // than to leave the field null and confuse downstream
+        // consumers that gate on truthiness.
+        (input.now ?? Timestamp.now())
+      : null;
+
   // Handbook + remaining policies.
   const handbookFile = policyFiles.find((f) =>
     typeof f.fileName === 'string' && HANDBOOK_FILENAME_REGEX.test(f.fileName),
@@ -436,6 +495,7 @@ export function computeEvereeReadinessMirror(
 
     i9SignedAt,
     i9Applicable: isEmployee,
+    employerI9SignedAt,
 
     w4SignedAt,
     w4Applicable: isEmployee,

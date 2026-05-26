@@ -164,6 +164,48 @@ async function tryFetchFiles(
   }
 }
 
+/**
+ * `GET /api/v2/workers/{id}/onboarding-status` — adds the
+ * `documentsVerifiedByCompany` signal we need for the I-9 Section 2
+ * auto-resolve flow. Same defensive shape as the other helpers: a
+ * 404 (or any other failure) yields `{ applicable: true, data: undefined }`
+ * and the compute fn falls back to `employerI9SignedAt: null` — the
+ * mirror just shows "Everee hasn't told us yet" until the next sweep.
+ */
+async function tryFetchOnboardingStatus(
+  config: Awaited<ReturnType<typeof requireEvereeEnabledEntity>>,
+  evereeWorkerId: string,
+  logCtx: Record<string, unknown>,
+): Promise<import('./evereeReadinessMirror').MirrorInputOnboardingStatus> {
+  try {
+    const response = await evereeRequest<Record<string, unknown>>(
+      config,
+      'GET',
+      `/api/v2/workers/${encodeURIComponent(evereeWorkerId)}/onboarding-status`,
+    );
+    return {
+      applicable: true,
+      data: response as import('./evereeReadinessMirror').EvereeOnboardingStatusApiResponse,
+    };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    const status = parseEvereeErrorStatus(message);
+    // 404 here means the worker doesn't exist on this Everee tenant
+    // (uncommon — caller usually has the right id). Lower noise than
+    // a generic warn; the broader reconcile will still proceed with
+    // null employerI9SignedAt.
+    if (status === 404) {
+      logger.info('[evereeReconcile] onboarding_status_404', logCtx);
+      return { applicable: false };
+    }
+    logger.warn('[evereeReconcile] onboarding_status_fetch_failed', {
+      ...logCtx,
+      message: message.slice(0, 240),
+    });
+    return { applicable: true };
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // The shared reconcile core.
 // ─────────────────────────────────────────────────────────────────────────
@@ -247,16 +289,18 @@ export async function reconcileWorkerInternal(
   // Parallel fetches. `Promise.allSettled` so a slow /files doesn't
   // block /workers; the W-4/W-9 helpers translate 404 → applicable:false
   // internally so we never bail on the "wrong worker type" branch.
-  const [workerSettled, w4Settled, w9Settled, filesSettled] = await Promise.allSettled([
-    evereeRequest<EvereeWorkerApiResponse>(
-      config,
-      'GET',
-      `/api/v2/workers/${encodeURIComponent(evereeWorkerId)}`,
-    ),
-    tryFetchW4(config, evereeWorkerId, logCtx),
-    tryFetchW9(config, evereeWorkerId, logCtx),
-    tryFetchFiles(config, evereeWorkerId, logCtx),
-  ]);
+  const [workerSettled, w4Settled, w9Settled, filesSettled, onboardingSettled] =
+    await Promise.allSettled([
+      evereeRequest<EvereeWorkerApiResponse>(
+        config,
+        'GET',
+        `/api/v2/workers/${encodeURIComponent(evereeWorkerId)}`,
+      ),
+      tryFetchW4(config, evereeWorkerId, logCtx),
+      tryFetchW9(config, evereeWorkerId, logCtx),
+      tryFetchFiles(config, evereeWorkerId, logCtx),
+      tryFetchOnboardingStatus(config, evereeWorkerId, logCtx),
+    ]);
 
   if (workerSettled.status !== 'fulfilled') {
     const message =
@@ -283,12 +327,15 @@ export async function reconcileWorkerInternal(
     w9Settled.status === 'fulfilled' ? w9Settled.value : { applicable: true };
   const files: MirrorInputFiles =
     filesSettled.status === 'fulfilled' ? filesSettled.value : { ok: false };
+  const onboardingStatus =
+    onboardingSettled.status === 'fulfilled' ? onboardingSettled.value : { applicable: true };
 
   const mirror = computeEvereeReadinessMirror({
     worker: workerSettled.value ?? {},
     w4,
     w9,
     files,
+    onboardingStatus,
     syncSource,
   });
 
@@ -328,6 +375,52 @@ export async function reconcileWorkerInternal(
     const message = e instanceof Error ? e.message : String(e);
     logger.error('[evereeReconcile] write_failed', { ...logCtx, message: message.slice(0, 240) });
     return { ok: false, reason: 'unknown_error', syncSource, error: message.slice(0, 240) };
+  }
+
+  // ── Audit write-through: I-9 Section 2 ──
+  //
+  // When the mirror reflects "employer signed in Everee", also stamp
+  // `entity_employments/{empId}.i9Section2CompletedAt` so existing
+  // surfaces that read the entity_employments doc (recruiter chips,
+  // reports, the Onboarding Specialist queue's section-2 gate) stay
+  // consistent without each consumer needing to know about the mirror.
+  //
+  // Best-effort: failures here log but DON'T fail the whole reconcile.
+  // The mirror is the source of truth; the audit denorm is a
+  // convenience. If this stamp is stuck, the next sweep will retry.
+  if (mirror.employerI9SignedAt) {
+    try {
+      const empSnap = await db()
+        .collection(`tenants/${tenantId}/entity_employments`)
+        .where('userId', '==', userId)
+        .where('entityId', '==', entityId)
+        .limit(1)
+        .get();
+      if (!empSnap.empty) {
+        const empDoc = empSnap.docs[0];
+        const current = empDoc.data() as { i9Section2CompletedAt?: unknown };
+        // Only write when not already stamped — avoids touching a value
+        // that the recruiter explicitly set (e.g. via the legacy manual
+        // "Mark complete" UI before this auto-resolve shipped).
+        if (!current.i9Section2CompletedAt) {
+          await empDoc.ref.update({
+            i9Section2CompletedAt: mirror.employerI9SignedAt,
+            i9Section2CompletedSource: 'everee_mirror',
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          logger.info('[evereeReconcile] i9_section2_audit_stamped', {
+            ...logCtx,
+            empId: empDoc.id,
+          });
+        }
+      }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      logger.warn('[evereeReconcile] i9_section2_audit_write_failed', {
+        ...logCtx,
+        message: message.slice(0, 240),
+      });
+    }
   }
 
   logger.info('[evereeReconcile] wrote', {
