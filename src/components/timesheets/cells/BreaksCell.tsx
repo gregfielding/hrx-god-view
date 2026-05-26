@@ -2,33 +2,31 @@
  * `BreaksCell` — popover-based editor for the breaks array on a
  * TimesheetEntryV2.
  *
- * **UX deltas from single-field cells:**
- *   - View mode shows total break minutes (sum across breaks):
- *     "30m" / "60m" / "—" when no breaks.
- *   - Click opens a Popover anchored to the cell. Inside:
- *     - Each break shows start time + end time + paid checkbox + "×" remove.
- *     - "+ Add break" button appends an empty break (defaults to
- *       middle of shift if shift window known, else 12:00–12:30).
- *     - Footer: "Save" (commit) or "Cancel" (discard local edits).
- *   - Save commits ALL breaks at once via a single `onSave(breaks[])`.
- *     Atomic at the Firestore level — either all of the array
- *     changes land or none.
+ * **UX (2026-05-26 simplification — duration-only).** Recruiters
+ * historically had to enter break start AND end times — which was
+ * fiddly, broke on overnight shifts (the validator refused to
+ * compare clock times across midnight), and didn't reflect how
+ * payroll actually consumes breaks. The pay-rules engine + Everee
+ * submission both read only `durationMins` + `paid` per break.
  *
- * **Validation.** Each break runs `validateBreakAgainstShift` (or
- * `validateBreak` if no shift window passed). Per-break errors show
- * inline next to the break row; Save is disabled until all breaks
- * are valid. This is stricter than the single-field cells (which
- * commit AS the user blurs) because the popover already has explicit
- * Save/Cancel semantics — and a popover full of validation chips
- * with auto-rollback would be chaotic.
+ * Now each break is a single duration input (with preset chips
+ * 15 / 30 / 45 / 60 / 90 minutes) plus a Paid checkbox plus a
+ * remove button. Existing rows with explicit start/end times are
+ * collapsed to their effective duration on open — no migration
+ * needed.
  *
- * **Save-on-popover-close vs explicit Save button.** Greg's spec
- * says "Save-on-blur as the only commit path. No Save button." For
- * the breaks cell, the popover-close IS the blur — clicking outside
- * the popover triggers `onClose`, which commits if breaks are valid
- * (and quietly discards if there are no changes). The "Save" button
- * inside the popover is redundant but kept for discoverability —
- * it's the same semantic as the popover-close blur.
+ * **Wire-shape compatibility.** TimesheetBreak still has `startTime`
+ * + `endTime` as required strings (declared in `types/recruiter/timesheet.ts`).
+ * We synthesize noon-anchored stub values on save (12:00 → 12:00 +
+ * duration) so the document shape stays compatible with existing
+ * readers. The synthetic times are never displayed to the user.
+ *
+ * **No more shift-window validation.** The old
+ * `validateBreakAgainstShift` rejected breaks that fell outside the
+ * shift, and it was also the source of the "Overnight shifts can't
+ * be edited inline yet" error. With durations there's no clock time
+ * to validate — only that the duration is a positive integer and
+ * less than the shift itself (in total).
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -36,6 +34,7 @@ import {
   Box,
   Button,
   Checkbox,
+  Chip,
   FormControlLabel,
   IconButton,
   InputBase,
@@ -49,10 +48,6 @@ import {
 } from '@mui/icons-material';
 
 import type { TimesheetBreak } from '../../../types/recruiter/timesheet';
-import {
-  isValidationFail,
-  validateBreakAgainstShift,
-} from '../../../utils/timesheets/entryValidation';
 import { minutesToTime, timeToMinutes } from '../../../utils/timesheets/timeFormat';
 
 import CellAdornments from './CellAdornments';
@@ -66,12 +61,10 @@ export interface BreaksCellProps {
   value: TimesheetBreak[] | null | undefined;
   onSave: (breaks: TimesheetBreak[]) => Promise<void>;
   /**
-   * Shift window — used to:
-   *   1. Default a new break to the middle of the shift.
-   *   2. Validate that breaks fall inside the shift via
-   *      `validateBreakAgainstShift`.
-   * Pass actuals when set; scheduled times as fallback. `null` for
-   * either is fine — validation skips the shift-window check.
+   * Shift window — kept on the prop signature for backwards-compat
+   * with callers, but now only used to compute a sanity cap on the
+   * total break duration (sum of breaks ≤ shift length). Individual
+   * breaks no longer need clock-time validation against the shift.
    */
   shiftStart?: string | null;
   shiftEnd?: string | null;
@@ -82,8 +75,7 @@ export interface BreaksCellProps {
 }
 
 interface DraftBreak {
-  startTime: string;
-  endTime: string;
+  durationMins: number;
   paid: boolean;
   /** Live validation error, if any. Updated as the user edits. */
   error: string | null;
@@ -93,11 +85,17 @@ interface DraftBreak {
  * Helpers
  * ------------------------------------------------------------------------- */
 
+const PRESET_DURATIONS_MIN: ReadonlyArray<number> = [15, 30, 45, 60, 90];
+/** Defensive cap on a single break — 8h is a full shift, anything longer
+ *  is almost certainly a typo. */
+const MAX_BREAK_MIN = 480;
+const DEFAULT_NEW_BREAK_MIN = 30;
+
 function totalBreakMinutes(breaks: TimesheetBreak[] | null | undefined): number {
   if (!Array.isArray(breaks) || breaks.length === 0) return 0;
   return breaks.reduce((acc, b) => {
     if (typeof b.durationMins === 'number' && Number.isFinite(b.durationMins)) {
-      return acc + b.durationMins;
+      return acc + Math.max(0, b.durationMins);
     }
     const start = timeToMinutes(b.startTime);
     const end = timeToMinutes(b.endTime);
@@ -106,30 +104,46 @@ function totalBreakMinutes(breaks: TimesheetBreak[] | null | undefined): number 
   }, 0);
 }
 
-function defaultBreakWindow(
-  shiftStart: string | null | undefined,
-  shiftEnd: string | null | undefined,
-): { startTime: string; endTime: string } {
-  const startMin = timeToMinutes(shiftStart ?? null);
-  const endMin = timeToMinutes(shiftEnd ?? null);
-  if (startMin === null || endMin === null || endMin <= startMin) {
-    return { startTime: '12:00', endTime: '12:30' };
+/**
+ * Derive the duration of an existing break from whichever fields it
+ * happens to carry. Newer rows have a populated `durationMins`; older
+ * rows only had `startTime` + `endTime` and the duration was implicit.
+ */
+function deriveDurationMins(b: TimesheetBreak): number {
+  if (typeof b.durationMins === 'number' && Number.isFinite(b.durationMins) && b.durationMins > 0) {
+    return Math.round(b.durationMins);
   }
-  const mid = Math.floor((startMin + endMin) / 2);
-  return {
-    startTime: minutesToTime(mid),
-    endTime: minutesToTime(mid + 30),
-  };
+  const start = timeToMinutes(b.startTime);
+  const end = timeToMinutes(b.endTime);
+  if (start === null || end === null) return 0;
+  return Math.max(0, end - start);
 }
 
 function toDraft(breaks: TimesheetBreak[] | null | undefined): DraftBreak[] {
   if (!Array.isArray(breaks)) return [];
   return breaks.map((b) => ({
-    startTime: typeof b.startTime === 'string' ? b.startTime : '',
-    endTime: typeof b.endTime === 'string' ? b.endTime : '',
+    durationMins: deriveDurationMins(b),
     paid: b.paid === true,
     error: null,
   }));
+}
+
+/**
+ * Per-break validator: must be a positive integer ≤ MAX_BREAK_MIN.
+ * `validateAll` also enforces sum-of-breaks ≤ shift length so a
+ * recruiter can't enter breaks that exceed the worked shift.
+ */
+function validateOne(d: DraftBreak): DraftBreak {
+  if (!Number.isFinite(d.durationMins) || d.durationMins <= 0) {
+    return { ...d, error: 'Enter a duration greater than 0 minutes.' };
+  }
+  if (!Number.isInteger(d.durationMins)) {
+    return { ...d, error: 'Duration must be a whole number of minutes.' };
+  }
+  if (d.durationMins > MAX_BREAK_MIN) {
+    return { ...d, error: `Duration must be ≤ ${MAX_BREAK_MIN} minutes.` };
+  }
+  return { ...d, error: null };
 }
 
 function validateAll(
@@ -140,26 +154,53 @@ function validateAll(
   drafts: DraftBreak[];
   validBreaks: TimesheetBreak[] | null;
 } {
-  const updated: DraftBreak[] = [];
-  const valid: TimesheetBreak[] = [];
-  let allOk = true;
+  const stepwise = drafts.map(validateOne);
+  // Sum sanity. Compute the shift length in minutes; if the shift is
+  // overnight (endMin < startMin), fold the second leg into the next
+  // day (same trick the recompute trigger uses). Anything longer than
+  // that is clearly over-counted.
+  const startMin = timeToMinutes(shiftStart ?? null);
+  const endMinRaw = timeToMinutes(shiftEnd ?? null);
+  let shiftLen = Number.POSITIVE_INFINITY;
+  if (startMin !== null && endMinRaw !== null) {
+    const endMin = endMinRaw <= startMin ? endMinRaw + 1440 : endMinRaw;
+    shiftLen = endMin - startMin;
+  }
+  const totalMin = stepwise.reduce((acc, d) => acc + (d.durationMins || 0), 0);
+  const totalExceedsShift = totalMin > shiftLen;
 
-  for (const d of drafts) {
-    const r = validateBreakAgainstShift(
-      { startTime: d.startTime, endTime: d.endTime, paid: d.paid },
-      shiftStart ?? null,
-      shiftEnd ?? null,
+  if (totalExceedsShift) {
+    // Mark every row with the shared error so the user knows it's
+    // a sum issue, not any one row in particular.
+    const flagged = stepwise.map((d) =>
+      d.error == null
+        ? { ...d, error: `Total breaks (${totalMin}m) exceed shift length (${shiftLen}m).` }
+        : d,
     );
-    if (isValidationFail(r)) {
-      updated.push({ ...d, error: r.message });
-      allOk = false;
-    } else {
-      updated.push({ ...d, error: null });
-      valid.push(r.value);
-    }
+    return { drafts: flagged, validBreaks: null };
   }
 
-  return { drafts: updated, validBreaks: allOk ? valid : null };
+  const allOk = stepwise.every((d) => d.error === null);
+  if (!allOk) return { drafts: stepwise, validBreaks: null };
+
+  // Synthesize stub clock times. Anchored at noon so existing
+  // type-shape readers (TimesheetBreak.startTime/endTime are required
+  // strings on the type) get valid HH:mm values. The pay-rules engine
+  // + Everee submission only read durationMins + paid, so the
+  // synthetic times don't affect downstream computation.
+  let cursor = 12 * 60; // 12:00 in minutes
+  const valid: TimesheetBreak[] = stepwise.map((d) => {
+    const start = cursor % 1440;
+    cursor += d.durationMins;
+    const end = cursor % 1440;
+    return {
+      startTime: minutesToTime(start),
+      endTime: minutesToTime(end),
+      durationMins: d.durationMins,
+      paid: d.paid,
+    };
+  });
+  return { drafts: stepwise, validBreaks: valid };
 }
 
 function breaksEqual(a: TimesheetBreak[], b: TimesheetBreak[]): boolean {
@@ -167,12 +208,7 @@ function breaksEqual(a: TimesheetBreak[], b: TimesheetBreak[]): boolean {
   for (let i = 0; i < a.length; i += 1) {
     const x = a[i];
     const y = b[i];
-    if (
-      x.startTime !== y.startTime ||
-      x.endTime !== y.endTime ||
-      x.durationMins !== y.durationMins ||
-      x.paid !== y.paid
-    ) {
+    if (x.durationMins !== y.durationMins || x.paid !== y.paid) {
       return false;
     }
   }
@@ -208,8 +244,7 @@ const BreaksCell: React.FC<BreaksCellProps> = ({
   }, [value, saveState.state]);
 
   const totalMin = totalBreakMinutes(value);
-  const display =
-    totalMin === 0 ? '—' : `${totalMin}m`;
+  const display = totalMin === 0 ? '—' : `${totalMin}m`;
 
   const openPopover = useCallback(() => {
     if (disabled) return;
@@ -243,18 +278,13 @@ const BreaksCell: React.FC<BreaksCellProps> = ({
     setDrafts((prev) => [
       ...prev,
       {
-        ...defaultBreakWindow(shiftStart, shiftEnd),
+        durationMins: DEFAULT_NEW_BREAK_MIN,
         paid: false,
         error: null,
       },
     ]);
-  }, [shiftStart, shiftEnd]);
+  }, []);
 
-  /**
-   * Commit on close: validate everything; if valid AND different
-   * from prior, fire save. If invalid, leave popover open with the
-   * inline errors (don't silently discard the user's work).
-   */
   const commit = useCallback(async () => {
     const { drafts: validated, validBreaks } = validateAll(
       drafts,
@@ -263,8 +293,6 @@ const BreaksCell: React.FC<BreaksCellProps> = ({
     );
     setDrafts(validated);
     if (validBreaks === null) {
-      // First invalid break's message becomes the cell-level chip
-      // tooltip — chrome compositing handles surfacing.
       const firstError = validated.find((d) => d.error !== null)?.error ?? 'Invalid breaks';
       saveState.setValidationError(firstError);
       return;
@@ -374,7 +402,7 @@ const BreaksCell: React.FC<BreaksCellProps> = ({
         transformOrigin={{ vertical: 'top', horizontal: 'left' }}
         slotProps={{
           paper: {
-            sx: { minWidth: 320, p: 2 },
+            sx: { minWidth: 340, p: 2 },
           },
         }}
       >
@@ -390,11 +418,8 @@ const BreaksCell: React.FC<BreaksCellProps> = ({
             {drafts.map((d, i) => {
               const liveError = liveValidated.drafts[i]?.error ?? null;
               return (
-                <Stack
+                <Box
                   key={i}
-                  direction="row"
-                  spacing={1}
-                  alignItems="center"
                   sx={{
                     p: 1,
                     borderRadius: 1,
@@ -402,95 +427,101 @@ const BreaksCell: React.FC<BreaksCellProps> = ({
                     borderColor: liveError ? 'error.main' : 'divider',
                   }}
                 >
-                  <InputBase
-                    value={d.startTime}
-                    onChange={(e) => updateDraft(i, { startTime: e.target.value })}
-                    placeholder="Start"
-                    inputProps={{
-                      'aria-label': `Break ${i + 1} start`,
-                      autoComplete: 'off',
-                      autoCorrect: 'off',
-                      autoCapitalize: 'off',
-                      spellCheck: false,
-                      inputMode: 'numeric',
-                      size: 6,
-                      style: { padding: '2px 6px' },
-                    }}
-                    sx={{
-                      fontSize: 'inherit',
-                      backgroundColor: 'background.paper',
-                      borderRadius: 0.5,
-                      border: '1px solid',
-                      borderColor: 'divider',
-                      px: 0.5,
-                    }}
-                  />
-                  <Typography variant="body2" color="text.secondary">
-                    –
-                  </Typography>
-                  <InputBase
-                    value={d.endTime}
-                    onChange={(e) => updateDraft(i, { endTime: e.target.value })}
-                    placeholder="End"
-                    inputProps={{
-                      'aria-label': `Break ${i + 1} end`,
-                      autoComplete: 'off',
-                      autoCorrect: 'off',
-                      autoCapitalize: 'off',
-                      spellCheck: false,
-                      inputMode: 'numeric',
-                      size: 6,
-                      style: { padding: '2px 6px' },
-                    }}
-                    sx={{
-                      fontSize: 'inherit',
-                      backgroundColor: 'background.paper',
-                      borderRadius: 0.5,
-                      border: '1px solid',
-                      borderColor: 'divider',
-                      px: 0.5,
-                    }}
-                  />
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        size="small"
-                        checked={d.paid}
-                        onChange={(e) => updateDraft(i, { paid: e.target.checked })}
-                      />
-                    }
-                    label={
-                      <Typography variant="caption">Paid</Typography>
-                    }
-                    sx={{ ml: 0, mr: 0 }}
-                  />
-                  <IconButton
-                    size="small"
-                    aria-label={`Remove break ${i + 1}`}
-                    onClick={() => removeDraft(i)}
-                  >
-                    <CloseIcon fontSize="small" />
-                  </IconButton>
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <InputBase
+                      value={Number.isFinite(d.durationMins) ? d.durationMins : ''}
+                      onChange={(e) => {
+                        const raw = e.target.value.trim();
+                        if (raw === '') {
+                          updateDraft(i, { durationMins: 0 });
+                          return;
+                        }
+                        const n = Number(raw);
+                        if (Number.isFinite(n)) {
+                          updateDraft(i, { durationMins: Math.round(n) });
+                        }
+                      }}
+                      placeholder="Mins"
+                      inputProps={{
+                        'aria-label': `Break ${i + 1} duration (minutes)`,
+                        autoComplete: 'off',
+                        autoCorrect: 'off',
+                        spellCheck: false,
+                        inputMode: 'numeric',
+                        size: 4,
+                        style: { padding: '4px 8px', textAlign: 'right' },
+                      }}
+                      sx={{
+                        fontSize: 'inherit',
+                        backgroundColor: 'background.paper',
+                        borderRadius: 0.5,
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        width: 64,
+                      }}
+                    />
+                    <Typography variant="caption" color="text.secondary">
+                      min
+                    </Typography>
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          size="small"
+                          checked={d.paid}
+                          onChange={(e) => updateDraft(i, { paid: e.target.checked })}
+                        />
+                      }
+                      label={<Typography variant="caption">Paid</Typography>}
+                      sx={{ ml: 0.5, mr: 0 }}
+                    />
+                    <Box sx={{ flex: 1 }} />
+                    <IconButton
+                      size="small"
+                      aria-label={`Remove break ${i + 1}`}
+                      onClick={() => removeDraft(i)}
+                    >
+                      <CloseIcon fontSize="small" />
+                    </IconButton>
+                  </Stack>
+                  {/* Preset chips — one tap to set a common value.
+                      Selected state if the current value matches. */}
+                  <Stack direction="row" spacing={0.5} sx={{ mt: 0.75 }}>
+                    {PRESET_DURATIONS_MIN.map((p) => {
+                      const selected = d.durationMins === p;
+                      return (
+                        <Chip
+                          key={p}
+                          size="small"
+                          label={`${p}m`}
+                          onClick={() => updateDraft(i, { durationMins: p })}
+                          variant={selected ? 'filled' : 'outlined'}
+                          color={selected ? 'primary' : 'default'}
+                          sx={{
+                            height: 22,
+                            fontSize: 11,
+                            fontWeight: selected ? 600 : 400,
+                            cursor: 'pointer',
+                          }}
+                        />
+                      );
+                    })}
+                  </Stack>
                   {liveError ? (
                     <Typography
                       variant="caption"
                       color="error"
-                      sx={{ flex: 1, minWidth: 80 }}
+                      sx={{ display: 'block', mt: 0.5 }}
                     >
                       {liveError}
                     </Typography>
                   ) : null}
-                </Stack>
+                </Box>
               );
             })}
           </Stack>
         )}
         <Box sx={{ mt: 1.5, display: 'flex', justifyContent: 'space-between' }}>
-          <Button
-            size="small"
-            startIcon={<AddIcon />}
-            onClick={addDraft}
-          >
+          <Button size="small" startIcon={<AddIcon />} onClick={addDraft}>
             Add break
           </Button>
           <Stack direction="row" spacing={1}>
