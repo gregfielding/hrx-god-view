@@ -25,7 +25,7 @@
  * lives in this component beyond rendering the cells in their slots.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   AlertTitle,
@@ -557,6 +557,101 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
     });
   }, [rawRows, narrowJobOrderIds, narrowShiftId]);
 
+  /* -------------------------------------------------------------------
+   * Auto-materialize draft entries on JO/shift narrow.
+   *
+   * Without this, every empty row requires a "+ Add entry" click
+   * before the recruiter can input actual hours — for a 79-worker
+   * festival JO that's 79 clicks before any data entry. Once the
+   * recruiter has explicitly narrowed to a single JO or a single
+   * shift, the intent is clear: they're about to fill in actuals for
+   * everyone listed. We pre-create the draft entries in chunked-
+   * parallel writes (8 at a time) so all rows arrive at the inline
+   * editor by the time the spinner clears.
+   *
+   * Why gate on "narrowed-to-one" specifically:
+   *   - Entity-wide views can list hundreds of empty rows across
+   *     unrelated JOs. Bulk-materializing those would create a lot
+   *     of noise the recruiter never asked for.
+   *   - Account narrow alone (no JO) still spans many JOs — same
+   *     concern.
+   *   - Shift narrow is intentional + scoped — exactly one row per
+   *     worker, safe to auto-create.
+   *
+   * Idempotency: `createDraftTimesheetEntryCallable` uses a
+   * deterministic `{assignmentId}_{workDate}` id and returns
+   * `created: false` for existing docs, so the second visit to the
+   * same JO is a free no-op on the server.
+   *
+   * `autoCreatedRef` reserves keys synchronously to keep multiple
+   * useEffect runs (e.g. while creates are in flight + rows[] has
+   * changed) from double-firing the same callable.
+   * ------------------------------------------------------------------- */
+  const autoCreatedRef = useRef<Set<string>>(new Set());
+  const [autoCreating, setAutoCreating] = useState(false);
+
+  useEffect(() => {
+    const narrowedToOne =
+      (narrowJobOrderIds !== null &&
+        narrowJobOrderIds !== undefined &&
+        narrowJobOrderIds.size === 1) ||
+      !!narrowShiftId;
+    if (!narrowedToOne || !tenantId || loading) return;
+
+    const fresh = rows.filter(
+      (r) => r.kind === 'empty' && !autoCreatedRef.current.has(r.key),
+    );
+    if (fresh.length === 0) return;
+
+    // Reserve keys synchronously so a re-render mid-flight doesn't
+    // duplicate the work.
+    for (const r of fresh) autoCreatedRef.current.add(r.key);
+
+    let cancelled = false;
+    setAutoCreating(true);
+
+    void (async () => {
+      const chunkSize = 8;
+      for (let i = 0; i < fresh.length; i += chunkSize) {
+        if (cancelled) return;
+        const chunk = fresh.slice(i, i + chunkSize);
+        await Promise.all(
+          chunk.map((r) =>
+            createDraftTimesheetEntry({
+              tenantId,
+              assignmentId: r.assignment.id,
+              workDate: r.workDate,
+            }).catch((err) => {
+              // Don't fail the whole batch — log + un-reserve so a
+              // later explicit "+ Add entry" click can retry.
+              console.warn(
+                '[TimesheetGrid] auto-create draft entry failed',
+                { key: r.key, err },
+              );
+              autoCreatedRef.current.delete(r.key);
+            }),
+          ),
+        );
+      }
+      if (cancelled) return;
+      setAutoCreating(false);
+      refresh();
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // `refresh` is stable across renders (useCallback inside the hook),
+    // but include it to satisfy exhaustive-deps. Same for `tenantId`.
+  }, [tenantId, rows, narrowJobOrderIds, narrowShiftId, loading, refresh]);
+
+  // Re-arm the auto-create gate when the narrow changes — otherwise
+  // switching from JO A → JO B would skip the new rows because A's
+  // keys would still be reserved.
+  useEffect(() => {
+    autoCreatedRef.current = new Set();
+  }, [narrowJobOrderIds, narrowShiftId]);
+
   if (!filter) {
     return <EmptyFilterState />;
   }
@@ -571,6 +666,17 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
           filter={filter}
           onSubmitted={refresh}
         />
+
+        {autoCreating ? (
+          <Alert
+            severity="info"
+            icon={<CircularProgress size={16} />}
+            sx={{ py: 0.5 }}
+          >
+            Preparing rows for input… inline editing will activate as
+            each row is materialized.
+          </Alert>
+        ) : null}
 
         {error ? (
           <Alert severity="error">
