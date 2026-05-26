@@ -674,6 +674,43 @@ function parseEmbedSessionResponse(response: unknown): {
   return { url, origin, expiresInMs, sessionId };
 }
 
+/**
+ * Push a new home address onto an EXISTING Everee worker record.
+ *
+ * Why this exists (2026-05-26, contractor address regression):
+ * `evereeEnsureWorker` historically only fetched the worker's home
+ * address on the W-2 path, so contractors got created with an empty
+ * `homeAddress.current` block and tripped Everee's anti-fraud lockout.
+ * The bug is fixed for NEW provisions, but workers already provisioned
+ * during the regression window are still stuck. This helper PUTs the
+ * fresh address into Everee non-destructively so they can be unlocked
+ * without recreating onboarding.
+ *
+ * Wire shape (from sandbox probe — see
+ * `memory/feedback_everee_wire_gotchas.md` §6):
+ *   PUT /api/v2/workers/{workerId}/address
+ *   { line1, line2?, city, state, postalCode }
+ *
+ * Returns the raw Everee response so callers can confirm the new
+ * `homeAddress.current` matches what they sent.
+ */
+export async function updateEvereeWorkerAddress(input: {
+  tenantId: string;
+  entityId: string;
+  /** Everee canonical worker UUID (NOT the HRX uid). */
+  evereeWorkerId: string;
+  address: EvereeAddress;
+}): Promise<unknown> {
+  const config = await getEvereeConfigForEntity(input.tenantId, input.entityId);
+  if (!config) {
+    throw new Error(
+      `updateEvereeWorkerAddress: no Everee config for entity ${input.entityId}`,
+    );
+  }
+  const path = `/api/v2/workers/${encodeURIComponent(input.evereeWorkerId)}/address`;
+  return evereeRequest<unknown>(config, 'PUT', path, input.address);
+}
+
 /** Create an Everee Embed Component session (short-lived URL for iframe / WebView). */
 export async function createOnboardingSession(input: CreateOnboardingSessionInput): Promise<{
   url: string;

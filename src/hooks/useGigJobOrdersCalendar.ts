@@ -2,7 +2,7 @@
  * Hook to fetch Gig job order shifts and convert them to calendar events
  */
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { collection, documentId, getDocs, query, where, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { CalendarEvent } from '../types/calendar';
@@ -352,6 +352,59 @@ function shiftToCalendarEvent(shift: any, jobOrder: any, jobOrderColor: string):
 /**
  * Hook to fetch Gig job order shifts as calendar events
  */
+/* -------------------------------------------------------------------------
+ * Stale-while-revalidate cache (sessionStorage)
+ *
+ * The gig-calendar query is expensive: for an entity-wide view it walks
+ * every gig JO under the tenant (often 50–200 docs) and sequentially
+ * loads each one's shifts sub-collection. Every cold mount of
+ * `/calendar` paid the full bill, which is why navigating away and back
+ * showed the empty grid with a "Upcoming" spinner for several seconds.
+ *
+ * Mirrors `useCalendarEvents`'s cache pattern (session-scoped so it
+ * survives within-tab navigation, but a fresh tab gets fresh data):
+ *   - Cache-first render → events appear instantly on revisit.
+ *   - Background refresh after `BACKGROUND_REFRESH_MIN_AGE_MS` to pick
+ *     up new shifts without a visible spinner.
+ *   - Cache miss → normal fetch with the loading state.
+ * ------------------------------------------------------------------------- */
+
+type GigCalendarCacheEntryV1 = {
+  v: 1;
+  fetchedAt: number; // epoch ms
+  events: CalendarEvent[];
+};
+
+const BACKGROUND_REFRESH_MIN_AGE_MS = 30_000;
+
+function safeReadCache(key: string): GigCalendarCacheEntryV1 | null {
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as GigCalendarCacheEntryV1;
+    if (
+      !parsed ||
+      parsed.v !== 1 ||
+      !Array.isArray(parsed.events) ||
+      typeof parsed.fetchedAt !== 'number'
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function safeWriteCache(key: string, entry: GigCalendarCacheEntryV1): void {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(entry));
+  } catch {
+    // Quota / serialization / private-mode — silent. Cache is an
+    // optimization, not a correctness requirement.
+  }
+}
+
 export function useGigJobOrdersCalendar({
   tenantId,
   timeMin,
@@ -366,6 +419,29 @@ export function useGigJobOrdersCalendar({
   // Important: if caller passes an explicit empty list, treat it as "show none",
   // not "show all". This prevents cross-account event leakage.
   const filterByAccount = Array.isArray(jobOrderIds);
+
+  const cacheKey = useMemo(() => {
+    if (!tenantId) return null;
+    const tm = timeMin?.toISOString?.() ?? '';
+    const tx = timeMax?.toISOString?.() ?? '';
+    const ids = Array.isArray(jobOrderIds)
+      ? [...jobOrderIds].filter(Boolean).sort().join(',')
+      : '*';
+    return `gigJobOrdersCalendar.v1:${tenantId}:${tm}:${tx}:${ids}`;
+  }, [tenantId, timeMin, timeMax, jobOrderIds]);
+
+  // Snapshot the cache-hit decision for the next effect run. Without
+  // this, the effect can't distinguish "cache miss — show spinner"
+  // from "cache hit — silent revalidation" since both branches share
+  // the same fetch body.
+  const seedFromCache = useCallback((): boolean => {
+    if (!cacheKey) return false;
+    const cached = safeReadCache(cacheKey);
+    if (!cached) return false;
+    setEvents(cached.events ?? []);
+    setLoading(false);
+    return true;
+  }, [cacheKey]);
 
   useEffect(() => {
     if (!enabled || !tenantId) {
@@ -389,10 +465,24 @@ export function useGigJobOrdersCalendar({
       return;
     }
 
+    // Cache-first render: paint from sessionStorage immediately, then
+    // decide whether to revalidate. If the cache is younger than the
+    // revalidation threshold, skip the network call entirely.
+    const cached = cacheKey ? safeReadCache(cacheKey) : null;
+    const cacheIsFresh = !!cached && Date.now() - cached.fetchedAt < BACKGROUND_REFRESH_MIN_AGE_MS;
+    const seeded = seedFromCache();
+    if (cacheIsFresh && seeded) {
+      return; // Cache hit + fresh → no fetch needed this render.
+    }
+
     let cancelled = false;
 
     async function fetchShifts() {
-      setLoading(true);
+      // Silent revalidation when we have cached events on screen —
+      // avoid flipping the grid back to the loading skeleton mid-view.
+      if (!seeded) {
+        setLoading(true);
+      }
       setError(null);
 
       try {
@@ -709,6 +799,13 @@ export function useGigJobOrdersCalendar({
 
         if (!cancelled) {
           setEvents(calendarEvents);
+          if (cacheKey) {
+            safeWriteCache(cacheKey, {
+              v: 1,
+              fetchedAt: Date.now(),
+              events: calendarEvents,
+            });
+          }
           // If we aborted due to Firestore errors, set a warning but don't fail completely
           if (queryAborted) {
             console.warn('Some shifts may not be displayed due to Firestore internal errors');
@@ -745,7 +842,13 @@ export function useGigJobOrdersCalendar({
     return () => {
       cancelled = true;
     };
-  }, [tenantId, timeMin, timeMax, enabled, jobOrderIds]);
+    // `cacheKey` and `seedFromCache` are derived from these same
+    // inputs (tenantId, timeMin, timeMax, jobOrderIds) so adding them
+    // to the dep array doesn't introduce extra firings, but it satisfies
+    // exhaustive-deps and keeps the effect honest if the cache shape
+    // is refactored later.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, timeMin, timeMax, enabled, jobOrderIds, cacheKey, seedFromCache]);
 
   return {
     events,
