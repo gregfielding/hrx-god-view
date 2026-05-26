@@ -78,6 +78,14 @@ import {
 export interface AssignmentSnapshot {
   id: string;
   jobOrderId: string;
+  /**
+   * Denormalized from the assignment doc — the shift this assignment
+   * is tied to, when known. `null` for legacy assignments that predate
+   * the Slice 5.5 denorm or for entries whose JO has multiple shifts
+   * but the assignment isn't pinned to one. The timesheets page uses
+   * this to narrow rows when the Shift dropdown is set.
+   */
+  shiftId: string | null;
   candidateId: string;
   workerId: string;
   hiringEntityId: string | null;
@@ -258,9 +266,21 @@ function scheduledShiftForDate(
 function buildAssignmentSnapshot(
   raw: Assignment & { id: string },
 ): AssignmentSnapshot {
+  // `shiftId` lives at the top level of newer assignment docs; older
+  // shapes occasionally store it on a `shift` sub-object. Read both
+  // defensively so this resolver doesn't fragment the read path.
+  const rawShiftId =
+    (raw as Record<string, unknown>).shiftId ??
+    ((raw as Record<string, unknown>).shift as Record<string, unknown> | undefined)?.id ??
+    null;
+
   return {
     id: raw.id,
     jobOrderId: raw.jobOrderId,
+    shiftId:
+      typeof rawShiftId === 'string' && rawShiftId.trim().length > 0
+        ? rawShiftId
+        : null,
     candidateId: raw.candidateId,
     workerId: raw.candidateId,
     hiringEntityId: typeof raw.hiringEntityId === 'string' ? raw.hiringEntityId : null,

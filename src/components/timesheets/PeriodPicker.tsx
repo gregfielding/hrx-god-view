@@ -210,9 +210,20 @@ export const PeriodPicker: React.FC<PeriodPickerProps> = ({
       onChange(currentWeeklyPeriod(mode.weekStartDow, mode.weekEndDow));
     } else if (mode.kind === 'per_event_scoped' && mode.scope.autoFillPeriod) {
       onChange(mode.scope.autoFillPeriod);
+    } else if (mode.kind === 'per_event_manual') {
+      // Default per-event range = last 7 days (per the C1 Events
+      // workflow). Gives the recruiter a populated grid on landing
+      // without forcing them to set both date pickers first; they can
+      // still narrow tighter or widen the range.
+      const today = new Date();
+      const sevenDaysAgo = new Date(today);
+      sevenDaysAgo.setDate(today.getDate() - 6); // 7 days inclusive
+      const startIso = dateToLocalYyyyMmDd(sevenDaysAgo);
+      const endIso = dateToLocalYyyyMmDd(today);
+      if (startIso && endIso) {
+        onChange({ start: startIso, end: endIso });
+      }
     }
-    // per_event_manual → leave null until the user picks dates manually
-    // (the date pickers below render placeholders).
   }, [mode, value, onChange]);
 
   // When the scope auto-fill changes (e.g. shift loaded after entity
@@ -489,6 +500,24 @@ export const PeriodPicker: React.FC<PeriodPickerProps> = ({
                     size: 'small',
                     required: true,
                     error: Boolean(manualValidationMessage) && !manualStartDate,
+                    // Matches the 36px / 6px-radius / white-bg filter
+                    // Selects on the same row. Width sized so the two
+                    // pickers + dash + label cluster fit in the toolbar.
+                    sx: {
+                      width: 156,
+                      '& .MuiOutlinedInput-root': {
+                        height: 36,
+                        borderRadius: '6px',
+                        fontSize: '0.875rem',
+                        backgroundColor: 'white',
+                      },
+                      '& .MuiOutlinedInput-notchedOutline': {
+                        borderColor: '#E5E7EB',
+                      },
+                      '&:hover .MuiOutlinedInput-notchedOutline': {
+                        borderColor: '#D1D5DB',
+                      },
+                    },
                   },
                 }}
               />
@@ -512,6 +541,21 @@ export const PeriodPicker: React.FC<PeriodPickerProps> = ({
                             manualEndDate &&
                             isAfter(manualStartDate, manualEndDate),
                         )),
+                    sx: {
+                      width: 156,
+                      '& .MuiOutlinedInput-root': {
+                        height: 36,
+                        borderRadius: '6px',
+                        fontSize: '0.875rem',
+                        backgroundColor: 'white',
+                      },
+                      '& .MuiOutlinedInput-notchedOutline': {
+                        borderColor: '#E5E7EB',
+                      },
+                      '&:hover .MuiOutlinedInput-notchedOutline': {
+                        borderColor: '#D1D5DB',
+                      },
+                    },
                   },
                 }}
               />

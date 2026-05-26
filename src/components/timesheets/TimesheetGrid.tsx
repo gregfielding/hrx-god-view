@@ -93,6 +93,15 @@ export interface TimesheetGridProps {
    * zero rows. Both states are distinct from `undefined`.
    */
   narrowJobOrderIds?: Set<string> | null;
+  /**
+   * Optional client-side narrowing — when set, only rows whose
+   * `assignment.shiftId` matches are rendered. Stacks ON TOP of the
+   * job-order narrow (both filters must pass). Rows whose assignment
+   * predates the `shiftId` denorm are dropped when this is set —
+   * acceptable trade-off because the recruiter has explicitly asked
+   * for a single shift's data.
+   */
+  narrowShiftId?: string | null;
 }
 
 /* -------------------------------------------------------------------------
@@ -512,6 +521,7 @@ const EntryRow: React.FC<EntryRowProps> = ({
 export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
   filter,
   narrowJobOrderIds = null,
+  narrowShiftId = null,
 }) => {
   const { tenantId } = useAuth();
   const {
@@ -529,10 +539,23 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
   // We do this here (vs. inside `useTimesheetGridRows`) so the underlying
   // `TimesheetFilter` shape — and the resolver's index-friendly query —
   // doesn't fragment per dropdown. Narrowing is purely a UX layer.
+  //
+  // Two axes can stack:
+  //   - `narrowJobOrderIds`: keep rows under any JO in the set
+  //   - `narrowShiftId`:     keep rows whose assignment.shiftId matches
+  // Both gates are AND-ed.
   const rows = useMemo(() => {
-    if (!narrowJobOrderIds) return rawRows;
-    return rawRows.filter((r) => narrowJobOrderIds.has(r.assignment.jobOrderId));
-  }, [rawRows, narrowJobOrderIds]);
+    if (!narrowJobOrderIds && !narrowShiftId) return rawRows;
+    return rawRows.filter((r) => {
+      if (narrowJobOrderIds && !narrowJobOrderIds.has(r.assignment.jobOrderId)) {
+        return false;
+      }
+      if (narrowShiftId && r.assignment.shiftId !== narrowShiftId) {
+        return false;
+      }
+      return true;
+    });
+  }, [rawRows, narrowJobOrderIds, narrowShiftId]);
 
   if (!filter) {
     return <EmptyFilterState />;
