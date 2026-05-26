@@ -26,7 +26,7 @@
  * `menuGenerator.ts` (sidebar). Both must agree.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -127,6 +127,73 @@ function toYyyyMmDd(value: unknown): string | null {
   }
   if (!d || Number.isNaN(d.getTime())) return null;
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/* -------------------------------------------------------------------------
+ * Filter persistence to localStorage
+ *
+ * Scoped by tenantId so switching tenants gets that tenant's saved view
+ * (not a leak from the previous one). Stored as plain JSON; reads
+ * defend against malformed or stale shapes.
+ *
+ * `entity` is persisted as just its `id` (the full HiringEntity gets
+ * re-hydrated from the loaded `entities` list once it arrives). All
+ * other fields are primitives or a small `PeriodRange`.
+ * ------------------------------------------------------------------------- */
+
+const FILTERS_STORAGE_PREFIX = 'hrx:timesheets:filters:';
+
+interface PersistedFilters {
+  entityId: string | null;
+  accountFilter: string;
+  jobOrderFilter: string;
+  shiftFilter: string;
+  period: PeriodRange | null;
+}
+
+function readPersistedFilters(tenantId: string): PersistedFilters | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(
+      `${FILTERS_STORAGE_PREFIX}${tenantId}`,
+    );
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PersistedFilters>;
+    const period =
+      parsed.period &&
+      typeof parsed.period === 'object' &&
+      isValidPeriod(parsed.period as PeriodRange)
+        ? (parsed.period as PeriodRange)
+        : null;
+    return {
+      entityId: typeof parsed.entityId === 'string' ? parsed.entityId : null,
+      accountFilter:
+        typeof parsed.accountFilter === 'string' ? parsed.accountFilter : 'all',
+      jobOrderFilter:
+        typeof parsed.jobOrderFilter === 'string' ? parsed.jobOrderFilter : 'all',
+      shiftFilter:
+        typeof parsed.shiftFilter === 'string' ? parsed.shiftFilter : 'all',
+      period,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writePersistedFilters(
+  tenantId: string,
+  filters: PersistedFilters,
+): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(
+      `${FILTERS_STORAGE_PREFIX}${tenantId}`,
+      JSON.stringify(filters),
+    );
+  } catch {
+    // Quota exceeded / private-mode / disabled storage — silent no-op.
+    // Persistence is a UX enhancement, not a correctness requirement.
+  }
 }
 
 const Timesheets: React.FC = () => {
@@ -445,13 +512,67 @@ const Timesheets: React.FC = () => {
     setPeriod(null); // same re-seed rationale as handleJobOrderChange
   }, []);
 
+  /* -------------------------------------------------------------------
+   * Filter persistence — restore on tenant change; write back on change.
+   *
+   * On tenantId change, read the saved filters for THAT tenant and
+   * seed the non-entity primitives immediately (account / JO / shift /
+   * period). The entity object itself is re-hydrated by a separate
+   * effect once `entities[]` finishes loading.
+   *
+   * `restoredEntityForTenantRef` guards the entity-restore against
+   * stomping a user-initiated `entity = null` selection later in the
+   * session. We only auto-set entity once per tenantId arrival.
+   * ------------------------------------------------------------------- */
+  const restoredEntityForTenantRef = useRef<string | null>(null);
+
   useEffect(() => {
-    setEntity(null);
-    setPeriod(null);
-    setAccountFilter('all');
-    setJobOrderFilter('all');
-    setShiftFilter('all');
+    if (!tenantId) {
+      setEntity(null);
+      setPeriod(null);
+      setAccountFilter('all');
+      setJobOrderFilter('all');
+      setShiftFilter('all');
+      restoredEntityForTenantRef.current = null;
+      return;
+    }
+    const persisted = readPersistedFilters(tenantId);
+    setEntity(null); // re-hydrated by the entities-loaded effect below
+    setPeriod(persisted?.period ?? null);
+    setAccountFilter(persisted?.accountFilter ?? 'all');
+    setJobOrderFilter(persisted?.jobOrderFilter ?? 'all');
+    setShiftFilter(persisted?.shiftFilter ?? 'all');
+    // Reset the entity-restore guard for the new tenant — once entities
+    // load for THIS tenantId, we'll attempt the entity restore exactly once.
+    restoredEntityForTenantRef.current = null;
   }, [tenantId]);
+
+  // Once entities load, hydrate `entity` from the saved entityId.
+  // Guarded by the ref so this only runs once per tenantId arrival —
+  // if the user later clears the entity selection, we don't re-restore.
+  useEffect(() => {
+    if (!tenantId || entities.length === 0) return;
+    if (restoredEntityForTenantRef.current === tenantId) return;
+    const persisted = readPersistedFilters(tenantId);
+    if (persisted?.entityId) {
+      const found = entities.find((e) => e.id === persisted.entityId);
+      if (found) setEntity(found);
+    }
+    restoredEntityForTenantRef.current = tenantId;
+  }, [tenantId, entities]);
+
+  // Write-back: persist any filter change. Skipped when tenantId is
+  // unset (e.g. between tenant switches).
+  useEffect(() => {
+    if (!tenantId) return;
+    writePersistedFilters(tenantId, {
+      entityId: entity?.id ?? null,
+      accountFilter,
+      jobOrderFilter,
+      shiftFilter,
+      period,
+    });
+  }, [tenantId, entity, accountFilter, jobOrderFilter, shiftFilter, period]);
 
   /* -------------------------------------------------------------------
    * Filter assembly — the base resolver filter the grid loads against.
