@@ -36,7 +36,9 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
+  Box,
   Button,
+  Chip,
   Snackbar,
   TableBody,
   TableCell,
@@ -84,6 +86,127 @@ function formatDaysSince(ts: { toMillis?: () => number } | null): string | null 
   return `${days} days ago`;
 }
 
+/* ─────────────── Federal I-9 Section 2 deadline ───────────────
+ *
+ * USCIS rule: Section 2 must be completed by the end of the third
+ * BUSINESS day after the worker starts work for pay. We approximate
+ * "starts work for pay" via `hireDate` (the field the rest of the
+ * platform uses; HRX recruiters stamp it on hire). Business days =
+ * Mon-Fri; weekends + federal holidays would be a future refinement
+ * (this app doesn't track a holiday calendar yet, so we count Mon-Fri
+ * only — over-counts available days slightly on holiday weeks, which
+ * fails safe by showing the deadline a bit LATER than reality).
+ *
+ * The chip on each row encodes one of four states:
+ *   - `overdue` (red)        — current day is past the deadline
+ *   - `due_today` (red)      — last business day before midnight
+ *   - `due_soon` (amber)     — 1 business day left
+ *   - `upcoming` (default)   — 2 or more business days left
+ *   - `no_anchor` (grey)     — hireDate missing (legacy row); show "—"
+ */
+
+type DeadlineUrgency = 'overdue' | 'due_today' | 'due_soon' | 'upcoming' | 'no_anchor';
+
+interface DeadlineSummary {
+  urgency: DeadlineUrgency;
+  /** Business days remaining (negative when overdue). null when no anchor. */
+  businessDaysLeft: number | null;
+}
+
+function isBusinessDay(d: Date): boolean {
+  const dow = d.getDay();
+  return dow !== 0 && dow !== 6;
+}
+
+/** Count business days between two Dates (inclusive of end-day boundary
+ *  meaning "days through end-of-day end"). Positive = future, negative =
+ *  past, zero = same business day. */
+function businessDaysBetween(from: Date, to: Date): number {
+  // Normalize both to start-of-day so partial-day arithmetic doesn't
+  // bias the count.
+  const a = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  const b = new Date(to.getFullYear(), to.getMonth(), to.getDate());
+  if (a.getTime() === b.getTime()) return 0;
+  const sign = b > a ? 1 : -1;
+  let count = 0;
+  const cursor = new Date(a);
+  // Walk one calendar day at a time toward `b`, counting only
+  // business days along the way. Bounded by the diff so this is O(n)
+  // in calendar days — fine for the few-week window we care about.
+  while (cursor.getTime() !== b.getTime()) {
+    cursor.setDate(cursor.getDate() + sign);
+    if (isBusinessDay(cursor)) count += sign;
+  }
+  return count;
+}
+
+/** Add N business days to a date. Used to derive the Section 2 deadline
+ *  from hireDate (deadline = hireDate + 3 business days, end-of-day). */
+function addBusinessDays(d: Date, n: number): Date {
+  const result = new Date(d);
+  let remaining = n;
+  while (remaining > 0) {
+    result.setDate(result.getDate() + 1);
+    if (isBusinessDay(result)) remaining--;
+  }
+  return result;
+}
+
+function computeDeadlineSummary(
+  hireTs: { toMillis?: () => number } | null,
+): DeadlineSummary {
+  if (!hireTs || typeof hireTs.toMillis !== 'function') {
+    return { urgency: 'no_anchor', businessDaysLeft: null };
+  }
+  const hireDate = new Date(hireTs.toMillis());
+  if (Number.isNaN(hireDate.getTime())) {
+    return { urgency: 'no_anchor', businessDaysLeft: null };
+  }
+  const deadline = addBusinessDays(hireDate, 3);
+  const today = new Date();
+  const businessDaysLeft = businessDaysBetween(today, deadline);
+  if (businessDaysLeft < 0) return { urgency: 'overdue', businessDaysLeft };
+  if (businessDaysLeft === 0) return { urgency: 'due_today', businessDaysLeft };
+  if (businessDaysLeft === 1) return { urgency: 'due_soon', businessDaysLeft };
+  return { urgency: 'upcoming', businessDaysLeft };
+}
+
+function formatDeadlineLabel(d: DeadlineSummary): string {
+  switch (d.urgency) {
+    case 'overdue': {
+      const days = Math.abs(d.businessDaysLeft ?? 0);
+      if (days === 1) return 'Overdue · 1 day late';
+      return `Overdue · ${days} days late`;
+    }
+    case 'due_today':
+      return 'Due today';
+    case 'due_soon':
+      return '1 day left';
+    case 'upcoming':
+      return `${d.businessDaysLeft} days left`;
+    case 'no_anchor':
+      return '—';
+  }
+}
+
+/** Sort weight — overdue first, then due_today, then ascending days
+ *  left. Lower number sorts first. */
+function urgencyWeight(d: DeadlineSummary): number {
+  switch (d.urgency) {
+    case 'overdue':
+      // Larger overdue = more urgent. Subtract so older > newer.
+      return -1_000_000 + (d.businessDaysLeft ?? 0);
+    case 'due_today':
+      return 0;
+    case 'due_soon':
+      return 1;
+    case 'upcoming':
+      return 2 + (d.businessDaysLeft ?? 0);
+    case 'no_anchor':
+      return 1_000_000;
+  }
+}
+
 const PendingEmployerI9SelectSection: React.FC<PendingEmployerI9SelectSectionProps> = ({
   tenantId,
   currentUserUid,
@@ -101,15 +224,37 @@ const PendingEmployerI9SelectSection: React.FC<PendingEmployerI9SelectSectionPro
   // the section stays scoped without re-implementing the join. If we
   // later add Workforce/Events I-9 surfaces we can lift the entity key
   // into a prop.
-  const filtered = useMemo(
-    () =>
-      items.filter(
+  // Filter to JUST the C1 Select rows in the I-9 Section 2 band, then
+  // attach the federal-deadline summary so we can sort + render off one
+  // shape. Sort: overdue first (oldest first within), then due_today,
+  // then ascending days remaining. Workers without a hireDate anchor
+  // sink to the bottom — they're a data-quality issue, not a deadline.
+  const filtered = useMemo(() => {
+    const withDeadline = items
+      .filter(
         (it) =>
           it.actionType === 'i9_section_2' &&
           String(it.entityKey || '').toLowerCase() === 'select',
-      ),
-    [items],
-  );
+      )
+      .map((it) => ({ item: it, deadline: computeDeadlineSummary(it.context.hireDate) }));
+    withDeadline.sort((a, b) => urgencyWeight(a.deadline) - urgencyWeight(b.deadline));
+    return withDeadline;
+  }, [items]);
+
+  // Header-band counts: surface the urgency totals so the recruiter has
+  // a single-glance sense of "how bad is the backlog right now". Pulled
+  // off the already-sorted set so the math stays cheap.
+  const urgencyCounts = useMemo(() => {
+    let overdue = 0;
+    let dueToday = 0;
+    let dueSoon = 0;
+    for (const row of filtered) {
+      if (row.deadline.urgency === 'overdue') overdue++;
+      else if (row.deadline.urgency === 'due_today') dueToday++;
+      else if (row.deadline.urgency === 'due_soon') dueSoon++;
+    }
+    return { overdue, dueToday, dueSoon };
+  }, [filtered]);
 
   const csaNamesByUid = useTenantRecruiterNamesByUid(tenantId);
 
@@ -142,6 +287,50 @@ const PendingEmployerI9SelectSection: React.FC<PendingEmployerI9SelectSectionPro
 
   return (
     <>
+      {/* Urgency banner — only renders when there's at least one
+          overdue / due-today / due-soon row, otherwise it's noise. */}
+      {(urgencyCounts.overdue > 0 ||
+        urgencyCounts.dueToday > 0 ||
+        urgencyCounts.dueSoon > 0) && (
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            flexWrap: 'wrap',
+            mb: 1,
+          }}
+        >
+          {urgencyCounts.overdue > 0 && (
+            <Chip
+              size="small"
+              color="error"
+              variant="filled"
+              label={`${urgencyCounts.overdue} overdue`}
+              sx={{ fontWeight: 600 }}
+            />
+          )}
+          {urgencyCounts.dueToday > 0 && (
+            <Chip
+              size="small"
+              color="error"
+              variant="outlined"
+              label={`${urgencyCounts.dueToday} due today`}
+              sx={{ fontWeight: 600 }}
+            />
+          )}
+          {urgencyCounts.dueSoon > 0 && (
+            <Chip
+              size="small"
+              color="warning"
+              variant="outlined"
+              label={`${urgencyCounts.dueSoon} due tomorrow`}
+              sx={{ fontWeight: 600 }}
+            />
+          )}
+        </Box>
+      )}
+
       <CsaSectionTable
         title="Employer I-9 needed (C1 Select)"
         totalCount={filtered.length}
@@ -161,6 +350,7 @@ const PendingEmployerI9SelectSection: React.FC<PendingEmployerI9SelectSectionPro
         <TableHead>
           <TableRow sx={{ bgcolor: 'rgba(0,0,0,0.02)' }}>
             <TableCell sx={headerCellSx}>Worker</TableCell>
+            <TableCell sx={headerCellSx}>Deadline</TableCell>
             <TableCell sx={headerCellSx}>Worker signed Section 1</TableCell>
             <TableCell sx={headerCellSx}>Onboarding Specialist</TableCell>
             <TableCell sx={headerCellSx} align="right">
@@ -169,7 +359,7 @@ const PendingEmployerI9SelectSection: React.FC<PendingEmployerI9SelectSectionPro
           </TableRow>
         </TableHead>
         <TableBody>
-          {visible.map((item) => {
+          {visible.map(({ item, deadline }) => {
             const sub = formatDaysSince(item.context.i9Section1SignedAt);
             const recruiterName = csaNamesByUid.get(item.workerUid) ?? '—';
             // workerName is composed by the aggregator from first+last;
@@ -192,6 +382,33 @@ const PendingEmployerI9SelectSection: React.FC<PendingEmployerI9SelectSectionPro
                     avatarUrl={item.workerAvatarUrl ?? undefined}
                     onWorkerClick={(uid) => navigate(`/users/${uid}`)}
                   />
+                </TableCell>
+                <TableCell sx={cellSx}>
+                  {deadline.urgency === 'no_anchor' ? (
+                    <Typography variant="body2" color="text.disabled">
+                      —
+                    </Typography>
+                  ) : (
+                    <Chip
+                      size="small"
+                      label={formatDeadlineLabel(deadline)}
+                      // Red filled for overdue (most urgent), red outlined
+                      // for due-today, amber outlined for due-tomorrow,
+                      // default outlined chip for further-out. Matches
+                      // the urgency banner above.
+                      color={
+                        deadline.urgency === 'overdue'
+                          ? 'error'
+                          : deadline.urgency === 'due_today'
+                            ? 'error'
+                            : deadline.urgency === 'due_soon'
+                              ? 'warning'
+                              : 'default'
+                      }
+                      variant={deadline.urgency === 'overdue' ? 'filled' : 'outlined'}
+                      sx={{ fontWeight: 600 }}
+                    />
+                  )}
                 </TableCell>
                 <TableCell sx={cellSx}>
                   <Typography variant="body2">
