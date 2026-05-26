@@ -3095,9 +3095,41 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   };
 
+  /**
+   * Drag-to-unplace destination. Three cases the recruiter can drop:
+   *
+   *   1. Placement-only worker (Click to Hire state) → `deletePlacement`
+   *      runs its own optimistic remove + Firestore delete. Row vanishes
+   *      from the Assignments card immediately.
+   *   2. Worker has an assignment (offered / accepted / confirmed) →
+   *      open the existing cancel-assignment confirm dialog. Cancelling
+   *      an assignment is non-trivial (worker gets notified, audit row
+   *      written) so we don't silent-fire it on a drop — we ask first.
+   *      Previously this branch returned silently and the user thought
+   *      the drop did nothing.
+   *   3. Neither (defensive) → log + ignore. Should never happen since
+   *      `assignedWorkers` only contains workers with a placement or
+   *      assignment, but the guard keeps us honest if the data layer
+   *      changes upstream.
+   */
   const handleUnplaceToWorkerPool = async (worker: Worker) => {
-    if (!worker.isPlacementOnly) return;
-    await deletePlacement(worker);
+    if (worker.isPlacementOnly) {
+      await deletePlacement(worker);
+      return;
+    }
+    if (worker.assignmentStatus || worker.assignmentId) {
+      // Route to the same confirm dialog the per-row "Cancel" button
+      // uses so the recruiter gets the explicit "this will notify the
+      // worker" copy before we touch the assignment doc.
+      setCancelAssignmentWorker(worker);
+      return;
+    }
+    // Defensive: nothing to do. Log so we can spot the case in field
+    // reports rather than silently swallowing the drop.
+    console.warn('[PlacementsTab] drag-to-unplace: worker has neither placement nor assignment', {
+      workerId: worker.id,
+      displayName: worker.displayName,
+    });
   };
 
   const handleWorkerPoolDragOver = (event: React.DragEvent) => {
