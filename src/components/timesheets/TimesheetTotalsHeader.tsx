@@ -17,10 +17,12 @@
  *     so the operator can see how much work remains to be entered.
  */
 
-import React, { useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Box,
+  Button,
   Chip,
+  CircularProgress,
   Paper,
   Stack,
   Tooltip,
@@ -28,6 +30,7 @@ import {
 } from '@mui/material';
 import {
   AccessTime as AccessTimeIcon,
+  CheckCircleOutline as CheckCircleOutlineIcon,
   Group as GroupIcon,
 } from '@mui/icons-material';
 
@@ -40,6 +43,7 @@ import {
 } from './timesheetGridResolver';
 import SubmitBatchToEvereeButton from './SubmitBatchToEvereeButton';
 import type { TimesheetFilter } from '../../types/recruiter/timesheet';
+import { approveTimesheetEntries } from '../../utils/timesheets/approveTimesheetEntries';
 
 export interface TimesheetTotalsHeaderProps {
   rows: TimesheetGridRow[];
@@ -161,6 +165,53 @@ export const TimesheetTotalsHeader: React.FC<TimesheetTotalsHeaderProps> = ({
   const allRowsEmpty = totals.rowCount > 0 && totals.emptyRowCount === totals.rowCount;
   const showScheduledOnlyNote = !loading && allRowsEmpty;
 
+  /* -------------------------------------------------------------------
+   * Bulk approve action.
+   *
+   * At production scale (e.g. 79-worker festival JO) clicking the
+   * status pill on each row is prohibitive. This button counts every
+   * `draft` / `submitted` entry in the current view and flips them
+   * all to `approved` in one shot. Chunks at the server's 200-id cap.
+   *
+   * Local optimistic-merge isn't needed — the per-row pill already
+   * handles single-entry merges; for bulk, we rely on `onSubmitted` /
+   * the live row listener to refresh.
+   * ------------------------------------------------------------------- */
+  const approvableEntryIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const r of rows) {
+      if (r.kind !== 'entry') continue;
+      if (r.entry.status === 'draft' || r.entry.status === 'submitted') {
+        ids.push(r.entry.id);
+      }
+    }
+    return ids;
+  }, [rows]);
+  const [approvingAll, setApprovingAll] = useState(false);
+  const handleApproveAll = useCallback(async () => {
+    if (!tenantId || approvableEntryIds.length === 0) return;
+    setApprovingAll(true);
+    try {
+      // Server caps at 200 ids per call. Chunk so 79-worker batches
+      // ship in one call but 500-worker (hypothetical) would still
+      // succeed in three.
+      const CHUNK = 200;
+      for (let i = 0; i < approvableEntryIds.length; i += CHUNK) {
+        await approveTimesheetEntries({
+          tenantId,
+          entryIds: approvableEntryIds.slice(i, i + CHUNK),
+        });
+      }
+      // The live row listener will pick up the status flip; calling
+      // onSubmitted gives the parent grid a hint to refresh too.
+      onSubmitted?.();
+    } catch (err) {
+      console.error('[TimesheetTotalsHeader] approve-all failed', err);
+    } finally {
+      setApprovingAll(false);
+    }
+  }, [tenantId, approvableEntryIds, onSubmitted]);
+
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
       <Stack
@@ -223,6 +274,37 @@ export const TimesheetTotalsHeader: React.FC<TimesheetTotalsHeaderProps> = ({
               />
             );
           })}
+
+          {/* Bulk-approve. Visible only when there's at least one
+              draft/submitted row in the current view, so a fully-
+              approved batch doesn't show a redundant button. */}
+          {tenantId && approvableEntryIds.length > 0 && (
+            <Tooltip
+              title={`Flip every ${approvableEntryIds.length} draft / submitted entry in this view to approved.`}
+            >
+              <span>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="primary"
+                  startIcon={
+                    approvingAll ? (
+                      <CircularProgress size={14} color="inherit" />
+                    ) : (
+                      <CheckCircleOutlineIcon fontSize="small" />
+                    )
+                  }
+                  onClick={() => void handleApproveAll()}
+                  disabled={approvingAll}
+                  sx={{ textTransform: 'none' }}
+                >
+                  {approvingAll
+                    ? 'Approving…'
+                    : `Approve ${approvableEntryIds.length}`}
+                </Button>
+              </span>
+            </Tooltip>
+          )}
 
           {/* TS.1.P4 Slice 6b — submit-to-Everee button. Renders only
            *  when we have tenant + filter context. Internally disabled
