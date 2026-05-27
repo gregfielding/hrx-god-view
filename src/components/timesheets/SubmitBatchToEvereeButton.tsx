@@ -43,7 +43,7 @@ import {
   type CreateTimesheetBatchScope,
 } from '../../services/timesheets/timesheetBatchCallables';
 import type { TimesheetFilter } from '../../types/recruiter/timesheet';
-import type { TimesheetGridRow } from './timesheetGridResolver';
+import { entryHasRecruiterData, type TimesheetGridRow } from './timesheetGridResolver';
 
 export interface SubmitBatchToEvereeButtonProps {
   tenantId: string | null | undefined;
@@ -72,6 +72,12 @@ function summarizeApproved(rows: TimesheetGridRow[]): ApprovedSummary {
   for (const row of rows) {
     if (row.kind !== 'entry') continue;
     if (row.entry.status !== 'approved') continue;
+    // Defensive: skip approved-but-empty rows. The bulk-approve
+    // affordance already filters these out, but a per-row pill click
+    // can flip an empty row to approved (deliberate no-show). Don't
+    // submit those — a $0 payable for $0 work is silly and wastes an
+    // Everee shift create.
+    if (!entryHasRecruiterData(row.entry)) continue;
     entryIds.push(row.entry.id);
     workerIds.add(row.assignment.workerId);
     totalRegularHours += Number(row.entry.totalRegularHours ?? 0);

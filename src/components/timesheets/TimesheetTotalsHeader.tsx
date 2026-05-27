@@ -39,6 +39,7 @@ import {
   type TimesheetRowDisplayStatus,
   actualHoursForRow,
   displayStatusForRow,
+  entryHasRecruiterData,
   scheduledHoursForRow,
 } from './timesheetGridResolver';
 import SubmitBatchToEvereeButton from './SubmitBatchToEvereeButton';
@@ -181,9 +182,14 @@ export const TimesheetTotalsHeader: React.FC<TimesheetTotalsHeaderProps> = ({
     const ids: string[] = [];
     for (const r of rows) {
       if (r.kind !== 'entry') continue;
-      if (r.entry.status === 'draft' || r.entry.status === 'submitted') {
-        ids.push(r.entry.id);
-      }
+      if (r.entry.status !== 'draft' && r.entry.status !== 'submitted') continue;
+      // Skip empties — the auto-create-on-narrow path materializes a
+      // draft row for every scheduled day so the cells are immediately
+      // editable, but only rows where the recruiter actually entered
+      // hours should ride a bulk action. Single-click on the status
+      // pill still works for the rare deliberate no-show approval.
+      if (!entryHasRecruiterData(r.entry)) continue;
+      ids.push(r.entry.id);
     }
     return ids;
   }, [rows]);

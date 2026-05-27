@@ -614,6 +614,40 @@ export function scheduledHoursForRow(row: TimesheetGridRow): number {
  * the per-row tooltip and don't roll into the worker-facing "actual
  * hours" total.
  */
+/**
+ * "Has the recruiter touched this entry yet?" — the predicate the
+ * bulk-approve and bulk-submit affordances use to skip rows that
+ * exist only because the auto-create-on-narrow path materialized
+ * them. An empty draft entry is a placeholder, NOT an intentional
+ * "0 hours worked" submission; bulk actions should respect that.
+ *
+ * Returns true iff any of:
+ *   - `actualStartTime` is a non-empty string
+ *   - `actualEndTime` is a non-empty string
+ *   - `actualHoursOverride` is a positive number
+ *
+ * Tips / bonus alone don't count — those without hours are almost
+ * certainly a typo the recruiter is mid-correcting, not a real
+ * payable.
+ *
+ * Per-row click-to-approve on the status pill is intentionally NOT
+ * gated by this — the recruiter may want to deliberately approve a
+ * no-show entry (0 hours, archived as confirmed) and we shouldn't
+ * silently block that one-off case. Only the bulk affordances
+ * filter via this helper.
+ */
+export function entryHasRecruiterData(
+  entry: Pick<TimesheetEntryV2, 'actualStartTime' | 'actualEndTime' | 'actualHoursOverride'>,
+): boolean {
+  const start = entry.actualStartTime;
+  if (typeof start === 'string' && start.trim().length > 0) return true;
+  const end = entry.actualEndTime;
+  if (typeof end === 'string' && end.trim().length > 0) return true;
+  const override = entry.actualHoursOverride;
+  if (typeof override === 'number' && Number.isFinite(override) && override > 0) return true;
+  return false;
+}
+
 export function actualHoursForRow(row: TimesheetGridRow): number {
   if (row.kind !== 'entry') return 0;
   const regular = typeof row.entry.totalRegularHours === 'number' ? row.entry.totalRegularHours : 0;
