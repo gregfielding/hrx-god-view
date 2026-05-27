@@ -66,6 +66,17 @@ export interface CreateWorkerInput {
   /** 10-digit phone number, no formatting (Everee strips non-digits anyway). */
   phone?: string;
   /**
+   * Worker DOB in `"YYYY-MM-DD"` (Everee's accepted format). Added
+   * 2026-05-27 after a probe confirmed Everee accepts it on both the
+   * create body and the `/personal-info` PUT endpoint. Pre-fix, we
+   * never passed DOB — that left Everee with no identity-verification
+   * signal at provision, and their anti-fraud engine flipped
+   * `accountAccessPermitted: false` on ~25% of new workers. Callers
+   * MUST pass this for production provisions; sandbox tenant 2320 will
+   * still accept a create without it.
+   */
+  dateOfBirth?: string;
+  /**
    * The remaining fields are REQUIRED by the Everee
    * `/api/v2/embedded/workers/employee` endpoint (W2). Callers may omit them —
    * `createWorkerIfNeeded` injects conservative stub defaults so sandbox /
@@ -330,6 +341,9 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
     if (input.homeAddress) {
       (requestBody as Record<string, unknown>).homeAddress = input.homeAddress;
     }
+    if (input.dateOfBirth) {
+      (requestBody as Record<string, unknown>).dateOfBirth = input.dateOfBirth;
+    }
   } else {
     path = '/api/v2/embedded/workers/employee';
     /**
@@ -380,6 +394,9 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
       homeAddress,
       externalWorkerId: input.firebaseUid,
     };
+    if (input.dateOfBirth) {
+      (requestBody as Record<string, unknown>).dateOfBirth = input.dateOfBirth;
+    }
   }
 
   if (resolvedApprovalGroupId !== undefined) {

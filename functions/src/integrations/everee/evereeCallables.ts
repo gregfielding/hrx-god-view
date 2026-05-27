@@ -82,15 +82,23 @@ async function fillEvereeIdentityFromUserDoc(
     lastName?: string;
     email?: string;
     phone?: string;
+    dateOfBirth?: string;
   },
-): Promise<{ firstName?: string; lastName?: string; email?: string; phone?: string }> {
+): Promise<{
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
+  dateOfBirth?: string;
+}> {
   const has = (v: unknown) => typeof v === 'string' && v.trim().length > 0;
   // Caller already provided everything — skip the read.
   if (
     has(current.firstName) &&
     has(current.lastName) &&
     has(current.email) &&
-    has(current.phone)
+    has(current.phone) &&
+    has(current.dateOfBirth)
   ) {
     return current;
   }
@@ -117,11 +125,26 @@ async function fillEvereeIdentityFromUserDoc(
       if (parts.length >= 1) displayFirst = parts[0];
       if (parts.length >= 2) displayLast = parts.slice(1).join(' ');
     }
+    // 2026-05-27 — dateOfBirth on the worker create body. Pre-fix, we
+    // never passed DOB to Everee, which (combined with the SSN we don't
+    // pass either) gave Everee zero identity-verification signal at
+    // provision time. Their anti-fraud engine defaulted to
+    // `accountAccessPermitted: false` on new workers (the systemic ~25%
+    // lockout we audited). HRX stores DOB on `users/{uid}` as either
+    // `dob` or `dateOfBirth`, both as `"YYYY-MM-DD"`. Sanity-check the
+    // format before passing to Everee so a malformed value can't trip
+    // a 422 on an otherwise-good provision.
+    const rawDob = pick('dob', 'dateOfBirth');
+    const validDob =
+      typeof rawDob === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawDob.trim())
+        ? rawDob.trim()
+        : undefined;
     return {
       firstName: has(current.firstName) ? current.firstName : pick('firstName') ?? displayFirst,
       lastName: has(current.lastName) ? current.lastName : pick('lastName') ?? displayLast,
       email: has(current.email) ? current.email : pick('email'),
       phone: has(current.phone) ? current.phone : pick('phoneE164', 'phone', 'phoneNumber'),
+      dateOfBirth: has(current.dateOfBirth) ? current.dateOfBirth : validDob,
     };
   } catch (err) {
     logger.warn('[evereeEnsureWorker] user-doc fallback failed', {
@@ -257,6 +280,7 @@ export const evereeEnsureWorker = onCall(async (request) => {
     firstName: typeof d?.firstName === 'string' ? d.firstName : undefined,
     lastName: typeof d?.lastName === 'string' ? d.lastName : undefined,
     phone: typeof d?.phone === 'string' ? d.phone : undefined,
+    dateOfBirth: typeof d?.dateOfBirth === 'string' ? d.dateOfBirth : undefined,
   });
 
   /**
@@ -313,6 +337,7 @@ export const evereeEnsureWorker = onCall(async (request) => {
     firstName: identity.firstName,
     lastName: identity.lastName,
     phone: identity.phone,
+    dateOfBirth: identity.dateOfBirth,
     homeAddress,
     ...(approvalGroupId !== undefined ? { approvalGroupId } : {}),
   });

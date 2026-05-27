@@ -318,6 +318,15 @@ export const restartEvereeOnboarding = onCall(
               `Update the worker profile and retry.`,
           );
         }
+        // 2026-05-27 — DOB at create. See evereeService.CreateWorkerInput
+        // doc-comment for the anti-fraud rationale.
+        const rawDob =
+          (typeof userData.dateOfBirth === 'string' && userData.dateOfBirth) ||
+          (typeof userData.dob === 'string' && userData.dob) ||
+          '';
+        const dateOfBirth = /^\d{4}-\d{2}-\d{2}$/.test(rawDob.trim())
+          ? rawDob.trim()
+          : undefined;
         const created = await createWorkerIfNeeded({
           tenantId,
           entityId,
@@ -328,6 +337,7 @@ export const restartEvereeOnboarding = onCall(
           firstName: typeof userData.firstName === 'string' ? userData.firstName : undefined,
           lastName: typeof userData.lastName === 'string' ? userData.lastName : undefined,
           phone: phone || undefined,
+          dateOfBirth,
           homeAddress: home,
           hireDate: new Date().toISOString().slice(0, 10),
         });

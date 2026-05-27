@@ -506,6 +506,13 @@ export async function runStartOnCallEmploymentFlow(
         String(u.phoneE164 ?? "").trim() ||
         String(u.phone ?? "").trim() ||
         String(u.phoneNumber ?? "").trim();
+      // 2026-05-27 — pass DOB at provision time. Pre-fix, Everee's
+      // anti-fraud engine flipped accountAccessPermitted: false on
+      // new workers because they had no identity-verification signal
+      // (no DOB, no SSN). Validating "YYYY-MM-DD" here so a malformed
+      // value can't 422 the create.
+      const rawDob = String(u.dateOfBirth ?? u.dob ?? "").trim();
+      const dateOfBirth = /^\d{4}-\d{2}-\d{2}$/.test(rawDob) ? rawDob : undefined;
       await createWorkerIfNeeded({
         tenantId,
         entityId: trimmedEntity,
@@ -516,6 +523,7 @@ export async function runStartOnCallEmploymentFlow(
         firstName: String(u.firstName ?? ""),
         lastName: String(u.lastName ?? ""),
         phone,
+        dateOfBirth,
         homeAddress: home,
         hireDate: new Date().toISOString().slice(0, 10),
       });
