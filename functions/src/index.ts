@@ -361,6 +361,7 @@ export { onAssignmentWriteEnsureDenormFields } from './timesheets/onAssignmentWr
 // per `weeklySchedule[dow].enabled`, and falls back to the shared
 // resolver chain when P1.B denorm fields are absent.
 export { createDraftTimesheetEntryCallable } from './timesheets/createDraftTimesheetEntryCallable';
+export { approveTimesheetEntriesCallable } from './timesheets/approveTimesheetEntriesCallable';
 // **TS.1.P1.D** — Companion trigger that maintains
 // `Assignment.latestTimesheetStatus` by aggregating across all the
 // assignment's entries with a precedence rule (error > draft >

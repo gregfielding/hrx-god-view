@@ -25,7 +25,7 @@
  * lives in this component beyond rendering the cells in their slots.
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   AlertTitle,
@@ -59,6 +59,7 @@ import type {
   TimesheetEntryV2,
   TimesheetFilter,
 } from '../../types/recruiter/timesheet';
+import { approveTimesheetEntries } from '../../utils/timesheets/approveTimesheetEntries';
 import { createDraftTimesheetEntry } from '../../utils/timesheets/createDraftTimesheetEntry';
 import { formatPeriodLabel } from '../../utils/timesheets/dateRange';
 import {
@@ -215,9 +216,15 @@ const STATUS_COLORS: Record<
 
 interface StatusPillProps {
   status: TimesheetRowDisplayStatus;
+  /** When set, click on a `draft` or `submitted` pill fires this
+   *  handler. Used to approve entries from the grid without a separate
+   *  bulk-select UI. Non-approvable statuses ignore the click. */
+  onApprove?: () => void;
+  /** Loading flag while the approve callable is in flight. */
+  approving?: boolean;
 }
 
-const StatusPill: React.FC<StatusPillProps> = ({ status }) => {
+const StatusPill: React.FC<StatusPillProps> = ({ status, onApprove, approving }) => {
   if (status === 'no_entry') {
     return (
       <Tooltip title="No entry yet — this day will appear in the next batch only after a recruiter saves an entry.">
@@ -231,19 +238,58 @@ const StatusPill: React.FC<StatusPillProps> = ({ status }) => {
       </Tooltip>
     );
   }
+  const isApprovable = (status === 'draft' || status === 'submitted') && !!onApprove;
   return (
-    <Chip
-      size="small"
-      color={STATUS_COLORS[status]}
-      variant="filled"
-      label={STATUS_LABELS[status]}
-    />
+    <Tooltip
+      title={
+        isApprovable
+          ? 'Click to approve this entry (required before submit to Everee).'
+          : ''
+      }
+    >
+      <Chip
+        size="small"
+        color={STATUS_COLORS[status]}
+        variant="filled"
+        label={approving ? 'Approving…' : STATUS_LABELS[status]}
+        onClick={isApprovable ? onApprove : undefined}
+        clickable={isApprovable}
+        sx={{
+          cursor: isApprovable ? 'pointer' : 'default',
+          fontWeight: 600,
+        }}
+      />
+    </Tooltip>
   );
 };
 
 /* -------------------------------------------------------------------------
  * Row rendering
  * ------------------------------------------------------------------------- */
+
+function formatMoney(n: number): string {
+  if (!Number.isFinite(n)) return '$0.00';
+  return `$${n.toFixed(2)}`;
+}
+
+/**
+ * Per-row gross pay. Same formula as SubmitBatchToEvereeButton's
+ * `summarizeApproved` so the row total and the batch total agree:
+ *   reg * payRate + ot * payRate * 1.5 + dt * payRate * 2 + tips + bonus
+ *
+ * Penalties (meal/rest break) are NOT included today — they're a CA-only
+ * rules-engine output that hasn't been wired into pay totals yet. Adding
+ * them would require splitting the formula by entity policy.
+ */
+function computeEntryGrossPay(entry: TimesheetEntryV2): number {
+  const payRate = Number(entry.payRate ?? 0);
+  const reg = Number(entry.totalRegularHours ?? 0);
+  const ot = Number(entry.totalOTHours ?? 0);
+  const dt = Number(entry.totalDoubleTimeHours ?? 0);
+  const tips = Number(entry.tips ?? 0);
+  const bonus = Number(entry.bonusAmount ?? 0);
+  return reg * payRate + ot * payRate * 1.5 + dt * payRate * 2 + tips + bonus;
+}
 
 function formatHours(h: number): string {
   if (!Number.isFinite(h) || h === 0) return '0';
@@ -272,6 +318,12 @@ interface EntryRowProps extends RowCommonProps {
   entry: TimesheetEntryV2;
   mergeEntryUpdate: (entryId: string, patch: Partial<TimesheetEntryV2>) => void;
   refreshEntry: (entryId: string) => Promise<void>;
+  /** Fired when the user clicks a `draft` or `submitted` Status pill.
+   *  Calls the approve callable; on success the row's status flips to
+   *  `approved` and the SubmitBatchToEveree button picks it up. */
+  onApproveEntry: (entryId: string) => Promise<void>;
+  /** True while an approve callable is in flight for THIS entry. */
+  approvingThisEntry: boolean;
 }
 
 /**
@@ -363,7 +415,11 @@ const EmptyRow: React.FC<EmptyRowProps> = ({
       <TableCell>{row.workDate}</TableCell>
       <ScheduledCell row={row} />
       <TableCell align="right">{formatHours(scheduledHrs)}</TableCell>
-      <TableCell colSpan={6}>
+      {/* Spans Actual / Breaks / Actual hrs / Tips / Bonus / Notes /
+          Pay rate / Total — 8 columns. Bumped from 6 → 8 when the
+          Pay rate + Total columns were added, so the "+ Add entry"
+          link block still spans correctly to the Status cell. */}
+      <TableCell colSpan={8}>
         <Stack direction="column" spacing={0.25}>
           {creating.status === 'creating' ? (
             <Stack direction="row" alignItems="center" spacing={0.5}>
@@ -426,6 +482,8 @@ const EntryRow: React.FC<EntryRowProps> = ({
   entry,
   mergeEntryUpdate,
   refreshEntry,
+  onApproveEntry,
+  approvingThisEntry,
 }) => {
   const editor = useTimesheetEntryEditor({
     tenantId,
@@ -527,8 +585,25 @@ const EntryRow: React.FC<EntryRowProps> = ({
         />
       </TableCell>
 
+      {/* Pay rate + Total. Total uses the same formula as the
+          batch submitter's gross-pay aggregation so per-row and
+          batch totals stay in lockstep. */}
+      <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+        {formatMoney(Number(entry.payRate ?? 0))}
+      </TableCell>
+      <TableCell
+        align="right"
+        sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}
+      >
+        {formatMoney(computeEntryGrossPay(entry))}
+      </TableCell>
+
       <TableCell>
-        <StatusPill status={status} />
+        <StatusPill
+          status={status}
+          onApprove={() => void onApproveEntry(entry.id)}
+          approving={approvingThisEntry}
+        />
       </TableCell>
     </TableRow>
   );
@@ -609,6 +684,52 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
    * ------------------------------------------------------------------- */
   const autoCreatedRef = useRef<Set<string>>(new Set());
   const [autoCreating, setAutoCreating] = useState(false);
+
+  /* -------------------------------------------------------------------
+   * Approval action (per-row click on the draft status pill).
+   *
+   * Tracks IN-FLIGHT entry ids so the clicked pill renders an
+   * "Approving…" state and the user can't double-click the same row.
+   * On success, the row's status flips to `approved` via the
+   * mergeEntryUpdate path so the Submit-to-Everee button picks it up
+   * immediately (no separate refresh round-trip).
+   * ------------------------------------------------------------------- */
+  const [approvingEntryIds, setApprovingEntryIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const handleApproveEntry = useCallback(
+    async (entryId: string) => {
+      if (!tenantId) return;
+      setApprovingEntryIds((prev) => {
+        if (prev.has(entryId)) return prev;
+        const next = new Set(prev);
+        next.add(entryId);
+        return next;
+      });
+      try {
+        const res = await approveTimesheetEntries({ tenantId, entryIds: [entryId] });
+        if (res.approved > 0) {
+          // Local-merge the new status so SubmitBatchToEvereeButton's
+          // summary count refreshes without a full grid refetch.
+          mergeEntryUpdate(entryId, { status: 'approved' });
+        } else {
+          // The server skipped it — likely already approved or in a
+          // terminal status. Either way the grid will reflect reality
+          // on the next refresh; nothing to do here.
+        }
+      } catch (err) {
+        console.error('[TimesheetGrid] approve failed', { entryId, err });
+      } finally {
+        setApprovingEntryIds((prev) => {
+          if (!prev.has(entryId)) return prev;
+          const next = new Set(prev);
+          next.delete(entryId);
+          return next;
+        });
+      }
+    },
+    [tenantId, mergeEntryUpdate],
+  );
 
   useEffect(() => {
     const narrowedToOne =
@@ -752,6 +873,8 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                     <TableCell align="right">Tips</TableCell>
                     <TableCell align="right">Bonus</TableCell>
                     <TableCell>Notes</TableCell>
+                    <TableCell align="right">Pay rate</TableCell>
+                    <TableCell align="right">Total</TableCell>
                     <TableCell>Status</TableCell>
                   </TableRow>
                 </TableHead>
@@ -802,6 +925,8 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                         entry={row.entry}
                         mergeEntryUpdate={mergeEntryUpdate}
                         refreshEntry={refreshEntry}
+                        onApproveEntry={handleApproveEntry}
+                        approvingThisEntry={approvingEntryIds.has(row.entry.id)}
                       />
                     );
                   })}
