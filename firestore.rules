@@ -263,6 +263,7 @@ service cloud.firestore {
                'actualStartTime',
                'actualEndTime',
                'breaks',
+               'actualHoursOverride',
                'tips',
                'bonusAmount',
                'notes',

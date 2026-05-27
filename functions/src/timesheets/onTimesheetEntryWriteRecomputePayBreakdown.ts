@@ -105,6 +105,7 @@ const COMPUTE_INPUT_FIELDS = [
   'actualStartTime',
   'actualEndTime',
   'breaks',
+  'actualHoursOverride',
   'workDate',
   'workState',
   'workerId',
@@ -238,9 +239,13 @@ function buildDayInput(entryId: string, data: EntryData): DayInput | null {
   const workDate = typeof data.workDate === 'string' ? data.workDate : null;
   if (!workDate) return null;
   const actualStart =
-    typeof data.actualStartTime === 'string' ? data.actualStartTime : null;
+    typeof data.actualStartTime === 'string' && data.actualStartTime.trim()
+      ? data.actualStartTime
+      : null;
   const actualEnd =
-    typeof data.actualEndTime === 'string' ? data.actualEndTime : null;
+    typeof data.actualEndTime === 'string' && data.actualEndTime.trim()
+      ? data.actualEndTime
+      : null;
   const breaksRaw = Array.isArray(data.breaks) ? data.breaks : [];
   const breaks = breaksRaw
     .filter(
@@ -258,14 +263,41 @@ function buildDayInput(entryId: string, data: EntryData): DayInput | null {
       durationMins: b.durationMins,
       paid: b.paid,
     }));
-  const workedMinutes = workedMinutesFromActuals(actualStart, actualEnd, breaks);
+
+  // 2026-05-26 — when the recruiter entered a manual total-hours
+  // override (no start/end times — common for clients that report
+  // a single "worked X.XX hrs" figure), short-circuit the workedMinutes
+  // computation. The override is only honored when BOTH actualStart
+  // and actualEnd are missing; if either is set, the time-based
+  // computation wins (and the UI shouldn't have shown the override
+  // as editable). See TimesheetEntryV2.actualHoursOverride for the
+  // full semantics.
+  const overrideHoursRaw = (data as Record<string, unknown>).actualHoursOverride;
+  const overrideHours =
+    !actualStart &&
+    !actualEnd &&
+    typeof overrideHoursRaw === 'number' &&
+    Number.isFinite(overrideHoursRaw) &&
+    overrideHoursRaw > 0
+      ? overrideHoursRaw
+      : null;
+
+  const workedMinutes =
+    overrideHours !== null
+      ? Math.round(overrideHours * 60)
+      : workedMinutesFromActuals(actualStart, actualEnd, breaks);
+
   return {
     entryId,
     workDate,
     workedMinutes,
-    breaks,
-    actualStartTime: actualStart,
-    actualEndTime: actualEnd,
+    breaks: overrideHours !== null ? [] : breaks,
+    // When using an override, deliberately pass null for the time-of-
+    // day boundaries so daily OT rules (CA daily-8, CA 7th-consecutive)
+    // skip this day. Weekly OT cascade still applies because it
+    // operates on total weekly minutes regardless of source.
+    actualStartTime: overrideHours !== null ? null : actualStart,
+    actualEndTime: overrideHours !== null ? null : actualEnd,
   };
 }
 

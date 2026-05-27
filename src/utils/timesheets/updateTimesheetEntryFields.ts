@@ -60,6 +60,14 @@ export interface TimesheetEntryEditablePatch {
   actualStartTime?: string | null;
   actualEndTime?: string | null;
   breaks?: TimesheetBreak[];
+  /**
+   * Manual total-hours override (decimal hours). Used when the client
+   * reports a single total without start/end. The recompute trigger
+   * honors this only when actualStartTime AND actualEndTime are both
+   * null/empty — see TimesheetEntryV2.actualHoursOverride.
+   * `null` clears the override.
+   */
+  actualHoursOverride?: number | null;
   tips?: number;
   bonusAmount?: number;
   notes?: string;
@@ -110,6 +118,9 @@ function buildWirePatch(
   }
   if (patch.breaks !== undefined) {
     out.breaks = patch.breaks;
+  }
+  if (patch.actualHoursOverride !== undefined) {
+    out.actualHoursOverride = patch.actualHoursOverride;
   }
   if (patch.tips !== undefined) {
     out.tips = patch.tips;

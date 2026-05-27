@@ -67,6 +67,7 @@ import {
 } from '../../utils/timesheets/entryValidation';
 
 import BreaksCell from './cells/BreaksCell';
+import HoursOverrideCell from './cells/HoursOverrideCell';
 import NotesCell from './cells/NotesCell';
 import NumberCell from './cells/NumberCell';
 import TimeCell from './cells/TimeCell';
@@ -476,7 +477,26 @@ const EntryRow: React.FC<EntryRowProps> = ({
         />
       </TableCell>
 
-      <TableCell align="right">{formatHours(actualHrs)}</TableCell>
+      {/* Actual hours column.
+          - When the recruiter has entered start AND end times, the
+            recompute trigger derives total worked hours from those —
+            this cell is read-only and shows the computed value.
+          - When start/end are both blank, the recruiter can enter a
+            manual total directly (e.g. 6.25 for clients that report
+            a single total). Writes to `actualHoursOverride`; the
+            trigger honors it as the day's workedMinutes. */}
+      <TableCell align="right">
+        {entry.actualStartTime && entry.actualEndTime ? (
+          formatHours(actualHrs)
+        ) : (
+          <HoursOverrideCell
+            value={entry.actualHoursOverride ?? null}
+            onSave={fieldHandlers.actualHoursOverride}
+            disabled={readOnly}
+            ariaLabel="Actual hours"
+          />
+        )}
+      </TableCell>
 
       <TableCell align="right">
         <NumberCell

@@ -174,6 +174,36 @@ export interface TimesheetEntryV2 {
   actualEndTime?: string;
   breaks: TimesheetBreak[];
 
+  /**
+   * Manual total-hours override for the day.
+   *
+   * Some C1 Events / C1 Workforce clients report a single "worked
+   * X.XX hours" total without start/end times. The recruiter needs to
+   * be able to enter that total directly (e.g. 6.25) and have it flow
+   * through pay computation as Regular hours without faking shift
+   * boundaries.
+   *
+   * Semantics:
+   *   - When `actualStartTime` AND `actualEndTime` are BOTH null/empty
+   *     AND this field is set, the recompute trigger treats
+   *     `workedMinutes = actualHoursOverride * 60` for the day. Daily
+   *     OT rules (CA daily-8, CA 7th-day-first-8h) naturally don't
+   *     apply because they need time-of-day boundaries; weekly OT
+   *     cascade (FLSA §207, 40h/wk) still applies because it operates
+   *     on total weekly minutes regardless of source.
+   *   - When `actualStartTime` AND `actualEndTime` are set, this
+   *     field is IGNORED — the time-based computation wins. The UI
+   *     should not surface the override as editable in that case.
+   *   - Stored as decimal hours (not minutes) to match the
+   *     recruiter's mental model + the input shape.
+   *
+   * Mutually exclusive at the UI layer with `actualStartTime` +
+   * `actualEndTime`. Both stored simultaneously is permitted by the
+   * schema (e.g. legacy entries) but the override silently loses to
+   * the time-based path when both exist.
+   */
+  actualHoursOverride?: number;
+
   /* ---------- Computed (rules engine output, read-only in UI) ----------- */
   totalRegularHours: number;
   /**

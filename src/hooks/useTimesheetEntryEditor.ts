@@ -77,6 +77,10 @@ export interface TimesheetEntryEditor {
     actualStartTime: (value: string | null) => Promise<void>;
     actualEndTime: (value: string | null) => Promise<void>;
     breaks: (breaks: TimesheetBreak[]) => Promise<void>;
+    /** Decimal-hours override. `null` clears the override. The recompute
+     *  trigger ignores it unless both actualStartTime + actualEndTime
+     *  are empty — see TimesheetEntryV2.actualHoursOverride. */
+    actualHoursOverride: (value: number | null) => Promise<void>;
     tips: (value: number) => Promise<void>;
     bonusAmount: (value: number) => Promise<void>;
     notes: (value: string) => Promise<void>;
@@ -213,6 +217,15 @@ export function useTimesheetEntryEditor(
           Array.isArray(entry.breaks) ? entry.breaks : [],
           { compute: true },
         ),
+      actualHoursOverride: (value) =>
+        saveField(
+          'actualHoursOverride',
+          value,
+          typeof entry.actualHoursOverride === 'number'
+            ? entry.actualHoursOverride
+            : null,
+          { compute: true },
+        ),
       tips: (value) =>
         saveField('tips', value, typeof entry.tips === 'number' ? entry.tips : 0, {
           compute: false,
@@ -231,6 +244,7 @@ export function useTimesheetEntryEditor(
     }),
     [
       entry.actualEndTime,
+      entry.actualHoursOverride,
       entry.actualStartTime,
       entry.bonusAmount,
       entry.breaks,
