@@ -53,6 +53,20 @@ export interface SubmitBatchToEvereeButtonProps {
    *  refresh the grid (the 'approved' rows should flip to
    *  'sent_to_everee' as the orchestrator's worker tasks complete). */
   onSubmitted?: () => void;
+  /**
+   * Optional optimistic local-state merge. When provided, on submit
+   * success we immediately stamp `status: 'sent_to_everee'` +
+   * `sentToEvereeAt: serverTimestamp` on every submitted entry so the
+   * grid reflects the new state without waiting for the live listener
+   * to pick up the server-side write. Without this, the row sits on
+   * `approved` for the few seconds it takes the worker tasks to fire
+   * and the listener to fan-in, which made the recruiter wonder
+   * whether the submit had really worked (2026-05-27 Greg report).
+   */
+  mergeEntryUpdate?: (
+    entryId: string,
+    patch: { status?: string; sentToEvereeAt?: unknown },
+  ) => void;
 }
 
 interface ApprovedSummary {
@@ -134,6 +148,7 @@ const SubmitBatchToEvereeButton: React.FC<SubmitBatchToEvereeButtonProps> = ({
   filter,
   rows,
   onSubmitted,
+  mergeEntryUpdate,
 }) => {
   const summary = useMemo(() => summarizeApproved(rows), [rows]);
   const approvedCount = summary.entryIds.length;
@@ -204,6 +219,18 @@ const SubmitBatchToEvereeButton: React.FC<SubmitBatchToEvereeButtonProps> = ({
         enqueued: submitRes.data.enqueuedEntryCount,
         preflightErrors: submitRes.data.preflightErrorCount,
       });
+      // Optimistic local merge — stamp `sent_to_everee` on every
+      // submitted entry so the grid reflects the new state without
+      // waiting for the per-entry worker tasks + live listener to
+      // fan in. Server-side the actual flip happens inside
+      // `submitTimesheetEntryWorker` (status: 'sent_to_everee' +
+      // sentToEvereeAt), so this is just an early UI render of
+      // what's about to land in Firestore anyway.
+      if (mergeEntryUpdate) {
+        for (const entryId of summary.entryIds) {
+          mergeEntryUpdate(entryId, { status: 'sent_to_everee' });
+        }
+      }
       if (onSubmitted) onSubmitted();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);

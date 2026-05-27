@@ -196,8 +196,12 @@ const STATUS_LABELS: Record<TimesheetRowDisplayStatus, string> = {
   draft: 'draft',
   submitted: 'submitted',
   approved: 'approved',
-  sent_to_everee: 'sent',
-  paid: 'paid',
+  // Longer label so recruiters can see at a glance that the row is
+  // done and shouldn't be touched again. The "→ Everee" suffix
+  // disambiguates from the worker-side `submitted` status (Section 1
+  // analog). Mirrors the same upgrade in the totals-header chip.
+  sent_to_everee: '✓ Sent to Everee',
+  paid: '✓ Paid',
   error: 'error',
 };
 
@@ -209,7 +213,12 @@ const STATUS_COLORS: Record<
   draft: 'default',
   submitted: 'info',
   approved: 'primary',
-  sent_to_everee: 'info',
+  // `sent_to_everee` was `info` (blue outline) which read as "in
+  // progress" — but on the row it really means "done from our side,
+  // awaiting Everee's pay-run completion". Bump to `success` so it
+  // visually matches `paid` (also success) and the recruiter sees
+  // "row is done" at a glance.
+  sent_to_everee: 'success',
   paid: 'success',
   error: 'error',
 };
@@ -806,6 +815,7 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
           tenantId={tenantId}
           filter={filter}
           onSubmitted={refresh}
+          mergeEntryUpdate={mergeEntryUpdate}
         />
 
         {autoCreating ? (

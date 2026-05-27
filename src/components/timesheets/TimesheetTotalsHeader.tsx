@@ -62,6 +62,10 @@ export interface TimesheetTotalsHeaderProps {
   /** Fires after a successful batch submission so the parent can
    *  refresh the grid. */
   onSubmitted?: () => void;
+  /** Optional optimistic merge passed through to the Submit button
+   *  so on submit success the rows immediately flip to
+   *  `sent_to_everee` without waiting for the live listener. */
+  mergeEntryUpdate?: (entryId: string, patch: { status?: string }) => void;
 }
 
 interface TotalsBreakdown {
@@ -160,6 +164,7 @@ export const TimesheetTotalsHeader: React.FC<TimesheetTotalsHeaderProps> = ({
   tenantId,
   filter,
   onSubmitted,
+  mergeEntryUpdate,
 }) => {
   const totals = useMemo(() => deriveTotals(rows), [rows]);
 
@@ -321,6 +326,7 @@ export const TimesheetTotalsHeader: React.FC<TimesheetTotalsHeaderProps> = ({
               filter={filter}
               rows={rows}
               onSubmitted={onSubmitted}
+              mergeEntryUpdate={mergeEntryUpdate}
             />
           )}
         </Stack>
