@@ -11,7 +11,6 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Button, Divider, IconButton, Tooltip } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
-import PersonAddAlt1OutlinedIcon from '@mui/icons-material/PersonAddAlt1Outlined';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 // import { OnCallI9SupportingReminderDialog } from '../components/staffOnboarding/OnCallI9SupportingReminderDialog';
@@ -207,27 +206,13 @@ const UsersLayout: React.FC = () => {
           </Button>
         </Tooltip>
         */}
-        {canCreateWorkerOnBehalf && (
-          <Tooltip title="Create the worker's HRX account directly (no email link). Use when the worker can't sign up themselves.">
-            <Button
-              variant="outlined"
-              color="primary"
-              size="small"
-              startIcon={<PersonAddAlt1OutlinedIcon />}
-              onClick={() => setShowCreateWorkerWizard(true)}
-              sx={{ textTransform: 'none', whiteSpace: 'nowrap', flexShrink: 0 }}
-            >
-              Create Worker on Behalf
-            </Button>
-          </Tooltip>
-        )}
         <UniversalSearchBar
           value={usersSearch}
           onChange={setUsersSearch}
           // Enter / Clear / suggestion-pick / magnifier click → commit.
-          // The expensive full-collection scan only fires on commit;
-          // live keystrokes drive only the in-memory filter on
-          // already-loaded rows.
+          // The full-collection scan only fires on commit; live
+          // keystrokes are a no-op (see RecruiterUsers — typing doesn't
+          // touch the rendered list).
           onSearch={setUsersSearchCommitted}
           placeholder="Search workers — press Enter"
           favoriteType="users"
@@ -236,6 +221,27 @@ const UsersLayout: React.FC = () => {
           showSubmitButton
           submitTooltip="Search all workers (Enter)"
         />
+        {/* Universal "+" add button — sits to the right of the search bar,
+            mirrors the user-groups Create style so every list tab uses one
+            visual idiom for "add new <thing>". Opens the Create Worker
+            wizard; gated by `canCreateWorkerOnBehalf`. */}
+        {canCreateWorkerOnBehalf && (
+          <Tooltip title="Create worker on behalf — the worker's HRX account is created directly, no email signup link needed.">
+            <IconButton
+              onClick={() => setShowCreateWorkerWizard(true)}
+              sx={{
+                width: 32,
+                height: 32,
+                bgcolor: '#0057B8',
+                color: '#fff',
+                '&:hover': { bgcolor: '#004a9f' },
+              }}
+              aria-label="Create worker on behalf"
+            >
+              <AddIcon sx={{ fontSize: 18 }} />
+            </IconButton>
+          </Tooltip>
+        )}
       </Box>
     ) : isSmartGroupsListTab ? (
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
