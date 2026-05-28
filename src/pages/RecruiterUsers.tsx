@@ -151,6 +151,15 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   
   // Use outlet context if available, otherwise use local state
   const searchTerm = outletCtx?.search !== undefined ? outletCtx.search : localSearch;
+  /**
+   * Committed search — only updates on Enter, Clear, or suggestion-pick.
+   * Used to gate the expensive `/users/all` full-collection scan so we
+   * don't burn an 8.5k-doc server query on every keystroke. Falls back to
+   * the live `searchTerm` for non-`UsersLayout` callers (e.g. the legacy
+   * standalone embed) where the parent doesn't split live vs committed.
+   */
+  const submittedSearchTerm =
+    outletCtx?.submittedSearch !== undefined ? outletCtx.submittedSearch : searchTerm;
   const showFavoritesOnly = outletCtx?.showFavoritesOnly !== undefined ? outletCtx.showFavoritesOnly : localShowFavoritesOnly;
   // Show/Hide filters lives in the parent layout's tab strip (mirrors
   // `/jobs/job-orders`). Default closed when no outlet context is
@@ -231,11 +240,14 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   const fullCollectionQueryActive = useMemo(
     () =>
       effectiveScope === 'all' &&
-      (searchTerm.trim() !== '' ||
+      // Use the COMMITTED query so the server scan only fires when the user
+      // explicitly hits Enter / Clear / picks a suggestion. Live typing
+      // (`searchTerm`) still drives the in-memory filter below.
+      (submittedSearchTerm.trim() !== '' ||
         groupFilter !== 'all' ||
         stateFilter !== 'all' ||
         entityFilter !== 'all'),
-    [effectiveScope, searchTerm, groupFilter, stateFilter, entityFilter],
+    [effectiveScope, submittedSearchTerm, groupFilter, stateFilter, entityFilter],
   );
 
   const groupLookup = useMemo(() => {
@@ -287,15 +299,20 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     groupFilter,
     stateFilter,
     sortBy,
-    searchTerm,
+    // Watching `submittedSearchTerm` (not `searchTerm`) keeps live keystrokes
+    // from re-running the mode-switch + setUsers([]) clear. Live typing only
+    // touches the in-memory filter.
+    submittedSearchTerm,
     fullCollectionQueryActive,
   ]);
 
-  /** Debounced full-collection query (search and/or group/state/entity) across all tenant listable users. */
+  /** Full-collection query (search and/or group/state/entity) across all tenant listable users.
+   *  Fires immediately on commit (Enter / Clear / suggestion-pick) — no debounce, since
+   *  the user has already signaled intent. */
   useEffect(() => {
     if (!activeTenant?.id || !tenantId) return;
     if (effectiveScope !== 'all') return;
-    const q = searchTerm.trim();
+    const q = submittedSearchTerm.trim();
     const hasGroup = groupFilter !== 'all';
     const hasState = stateFilter !== 'all';
     const hasEntity = entityFilter !== 'all';
@@ -305,7 +322,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     }
 
     let cancelled = false;
-    const timer = window.setTimeout(async () => {
+    const run = async () => {
       setSearchFirestoreLoading(true);
       setError(null);
       try {
@@ -350,13 +367,13 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
       } finally {
         if (!cancelled) setSearchFirestoreLoading(false);
       }
-    }, 400);
+    };
+    void run();
 
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
     };
-  }, [searchTerm, groupFilter, stateFilter, entityFilter, effectiveScope, tenantId, activeTenant?.id]);
+  }, [submittedSearchTerm, groupFilter, stateFilter, entityFilter, effectiveScope, tenantId, activeTenant?.id]);
 
   // Update cache when filters change
   useEffect(() => {

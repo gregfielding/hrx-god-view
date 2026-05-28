@@ -31,8 +31,15 @@ export type { UsersTab };
 
 export interface UsersLayoutOutletContext {
   usersTab: UsersTab;
+  /** Live value of the search input — updates on every keystroke. Use for
+   *  cheap in-memory filters that run over already-loaded rows. */
   search?: string;
   setSearch?: (value: string) => void;
+  /** Committed query — only updates on Enter, Clear (X), or suggestion-pick.
+   *  Use for expensive paths (full-collection scans, server callables). When
+   *  not provided, callers should fall back to `search`. */
+  submittedSearch?: string;
+  setSubmittedSearch?: (value: string) => void;
   showFavoritesOnly?: boolean;
   setShowFavoritesOnly?: (value: boolean) => void;
   openCreateGroupForm?: boolean;
@@ -91,6 +98,14 @@ const UsersLayout: React.FC = () => {
 
   const persisted = loadUsersLayoutPersisted();
   const [usersSearch, setUsersSearch] = useState(persisted.usersListSearch);
+  /**
+   * Committed search — only updated on Enter, Clear, or suggestion-pick.
+   * Drives the expensive full-collection `searchRecruiterTableUsers` callable
+   * in `RecruiterUsers`, so we don't burn a 8.5k-doc server scan on every
+   * keystroke. Initialized from the same persisted slot as the live value so
+   * that returning to the tab restores both halves consistently.
+   */
+  const [usersSearchCommitted, setUsersSearchCommitted] = useState(persisted.usersListSearch);
   const [usersShowFavoritesOnly, setUsersShowFavoritesOnly] = useState(persisted.usersListFavoritesOnly);
   const [groupsSearch, setGroupsSearch] = useState(persisted.userGroupsSearch);
   const [groupsShowFavoritesOnly, setGroupsShowFavoritesOnly] = useState(persisted.userGroupsFavoritesOnly);
@@ -151,6 +166,8 @@ const UsersLayout: React.FC = () => {
     ...(isUsersTab && {
       search: usersSearch,
       setSearch: setUsersSearch,
+      submittedSearch: usersSearchCommitted,
+      setSubmittedSearch: setUsersSearchCommitted,
       showFavoritesOnly: usersShowFavoritesOnly,
       setShowFavoritesOnly: setUsersShowFavoritesOnly,
       filtersExpanded,
@@ -207,8 +224,11 @@ const UsersLayout: React.FC = () => {
         <UniversalSearchBar
           value={usersSearch}
           onChange={setUsersSearch}
-          onSearch={setUsersSearch}
-          placeholder="Search by name, email, or phone..."
+          // Enter / Clear / suggestion-pick → commit. The expensive
+          // full-collection scan only fires on commit; live keystrokes
+          // drive only the in-memory filter on already-loaded rows.
+          onSearch={setUsersSearchCommitted}
+          placeholder="Search workers — press Enter"
           favoriteType="users"
           showFavoritesOnly={usersShowFavoritesOnly}
           onToggleFavorites={setUsersShowFavoritesOnly}

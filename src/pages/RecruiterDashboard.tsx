@@ -31,8 +31,18 @@ export type RecruiterTab =
 
 export type RecruiterOutletContext = {
   activeTab: RecruiterTab;
+  /** Live value of the header search input — fires on every keystroke. */
   search: string;
   setSearch: (value: string) => void;
+  /**
+   * Committed query — only updates on Enter, Clear (X), or suggestion-pick.
+   * Optional because most list surfaces don't distinguish live vs committed;
+   * those callers should fall back to `search`. Currently provided by
+   * `UsersLayout` so the expensive `/users/all` server scan only fires when
+   * the user explicitly commits.
+   */
+  submittedSearch?: string;
+  setSubmittedSearch?: (value: string) => void;
   showFavoritesOnly: boolean;
   setShowFavoritesOnly: (value: boolean) => void;
   /**
