@@ -122,6 +122,15 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   
   // All hooks must be called at the top level, before any conditional returns
   const isFetchingRef = useRef(false);
+  /**
+   * Generation token for paginated `loadUsers` calls. Incremented whenever we
+   * transition into `fullCollectionQueryActive` mode (or otherwise want any
+   * in-flight `loadUsers` to ignore its result). `loadUsers` captures the
+   * generation at start and skips `setUsers` if the current generation has
+   * advanced — guards against a stale 500-by-createdAt load overwriting a
+   * fresh full-collection search result (see /users/all "abraham" race).
+   */
+  const loadUsersGenerationRef = useRef(0);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const filtersRef = useRef<HTMLDivElement | null>(null);
   
@@ -255,6 +264,11 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     loadGroups(activeTenant.id);
     // All Users + search and/or group/state/entity: list is filled by `searchRecruiterTableUsers` + hydrate (not paginated `loadUsers`).
     if (fullCollectionQueryActive) {
+      // Invalidate any paginated `loadUsers` in flight from a prior empty-search
+      // render. Without this, its setUsers(500 newest by createdAt) lands AFTER
+      // the search hydration and silently wipes older matches (e.g. the bulk-
+      // imported Abraham cohort, whose createdAt predates the first 500).
+      loadUsersGenerationRef.current += 1;
       setUsers([]);
       setLastVisibleDoc(null);
       setHasMore(false);
@@ -446,6 +460,10 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     // Guard against overlapping/double-invoked fetches (React dev/StrictMode)
     if (isFetchingRef.current) return;
     isFetchingRef.current = true;
+    // Capture the generation at start; if it advances before we call setUsers,
+    // a newer code path (full-collection search) has taken over and our 500-by-
+    // createdAt result is now stale and must NOT overwrite it.
+    const generation = loadUsersGenerationRef.current;
 
     if (isInitialLoad) {
       setLoading(true);
@@ -589,6 +607,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
           .map((d) => mapUserDocToRecruiterUser(d, tenantId))
           .filter((u): u is RecruiterUser => !!u);
 
+        if (loadUsersGenerationRef.current !== generation) return;
         setUsers(mapped);
         setLastVisibleDoc(null);
         setHasMore(false);
@@ -612,7 +631,10 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
       }
 
       const snapshot = await getDocs(q);
-      
+
+      // Stale result — a newer code path (full-collection search) is in charge now.
+      if (loadUsersGenerationRef.current !== generation) return;
+
       // Track last document for pagination
       const lastDoc = snapshot.docs[snapshot.docs.length - 1];
       setLastVisibleDoc(lastDoc || null);
@@ -621,7 +643,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
       const data: RecruiterUser[] = snapshot.docs
         .map((userDoc) => mapUserDocToRecruiterUser(userDoc, tenantId))
         .filter((u): u is RecruiterUser => !!u);
-      
+
       // If initial load, replace users; if loading more, append (dedupe by id)
       setUsers((prev) => {
         const map = new Map<string, RecruiterUser>();
