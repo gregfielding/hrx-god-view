@@ -35,6 +35,47 @@ export interface EvereeAddress {
 }
 
 /**
+ * Full-name → USPS 2-letter code. Required because the worker self-serve UI
+ * stores Google-Places `state` as the FULL spelling ("Pennsylvania", not "PA"),
+ * and Everee's `com.everee.api.tax.state.State` enum only accepts USPS codes.
+ *
+ * History: a naive `state.slice(0, 2)` produced wrong codes for half the
+ * states ("Pennsylvania" → "PE" not "PA"; "Tennessee" → "TE" not "TN";
+ * "Mississippi" → "MI" — Michigan!; "Connecticut" → "CO" — Colorado!).
+ * Everee rejected the create-worker POST with HTTP 400, the callable surfaced
+ * as INTERNAL on the User Details Everee panel, and recruiters couldn't
+ * provision affected workers. Fixed 2026-05-28.
+ */
+const US_STATE_CODE_BY_NAME: Readonly<Record<string, string>> = {
+  alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR',
+  california: 'CA', colorado: 'CO', connecticut: 'CT', delaware: 'DE',
+  florida: 'FL', georgia: 'GA', hawaii: 'HI', idaho: 'ID',
+  illinois: 'IL', indiana: 'IN', iowa: 'IA', kansas: 'KS',
+  kentucky: 'KY', louisiana: 'LA', maine: 'ME', maryland: 'MD',
+  massachusetts: 'MA', michigan: 'MI', minnesota: 'MN', mississippi: 'MS',
+  missouri: 'MO', montana: 'MT', nebraska: 'NE', nevada: 'NV',
+  'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY',
+  'north carolina': 'NC', 'north dakota': 'ND', ohio: 'OH', oklahoma: 'OK',
+  oregon: 'OR', pennsylvania: 'PA', 'rhode island': 'RI', 'south carolina': 'SC',
+  'south dakota': 'SD', tennessee: 'TN', texas: 'TX', utah: 'UT',
+  vermont: 'VT', virginia: 'VA', washington: 'WA', 'west virginia': 'WV',
+  wisconsin: 'WI', wyoming: 'WY',
+  // Territories Everee accepts in the same enum:
+  'district of columbia': 'DC', 'puerto rico': 'PR', 'virgin islands': 'VI',
+};
+const US_STATE_CODES: ReadonlySet<string> = new Set(Object.values(US_STATE_CODE_BY_NAME));
+
+/** "Pennsylvania" → "PA"; "PA" → "PA"; "pa." → "PA"; "Calhoun" → null; "" → null. */
+function normalizeStateCode(raw: string): string | null {
+  // Strip trailing period (e.g. "Pa.") before BOTH the code and name probes.
+  const t = raw.trim().replace(/\.$/, '').trim();
+  if (!t) return null;
+  const upper = t.toUpperCase();
+  if (/^[A-Z]{2}$/.test(upper) && US_STATE_CODES.has(upper)) return upper;
+  return US_STATE_CODE_BY_NAME[t.toLowerCase()] ?? null;
+}
+
+/**
  * Read `addressInfo` (worker-UI shape with `streetAddress`/`zip`) AND
  * the alternative `addressInfo` shape that `adminCreateWorker` writes
  * (`addressLine1`/`postalCode`) AND the top-level `address` block (used
@@ -83,9 +124,11 @@ function tryExtractFromBlock(
   const stateRaw = String(block.state ?? '').trim();
   // Guard against the user typing a 5-digit ZIP into the state slot
   // (Terrance Edgar shape). A 2-letter US state code is always letters,
-  // so reject any digit-only state.
+  // so reject any digit-only state. Then resolve full names ("Pennsylvania"
+  // → "PA") OR codes ("PA" → "PA") via the map; never the naive 2-char
+  // slice that produced "PE" (and Everee 400'd it).
   const stateLooksValid = /^[A-Za-z]{2,}/.test(stateRaw);
-  const state = stateLooksValid ? stateRaw.slice(0, 2).toUpperCase() : '';
+  const state = stateLooksValid ? normalizeStateCode(stateRaw) ?? '' : '';
   const zipRaw = String(block.zip ?? block.zipCode ?? block.postalCode ?? '')
     .trim()
     .replace(/\D/g, '');
