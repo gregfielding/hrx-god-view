@@ -224,14 +224,17 @@ const UsersLayout: React.FC = () => {
         <UniversalSearchBar
           value={usersSearch}
           onChange={setUsersSearch}
-          // Enter / Clear / suggestion-pick → commit. The expensive
-          // full-collection scan only fires on commit; live keystrokes
-          // drive only the in-memory filter on already-loaded rows.
+          // Enter / Clear / suggestion-pick / magnifier click → commit.
+          // The expensive full-collection scan only fires on commit;
+          // live keystrokes drive only the in-memory filter on
+          // already-loaded rows.
           onSearch={setUsersSearchCommitted}
           placeholder="Search workers — press Enter"
           favoriteType="users"
           showFavoritesOnly={usersShowFavoritesOnly}
           onToggleFavorites={setUsersShowFavoritesOnly}
+          showSubmitButton
+          submitTooltip="Search all workers (Enter)"
         />
       </Box>
     ) : isSmartGroupsListTab ? (

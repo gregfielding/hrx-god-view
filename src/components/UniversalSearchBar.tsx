@@ -93,6 +93,16 @@ interface UniversalSearchBarProps {
   favoriteType?: FavoriteType;
   showFavoritesOnly?: boolean;
   onToggleFavorites?: (next: boolean) => void;
+  /**
+   * When true, render a trailing magnifier IconButton that calls
+   * `onSearch(value)` on click — same effect as pressing Enter, but
+   * mouse-discoverable. Only appears when the field is non-empty. Use
+   * on list pages where the commit path is expensive (e.g. server scan)
+   * so users have a visible affordance to fire it.
+   */
+  showSubmitButton?: boolean;
+  /** Tooltip on the submit magnifier; default "Search". */
+  submitTooltip?: string;
 }
 
 const UniversalSearchBar: React.FC<UniversalSearchBarProps> = ({
@@ -105,6 +115,8 @@ const UniversalSearchBar: React.FC<UniversalSearchBarProps> = ({
   favoriteType,
   showFavoritesOnly,
   onToggleFavorites,
+  showSubmitButton = false,
+  submitTooltip,
 }) => {
   // All three favorites props must be present for the star to render.
   // We don't try to be clever with partial state — better to fail loud
@@ -122,6 +134,8 @@ const UniversalSearchBar: React.FC<UniversalSearchBarProps> = ({
       placeholder={placeholder}
       disabled={disabled}
       sx={sx ?? compactInboxSearchBarSx}
+      showSubmitButton={showSubmitButton}
+      {...(submitTooltip ? { submitTooltip } : {})}
       endAdornment={
         showFavoritesSlot ? (
           <FavoritesFilter

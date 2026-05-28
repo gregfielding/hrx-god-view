@@ -24,6 +24,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import ClearIcon from '@mui/icons-material/Clear';
 import EmailIcon from '@mui/icons-material/Email';
 import PersonIcon from '@mui/icons-material/Person';
+import Tooltip from '@mui/material/Tooltip';
 
 interface SearchSuggestion {
   type: 'recent' | 'thread' | 'sender';
@@ -80,6 +81,18 @@ interface InboxSearchBarProps {
    * to the *left* of this slot once the user has typed something.
    */
   endAdornment?: React.ReactNode;
+  /**
+   * When true, render a magnifier IconButton inside the trailing slot
+   * that calls `onSearch(value)` on click — exposing the Enter-to-commit
+   * affordance for users who don't think of pressing Enter. Only renders
+   * when the field is non-empty, so it appears alongside the X clear
+   * button right when there's pending text to submit. Used by
+   * `/users/all` because its commit path fires an 8.5k-doc server scan
+   * and the keyboard cue alone wasn't discoverable.
+   */
+  showSubmitButton?: boolean;
+  /** Tooltip on the submit magnifier; default "Search". */
+  submitTooltip?: string;
 }
 
 const InboxSearchBar: React.FC<InboxSearchBarProps> = ({
@@ -91,6 +104,8 @@ const InboxSearchBar: React.FC<InboxSearchBarProps> = ({
   disabled = false,
   sx,
   endAdornment,
+  showSubmitButton = false,
+  submitTooltip = 'Search',
 }) => {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -237,13 +252,18 @@ const InboxSearchBar: React.FC<InboxSearchBarProps> = ({
           endAdornment: (() => {
             // The right edge of the input renders, in order:
             //  1. A Clear (×) button when the user has typed something.
-            //  2. The caller-provided trailing slot (e.g. favorites star)
+            //  2. A magnifier submit button when `showSubmitButton` is on
+            //     AND the field is non-empty — exposes Enter-to-commit
+            //     for callers whose commit path is expensive (e.g.
+            //     `/users/all` server scan).
+            //  3. The caller-provided trailing slot (e.g. favorites star)
             //     if any — this *replaces* the ⌘K hint when supplied.
-            //  3. Otherwise, the ⌘K / Ctrl+K shortcut hint when the
+            //  4. Otherwise, the ⌘K / Ctrl+K shortcut hint when the
             //     field is empty and unfocused.
             const showClear = !!value;
+            const renderSubmit = showSubmitButton && !!value;
             const showHint = !endAdornment && !focused && !value;
-            if (!showClear && !endAdornment && !showHint) return null;
+            if (!showClear && !renderSubmit && !endAdornment && !showHint) return null;
             return (
               <InputAdornment position="end" sx={{ gap: 0.25 }}>
                 {showClear && (
@@ -255,6 +275,26 @@ const InboxSearchBar: React.FC<InboxSearchBarProps> = ({
                   >
                     <ClearIcon fontSize="small" />
                   </IconButton>
+                )}
+                {renderSubmit && (
+                  <Tooltip title={submitTooltip} arrow>
+                    <IconButton
+                      size="small"
+                      onClick={() => {
+                        onSearch(value);
+                        setShowSuggestions(false);
+                        inputRef.current?.blur();
+                      }}
+                      sx={{
+                        p: 0.5,
+                        color: 'primary.main',
+                        '&:hover': { backgroundColor: 'primary.main', color: 'primary.contrastText' },
+                      }}
+                      aria-label={submitTooltip}
+                    >
+                      <SearchIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
                 )}
                 {endAdornment}
                 {showHint && (
