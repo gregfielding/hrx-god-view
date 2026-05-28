@@ -392,10 +392,12 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     updateCache({ usersTablePage: page, usersTableRowsPerPage: rowsPerPage });
   }, [page, rowsPerPage, updateCache]);
 
-  // Reset client pagination when filters/search change
+  // Reset client pagination when filters / committed search change.
+  // (Live `searchTerm` is intentionally NOT a dep — typing doesn't
+  // affect the rendered list; only commit does.)
   useEffect(() => {
     setPage(0);
-  }, [searchTerm, effectiveScope, entityFilter, groupFilter, stateFilter, sortBy, showFavoritesOnly]);
+  }, [submittedSearchTerm, effectiveScope, entityFilter, groupFilter, stateFilter, sortBy, showFavoritesOnly]);
 
   /** Work readiness sort only applies when a single entity is selected; reset if user clears entity. */
   useEffect(() => {
@@ -687,34 +689,11 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     loadUsers(activeTenant.id, false);
   };
 
-  /** If search has no matches in the current batch, paginate Firestore until we find some or exhaust results (large tenants). */
-  const searchAutoLoadAttemptsRef = useRef(0);
-  useEffect(() => {
-    searchAutoLoadAttemptsRef.current = 0;
-  }, [searchTerm]);
-
-  useEffect(() => {
-    if (effectiveScope === 'my') return;
-    if (fullCollectionQueryActive) return;
-    if (!activeTenant?.id) return;
-    const q = searchTerm.trim();
-    if (!q) return;
-    if (loading || loadingMore) return;
-    if (!hasMore) return;
-    if (users.some((u) => userMatchesSearchTerm(u, q))) return;
-    if (searchAutoLoadAttemptsRef.current >= 25) return;
-    searchAutoLoadAttemptsRef.current += 1;
-    loadUsers(activeTenant.id, false);
-  }, [
-    searchTerm,
-    users,
-    hasMore,
-    loading,
-    loadingMore,
-    effectiveScope,
-    activeTenant?.id,
-    fullCollectionQueryActive,
-  ]);
+  // (Removed) Auto-paginate-while-typing effect — previously tried to
+  // load more 500-doc pages when the user typed something with no local
+  // match. The current design only filters on the COMMITTED query (Enter
+  // / magnifier click), which fires the full-collection callable in one
+  // shot, so progressive in-memory pagination is dead weight.
 
   const formatDate = (timestamp: any) => {
     if (timestamp == null) return 'N/A';
@@ -762,13 +741,16 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
         }
       }
 
-      return userMatchesSearchTerm(user, searchTerm);
+      // Filter only on the COMMITTED query so live typing is a no-op
+      // (per design: every search hits the entire DB via the callable,
+      // never the 500-row in-memory cache).
+      return userMatchesSearchTerm(user, submittedSearchTerm);
     });
   }, [
     favorites,
     fullCollectionQueryActive,
     groupFilter,
-    searchTerm,
+    submittedSearchTerm,
     showFavoritesOnly,
     stateFilter,
     users,
@@ -911,7 +893,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     loadingMore,
     activeTenant?.id,
     effectiveScope,
-    searchTerm,
+    submittedSearchTerm,
     fullCollectionQueryActive,
   ]);
 
