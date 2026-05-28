@@ -1,5 +1,16 @@
 /**
- * Mirrors `userMatchesSearchTerm` in `src/pages/RecruiterUsers.tsx` for server-side full-collection search.
+ * Mirrors `userMatchesSearchTerm` in `src/utils/recruiterUserSearchMatch.ts` for server-side full-collection search.
+ *
+ * Matching strategy:
+ *  - Whole query as a substring of the full name / displayName / preferredName
+ *    (so "abraham hern" still hits even though the second token is a prefix).
+ *  - Token-based: split the query on whitespace; each token must hit *some* field.
+ *    A token matches a name field when it is a prefix of any individual name
+ *    token (firstName / lastName / each space-separated piece of displayName,
+ *    lastName "Hernandez Leon", etc.) — that's what makes "Robert Sm" match
+ *    "Robert Smith".
+ *  - Email / phone / skills fall back to substring on individual tokens.
+ *  - Phone digits-only and email local-part shortcuts are preserved.
  */
 import { normalizeUsStateCode } from './usStateNormalize';
 
@@ -20,6 +31,22 @@ function normalizeSkills(raw: unknown): string[] {
     .filter((s): s is string => !!s);
 }
 
+/** Strip diacritics so "José" matches "jose" etc. */
+function fold(s: string): string {
+  // U+0300–U+036F = Combining Diacritical Marks block.
+  return s
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase();
+}
+
+function splitTokens(s: string): string[] {
+  return s
+    .split(/[\s,]+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
 /**
  * Returns true if this user document should appear when `rawSearch` is applied in the recruiter table.
  * `data` is Firestore `users/{id}` document data; `tenantId` scopes tenant-specific fields.
@@ -30,7 +57,7 @@ export function firestoreUserDocMatchesRecruiterSearch(
   rawSearch: string,
 ): boolean {
   if (!data) return false;
-  const q = rawSearch.trim().toLowerCase();
+  const q = fold(rawSearch.trim());
   if (!q) return true;
 
   const tenantData = (data.tenantIds as Record<string, unknown> | undefined)?.[tenantId] as
@@ -45,6 +72,7 @@ export function firestoreUserDocMatchesRecruiterSearch(
   const rawDisplay = String(data.displayName || '').trim();
   let firstName = String(data.firstName || '').trim();
   let lastName = String(data.lastName || '').trim();
+  const preferredName = String(data.preferredName || '').trim();
   if (!firstName && !lastName && rawDisplay) {
     const parts = rawDisplay.split(/\s+/).filter(Boolean);
     if (parts.length >= 2) {
@@ -55,46 +83,64 @@ export function firestoreUserDocMatchesRecruiterSearch(
     }
   }
 
-  const fullName = `${firstName} ${lastName}`.trim().toLowerCase();
-  const displayLower = rawDisplay.toLowerCase();
-  const email = String(resolvedEmail).trim();
-  const emailLower = email.toLowerCase();
+  const fullNameFolded = fold(`${firstName} ${lastName}`.trim());
+  const displayFolded = fold(rawDisplay);
+  const preferredFolded = fold(preferredName);
+  const emailLower = String(resolvedEmail).trim().toLowerCase();
+  const emailFolded = fold(emailLower);
   const phone = String(data.phone || data.phoneE164 || '').trim();
-  const skills = normalizeSkills(data.skills ?? tenantData?.skills);
+  const phoneLower = phone.toLowerCase();
+  const skills = normalizeSkills(data.skills ?? tenantData?.skills).map((s) => fold(s));
 
-  const fieldMatchesToken = (token: string) =>
-    fullName.includes(token) ||
-    (displayLower && displayLower.includes(token)) ||
-    emailLower.includes(token) ||
-    phone.toLowerCase().includes(token) ||
-    skills.some((skill) => skill.toLowerCase().includes(token));
-
-  const tokens = q.split(/\s+/).filter(Boolean);
-  if (tokens.length > 1) {
-    if (tokens.every((t) => fieldMatchesToken(t))) return true;
-  } else {
-    if (fullName.includes(q)) return true;
-    if (displayLower && displayLower.includes(q)) return true;
+  // Individual name tokens (each word in firstName/lastName/displayName/preferredName).
+  // These power per-token prefix matching, which is what makes "Robert Sm"
+  // → "Robert Smith" work (and "Hernandez", "Leon", "Hernandez Leon" all hit
+  // a worker whose lastName is "Hernandez Leon").
+  const nameTokens = new Set<string>();
+  for (const src of [fullNameFolded, displayFolded, preferredFolded]) {
+    if (!src) continue;
+    for (const tok of splitTokens(src)) nameTokens.add(tok);
   }
 
+  const tokenMatchesName = (token: string): boolean => {
+    if (!token) return false;
+    for (const nt of nameTokens) {
+      if (nt.startsWith(token)) return true;
+    }
+    return false;
+  };
+
+  const tokenMatchesAnyField = (token: string): boolean => {
+    if (tokenMatchesName(token)) return true;
+    if (emailFolded.includes(token)) return true;
+    if (phoneLower.includes(token)) return true;
+    if (skills.some((skill) => skill.includes(token))) return true;
+    return false;
+  };
+
+  // Whole-query convenience matches first (covers " abraham hern" style).
+  if (fullNameFolded.includes(q)) return true;
+  if (displayFolded && displayFolded.includes(q)) return true;
+  if (preferredFolded && preferredFolded.includes(q)) return true;
+
+  // Tokenize and require every token to hit some field.
+  const tokens = splitTokens(q);
+  if (tokens.length > 0 && tokens.every((t) => tokenMatchesAnyField(t))) return true;
+
+  // Email special cases — full, compact (no spaces), and local-part-only.
   if (emailLower) {
-    if (tokens.length <= 1 && emailLower.includes(q)) return true;
+    if (emailLower.includes(q)) return true;
     const compactEmail = emailLower.replace(/\s/g, '');
     const compactQ = q.replace(/\s/g, '');
     if (compactEmail.includes(compactQ)) return true;
     const at = emailLower.indexOf('@');
-    if (at > 0) {
-      const local = emailLower.slice(0, at);
-      if (local.includes(q)) return true;
-    }
+    if (at > 0 && emailLower.slice(0, at).includes(q)) return true;
   }
 
-  if (tokens.length <= 1 && phone.toLowerCase().includes(q)) return true;
+  // Phone digits-only fallback ("(555) 123-4567" still matches "5551234567").
   const digits = (s: string) => s.replace(/\D/g, '');
   const qDigits = digits(q);
   if (qDigits.length >= 3 && phone && digits(phone).includes(qDigits)) return true;
-
-  if (tokens.length <= 1 && skills.some((skill) => skill.toLowerCase().includes(q))) return true;
 
   return false;
 }
@@ -144,4 +190,3 @@ export function firestoreUserDocMatchesRecruiterState(
   const userCode = normalizeUsStateCode(extractStateRawFromUserDoc(data));
   return userCode === selected;
 }
-
