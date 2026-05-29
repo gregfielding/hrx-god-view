@@ -33,6 +33,14 @@ export interface HoursOverrideCellProps {
   ariaLabel?: string;
   onEditStart?: () => void;
   onEditEnd?: () => void;
+  /**
+   * Optional display text shown in static / view mode when the override
+   * `value` is null/empty — typically the computed-from-start/end hours.
+   * Renders in `text.secondary` so it visually reads as "this is what
+   * will be paid if you leave the override blank." Clicking still opens
+   * the edit input (empty), so the recruiter can replace it.
+   */
+  placeholder?: string;
 }
 
 /** Maximum decimal hours we'll accept on commit. 24h covers any single
@@ -93,6 +101,7 @@ const HoursOverrideCell: React.FC<HoursOverrideCellProps> = ({
   ariaLabel = 'Actual hours override',
   onEditStart,
   onEditEnd,
+  placeholder,
 }) => {
   const [editing, setEditing] = useState(false);
   const [raw, setRaw] = useState<string>(() => rawForEdit(value));
@@ -257,7 +266,11 @@ const HoursOverrideCell: React.FC<HoursOverrideCellProps> = ({
       }}
     >
       <Typography component="span" variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-        {formatDisplay(value)}
+        {value !== null && value !== undefined && value > 0
+          ? formatDisplay(value)
+          : placeholder && placeholder !== '0' && placeholder !== '—'
+            ? placeholder
+            : '—'}
       </Typography>
       <CellAdornments
         state={saveState.state}

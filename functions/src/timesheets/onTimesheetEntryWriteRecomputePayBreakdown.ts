@@ -264,18 +264,24 @@ function buildDayInput(entryId: string, data: EntryData): DayInput | null {
       paid: b.paid,
     }));
 
-  // 2026-05-26 — when the recruiter entered a manual total-hours
-  // override (no start/end times — common for clients that report
-  // a single "worked X.XX hrs" figure), short-circuit the workedMinutes
-  // computation. The override is only honored when BOTH actualStart
-  // and actualEnd are missing; if either is set, the time-based
-  // computation wins (and the UI shouldn't have shown the override
-  // as editable). See TimesheetEntryV2.actualHoursOverride for the
-  // full semantics.
+  // 2026-05-26 — manual total-hours override (common for clients that
+  // report a single "worked X.XX hrs" figure).
+  //
+  // 2026-05-29 — broadened: the override now ALWAYS wins when set,
+  // regardless of whether `actualStartTime`/`actualEndTime` are also
+  // populated. Previously the override was only honored when both
+  // time fields were blank; that gated the user out of fixing the
+  // pay total in the buggy "start set, end blank" state (where the
+  // time-based computation collapses to 0 minutes — see the
+  // 2026-05-29 incident where `actualStartTime: "15:00"` accidentally
+  // stuck two contractors at $0 totals and the override cell was
+  // hidden by the UI).
+  //
+  // Semantics: override is the recruiter explicitly stating "this is
+  // the correct hours figure; ignore the times." It's their call to
+  // make either way.
   const overrideHoursRaw = (data as Record<string, unknown>).actualHoursOverride;
   const overrideHours =
-    !actualStart &&
-    !actualEnd &&
     typeof overrideHoursRaw === 'number' &&
     Number.isFinite(overrideHoursRaw) &&
     overrideHoursRaw > 0

@@ -545,24 +545,30 @@ const EntryRow: React.FC<EntryRowProps> = ({
       </TableCell>
 
       {/* Actual hours column.
-          - When the recruiter has entered start AND end times, the
-            recompute trigger derives total worked hours from those —
-            this cell is read-only and shows the computed value.
-          - When start/end are both blank, the recruiter can enter a
-            manual total directly (e.g. 6.25 for clients that report
-            a single total). Writes to `actualHoursOverride`; the
-            trigger honors it as the day's workedMinutes. */}
+          The override field is ALWAYS editable. The trigger honors
+          `actualHoursOverride` whenever it's set — regardless of
+          whether start/end times are also set — so the Total column
+          stays in lockstep with whatever the recruiter sees here.
+          When the override is empty AND both start/end are filled,
+          the computed value from the recompute trigger renders as
+          the input's placeholder so the cell still shows the value
+          that will be paid. (Previously the override cell was hidden
+          whenever start was set, which trapped users whose start time
+          had a stale or partial value — see the 2026-05-29 incident.) */}
       <TableCell align="right">
-        {entry.actualStartTime && entry.actualEndTime ? (
-          formatHours(actualHrs)
-        ) : (
-          <HoursOverrideCell
-            value={entry.actualHoursOverride ?? null}
-            onSave={fieldHandlers.actualHoursOverride}
-            disabled={readOnly}
-            ariaLabel="Actual hours"
-          />
-        )}
+        <HoursOverrideCell
+          value={entry.actualHoursOverride ?? null}
+          onSave={fieldHandlers.actualHoursOverride}
+          disabled={readOnly}
+          ariaLabel="Actual hours"
+          placeholder={
+            entry.actualHoursOverride == null &&
+            entry.actualStartTime &&
+            entry.actualEndTime
+              ? formatHours(actualHrs)
+              : undefined
+          }
+        />
       </TableCell>
 
       <TableCell align="right">
