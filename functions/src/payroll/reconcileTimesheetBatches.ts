@@ -259,6 +259,19 @@ export async function reconcileStuckBatch(
         );
         resolvedStatus = rollupPayableStatuses(statuses);
         resolvedNote = `payables: ${statuses.join(',')}`;
+        // Orphaned-payable detection: payable exists on Everee but has no
+        // paymentId attached after the grouping window. Without this check
+        // the entry sits at `sent_to_everee` indefinitely — see the
+        // 2026-05-29 DeAndre incident where a $360 payable was created
+        // post-payment-delete and never re-grouped into a new payment.
+        if (resolvedStatus === null) {
+          const nowMs = Date.now();
+          const orphaned = items.filter((p) => isOrphanedPayable(p, nowMs));
+          if (orphaned.length > 0) {
+            resolvedStatus = 'error';
+            resolvedNote = `orphaned payables (${orphaned.length}/${items.length}): no paymentId after ${Math.round(ORPHANED_PAYABLE_MIN_AGE_MS / 60_000)}m grace`;
+          }
+        }
       } catch (e) {
         summary.errors.push(
           `entry ${entryId} payables: ${e instanceof Error ? e.message : String(e)}`,
@@ -295,14 +308,25 @@ export async function reconcileStuckBatch(
     }
 
     try {
-      await entryRef.update({
+      const isOrphanError =
+        resolvedStatus === 'error' && resolvedNote.startsWith('orphaned payables');
+      const updates: Record<string, unknown> = {
         status: resolvedStatus,
         'everee.status': resolvedStatus.toUpperCase(),
         'everee.respondedAt': admin.firestore.FieldValue.serverTimestamp(),
         'everee.reconciledAt': admin.firestore.FieldValue.serverTimestamp(),
         'everee.reconcileNote': resolvedNote.slice(0, 240),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
+      };
+      if (isOrphanError) {
+        // Distinguish reconciler-detected orphans from Everee-reported errors
+        // so the front-end can render a recoverable hint ("payable created
+        // but Everee didn't bundle it — try resubmit") instead of the
+        // generic Everee error message.
+        updates['everee.errorCode'] = 'orphaned_payable';
+        updates['everee.errorMessage'] = resolvedNote.slice(0, 240);
+      }
+      await entryRef.update(updates);
       summary.entriesUpdated++;
     } catch (e) {
       summary.errors.push(
@@ -450,6 +474,16 @@ export const reconcileTimesheetBatchesCron = onSchedule(
 interface PayableShape {
   paymentStatus?: string;
   status?: string;
+  /** Set once Everee attaches the payable to a payment record (pay-run).
+   *  When this is null/undefined more than a few minutes after creation,
+   *  the payable is "orphaned" — submitted but not picked up by any
+   *  payment, so it'll never settle without manual intervention.
+   *  Surfaced as `everee.errorCode: 'orphaned_payable'` on the entry. */
+  paymentId?: number | string | null;
+  /** When the payable was created on Everee, ISO 8601. Used to gate the
+   *  orphaned-payable check — newer payables may legitimately be waiting
+   *  for Everee's pay-run grouping cron and shouldn't be flagged yet. */
+  createdAt?: string;
 }
 
 function extractPayables(raw: unknown): PayableShape[] {
@@ -460,4 +494,32 @@ function extractPayables(raw: unknown): PayableShape[] {
     if (Array.isArray(obj.data)) return obj.data as PayableShape[];
   }
   return [];
+}
+
+/**
+ * Threshold past which a payable with no paymentId is considered orphaned.
+ * 10 minutes covers Everee's normal pay-run grouping cron cadence; anything
+ * older than that is stuck and should surface as error on the HRX entry so
+ * the recruiter knows to investigate (vs. seeing `sent_to_everee` forever).
+ *
+ * History: 2026-05-29 incident — DeAndre's resubmit created a $360 payable
+ * after the original ERRORED payment was deleted on Everee's side. Everee
+ * never re-grouped the payable into a new payment, so the dashboard never
+ * showed it and the recruiter believed it had landed. Reconciler now flags
+ * this state.
+ */
+const ORPHANED_PAYABLE_MIN_AGE_MS = 10 * 60 * 1000;
+
+/** True if a payable has no Everee paymentId attached AND it's been long
+ *  enough since creation that we expect Everee's grouping cron to have run. */
+export function isOrphanedPayable(p: PayableShape, nowMs: number): boolean {
+  if (p.paymentId != null && p.paymentId !== '') return false;
+  if (!p.createdAt) {
+    // No createdAt — be conservative and don't flag (avoids false positives
+    // on payables whose wire shape lacks the timestamp).
+    return false;
+  }
+  const createdMs = Date.parse(p.createdAt);
+  if (!Number.isFinite(createdMs)) return false;
+  return nowMs - createdMs >= ORPHANED_PAYABLE_MIN_AGE_MS;
 }

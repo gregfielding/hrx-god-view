@@ -534,8 +534,8 @@ async function resolveWorkerDisplayName(args: ResolverArgs): Promise<string | nu
 async function resolveWeeklySchedule(args: ResolverArgs): Promise<WeeklySchedule | null> {
   const {fdb, tenantId, assignmentData, caches} = args;
 
-  // 1. Linked Shift doc (`assignment.shiftId`). Multi-day shifts
-  //    persist a full `weeklySchedule`; single-day shifts persist
+  // 1. Linked Shift doc (`assignment.shiftId`). Multi-day shifts persist
+  //    a full `weeklySchedule`; single-day shifts persist
   //    `defaultStartTime`/`defaultEndTime` + `shiftDate` and we
   //    synthesize a single-DOW schedule from those.
   const jobOrderId = pickStringField(assignmentData, ["jobOrderId"]);
@@ -545,13 +545,66 @@ async function resolveWeeklySchedule(args: ResolverArgs): Promise<WeeklySchedule
   const shift = await readShiftDoc(fdb, tenantId, jobOrderId, shiftId, caches);
   if (!shift) return null;
 
+  // **PER-DAY ASSIGNMENT REMAP (2026-05-29).** The placement expander writes
+  // one per-day assignment doc per worker-date (`startDate === endDate`).
+  // Previously we returned the SHIFT'S weeklySchedule verbatim — but that
+  // only has the shift's recurrence DOW(s) enabled, so a per-day doc dated
+  // on a non-recurring DOW resolved to a schedule with no matching day,
+  // and the timesheet resolver dropped the row with
+  // `"overlaps the period but has no weeklySchedule"`. C1 Events FIFA
+  // shifts created 141 such rows; recruiters saw 2/16 expected workers
+  // because only the Monday-dated docs aligned with the shift's Monday
+  // entry. Fix: when the assignment is per-day, take any enabled day's
+  // start/end times from the shift schedule and rebuild a 1-key
+  // weeklySchedule keyed on the assignment date's actual DOW.
+  const startDate = pickStringField(assignmentData, ["startDate"]);
+  const endDate = pickStringField(assignmentData, ["endDate"]);
+  const isPerDay = !!startDate && !!endDate && startDate === endDate;
+
   const fromShift = pickWeeklyScheduleField(shift, "weeklySchedule");
-  if (fromShift) return fromShift;
+  if (fromShift) {
+    if (!isPerDay) return fromShift;
+    const sample = pickAnyEnabledDay(fromShift);
+    if (sample) {
+      return synthesizeSingleDowSchedule(startDate, sample.startTime, sample.endTime);
+    }
+    // No enabled day on the shift schedule — fall through to the
+    // shift-default times path so the synthesizer can still produce a
+    // single-DOW schedule keyed on the assignment date.
+  }
 
   const shiftDate = pickStringField(shift, ["shiftDate"]);
   const defaultStart = pickStringField(shift, ["defaultStartTime"]);
   const defaultEnd = pickStringField(shift, ["defaultEndTime"]);
-  return synthesizeSingleDowSchedule(shiftDate, defaultStart, defaultEnd);
+  // For per-day assignments use the assignment's own date (not the shift's
+  // canonical shiftDate) so the synthesized DOW matches what the resolver
+  // will compute when iterating the period.
+  const effectiveDate = isPerDay ? startDate : shiftDate;
+  return synthesizeSingleDowSchedule(effectiveDate, defaultStart, defaultEnd);
+}
+
+/** Returns the first enabled day with valid start/end strings from a
+ *  weeklySchedule, or null if no day qualifies. Used by per-day assignment
+ *  re-keying so we can copy times forward without re-reading the shift. */
+function pickAnyEnabledDay(
+  schedule: WeeklySchedule,
+): {startTime: string; endTime: string} | null {
+  for (const k of Object.keys(schedule)) {
+    const day = (schedule as Record<string, unknown>)[k] as
+      | {enabled?: unknown; startTime?: unknown; endTime?: unknown}
+      | undefined;
+    if (
+      day &&
+      day.enabled === true &&
+      typeof day.startTime === "string" &&
+      typeof day.endTime === "string" &&
+      day.startTime &&
+      day.endTime
+    ) {
+      return {startTime: day.startTime, endTime: day.endTime};
+    }
+  }
+  return null;
 }
 
 async function resolveShiftBreakDefaultMinutes(args: ResolverArgs): Promise<number | null> {
