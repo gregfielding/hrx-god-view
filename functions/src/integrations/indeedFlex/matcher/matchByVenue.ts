@@ -268,6 +268,28 @@ export async function matchByVenue(
     };
   }
   const venueKey = normalizeVenueName(raw);
+
+  // **Alias short-circuit (Slice 3c, 2026-06-02).** Recruiters can
+  // explicitly link a venue string → account via the /shifts/log
+  // "Link to account" UI. When the alias exists, return it directly —
+  // skipping the IDF + fuzzy pass entirely. Saves us from edge cases
+  // where the fuzzy scorer can't clear threshold for venue strings
+  // stuffed with brand prefixes (`"WBI (Hanover, MD) -"`) and SVC
+  // codes (`"- SVC07/44/00"`).
+  const aliased = await reader.getVenueAlias({
+    tenantId: args.tenantId,
+    rawVenueName: raw,
+  });
+  if (aliased) {
+    return {
+      accountId: aliased.accountId,
+      accountName: aliased.accountName,
+      venueKey,
+      candidates: [{ id: aliased.accountId, name: aliased.accountName }],
+      confidence: 'exact',
+      notes: `matched via alias (recruiter-linked) → ${aliased.accountName}`,
+    };
+  }
   const venueTokens = tokenize(venueKey);
   if (venueTokens.size === 0) {
     return {

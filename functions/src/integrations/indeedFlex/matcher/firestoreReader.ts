@@ -20,6 +20,7 @@
 import type { Firestore } from 'firebase-admin/firestore';
 
 import type { Reader, ReaderDoc } from './types';
+import { aliasDocIdFor } from './venueAliases';
 
 export function createFirestoreReader(db: Firestore): Reader {
   return {
@@ -171,6 +172,33 @@ export function createFirestoreReader(db: Firestore): Reader {
         }
       }
       return null;
+    },
+
+    /**
+     * **Venue alias short-circuit (Slice 3c).** Looks up a recruiter-
+     * confirmed mapping at `tenants/{tid}/venue_aliases/{aliasDocId}`.
+     * The doc id is derived from the normalized venue string so all
+     * SVC-code variants of the same underlying venue collide on a
+     * single alias entry. Returns null when no alias exists.
+     */
+    async getVenueAlias({ tenantId, rawVenueName }) {
+      const docId = aliasDocIdFor(rawVenueName);
+      if (!docId) return null;
+      const snap = await db
+        .collection('tenants')
+        .doc(tenantId)
+        .collection('venue_aliases')
+        .doc(docId)
+        .get();
+      if (!snap.exists) return null;
+      const data = snap.data() as Record<string, unknown>;
+      const accountId = typeof data.accountId === 'string' ? data.accountId.trim() : '';
+      if (!accountId) return null;
+      const accountName =
+        typeof data.accountName === 'string' && data.accountName.trim()
+          ? data.accountName.trim()
+          : accountId;
+      return { accountId, accountName };
     },
   };
 }

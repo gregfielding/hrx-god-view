@@ -29,6 +29,7 @@ import {
 import { serverTimestamp, updateDoc, doc as fsDoc } from 'firebase/firestore';
 
 import ShiftLogEntry from '../components/shifts/ShiftLogEntry';
+import LinkVenueToAccountDialog from '../components/shifts/LinkVenueToAccountDialog';
 import { useAuth } from '../contexts/AuthContext';
 import { useExternalShiftRequests } from '../hooks/useExternalShiftRequests';
 import { db } from '../firebase';
@@ -43,6 +44,11 @@ const ShiftsLog: React.FC = () => {
   const [confidenceFilter, setConfidenceFilter] = useState<ConfidenceFilter>('all');
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  /** Active "Link to account" target — when set, the alias dialog is open
+   *  for this log entry's venueName. */
+  const [linkVenueRequest, setLinkVenueRequest] = useState<ExternalShiftRequest | null>(
+    null,
+  );
 
   const { rows, loading, error } = useExternalShiftRequests(tenantId, {
     status: statusFilter,
@@ -195,6 +201,7 @@ const ShiftsLog: React.FC = () => {
                   request={req}
                   pending={pendingId === req.id}
                   onDecide={(decision) => handleDecide(req, decision)}
+                  onLinkVenue={(r) => setLinkVenueRequest(r)}
                 />
               ))}
             </Stack>
@@ -209,6 +216,26 @@ const ShiftsLog: React.FC = () => {
           Hard refresh
         </Button>
       </Stack>
+
+      {/* Link-venue dialog. Mounted at the page level so the listener
+          on `external_shift_requests` picks up the re-match update and
+          the row re-renders without a manual refresh. */}
+      {tenantId && linkVenueRequest && (
+        <LinkVenueToAccountDialog
+          open={!!linkVenueRequest}
+          onClose={() => setLinkVenueRequest(null)}
+          onSuccess={() => {
+            // Listener will re-fire when the doc updates; nothing else needed.
+            setLinkVenueRequest(null);
+          }}
+          tenantId={tenantId}
+          venueName={linkVenueRequest.event?.venueName ?? ''}
+          requestId={linkVenueRequest.id}
+          suggestedAccountIds={(linkVenueRequest.candidateAccounts ?? [])
+            .map((c) => c.id)
+            .filter((id): id is string => !!id)}
+        />
+      )}
     </Box>
   );
 };

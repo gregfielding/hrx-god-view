@@ -83,6 +83,18 @@ export interface Reader {
     tenantId: string;
     accountId: string;
   }): Promise<ReaderDoc | null>;
+
+  /**
+   * **Venue alias short-circuit (Slice 3c, 2026-06-02).** Lookup a
+   * recruiter-confirmed mapping of `rawVenueName → accountId`. When
+   * present, the venue matcher returns it directly with confidence
+   * `'exact'` and skips the fuzzy scoring pass. Returns `null` when no
+   * alias exists for this normalized venue key.
+   */
+  getVenueAlias(args: {
+    tenantId: string;
+    rawVenueName: string;
+  }): Promise<{ accountId: string; accountName: string } | null>;
 }
 
 // ─────────────────────────────────────────────────────────────────────

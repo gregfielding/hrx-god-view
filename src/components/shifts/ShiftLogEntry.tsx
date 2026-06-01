@@ -49,6 +49,10 @@ interface Props {
   onDecide?: (decision: 'applied' | 'rejected', reason?: string) => Promise<void>;
   /** True while the parent is mutating the doc; disables buttons. */
   pending?: boolean;
+  /** When provided AND the entry has no account match, render an inline
+   *  "Link to account" button. Click opens the parent's alias dialog
+   *  with the venueName + the matcher's top candidates pre-filled. */
+  onLinkVenue?: (request: ExternalShiftRequest) => void;
 }
 
 interface KindMeta {
@@ -319,7 +323,12 @@ function ActionDescription({
 // Card
 // ─────────────────────────────────────────────────────────────────────
 
-export default function ShiftLogEntry({ request, onDecide, pending }: Props): React.ReactElement {
+export default function ShiftLogEntry({
+  request,
+  onDecide,
+  pending,
+  onLinkVenue,
+}: Props): React.ReactElement {
   const kind = classify(request);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
@@ -479,6 +488,25 @@ export default function ShiftLogEntry({ request, onDecide, pending }: Props): Re
             >
               Reject
             </Button>
+            {/* "Link to account" — only meaningful when the matcher
+                couldn't pick an account (matchConfidence none / multiple)
+                AND the entry has a venueName to alias on. One click
+                locks in the mapping for every future email with the
+                same normalized venue. */}
+            {onLinkVenue &&
+              (request.matchConfidence === 'none' ||
+                request.matchConfidence === 'multiple') &&
+              !!request.event?.venueName && (
+                <Button
+                  variant="outlined"
+                  size="small"
+                  disabled={pending}
+                  onClick={() => onLinkVenue(request)}
+                  sx={{ ml: 'auto' }}
+                >
+                  Link to account
+                </Button>
+              )}
           </Stack>
         )}
         {request.status !== 'needs_review' && (

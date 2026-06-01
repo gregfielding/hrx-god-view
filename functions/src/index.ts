@@ -368,6 +368,12 @@ export { approveTimesheetEntriesCallable } from './timesheets/approveTimesheetEn
 // onAssignmentCreatedAutoSeed). Powers the "+ add worker" modal on
 // the Timesheets page.
 export { addRetroactiveWorker } from './timesheets/addRetroactiveWorkerCallable';
+// Indeed Flex venue→account alias (Slice 3c). Recruiters use this from
+// the /shifts/log "Link to account" button to lock in a venue string →
+// child account mapping once. Subsequent emails with the same normalized
+// venue route through the alias short-circuit in `matchByVenue` instead
+// of the fuzzy scorer. See `linkVenueToAccountCallable.ts` for context.
+export { linkVenueToAccount } from './integrations/indeedFlex/linkVenueToAccountCallable';
 // Bulk tenant-worker directory for client-side IndexedDB caching. Powers
 // instant search on /users/all and the Add Worker autocomplete; client
 // uses stale-while-revalidate so the in-memory list renders immediately
