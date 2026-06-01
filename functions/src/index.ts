@@ -362,6 +362,12 @@ export { onAssignmentWriteEnsureDenormFields } from './timesheets/onAssignmentWr
 // resolver chain when P1.B denorm fields are absent.
 export { createDraftTimesheetEntryCallable } from './timesheets/createDraftTimesheetEntryCallable';
 export { approveTimesheetEntriesCallable } from './timesheets/approveTimesheetEntriesCallable';
+// Admin-only retroactive worker add. Creates per-day assignment docs
+// for a shift's full date range with `retroactive: true` flag so SMS /
+// cadence triggers short-circuit (see workerShiftRemindersV2 +
+// onAssignmentCreatedAutoSeed). Powers the "+ add worker" modal on
+// the Timesheets page.
+export { addRetroactiveWorker } from './timesheets/addRetroactiveWorkerCallable';
 // **TS.1.P1.D** — Companion trigger that maintains
 // `Assignment.latestTimesheetStatus` by aggregating across all the
 // assignment's entries with a precedence rule (error > draft >

@@ -32,11 +32,14 @@ import {
   Box,
   Button,
   FormControl,
+  IconButton,
   InputLabel,
   MenuItem,
   Select,
+  Tooltip,
   Typography,
 } from '@mui/material';
+import AddIcon from '@mui/icons-material/Add';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 
 import PageHeader from '../components/PageHeader';
@@ -44,6 +47,9 @@ import PeriodPicker, {
   type PeriodPickerScope,
 } from '../components/timesheets/PeriodPicker';
 import TimesheetGrid from '../components/timesheets/TimesheetGrid';
+import AddRetroactiveWorkerDialog, {
+  type AddRetroactiveWorkerDialogShiftOption,
+} from '../components/timesheets/AddRetroactiveWorkerDialog';
 import { useAuth } from '../contexts/AuthContext';
 import { useSetTopBarTitle } from '../contexts/TopBarTitleContext';
 import { db } from '../firebase';
@@ -221,6 +227,13 @@ const Timesheets: React.FC = () => {
   // Refetched on JO change; the dropdown is disabled outside that state.
   const [shifts, setShifts] = useState<ShiftOption[]>([]);
   const [shiftsLoading, setShiftsLoading] = useState(false);
+
+  // "+ Add worker" modal — admin-only retroactive placement. Opens from
+  // the header (visible once a JO is selected). The `refreshKey` bumps
+  // on success so the TimesheetGrid re-resolves and picks up the new
+  // per-day assignment docs.
+  const [addWorkerOpen, setAddWorkerOpen] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Replace the default tenant-name top-bar title with "Timesheets".
   const topBarTitleNode = useMemo(
@@ -860,6 +873,36 @@ const Timesheets: React.FC = () => {
                 >
                   Clear filters
                 </Button>
+
+                {/* Universal "+" — admin-only retroactive worker add.
+                    Only meaningful with a JO selected (the modal needs
+                    to know which shifts to offer). Mirrors the
+                    `/users/all` primary-blue idiom for "add new <thing>". */}
+                {jobOrderFilter !== 'all' && (
+                  <Tooltip title="Add a worker to this job order (retroactive — no notifications sent)">
+                    <span>
+                      <IconButton
+                        size="small"
+                        onClick={() => setAddWorkerOpen(true)}
+                        disabled={shiftsLoading || shifts.length === 0}
+                        sx={{
+                          width: 32,
+                          height: 32,
+                          bgcolor: '#0057B8',
+                          color: '#fff',
+                          '&:hover': { bgcolor: '#004a9f' },
+                          '&.Mui-disabled': {
+                            bgcolor: 'rgba(0, 87, 184, 0.35)',
+                            color: '#fff',
+                          },
+                        }}
+                        aria-label="Add worker"
+                      >
+                        <AddIcon sx={{ fontSize: 18 }} />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                )}
             </Box>
           </Box>
         }
@@ -878,11 +921,41 @@ const Timesheets: React.FC = () => {
         }}
       >
         <TimesheetGrid
+          key={refreshKey}
           filter={filter}
           narrowJobOrderIds={narrowJobOrderIds}
           narrowShiftId={narrowShiftId}
         />
       </Box>
+
+      {tenantId && jobOrderFilter !== 'all' && (
+        <AddRetroactiveWorkerDialog
+          open={addWorkerOpen}
+          onClose={() => setAddWorkerOpen(false)}
+          onSuccess={() => {
+            // Force the TimesheetGrid to re-mount (and re-resolve) so the
+            // new per-day assignment docs show up immediately. Cheap
+            // because the grid's own data flow is keyed on filter + period,
+            // not on a heavy parent state.
+            setRefreshKey((k) => k + 1);
+          }}
+          tenantId={tenantId}
+          jobOrderId={jobOrderFilter}
+          shifts={shifts.map((s): AddRetroactiveWorkerDialogShiftOption => {
+            const datePart = s.date ?? '';
+            const timePart =
+              s.startTime && s.endTime
+                ? `${s.startTime}–${s.endTime}`
+                : s.startTime ?? '';
+            const label =
+              datePart && timePart
+                ? `${datePart} · ${timePart}`
+                : datePart || timePart || s.id;
+            return { id: s.id, label };
+          })}
+          defaultShiftId={shiftFilter === 'all' ? null : shiftFilter}
+        />
+      )}
     </Box>
   );
 };

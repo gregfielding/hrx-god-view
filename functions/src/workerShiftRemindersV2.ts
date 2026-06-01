@@ -1323,6 +1323,18 @@ export const onAssignmentConfirmedScheduleReminders = onDocumentWritten(
     const after = event.data?.after.exists ? event.data.after.data() as Record<string, unknown> : null;
     if (!after) return;
 
+    // Retroactive admin adds (see `addRetroactiveWorker` callable) record
+    // shifts that already happened. Scheduling SMS reminders for a past
+    // shift is wrong and would either fire immediately or get cancelled
+    // by `skipped_past_schedule`. Skip the whole pipeline.
+    if (after.retroactive === true || after.notificationsSuppressed === true) {
+      logger.info('[worker_shift_reminders] skipping retroactive/suppressed assignment', {
+        tenantId,
+        assignmentId,
+      });
+      return;
+    }
+
     const beforeStatus = normalizeStatus(before?.status);
     const afterStatus = normalizeStatus(after.status);
 

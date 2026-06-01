@@ -64,6 +64,18 @@ export const onAssignmentCreatedAutoSeedReadiness = onDocumentCreated(
       return;
     }
 
+    // Retroactive admin adds (see `addRetroactiveWorker` callable) record
+    // work that has already happened. The cadence seed would queue a
+    // "confirm your shift" SMS for a shift that's in the past — wrong
+    // signal for the worker, noisy for the recruiter. Skip.
+    if (data.retroactive === true) {
+      logger.info('onAssignmentCreatedAutoSeedReadiness: skipping retroactive add', {
+        tenantId,
+        assignmentId,
+      });
+      return;
+    }
+
     try {
       const outcome = await seedReadinessForExistingAssignment({
         tenantId,
