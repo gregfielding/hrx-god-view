@@ -57,11 +57,20 @@ export function useTenantWorkerDirectory(
     }
     let cancelled = false;
 
+    // Reset loading=true on every tenantId activation. Without this, a
+    // previous "closed dialog" pass would have left `loading` at false,
+    // and the next open would show "No workers match" during the
+    // 20-second cold-start fetch (the stale-while-revalidate window).
+    setLoading(true);
+
     (async () => {
       // Stage 1 — synchronous (well, IndexedDB-async) read from cache.
       const cached = await getCachedDirectory(tenantId);
       if (cancelled) return;
-      if (cached) {
+      // Only treat as "loaded" when the cache has non-empty workers.
+      // An empty cached array means a prior bad write or an interrupted
+      // first fetch — keep loading=true until the server fills it in.
+      if (cached && cached.workers.length > 0) {
         setWorkers(cached.workers);
         setFetchedAt(cached.fetchedAt);
         setLoading(false);

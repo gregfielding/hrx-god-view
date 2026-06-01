@@ -206,11 +206,11 @@ const AddRetroactiveWorkerDialog: React.FC<Props> = ({
                 placeholder="Type at least 2 characters"
                 autoFocus
                 helperText={
-                  directory.refreshing
-                    ? 'Updating worker directory…'
-                    : directory.fetchedAt
-                      ? `${directory.workers.length} workers indexed`
-                      : ''
+                  directory.loading
+                    ? 'Loading worker directory (one-time, ~10 s on first open)…'
+                    : directory.refreshing
+                      ? `${directory.workers.length} workers indexed · refreshing…`
+                      : `${directory.workers.length} workers indexed`
                 }
                 InputProps={{
                   ...params.InputProps,

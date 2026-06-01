@@ -34,8 +34,12 @@ const TENANT_LISTABLE_SECURITY_LEVELS: Array<string | number> = [
   '0', '1', '2', '3', '4', 0, 1, 2, 3, 4,
 ];
 
-const BATCH_SIZE = 500;
-/** Safety cap: 200k user docs scanned per request. Tenant directories
+/** 1000 is Firestore's hard max page size — each round-trip costs about
+ *  the same regardless of size up to that ceiling, so going from 500 →
+ *  1000 cuts cold-start time roughly in half (8.5k workers ~21s → ~11s
+ *  observed locally). */
+const BATCH_SIZE = 1000;
+/** Safety cap: 400k user docs scanned per request. Tenant directories
  *  larger than this should paginate via cursor — out of scope for v1. */
 const MAX_BATCHES = 400;
 
