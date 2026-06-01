@@ -921,8 +921,8 @@ const Timesheets: React.FC = () => {
         }}
       >
         <TimesheetGrid
-          key={refreshKey}
           filter={filter}
+          refreshSignal={refreshKey}
           narrowJobOrderIds={narrowJobOrderIds}
           narrowShiftId={narrowShiftId}
         />

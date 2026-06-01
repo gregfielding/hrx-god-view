@@ -94,6 +94,13 @@ export interface TimesheetGridProps {
    * resolver returned. An empty set means "narrow to nothing" — render
    * zero rows. Both states are distinct from `undefined`.
    */
+  /**
+   * Bumping this number triggers an in-place data refresh — same effect
+   * as the user clicking a refresh button. Used by Timesheets.tsx after
+   * the Add Worker modal completes, so the grid picks up the new rows
+   * without re-mounting (and without resetting any in-row edit state).
+   */
+  refreshSignal?: number;
   narrowJobOrderIds?: Set<string> | null;
   /**
    * Optional client-side narrowing — when set, only rows whose
@@ -630,6 +637,7 @@ const EntryRow: React.FC<EntryRowProps> = ({
 
 export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
   filter,
+  refreshSignal,
   narrowJobOrderIds = null,
   narrowShiftId = null,
 }) => {
@@ -644,6 +652,18 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
     mergeEntryUpdate,
     refreshEntry,
   } = useTimesheetGridRows(tenantId, filter);
+
+  // External refresh trigger — bump `refreshSignal` from the parent to
+  // re-resolve rows without remounting. Used after the Add Worker modal
+  // submits so the new per-day assignment rows appear without flickering
+  // the filter bar or losing scroll position.
+  React.useEffect(() => {
+    if (refreshSignal === undefined) return;
+    // Skip the initial mount; only react to subsequent bumps. (The
+    // first paint already resolves via the hook's own initial effect.)
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshSignal]);
 
   // Apply client-side narrowing on top of whatever the resolver returned.
   // We do this here (vs. inside `useTimesheetGridRows`) so the underlying
