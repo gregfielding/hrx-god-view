@@ -9048,6 +9048,17 @@ export const logAssignmentCreated = onDocumentCreated(
     if (assignment.suppressInitialNotification) {
       return { success: true };
     }
+    // Retroactive admin adds (see `addRetroactiveWorker` callable): the
+    // shift already happened, so the "your application has been accepted"
+    // SMS is wrong noise for the worker. Gate same as the cadence seed
+    // and shift-reminder triggers do.
+    if (assignment.retroactive === true || assignment.notificationsSuppressed === true) {
+      logger.info(`logAssignmentCreated: skipped (retroactive/suppressed)`, {
+        assignmentId,
+        tenantId,
+      });
+      return { success: true };
+    }
     const { normalizeAssignmentStatus } = await import('./utils/assignmentStatusNormalize');
     const createNorm = normalizeAssignmentStatus(assignment.status as string);
     // Send worker notification if assignment was newly pending/proposed or confirmed (SMS + email with full assignment details)
@@ -9205,9 +9216,15 @@ export const logAssignmentUpdated = onDocumentUpdated(
   }
 
   try {
+    // Retroactive admin adds — skip the entire update-side notification
+    // pipeline. The shift already happened; status transitions
+    // (pending → confirmed → completed) don't warrant a worker SMS.
+    if (after.retroactive === true || after.notificationsSuppressed === true) {
+      return { success: true, skipped: 'retroactive' };
+    }
     // Check for status changes
     const statusChanged = before.status !== after.status;
-    
+
     if (statusChanged && after.userId) {
       try {
         const { normalizeAssignmentStatus } = await import('./utils/assignmentStatusNormalize');
