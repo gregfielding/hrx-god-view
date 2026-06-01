@@ -368,6 +368,12 @@ export { approveTimesheetEntriesCallable } from './timesheets/approveTimesheetEn
 // onAssignmentCreatedAutoSeed). Powers the "+ add worker" modal on
 // the Timesheets page.
 export { addRetroactiveWorker } from './timesheets/addRetroactiveWorkerCallable';
+// Bulk tenant-worker directory for client-side IndexedDB caching. Powers
+// instant search on /users/all and the Add Worker autocomplete; client
+// uses stale-while-revalidate so the in-memory list renders immediately
+// from cache and refreshes in the background. See
+// `src/utils/tenantWorkerDirectoryCache.ts`.
+export { listTenantWorkerDirectory } from './recruiter/listTenantWorkerDirectory';
 // **TS.1.P1.D** — Companion trigger that maintains
 // `Assignment.latestTimesheetStatus` by aggregating across all the
 // assignment's entries with a precedence rule (error > draft >

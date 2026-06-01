@@ -4,10 +4,9 @@
  * timesheet retroactively.
  *
  * Flow:
- *   1. Type to search the tenant's workers (debounced, hits
- *      `searchRecruiterTableUsers`). Options render with the worker's
- *      name + city/state + phone so the recruiter can disambiguate
- *      common-name workers (the Robert Smiths, the DeAndres).
+ *   1. Type to search — filtered against the in-memory tenant worker
+ *      directory (cached in IndexedDB; see `useTenantWorkerDirectory`).
+ *      Instant; no debounce, no per-keystroke server roundtrip.
  *   2. Pick a shift from the JO's available shifts.
  *   3. Submit → `addRetroactiveWorker` callable writes one assignment
  *      per day in the shift's date range with `retroactive: true`.
@@ -37,31 +36,17 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import {
-  collection,
-  documentId,
-  getDocs,
-  query as fdbQuery,
-  where,
-} from 'firebase/firestore';
-import { db, functions } from '../../firebase';
-import { callSearchRecruiterTableUsers } from '../../services/searchRecruiterTableUsersCallable';
+import { functions } from '../../firebase';
 import { callAddRetroactiveWorker } from '../../services/addRetroactiveWorkerCallable';
+import type { TenantWorkerDirectoryEntry } from '../../services/listTenantWorkerDirectoryCallable';
+import { useTenantWorkerDirectory } from '../../hooks/useTenantWorkerDirectory';
+import { userMatchesSearchTerm } from '../../utils/recruiterUserSearchMatch';
 import { formatFirebaseHttpsError } from '../../utils/firebaseHttpsErrors';
 
 export interface AddRetroactiveWorkerDialogShiftOption {
   id: string;
   /** Display label — pre-composed by the parent (e.g. "2026-05-25 · 09:00–17:00"). */
   label: string;
-}
-
-interface UserOption {
-  id: string;
-  firstName: string;
-  lastName: string;
-  city: string;
-  state: string;
-  phone: string;
 }
 
 interface Props {
@@ -76,10 +61,15 @@ interface Props {
   defaultShiftId?: string | null;
 }
 
-/** Format a user option for the Autocomplete dropdown row. */
-function formatUserSubtitle(u: UserOption): string {
-  const loc = [u.city, u.state].filter(Boolean).join(', ');
-  return [loc, u.phone].filter(Boolean).join(' · ');
+/** Cap the dropdown list so the Autocomplete doesn't render thousands of
+ *  nodes on an empty query. 30 covers the common case (user types 2-3
+ *  chars and the right worker is in the first page). */
+const MAX_OPTIONS = 30;
+
+/** Format a worker's subtitle for the dropdown row. */
+function formatSubtitle(w: TenantWorkerDirectoryEntry): string {
+  const loc = [w.city, w.state].filter(Boolean).join(', ');
+  return [loc, w.phone].filter(Boolean).join(' · ');
 }
 
 const AddRetroactiveWorkerDialog: React.FC<Props> = ({
@@ -91,11 +81,10 @@ const AddRetroactiveWorkerDialog: React.FC<Props> = ({
   shifts,
   defaultShiftId,
 }) => {
+  const directory = useTenantWorkerDirectory(open ? tenantId : null);
   const [searchInput, setSearchInput] = useState('');
-  const [userOptions, setUserOptions] = useState<UserOption[]>([]);
-  const [selectedUser, setSelectedUser] = useState<UserOption | null>(null);
+  const [selectedUser, setSelectedUser] = useState<TenantWorkerDirectoryEntry | null>(null);
   const [shiftId, setShiftId] = useState<string>('');
-  const [searching, setSearching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -104,75 +93,41 @@ const AddRetroactiveWorkerDialog: React.FC<Props> = ({
   useEffect(() => {
     if (!open) return;
     setSearchInput('');
-    setUserOptions([]);
     setSelectedUser(null);
     setShiftId(defaultShiftId && defaultShiftId !== 'all' ? defaultShiftId : '');
     setError(null);
   }, [open, defaultShiftId]);
 
-  // Debounced user search. We use the existing `searchRecruiterTableUsers`
-  // server-side full-collection search (it returns userIds), then hydrate
-  // the first ~20 ids to a UserOption with city/state/phone for the
-  // dropdown.
-  useEffect(() => {
-    if (!open) return;
+  /**
+   * Local filter — runs synchronously over the in-memory directory. No
+   * debounce, no spinner. Reuses the existing `userMatchesSearchTerm`
+   * helper so the matching semantics (name prefix, email substring,
+   * digits-only phone, diacritic fold) match what /users/all uses.
+   */
+  const filteredWorkers = useMemo<TenantWorkerDirectoryEntry[]>(() => {
     const q = searchInput.trim();
-    if (q.length < 2) {
-      setUserOptions([]);
-      setSearching(false);
-      return;
-    }
-    let cancelled = false;
-    setSearching(true);
-    const timer = window.setTimeout(async () => {
-      try {
-        const { data } = await callSearchRecruiterTableUsers(functions, {
-          tenantId,
-          searchQuery: q,
-        });
-        if (cancelled) return;
-        const ids = data.userIds.slice(0, 20);
-        if (ids.length === 0) {
-          setUserOptions([]);
-          return;
-        }
-        // Hydrate via Firestore `in` query (max 30 ids per batch).
-        const snap = await getDocs(
-          fdbQuery(collection(db, 'users'), where(documentId(), 'in', ids)),
-        );
-        const byId = new Map<string, UserOption>();
-        snap.docs.forEach((d) => {
-          const u = d.data() as Record<string, unknown>;
-          const addr = (u.addressInfo as Record<string, unknown> | undefined) ?? {};
-          byId.set(d.id, {
-            id: d.id,
-            firstName: String(u.firstName ?? ''),
-            lastName: String(u.lastName ?? ''),
-            city: String(addr.city ?? u.city ?? ''),
-            state: String(addr.state ?? u.state ?? ''),
-            phone: String(u.phone ?? u.phoneE164 ?? u.phoneNumber ?? ''),
-          });
-        });
-        // Preserve the server's relevance order.
-        const ordered = ids
-          .map((id) => byId.get(id))
-          .filter((u): u is UserOption => !!u);
-        if (!cancelled) setUserOptions(ordered);
-      } catch (e: unknown) {
-        if (!cancelled) {
-          console.warn('AddRetroactiveWorkerDialog: search failed', e);
-          setUserOptions([]);
-          setError(formatFirebaseHttpsError(e));
-        }
-      } finally {
-        if (!cancelled) setSearching(false);
+    if (q.length < 2) return [];
+    const matches: TenantWorkerDirectoryEntry[] = [];
+    for (const w of directory.workers) {
+      if (
+        userMatchesSearchTerm(
+          {
+            firstName: w.firstName,
+            lastName: w.lastName,
+            displayName: w.displayName,
+            email: w.email,
+            phone: w.phone,
+            skills: w.skills ?? null,
+          },
+          q,
+        )
+      ) {
+        matches.push(w);
+        if (matches.length >= MAX_OPTIONS) break;
       }
-    }, 350);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [open, searchInput, tenantId]);
+    }
+    return matches;
+  }, [searchInput, directory.workers]);
 
   const canSubmit = useMemo(
     () => !!selectedUser && !!shiftId && !submitting,
@@ -215,23 +170,30 @@ const AddRetroactiveWorkerDialog: React.FC<Props> = ({
             worker — this is for back-filling a shift they already worked.
           </Typography>
 
-          <Autocomplete<UserOption, false, false, false>
+          <Autocomplete<TenantWorkerDirectoryEntry, false, false, false>
             value={selectedUser}
             onChange={(_, v) => setSelectedUser(v)}
             inputValue={searchInput}
             onInputChange={(_, v) => setSearchInput(v)}
-            options={userOptions}
+            options={filteredWorkers}
             getOptionLabel={(o) =>
-              `${o.firstName} ${o.lastName}`.trim() || o.id
+              `${o.firstName} ${o.lastName}`.trim() || o.displayName || o.id
             }
             isOptionEqualToValue={(a, b) => a.id === b.id}
-            loading={searching}
-            filterOptions={(x) => x} // server-side, no client filter
+            // Local search — Autocomplete's own filter would be redundant
+            // and would re-filter our already-filtered options on every
+            // keystroke. Disable it.
+            filterOptions={(x) => x}
+            loading={directory.loading}
             renderOption={(props, option) => (
               <li {...props} key={option.id}>
                 <ListItemText
-                  primary={`${option.firstName} ${option.lastName}`.trim() || option.id}
-                  secondary={formatUserSubtitle(option)}
+                  primary={
+                    `${option.firstName} ${option.lastName}`.trim() ||
+                    option.displayName ||
+                    option.id
+                  }
+                  secondary={formatSubtitle(option)}
                   primaryTypographyProps={{ variant: 'body2', fontWeight: 500 }}
                   secondaryTypographyProps={{ variant: 'caption' }}
                 />
@@ -243,11 +205,18 @@ const AddRetroactiveWorkerDialog: React.FC<Props> = ({
                 label="Search worker"
                 placeholder="Type at least 2 characters"
                 autoFocus
+                helperText={
+                  directory.refreshing
+                    ? 'Updating worker directory…'
+                    : directory.fetchedAt
+                      ? `${directory.workers.length} workers indexed`
+                      : ''
+                }
                 InputProps={{
                   ...params.InputProps,
                   endAdornment: (
                     <>
-                      {searching ? <CircularProgress size={16} /> : null}
+                      {directory.loading ? <CircularProgress size={16} /> : null}
                       {params.InputProps.endAdornment}
                     </>
                   ),
@@ -257,9 +226,9 @@ const AddRetroactiveWorkerDialog: React.FC<Props> = ({
             noOptionsText={
               searchInput.trim().length < 2
                 ? 'Type at least 2 characters'
-                : searching
-                  ? 'Searching…'
-                  : 'No workers found'
+                : directory.loading
+                  ? 'Loading worker directory…'
+                  : 'No workers match'
             }
           />
 
