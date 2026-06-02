@@ -122,6 +122,20 @@ export interface Worker {
    * render the 4th "group status" chip.
    */
   groupPrefStatus?: 'preferred' | 'member' | 'not_preferred';
+  /**
+   * **Multi-group memberships (2026-06-02).** Set when the workforce
+   * dropdown is NOT a single group — populated from the JO's
+   * `autoMessagingUserGroupIds`. For each of those groups the user
+   * belongs to, emit one entry. The tile renders one chip per entry
+   * so the recruiter sees membership context across all the groups
+   * that JO is configured to notify. Empty when the JO has no
+   * auto-messaging groups configured or the user isn't a member of any.
+   */
+  groupMemberships?: Array<{
+    groupId: string;
+    groupName: string;
+    status: 'preferred' | 'member' | 'not_preferred';
+  }>;
   isAssignedToShift?: boolean; // In Assignments column (placed or assigned)
   isPlacementOnly?: boolean;   // Placed but not yet offered - no Assignment, no messages
   assignmentStatus?: string;
@@ -844,6 +858,56 @@ function PlacementReadinessChipsRow({
           />
         </Tooltip>
       )}
+      {/*
+       * Multi-group memberships (2026-06-02). Renders one chip per
+       * user-group the worker belongs to from the JO's
+       * `autoMessagingUserGroupIds`. Same color scheme as the single-
+       * group chip above — chip label is "GroupName · Status" so the
+       * recruiter can read both the group identity AND the worker's
+       * status in it without hovering.
+       */}
+      {(worker.groupMemberships ?? []).map((m) => (
+        <Tooltip
+          key={m.groupId}
+          title={
+            m.status === 'preferred'
+              ? `Preferred in ${m.groupName}`
+              : m.status === 'not_preferred'
+                ? `Marked Not Preferred in ${m.groupName}`
+                : `Standard member of ${m.groupName}`
+          }
+          {...placementTileTooltipSlotProps}
+        >
+          <Chip
+            size="small"
+            label={`${m.groupName} · ${
+              m.status === 'preferred'
+                ? 'Preferred'
+                : m.status === 'not_preferred'
+                  ? 'Not Preferred'
+                  : 'Member'
+            }`}
+            variant={m.status === 'member' ? 'outlined' : 'filled'}
+            sx={{
+              ...tileReadinessChipSx,
+              ...(m.status === 'preferred' && {
+                bgcolor: '#0057B8',
+                color: '#fff',
+                '& .MuiChip-label': { ...tileReadinessChipSx['& .MuiChip-label'], color: '#fff' },
+              }),
+              ...(m.status === 'not_preferred' && {
+                bgcolor: '#D14343',
+                color: '#fff',
+                '& .MuiChip-label': { ...tileReadinessChipSx['& .MuiChip-label'], color: '#fff' },
+              }),
+              ...(m.status === 'member' && {
+                borderColor: 'divider',
+                color: 'text.secondary',
+              }),
+            }}
+          />
+        </Tooltip>
+      ))}
     </Box>
   );
 }

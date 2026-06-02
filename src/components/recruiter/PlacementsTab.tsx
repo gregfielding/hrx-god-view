@@ -1487,6 +1487,60 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           }
         }
         
+        /**
+         * **Multi-group memberships (2026-06-02).** When the workforce
+         * dropdown isn't a single group, attach each worker's membership
+         * status across the JO's auto-messaging groups so the tiles can
+         * surface Preferred / Member / Not Preferred chips per group.
+         * The single-group branch above already sets `groupPrefStatus`
+         * for the selected group; skip the per-group decoration there
+         * to avoid double-rendering.
+         */
+        if (!selectedWorkforce.startsWith('group_')) {
+          const autoGroupIds = ((jobOrder as any)?.autoMessagingUserGroupIds ?? []).filter(
+            (s: unknown): s is string => typeof s === 'string' && !!s.trim(),
+          );
+          if (autoGroupIds.length > 0 && workforceUsers.length > 0) {
+            const groupDocs = await Promise.all(
+              autoGroupIds.map((gid: string) =>
+                getDoc(doc(db, 'tenants', tenantId, 'userGroups', gid)).catch(() => null),
+              ),
+            );
+            const groups = groupDocs
+              .filter((s): s is NonNullable<typeof s> => !!s && s.exists())
+              .map((s) => {
+                const data = s.data();
+                const memberIds: string[] = Array.isArray(data?.memberIds)
+                  ? data!.memberIds
+                  : Array.isArray(data?.members)
+                    ? data!.members
+                    : [];
+                const memberStatusById = (data?.memberStatusById ?? {}) as Record<string, string>;
+                const groupName =
+                  typeof data?.title === 'string' && data.title.trim()
+                    ? data.title.trim()
+                    : typeof data?.name === 'string' && data.name.trim()
+                      ? data.name.trim()
+                      : s.id;
+                return { id: s.id, groupName, memberIds: new Set(memberIds), memberStatusById };
+              });
+
+            const normalize = (raw: string | undefined): 'preferred' | 'member' | 'not_preferred' =>
+              raw === 'preferred' || raw === 'not_preferred' ? raw : 'member';
+
+            workforceUsers = workforceUsers.map((w) => {
+              const memberships = groups
+                .filter((g) => g.memberIds.has(w.id))
+                .map((g) => ({
+                  groupId: g.id,
+                  groupName: g.groupName,
+                  status: normalize(g.memberStatusById[w.id]),
+                }));
+              return memberships.length > 0 ? { ...w, groupMemberships: memberships } : w;
+            });
+          }
+        }
+
         // Assignment status is now applied from real-time shift listener below.
         setWorkers(workforceUsers);
       } catch (err: any) {
