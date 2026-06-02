@@ -1370,6 +1370,17 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
           shiftData.endDate = formData.endDate;
           const range = getDateRange(formData.shiftDate, formData.endDate);
           mergedGigDateSchedule = {};
+          // **Default cascade on save (2026-06-02).** When the recruiter
+          // never typed into a per-day cell, fall back to the form's
+          // `totalStaffRequested` / `overstaffCount` defaults — same as
+          // the per-row display uses (line ~2265). Previously the save
+          // hardcoded `workersNeeded: 1` / `overstaff: 0`, so a recruiter
+          // who set "Default Workers = 5" saw 5 on every row in the UI
+          // but the shift wrote `workersNeeded: 1` to every untouched
+          // day. Reported by Greg on the David L. Lawrence Convention
+          // Center JO 2026-06-02.
+          const defaultWorkers = Math.max(1, Number(formData.totalStaffRequested ?? 1));
+          const defaultOverstaff = Math.max(0, Number(formData.overstaffCount ?? 0));
           range.forEach((iso) => {
             const existing = formData.dateSchedule?.[iso];
             mergedGigDateSchedule![iso] = {
@@ -1378,9 +1389,11 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
               workersNeeded:
                 existing?.workersNeeded != null
                   ? Math.max(1, Number(existing.workersNeeded))
-                  : 1,
+                  : defaultWorkers,
               overstaff:
-                existing?.overstaff != null ? Math.max(0, Number(existing.overstaff)) : 0,
+                existing?.overstaff != null
+                  ? Math.max(0, Number(existing.overstaff))
+                  : defaultOverstaff,
             };
           });
           shiftData.dateSchedule = mergedGigDateSchedule;
