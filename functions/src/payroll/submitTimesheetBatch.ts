@@ -289,6 +289,11 @@ export const submitTimesheetBatch = onCall<SubmitTimesheetBatchInput>(
         return undefined;
       };
       const workersCompClassCode = pickWcStr(
+        // Entry-level override — set via the Timesheets grid's inline
+        // "WC Code" cell (setEntryWorkersComp callable). Recruiter
+        // intent wins: even when the shift has a value, the override
+        // takes priority for this entry only.
+        entry.workersCompCode,
         shift?.workersCompCode,
         jo?.workersCompCode,
         jo?.workersCompClassCode,
