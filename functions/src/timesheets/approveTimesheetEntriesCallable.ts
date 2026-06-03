@@ -119,7 +119,21 @@ async function assertTimesheetEditor(
   throw new HttpsError('permission-denied', 'Recruiter access required.');
 }
 
-const APPROVABLE_STATUSES = new Set(['draft', 'submitted']);
+/**
+ * Statuses that can be flipped → 'approved' via this callable.
+ *
+ *   - draft / submitted — fresh entries that have never reached Everee.
+ *   - error             — Everee or the pre-flight stamped the entry
+ *                         after a failed submit. Once the recruiter
+ *                         fixes the underlying data (WC code, worker
+ *                         linkage, etc.), clicking the status pill
+ *                         re-approves so the next batch can pick it up.
+ *
+ * `sent_to_everee` / `paid` deliberately excluded — those represent
+ * money already in flight; recovering from those requires the
+ * adjustment path, not a status flip.
+ */
+const APPROVABLE_STATUSES = new Set(['draft', 'submitted', 'error']);
 
 export const approveTimesheetEntriesCallable = onCall(
   { cors: true, timeoutSeconds: 30 },

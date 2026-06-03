@@ -187,7 +187,19 @@ export const TimesheetTotalsHeader: React.FC<TimesheetTotalsHeaderProps> = ({
     const ids: string[] = [];
     for (const r of rows) {
       if (r.kind !== 'entry') continue;
-      if (r.entry.status !== 'draft' && r.entry.status !== 'submitted') continue;
+      // Re-approve errored entries too — the pre-flight stamps this
+      // status when the underlying data was missing (WC code, worker
+      // linkage, etc.); once the recruiter fixes the data the bulk
+      // action should pick them up alongside ordinary drafts. The
+      // server callable's APPROVABLE_STATUSES allows the same
+      // 'error' → 'approved' transition.
+      if (
+        r.entry.status !== 'draft' &&
+        r.entry.status !== 'submitted' &&
+        r.entry.status !== 'error'
+      ) {
+        continue;
+      }
       // Skip empties — the auto-create-on-narrow path materializes a
       // draft row for every scheduled day so the cells are immediately
       // editable, but only rows where the recruiter actually entered
@@ -291,7 +303,7 @@ export const TimesheetTotalsHeader: React.FC<TimesheetTotalsHeaderProps> = ({
               approved batch doesn't show a redundant button. */}
           {tenantId && approvableEntryIds.length > 0 && (
             <Tooltip
-              title={`Flip every ${approvableEntryIds.length} draft / submitted entry in this view to approved.`}
+              title={`Flip every ${approvableEntryIds.length} draft / submitted / error entry in this view to approved (errored rows are retried after their underlying issue is fixed).`}
             >
               <span>
                 <Button

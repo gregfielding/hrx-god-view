@@ -255,12 +255,20 @@ const StatusPill: React.FC<StatusPillProps> = ({ status, onApprove, approving })
       </Tooltip>
     );
   }
-  const isApprovable = (status === 'draft' || status === 'submitted') && !!onApprove;
+  // Allow re-approving an `error` row — the pre-flight stamps this
+  // status when the underlying data was missing (WC code, worker
+  // linkage, etc.); once the recruiter fixes it, one click flips back
+  // to approved so the next batch picks it up. The server callable's
+  // APPROVABLE_STATUSES allows the same transition.
+  const isApprovable =
+    (status === 'draft' || status === 'submitted' || status === 'error') && !!onApprove;
   return (
     <Tooltip
       title={
         isApprovable
-          ? 'Click to approve this entry (required before submit to Everee).'
+          ? status === 'error'
+            ? 'Click to retry — re-approves this entry so the next batch picks it up.'
+            : 'Click to approve this entry (required before submit to Everee).'
           : ''
       }
     >
