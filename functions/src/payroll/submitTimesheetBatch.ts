@@ -162,6 +162,11 @@ export const submitTimesheetBatch = onCall<SubmitTimesheetBatchInput>(
 
     // Single JO lookup per assignment — most batches share JOs across entries.
     const joCache = new Map<string, Record<string, unknown>>();
+    // Same caching pattern for shift docs — a batch typically has many
+    // entries sharing the same shift. Used to resolve workersCompCode /
+    // workersCompRate when set per-shift (the canonical source for new
+    // shifts created via the EditShiftForm).
+    const shiftCache = new Map<string, Record<string, unknown> | null>();
     // workerType cache per entity — there's typically one per batch, but be
     // robust if a future scope crosses entities.
     let entityWorkerType: string | undefined;
@@ -233,7 +238,67 @@ export const submitTimesheetBatch = onCall<SubmitTimesheetBatchInput>(
       const worksiteName = String((jo?.worksiteName as string) ?? worksiteId).trim();
       const worksiteAddress = (jo?.worksiteAddress as Record<string, unknown>) ?? {};
       const worksiteState = String(worksiteAddress.state ?? '').trim();
-      const workersCompClassCode = String((jo?.workersCompCode as string) ?? '').trim() || undefined;
+
+      // **WC code resolution (2026-06-03).** The code lives in up to four
+      // places depending on JO age / how it was created. Walk them in
+      // priority order until we find a non-empty value:
+      //
+      //   1. SHIFT doc — `shift.workersCompCode`. Canonical for shifts
+      //      created via EditShiftForm; per-shift values let one JO host
+      //      multiple roles with different codes.
+      //   2. JO doc — `jo.workersCompCode`. Legacy field name; some older
+      //      JO creators stamp this directly.
+      //   3. JO doc — `jo.workersCompClassCode`. Current field name used
+      //      by the JO form's Rates section.
+      //   4. JO doc — `jo.gigPositions[0].workersCompClassCode`. Per-role
+      //      array for Gig JOs that carry multiple positions.
+      //
+      // Same chain mirrored for `workersCompRate` so the composer
+      // downstream can attach a rate (Everee's worker-shifts API accepts
+      // both, and we want them in lockstep with the code).
+      const shiftIdRaw = String((entry.shiftId as string) ?? '').trim();
+      // Fall back to parsing from the entry id (`{shiftId}__{userId}__{date}_{date}`)
+      // — older entries don't carry a denormalized shiftId field.
+      const shiftId =
+        shiftIdRaw || (entryId.includes('__') ? entryId.split('__')[0]! : '');
+      let shift: Record<string, unknown> | null = null;
+      if (shiftId && jobOrderId) {
+        if (shiftCache.has(shiftId)) {
+          shift = shiftCache.get(shiftId) ?? null;
+        } else {
+          try {
+            const shiftSnap = await db
+              .doc(`tenants/${tenantId}/job_orders/${jobOrderId}/shifts/${shiftId}`)
+              .get();
+            shift = shiftSnap.exists ? (shiftSnap.data() as Record<string, unknown>) : null;
+          } catch {
+            shift = null;
+          }
+          shiftCache.set(shiftId, shift);
+        }
+      }
+      const firstGigPosition =
+        Array.isArray(jo?.gigPositions) && jo.gigPositions.length > 0
+          ? ((jo.gigPositions as unknown[])[0] as Record<string, unknown>)
+          : null;
+      const pickWcStr = (...candidates: unknown[]): string | undefined => {
+        for (const c of candidates) {
+          if (typeof c === 'string' && c.trim()) return c.trim();
+          if (typeof c === 'number' && Number.isFinite(c)) return String(c);
+        }
+        return undefined;
+      };
+      const workersCompClassCode = pickWcStr(
+        shift?.workersCompCode,
+        jo?.workersCompCode,
+        jo?.workersCompClassCode,
+        firstGigPosition?.workersCompClassCode,
+      );
+      // `workersCompRate` exists alongside the code in the same three
+      // slots — not consumed by the current Everee submitter (only the
+      // class code is wired into the per-shift POST), but reserved here
+      // so we can extend the composed payload later without re-touching
+      // the resolution chain.
 
       // Pre-flight #1: externalWorkerId via linkage fallback
       let externalWorkerId: string | null = null;
