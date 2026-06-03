@@ -547,16 +547,22 @@ const Timesheets: React.FC = () => {
     // different shift collection. Reset to "All Shifts" so we don't
     // leave a stale shift id selected against a JO it doesn't belong to.
     setShiftFilter('all');
-    // Clear the period so PeriodPicker re-seeds against the new scope:
-    //   - new JO with dates  → auto-fills to JO's startDate/endDate
-    //   - JO cleared (= 'all')→ falls back to last-7-days for per_event
-    //                            entities, or current week for weekly
-    setPeriod(null);
+    // NOTE: we deliberately do NOT setPeriod(null) here.
+    //   - For per_event entities, PeriodPicker's `scope` effect picks
+    //     up the new JO's autoFillPeriod and overwrites `value`
+    //     directly — no `null` round-trip needed.
+    //   - For weekly entities, scope is ignored; clearing the period
+    //     would just snap the recruiter back to "this week" and lose
+    //     whatever week they had picked. That was the source of the
+    //     "Week input refreshes after every JO/shift change" bug
+    //     reported against the Timesheets page.
   }, []);
 
   const handleShiftChange = useCallback((nextId: string) => {
     setShiftFilter(nextId);
-    setPeriod(null); // same re-seed rationale as handleJobOrderChange
+    // Same rationale as handleJobOrderChange — let PeriodPicker's
+    // scope effect drive per_event auto-fill; preserve weekly
+    // entity period selection across shift narrowing.
   }, []);
 
   /* -------------------------------------------------------------------
