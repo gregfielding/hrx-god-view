@@ -431,21 +431,35 @@ export const submitTimesheetBatch = onCall<SubmitTimesheetBatchInput>(
         Number(entry.totalNonFlsaOTHours ?? 0) +
         Number(entry.totalDoubleTimeHours ?? 0);
       if (Number.isFinite(totalClassifiedHours) && totalClassifiedHours > 0) {
-        // Round to the nearest second to dodge floating-point garbage
-        // (6.01h = 21636 seconds exactly; .toFixed-style noise would
-        // confuse Everee's millisecond-precision validator).
+        // Two-step precision dance, both required to clear Everee's
+        // server-side `shift_validate_is_correctly_classified()`
+        // trigger (postgres function we hit via 500 on 2026-06-03):
+        //
+        //   1. Compute classified-hours in seconds (`Math.round` to
+        //      kill float noise — 6.01h → 21636s exactly).
+        //   2. Align the resulting end-epoch UP to the next whole
+        //      minute. Everee stores `shift.duration` at minute
+        //      precision but `classified.duration` at second
+        //      precision; sending 27792s for both fields actually
+        //      stores them as 27780s vs 27792s, and the trigger
+        //      raises "classified > shift" by the truncated 12s.
+        //      Rounding UP to the next minute (27840s) gives Everee
+        //      a window that's strictly wider than the classified
+        //      duration at THEIR precision.
         const classifiedSeconds = Math.round(totalClassifiedHours * 3600);
-        const minEndEpoch = shiftStartEpochSeconds + classifiedSeconds;
-        if (minEndEpoch > shiftEndEpochSeconds) {
-          const widenBySeconds = minEndEpoch - shiftEndEpochSeconds;
+        const minEndEpochRaw = shiftStartEpochSeconds + classifiedSeconds;
+        const minEndEpochAligned = Math.ceil(minEndEpochRaw / 60) * 60;
+        if (minEndEpochAligned > shiftEndEpochSeconds) {
+          const widenBySeconds = minEndEpochAligned - shiftEndEpochSeconds;
           logger.info('[submitTimesheetBatch] widened shift window', {
             tenantId,
             entryId,
             scheduledWindowSeconds: shiftEndEpochSeconds - shiftStartEpochSeconds,
             classifiedSeconds,
+            alignedEndDelta: minEndEpochAligned - minEndEpochRaw,
             widenBySeconds,
           });
-          shiftEndEpochSeconds = minEndEpoch;
+          shiftEndEpochSeconds = minEndEpochAligned;
         }
       }
 
