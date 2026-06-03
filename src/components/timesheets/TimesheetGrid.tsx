@@ -60,6 +60,7 @@ import type {
   TimesheetFilter,
 } from '../../types/recruiter/timesheet';
 import { approveTimesheetEntries } from '../../utils/timesheets/approveTimesheetEntries';
+import { revertTimesheetEntriesToDraft } from '../../utils/timesheets/revertTimesheetEntriesToDraft';
 import { createDraftTimesheetEntry } from '../../utils/timesheets/createDraftTimesheetEntry';
 import { formatPeriodLabel } from '../../utils/timesheets/dateRange';
 import {
@@ -237,11 +238,25 @@ interface StatusPillProps {
    *  handler. Used to approve entries from the grid without a separate
    *  bulk-select UI. Non-approvable statuses ignore the click. */
   onApprove?: () => void;
+  /** When set, click on an `approved` pill fires this handler — flips
+   *  the row back to `draft` so it falls out of the next Submit-to-
+   *  Everee batch. Powers the recruiter workflow of "approved-all then
+   *  noticed a zero-hour row that shouldn't ship". `sent_to_everee` /
+   *  `paid` rows are NOT clickable — those need the adjustment path. */
+  onRevert?: () => void;
   /** Loading flag while the approve callable is in flight. */
   approving?: boolean;
+  /** Loading flag while the revert callable is in flight. */
+  reverting?: boolean;
 }
 
-const StatusPill: React.FC<StatusPillProps> = ({ status, onApprove, approving }) => {
+const StatusPill: React.FC<StatusPillProps> = ({
+  status,
+  onApprove,
+  onRevert,
+  approving,
+  reverting,
+}) => {
   if (status === 'no_entry') {
     return (
       <Tooltip title="No entry yet — this day will appear in the next batch only after a recruiter saves an entry.">
@@ -262,25 +277,42 @@ const StatusPill: React.FC<StatusPillProps> = ({ status, onApprove, approving })
   // APPROVABLE_STATUSES allows the same transition.
   const isApprovable =
     (status === 'draft' || status === 'submitted' || status === 'error') && !!onApprove;
+  // Allow flipping an `approved` row back to `draft`. Symmetric with
+  // approve — anyone allowed to approve is allowed to undo it. Stops
+  // at `approved`: once a row is `sent_to_everee` / `paid` it's money
+  // in flight and needs the adjustment path, not a status flip.
+  const isRevertable = status === 'approved' && !!onRevert;
+
+  const clickHandler = isApprovable ? onApprove : isRevertable ? onRevert : undefined;
+  const clickable = isApprovable || isRevertable;
+
+  let label: string;
+  if (approving) label = 'Approving…';
+  else if (reverting) label = 'Reverting…';
+  else label = STATUS_LABELS[status];
+
+  let tooltip = '';
+  if (isApprovable) {
+    tooltip =
+      status === 'error'
+        ? 'Click to retry — re-approves this entry so the next batch picks it up.'
+        : 'Click to approve this entry (required before submit to Everee).';
+  } else if (isRevertable) {
+    tooltip =
+      'Click to revert to draft — pulls this row out of the next Everee batch (useful for 0-hour rows that shouldn\'t ship).';
+  }
+
   return (
-    <Tooltip
-      title={
-        isApprovable
-          ? status === 'error'
-            ? 'Click to retry — re-approves this entry so the next batch picks it up.'
-            : 'Click to approve this entry (required before submit to Everee).'
-          : ''
-      }
-    >
+    <Tooltip title={tooltip}>
       <Chip
         size="small"
         color={STATUS_COLORS[status]}
         variant="filled"
-        label={approving ? 'Approving…' : STATUS_LABELS[status]}
-        onClick={isApprovable ? onApprove : undefined}
-        clickable={isApprovable}
+        label={label}
+        onClick={clickable ? clickHandler : undefined}
+        clickable={clickable}
         sx={{
-          cursor: isApprovable ? 'pointer' : 'default',
+          cursor: clickable ? 'pointer' : 'default',
           fontWeight: 600,
         }}
       />
@@ -349,6 +381,13 @@ interface EntryRowProps extends RowCommonProps {
   onApproveEntry: (entryId: string) => Promise<void>;
   /** True while an approve callable is in flight for THIS entry. */
   approvingThisEntry: boolean;
+  /** Fired when the user clicks an `approved` Status pill. Calls the
+   *  revert callable; on success the row's status flips back to
+   *  `draft` and the SubmitBatchToEveree button drops it from the
+   *  count. */
+  onRevertEntry: (entryId: string) => Promise<void>;
+  /** True while a revert callable is in flight for THIS entry. */
+  revertingThisEntry: boolean;
 }
 
 /**
@@ -509,6 +548,8 @@ const EntryRow: React.FC<EntryRowProps> = ({
   refreshEntry,
   onApproveEntry,
   approvingThisEntry,
+  onRevertEntry,
+  revertingThisEntry,
 }) => {
   const editor = useTimesheetEntryEditor({
     tenantId,
@@ -675,6 +716,8 @@ const EntryRow: React.FC<EntryRowProps> = ({
           status={status}
           onApprove={() => void onApproveEntry(entry.id)}
           approving={approvingThisEntry}
+          onRevert={() => void onRevertEntry(entry.id)}
+          reverting={revertingThisEntry}
         />
       </TableCell>
       {/* Workers' Comp edit dialog — mounted inside the row so dialog
@@ -825,6 +868,51 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
         console.error('[TimesheetGrid] approve failed', { entryId, err });
       } finally {
         setApprovingEntryIds((prev) => {
+          if (!prev.has(entryId)) return prev;
+          const next = new Set(prev);
+          next.delete(entryId);
+          return next;
+        });
+      }
+    },
+    [tenantId, mergeEntryUpdate],
+  );
+
+  /* -------------------------------------------------------------------
+   * Revert action (per-row click on the approved status pill).
+   *
+   * Symmetric with handleApproveEntry — flips `approved` back to
+   * `draft` so 0-hour or otherwise-bogus rows can be pulled out of
+   * the Submit-to-Everee queue without leaving the page.
+   * ------------------------------------------------------------------- */
+  const [revertingEntryIds, setRevertingEntryIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const handleRevertEntry = useCallback(
+    async (entryId: string) => {
+      if (!tenantId) return;
+      setRevertingEntryIds((prev) => {
+        if (prev.has(entryId)) return prev;
+        const next = new Set(prev);
+        next.add(entryId);
+        return next;
+      });
+      try {
+        const res = await revertTimesheetEntriesToDraft({
+          tenantId,
+          entryIds: [entryId],
+        });
+        if (res.reverted > 0) {
+          // Local-merge so SubmitBatchToEvereeButton's count drops
+          // immediately, without waiting for the resolver refresh.
+          mergeEntryUpdate(entryId, { status: 'draft' });
+        }
+        // If the server skipped it (already draft, or sent_to_everee),
+        // the next refresh will reflect reality — no UI rollback needed.
+      } catch (err) {
+        console.error('[TimesheetGrid] revert failed', { entryId, err });
+      } finally {
+        setRevertingEntryIds((prev) => {
           if (!prev.has(entryId)) return prev;
           const next = new Set(prev);
           next.delete(entryId);
@@ -1038,6 +1126,8 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                         refreshEntry={refreshEntry}
                         onApproveEntry={handleApproveEntry}
                         approvingThisEntry={approvingEntryIds.has(row.entry.id)}
+                        onRevertEntry={handleRevertEntry}
+                        revertingThisEntry={revertingEntryIds.has(row.entry.id)}
                       />
                     );
                   })}

@@ -362,6 +362,12 @@ export { onAssignmentWriteEnsureDenormFields } from './timesheets/onAssignmentWr
 // resolver chain when P1.B denorm fields are absent.
 export { createDraftTimesheetEntryCallable } from './timesheets/createDraftTimesheetEntryCallable';
 export { approveTimesheetEntriesCallable } from './timesheets/approveTimesheetEntriesCallable';
+// Mirror of approve in reverse — flips `approved` rows back to `draft`
+// so recruiters can pull a row out of the Submit-to-Everee queue when
+// they notice 0-hour rows that shouldn't ship (no-shows, cancellations).
+// Only `approved` rows are eligible; sent_to_everee / paid require the
+// adjustment path.
+export { revertTimesheetEntriesToDraftCallable } from './timesheets/revertTimesheetEntriesToDraftCallable';
 // Admin-only retroactive worker add. Creates per-day assignment docs
 // for a shift's full date range with `retroactive: true` flag so SMS /
 // cadence triggers short-circuit (see workerShiftRemindersV2 +
