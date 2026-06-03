@@ -406,6 +406,49 @@ export const submitTimesheetBatch = onCall<SubmitTimesheetBatchInput>(
         shiftEndEpochSeconds += 24 * 3600;
       }
 
+      // **Widen the shift window to fit the actual classified hours.**
+      //
+      // Real-world: a worker scheduled 10:00–16:00 ends up staying ~36
+      // extra seconds (or 15 extra minutes, or an hour). The recruiter
+      // bumps `actualHoursOverride` to 6.01 / 6.25 / 7.00 but doesn't
+      // bother updating `actualEndTime`. Without this widen, the
+      // composer lays the classified segments out starting at
+      // `shiftStartEpochSeconds` and they overrun `shiftEndEpochSeconds`,
+      // tripping Everee's 400 "Classified hours must be contained fully
+      // by the shift's start & end times."
+      //
+      // Fix: if the entry's total classified hours (reg + OT (FLSA +
+      // non-FLSA) + DT) exceed the current window, push `shiftEnd` out
+      // by the difference. The window now exactly contains the worked
+      // hours and Everee accepts.
+      //
+      // We DON'T shrink the window if classified < scheduled — the
+      // scheduled window is the contractual baseline and Everee is
+      // happy as long as classifications fit inside it.
+      const totalClassifiedHours =
+        Number(entry.totalRegularHours ?? 0) +
+        Number(entry.totalFlsaOTHours ?? 0) +
+        Number(entry.totalNonFlsaOTHours ?? 0) +
+        Number(entry.totalDoubleTimeHours ?? 0);
+      if (Number.isFinite(totalClassifiedHours) && totalClassifiedHours > 0) {
+        // Round to the nearest second to dodge floating-point garbage
+        // (6.01h = 21636 seconds exactly; .toFixed-style noise would
+        // confuse Everee's millisecond-precision validator).
+        const classifiedSeconds = Math.round(totalClassifiedHours * 3600);
+        const minEndEpoch = shiftStartEpochSeconds + classifiedSeconds;
+        if (minEndEpoch > shiftEndEpochSeconds) {
+          const widenBySeconds = minEndEpoch - shiftEndEpochSeconds;
+          logger.info('[submitTimesheetBatch] widened shift window', {
+            tenantId,
+            entryId,
+            scheduledWindowSeconds: shiftEndEpochSeconds - shiftStartEpochSeconds,
+            classifiedSeconds,
+            widenBySeconds,
+          });
+          shiftEndEpochSeconds = minEndEpoch;
+        }
+      }
+
       // Breaks → epoch
       const breaks: ComposeBreak[] = [];
       const rawBreaks = Array.isArray(entry.breaks) ? (entry.breaks as Array<Record<string, unknown>>) : [];
