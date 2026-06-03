@@ -20,6 +20,7 @@ import {
   Alert,
   CircularProgress,
   Grid,
+  TextField,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -31,6 +32,8 @@ import {
   Group as GroupIcon,
   ChevronLeft as ChevronLeftIcon,
   ChevronRight as ChevronRightIcon,
+  Check as CheckIcon,
+  Close as CloseIcon,
 } from '@mui/icons-material';
 import {
   addDoc,
@@ -40,6 +43,7 @@ import {
   getDocs,
   query,
   serverTimestamp,
+  updateDoc,
 } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { JobsBoardService } from '../../services/recruiter/jobsBoardService';
@@ -101,6 +105,172 @@ function parseLocalYyyyMmDd(dateStr: string): Date | null {
   const d = new Date(year, month - 1, day);
   return Number.isNaN(d.getTime()) ? null : d;
 }
+
+/* -------------------------------------------------------------------------
+ * InlineTimeRangeCell — click-to-edit start/end time for the Shifts table.
+ *
+ * Edits `defaultStartTime` / `defaultEndTime` (HH:mm) directly on the shift
+ * doc so a recruiter can tweak a shift's hours without opening the full
+ * EditShiftForm dialog.
+ *
+ * **Single-day only.** Multi-day shifts (shiftMode === 'multi') carry their
+ * real hours in `weeklySchedule` / `dateSchedule` (per-day maps); a single
+ * start/end pair can't represent those, so we render them read-only and let
+ * the row-click open the full dialog, which knows how to edit per-day
+ * schedules. Editing the `default*` fields on a multi-day shift would
+ * silently diverge from what candidates actually see on the jobs board.
+ *
+ * Save semantics: writes both fields + `updatedAt`, then re-syncs the linked
+ * jobs-board postings (same call the dialog + delete paths make) so the
+ * public listing reflects the new hours. Optimistic — the parent merges the
+ * patch into local state so the cell updates without a full refetch.
+ * ------------------------------------------------------------------------- */
+const InlineTimeRangeCell: React.FC<{
+  shift: Shift;
+  tenantId: string;
+  jobOrderId: string;
+  formatTime: (t: string) => string;
+  onSaved: (shiftId: string, patch: Partial<Shift>) => void;
+}> = ({ shift, tenantId, jobOrderId, formatTime, onSaved }) => {
+  const isMulti = shift.shiftMode === 'multi';
+  const [editing, setEditing] = useState(false);
+  const [start, setStart] = useState(shift.defaultStartTime || '');
+  const [end, setEnd] = useState(shift.defaultEndTime || '');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Multi-day → read-only display (see component doc-comment).
+  if (isMulti) {
+    return (
+      <Stack direction="row" spacing={0.5} alignItems="center">
+        <TimeIcon fontSize="small" color="action" />
+        <Typography variant="body2">
+          {shift.defaultStartTime
+            ? `${formatTime(shift.defaultStartTime)} - ${formatTime(shift.defaultEndTime)}`
+            : '—'}
+        </Typography>
+      </Stack>
+    );
+  }
+
+  const beginEdit = (e: React.MouseEvent) => {
+    e.stopPropagation(); // don't open the row's edit dialog
+    setStart(shift.defaultStartTime || '');
+    setEnd(shift.defaultEndTime || '');
+    setErr(null);
+    setEditing(true);
+  };
+
+  const handleSave = async () => {
+    if (!start || !end) {
+      setErr('Both start and end times are required.');
+      return;
+    }
+    // No-op if unchanged. (We allow end <= start — shifts legitimately
+    // cross midnight, e.g. 18:00 → 02:00.)
+    if (start === (shift.defaultStartTime || '') && end === (shift.defaultEndTime || '')) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    setErr(null);
+    try {
+      await updateDoc(
+        doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts', shift.id),
+        { defaultStartTime: start, defaultEndTime: end, updatedAt: serverTimestamp() },
+      );
+      onSaved(shift.id, { defaultStartTime: start, defaultEndTime: end });
+      // Keep the public jobs-board listing in sync — same call the
+      // dialog-save and delete paths make.
+      JobsBoardService.getInstance()
+        .syncJobOrderToLinkedPostings(tenantId, jobOrderId)
+        .catch(() => {});
+      setEditing(false);
+    } catch (e) {
+      console.error('Error updating shift time:', e);
+      setErr('Save failed — try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <Stack
+        direction="row"
+        spacing={0.5}
+        alignItems="center"
+        onClick={beginEdit}
+        title="Click to edit shift time"
+        sx={{
+          cursor: 'text',
+          borderRadius: 1,
+          px: 0.5,
+          mx: -0.5,
+          '&:hover': { bgcolor: 'action.hover' },
+        }}
+      >
+        <TimeIcon fontSize="small" color="action" />
+        <Typography variant="body2">
+          {shift.defaultStartTime
+            ? `${formatTime(shift.defaultStartTime)} - ${formatTime(shift.defaultEndTime)}`
+            : 'Set time'}
+        </Typography>
+      </Stack>
+    );
+  }
+
+  return (
+    <Stack
+      direction="row"
+      spacing={0.5}
+      alignItems="center"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <TextField
+        type="time"
+        size="small"
+        value={start}
+        autoFocus
+        disabled={saving}
+        onChange={(e) => setStart(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') void handleSave();
+          if (e.key === 'Escape') setEditing(false);
+        }}
+        inputProps={{ 'aria-label': 'Shift start time', step: 300 }}
+        sx={{ width: 120 }}
+      />
+      <Typography component="span" variant="body2" color="text.secondary">
+        –
+      </Typography>
+      <TextField
+        type="time"
+        size="small"
+        value={end}
+        disabled={saving}
+        onChange={(e) => setEnd(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') void handleSave();
+          if (e.key === 'Escape') setEditing(false);
+        }}
+        inputProps={{ 'aria-label': 'Shift end time', step: 300 }}
+        sx={{ width: 120 }}
+      />
+      <IconButton size="small" color="primary" onClick={() => void handleSave()} disabled={saving} title="Save">
+        {saving ? <CircularProgress size={16} /> : <CheckIcon fontSize="small" />}
+      </IconButton>
+      <IconButton size="small" onClick={() => setEditing(false)} disabled={saving} title="Cancel">
+        <CloseIcon fontSize="small" />
+      </IconButton>
+      {err && (
+        <Typography variant="caption" color="error" sx={{ ml: 0.5 }}>
+          {err}
+        </Typography>
+      )}
+    </Stack>
+  );
+};
 
 interface ShiftSetupTabProps {
   tenantId: string;
@@ -168,6 +338,12 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
     setDialogOpen(false);
     setEditingShift(null);
     setError('');
+  };
+
+  // Optimistic local patch after an inline cell save — avoids a full
+  // refetch so the edited cell updates instantly.
+  const mergeShiftUpdate = (shiftId: string, patch: Partial<Shift>) => {
+    setShifts((prev) => prev.map((s) => (s.id === shiftId ? { ...s, ...patch } : s)));
   };
 
   // EditShiftForm bubbles success here; we surface the message and
@@ -396,12 +572,13 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
                     </Stack>
                   </TableCell>
                   <TableCell>
-                    <Stack direction="row" spacing={0.5} alignItems="center">
-                      <TimeIcon fontSize="small" color="action" />
-                      <Typography variant="body2">
-                        {formatTime(shift.defaultStartTime)} - {formatTime(shift.defaultEndTime)}
-                      </Typography>
-                    </Stack>
+                    <InlineTimeRangeCell
+                      shift={shift}
+                      tenantId={tenantId}
+                      jobOrderId={jobOrderId}
+                      formatTime={formatTime}
+                      onSaved={mergeShiftUpdate}
+                    />
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2" color="text.secondary">
