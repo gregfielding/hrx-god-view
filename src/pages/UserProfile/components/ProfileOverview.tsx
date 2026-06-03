@@ -1314,8 +1314,13 @@ const transportOptions: Array<{
           }
         >
         <Grid container spacing={sectionSpacing} sx={{ alignItems: 'stretch', pb: 2 }}>
-          {/* Section 1: Action items (recruiter overview) */}
-          {showRecruiterDeployment && !hideNonQuickSections && (
+          {/* Section 1: Action items (recruiter overview)
+              TEMPORARILY DISABLED (2026-06-03, per request) — hidden from the
+              Overview tab for now. The `false &&` guard keeps all references
+              (OverviewActionItemsCard / actionItems / ActionItem) "used" so the
+              CI build (CI=true treats unused-import warnings as errors) stays
+              green. To restore: delete the leading `false && `. */}
+          {false && showRecruiterDeployment && !hideNonQuickSections && (
             <Grid item xs={12}>
               <OverviewActionItemsCard
                 items={actionItems}
