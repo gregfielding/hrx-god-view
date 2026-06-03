@@ -315,6 +315,14 @@ export { onJobOrderStatusTransitionSnapshot } from './jobOrders/onJobOrderStatus
 export { onChildAccountCreatedAutoCreateGigJobOrder } from './jobOrders/onChildAccountCreatedAutoCreateGigJobOrder';
 export { onJobOrderCreatedAttachAutoUserGroup } from './jobOrders/onJobOrderCreatedAttachAutoUserGroup';
 export { onJobOrderUpdatedSyncAutoUserGroup } from './jobOrders/onJobOrderUpdatedSyncAutoUserGroup';
+// Defensive denorm: on every JO write, copy `worksiteAddress` from
+// the worksite location doc if the JO doesn't already have a complete
+// {street, city, state, zip}. Without this, several JO creation
+// paths (manual form, deal-conversion, Indeed Flex inbound) land with
+// `worksiteId` but no `worksiteAddress` — which causes the
+// submitTimesheetBatch pre-flight to send blank address fields to
+// Everee and fail with 422. Idempotent; safe to re-fire.
+export { onJobOrderWriteDenormWorksiteAddress } from './jobOrders/onJobOrderWriteDenormWorksiteAddress';
 export { backfillAutoUserGroupAttachments } from './jobOrders/backfillAutoUserGroupAttachments';
 export { backfillAutoGigJobOrderCompliance } from './jobOrders/backfillAutoGigJobOrderCompliance';
 export { backfillGigJobOrdersForNationalAccount } from './jobOrders/backfillGigJobOrdersForNationalAccount';
