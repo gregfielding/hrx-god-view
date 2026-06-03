@@ -75,7 +75,9 @@ const filterSelectSx = {
 /** Lightweight shape pulled off each JO doc — enough to drive both the
  *  Account and Job Order dropdowns plus the account→JO narrowing. The
  *  startDate/endDate fields are normalized to YYYY-MM-DD so they can
- *  feed PeriodPicker's `scope.autoFillPeriod` for per_event entities. */
+ *  feed PeriodPicker's `scope.autoFillPeriod` for per_event entities.
+ *  jobTitle / worksite* feed the 3-line MenuItem rendering on the JO
+ *  dropdown so recruiters can disambiguate same-named JOs at a glance. */
 interface JobOrderOption {
   id: string;
   name: string;
@@ -83,6 +85,9 @@ interface JobOrderOption {
   companyName: string;
   startDate: string | null;
   endDate: string | null;
+  jobTitle: string | null;
+  worksiteName: string | null;
+  worksiteAddress: string | null;
 }
 
 /** Lightweight shape for a shift under a JO — drives the Shift
@@ -336,6 +341,32 @@ const Timesheets: React.FC = () => {
               (typeof data.companyName === 'string' && data.companyName.trim()) ||
               (typeof data.accountName === 'string' && data.accountName.trim()) ||
               '(unknown account)';
+            // Job title — distinct from jobOrderName. A JO labeled
+            // "Suenos 2026" might have jobTitle "Janitors and Cleaners";
+            // both belong in the MenuItem so the recruiter sees what
+            // the workers are actually doing.
+            const jobTitle =
+              (typeof data.jobTitle === 'string' && data.jobTitle.trim()) || null;
+            const worksiteName =
+              (typeof data.worksiteName === 'string' && data.worksiteName.trim()) ||
+              (typeof data.locationName === 'string' && data.locationName.trim()) ||
+              null;
+            // Compose a one-line address from the worksiteAddress map
+            // (street, city, state, zip). Older JOs may have only some
+            // of these set — emit whatever's available, comma-joined.
+            const addrMap =
+              (data.worksiteAddress as Record<string, unknown> | undefined) ?? {};
+            const addrLine1 =
+              typeof addrMap.street === 'string' ? addrMap.street.trim() : '';
+            const addrCity =
+              typeof addrMap.city === 'string' ? addrMap.city.trim() : '';
+            const addrState =
+              typeof addrMap.state === 'string' ? addrMap.state.trim() : '';
+            const addrZip = typeof addrMap.zip === 'string' ? addrMap.zip.trim() : '';
+            const cityStateZip = [addrCity, addrState].filter(Boolean).join(', ');
+            const cityStateZipFull = addrZip ? `${cityStateZip} ${addrZip}` : cityStateZip;
+            const worksiteAddress =
+              [addrLine1, cityStateZipFull].filter(Boolean).join(' · ') || null;
             return {
               id: d.id,
               name,
@@ -343,6 +374,9 @@ const Timesheets: React.FC = () => {
               companyName,
               startDate: toYyyyMmDd(data.startDate),
               endDate: toYyyyMmDd(data.endDate),
+              jobTitle,
+              worksiteName,
+              worksiteAddress,
             };
           })
           .sort((a, b) => a.name.localeCompare(b.name));
@@ -783,11 +817,46 @@ const Timesheets: React.FC = () => {
                     onChange={(e) => handleJobOrderChange(String(e.target.value))}
                     label="Job Order"
                     sx={filterSelectSx}
+                    // Keep the closed-state display a single line. Without
+                    // this, the Select renders the entire 3-line MenuItem
+                    // body when collapsed and the field grows to ~80px tall.
+                    renderValue={(val) => {
+                      if (val === 'all') return 'All Job Orders';
+                      const jo = jobOrderOptions.find((o) => o.id === val);
+                      return jo?.name ?? String(val);
+                    }}
                   >
                     <MenuItem value="all">All Job Orders</MenuItem>
                     {jobOrderOptions.map((jo) => (
-                      <MenuItem key={jo.id} value={jo.id}>
-                        {jo.name}
+                      <MenuItem key={jo.id} value={jo.id} sx={{ alignItems: 'flex-start', py: 1 }}>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, minWidth: 0 }}>
+                          <Typography
+                            variant="body2"
+                            sx={{ fontWeight: 600, lineHeight: 1.2 }}
+                          >
+                            {jo.name}
+                          </Typography>
+                          {jo.jobTitle && (
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                              sx={{ lineHeight: 1.2 }}
+                            >
+                              {jo.jobTitle}
+                            </Typography>
+                          )}
+                          {(jo.worksiteName || jo.worksiteAddress) && (
+                            <Typography
+                              variant="caption"
+                              color="text.disabled"
+                              sx={{ lineHeight: 1.2 }}
+                            >
+                              {[jo.worksiteName, jo.worksiteAddress]
+                                .filter(Boolean)
+                                .join(' — ')}
+                            </Typography>
+                          )}
+                        </Box>
                       </MenuItem>
                     ))}
                   </Select>
