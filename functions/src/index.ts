@@ -368,6 +368,12 @@ export { approveTimesheetEntriesCallable } from './timesheets/approveTimesheetEn
 // onAssignmentCreatedAutoSeed). Powers the "+ add worker" modal on
 // the Timesheets page.
 export { addRetroactiveWorker } from './timesheets/addRetroactiveWorkerCallable';
+// Inline "WC Code" / "WC Rate" edit from the Timesheets grid. Writes
+// the override to the entry doc (highest-priority source for the
+// submit pre-flight) AND back-fills the shift doc when the canonical
+// slot is empty, so future entries on the same shift inherit through
+// the resolution chain.
+export { setEntryWorkersComp } from './timesheets/setEntryWorkersCompCallable';
 // Indeed Flex venue→account alias (Slice 3c). Recruiters use this from
 // the /shifts/log "Link to account" button to lock in a venue string →
 // child account mapping once. Subsequent emails with the same normalized

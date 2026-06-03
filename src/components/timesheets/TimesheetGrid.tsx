@@ -72,6 +72,7 @@ import HoursOverrideCell from './cells/HoursOverrideCell';
 import NotesCell from './cells/NotesCell';
 import NumberCell from './cells/NumberCell';
 import TimeCell from './cells/TimeCell';
+import EditWorkersCompDialog from './EditWorkersCompDialog';
 import TimesheetTotalsHeader from './TimesheetTotalsHeader';
 import {
   type TimesheetGridRow,
@@ -432,10 +433,10 @@ const EmptyRow: React.FC<EmptyRowProps> = ({
       <ScheduledCell row={row} />
       <TableCell align="right">{formatHours(scheduledHrs)}</TableCell>
       {/* Spans Actual / Breaks / Actual hrs / Tips / Bonus / Notes /
-          Pay rate / Total — 8 columns. Bumped from 6 → 8 when the
-          Pay rate + Total columns were added, so the "+ Add entry"
-          link block still spans correctly to the Status cell. */}
-      <TableCell colSpan={8}>
+          Pay rate / WC Code / WC Rate / Total — 10 columns. Bumped from
+          8 → 10 when the WC Code + WC Rate columns were added, so the
+          "+ Add entry" link block still spans correctly to the Status cell. */}
+      <TableCell colSpan={10}>
         <Stack direction="column" spacing={0.25}>
           {creating.status === 'creating' ? (
             <Stack direction="row" alignItems="center" spacing={0.5}>
@@ -508,6 +509,9 @@ const EntryRow: React.FC<EntryRowProps> = ({
     refreshEntry,
   });
   const { fieldHandlers, readOnly } = editor;
+
+  // WC Code / Rate dialog state — opens on click of either WC cell.
+  const [wcDialogOpen, setWcDialogOpen] = React.useState(false);
 
   // Shift window for the breaks-inside-shift validator. Use actuals
   // when set (recruiter-edited), fall back to scheduled otherwise.
@@ -613,6 +617,44 @@ const EntryRow: React.FC<EntryRowProps> = ({
       <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
         {formatMoney(Number(entry.payRate ?? 0))}
       </TableCell>
+      {/* WC Code + WC Rate (2026-06-03). Click either cell to open the
+          edit dialog. Resolved values come from
+          `row.resolvedWorkersCompCode` / `row.resolvedWorkersCompRate`
+          which the resolver computes via entry override → shift → JO →
+          positions. Override cells are bolded so the recruiter can spot
+          per-entry overrides at a glance. */}
+      <TableCell
+        align="right"
+        onClick={() => !readOnly && setWcDialogOpen(true)}
+        sx={{
+          fontVariantNumeric: 'tabular-nums',
+          cursor: readOnly ? 'default' : 'pointer',
+          color: row.resolvedWorkersCompCode ? 'text.primary' : 'text.disabled',
+          fontWeight: row.hasEntryWorkersCompOverride ? 700 : 400,
+          '&:hover': readOnly
+            ? undefined
+            : { backgroundColor: 'action.hover' },
+        }}
+      >
+        {row.resolvedWorkersCompCode ?? '—'}
+      </TableCell>
+      <TableCell
+        align="right"
+        onClick={() => !readOnly && setWcDialogOpen(true)}
+        sx={{
+          fontVariantNumeric: 'tabular-nums',
+          cursor: readOnly ? 'default' : 'pointer',
+          color: row.resolvedWorkersCompRate != null ? 'text.primary' : 'text.disabled',
+          fontWeight: row.hasEntryWorkersCompOverride ? 700 : 400,
+          '&:hover': readOnly
+            ? undefined
+            : { backgroundColor: 'action.hover' },
+        }}
+      >
+        {row.resolvedWorkersCompRate != null
+          ? row.resolvedWorkersCompRate.toFixed(2)
+          : '—'}
+      </TableCell>
       <TableCell
         align="right"
         sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}
@@ -627,6 +669,25 @@ const EntryRow: React.FC<EntryRowProps> = ({
           approving={approvingThisEntry}
         />
       </TableCell>
+      {/* Workers' Comp edit dialog — mounted inside the row so dialog
+          state lives per-row. Renders nothing when closed. */}
+      {tenantId && (
+        <EditWorkersCompDialog
+          open={wcDialogOpen}
+          onClose={() => setWcDialogOpen(false)}
+          onSuccess={() => {
+            setWcDialogOpen(false);
+            // Re-resolve so the row picks up the new override (and the
+            // shift back-fill propagates to siblings on next render).
+            void refreshEntry(entry.id);
+          }}
+          tenantId={tenantId}
+          entryId={entry.id}
+          initialCode={row.resolvedWorkersCompCode}
+          initialRate={row.resolvedWorkersCompRate}
+          rowLabel={`${row.assignment.workerDisplayName ?? ''} · ${row.workDate}`.trim()}
+        />
+      )}
     </TableRow>
   );
 };
@@ -910,6 +971,12 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                     <TableCell align="right">Bonus</TableCell>
                     <TableCell>Notes</TableCell>
                     <TableCell align="right">Pay rate</TableCell>
+                    {/* WC code / rate (2026-06-03). Read display sourced
+                        from the resolver's resolution chain; click to
+                        open the edit dialog (entry override + shift
+                        back-fill). */}
+                    <TableCell align="right">WC Code</TableCell>
+                    <TableCell align="right">WC Rate</TableCell>
                     <TableCell align="right">Total</TableCell>
                     <TableCell>Status</TableCell>
                   </TableRow>

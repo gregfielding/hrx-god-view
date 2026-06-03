@@ -109,22 +109,37 @@ export interface ScheduledShift {
   breakMinutes: number;
 }
 
+/** WC display block stamped onto each row by the resolver. Same chain
+ *  the server pre-flight uses, so the grid's resolved value matches
+ *  exactly what the submit would resolve to. */
+export interface ResolvedWorkersComp {
+  /** First non-empty value of (entry override, shift, JO legacy field,
+   *  JO canonical field, JO position[0]). Undefined when nothing resolves. */
+  resolvedWorkersCompCode?: string;
+  resolvedWorkersCompRate?: number;
+  /** True when the resolution found a value on `entry.workersCompCode`
+   *  or `entry.workersCompRate` — i.e. the recruiter set this row's
+   *  override via the inline cell. Lets the UI render the cell with a
+   *  subtle "override" affordance vs. plain inherited values. */
+  hasEntryWorkersCompOverride?: boolean;
+}
+
 export type TimesheetGridRow =
-  | {
+  | ({
       kind: 'entry';
       key: string; // `${assignmentId}_${workDate}` — stable for React.
       assignment: AssignmentSnapshot;
       workDate: IsoDate;
       scheduled: ScheduledShift;
       entry: TimesheetEntryV2;
-    }
-  | {
+    } & ResolvedWorkersComp)
+  | ({
       kind: 'empty';
       key: string;
       assignment: AssignmentSnapshot;
       workDate: IsoDate;
       scheduled: ScheduledShift;
-    };
+    } & ResolvedWorkersComp);
 
 export interface TimesheetGridResolution {
   rows: TimesheetGridRow[];
@@ -561,7 +576,89 @@ export async function resolveTimesheetGrid(
     rows.push(...results);
   }
 
-  // Step 4: stable sort by worker → date → assignmentId.
+  // Step 4a: Workers' Comp resolution (2026-06-03). Same chain the
+  // server pre-flight uses — entry override → shift → JO legacy → JO
+  // canonical → JO position[0]. Done client-side so the WC Code / WC
+  // Rate columns can render the resolved value (and the inline editor
+  // can disambiguate "set on this entry" vs "inherited from shift").
+  //
+  // Reads are deduped by (jobOrderId) and (jobOrderId, shiftId); typical
+  // period view spans a handful of each, so a few extra reads beats
+  // denormalizing the WC fields onto every entry doc.
+  const uniqueJoIds = new Set<string>();
+  const uniqueShifts = new Set<string>(); // `${joId}|${shiftId}`
+  for (const r of rows) {
+    if (r.assignment.jobOrderId) uniqueJoIds.add(r.assignment.jobOrderId);
+    if (r.assignment.jobOrderId && r.assignment.shiftId) {
+      uniqueShifts.add(`${r.assignment.jobOrderId}|${r.assignment.shiftId}`);
+    }
+  }
+  const joWcCache = new Map<string, Record<string, unknown>>();
+  const shiftWcCache = new Map<string, Record<string, unknown>>();
+  await Promise.all([
+    ...Array.from(uniqueJoIds).map(async (joId) => {
+      try {
+        const s = await getDoc(doc(fdb, 'tenants', tenantId, 'job_orders', joId));
+        if (s.exists()) joWcCache.set(joId, s.data() as Record<string, unknown>);
+      } catch {
+        // Non-fatal — row falls back to entry override if the JO read fails.
+      }
+    }),
+    ...Array.from(uniqueShifts).map(async (key) => {
+      const [joId, shiftId] = key.split('|');
+      if (!joId || !shiftId) return;
+      try {
+        const s = await getDoc(
+          doc(fdb, 'tenants', tenantId, 'job_orders', joId, 'shifts', shiftId),
+        );
+        if (s.exists()) shiftWcCache.set(key, s.data() as Record<string, unknown>);
+      } catch {
+        // Non-fatal.
+      }
+    }),
+  ]);
+  for (const r of rows) {
+    if (r.kind !== 'entry' && r.kind !== 'empty') continue;
+    const joId = r.assignment.jobOrderId;
+    const shiftId = r.assignment.shiftId;
+    const jo = joId ? joWcCache.get(joId) : undefined;
+    const shift = joId && shiftId ? shiftWcCache.get(`${joId}|${shiftId}`) : undefined;
+    const firstGigPosition =
+      jo && Array.isArray(jo.gigPositions) && jo.gigPositions.length > 0
+        ? (jo.gigPositions[0] as Record<string, unknown>)
+        : undefined;
+    const codeOverride =
+      r.kind === 'entry'
+        ? typeof (r.entry as unknown as Record<string, unknown>).workersCompCode === 'string'
+          ? String((r.entry as unknown as Record<string, unknown>).workersCompCode)
+          : undefined
+        : undefined;
+    const rateOverride =
+      r.kind === 'entry'
+        ? typeof (r.entry as unknown as Record<string, unknown>).workersCompRate === 'number'
+          ? Number((r.entry as unknown as Record<string, unknown>).workersCompRate)
+          : undefined
+        : undefined;
+    const codeStr = pickWcDisplayStr(
+      codeOverride,
+      shift?.workersCompCode,
+      jo?.workersCompCode,
+      jo?.workersCompClassCode,
+      firstGigPosition?.workersCompClassCode,
+    );
+    const rateNum = pickWcDisplayNum(
+      rateOverride,
+      shift?.workersCompRate,
+      jo?.workersCompRate,
+      firstGigPosition?.workersCompRate,
+    );
+    (r as unknown as Record<string, unknown>).resolvedWorkersCompCode = codeStr;
+    (r as unknown as Record<string, unknown>).resolvedWorkersCompRate = rateNum;
+    (r as unknown as Record<string, unknown>).hasEntryWorkersCompOverride =
+      codeOverride != null || rateOverride != null;
+  }
+
+  // Step 4b: stable sort by worker → date → assignmentId.
   rows.sort((a, b) => rowSortKey(a).localeCompare(rowSortKey(b)));
 
   return {
@@ -569,6 +666,27 @@ export async function resolveTimesheetGrid(
     errors,
     consideredAssignmentCount: overlapping.length,
   };
+}
+
+/** Pick the first non-empty string from a list; coerce numbers to strings.
+ *  Mirror of the server pre-flight's `pickWcStr`. */
+function pickWcDisplayStr(...candidates: unknown[]): string | undefined {
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim()) return c.trim();
+    if (typeof c === 'number' && Number.isFinite(c)) return String(c);
+  }
+  return undefined;
+}
+
+function pickWcDisplayNum(...candidates: unknown[]): number | undefined {
+  for (const c of candidates) {
+    if (typeof c === 'number' && Number.isFinite(c)) return c;
+    if (typeof c === 'string' && c.trim()) {
+      const n = Number.parseFloat(c);
+      if (Number.isFinite(n)) return n;
+    }
+  }
+  return undefined;
 }
 
 /* -------------------------------------------------------------------------
