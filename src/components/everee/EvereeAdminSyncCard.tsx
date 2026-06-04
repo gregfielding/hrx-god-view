@@ -607,7 +607,28 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
         bgcolor: 'action.hover',
       }}
     >
-      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+      <Stack
+        direction="row"
+        spacing={1}
+        alignItems="center"
+        flexWrap="wrap"
+        sx={{
+          // Compact all action buttons in the Everee header row
+          // (Push address / Restart onboarding / Resend payroll link /
+          // Re-sync / Open in Everee) so the bar reads denser.
+          rowGap: 1,
+          '& .MuiButton-root': {
+            fontSize: '0.72rem',
+            py: 0.3,
+            px: 1,
+            minHeight: 28,
+          },
+          '& .MuiButton-startIcon': {
+            mr: 0.5,
+            '& .MuiSvgIcon-root': { fontSize: 16 },
+          },
+        }}
+      >
         <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
           Everee
         </Typography>

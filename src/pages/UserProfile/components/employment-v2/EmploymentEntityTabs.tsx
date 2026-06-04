@@ -38,7 +38,17 @@ const EmploymentEntityTabs: React.FC<EmploymentEntityTabsProps> = ({ value, onCh
         sx={{ flexWrap: 'wrap' }}
       >
         {EMPLOYMENT_ENTITY_KEYS.filter((k) => !HIDDEN_ENTITY_KEYS.has(k)).map((k) => (
-          <ToggleButton key={k} value={k} sx={{ textTransform: 'none', px: 2 }}>
+          <ToggleButton
+            key={k}
+            value={k}
+            sx={{
+              textTransform: 'none',
+              px: 1.25,
+              py: 0.35,
+              fontSize: '0.78rem',
+              lineHeight: 1.2,
+            }}
+          >
             {entityLabelForKey(k)}
           </ToggleButton>
         ))}
