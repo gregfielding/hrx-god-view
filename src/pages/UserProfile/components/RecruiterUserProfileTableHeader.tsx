@@ -288,13 +288,12 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
   const showAddGroupControl = Boolean(tenantIdForUserGroups && onAddUserToGroup);
 
   /**
-   * Column width. After the 2026-06-03 header reorg, Employment +
-   * Applications + Groups + Recruiter are stacked together in column 2,
-   * which removes the standalone Employment column.
-   * Admin: four columns (Contact · Employment-stack · Screening · Risk) → 3 each.
-   * Non-admin: three columns (no Risk) → 4 each.
+   * Column width. After the 2026-06-03 header reorg:
+   * Admin: five columns (Contact · Employment-stack · Screening ·
+   *   Assignments · Risk) → 2.4 each.
+   * Non-admin: four columns (no Risk) → 3 each.
    */
-  const gridColMd = canViewAdminContent ? 3 : 4;
+  const gridColMd = canViewAdminContent ? 2.4 : 3;
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
 
   /**
@@ -773,28 +772,6 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                 </Stack>
               )}
 
-              {assignmentLines.length > 0 ? (
-                <Box sx={{ mt: 1.25 }}>
-                  <Typography component="span" sx={recordHeaderColumnTitleSx}>
-                    Assignments
-                  </Typography>
-                  <Stack spacing={0.4} sx={{ mt: 0.35 }}>
-                    {assignmentLines.map((line) => (
-                      <Box key={line.id || line.primary}>
-                        <Typography variant="body2" sx={recordHeaderBodyTextSx}>
-                          {line.primary}
-                        </Typography>
-                        {line.secondary ? (
-                          <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, display: 'block', mt: 0.1 }}>
-                            {line.secondary}
-                          </Typography>
-                        ) : null}
-                      </Box>
-                    ))}
-                  </Stack>
-                </Box>
-              ) : null}
-
               {/* Applications — the Indeed Flex / Fieldglass enrollment
                   checkboxes, formerly under the Readiness column. */}
               <Typography component="span" sx={{ ...recordHeaderColumnTitleSx, mt: 1.25 }}>
@@ -1048,6 +1025,34 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
               <Typography variant="body2" sx={recordHeaderBodyTextSx}>
                 —
               </Typography>
+            </Grid>
+
+            {/* Column 4 — Assignments (its own column, per 2026-06-03
+                request to keep 5 columns). */}
+            <Grid item xs={12} md={gridColMd}>
+              <Typography component="span" sx={recordHeaderColumnTitleSx}>
+                Assignments
+              </Typography>
+              {assignmentLines.length > 0 ? (
+                <Stack spacing={0.4} sx={{ mt: 0.35 }}>
+                  {assignmentLines.map((line) => (
+                    <Box key={line.id || line.primary}>
+                      <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                        {line.primary}
+                      </Typography>
+                      {line.secondary ? (
+                        <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, display: 'block', mt: 0.1 }}>
+                          {line.secondary}
+                        </Typography>
+                      ) : null}
+                    </Box>
+                  ))}
+                </Stack>
+              ) : (
+                <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                  —
+                </Typography>
+              )}
             </Grid>
 
             {canViewAdminContent && (
