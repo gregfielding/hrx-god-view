@@ -2,6 +2,24 @@ import * as admin from 'firebase-admin';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { formatTime12h } from './utils/formatShiftTime';
+import {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_MESSAGING_PHONE_NUMBER,
+  TWILIO_A2P_CAMPAIGN,
+} from './messaging/twilioSecrets';
+
+// Twilio secrets must be bound to any function that sends an SMS through the
+// routing orchestrator (it reads process.env.TWILIO_*). Without this binding
+// the SMS send throws "Twilio credentials not configured" and only the email
+// goes out — the cause of placement offer texts silently not sending
+// (2026-06-04). Both placement SMS senders below declare these.
+const PLACEMENT_SMS_SECRETS = [
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_MESSAGING_PHONE_NUMBER,
+  TWILIO_A2P_CAMPAIGN,
+];
 import { ensureWorkerOnboardingPipeline } from './onboarding/workerOnboardingPipeline';
 import { ASSIGNMENT_STATUS_QUERY_LIVE, isAssignmentTerminalNormalized } from './utils/assignmentStatusNormalize';
 import { buildWorkerAssignmentResponseUrl } from './utils/workerUrls';
@@ -332,7 +350,7 @@ async function resolveApplicationForAssignment(args: {
 }
 
 export const placementsCreateAssignments = onCall(
-  { cors: true },
+  { cors: true, secrets: PLACEMENT_SMS_SECRETS },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required');
@@ -1335,6 +1353,7 @@ export const resendAssignmentOffer = onCall(
       'https://hrxone.com',
       'https://www.hrxone.com',
     ],
+    secrets: PLACEMENT_SMS_SECRETS,
   },
   async (request) => {
   if (!request.auth?.uid) {
