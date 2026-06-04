@@ -599,7 +599,7 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
   return (
     <Box
       sx={{
-        mt: 2,
+        mt: 1,
         p: 2,
         border: 1,
         borderColor: 'divider',

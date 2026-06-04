@@ -118,7 +118,7 @@ function EmploymentV2Tab({
   }
 
   return (
-    <Box sx={{ p: { xs: 1, sm: 2 }, pb: '32px' }}>
+    <Box sx={{ px: { xs: 1, sm: 2 }, pt: { xs: 0.5, sm: 1 }, pb: '32px' }}>
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
           {error}

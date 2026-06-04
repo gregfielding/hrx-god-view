@@ -25,7 +25,7 @@ const EmploymentEntityTabs: React.FC<EmploymentEntityTabsProps> = ({ value, onCh
       flexWrap="wrap"
       columnGap={2}
       rowGap={1}
-      sx={{ mb: 2 }}
+      sx={{ mb: 1 }}
     >
       <ToggleButtonGroup
         exclusive
