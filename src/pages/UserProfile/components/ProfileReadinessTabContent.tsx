@@ -57,7 +57,8 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { db, functions } from '../../../firebase';
 import { p } from '../../../data/firestorePaths';
 import { getWorkAuthorizedStatus } from '../../../utils/workAuthorizedDisplay';
-import type { BackgroundCheckRecord } from '../../../types/backgroundCheck';
+import type { BackgroundCheckRecord, AccusourceLineVerdict } from '../../../types/backgroundCheck';
+import { accusourceScreeningLineItems } from '../../../utils/accusourceScreeningLineItems';
 import type { WorkerComplianceItem } from '../../../types/compliance';
 import { getComplianceTypeLabel } from '../../../types/compliance';
 import {
@@ -186,6 +187,50 @@ function ReadinessRequirementRow(props: {
       {rowContent}
     </Stack>
   );
+}
+
+/** Small status icon for an individual AccuSource screening line item,
+ *  colored by its adjudication verdict. Matches the header SCREENING
+ *  column vocabulary (PASSED=green, FAILED=red, NEEDS_REVIEW=amber,
+ *  PENDING/other=muted). */
+function screeningVerdictIcon(verdict: AccusourceLineVerdict): React.ReactNode {
+  switch (verdict) {
+    case 'PASSED':
+      return <CheckCircleIcon sx={{ fontSize: 20, color: 'success.main' }} titleAccess="Passed" />;
+    case 'FAILED':
+      return <CancelIcon sx={{ fontSize: 20, color: 'error.main' }} titleAccess="Failed" />;
+    case 'NEEDS_REVIEW':
+      return <WarningAmberIcon sx={{ fontSize: 20, color: 'warning.main' }} titleAccess="Needs review" />;
+    default:
+      return <WarningAmberIcon sx={{ fontSize: 20, color: 'text.disabled' }} titleAccess="Pending" />;
+  }
+}
+
+/**
+ * Parse the worker's AccuSource background-check record into its
+ * individual screening line items (Social Security Locator, CrimNet,
+ * County Criminal, 4 Panel Quick Test, Quest Drug Screen, …) for the
+ * selected assignment. Prefers a check linked to THIS assignment
+ * (`automationAssignmentId`); falls back to the worker's most recent
+ * check overall (screening is typically worker-level). Returns the
+ * package name + parsed line items, or null when no check exists.
+ */
+function screeningPackageForAssignment(
+  assignmentId: string,
+  records: BackgroundCheckRecord[],
+): { packageName: string | null; items: ReturnType<typeof accusourceScreeningLineItems> } | null {
+  if (!assignmentId || records.length === 0) return null;
+  const linked = records.filter((r) => r.automationAssignmentId === assignmentId);
+  const pool = linked.length > 0 ? linked : records;
+  const toMillis = (r: BackgroundCheckRecord): number =>
+    (r.updatedAt as { toMillis?: () => number } | null | undefined)?.toMillis?.() ?? 0;
+  const bg = [...pool].sort((a, b) => toMillis(b) - toMillis(a))[0];
+  if (!bg) return null;
+  const items = accusourceScreeningLineItems(bg);
+  if (items.length === 0) return null;
+  const packageName =
+    String(bg.requestedPackageName || bg.requestedPackageId || '').trim() || null;
+  return { packageName, items };
 }
 
 function screeningForAssignment(
@@ -1028,6 +1073,14 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
     return screeningForAssignment(selectedId, backgroundChecks);
   }, [selectedId, backgroundChecks]);
 
+  // Actual AccuSource package line items for this assignment (parsed from
+  // the worker's background-check record) — drives the detailed
+  // "Background & drug screenings" list.
+  const screeningPackage = useMemo(() => {
+    if (!selectedId) return null;
+    return screeningPackageForAssignment(selectedId, backgroundChecks);
+  }, [selectedId, backgroundChecks]);
+
   const readinessResult: BuildAssignmentReadinessResult = useMemo(() => {
     if (!selectedAssignment) {
       return {
@@ -1505,13 +1558,36 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
                     )}
                   </Box>
 
-                  {/* 2. Background checks & drug screenings — required by
-                      the assignment's job order / screening package. */}
+                  {/* 2. Background checks & drug screenings — the actual
+                      AccuSource package line items (parsed from the
+                      worker's background-check record), each with its own
+                      status. Falls back to the generic background/drug
+                      requirement rows when no parsed package exists, then
+                      to an empty-state. */}
                   <Box sx={{ mb: 3.5 }}>
                     <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 1.25, letterSpacing: 0.02 }}>
                       Background &amp; drug screenings
                     </Typography>
-                    {requirementsScreening.length > 0 ? (
+                    {screeningPackage ? (
+                      <Box>
+                        {screeningPackage.packageName ? (
+                          <Typography variant="body2" color="text.secondary" sx={{ mb: 0.85 }}>
+                            Package: {screeningPackage.packageName}
+                          </Typography>
+                        ) : null}
+                        <Stack spacing={0.5}>
+                          {screeningPackage.items.map((item) => (
+                            <Stack key={item.id} direction="row" alignItems="flex-start" spacing={1}>
+                              {screeningVerdictIcon(item.verdict)}
+                              <Typography variant="body2" sx={{ flex: 1, lineHeight: 1.45 }}>
+                                {item.name}
+                                {item.type ? ` (${item.type})` : ''}: {item.status}
+                              </Typography>
+                            </Stack>
+                          ))}
+                        </Stack>
+                      </Box>
+                    ) : requirementsScreening.length > 0 ? (
                       renderRequirementRows(requirementsScreening)
                     ) : (
                       <Typography variant="body2" color="text.secondary">
