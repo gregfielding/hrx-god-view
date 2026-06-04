@@ -1,6 +1,7 @@
 import * as admin from 'firebase-admin';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
+import { formatTime12h } from './utils/formatShiftTime';
 import { ensureWorkerOnboardingPipeline } from './onboarding/workerOnboardingPipeline';
 import { ASSIGNMENT_STATUS_QUERY_LIVE, isAssignmentTerminalNormalized } from './utils/assignmentStatusNormalize';
 import { buildWorkerAssignmentResponseUrl } from './utils/workerUrls';
@@ -1402,7 +1403,7 @@ export const resendAssignmentOffer = onCall(
       assignment.startDate?.toDate ? assignment.startDate.toDate() : new Date(assignment.startDate);
     dateTimeInfo = ` on ${startDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}`;
     if (assignment.startTime && assignment.endTime) {
-      dateTimeInfo += ` from ${assignment.startTime} - ${assignment.endTime}`;
+      dateTimeInfo += ` from ${formatTime12h(assignment.startTime)} - ${formatTime12h(assignment.endTime)}`;
     }
   }
 

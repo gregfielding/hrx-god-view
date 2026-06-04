@@ -1,5 +1,6 @@
 import * as admin from 'firebase-admin';
 import { onCall, HttpsError } from 'firebase-functions/v2/https'; // v2 for callable functions
+import { formatTime12h } from './utils/formatShiftTime';
 import { onSchedule } from 'firebase-functions/v2/scheduler'; // v2 for scheduler
 import { setGlobalOptions } from 'firebase-functions/v2';
 
@@ -9140,7 +9141,7 @@ export const logAssignmentCreated = onDocumentCreated(
           const startDate = assignment.startDate.toDate ? assignment.startDate.toDate() : new Date(assignment.startDate);
           dateTimeInfo = ` on ${startDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}`;
           if (assignment.startTime && assignment.endTime) {
-            dateTimeInfo += ` from ${assignment.startTime} - ${assignment.endTime}`;
+            dateTimeInfo += ` from ${formatTime12h(assignment.startTime)} - ${formatTime12h(assignment.endTime)}`;
           }
         }
 
