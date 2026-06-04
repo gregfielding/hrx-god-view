@@ -219,21 +219,14 @@ export function buildAssignmentReadiness({
     status: employment?.taxFormComplete ? 'complete' : 'missing',
   });
 
-  requirements.push({
-    key: 'handbook',
-    label: 'Handbook Signed',
-    category: 'policies',
-    severity: 'warning',
-    status: employment?.handbookSigned ? 'complete' : 'missing',
-  });
-
-  requirements.push({
-    key: 'policies',
-    label: 'Policies Signed',
-    category: 'policies',
-    severity: 'warning',
-    status: employment?.policiesSigned ? 'complete' : 'missing',
-  });
+  // Handbook + Policies signature requirements removed from assignment
+  // readiness (2026-06-03 request) — these Everee-managed acknowledgements
+  // no longer gate placement readiness, so they're not surfaced as items,
+  // don't count toward "need attention", and don't appear in "Next
+  // actions". The `employment.handbookSigned` / `policiesSigned` inputs
+  // remain available if a future change wants to restore them.
+  void employment?.handbookSigned;
+  void employment?.policiesSigned;
 
   if (assignment.requiresBackgroundCheck) {
     let status: ReadinessRequirementStatus = 'missing';

@@ -876,40 +876,6 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                 }
                 label="Fieldglass"
               />
-
-              {/* Recruiter — surfaced from the denormalized
-                  `users.{uid}.primaryRecruiterId` scalar. Under the
-                  recruiting role model this is the durable per-worker
-                  Recruiter relationship; see
-                  `docs/RECRUITING_ROLE_MODEL.md` §5.1. Null means no
-                  Recruiter resolves — rendered as "Unassigned" so
-                  absence is visible rather than silent. Clicking opens
-                  the Recruiter's profile. */}
-              <Box sx={{ mt: 1.25 }}>
-                <Typography component="span" sx={recordHeaderColumnTitleSx}>
-                  Recruiter
-                </Typography>
-                <Box sx={{ mt: 0.35 }}>
-                  {primaryRecruiterId ? (
-                    <Link
-                      component={RouterLink}
-                      to={`/users/${primaryRecruiterId}`}
-                      underline="hover"
-                      sx={{
-                        ...recordHeaderBodyTextSx,
-                        color: 'primary.main',
-                        fontWeight: 400,
-                      }}
-                    >
-                      {primaryRecruiterName || '…'}
-                    </Link>
-                  ) : (
-                    <Typography variant="body2" sx={recordHeaderBodyTextSx}>
-                      Unassigned
-                    </Typography>
-                  )}
-                </Box>
-              </Box>
             </Grid>
 
             <Grid item xs={12} md={gridColMd}>
@@ -1109,6 +1075,36 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                     riskProfile={riskProfile}
                     interviewSummaryLine={interviewSummaryLine}
                   />
+                </Box>
+                {/* Recruiter — moved to the bottom of the Risk &
+                    Recommendations column (2026-06-03 request).
+                    Surfaced from `users.{uid}.primaryRecruiterId`; null
+                    renders as "Unassigned". Clicking opens the
+                    recruiter's profile. */}
+                <Box sx={{ mt: 1.25 }}>
+                  <Typography component="span" sx={recordHeaderColumnTitleSx}>
+                    Recruiter
+                  </Typography>
+                  <Box sx={{ mt: 0.35 }}>
+                    {primaryRecruiterId ? (
+                      <Link
+                        component={RouterLink}
+                        to={`/users/${primaryRecruiterId}`}
+                        underline="hover"
+                        sx={{
+                          ...recordHeaderBodyTextSx,
+                          color: 'primary.main',
+                          fontWeight: 400,
+                        }}
+                      >
+                        {primaryRecruiterName || '…'}
+                      </Link>
+                    ) : (
+                      <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                        Unassigned
+                      </Typography>
+                    )}
+                  </Box>
                 </Box>
               </Grid>
             )}
