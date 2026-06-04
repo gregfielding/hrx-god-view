@@ -24,6 +24,7 @@ import {
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import CameraAltIcon from '@mui/icons-material/CameraAlt';
+import DownloadIcon from '@mui/icons-material/Download';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
@@ -435,6 +436,52 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                 ) : (
                   <CameraAltIcon sx={{ fontSize: 16 }} />
                 )}
+              </IconButton>
+            </Tooltip>
+          )}
+          {/* Download photo — bottom-left, mirrors the replace button.
+              Fetches the image as a blob so cross-origin (Firebase
+              Storage) downloads actually save rather than navigate. The
+              browser controls the destination folder (typically
+              Downloads). */}
+          {avatarUrl && recordHeaderAvatarHover && (
+            <Tooltip title="Download photo">
+              <IconButton
+                size="small"
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  try {
+                    const res = await fetch(avatarUrl, { mode: 'cors' });
+                    const blob = await res.blob();
+                    const objectUrl = URL.createObjectURL(blob);
+                    const ext = (blob.type.split('/')[1] || 'jpg').split('+')[0];
+                    const base =
+                      [firstName, lastName].filter(Boolean).join('_').trim() || 'avatar';
+                    const a = document.createElement('a');
+                    a.href = objectUrl;
+                    a.download = `${base}.${ext}`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(objectUrl);
+                  } catch {
+                    // CORS/fetch failure — open in a new tab so the user
+                    // can still save it manually.
+                    window.open(avatarUrl, '_blank', 'noopener,noreferrer');
+                  }
+                }}
+                sx={{
+                  position: 'absolute',
+                  bottom: -4,
+                  left: -4,
+                  bgcolor: 'grey.300',
+                  color: 'grey.700',
+                  width: 28,
+                  height: 28,
+                  '&:hover': { bgcolor: 'grey.400' },
+                }}
+              >
+                <DownloadIcon sx={{ fontSize: 16 }} />
               </IconButton>
             </Tooltip>
           )}

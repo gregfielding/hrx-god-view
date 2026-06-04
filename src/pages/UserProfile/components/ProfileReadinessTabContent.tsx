@@ -1522,9 +1522,21 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
           <CircularProgress />
         </Box>
       ) : (
-        <Grid container spacing={2}>
-          <Grid item xs={12} md={4}>
-            <Paper variant="outlined" sx={{ p: 1 }}>
+        <Grid container spacing={2} alignItems="flex-start">
+          {/* Left column sticks to the top of the viewport and scrolls
+              internally, so the Applications/Assignments list stays visible
+              even when the worker has many rows — independent of how tall
+              the right-hand readiness detail gets. */}
+          <Grid
+            item
+            xs={12}
+            md={4}
+            sx={{ position: { md: 'sticky' }, top: { md: 8 }, alignSelf: 'flex-start' }}
+          >
+            <Paper
+              variant="outlined"
+              sx={{ p: 1, maxHeight: { md: 'calc(100vh - 110px)' }, overflowY: 'auto' }}
+            >
               {/* Applications — jobs the worker has applied to. Shown above
                   Assignments with identical readiness. Hidden when none. */}
               {applications.length > 0 && (
