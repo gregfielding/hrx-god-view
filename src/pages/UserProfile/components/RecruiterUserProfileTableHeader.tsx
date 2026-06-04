@@ -842,6 +842,111 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                 label="Fieldglass"
               />
 
+              {/* Recruiter — surfaced from the denormalized
+                  `users.{uid}.primaryRecruiterId` scalar. Under the
+                  recruiting role model this is the durable per-worker
+                  Recruiter relationship; see
+                  `docs/RECRUITING_ROLE_MODEL.md` §5.1. Null means no
+                  Recruiter resolves — rendered as "Unassigned" so
+                  absence is visible rather than silent. Clicking opens
+                  the Recruiter's profile. */}
+              <Box sx={{ mt: 1.25 }}>
+                <Typography component="span" sx={recordHeaderColumnTitleSx}>
+                  Recruiter
+                </Typography>
+                <Box sx={{ mt: 0.35 }}>
+                  {primaryRecruiterId ? (
+                    <Link
+                      component={RouterLink}
+                      to={`/users/${primaryRecruiterId}`}
+                      underline="hover"
+                      sx={{
+                        ...recordHeaderBodyTextSx,
+                        color: 'primary.main',
+                        fontWeight: 400,
+                      }}
+                    >
+                      {primaryRecruiterName || '…'}
+                    </Link>
+                  ) : (
+                    <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                      Unassigned
+                    </Typography>
+                  )}
+                </Box>
+              </Box>
+            </Grid>
+
+            <Grid item xs={12} md={gridColMd}>
+              <Typography component="span" sx={recordHeaderColumnTitleSx}>
+                Screening
+              </Typography>
+              {screeningPackageHint ? (
+                <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, mb: 0.5 }}>
+                  {screeningPackageHint}
+                </Typography>
+              ) : null}
+              {screeningLines.length > 0 ? (
+                <Stack spacing={0.35}>
+                  {screeningLines.map((line) => {
+                    const verdictIcon = renderVerdictIconForHeader(line.verdict);
+                    return (
+                      <Typography
+                        key={line.id}
+                        variant="body2"
+                        sx={{ ...recordHeaderBodyTextSx, display: 'flex', alignItems: 'flex-start', gap: 0.5 }}
+                      >
+                        {verdictIcon}
+                        <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
+                          {line.name}
+                          {line.type ? ` (${line.type})` : ''}: {line.status}
+                        </Box>
+                      </Typography>
+                    );
+                  })}
+                </Stack>
+              ) : (
+                <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                  {screeningPackageHint ? '—' : 'No active screening package on file'}
+                </Typography>
+              )}
+              <Typography component="span" sx={{ ...recordHeaderColumnTitleSx, mt: 1.25 }}>
+                Certifications
+              </Typography>
+              <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                —
+              </Typography>
+            </Grid>
+
+            {/* Column 4 — Assignments (its own column, per 2026-06-03
+                request to keep 5 columns). */}
+            <Grid item xs={12} md={gridColMd}>
+              <Typography component="span" sx={recordHeaderColumnTitleSx}>
+                Assignments
+              </Typography>
+              {assignmentLines.length > 0 ? (
+                <Stack spacing={0.4} sx={{ mt: 0.35 }}>
+                  {assignmentLines.map((line) => (
+                    <Box key={line.id || line.primary}>
+                      <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                        {line.primary}
+                      </Typography>
+                      {line.secondary ? (
+                        <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, display: 'block', mt: 0.1 }}>
+                          {line.secondary}
+                        </Typography>
+                      ) : null}
+                    </Box>
+                  ))}
+                </Stack>
+              ) : (
+                <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                  —
+                </Typography>
+              )}
+
+              {/* Groups — moved below Assignments in column 4
+                  (2026-06-03 request). */}
               {canManageGroupsSection && (headerUserGroups.length > 0 || showAddGroupControl) && (
                 <Box sx={{ mt: 1.25 }}>
                   <Box
@@ -949,109 +1054,6 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                     ))}
                   </Stack>
                 </Box>
-              )}
-
-              {/* Recruiter — surfaced from the denormalized
-                  `users.{uid}.primaryRecruiterId` scalar. Under the
-                  recruiting role model this is the durable per-worker
-                  Recruiter relationship; see
-                  `docs/RECRUITING_ROLE_MODEL.md` §5.1. Null means no
-                  Recruiter resolves — rendered as "Unassigned" so
-                  absence is visible rather than silent. Clicking opens
-                  the Recruiter's profile. */}
-              <Box sx={{ mt: 1.25 }}>
-                <Typography component="span" sx={recordHeaderColumnTitleSx}>
-                  Recruiter
-                </Typography>
-                <Box sx={{ mt: 0.35 }}>
-                  {primaryRecruiterId ? (
-                    <Link
-                      component={RouterLink}
-                      to={`/users/${primaryRecruiterId}`}
-                      underline="hover"
-                      sx={{
-                        ...recordHeaderBodyTextSx,
-                        color: 'primary.main',
-                        fontWeight: 400,
-                      }}
-                    >
-                      {primaryRecruiterName || '…'}
-                    </Link>
-                  ) : (
-                    <Typography variant="body2" sx={recordHeaderBodyTextSx}>
-                      Unassigned
-                    </Typography>
-                  )}
-                </Box>
-              </Box>
-            </Grid>
-
-            <Grid item xs={12} md={gridColMd}>
-              <Typography component="span" sx={recordHeaderColumnTitleSx}>
-                Screening
-              </Typography>
-              {screeningPackageHint ? (
-                <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, mb: 0.5 }}>
-                  {screeningPackageHint}
-                </Typography>
-              ) : null}
-              {screeningLines.length > 0 ? (
-                <Stack spacing={0.35}>
-                  {screeningLines.map((line) => {
-                    const verdictIcon = renderVerdictIconForHeader(line.verdict);
-                    return (
-                      <Typography
-                        key={line.id}
-                        variant="body2"
-                        sx={{ ...recordHeaderBodyTextSx, display: 'flex', alignItems: 'flex-start', gap: 0.5 }}
-                      >
-                        {verdictIcon}
-                        <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
-                          {line.name}
-                          {line.type ? ` (${line.type})` : ''}: {line.status}
-                        </Box>
-                      </Typography>
-                    );
-                  })}
-                </Stack>
-              ) : (
-                <Typography variant="body2" sx={recordHeaderBodyTextSx}>
-                  {screeningPackageHint ? '—' : 'No active screening package on file'}
-                </Typography>
-              )}
-              <Typography component="span" sx={{ ...recordHeaderColumnTitleSx, mt: 1.25 }}>
-                Certifications
-              </Typography>
-              <Typography variant="body2" sx={recordHeaderBodyTextSx}>
-                —
-              </Typography>
-            </Grid>
-
-            {/* Column 4 — Assignments (its own column, per 2026-06-03
-                request to keep 5 columns). */}
-            <Grid item xs={12} md={gridColMd}>
-              <Typography component="span" sx={recordHeaderColumnTitleSx}>
-                Assignments
-              </Typography>
-              {assignmentLines.length > 0 ? (
-                <Stack spacing={0.4} sx={{ mt: 0.35 }}>
-                  {assignmentLines.map((line) => (
-                    <Box key={line.id || line.primary}>
-                      <Typography variant="body2" sx={recordHeaderBodyTextSx}>
-                        {line.primary}
-                      </Typography>
-                      {line.secondary ? (
-                        <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, display: 'block', mt: 0.1 }}>
-                          {line.secondary}
-                        </Typography>
-                      ) : null}
-                    </Box>
-                  ))}
-                </Stack>
-              ) : (
-                <Typography variant="body2" sx={recordHeaderBodyTextSx}>
-                  —
-                </Typography>
               )}
             </Grid>
 
