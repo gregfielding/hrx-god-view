@@ -166,9 +166,46 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
   return (
     <Stack spacing={0}>
       <Box id={EMPLOYMENT_V2_ANCHOR_ONBOARDING} sx={{ scrollMarginTop: 96 }}>
+        {/*
+        <EmploymentSystemsSummaryCard
+          overview={overview}
+          tenantId={tenantId}
+          profileUserId={profileUserId}
+          onPayrollResendComplete={() => onRefresh?.()}
+          defaultExpanded={false}
+        />
+        */}
+
+        {/* Everee section (live data) leads the tab; the manual /
+            TempWorks-sourced "Onboarding checklist" was moved below it
+            per 2026-06-03 request. */}
+        {showEvereeAdminSync ? (
+          <EvereeAdminSyncCard
+            tenantId={tenantId}
+            entityId={overview.entityEmployment?.entityId ?? null}
+            userId={profileUserId}
+            workerType={overview.workerType === '1099' ? 'contractor' : 'employee'}
+            onSynced={handleEvereeSynced}
+          />
+        ) : null}
+
+        {showEmployeePayrollSection ? (
+          <EmployeePayrollSection
+            tenantId={tenantId}
+            entityId={overview.entityEmployment!.entityId!}
+            userId={profileUserId}
+            evereeTenantId={evereeTenantId!}
+            evereeWorkerId={evereeWorkerId!}
+            viewerKind={viewerKind}
+          />
+        ) : null}
+
+        {/* Manual / TempWorks onboarding checklist — moved below the
+            Everee section so the live data leads and the manual entry
+            trails. */}
         {showChecklist ? (
           showWorkerPostOnboardingHub ? (
-            <Box sx={{ mb: 2 }}>
+            <Box sx={{ mb: 2, mt: 2 }}>
               <EmploymentWorkerEmploymentHub
                 entityKey={entityKey}
                 overview={overview}
@@ -181,7 +218,7 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
               />
             </Box>
           ) : (
-            <Card variant="outlined" sx={{ mb: 2 }}>
+            <Card variant="outlined" sx={{ mt: 2 }}>
               <CardHeader
                 title="Onboarding checklist"
                 titleTypographyProps={{ variant: 'subtitle1', fontWeight: 700 }}
@@ -206,37 +243,6 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
               </CardContent>
             </Card>
           )
-        ) : null}
-
-        {/*
-        <EmploymentSystemsSummaryCard
-          overview={overview}
-          tenantId={tenantId}
-          profileUserId={profileUserId}
-          onPayrollResendComplete={() => onRefresh?.()}
-          defaultExpanded={false}
-        />
-        */}
-
-        {showEvereeAdminSync ? (
-          <EvereeAdminSyncCard
-            tenantId={tenantId}
-            entityId={overview.entityEmployment?.entityId ?? null}
-            userId={profileUserId}
-            workerType={overview.workerType === '1099' ? 'contractor' : 'employee'}
-            onSynced={handleEvereeSynced}
-          />
-        ) : null}
-
-        {showEmployeePayrollSection ? (
-          <EmployeePayrollSection
-            tenantId={tenantId}
-            entityId={overview.entityEmployment!.entityId!}
-            userId={profileUserId}
-            evereeTenantId={evereeTenantId!}
-            evereeWorkerId={evereeWorkerId!}
-            viewerKind={viewerKind}
-          />
         ) : null}
       </Box>
       {showEmptyExplainer && <EmploymentEmptyStateCard entityKey={entityKey} />}
