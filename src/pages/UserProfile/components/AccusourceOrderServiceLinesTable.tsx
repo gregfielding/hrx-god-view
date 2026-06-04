@@ -524,6 +524,7 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
             handleMenuOpen(e, line.id);
           }}
           disabled={adjudicationLoadingKey === `${record.id}::${line.id}`}
+          sx={{ fontSize: '0.72rem', py: 0.3, px: 1.25, minHeight: 28 }}
         >
           Review
         </Button>
