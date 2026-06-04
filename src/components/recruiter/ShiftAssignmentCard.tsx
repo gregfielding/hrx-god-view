@@ -327,51 +327,64 @@ export function ShiftAssignmentCard({
                 row that used to live below the column-row is removed —
                 this consolidates it into the Assignments header. */}
             <Box sx={{ minWidth: 0 }}>
-              <Typography variant="h6" sx={{ fontWeight: 600, lineHeight: 1.2 }} noWrap>
-                {selectedShift?.shiftTitle || 'Assignments'}
-                <Typography component="span" sx={{ ml: 0.5, fontSize: '0.7rem', color: 'text.secondary', fontWeight: 400 }} title="New UI with Preview Email">
-                  (updated)
-                </Typography>
-              </Typography>
-              {selectedShift && (
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  noWrap
-                  sx={{ display: 'block', lineHeight: 1.3 }}
-                >
-                  {(() => {
-                    const dayEntry =
-                      selectedDay && dayOptions.length > 0
-                        ? dayOptions.find((d) => d.date === selectedDay)
-                        : null;
-                    const staffReq =
-                      dayEntry?.workersNeeded !== undefined
-                        ? dayEntry.workersNeeded
-                        : (selectedShift as any).totalStaffRequested ??
-                          (selectedShift as any).staffNeeded ??
-                          (selectedShift as any).workersNeeded;
-                    const overstaff =
-                      dayEntry?.overstaff ??
-                      (selectedShift as any).overstaffCount ??
-                      (selectedShift as any).overstaff ??
-                      0;
-                    const secondLine = buildShiftPickerSecondLine(
-                      selectedShift as any,
-                      (jobOrder as any)?.jobTitle,
-                    );
-                    const staffStr =
-                      typeof staffReq === 'number'
-                        ? `Staff: ${staffReq}${
-                            typeof overstaff === 'number' && overstaff > 0
-                              ? ` (+${overstaff} overstaff)`
-                              : ''
-                          }`
-                        : '';
-                    return [secondLine, staffStr].filter(Boolean).join(' • ');
-                  })()}
-                </Typography>
-              )}
+              {(() => {
+                // Resolve staff-requested + overstaff for THIS shift (per-day
+                // override when a multi-day day is selected, else shift-level).
+                // Shown next to the shift name (replacing the old "(updated)"
+                // label, 2026-06-04 request) so the count is always visible
+                // even when the subtitle truncates.
+                const dayEntry =
+                  selectedDay && dayOptions.length > 0
+                    ? dayOptions.find((d) => d.date === selectedDay)
+                    : null;
+                const staffReq =
+                  dayEntry?.workersNeeded !== undefined
+                    ? dayEntry.workersNeeded
+                    : (selectedShift as any)?.totalStaffRequested ??
+                      (selectedShift as any)?.staffNeeded ??
+                      (selectedShift as any)?.workersNeeded;
+                const overstaff =
+                  dayEntry?.overstaff ??
+                  (selectedShift as any)?.overstaffCount ??
+                  (selectedShift as any)?.overstaff ??
+                  0;
+                const staffLabel =
+                  typeof staffReq === 'number'
+                    ? `Staff: ${staffReq}${
+                        typeof overstaff === 'number' && overstaff > 0
+                          ? ` (+${overstaff} overstaff)`
+                          : ''
+                      }`
+                    : '';
+                const secondLine = selectedShift
+                  ? buildShiftPickerSecondLine(selectedShift as any, (jobOrder as any)?.jobTitle)
+                  : '';
+                return (
+                  <>
+                    <Typography variant="h6" sx={{ fontWeight: 600, lineHeight: 1.2 }} noWrap>
+                      {selectedShift?.shiftTitle || 'Assignments'}
+                      {staffLabel && (
+                        <Typography
+                          component="span"
+                          sx={{ ml: 0.75, fontSize: '0.78rem', color: 'text.secondary', fontWeight: 500 }}
+                        >
+                          · {staffLabel}
+                        </Typography>
+                      )}
+                    </Typography>
+                    {selectedShift && secondLine && (
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        noWrap
+                        sx={{ display: 'block', lineHeight: 1.3 }}
+                      >
+                        {secondLine}
+                      </Typography>
+                    )}
+                  </>
+                );
+              })()}
             </Box>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: '0 0 auto', ml: 'auto' }}>
