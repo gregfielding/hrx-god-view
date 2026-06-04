@@ -445,12 +445,6 @@ function highlightedKeysForRequirementType(
 
 type PrioritySectionId = 'must' | 'important' | 'admin';
 
-function requirementPrioritySection(req: ReadinessRequirement): PrioritySectionId {
-  if (req.severity === 'hard_block') return 'must';
-  if (req.category === 'employment' || req.category === 'screening') return 'important';
-  return 'admin';
-}
-
 const SORT_KEY_ORDER: string[] = [
   'work_authorization',
   'i9',
@@ -1070,25 +1064,36 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
     [readinessResult.requirements],
   );
 
-  const requirementsMust = useMemo(
-    () => sortRequirementsForSection(
-      readinessResult.requirements.filter((r) => requirementPrioritySection(r) === 'must'),
-      'must',
-    ),
+  // Three semantic sections (2026-06-03 request) — the panel now reads as
+  // exactly three things:
+  //   1. Employment readiness — is the worker onboarded with the
+  //      assignment's hiring entity (work auth, I-9, payroll, tax).
+  //   2. Background & drug screenings — required checks for this assignment.
+  //   3. Certifications — required licenses / credentials.
+  const requirementsEmployment = useMemo(
+    () =>
+      sortRequirementsForSection(
+        readinessResult.requirements.filter(
+          (r) => r.category === 'identity' || r.category === 'employment',
+        ),
+        'must',
+      ),
     [readinessResult.requirements],
   );
-  const requirementsImportant = useMemo(
-    () => sortRequirementsForSection(
-      readinessResult.requirements.filter((r) => requirementPrioritySection(r) === 'important'),
-      'important',
-    ),
+  const requirementsScreening = useMemo(
+    () =>
+      sortRequirementsForSection(
+        readinessResult.requirements.filter((r) => r.category === 'screening'),
+        'important',
+      ),
     [readinessResult.requirements],
   );
-  const requirementsAdmin = useMemo(
-    () => sortRequirementsForSection(
-      readinessResult.requirements.filter((r) => requirementPrioritySection(r) === 'admin'),
-      'admin',
-    ),
+  const requirementsCertifications = useMemo(
+    () =>
+      sortRequirementsForSection(
+        readinessResult.requirements.filter((r) => r.category === 'certification'),
+        'admin',
+      ),
     [readinessResult.requirements],
   );
 
@@ -1485,32 +1490,49 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
 
                   <Divider sx={{ mb: 3 }} />
 
-                  {requirementsMust.length > 0 && (
-                    <Box sx={{ mb: 3.5 }}>
-                      <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 1.25, letterSpacing: 0.02 }}>
-                        Must complete
+                  {/* 1. Employment readiness — onboarded with the
+                      assignment's hiring entity. Always shown. */}
+                  <Box sx={{ mb: 3.5 }}>
+                    <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 1.25, letterSpacing: 0.02 }}>
+                      Employment readiness
+                    </Typography>
+                    {requirementsEmployment.length > 0 ? (
+                      renderRequirementRows(requirementsEmployment)
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        No employment items to show for this entity.
                       </Typography>
-                      {renderRequirementRows(requirementsMust)}
-                    </Box>
-                  )}
+                    )}
+                  </Box>
 
-                  {requirementsImportant.length > 0 && (
-                    <Box sx={{ mb: 3.5 }}>
-                      <Typography variant="subtitle2" fontWeight={800} sx={{ mb: 1.25, letterSpacing: 0.02 }}>
-                        Important
+                  {/* 2. Background checks & drug screenings — required by
+                      the assignment's job order / screening package. */}
+                  <Box sx={{ mb: 3.5 }}>
+                    <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 1.25, letterSpacing: 0.02 }}>
+                      Background &amp; drug screenings
+                    </Typography>
+                    {requirementsScreening.length > 0 ? (
+                      renderRequirementRows(requirementsScreening)
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        No background check or drug screen required for this assignment.
                       </Typography>
-                      {renderRequirementRows(requirementsImportant)}
-                    </Box>
-                  )}
+                    )}
+                  </Box>
 
-                  {requirementsAdmin.length > 0 && (
-                    <Box sx={{ mb: 1 }}>
-                      <Typography variant="subtitle2" fontWeight={700} color="text.secondary" sx={{ mb: 1.25, letterSpacing: 0.02 }}>
-                        Admin / compliance
+                  {/* 3. Certifications — required licenses / credentials. */}
+                  <Box sx={{ mb: 1 }}>
+                    <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 1.25, letterSpacing: 0.02 }}>
+                      Certifications
+                    </Typography>
+                    {requirementsCertifications.length > 0 ? (
+                      renderRequirementRows(requirementsCertifications)
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        No certifications required for this assignment.
                       </Typography>
-                      {renderRequirementRows(requirementsAdmin)}
-                    </Box>
-                  )}
+                    )}
+                  </Box>
 
                   {/**
                     * **R.3** — generalized CSA action surface for the
@@ -1526,7 +1548,12 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
                     * Skipped on the entity-onboarding sentinel — those
                     * rows aren't backed by `assignmentReadinessItems`.
                     */}
-                  {tenantId && !isEntityScopeReadiness && selectedAssignment && (
+                  {/* Recruiter actions (ReadinessCsaActionsSection) hidden
+                      per 2026-06-03 request. The `false &&` guard keeps the
+                      import referenced so the CI build (CI=true → unused
+                      imports are errors) stays green. Remove the leading
+                      `false && ` to restore. */}
+                  {false && tenantId && !isEntityScopeReadiness && selectedAssignment && (
                     <ReadinessCsaActionsSection
                       tenantId={tenantId}
                       assignmentId={selectedAssignment.id}
