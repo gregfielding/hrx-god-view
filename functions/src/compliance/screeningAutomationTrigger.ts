@@ -448,6 +448,103 @@ export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
       return;
     }
 
+    // **Duplicate-order safeguard (2026-06-03).** The "already satisfied"
+    // check above only blocks when a prior order is COMPLETE. It does NOT
+    // block when an order for the same package is still *in flight*
+    // (draft / queued / submitted / awaiting_applicant / in_progress /
+    // report_ready). That gap let the automation re-fire days later (e.g.
+    // assignment status churned back to `confirmed`, or a second
+    // assignment for the same worker) and place a second AccuSource order
+    // while the first was still pending — the Christopher Dempsey 5/22 +
+    // 5/27 duplicate.
+    //
+    // Guard: if ANY prior background check for this (candidateId, tenantId)
+    // matches the requested package equivalency key and is NOT in a dead
+    // state (canceled / error / expired), skip — there's already a live
+    // order for this package. (Completed/satisfied orders were handled
+    // above; a recruiter can still place a deliberate re-order via the
+    // admin callable, which is intentionally not gated by this automation.)
+    const DEAD_ORDER_STATUSES = new Set([
+      'canceled',
+      'cancelled',
+      'error',
+      'expired',
+    ]);
+    const activePriorOrder = priorScreeningEvaluations.find(
+      (e) =>
+        e.equivalencyKey === requestedKey &&
+        !DEAD_ORDER_STATUSES.has(String(e.hrxStatus ?? '').trim().toLowerCase()),
+    );
+    if (activePriorOrder) {
+      logger.info('[screeningAutomation] active order already exists — skip', {
+        tenantId,
+        assignmentId,
+        backgroundCheckId: activePriorOrder.backgroundCheckId,
+        equivalencyKey: requestedKey,
+        existingStatus: activePriorOrder.hrxStatus,
+      });
+      await writeAudit(tenantId, {
+        assignmentId,
+        candidateId,
+        jobOrderId,
+        outcome: 'skipped_active_order_exists',
+        reasonSummary:
+          `No new order: an in-flight background check (status '${activePriorOrder.hrxStatus ?? 'unknown'}') ` +
+          `for the same package key already exists — avoids a duplicate AccuSource order.`,
+        resolvedPackageKey: requestedKey,
+        packageFingerprint: fp,
+        resolvedPackageLayers: merged,
+        matchedBackgroundCheckIds: [activePriorOrder.backgroundCheckId],
+        priorScreeningEvaluations,
+        matchedEquivalencyKey: requestedKey,
+        dryRun: cfg.dryRun,
+      });
+      await runRef.set(
+        {
+          status: 'skipped_active_order_exists',
+          fingerprint: fp,
+          matchedBackgroundCheckId: activePriorOrder.backgroundCheckId,
+          resolvedPackageKey: requestedKey,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      await writeWorkerActivityLog({
+        userId: candidateId,
+        action: 'Screening automation',
+        description:
+          `Assignment confirmed: an in-flight screening order (backgroundChecks/${activePriorOrder.backgroundCheckId}, ` +
+          `status '${activePriorOrder.hrxStatus ?? 'unknown'}') already covers package key ${requestedKey} — skipped to avoid a duplicate order.`,
+        severity: 'low',
+        metadata: {
+          assignmentId,
+          jobOrderId,
+          tenantId,
+          automation: true,
+          resolvedPackageKey: requestedKey,
+          matchedBackgroundCheckId: activePriorOrder.backgroundCheckId,
+          existingStatus: activePriorOrder.hrxStatus ?? null,
+        },
+      });
+      await logScreeningAutomationDispatch({
+        tenantId,
+        assignmentId,
+        userId: candidateId,
+        hiringEntityId: hiringEntityIdForDispatch,
+        messageTypeId: 'screening_auto_skipped',
+        outcome: 'skipped',
+        fingerprint: fp,
+        skipReason: 'active_order_exists',
+        details: {
+          jobOrderId,
+          backgroundCheckId: activePriorOrder.backgroundCheckId,
+          resolvedPackageKey: requestedKey,
+          packageSummary: packageSummaryFromMerged(merged),
+        },
+      });
+      return;
+    }
+
     const userSnap = await db.collection('users').doc(candidateId).get();
     const u = (userSnap.exists ? userSnap.data() : {}) as Record<string, unknown>;
 
