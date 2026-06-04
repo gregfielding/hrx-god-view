@@ -233,6 +233,63 @@ function screeningPackageForAssignment(
   return { packageName, items };
 }
 
+/**
+ * Load the worker's job applications as readiness rows — same `{ id, data }`
+ * shape as assignments — so the Readiness panel can show "applied to" jobs
+ * above their assignments and compute identical readiness for each.
+ *
+ * `users/{uid}.applicationIds` holds `"{tenantId}_{jobId}"` strings; the app
+ * doc lives at `tenants/{tid}/applications/{uid}_{jobId}`. We resolve the
+ * `jobOrderId` from the app doc (or its job_posting), inject it, and run the
+ * SAME `enrichUserAssignmentRow` enrichment assignments use — which resolves
+ * the JO's display name, hiring entity, screening package, and cert demand.
+ * Row ids are prefixed `app_` so they never collide with assignment ids.
+ */
+async function loadReadinessApplicationRows(
+  tenantId: string,
+  uid: string,
+  applicationIds: string[],
+): Promise<Array<{ id: string; data: Record<string, unknown> }>> {
+  const rows: Array<{ id: string; data: Record<string, unknown> }> = [];
+  for (const appId of applicationIds) {
+    const [appTenantId, jobId] = String(appId).split('_');
+    if (appTenantId !== tenantId || !jobId) continue;
+    try {
+      const appSnap = await getDoc(doc(db, 'tenants', tenantId, 'applications', `${uid}_${jobId}`));
+      if (!appSnap.exists()) continue;
+      const appData = appSnap.data() as Record<string, unknown>;
+      let jobOrderId =
+        typeof appData.jobOrderId === 'string' ? appData.jobOrderId.trim() : '';
+      if (!jobOrderId) {
+        try {
+          const postingSnap = await getDoc(doc(db, 'tenants', tenantId, 'job_postings', jobId));
+          if (postingSnap.exists()) {
+            const pj = postingSnap.data() as Record<string, unknown>;
+            jobOrderId = typeof pj.jobOrderId === 'string' ? pj.jobOrderId.trim() : '';
+          }
+        } catch {
+          /* ignore — enrichment still shows the app's own fields */
+        }
+      }
+      const mergedData: Record<string, unknown> = { ...appData };
+      if (jobOrderId) mergedData.jobOrderId = jobOrderId;
+      // `enrichUserAssignmentRow` only reads `.id` + `.data()`, so a minimal
+      // faux snapshot is sufficient.
+      const fauxSnap = {
+        id: `${uid}_${jobId}`,
+        data: () => mergedData,
+      } as unknown as QueryDocumentSnapshot<DocumentData>;
+      const enriched = await enrichUserAssignmentRow(tenantId, fauxSnap);
+      // Carry the application status through for display.
+      enriched.applicationStatus = appData.status ?? null;
+      rows.push({ id: `app_${jobId}`, data: enriched });
+    } catch {
+      /* skip unreadable application */
+    }
+  }
+  return rows;
+}
+
 function screeningForAssignment(
   assignmentId: string,
   records: BackgroundCheckRecord[],
@@ -679,6 +736,7 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [userData, setUserData] = useState<Record<string, unknown> | null>(null);
   const [assignments, setAssignments] = useState<Array<{ id: string; data: Record<string, unknown> }>>([]);
+  const [applications, setApplications] = useState<Array<{ id: string; data: Record<string, unknown> }>>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [backgroundChecks, setBackgroundChecks] = useState<BackgroundCheckRecord[]>([]);
   const [complianceItemsRaw, setComplianceItemsRaw] = useState<Array<WorkerComplianceItem & { id: string }>>([]);
@@ -729,6 +787,7 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
     if (!uid || !tenantId) {
       setLoading(false);
       setAssignments([]);
+      setApplications([]);
       setEntityBundle(null);
       setComplianceItemsRaw([]);
       return;
@@ -772,15 +831,31 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
         })),
       );
       setAssignments(assignRows);
+
+      // Applications the worker has applied to — shown above assignments
+      // with identical readiness. Sourced from `users/{uid}.applicationIds`.
+      const applicationIds: string[] = Array.isArray(
+        (userSnap.data() as Record<string, unknown> | undefined)?.applicationIds,
+      )
+        ? ((userSnap.data() as Record<string, unknown>).applicationIds as string[])
+        : [];
+      const appRows = await loadReadinessApplicationRows(tenantId, uid, applicationIds);
+      setApplications(appRows);
+
       setSelectedId((prev) => {
-        if (assignRows.length > 0) {
-          if (prev && prev !== ENTITY_ONBOARDING_ASSIGNMENT_ID && assignRows.some((r) => r.id === prev)) return prev;
-          return assignRows[0]!.id;
+        const allIds = [...assignRows.map((r) => r.id), ...appRows.map((r) => r.id)];
+        if (allIds.length > 0) {
+          if (prev && prev !== ENTITY_ONBOARDING_ASSIGNMENT_ID && allIds.includes(prev)) return prev;
+          // Default to the first assignment when present, else first application.
+          return assignRows[0]?.id ?? appRows[0]!.id;
         }
         return ENTITY_ONBOARDING_ASSIGNMENT_ID;
       });
 
-      const bundle = await fetchReadinessEntityBundle(tenantId, uid, assignRows);
+      // Resolve hiring-entity employment for every entity referenced by an
+      // assignment OR an application, so application rows get real
+      // employment-readiness too.
+      const bundle = await fetchReadinessEntityBundle(tenantId, uid, [...assignRows, ...appRows]);
       setEntityBundle(bundle);
 
       setBackgroundChecks(
@@ -1052,11 +1127,23 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
   }, [entityBundle]);
 
   const selectedAssignment = useMemo(() => {
-    if (assignments.length === 0 && selectedId === ENTITY_ONBOARDING_ASSIGNMENT_ID) return entityScopeSyntheticRow;
-    return assignments.find((a) => a.id === selectedId) ?? null;
-  }, [assignments, selectedId, entityScopeSyntheticRow]);
+    if (
+      assignments.length === 0 &&
+      applications.length === 0 &&
+      selectedId === ENTITY_ONBOARDING_ASSIGNMENT_ID
+    ) {
+      return entityScopeSyntheticRow;
+    }
+    return (
+      assignments.find((a) => a.id === selectedId) ??
+      applications.find((a) => a.id === selectedId) ??
+      null
+    );
+  }, [assignments, applications, selectedId, entityScopeSyntheticRow]);
 
-  const isEntityScopeReadiness = assignments.length === 0;
+  // Entity-scope (onboarding) view only when the worker has NEITHER
+  // assignments nor applications in this tenant.
+  const isEntityScopeReadiness = assignments.length === 0 && applications.length === 0;
 
   const certificationsForSelection = useMemo(() => {
     if (!selectedId || !selectedAssignment || !entityBundle) return [];
@@ -1105,12 +1192,14 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
       complianceItemsRaw,
       backgroundChecks,
     };
-    for (const row of assignments) {
+    // Cover both assignment rows and application rows — their ids are
+    // disjoint (`app_` prefix) so a single map is unambiguous.
+    for (const row of [...assignments, ...applications]) {
       const r = buildReadinessForAssignmentRow(row, args);
       map.set(row.id, r.readiness);
     }
     return map;
-  }, [assignments, userInput, entityBundle, complianceItemsRaw, backgroundChecks]);
+  }, [assignments, applications, userInput, entityBundle, complianceItemsRaw, backgroundChecks]);
 
   const nextActions = useMemo(
     () => computeNextActions(readinessResult.requirements, 3),
@@ -1175,6 +1264,65 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
       ))}
     </Stack>
   );
+
+  /** A single selectable left-panel card — shared by the Applications and
+   *  Assignments lists so both render identically. */
+  const renderReadinessRow = (a: { id: string; data: Record<string, unknown> }) => {
+    const title = assignmentDisplayName(a.data);
+    const sel = a.id === selectedId;
+    const rowState = readinessByAssignmentId.get(a.id) ?? 'PENDING_INITIALIZATION';
+    return (
+      <ListItemButton
+        key={a.id}
+        selected={sel}
+        onClick={() => setSelectedId(a.id)}
+        alignItems="flex-start"
+      >
+        <Box sx={{ minWidth: 0, width: '100%', pr: 0.5 }}>
+          <Typography variant="body2" fontWeight={sel ? 700 : 500} title={title}>
+            {title}
+          </Typography>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            display="block"
+            sx={{ mt: 0.35, lineHeight: 1.35 }}
+          >
+            {assignmentStartDateShort(a.data)}
+          </Typography>
+          <Stack spacing={0.2} sx={{ mt: 0.65 }}>
+            <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.4 }}>
+              <Box component="span" sx={{ fontWeight: 600, color: 'text.disabled' }}>
+                Job order
+              </Box>
+              {': '}
+              {displayDetail(a.data.jobOrderDisplayName)}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.4 }}>
+              <Box component="span" sx={{ fontWeight: 600, color: 'text.disabled' }}>
+                Account
+              </Box>
+              {': '}
+              {displayDetail(a.data.companyDisplayName)}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.4 }}>
+              <Box component="span" sx={{ fontWeight: 600, color: 'text.disabled' }}>
+                Worksite
+              </Box>
+              {': '}
+              {displayDetail(a.data.worksiteDisplayName)}
+            </Typography>
+          </Stack>
+          <Chip
+            label={readinessBadgeLabel(rowState)}
+            color={readinessBadgeColor(rowState)}
+            size="small"
+            sx={{ mt: 0.75, fontWeight: 700, height: 'auto', py: 0.35, '& .MuiChip-label': { px: 1, whiteSpace: 'normal' } }}
+          />
+        </Box>
+      </ListItemButton>
+    );
+  };
 
   /**
    * **R.5** — first `e_verify` employee item that the worker / recruiter
@@ -1377,6 +1525,21 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
         <Grid container spacing={2}>
           <Grid item xs={12} md={4}>
             <Paper variant="outlined" sx={{ p: 1 }}>
+              {/* Applications — jobs the worker has applied to. Shown above
+                  Assignments with identical readiness. Hidden when none. */}
+              {applications.length > 0 && (
+                <>
+                  <Typography variant="subtitle2" fontWeight={700} sx={{ px: 1, py: 1 }}>
+                    Applications
+                  </Typography>
+                  <Divider />
+                  <List dense disablePadding>
+                    {applications.map((a) => renderReadinessRow(a))}
+                  </List>
+                  <Box sx={{ height: 12 }} />
+                </>
+              )}
+
               <Typography variant="subtitle2" fontWeight={700} sx={{ px: 1, py: 1 }}>
                 Assignments
               </Typography>
@@ -1393,62 +1556,7 @@ const ProfileReadinessTabContent: React.FC<ProfileReadinessTabContentProps> = ({
                 </Box>
               ) : (
                 <List dense disablePadding>
-                  {assignments.map((a) => {
-                    const title = assignmentDisplayName(a.data);
-                    const sel = a.id === selectedId;
-                    const rowState = readinessByAssignmentId.get(a.id) ?? 'PENDING_INITIALIZATION';
-                    return (
-                      <ListItemButton
-                        key={a.id}
-                        selected={sel}
-                        onClick={() => setSelectedId(a.id)}
-                        alignItems="flex-start"
-                      >
-                        <Box sx={{ minWidth: 0, width: '100%', pr: 0.5 }}>
-                          <Typography variant="body2" fontWeight={sel ? 700 : 500} title={title}>
-                            {title}
-                          </Typography>
-                          <Typography
-                            variant="caption"
-                            color="text.secondary"
-                            display="block"
-                            sx={{ mt: 0.35, lineHeight: 1.35 }}
-                          >
-                            {assignmentStartDateShort(a.data)}
-                          </Typography>
-                          <Stack spacing={0.2} sx={{ mt: 0.65 }}>
-                            <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.4 }}>
-                              <Box component="span" sx={{ fontWeight: 600, color: 'text.disabled' }}>
-                                Job order
-                              </Box>
-                              {': '}
-                              {displayDetail(a.data.jobOrderDisplayName)}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.4 }}>
-                              <Box component="span" sx={{ fontWeight: 600, color: 'text.disabled' }}>
-                                Account
-                              </Box>
-                              {': '}
-                              {displayDetail(a.data.companyDisplayName)}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.4 }}>
-                              <Box component="span" sx={{ fontWeight: 600, color: 'text.disabled' }}>
-                                Worksite
-                              </Box>
-                              {': '}
-                              {displayDetail(a.data.worksiteDisplayName)}
-                            </Typography>
-                          </Stack>
-                          <Chip
-                            label={readinessBadgeLabel(rowState)}
-                            color={readinessBadgeColor(rowState)}
-                            size="small"
-                            sx={{ mt: 0.75, fontWeight: 700, height: 'auto', py: 0.35, '& .MuiChip-label': { px: 1, whiteSpace: 'normal' } }}
-                          />
-                        </Box>
-                      </ListItemButton>
-                    );
-                  })}
+                  {assignments.map((a) => renderReadinessRow(a))}
                 </List>
               )}
             </Paper>
