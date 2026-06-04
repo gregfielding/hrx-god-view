@@ -117,6 +117,11 @@ export type RecruiterUserProfileTableHeaderProps = {
   entitySlots: RecordHeaderEntitySlot[];
   interviewSummaryLine: string | null;
   readinessRows: ReadinessBreakdownRow[];
+  /** When the worker's Employer I-9 row is "Action needed", this link
+   *  (Everee worker Documents tab) is used so the recruiter can jump
+   *  straight to the signature surface. Null when no Everee worker id
+   *  resolves — the row then renders as plain "Signature needed" text. */
+  employerI9SignatureUrl?: string | null;
   recordHeaderFileInputRef: React.RefObject<HTMLInputElement>;
   handleRecordHeaderAvatarFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   canEditRecordAvatar: boolean;
@@ -193,6 +198,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
   entitySlots,
   interviewSummaryLine,
   readinessRows,
+  employerI9SignatureUrl = null,
   recordHeaderFileInputRef,
   handleRecordHeaderAvatarFileChange,
   canEditRecordAvatar,
@@ -753,22 +759,51 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
               ) : null}
               {readinessRows.length > 0 && (
                 <Stack spacing={0.2} sx={{ mt: 0.5 }}>
-                  {readinessRows.map((row) => (
-                    <Box key={row.key} component="span">
-                      <Typography variant="body2" sx={recordHeaderBodyTextSx}>
-                        {row.text}
-                      </Typography>
-                      {row.sublines?.map((line, i) => (
-                        <Typography
-                          key={i}
-                          variant="body2"
-                          sx={{ ...recordHeaderBodyTextSx, display: 'block', pl: 0.5 }}
-                        >
-                          {line}
-                        </Typography>
-                      ))}
-                    </Box>
-                  ))}
+                  {readinessRows.map((row) => {
+                    // Employer I-9 needing the employer signature: relabel
+                    // "Action needed" → "Signature needed" and (when an
+                    // Everee worker id resolved) link straight to the
+                    // worker's Everee Documents tab in a new tab.
+                    const isI9SignatureNeeded =
+                      row.key === 'employer_i9' && /Action needed/i.test(row.text);
+                    const displayText = isI9SignatureNeeded
+                      ? row.text.replace(/Action needed/i, 'Signature needed')
+                      : row.text;
+                    const renderAsLink = isI9SignatureNeeded && !!employerI9SignatureUrl;
+                    return (
+                      <Box key={row.key} component="span">
+                        {renderAsLink ? (
+                          <Link
+                            href={employerI9SignatureUrl!}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            underline="hover"
+                            variant="body2"
+                            sx={{
+                              ...recordHeaderBodyTextSx,
+                              color: 'primary.main',
+                              fontWeight: 400,
+                            }}
+                          >
+                            {displayText}
+                          </Link>
+                        ) : (
+                          <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                            {displayText}
+                          </Typography>
+                        )}
+                        {row.sublines?.map((line, i) => (
+                          <Typography
+                            key={i}
+                            variant="body2"
+                            sx={{ ...recordHeaderBodyTextSx, display: 'block', pl: 0.5 }}
+                          >
+                            {line}
+                          </Typography>
+                        ))}
+                      </Box>
+                    );
+                  })}
                 </Stack>
               )}
 

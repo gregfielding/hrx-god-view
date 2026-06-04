@@ -1879,6 +1879,27 @@ const UserProfilePage = () => {
     [skillsData],
   );
 
+  /**
+   * Deep link for the Employer I-9 "Signature needed" header row — points
+   * at the worker's Everee Documents tab. Employer I-9 (Section 2) lives in
+   * the W-2 / C1 Select Everee tenant (3133); prefer that worker id, fall
+   * back to the first linked id. Null when no Everee worker id resolves —
+   * the header then shows "Signature needed" as plain text.
+   */
+  const employerI9SignatureUrl = useMemo<string | null>(() => {
+    const ids = (skillsData as { evereeWorkerIds?: Record<string, unknown> } | undefined)
+      ?.evereeWorkerIds;
+    if (!ids || typeof ids !== 'object') return null;
+    const preferred =
+      typeof ids['3133'] === 'string' ? (ids['3133'] as string).trim() : '';
+    const firstId = Object.values(ids).find(
+      (v): v is string => typeof v === 'string' && v.trim().length > 0,
+    );
+    const workerId = preferred || (firstId ? firstId.trim() : '');
+    if (!workerId) return null;
+    return `https://app.everee.com/workers/details/${encodeURIComponent(workerId)}?tab=DOCUMENTS`;
+  }, [skillsData]);
+
   const recruiterReadinessBreakdownRows = useMemo(() => {
     if (!showRecordHeaderEntityStatus || !uid) return [];
     const eb =
@@ -2491,6 +2512,7 @@ const UserProfilePage = () => {
                   screeningLines={recordHeaderScreeningLines}
                   screeningPackageHint={recordHeaderScreeningPackageHint}
                   readinessRows={recruiterReadinessBreakdownRows}
+                  employerI9SignatureUrl={employerI9SignatureUrl}
                   addedToIndeedFlex={addedToIndeedFlex}
                   onIndeedFlexChange={handleIndeedFlexToggle}
                   canEditIndeedFlex={viewerSecurityLevel >= 4}
