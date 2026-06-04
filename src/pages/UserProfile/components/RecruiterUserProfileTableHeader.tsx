@@ -287,8 +287,14 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
   const canManageGroupsSection = viewerSecurityLevel >= 4 && viewerSecurityLevel <= 7;
   const showAddGroupControl = Boolean(tenantIdForUserGroups && onAddUserToGroup);
 
-  /** Admin: five columns (Contact … Employment … Risk); otherwise four (no Risk). */
-  const gridColMd = canViewAdminContent ? 2.4 : 3;
+  /**
+   * Column width. After the 2026-06-03 header reorg, Employment +
+   * Applications + Groups + Recruiter are stacked together in column 2,
+   * which removes the standalone Employment column.
+   * Admin: four columns (Contact · Employment-stack · Screening · Risk) → 3 each.
+   * Non-admin: three columns (no Risk) → 4 each.
+   */
+  const gridColMd = canViewAdminContent ? 3 : 4;
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
 
   /**
@@ -703,17 +709,51 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
               ) : null}
             </Grid>
 
+            {/* Column 2 — Employment (2026-06-03 header reorg).
+                Employment moved here above the former Readiness column.
+                The Readiness status rows (Direct deposit, Employer I-9, …)
+                now render below the entity chips; the Indeed Flex /
+                Fieldglass checkboxes become an "Applications" section;
+                Groups + Recruiter stack below. The standalone Employment
+                column further right has been removed. */}
             <Grid item xs={12} md={gridColMd}>
               <Typography component="span" sx={recordHeaderColumnTitleSx}>
-                Readiness
+                Employment
               </Typography>
+              {entitySlots.length > 0 ? (
+                <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mt: 0.35 }}>
+                  {entitySlots.map((slot) => {
+                    const v = entityChipVisuals(slot);
+                    return (
+                      <Chip
+                        key={slot.entityKey}
+                        size="small"
+                        label={`${slot.title}: ${slot.statusLabel}`}
+                        color={v.color}
+                        variant={v.variant}
+                        sx={{
+                          height: 24,
+                          maxWidth: '100%',
+                          '& .MuiChip-label': { px: 0.75, fontSize: '0.74rem', fontWeight: 400 },
+                        }}
+                      />
+                    );
+                  })}
+                </Stack>
+              ) : (
+                <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                  —
+                </Typography>
+              )}
+
+              {/* Readiness status rows — moved under the Employment chips. */}
               {!canViewAdminContent && interviewSummaryLine ? (
-                <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, mb: 0.5 }}>
+                <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, mt: 0.5 }}>
                   {interviewSummaryLine}
                 </Typography>
               ) : null}
               {readinessRows.length > 0 && (
-                <Stack spacing={0.2}>
+                <Stack spacing={0.2} sx={{ mt: 0.5 }}>
                   {readinessRows.map((row) => (
                     <Box key={row.key} component="span">
                       <Typography variant="body2" sx={recordHeaderBodyTextSx}>
@@ -732,17 +772,42 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                   ))}
                 </Stack>
               )}
+
+              {assignmentLines.length > 0 ? (
+                <Box sx={{ mt: 1.25 }}>
+                  <Typography component="span" sx={recordHeaderColumnTitleSx}>
+                    Assignments
+                  </Typography>
+                  <Stack spacing={0.4} sx={{ mt: 0.35 }}>
+                    {assignmentLines.map((line) => (
+                      <Box key={line.id || line.primary}>
+                        <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                          {line.primary}
+                        </Typography>
+                        {line.secondary ? (
+                          <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, display: 'block', mt: 0.1 }}>
+                            {line.secondary}
+                          </Typography>
+                        ) : null}
+                      </Box>
+                    ))}
+                  </Stack>
+                </Box>
+              ) : null}
+
+              {/* Applications — the Indeed Flex / Fieldglass enrollment
+                  checkboxes, formerly under the Readiness column. */}
+              <Typography component="span" sx={{ ...recordHeaderColumnTitleSx, mt: 1.25 }}>
+                Applications
+              </Typography>
               <FormControlLabel
                 sx={{
                   // FormControlLabel defaults to inline-flex; forcing flex
                   // here (and on the Fieldglass row below) makes the two
                   // checkboxes stack vertically instead of wrapping side by
-                  // side as the Readiness column narrows.
+                  // side as the column narrows.
                   display: 'flex',
-                  mt:
-                    readinessRows.length > 0 || (!canViewAdminContent && interviewSummaryLine)
-                      ? 0.35
-                      : 0.75,
+                  mt: 0.35,
                   mr: 0,
                   ml: -0.75,
                   alignItems: 'center',
@@ -799,100 +864,6 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                 }
                 label="Fieldglass"
               />
-            </Grid>
-
-            <Grid item xs={12} md={gridColMd}>
-              <Typography component="span" sx={recordHeaderColumnTitleSx}>
-                Screening
-              </Typography>
-              {screeningPackageHint ? (
-                <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, mb: 0.5 }}>
-                  {screeningPackageHint}
-                </Typography>
-              ) : null}
-              {screeningLines.length > 0 ? (
-                <Stack spacing={0.35}>
-                  {screeningLines.map((line) => {
-                    const verdictIcon = renderVerdictIconForHeader(line.verdict);
-                    return (
-                      <Typography
-                        key={line.id}
-                        variant="body2"
-                        sx={{ ...recordHeaderBodyTextSx, display: 'flex', alignItems: 'flex-start', gap: 0.5 }}
-                      >
-                        {verdictIcon}
-                        <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
-                          {line.name}
-                          {line.type ? ` (${line.type})` : ''}: {line.status}
-                        </Box>
-                      </Typography>
-                    );
-                  })}
-                </Stack>
-              ) : (
-                <Typography variant="body2" sx={recordHeaderBodyTextSx}>
-                  {screeningPackageHint ? '—' : 'No active screening package on file'}
-                </Typography>
-              )}
-              <Typography component="span" sx={{ ...recordHeaderColumnTitleSx, mt: 1.25 }}>
-                Certifications
-              </Typography>
-              <Typography variant="body2" sx={recordHeaderBodyTextSx}>
-                —
-              </Typography>
-            </Grid>
-
-            <Grid item xs={12} md={gridColMd}>
-              <Typography component="span" sx={recordHeaderColumnTitleSx}>
-                Employment
-              </Typography>
-              {entitySlots.length > 0 ? (
-                <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mt: 0.35 }}>
-                  {entitySlots.map((slot) => {
-                    const v = entityChipVisuals(slot);
-                    return (
-                      <Chip
-                        key={slot.entityKey}
-                        size="small"
-                        label={`${slot.title}: ${slot.statusLabel}`}
-                        color={v.color}
-                        variant={v.variant}
-                        sx={{
-                          height: 24,
-                          maxWidth: '100%',
-                          '& .MuiChip-label': { px: 0.75, fontSize: '0.74rem', fontWeight: 400 },
-                        }}
-                      />
-                    );
-                  })}
-                </Stack>
-              ) : (
-                <Typography variant="body2" sx={recordHeaderBodyTextSx}>
-                  —
-                </Typography>
-              )}
-
-              {assignmentLines.length > 0 ? (
-                <Box sx={{ mt: 1.25 }}>
-                  <Typography component="span" sx={recordHeaderColumnTitleSx}>
-                    Assignments
-                  </Typography>
-                  <Stack spacing={0.4} sx={{ mt: 0.35 }}>
-                    {assignmentLines.map((line) => (
-                      <Box key={line.id || line.primary}>
-                        <Typography variant="body2" sx={recordHeaderBodyTextSx}>
-                          {line.primary}
-                        </Typography>
-                        {line.secondary ? (
-                          <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, display: 'block', mt: 0.1 }}>
-                            {line.secondary}
-                          </Typography>
-                        ) : null}
-                      </Box>
-                    ))}
-                  </Stack>
-                </Box>
-              ) : null}
 
               {canManageGroupsSection && (headerUserGroups.length > 0 || showAddGroupControl) && (
                 <Box sx={{ mt: 1.25 }}>
@@ -1036,6 +1007,47 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                   )}
                 </Box>
               </Box>
+            </Grid>
+
+            <Grid item xs={12} md={gridColMd}>
+              <Typography component="span" sx={recordHeaderColumnTitleSx}>
+                Screening
+              </Typography>
+              {screeningPackageHint ? (
+                <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, mb: 0.5 }}>
+                  {screeningPackageHint}
+                </Typography>
+              ) : null}
+              {screeningLines.length > 0 ? (
+                <Stack spacing={0.35}>
+                  {screeningLines.map((line) => {
+                    const verdictIcon = renderVerdictIconForHeader(line.verdict);
+                    return (
+                      <Typography
+                        key={line.id}
+                        variant="body2"
+                        sx={{ ...recordHeaderBodyTextSx, display: 'flex', alignItems: 'flex-start', gap: 0.5 }}
+                      >
+                        {verdictIcon}
+                        <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
+                          {line.name}
+                          {line.type ? ` (${line.type})` : ''}: {line.status}
+                        </Box>
+                      </Typography>
+                    );
+                  })}
+                </Stack>
+              ) : (
+                <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                  {screeningPackageHint ? '—' : 'No active screening package on file'}
+                </Typography>
+              )}
+              <Typography component="span" sx={{ ...recordHeaderColumnTitleSx, mt: 1.25 }}>
+                Certifications
+              </Typography>
+              <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                —
+              </Typography>
             </Grid>
 
             {canViewAdminContent && (
