@@ -1717,6 +1717,18 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
 
   // Real-time placements (placed but not yet assigned - no Assignment created, no messages sent).
   useEffect(() => {
+    // Reset optimistic placement bookkeeping whenever the selected shift
+    // changes. `pendingPlacementAddsRef` / `pendingPlacementRemovesRef` are
+    // keyed by userId only (not shiftId), and the snapshot listener below
+    // merges them into the placed set. Carrying them across a shift switch
+    // leaked a just-placed worker onto OTHER shifts of the same job order
+    // (2026-06-04 cross-shift placement-leak bug — e.g. workers placed on
+    // "Day Cleaners" also showing on "PM Cleaners"). Each shift's own
+    // placements snapshot is authoritative; the pending refs only matter
+    // within a single shift to smooth the local-write → snapshot race.
+    pendingPlacementAddsRef.current.clear();
+    pendingPlacementRemovesRef.current.clear();
+
     if (!tenantId || !selectedShiftId) {
       setPlacementUserIds(new Set());
       setPlacementStartDateByUserId(new Map());
