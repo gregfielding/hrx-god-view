@@ -1258,6 +1258,9 @@ const UserProfilePage = () => {
           recruiterMasterScore: data.recruiterMasterScore ?? null,
           categoryScoresCurrent: data.categoryScoresCurrent ?? null,
           phoneVerified: data.phoneVerified === true,
+          // Everee worker id map (keyed by evereeTenantId) — powers the
+          // Employer I-9 "Signature needed" deep link in the header.
+          evereeWorkerIds: data.evereeWorkerIds ?? null,
         });
 
         setProfileOnboardingType(typeof data.onboardingType === 'string' ? data.onboardingType : undefined);
