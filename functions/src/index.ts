@@ -239,7 +239,7 @@ export {
 export { processWorkerAiPrescreenReminders } from './workerAiPrescreen/processWorkerAiPrescreenReminders';
 export { triggerRecentUserInterviewBackfill } from './workerAiPrescreen/triggerRecentUserInterviewBackfill';
 export { scheduleWorkerAiPrescreenFollowUpOnUserWrite } from './workerAiPrescreen/scheduleWorkerAiPrescreenFollowUpOnUserWrite';
-export { placementsCreateAssignments, placementsCancelAssignment, respondToAssignment, confirmAssignmentForWorker, resendAssignmentOffer, previewAssignmentDetailsEmail } from './placementsApi';
+export { placementsCreateAssignments, placementsCancelAssignment, respondToAssignment, confirmAssignmentForWorker, resendAssignmentOffer, previewAssignmentDetailsEmail, revertAssignmentDecline, revertAssignmentCancel, resendShiftConfirmationsToConfirmedStaff, resendAssignmentConfirmation } from './placementsApi';
 export { updateExternalOnboardingStepVerification } from './onboardingGate';
 export {
   everifyCreateCase,
@@ -498,7 +498,9 @@ export {
 } from './readiness/onActionItemOwnershipChange';
 export { syncAssignmentReadinessV1OnAssignmentWrite } from './readiness/assignmentReadinessOnAssignmentWrite';
 export { syncAssignmentReadinessV1OnOnboardingInstanceWrite } from './readiness/assignmentReadinessOnOnboardingInstanceWrite';
-export { syncAssignmentReadinessV1OnSignatureEnvelopeWrite } from './readiness/assignmentReadinessOnSignatureEnvelopeWrite';
+// syncAssignmentReadinessV1OnSignatureEnvelopeWrite removed 2026-06-05 alongside
+// the Phase 1C signature scaffold — no signature_envelopes docs are ever written
+// (Everee's hosted onboarding owns the signature flow), so this trigger never fired.
 export { syncAssignmentReadinessV1OnBackgroundCheckWrite } from './readiness/assignmentReadinessOnBackgroundCheckWrite';
 
 // Phase A reconciliation triggers — bridge vendor / source data flows
@@ -5641,20 +5643,10 @@ export const validatePromptConsistency = onCall(async (request) => {
 export { parseResumeHttp, getResumeParsingStatus, getUserResumeUploads, getResumeSignedUrl };
 export { getUserParsedResumes };
 
-// Phase 1C: Documents + E-Sign Infrastructure
-export {
-  signaturesStartEnvelope,
-  signaturesWebhookReceiver,
-} from './signatures';
-export {
-  signatureCreateEnvelope,
-  signatureCreateSigningSession,
-  signatureGetSession,
-  signatureGetSigningUrl,
-  signatureAdminListEnvelopes,
-  signatureAdminVoidEnvelope,
-  webhooksSignaturesDropboxsign,
-} from './integrations/signatures';
+// Phase 1C: Documents + E-Sign Infrastructure was scaffolded but never
+// activated — production I-9 signatures flow through Everee's hosted
+// onboarding (see evereeCreateOnboardingSession + evereeWebhook). Removed
+// 2026-06-05; functions deleted from Cloud Run in the same change.
 
 // Phase 4: HRXOne Worker Onboarding Flow Functions
 export const validateInviteToken = onCall(async (request) => {
@@ -12138,10 +12130,21 @@ export { backfillWorkerAttestationsCallable } from './backfillWorkerAttestations
 // is signed off.
 // (see docs/READINESS_R1_R2_HANDOFF.md)
 export { backfillAssignmentReadinessItemsCallable } from './backfillAssignmentReadinessItemsCallable';
-export {
-  syncAssignmentScheduledNotifications,
-  dispatchScheduledAssignmentNotifications,
-} from './workerShiftReminders';
+// V1 shift-reminder system (`workerShiftReminders.ts`) is RETIRED as of
+// 2026-06-07. It was scheduling a T-4h reminder with hardcoded "starts in
+// 4 hours" copy regardless of cadence profile, and its dispatcher (which
+// did NOT filter on `type`) was cannibalizing V2's reminder docs — picking
+// them up via the same `scheduled_notifications` collectionGroup query,
+// dispatching them with V1's default "4 hours" template, and marking them
+// `sent` so V2 never got to send the correct copy. End result: managers
+// reported "random 7 AM texts" (V1's T-4h fire for an 11 AM shift) and
+// duplicate "starts in 4 hours" messages 2 hours apart (V1 hitting both
+// its own doc and V2's T-2h doc with the wrong template). All cadence now
+// flows through V2 only. See workerShiftRemindersV2 + cadenceMessages.
+//
+// V1 pending docs are cancelled by the one-shot
+// `.scratch/cancelV1ShiftReminders.ts` script — without dispatchers, they
+// would otherwise sit forever as dead `pending` rows.
 export {
   onAssignmentConfirmedScheduleReminders,
   dispatchScheduledWorkerReminders,

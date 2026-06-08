@@ -42,6 +42,93 @@ const REMINDER_KIND = 'worker_shift_reminder';
 const REMINDER_VERSION = 1;
 const MAX_ATTEMPTS = 3;
 const CLAIM_TTL_MS = 5 * 60 * 1000;
+
+// Early-morning floor (worker local time) for long-lead reminders. T-2h
+// and longer-lead steps that would otherwise fire before this hour get
+// pushed to it — Danny's managers were getting 5–7 AM "starts in X hours"
+// pings that wake up a worker hours before they need to leave. The
+// shorter cadence steps (T-15m, T-0h, post-start no-shows) bypass the
+// floor because they're tied to imminent arrival and the wake-up itself
+// is the point. We also cap the deferral at T-15m so even a 6 AM shift
+// where T-2h would naturally fire at 4 AM doesn't get pushed to 8 AM
+// (which would be 2 hours after the worker was supposed to clock in).
+const REMINDER_EARLY_MORNING_FLOOR_LOCAL_HOUR = 8;
+const REMINDER_FLOOR_LATEST_OFFSET_MIN_BEFORE_START = 15; // T-15m cap
+
+/**
+ * Return the minute-of-day (0..1439) for `ms` rendered in `timezone`.
+ * Used by `applyEarlyMorningFloor` to decide whether a scheduled time
+ * lands inside the worker's local pre-dawn window.
+ */
+function getLocalMinutesSinceMidnight(ms: number, timezone: string): number {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+    }).formatToParts(new Date(ms));
+    const hStr = parts.find((p) => p.type === 'hour')?.value ?? '0';
+    const mStr = parts.find((p) => p.type === 'minute')?.value ?? '0';
+    let h = parseInt(hStr, 10);
+    const m = parseInt(mStr, 10);
+    if (h === 24) h = 0; // some locales render midnight as "24"
+    return h * 60 + m;
+  } catch (err) {
+    logger.warn('[worker_shift_reminders] tz_minute_extract_fallback', {
+      timezone,
+      err: (err as Error)?.message || String(err),
+    });
+    const d = new Date(ms);
+    return d.getHours() * 60 + d.getMinutes();
+  }
+}
+
+/**
+ * If `scheduledForMs` falls before the early-morning floor in the
+ * worker's local timezone AND the reminder's lead time is long enough
+ * to safely defer (offsetHours >= 2), push it forward to the floor.
+ *
+ * Capped at `start - REMINDER_FLOOR_LATEST_OFFSET_MIN_BEFORE_START`
+ * so we never push the reminder to fire after the shift has started
+ * (or so close that the worker has no useful prep time).
+ */
+function applyEarlyMorningFloor(
+  scheduledForMs: number,
+  shiftStartMs: number,
+  offsetHours: number,
+  timezone: string,
+): { scheduledForMs: number; deferred: boolean; deferredReason?: string } {
+  // Short-lead steps (T-15m, T-0h, post-start) always send when scheduled —
+  // they're the imminent-arrival pings whose value IS waking the worker.
+  if (offsetHours < 2) return { scheduledForMs, deferred: false };
+
+  const localMinutes = getLocalMinutesSinceMidnight(scheduledForMs, timezone);
+  const floorMinutes = REMINDER_EARLY_MORNING_FLOOR_LOCAL_HOUR * 60;
+  if (localMinutes >= floorMinutes) return { scheduledForMs, deferred: false };
+
+  const liftMs = (floorMinutes - localMinutes) * 60 * 1000;
+  let deferredMs = scheduledForMs + liftMs;
+  // Cap: never push the reminder past the shift's own T-15m gate.
+  const latestAllowedMs =
+    shiftStartMs - REMINDER_FLOOR_LATEST_OFFSET_MIN_BEFORE_START * 60 * 1000;
+  let cappedAtTMinus15 = false;
+  if (deferredMs > latestAllowedMs) {
+    deferredMs = latestAllowedMs;
+    cappedAtTMinus15 = true;
+  }
+  // If the cap brings the deferred time back before/at the original time,
+  // the floor would be a no-op or backwards move — keep the original.
+  if (deferredMs <= scheduledForMs) return { scheduledForMs, deferred: false };
+
+  return {
+    scheduledForMs: deferredMs,
+    deferred: true,
+    deferredReason: cappedAtTMinus15
+      ? 'early_morning_floor_capped_at_t_minus_15m'
+      : `early_morning_floor_${REMINDER_EARLY_MORNING_FLOOR_LOCAL_HOUR}am_local`,
+  };
+}
 // Deterministic retry delay for non-terminal retry path.
 const RETRY_BACKOFF_MS = 2 * 60 * 1000;
 const DISPATCH_BATCH_LIMIT = 200;
@@ -512,7 +599,14 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
   for (const step of effectiveSteps) {
     const reminderType = step.type as ReminderType;
     const offsetHours = step.offsetHours;
-    const scheduledForMs = start.toMillis() - offsetHours * 60 * 60 * 1000;
+    const rawScheduledForMs = start.toMillis() - offsetHours * 60 * 60 * 1000;
+    // Debug-override runs deliberately use minute-scale offsets that should
+    // fire NOW for QA — never apply the 8 AM local floor in that mode.
+    const floorResult =
+      scheduleMode === 'production_default'
+        ? applyEarlyMorningFloor(rawScheduledForMs, start.toMillis(), offsetHours, resolvedTimezone)
+        : { scheduledForMs: rawScheduledForMs, deferred: false };
+    const scheduledForMs = floorResult.scheduledForMs;
     const isPast = scheduledForMs <= nowMs;
     const status: ReminderStatus = isPast ? 'cancelled' : 'pending';
     const docRef = db.doc(
@@ -557,6 +651,16 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
       scheduleMode,
       scheduledOffsetMinutes: Math.round(offsetHours * 60),
       reminderProfile: profile.id,
+      // Stamp early-morning-floor deferral (or delete the field when the
+      // raw time was used) so we can spot in Firestore which reminders
+      // had their natural T-N fire-time lifted forward into business hours.
+      floorDeferred: floorResult.deferred,
+      floorDeferredReason: floorResult.deferred
+        ? floorResult.deferredReason
+        : admin.firestore.FieldValue.delete(),
+      rawScheduledForMs: floorResult.deferred
+        ? rawScheduledForMs
+        : admin.firestore.FieldValue.delete(),
       assignmentStatusSnapshot,
       createdAt: now,
       updatedAt: now,
