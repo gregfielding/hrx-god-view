@@ -248,6 +248,13 @@ interface StatusPillProps {
   approving?: boolean;
   /** Loading flag while the revert callable is in flight. */
   reverting?: boolean;
+  /** When `status === 'error'`, the precise reason from `entry.everee.errorMessage`
+   *  — surfaced in the tooltip so the recruiter knows WHY it failed without
+   *  having to re-open the submit modal. */
+  errorMessage?: string;
+  /** Optional short code (`missing_workers_comp_code`, `submission_failed`, etc.)
+   *  shown before the message for quick scanning. */
+  errorCode?: string;
 }
 
 const StatusPill: React.FC<StatusPillProps> = ({
@@ -256,6 +263,8 @@ const StatusPill: React.FC<StatusPillProps> = ({
   onRevert,
   approving,
   reverting,
+  errorMessage,
+  errorCode,
 }) => {
   if (status === 'no_entry') {
     return (
@@ -293,17 +302,41 @@ const StatusPill: React.FC<StatusPillProps> = ({
 
   let tooltip = '';
   if (isApprovable) {
-    tooltip =
-      status === 'error'
-        ? 'Click to retry — re-approves this entry so the next batch picks it up.'
-        : 'Click to approve this entry (required before submit to Everee).';
+    if (status === 'error') {
+      const reason = errorMessage
+        ? `Reason: ${errorCode ? `[${errorCode}] ` : ''}${errorMessage}`
+        : null;
+      const retroNote =
+        'Retroactive shifts (>10d old) are auto-sent with correction-authorized, so re-submission of a stuck older entry should succeed once the underlying data is fixed.';
+      tooltip = [
+        reason,
+        'Click to retry — re-approves this entry so the next batch picks it up.',
+        retroNote,
+      ]
+        .filter(Boolean)
+        .join('\n\n');
+    } else {
+      tooltip = 'Click to approve this entry (required before submit to Everee).';
+    }
   } else if (isRevertable) {
     tooltip =
       'Click to revert to draft — pulls this row out of the next Everee batch (useful for 0-hour rows that shouldn\'t ship).';
   }
 
   return (
-    <Tooltip title={tooltip}>
+    <Tooltip
+      title={tooltip}
+      // Multi-line tooltip for the error case — pre-wrap keeps the line breaks
+      // and bumps the max-width so the precise error message isn't clipped.
+      slotProps={{
+        tooltip: {
+          sx: {
+            whiteSpace: 'pre-wrap',
+            maxWidth: status === 'error' && errorMessage ? 480 : undefined,
+          },
+        },
+      }}
+    >
       <Chip
         size="small"
         color={STATUS_COLORS[status]}
@@ -718,6 +751,8 @@ const EntryRow: React.FC<EntryRowProps> = ({
           approving={approvingThisEntry}
           onRevert={() => void onRevertEntry(entry.id)}
           reverting={revertingThisEntry}
+          errorMessage={(entry as any).everee?.errorMessage as string | undefined}
+          errorCode={(entry as any).everee?.errorCode as string | undefined}
         />
       </TableCell>
       {/* Workers' Comp edit dialog — mounted inside the row so dialog

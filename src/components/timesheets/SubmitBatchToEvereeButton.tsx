@@ -36,7 +36,9 @@ import {
   Typography,
 } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import { doc, getDoc } from 'firebase/firestore';
 
+import { db } from '../../firebase';
 import {
   createTimesheetBatch,
   submitTimesheetBatch,
@@ -44,6 +46,16 @@ import {
 } from '../../services/timesheets/timesheetBatchCallables';
 import type { TimesheetFilter } from '../../types/recruiter/timesheet';
 import { entryHasRecruiterData, type TimesheetGridRow } from './timesheetGridResolver';
+
+/** One row in the modal's per-entry error list — populated after submit when
+ *  pre-flight or the Everee POST returned errors. */
+interface EntryErrorDetail {
+  entryId: string;
+  workerName: string;
+  workDate: string;
+  errorCode: string;
+  errorMessage: string;
+}
 
 export interface SubmitBatchToEvereeButtonProps {
   tenantId: string | null | undefined;
@@ -161,6 +173,7 @@ const SubmitBatchToEvereeButton: React.FC<SubmitBatchToEvereeButtonProps> = ({
     batchId: string;
     enqueued: number;
     preflightErrors: number;
+    errorDetails: EntryErrorDetail[];
   } | null>(null);
 
   const hiringEntityId = useMemo(() => {
@@ -214,10 +227,47 @@ const SubmitBatchToEvereeButton: React.FC<SubmitBatchToEvereeButtonProps> = ({
 
       // Step 2 — kick the orchestrator
       const submitRes = await submitTimesheetBatch({ tenantId, batchId });
+
+      // Step 3 — read back the per-entry errors so we can show the user the
+      // ACTUAL reasons instead of the generic three-cause hint. Pre-flight
+      // failures stamp `everee.errorCode` + `everee.errorMessage` on the
+      // entry doc; post-flight Everee POST failures stamp the same fields
+      // from `submitTimesheetEntryWorker`. We fan out a small batch of reads
+      // and surface anything with an active error message.
+      const errorDetails: EntryErrorDetail[] = [];
+      const preflightErrors = submitRes.data.preflightErrorCount ?? 0;
+      if (preflightErrors > 0 || submitRes.data.enqueuedEntryCount < summary.entryIds.length) {
+        const snaps = await Promise.all(
+          summary.entryIds.map((id) =>
+            getDoc(doc(db, 'tenants', tenantId, 'timesheet_entries', id)).catch(() => null),
+          ),
+        );
+        for (let i = 0; i < snaps.length; i++) {
+          const s = snaps[i];
+          if (!s || !s.exists()) continue;
+          const ed = s.data() as any;
+          const errMsg = ed?.everee?.errorMessage;
+          const errCode = ed?.everee?.errorCode;
+          // Show anything with an active error OR status=error that doesn't carry a message
+          if (errMsg || errCode || ed?.status === 'error') {
+            errorDetails.push({
+              entryId: summary.entryIds[i],
+              workerName: ed?.workerName || ed?.userName || ed?.workerId || '(unknown worker)',
+              workDate: ed?.workDate || '',
+              errorCode: String(errCode || (ed?.status === 'error' ? 'error' : '')),
+              errorMessage: String(
+                errMsg ||
+                  (ed?.status === 'error' ? 'Entry status is error — see logs for details.' : ''),
+              ),
+            });
+          }
+        }
+      }
       setResult({
         batchId,
         enqueued: submitRes.data.enqueuedEntryCount,
-        preflightErrors: submitRes.data.preflightErrorCount,
+        preflightErrors,
+        errorDetails,
       });
       // Optimistic local merge — stamp `sent_to_everee` on every
       // submitted entry so the grid reflects the new state without
@@ -313,17 +363,49 @@ const SubmitBatchToEvereeButton: React.FC<SubmitBatchToEvereeButtonProps> = ({
                 {result.preflightErrors > 0 && (
                   <>
                     {' '}<strong>{result.preflightErrors}</strong> pre-flight error
-                    {result.preflightErrors === 1 ? '' : 's'} — see entry status pills
-                    in the grid.
+                    {result.preflightErrors === 1 ? '' : 's'}.
                   </>
                 )}
               </Alert>
-              <Typography variant="caption" color="text.secondary">
-                Pre-flight errors typically mean a worker doesn&apos;t have an Everee
-                linkage on this entity, the JO is missing a workersCompCode, or the
-                entry&apos;s actual start/end times aren&apos;t set. Fix the entry and
-                re-submit a new batch when ready.
-              </Typography>
+              {result.errorDetails.length > 0 && (
+                <Box
+                  sx={{
+                    border: '1px solid',
+                    borderColor: 'warning.light',
+                    borderRadius: 1,
+                    bgcolor: 'warning.50',
+                    p: 1.5,
+                    maxHeight: 280,
+                    overflow: 'auto',
+                  }}
+                >
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                    Errors by entry
+                  </Typography>
+                  <Stack spacing={1.25}>
+                    {result.errorDetails.map((e) => (
+                      <Box key={e.entryId} sx={{ fontSize: 13, lineHeight: 1.4 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                          {e.workerName}
+                          {e.workDate ? ` · ${e.workDate}` : ''}
+                          {e.errorCode ? ` · ${e.errorCode}` : ''}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                          {e.errorMessage}
+                        </Typography>
+                      </Box>
+                    ))}
+                  </Stack>
+                </Box>
+              )}
+              {result.errorDetails.length === 0 && result.preflightErrors === 0 && (
+                <Typography variant="caption" color="text.secondary">
+                  All entries enqueued. The orchestrator will flip each to{' '}
+                  <code>sent_to_everee</code> as the per-worker tasks complete; the
+                  reconciler will pick up <code>paid</code> once Everee finishes the pay
+                  run.
+                </Typography>
+              )}
             </Stack>
           )}
         </DialogContent>

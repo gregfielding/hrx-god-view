@@ -33,8 +33,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import CertificationsModal from './CertificationsModal';
 import MessageDrawer, { MessageRecipient } from '../../../components/MessageDrawer';
 import { FirebaseError } from 'firebase/app';
-import { functions } from '../../../firebase';
-import { httpsCallable } from 'firebase/functions';
+import { getGmailConnectionFromFirestore } from '../../../utils/getGmailConnectionFromFirestore';
 import MissingItemsAlert from './MissingItemsAlert';
 import ProfileQualityMeter from './ProfileQualityMeter';
 import CompactProfileQualityBar from './CompactProfileQualityBar';
@@ -449,36 +448,15 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   // Without this, gmailConnected stayed false and the email icon always opened mailto:.
   useEffect(() => {
     let mounted = true;
-    const checkGmail = async () => {
-      const level = Number.parseInt(String(viewerSecurityLevel || '0'), 10) || 0;
-      if (level < 5 || level > 7 || !user?.uid) {
-        if (mounted) setGmailConnected(false);
-        return;
-      }
-      try {
-        const getGmailStatus = httpsCallable(functions, 'getGmailStatusOptimized');
-        const result = await getGmailStatus({ userId: user.uid, force: true });
-        const data = result.data as {
-          connected?: boolean;
-          rateLimited?: boolean;
-          sampled?: boolean;
-        };
-        const connected =
-          !!data?.connected || !!data?.rateLimited || !!data?.sampled;
-        if (mounted) setGmailConnected(connected);
-      } catch {
-        try {
-          const viewerSnap = await getDoc(doc(db, 'users', user.uid));
-          const viewerData: any = viewerSnap.exists() ? viewerSnap.data() : null;
-          if (mounted) {
-            setGmailConnected(!!viewerData?.gmailTokens?.access_token);
-          }
-        } catch {
-          if (mounted) setGmailConnected(false);
-        }
-      }
-    };
-    checkGmail();
+    const level = Number.parseInt(String(viewerSecurityLevel || '0'), 10) || 0;
+    if (level < 5 || level > 7 || !user?.uid) {
+      setGmailConnected(false);
+      return;
+    }
+    // Firestore-only check — see getGmailConnectionFromFirestore.
+    getGmailConnectionFromFirestore(user.uid).then((status) => {
+      if (mounted) setGmailConnected(status.connected);
+    });
     return () => {
       mounted = false;
     };

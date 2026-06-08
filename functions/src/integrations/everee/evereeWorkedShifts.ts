@@ -128,11 +128,20 @@ export interface CreateWorkedShiftResult {
 export async function createWorkedShift(
   config: EvereeEntityConfig,
   input: CreateWorkedShiftInput,
+  opts?: { correctionAuthorized?: boolean },
 ): Promise<CreateWorkedShiftResult> {
+  // `correction-authorized=true` is required when the shift's pay period
+  // is already closed/posted on Everee's side. Without it Everee returns:
+  //   "This shift can no longer be modified because it is included in a
+  //    payment that is already approved, submitted, or paid."
+  // (2026-06-05 Cheneana 5/19 case). The flag accepts the POST as a
+  // correction into the next pay run.
+  const base = '/integration/v1/labor/timesheet/worked-shifts';
+  const path = opts?.correctionAuthorized ? `${base}?correction-authorized=true` : base;
   const raw = await evereeRequest<{ workedShiftId?: number; id?: number } & Record<string, unknown>>(
     config,
     'POST',
-    '/integration/v1/labor/timesheet/worked-shifts',
+    path,
     input,
   );
   const workedShiftId =

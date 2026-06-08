@@ -2847,6 +2847,35 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         }
       }
 
+      // Pre-flight #1 — require workersCompClassCode (and rate) when activating a W-2 job order.
+      // Why: the Submit-to-Everee path fails pre-flight with `missing_workers_comp_code`
+      // if W-2 entries reach it without a code on the JO. Catching this at JO save time
+      // stops bad JOs from being activated and recruiters discovering the gap mid-batch.
+      //
+      // Scope: enforced only when status is being set to 'open' (active). Drafts can be
+      // saved with the code missing — the recruiter may still be filling out the JO.
+      // Detection: the entity's workerType (loaded via `formEntity`). Defaults to enforcing
+      // when workerType is unknown rather than letting bad data through.
+      const goingToOpen = formData.status === 'open';
+      const isW2Entity = formEntity?.workerType !== '1099'; // null/undefined → treat as W-2
+      if (goingToOpen && isW2Entity) {
+        // Check both the top-level WC fields and the per-position fields on gig JOs.
+        const topLevelCode = String((formData as any).workersCompClassCode || (formData as any).workersCompCode || '').trim();
+        const positions = Array.isArray((formData as any).gigPositions) ? (formData as any).gigPositions : [];
+        const everyActivePositionHasCode =
+          positions.length === 0 ||
+          positions.every((p: any) => String(p?.workersCompClassCode || '').trim().length > 0);
+        if (!topLevelCode && !everyActivePositionHasCode) {
+          setError(
+            "Workers' Comp class code is required before activating a W-2 job order. " +
+            'Set the code in the Rates section (or per-position for gig JOs) and save again, ' +
+            "or keep status as Draft until you have it. Without the code, Everee pre-flight will reject every timesheet entry on this JO.",
+          );
+          setSaving(false);
+          return;
+        }
+      }
+
       // Get company and location names (and worksite city/state for Smart Groups metro sync)
       // Also resolve parent account (national) for account/parent/location lookup fields
       let companyName = '';

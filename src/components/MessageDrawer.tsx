@@ -42,6 +42,7 @@ import { functions } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage, db } from '../firebase';
+import { getGmailConnectionFromFirestore } from '../utils/getGmailConnectionFromFirestore';
 import { collection, query, where, getDocs, limit, doc, getDoc } from 'firebase/firestore';
 import { createAutoSave, loadDraft, deleteDraft } from '../utils/emailDrafts';
 import { generateEmailSignature, type EmailSignatureSettings } from '../utils/emailSignature';
@@ -332,26 +333,15 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
       setGmailConnected(null);
 
       if (bulkSystemMode) {
-        // Check Gmail connection for bulk mode
-        const checkGmailForBulk = async () => {
-          try {
-            const getGmailStatusFn = httpsCallable(functions, 'getGmailStatusOptimized');
-            const gmailResult = await getGmailStatusFn({ userId: user.uid, force: true });
-            const gmailData = gmailResult.data as { connected?: boolean; email?: string };
-            
-            if (gmailData?.connected) {
-              setGmailConnected(true);
-              setBulkSenderType('system'); // Default to system
-            } else {
-              setGmailConnected(false);
-            }
-          } catch (err) {
-            console.warn('Failed to check Gmail status for bulk mode:', err);
+        // Check Gmail connection for bulk mode (Firestore-only — see getGmailConnectionFromFirestore)
+        getGmailConnectionFromFirestore(user.uid).then((status) => {
+          if (status.connected) {
+            setGmailConnected(true);
+            setBulkSenderType('system'); // Default to system
+          } else {
             setGmailConnected(false);
           }
-        };
-        
-        checkGmailForBulk();
+        });
         setLoadingSenders(false);
         setHasTwilioNumber(true);
         return;
@@ -374,28 +364,25 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
       
       // Check Gmail status and Twilio number in background (non-blocking)
       const checkSenderInfo = async () => {
-        // Check Gmail connection
+        // Check Gmail connection (Firestore-only — see getGmailConnectionFromFirestore).
+        // Token validity is verified at send time, where errors are surfaced to the user.
         try {
-          const getGmailStatusFn = httpsCallable(functions, 'getGmailStatusOptimized');
-          // Force=true to bypass sampling/rate-limit shortcuts that can incorrectly report disconnected.
-          const gmailResult = await getGmailStatusFn({ userId: user.uid, force: true });
-          const gmailData = gmailResult.data as { connected?: boolean; email?: string };
-          
-          if (!gmailData?.connected) {
+          const gmailData = await getGmailConnectionFromFirestore(user.uid, effectiveTenantId);
+          if (!gmailData.connected) {
             setGmailConnected(false);
             setSenderOptions([
               {
                 id: 'gmail',
                 type: 'gmail',
                 label: 'Gmail',
-                email: gmailData?.email || user?.email || '',
+                email: gmailData.email || user?.email || '',
                 enabled: false,
                 description: 'Connect Gmail to send from your address',
               },
             ]);
           } else {
             setGmailConnected(true);
-            const resolvedEmail = gmailData?.email || user?.email || '';
+            const resolvedEmail = gmailData.email || user?.email || '';
             setSenderOptions([
               {
                 id: 'gmail',

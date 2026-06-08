@@ -337,20 +337,8 @@ function buildAssignmentReadiness({
     severity: "warning",
     status: employment?.taxFormComplete ? "complete" : "missing"
   });
-  requirements.push({
-    key: "handbook",
-    label: "Handbook Signed",
-    category: "policies",
-    severity: "warning",
-    status: employment?.handbookSigned ? "complete" : "missing"
-  });
-  requirements.push({
-    key: "policies",
-    label: "Policies Signed",
-    category: "policies",
-    severity: "warning",
-    status: employment?.policiesSigned ? "complete" : "missing"
-  });
+  void employment?.handbookSigned;
+  void employment?.policiesSigned;
   if (assignment.requiresBackgroundCheck) {
     let status = "missing";
     if (screening?.backgroundComplete) status = "complete";

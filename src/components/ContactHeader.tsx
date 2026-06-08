@@ -34,8 +34,8 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { doc, updateDoc, getDoc } from 'firebase/firestore';
-import { db, storage, functions } from '../firebase';
-import { httpsCallable } from 'firebase/functions';
+import { db, storage } from '../firebase';
+import { getGmailConnectionFromFirestore } from '../utils/getGmailConnectionFromFirestore';
 import FavoriteButton from './FavoriteButton';
 import SafeAvatar from './SafeAvatar';
 import MessageDrawer, { MessageRecipient } from './MessageDrawer';
@@ -151,43 +151,17 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
   const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
   const [messageDrawerChannel, setMessageDrawerChannel] = useState<'email' | 'sms'>('email');
 
-  // Check Gmail connection status
+  // Check Gmail connection status (Firestore-only — see getGmailConnectionFromFirestore)
   useEffect(() => {
-    const checkGmailConnection = async () => {
-      if (!user?.uid || !tenantId) {
-        setGmailConnected(false);
-        return;
-      }
-      try {
-        const getGmailStatus = httpsCallable(functions, 'getGmailStatusOptimized');
-        const result = await getGmailStatus({ userId: user.uid, force: true });
-        const data = result.data as any;
-        // If rate-limited/sampled, treat as connected to avoid false negatives; MessageDrawer will validate senders.
-        const connected = !!data?.connected || !!data?.rateLimited || !!data?.sampled;
-        setGmailConnected(connected);
-      } catch {
-        // Fallback: check tokens on user doc
-        try {
-          const userDocRef = doc(db, 'users', user.uid);
-          const userDocSnap = await getDoc(userDocRef);
-          if (userDocSnap.exists()) {
-            const userData = userDocSnap.data();
-            const tenantIntegration = userData.tenantIds?.[tenantId]?.integrations?.google;
-            const topLevelIntegration = userData.integrations?.google;
-            
-            const isConnected = (tenantIntegration?.accessToken || topLevelIntegration?.accessToken) && 
-                                (tenantIntegration?.email || topLevelIntegration?.email);
-            setGmailConnected(!!isConnected);
-          } else {
-            setGmailConnected(false);
-          }
-        } catch (error) {
-          console.error('Error checking Gmail connection:', error);
-          setGmailConnected(false);
-        }
-      }
-    };
-    checkGmailConnection();
+    if (!user?.uid || !tenantId) {
+      setGmailConnected(false);
+      return;
+    }
+    let mounted = true;
+    getGmailConnectionFromFirestore(user.uid, tenantId).then((status) => {
+      if (mounted) setGmailConnected(status.connected);
+    });
+    return () => { mounted = false; };
   }, [user?.uid, tenantId]);
 
   // Check Twilio number status

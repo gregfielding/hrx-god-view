@@ -511,11 +511,10 @@ const Layout: React.FC = function Layout() {
   }, [user?.uid, activeTenant?.id]);
 
   // Gmail mailbox counts: single source of truth for badge so it matches Inbox tabs (e.g. Updates 10).
-  // Self-healing circuit breaker: we start the 30s interval ONLY after a successful first call.
-  // This prevents hammering `getGmailMailboxCounts` for users who don't have Gmail connected
-  // (previously: N-page-load × 30s = perpetual 500s in the console, since the callable fails
-  // hard when no OAuth tokens are on the user doc). Refresh the page after connecting Gmail
-  // to resume polling.
+  // No more setInterval polling — the Firestore inbox-unread listener (above) already triggers a
+  // refresh whenever the local unread count changes (read action / inbound arrival). We additionally
+  // refresh on tab visibility-change so returning to the tab gets a fresh count.
+  // Cost: 30s polling cost ~46k/mo; this design = ~3 calls/tab/day (mount + visibility events).
   useEffect(() => {
     if (!user?.uid) {
       setGmailInboxTotal(null);
@@ -524,12 +523,11 @@ const Layout: React.FC = function Layout() {
     }
 
     let cancelled = false;
-    let interval: ReturnType<typeof setInterval> | null = null;
-    /** How many times in a row the load call has failed — used to stop polling after repeated failures. */
-    let consecutiveFailures = 0;
-    const MAX_CONSECUTIVE_FAILURES = 1; // one strike and we stop for this session
+    /** Tripped after first failure so we stop calling for the session (most failures = no Gmail OAuth). */
+    let circuitOpen = false;
 
     const load = async (): Promise<boolean> => {
+      if (circuitOpen) return false;
       try {
         const getCounts = httpsCallable<{ userId: string }, { success: boolean; counts?: Record<string, { threadsUnread?: number }> }>(functions, 'getGmailMailboxCounts');
         const result = await getCounts({ userId: user.uid });
@@ -537,17 +535,16 @@ const Layout: React.FC = function Layout() {
         const data = result.data;
         if (!data?.success || !data.counts) {
           setGmailInboxTotal(null);
-          consecutiveFailures += 1;
+          circuitOpen = true; // No OAuth or backend sad — stop trying this session.
           return false;
         }
         const c = data.counts;
         const total = Number(c.primary?.threadsUnread || 0) + Number(c.social?.threadsUnread || 0) + Number(c.promotions?.threadsUnread || 0) + Number(c.updates?.threadsUnread || 0) + Number(c.forums?.threadsUnread || 0) + Number(c.spam?.threadsUnread || 0);
         setGmailInboxTotal(total);
-        consecutiveFailures = 0;
         return true;
       } catch {
         if (!cancelled) setGmailInboxTotal(null);
-        consecutiveFailures += 1;
+        circuitOpen = true;
         return false;
       }
     };
@@ -556,23 +553,22 @@ const Layout: React.FC = function Layout() {
       await load();
     };
 
-    (async () => {
-      const ok = await load();
-      if (cancelled) return;
-      if (!ok) return; // Gmail not connected or backend broken — don't start the interval.
-      interval = setInterval(async () => {
-        const pollOk = await load();
-        if (!pollOk && consecutiveFailures >= MAX_CONSECUTIVE_FAILURES && interval) {
-          // Recovered-then-failed case: stop the bleeding until next mount.
-          clearInterval(interval);
-          interval = null;
-        }
-      }, 30000);
-    })();
+    // Fire once on mount. After this, refresh happens via:
+    //   (a) the Firestore inbox-listener calling gmailCountsLoaderRef on user activity
+    //   (b) the tab visibility-change listener below
+    load();
+
+    // Refresh when the user returns to the tab after being away (cheap, on-demand).
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible' && !cancelled && !circuitOpen) {
+        load();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
       cancelled = true;
-      if (interval) clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibility);
       gmailCountsLoaderRef.current = null;
     };
   }, [user?.uid]);

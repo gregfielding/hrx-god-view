@@ -52,6 +52,7 @@ import useMyWorkerUids from '../hooks/useMyWorkerUids';
 import UpcomingFirstShiftsSection from '../components/workforce/csa/UpcomingFirstShiftsSection';
 import RecentlyCompletedFirstShiftsSection from '../components/workforce/csa/RecentlyCompletedFirstShiftsSection';
 import PendingOnboardingCallsSection from '../components/workforce/csa/PendingOnboardingCallsSection';
+import HeadshotBypassesSection from '../components/workforce/csa/HeadshotBypassesSection';
 import type { WorkforceOutletContext } from './Workforce';
 
 const WorkforceEmployeeReadiness: React.FC = () => {
@@ -187,6 +188,15 @@ const WorkforceEmployeeReadiness: React.FC = () => {
       {/* The "Employer I-9 needed" surface used to live here as Section
           4 (commit def18be4) but was promoted to a dedicated top-level
           tab — see /readiness/i9-signatures and WorkforceI9Signatures.tsx. */}
+      {/* Headshot-gate bypass tracker (2026-06-05): when a worker is blocked
+          from self-confirming a shift by the Accept-flow headshot gate and a
+          recruiter manually overrides via `confirmAssignmentForWorker`, the
+          assignment doc gets a `headshotBypass` audit stamp. This section
+          surfaces those workers so their underlying blocker (no/pending/
+          rejected headshot) can be cleared proactively before the next
+          placement hits the same gate. */}
+      <HeadshotBypassesSection tenantId={tenantId} />
+
 
       <Snackbar
         open={snackbar.open}

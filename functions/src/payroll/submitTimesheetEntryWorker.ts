@@ -155,12 +155,33 @@ export const submitTimesheetEntryWorker = onTaskDispatched<SubmitEntryTaskPayloa
       const payableExternalIds: string[] = [];
 
       if (composed.kind === 'w2') {
+        // Decide whether to send `correction-authorized=true`. Everee locks
+        // worked-shifts to closed pay periods; without the flag a retroactive
+        // POST returns 400 "shift is included in a payment that is already
+        // approved, submitted, or paid." (2026-06-05 Cheneana case). Two
+        // signals trigger correction mode:
+        //   1. The entry already failed with that exact error before (retry).
+        //   2. The work date is older than ~10 days (defensive — covers
+        //      weekly + bi-weekly tenants without needing per-tenant config).
+        // For PUT (existing workedShiftId), Everee already requires the flag
+        // when the underlying payment was paid — we pass it unconditionally
+        // there too since false-positives are harmless.
+        const priorErrMsg = String(evereeState.errorMessage || '').toLowerCase();
+        const failedBeforeOnLock = priorErrMsg.includes('already approved, submitted, or paid');
+        const workDateMs = Date.parse(String(entry.workDate || ''));
+        const isRetro =
+          Number.isFinite(workDateMs) &&
+          Date.now() - workDateMs > 10 * 24 * 60 * 60 * 1000;
+        const correctionAuthorized = failedBeforeOnLock || isRetro;
+
         // Idempotent: PUT if we already have a workedShiftId, otherwise POST.
         if (existingWorkedShiftId) {
-          const r = await updateWorkedShift(config, existingWorkedShiftId, composed.workedShift);
+          const r = await updateWorkedShift(config, existingWorkedShiftId, composed.workedShift, {
+            correctionAuthorized,
+          });
           workedShiftId = r.workedShiftId;
         } else {
-          const r = await createWorkedShift(config, composed.workedShift);
+          const r = await createWorkedShift(config, composed.workedShift, { correctionAuthorized });
           workedShiftId = r.workedShiftId;
         }
         // Additional payables (tips, bonus, meal/rest premium). Each

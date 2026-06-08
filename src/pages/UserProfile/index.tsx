@@ -62,6 +62,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 import { FirebaseError } from 'firebase/app';
 import { db, functions, storage } from '../../firebase'; // adjust path
+import { getGmailConnectionFromFirestore } from '../../utils/getGmailConnectionFromFirestore';
 import ImageCropDialog from '../../components/common/ImageCropDialog';
 import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import onetSkills from '../../data/onetSkills.json';
@@ -781,41 +782,22 @@ const UserProfilePage = () => {
   };
 
   // Determine if viewer has Gmail connected (for conditional Email icon behavior)
+  // Firestore-only check — see getGmailConnectionFromFirestore.
   useEffect(() => {
     let mounted = true;
-
-    const checkViewerGmail = async () => {
-      if (!user?.uid) {
-        if (mounted) setViewerGmailConnected(false);
-        return;
-      }
-      const level =
-        Number.parseInt(String(currentClaimsSecurityLevel || securityLevel || '0'), 10) || 0;
-      if (level < 5 || level > 7) {
-        if (mounted) setViewerGmailConnected(false);
-        return;
-      }
-
-      try {
-        const getGmailStatus = httpsCallable(functions, 'getGmailStatusOptimized');
-        const result = await getGmailStatus({ userId: user.uid, force: true });
-        const data = result.data as any;
-        // If rate-limited/sampled, treat as connected to avoid false negatives; MessageDrawer will validate senders.
-        const connected = !!data?.connected || !!data?.rateLimited || !!data?.sampled;
-        if (mounted) setViewerGmailConnected(connected);
-      } catch {
-        // Fallback: check tokens on user doc
-        try {
-          const viewerSnap = await getDoc(doc(db, 'users', user.uid));
-          const viewerData: any = viewerSnap.exists() ? viewerSnap.data() : null;
-          if (mounted) setViewerGmailConnected(!!viewerData?.gmailTokens?.access_token);
-        } catch {
-          if (mounted) setViewerGmailConnected(false);
-        }
-      }
-    };
-
-    checkViewerGmail();
+    if (!user?.uid) {
+      setViewerGmailConnected(false);
+      return;
+    }
+    const level =
+      Number.parseInt(String(currentClaimsSecurityLevel || securityLevel || '0'), 10) || 0;
+    if (level < 5 || level > 7) {
+      setViewerGmailConnected(false);
+      return;
+    }
+    getGmailConnectionFromFirestore(user.uid).then((status) => {
+      if (mounted) setViewerGmailConnected(status.connected);
+    });
     return () => {
       mounted = false;
     };

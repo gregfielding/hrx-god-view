@@ -66,9 +66,40 @@ export interface RawPayablesResponse {
 
 export function mapPayablesToPayHistory(
   raw: unknown,
+  keys?: string | string[],
 ): { items: EvereePayHistoryItem[]; nextCursor: string | null } {
   const { payables, nextCursor } = extractEnvelope(raw);
-  const groups = groupByPaymentId(payables);
+
+  // Client-side filter by externalWorkerId. Everee's `external-worker-ids`
+  // query param is SILENTLY IGNORED on `/api/v2/payables` (same broken
+  // behavior as `/api/v2/payments` — confirmed 2026-06-06 against the live
+  // API: requesting payables for one worker returned 4 other random workers'
+  // records, with not a single externalWorkerId matching the filter we sent).
+  // Without this client-side filter, mapPayablesToPayHistory groups whatever
+  // Everee returns and the recruiter sees other workers' pay history on the
+  // current worker's profile. Bug reported by Greg 2026-06-06 — Michael
+  // Villanueva (just-applied worker) was shown $683 in pay history that
+  // belonged to four unrelated workers.
+  //
+  // Two filter candidates because the HRX → Everee linkage was set up with
+  // `externalWorkerId = evereeWorkerId` (Everee UUID) for some workers and
+  // `externalWorkerId = HRX uid` for others — schema drift across waves. The
+  // caller passes both keys and we union them. When `keys` is undefined (e.g.
+  // older callers that haven't been updated) we fall back to the legacy
+  // unfiltered behavior to avoid breaking existing reconcile paths.
+  const targetSet = new Set(
+    (Array.isArray(keys) ? keys : keys ? [keys] : [])
+      .map((k) => (k ?? '').trim())
+      .filter((k) => k.length > 0),
+  );
+  const filtered = targetSet.size === 0
+    ? payables
+    : payables.filter((p) => {
+        const key = String(p?.externalWorkerId ?? '').trim();
+        return targetSet.has(key);
+      });
+
+  const groups = groupByPaymentId(filtered);
   const items: EvereePayHistoryItem[] = [];
   for (const [key, group] of groups.entries()) {
     items.push(summarizeGroup(key, group));

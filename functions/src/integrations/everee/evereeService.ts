@@ -884,7 +884,7 @@ export async function getPayHistory(
 
   const [payments, payables] = await Promise.all([
     safeMapPayments(config, candidateKeys, tenantId, entityId, userId),
-    safeMapPayables(config, externalWorkerId, tenantId, entityId, userId),
+    safeMapPayables(config, externalWorkerId, tenantId, entityId, userId, candidateKeys),
   ]);
 
   // Merge by statementId so a payment + its component payable don't
@@ -945,14 +945,20 @@ async function safeMapPayables(
   tenantId: string,
   entityId: string,
   userId: string,
+  candidateKeys: string[],
 ): Promise<{ items: EvereePayHistoryItem[]; nextCursor: string | null }> {
   if (!config) return { items: [], nextCursor: null };
   try {
+    // Pass candidateKeys (HRX uid + Everee UUID) — the mapper filters
+    // client-side because Everee silently ignores `external-worker-ids`
+    // on `/api/v2/payables` (same broken behavior as payments; confirmed
+    // 2026-06-06). Without client-side filtering the recruiter sees
+    // other workers' pay history on the current worker's profile.
     const raw = await listPayables(config, {
       externalWorkerIds: [externalWorkerId],
       includeWorkersOnRegularPayCycle: true,
     });
-    return mapPayablesToPayHistory(raw);
+    return mapPayablesToPayHistory(raw, candidateKeys);
   } catch (err) {
     logger.warn('[getPayHistory] /api/v2/payables fetch failed', {
       tenantId,
