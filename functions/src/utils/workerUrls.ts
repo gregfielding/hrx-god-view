@@ -183,3 +183,49 @@ export function buildWorkerAssignmentResponseUrl(params: {
   }
   return buildWorkerFindWorkUrl();
 }
+
+/**
+ * One-click ACCEPT URL for assignment-offer SMS / email. Worker taps the
+ * link → assignment details page loads → page detects `intent=accept` in
+ * the query and fires `respondToAssignment({ decision: 'accept' })` on
+ * mount, then strips the query so a refresh doesn't re-fire.
+ *
+ * Rationale: the previous flow used a single
+ * `{{assignmentAcceptDeclineUrl}}` link that took the worker to the
+ * job-post page where they STILL had to find + tap an Accept button.
+ * Click-through was poor — many workers got the SMS, opened the page,
+ * and bailed. Two explicit verbs (ACCEPT / DECLINE) in the SMS body
+ * paired with one-click handlers on the landing page is the new pattern.
+ */
+export function buildWorkerAssignmentAcceptUrl(assignmentId?: string): string {
+  const id = String(assignmentId || '').trim();
+  if (!id) return buildWorkerAssignmentsUrl();
+  const search = new URLSearchParams({ intent: 'accept' });
+  return `${buildWorkerWebBaseAssignmentPath(id)}?${search.toString()}`;
+}
+
+/**
+ * One-click DECLINE URL — lands on the job-post page (so they can
+ * re-apply to another shift if they declined the wrong one) with
+ * `intent=decline&assignmentId=...`. The page fires the decline on
+ * mount and shows a confirmation banner with a CTA back to the shift
+ * list. Falls back to the assignment details page if jobPostId is
+ * missing (can still record the decline, just no reapply CTA).
+ */
+export function buildWorkerAssignmentDeclineUrl(params: {
+  assignmentId?: string;
+  jobPostId?: string;
+}): string {
+  const aid = String(params.assignmentId || '').trim();
+  const jpid = String(params.jobPostId || '').trim();
+  if (!aid) return buildWorkerAssignmentsUrl();
+  const search = new URLSearchParams({ intent: 'decline', assignmentId: aid });
+  if (jpid) {
+    return `${buildWorkerJobPostUrl(jpid)}?${search.toString()}`;
+  }
+  return `${buildWorkerWebBaseAssignmentPath(aid)}?intent=decline`;
+}
+
+function buildWorkerWebBaseAssignmentPath(assignmentId: string): string {
+  return `${getWorkerWebBaseUrl()}/c1/workers/assignments/${assignmentId}`;
+}

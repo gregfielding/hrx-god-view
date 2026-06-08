@@ -325,12 +325,34 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                   Confirmed
                 </Button>
               ) : isOffered ? (
+                // Worker has been offered this shift (assignment.status =
+                // pending/proposed). Replace the blue Apply CTA with an
+                // explicit accept/decline pair — green Confirm, red
+                // Decline — matching the same verbs the offer SMS uses
+                // (ACCEPT / DECLINE links). Single tap fires the
+                // existing handler which calls respondToAssignment under
+                // the hood.
                 <>
-                  <Button variant="contained" onClick={() => onConfirmShift?.(shift.shiftId)} sx={{ minWidth: 140, backgroundColor: '#4CAF50', color: '#fff', fontWeight: 600, '&:hover': { backgroundColor: '#45a049' } }}>
-                    Click to Accept
+                  <Button
+                    variant="contained"
+                    onClick={() => onConfirmShift?.(shift.shiftId)}
+                    sx={{
+                      minWidth: 140,
+                      backgroundColor: '#4CAF50',
+                      color: '#fff',
+                      fontWeight: 600,
+                      '&:hover': { backgroundColor: '#45a049' },
+                    }}
+                  >
+                    Confirm
                   </Button>
-                  <Button variant="contained" color="error" onClick={() => onDeclineShift?.(shift.shiftId)} sx={{ minWidth: 140, fontWeight: 600 }}>
-                    Decline this Job
+                  <Button
+                    variant="contained"
+                    color="error"
+                    onClick={() => onDeclineShift?.(shift.shiftId)}
+                    sx={{ minWidth: 140, fontWeight: 600 }}
+                  >
+                    Decline
                   </Button>
                 </>
               ) : hasApplied ? (

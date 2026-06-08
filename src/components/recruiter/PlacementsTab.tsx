@@ -26,6 +26,7 @@ import {
   Checkbox,
   Autocomplete,
   InputAdornment,
+  Snackbar,
 } from '@mui/material';
 import {
   Description as ResumeIcon,
@@ -330,6 +331,34 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const [confirmedApplicationsCount, setConfirmedApplicationsCount] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Bottom-center toast for assign-click feedback. The legacy `error`
+   * Alert renders at the very top of the placements UI — when the
+   * recruiter is scrolled down looking at the Worker Pool on the right
+   * and clicks Assign, an error like "Could not hire: Quiana Jackson —
+   * already assigned to this shift" was off-screen, so the click felt
+   * silent. The Snackbar floats above content regardless of scroll.
+   *
+   * `severity` drives the color (error = red, success = green). For
+   * mixed batches we use 'info' so neither a green nor a red read
+   * misrepresents what happened.
+   */
+  const [assignToast, setAssignToast] = useState<{
+    message: string;
+    severity: 'success' | 'error' | 'info';
+    /**
+     * Optional retry action for the toast. When the only blocker on a
+     * batch was `overlapping_assignment`, we surface an "Assign anyway"
+     * button that re-fires the same batch with `allowOverlapping: true`
+     * — so the recruiter doesn't have to re-click each tile after
+     * acknowledging the conflict.
+     */
+    overrideAction?: {
+      label: string;
+      workerIds: string[];
+      dayOverride?: string;
+    };
+  } | null>(null);
   const [resendLoadingAssignmentId, setResendLoadingAssignmentId] = useState<string | null>(null);
   const [resendCooldownUntilByAssignmentId, setResendCooldownUntilByAssignmentId] = useState<Record<string, number>>({});
   const [confirmLoadingAssignmentId, setConfirmLoadingAssignmentId] = useState<string | null>(null);
@@ -441,6 +470,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       lastName: userData.lastName || '',
       email: userData.email,
       phone: userData.phone,
+      phoneE164: userData.phoneE164,
+      phoneVerified: userData.phoneVerified === true,
       displayName: userData.displayName || `${userData.firstName || ''} ${userData.lastName || ''}`.trim(),
       city,
       state,
@@ -470,6 +501,28 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       inactiveAtAccounts: Array.isArray(userData.inactiveAtAccounts)
         ? (userData.inactiveAtAccounts as unknown as UserInactiveAtAccountEntry[])
         : undefined,
+      // Read the headshot/avatar verification status straight off the user doc.
+      // When this isn't 'approved', the worker is blocked from self-confirming
+      // shifts via respondToAssignment (Accept-flow headshot gate). Tile shows a
+      // "Headshot {status}" chip so the recruiter sees the blocker before sending
+      // the offer.
+      headshotStatus: (() => {
+        const av = userData.avatarVerification as { status?: string } | undefined;
+        if (!av) {
+          // No verification record at all → treat as missing for chip purposes
+          // (so it's visible). When the worker uploads their first photo, the
+          // onUserAvatarChangedVerify trigger creates the record.
+          return userData.avatar ? 'pending' : 'missing';
+        }
+        const s = String(av.status || '').toLowerCase();
+        if (s === 'approved') return 'approved';
+        if (s === 'pending' || s === 'rejected' || s === 'error') return s;
+        return 'missing';
+      })(),
+      headshotRejectionReason:
+        ((userData.avatarVerification as { rejectionReason?: string } | undefined)?.rejectionReason as
+          | string
+          | undefined) || undefined,
     };
   };
 
@@ -2121,7 +2174,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     return options;
   }
 
-  const assignWorkersToShift = async (workerIds: string[], dayOverride?: string) => {
+  const assignWorkersToShift = async (
+    workerIds: string[],
+    dayOverride?: string,
+    options?: { allowOverlapping?: boolean },
+  ) => {
     if (!selectedShift || !tenantId || !jobOrderId || workerIds.length === 0) {
       setError('Missing required information to assign shift');
       return;
@@ -2161,36 +2218,163 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       } else if (bulkDates.length > 0) {
         payload.applyDates = bulkDates;
       }
+      if (options?.allowOverlapping) {
+        // Recruiter explicitly overrode the overlap guard via the
+        // "Assign anyway" snackbar action (or programmatically). Server
+        // logs `overlapping_assignment_overridden` in warnings.
+        payload.allowOverlapping = true;
+      }
       const assignFn = httpsCallable(functions, 'placementsCreateAssignments');
       const response = await assignFn(payload);
 
       const data = response.data as any;
       const created = Array.isArray(data?.created) ? data.created : [];
       const createdCount = created.length;
-      const skipped = Array.isArray(data?.skipped) ? data.skipped : [];
+      const skipped: Array<{ userId: string; reason: string }> = Array.isArray(data?.skipped)
+        ? data.skipped
+        : [];
 
-      if (createdCount === 0 && skipped.length > 0) {
-        setError(`No assignments created. ${skipped.map((s: any) => s.reason).join(', ')}`);
+      // Soft-skip recovery (Kalijah Emmanuel bug, 2026-06-08): the server
+      // returns 200 with `{ created: [...], skipped: [{userId, reason}] }`
+      // when a worker can't be hired (overlapping_assignment,
+      // already_assigned_to_shift, user_not_found). The previous code only
+      // wrote a generic error string and left the optimistic
+      // `pendingHireWorkerIds` entry in place — which left the tile stuck
+      // on "Accepted" with no Confirm button because:
+      //   1. statusByUser had 'proposed' (from the optimistic injection)
+      //   2. idByUser had nothing (no real assignment doc ever existed)
+      //   3. the cleanup effect only fires when a row appears in
+      //      `assignmentRows`, which never happened for a skipped worker.
+      // Now we explicitly drop skipped uids from pendingHireWorkerIds so
+      // their tile flips back to "Click to Hire" + we surface a
+      // worker-specific error so the recruiter knows why.
+      if (skipped.length > 0) {
+        const skippedUserIds = new Set(skipped.map((s) => s?.userId).filter(Boolean) as string[]);
+        if (skippedUserIds.size > 0) {
+          setPendingHireWorkerIds((prev) => {
+            let changed = false;
+            const next = new Set(prev);
+            skippedUserIds.forEach((uid) => {
+              if (next.delete(uid)) changed = true;
+            });
+            return changed ? next : prev;
+          });
+        }
+      }
+
+      // Resolve a name for each worker in the batch (used by both the
+      // success toast + the failure breakdown).
+      const nameById = new Map<string, string>();
+      const allLists = [assignmentWorkersList, availableWorkers];
+      for (const list of allLists) {
+        for (const w of list) {
+          const nm = w.displayName || [w.firstName, w.lastName].filter(Boolean).join(' ').trim();
+          if (nm) nameById.set(w.id, nm);
+        }
+      }
+      const shiftLabel = selectedShift
+        ? String((selectedShift as any).title || (selectedShift as any).jobTitle || (selectedShift as any).name || 'this shift')
+        : 'this shift';
+
+      if (skipped.length > 0) {
+        // Build a worker-name-aware error so the recruiter sees who was
+        // rejected and why ("Jane Doe — already on another shift today").
+        const reasonLabel = (reason: string): string => {
+          switch (reason) {
+            case 'overlapping_assignment':
+              return 'already on another shift that overlaps this one';
+            case 'already_assigned_to_shift':
+              return 'already assigned to this shift';
+            case 'user_not_found':
+              return 'user record not found';
+            default:
+              return reason || 'unknown reason';
+          }
+        };
+        const lines = skipped.map((s) => {
+          const nm = nameById.get(s.userId) || s.userId.slice(0, 8);
+          return `${nm} — ${reasonLabel(s.reason)}`;
+        });
+        // If every skip is `overlapping_assignment`, the recruiter can
+        // override with one tap on the toast. Surface the action — same
+        // call again with allowOverlapping=true. Mixed-reason batches
+        // (e.g. one overlap + one user_not_found) don't get the action
+        // since the override only helps the overlap cases.
+        const overlappingUserIds = skipped
+          .filter((s) => s.reason === 'overlapping_assignment')
+          .map((s) => s.userId);
+        const allSkipsAreOverlap =
+          skipped.length > 0 && overlappingUserIds.length === skipped.length;
+        const overrideAction =
+          allSkipsAreOverlap && !options?.allowOverlapping
+            ? {
+                label: overlappingUserIds.length > 1 ? 'Assign all anyway' : 'Assign anyway',
+                workerIds: overlappingUserIds,
+                dayOverride,
+              }
+            : undefined;
+
+        if (createdCount === 0) {
+          const msg = `Could not assign: ${lines.join('; ')}`;
+          setError(msg);
+          setAssignToast({ message: msg, severity: 'error', overrideAction });
+        } else {
+          // Mixed batch: some hired, some skipped. Don't mask the
+          // partial success — but tell the recruiter what fell out.
+          const createdNames = created
+            .map((c: { userId: string }) => nameById.get(c.userId) || c.userId.slice(0, 8))
+            .join(', ');
+          const msg = `Assigned ${createdNames} to ${shiftLabel}. Skipped ${skipped.length}: ${lines.join('; ')}`;
+          setError(msg);
+          setAssignToast({ message: msg, severity: 'info', overrideAction });
+        }
       } else {
         setError(null);
-        created.forEach((entry: { userId: string; assignmentId: string }) => {
-          if (entry?.userId && entry?.assignmentId) {
-            logAssignmentUpdateActivity(entry.userId, entry.assignmentId, 'placed').catch((e) =>
-              console.warn('Failed to log assignment placed activity:', e)
-            );
-          }
-        });
+        if (createdCount > 0) {
+          const createdNames = created
+            .map((c: { userId: string }) => nameById.get(c.userId) || c.userId.slice(0, 8))
+            .join(', ');
+          setAssignToast({
+            message: `Assigned ${createdNames} to ${shiftLabel} — offer SMS sent.`,
+            severity: 'success',
+          });
+        }
       }
+
+      created.forEach((entry: { userId: string; assignmentId: string }) => {
+        if (entry?.userId && entry?.assignmentId) {
+          logAssignmentUpdateActivity(entry.userId, entry.assignmentId, 'placed').catch((e) =>
+            console.warn('Failed to log assignment placed activity:', e),
+          );
+        }
+      });
+
+      // Return so callers (handleConfirmPlacement, bulk hire) can tell
+      // whether their specific worker actually got hired. Without this,
+      // an all-skipped batch silently leaves the optimistic-hire flag
+      // stuck — the catch path below only fires for hard HttpsErrors.
+      return { created, skipped };
     } catch (err: any) {
       console.error('Error assigning workers to shift:', err);
       setError(err?.message || 'Failed to assign worker(s) to shift');
+      // Hard failure path — bubble so callers can revert their optimistic
+      // state and stop the chip from being stuck on "Accepted" forever.
+      throw err;
     }
   };
 
   // Handle assign to shift (create new assignment from pool). Pass selected day when set.
+  // `assignWorkersToShift` now throws on hard failures (HttpsError); the
+  // drag-and-drop callback that invokes this would silently warn if
+  // we let that bubble. Swallow with a console.error — assignWorkersToShift
+  // already calls setError() with a recruiter-readable message.
   const handleAssignToShift = async (worker: Worker, shift: Shift | undefined) => {
     if (!shift || !worker.id) return;
-    await assignWorkersToShift([worker.id], selectedDay || undefined);
+    try {
+      await assignWorkersToShift([worker.id], selectedDay || undefined);
+    } catch (err) {
+      console.error('handleAssignToShift failed:', err);
+    }
   };
 
   // Handle offering position: create Assignment (sends accept/decline message). Pass selected day so
@@ -2344,6 +2528,157 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       setError(err?.message || 'Failed to resend offer');
     } finally {
       setResendLoadingAssignmentId(null);
+    }
+  };
+
+  /**
+   * Per-worker confirmation resend. Mirrors `handleResendOffer` but for
+   * the post-confirmation state — the refresh icon next to the
+   * "Confirmed Jun X" timestamp on confirmed tiles. Sends the latest
+   * assignment-details email + a short SMS pointer to one worker.
+   * Shares loading + cooldown state with the offer-resend path so we
+   * don't burn one debounce on each (recruiter-intent is "resend this
+   * worker's message" regardless of which side of confirmation it is).
+   */
+  const handleResendConfirmation = async (worker: Worker) => {
+    if (!worker.assignmentId || !tenantId) return;
+    const aid = worker.assignmentId;
+    if (resendLoadingAssignmentId === aid) return;
+    const cooldownUntil = resendCooldownUntilByAssignmentId[aid] ?? 0;
+    if (Date.now() < cooldownUntil) return;
+    try {
+      setResendLoadingAssignmentId(aid);
+      setError(null);
+      const resendFn = httpsCallable(functions, 'resendAssignmentConfirmation');
+      await resendFn({ tenantId, assignmentId: aid });
+      setResendCooldownUntilByAssignmentId((prev) => ({ ...prev, [aid]: Date.now() + RESEND_COOLDOWN_MS }));
+    } catch (err: any) {
+      console.error('Error resending confirmation:', err);
+      setError(err?.message || 'Failed to resend confirmation');
+    } finally {
+      setResendLoadingAssignmentId(null);
+    }
+  };
+
+  /**
+   * Revert a declined OR cancelled assignment back to 'pending' (awaiting
+   * worker confirm). Recruiter clicks the red chip — for decline it's
+   * "undo the worker's decline so I can re-offer / confirm on their
+   * behalf"; for cancel it's "undo my mistake cancellation".
+   *
+   * Both call distinct server callables (`revertAssignmentDecline` /
+   * `revertAssignmentCancel`) because the application-side and audit
+   * field cleanup is status-specific. Multi-day "All days" mode sweeps
+   * every matching status row for the worker on this shift in one click.
+   */
+  const handleRevertTerminalStatus = async (
+    worker: Worker,
+    fromStatus: 'declined' | 'cancelled',
+  ) => {
+    if (!tenantId) return;
+    const matchStatus = (s: string | undefined): boolean =>
+      fromStatus === 'declined'
+        ? s === 'declined'
+        : s === 'cancelled' || s === 'canceled';
+    const targetAssignmentIds =
+      selectedDay === ''
+        ? assignmentRows
+            .filter((r) => r.userId === worker.id && matchStatus(r.status))
+            .map((r) => r.assignmentId)
+        : worker.assignmentId && matchStatus(worker.assignmentStatus)
+          ? [worker.assignmentId]
+          : [];
+    if (targetAssignmentIds.length === 0) return;
+    if (confirmLoadingAssignmentId === worker.id) return;
+    const fnName =
+      fromStatus === 'declined' ? 'revertAssignmentDecline' : 'revertAssignmentCancel';
+    const errorVerb = fromStatus === 'declined' ? 'revert decline' : 'revert cancellation';
+    try {
+      setConfirmLoadingAssignmentId(worker.id);
+      setError(null);
+      const revertFn = httpsCallable(functions, fnName);
+      await Promise.all(
+        targetAssignmentIds.map((aid) => revertFn({ tenantId, assignmentId: aid })),
+      );
+    } catch (err: any) {
+      console.error(`Error during ${errorVerb}:`, err);
+      setError(err?.message || `Failed to ${errorVerb}`);
+    } finally {
+      setConfirmLoadingAssignmentId(null);
+    }
+  };
+
+  const handleRevertDecline = (worker: Worker) => handleRevertTerminalStatus(worker, 'declined');
+  const handleRevertCancel = (worker: Worker) => handleRevertTerminalStatus(worker, 'cancelled');
+
+  /**
+   * Per-shift "resend confirmation to all confirmed staff" — fires the
+   * `resendShiftConfirmationsToConfirmedStaff` callable for the given
+   * shift. Each card has its own loading flag keyed by shiftId so two
+   * resends on different cards can run concurrently without their
+   * spinners colliding.
+   */
+  const [resendingShiftIds, setResendingShiftIds] = useState<Set<string>>(new Set());
+  const handleResendShiftConfirmations = async (shiftId: string) => {
+    if (!tenantId || !shiftId) return;
+    if (resendingShiftIds.has(shiftId)) return;
+    // Light client-side confirm prompt. The recruiter is about to send
+    // N emails + N SMSes; one tap of the icon shouldn't yeet that out
+    // without a sanity check. We don't list every worker by name (the
+    // card already shows them); the count is sufficient context.
+    const confirmedWorkerCount = assignmentRows.filter(
+      (r) =>
+        r.shiftId === shiftId &&
+        (r.status === 'confirmed' || r.status === 'active'),
+    ).length;
+    if (confirmedWorkerCount === 0) {
+      setError('No confirmed workers on this shift to resend to.');
+      return;
+    }
+    const ok = window.confirm(
+      `Resend the confirmation email and SMS to ${confirmedWorkerCount} confirmed worker${confirmedWorkerCount === 1 ? '' : 's'} on this shift?\n\n` +
+        'Each will receive the latest shift-details email (reflecting any recent edits to the JO/shift) plus a short SMS pointing them at it.',
+    );
+    if (!ok) return;
+    try {
+      setResendingShiftIds((prev) => {
+        const next = new Set(prev);
+        next.add(shiftId);
+        return next;
+      });
+      setError(null);
+      const resendFn = httpsCallable<
+        { tenantId: string; shiftId: string; jobOrderId?: string },
+        { sent: number; skipped: number; failed: number; totalConfirmed: number; errors: any[] }
+      >(functions, 'resendShiftConfirmationsToConfirmedStaff');
+      const { data } = await resendFn({
+        tenantId,
+        shiftId,
+        ...(jobOrderId ? { jobOrderId } : {}),
+      });
+      const parts: string[] = [];
+      if (data.sent > 0) parts.push(`✓ ${data.sent} sent`);
+      if (data.skipped > 0) parts.push(`⚠ ${data.skipped} skipped`);
+      if (data.failed > 0) parts.push(`✗ ${data.failed} failed`);
+      // Use the existing error banner channel since it's already
+      // surfaced inside the page — success messages render as info.
+      // (If/when a tenant adopts a real snackbar component we can
+      // swap this to severity='success'.)
+      window.alert(
+        `Resend complete for ${data.totalConfirmed} confirmed worker${data.totalConfirmed === 1 ? '' : 's'}.\n\n${parts.join(' · ') || 'No actionable results.'}` +
+          (data.errors && data.errors.length > 0
+            ? `\n\nFirst error: ${data.errors[0]?.error || 'unknown'}`
+            : ''),
+      );
+    } catch (err: any) {
+      console.error('Error resending shift confirmations:', err);
+      setError(err?.message || 'Failed to resend confirmations');
+    } finally {
+      setResendingShiftIds((prev) => {
+        const next = new Set(prev);
+        next.delete(shiftId);
+        return next;
+      });
     }
   };
 
@@ -3390,6 +3725,62 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           </Alert>
         )}
 
+        {/* Assign-click feedback toast (floats over content, visible
+            regardless of scroll). Auto-hides after 6s for success/info,
+            10s for errors so recruiters get longer to read why a click
+            was rejected. */}
+        <Snackbar
+          open={assignToast !== null}
+          // When there's an "Assign anyway" action, give the recruiter a
+          // generous window to react before the toast auto-dismisses —
+          // 20s vs the standard 10s for plain errors. Otherwise the
+          // override CTA evaporates while they're still reading the
+          // conflict message.
+          autoHideDuration={
+            assignToast?.overrideAction
+              ? 20_000
+              : assignToast?.severity === 'error'
+                ? 10_000
+                : 6_000
+          }
+          onClose={() => setAssignToast(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          {assignToast ? (
+            <Alert
+              severity={assignToast.severity}
+              variant="filled"
+              onClose={() => setAssignToast(null)}
+              sx={{ maxWidth: 720 }}
+              action={
+                assignToast.overrideAction ? (
+                  <Button
+                    color="inherit"
+                    size="small"
+                    onClick={() => {
+                      const action = assignToast.overrideAction;
+                      if (!action) return;
+                      setAssignToast(null);
+                      // Re-fire the same batch with the overlap guard
+                      // bypassed. Server logs `overlapping_assignment_overridden`
+                      // in `warnings` so the audit trail captures the
+                      // deliberate double-book.
+                      void assignWorkersToShift(action.workerIds, action.dayOverride, {
+                        allowOverlapping: true,
+                      });
+                    }}
+                    sx={{ fontWeight: 600 }}
+                  >
+                    {assignToast.overrideAction.label}
+                  </Button>
+                ) : undefined
+              }
+            >
+              {assignToast.message}
+            </Alert>
+          ) : undefined}
+        </Snackbar>
+
         {/* Content Area - two column board.
             Drawer mode (`lockedShiftId`) drops the Card chrome and
             tightens the gutter so the two columns read as a clean
@@ -3466,7 +3857,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         resendCooldownUntilByAssignmentId={resendCooldownUntilByAssignmentId}
                         onConfirmPlacement={handleConfirmPlacement}
                         onConfirmForWorker={handleConfirmForWorker}
+                        onRevertDecline={handleRevertDecline}
+                        onRevertCancel={handleRevertCancel}
+                        onResendConfirmations={() => void handleResendShiftConfirmations(shift.id)}
+                        resendingShiftConfirmations={resendingShiftIds.has(shift.id)}
                         onResendOffer={handleResendOffer}
+                        onResendConfirmation={handleResendConfirmation}
                         onCancelAssignment={(worker) => setCancelAssignmentWorker(worker)}
                         onOpenEditStartDate={handleOpenEditStartDate}
                         hiringEntityName={hiringEntityName}

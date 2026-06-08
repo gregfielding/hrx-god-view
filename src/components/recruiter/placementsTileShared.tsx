@@ -34,8 +34,11 @@ import {
   DirectionsBike as TransportBikeIcon,
   DirectionsWalk as TransportWalkIcon,
   MoreHoriz as TransportOtherIcon,
+  ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material';
 import type { SvgIconComponent } from '@mui/icons-material';
+import { formatPhoneNumber } from '../../utils/formatPhone';
+import { PhoneVerifiedInlineCheck } from '../PhoneVerifiedInlineCheck';
 
 import type { JobOrder } from '../../types/recruiter/jobOrder';
 import type { UserInactiveAtAccountEntry } from '../../shared/accountWorkforce';
@@ -79,6 +82,10 @@ export interface Worker {
   lastName: string;
   email?: string;
   phone?: string;
+  /** E.164 form when present (preferred for `tel:` hrefs). */
+  phoneE164?: string;
+  /** Twilio / verification pipeline marker. Drives the green check beside the phone. */
+  phoneVerified?: boolean;
   displayName?: string;
   city?: string;
   state?: string;
@@ -164,6 +171,23 @@ export interface Worker {
    * match the current account before rendering.
    */
   inactiveAtAccounts?: UserInactiveAtAccountEntry[];
+  /**
+   * Avatar/headshot verification status — read directly from
+   * `users/{uid}.avatarVerification.status`. When this isn't `approved`,
+   * the worker is blocked from self-confirming a shift via
+   * `respondToAssignment` (headshot accept-gate). The placement tile
+   * surfaces this as a "Headshot {status}" chip so the recruiter knows
+   * BEFORE clicking offer that the worker can't self-confirm — they can
+   * either approve the headshot first or plan to use "Confirm For Worker"
+   * which bypasses the gate.
+   *
+   * Only one of {'pending'|'rejected'|'error'|'missing'} is rendered as a
+   * chip; `approved` means no chip. Undefined means we never wrote a
+   * verification record — treated as `missing` for display purposes.
+   */
+  headshotStatus?: 'approved' | 'pending' | 'rejected' | 'error' | 'missing';
+  /** When rejected, the localized reason key (e.g. `no_face`, `too_dark`). */
+  headshotRejectionReason?: string;
 }
 
 export const WORKER_DRAG_MIME = 'application/x-hrx-worker-id';
@@ -407,6 +431,62 @@ function placementScreeningIconSx(state: ScreeningSignalState, active: boolean):
   if (state === 'issue') return { fontSize: 15, color: 'error.main' };
   if (state === 'missing') return { fontSize: 15, color: 'info.main' };
   return { fontSize: 15, color: 'text.secondary' };
+}
+
+/**
+ * Phone-number row mirroring the record-header pattern:
+ *   `(555) 123-4567   ✅   📋`
+ * - Formatted number (`utils/formatPhone.formatPhoneNumber`)
+ * - Green inline check from `PhoneVerifiedInlineCheck` when `phoneVerified === true`
+ * - Copy-to-clipboard icon button next to it
+ *
+ * Renders nothing when no phone is on the worker doc — keeps the tile
+ * compact for workers we haven't captured a number for yet.
+ */
+function PlacementTilePhoneRow({ worker }: { worker: Worker }): JSX.Element | null {
+  const phoneRaw = worker.phoneE164 || worker.phone || '';
+  if (!phoneRaw) return null;
+  const phoneDisplay = formatPhoneNumber(String(phoneRaw));
+  const handleCopy = async (e: React.MouseEvent): Promise<void> => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(phoneDisplay);
+    } catch {
+      /* clipboard may be denied in some browser sandboxes — ignore */
+    }
+  };
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25, mt: 0.25 }}>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ lineHeight: 1.2, fontSize: '0.7rem', minWidth: 0 }}
+      >
+        {phoneDisplay}
+      </Typography>
+      <PhoneVerifiedInlineCheck verified={Boolean(worker.phoneVerified)} />
+      <Tooltip title="Copy phone number" arrow placement="top" {...placementTileTooltipSlotProps}>
+        <IconButton
+          size="small"
+          aria-label="Copy phone number"
+          onClick={handleCopy}
+          sx={{
+            p: 0.125,
+            ml: 0.125,
+            flexShrink: 0,
+            color: 'text.secondary',
+            minWidth: 18,
+            width: 18,
+            height: 18,
+            borderRadius: 0.75,
+            '&:hover': { color: 'primary.main', bgcolor: 'action.hover' },
+          }}
+        >
+          <ContentCopyIcon sx={{ fontSize: 11 }} />
+        </IconButton>
+      </Tooltip>
+    </Box>
+  );
 }
 
 /** Job-order screening: compact icons + tooltips (Placements tiles). Required certs use chips in the qualification row. */
@@ -1092,6 +1172,13 @@ export function PlacementWorkerTileMainColumn({
       ) : null}
       */}
       {row3}
+      {/* Phone line — mirrors the record-header pattern (formatted number +
+          green verified check + copy-to-clipboard button). Recruiters use
+          this directly off the tile so they don't have to click into the
+          user record to dial / copy the number when coordinating from the
+          placements view. Same `phoneVerified` field that powers the chip
+          on the worker profile header. */}
+      <PlacementTilePhoneRow worker={worker} />
       <PlacementTileReadinessIconRow jobOrder={jobOrder} worker={worker} leadingSlot={profileActionIcons} />
       {/* Bottom row (rewritten 2026-05-23 per Greg's chip-redesign spec):
           exactly two chips — Employee + Job — regardless of column or
@@ -1113,6 +1200,56 @@ export function PlacementWorkerTileMainColumn({
           jobOrder={jobOrder}
           worker={worker}
         />
+        {/* Headshot status chip — only shown when status != 'approved' (so it
+            doesn't add noise for ready workers). When the worker tries to
+            self-confirm a shift via `respondToAssignment`, the server's
+            headshot accept-gate rejects unless this is 'approved'. Surfacing
+            it here lets the recruiter (a) approve their photo first, OR
+            (b) plan to use "Confirm For Worker" which bypasses the gate. */}
+        {worker.headshotStatus && worker.headshotStatus !== 'approved' && (
+          <Tooltip
+            title={(() => {
+              const reason = worker.headshotRejectionReason
+                ? ` (reason: ${worker.headshotRejectionReason.replace(/_/g, ' ')})`
+                : '';
+              switch (worker.headshotStatus) {
+                case 'pending':
+                  return `Headshot uploaded but still under review${reason}. Worker can't self-confirm shifts yet.`;
+                case 'rejected':
+                  return `Headshot was rejected${reason}. Worker can't self-confirm shifts until they reupload AND it passes review.`;
+                case 'error':
+                  return `Headshot verification errored${reason}. Worker can't self-confirm; ask them to reupload.`;
+                case 'missing':
+                default:
+                  return "No headshot on file. Worker can't self-confirm shifts via the link in the SMS until they upload + a recruiter or auto-verification approves it.";
+              }
+            })()}
+            placement="top"
+            enterDelay={250}
+            {...placementTileTooltipSlotProps}
+          >
+            <Chip
+              size="small"
+              label={
+                worker.headshotStatus === 'pending'
+                  ? 'Headshot Pending'
+                  : worker.headshotStatus === 'rejected'
+                    ? 'Headshot Rejected'
+                    : worker.headshotStatus === 'error'
+                      ? 'Headshot Error'
+                      : 'Headshot Missing'
+              }
+              color={worker.headshotStatus === 'pending' ? 'warning' : 'error'}
+              variant="outlined"
+              sx={{
+                height: 22,
+                fontWeight: 600,
+                fontSize: 11,
+                '& .MuiChip-label': { px: 0.75 },
+              }}
+            />
+          </Tooltip>
+        )}
         {row4End}
         {actions ? (
           <Box sx={{ ml: 'auto', display: 'flex', alignItems: 'center', gap: 0.5 }}>{actions}</Box>

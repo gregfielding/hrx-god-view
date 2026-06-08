@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { httpsCallable } from 'firebase/functions';
 import UniversalBackButton from '../components/common/UniversalBackButton';
 import {
   Box,
@@ -33,7 +34,7 @@ import {
   CalendarMonth as CalendarMonthIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, functions } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import type { ClaimsRole } from '../contexts/AuthContext';
 import { useWorkerPreferredLanguage } from '../hooks/useWorkerPreferredLanguage';
@@ -214,7 +215,30 @@ function canViewAssignmentAsTenantStaff(
 const AssignmentDetails: React.FC = () => {
   const { assignmentId } = useParams<{ assignmentId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, activeTenant, tenantIds, recruiterEnabled, claimsRoles } = useAuth();
+  /**
+   * One-click ACCEPT intent handler (SMS link → `?intent=accept`).
+   *
+   * Worker taps the ACCEPT link in their offer SMS, lands here, and we
+   * synchronously fire `respondToAssignment({decision:'accept'})` on
+   * mount so they never have to tap a separate button. This replaces
+   * the legacy flow where SMS → jobs-board landing page → Accept
+   * button → (only THEN) callable fires; recruiter feedback showed
+   * workers were stalling at the landing page and never confirming.
+   *
+   * Idempotency: we skip when status is already terminal
+   * (confirmed/active/declined/cancelled) and strip the `intent` query
+   * param after firing so a refresh / share doesn't re-fire.
+   *
+   * Auth: the page is gated by the worker auth shell — unauth users
+   * hit login first, then return here with the query intact, then this
+   * effect fires.
+   */
+  const [acceptIntentState, setAcceptIntentState] = useState<
+    'idle' | 'firing' | 'success' | 'error' | 'skipped'
+  >('idle');
+  const [acceptIntentError, setAcceptIntentError] = useState<string | null>(null);
   const preferredLanguage = useWorkerPreferredLanguage();
   const t = useT();
   const [assignment, setAssignment] = useState<AssignmentDetails | null>(null);
@@ -356,6 +380,73 @@ const AssignmentDetails: React.FC = () => {
     loadShift();
     return () => { cancelled = true; };
   }, [assignment?.tenantId, assignment?.jobOrderId, assignment?.shiftId]);
+
+  // One-click ACCEPT intent handler — see field comment above for
+  // rationale. Runs as soon as the assignment is loaded; idempotent.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const intent = params.get('intent');
+    if (intent !== 'accept') return;
+    if (!assignment?.tenantId || !assignment?.id) return;
+    if (!user?.uid) return;
+    if (acceptIntentState !== 'idle') return;
+
+    const status = String(assignment.status || '').toLowerCase();
+    // Already terminal — nothing to do, just clean up the URL so a
+    // refresh doesn't show the toast again.
+    if (['confirmed', 'active', 'declined', 'cancelled'].includes(status)) {
+      setAcceptIntentState('skipped');
+      params.delete('intent');
+      const next = params.toString();
+      navigate({ pathname: location.pathname, search: next ? `?${next}` : '' }, { replace: true });
+      return;
+    }
+
+    setAcceptIntentState('firing');
+    const callable = httpsCallable(functions, 'respondToAssignment');
+    callable({
+      tenantId: assignment.tenantId,
+      assignmentId: assignment.id,
+      decision: 'accept',
+    })
+      .then(() => {
+        setAcceptIntentState('success');
+        params.delete('intent');
+        const next = params.toString();
+        navigate(
+          { pathname: location.pathname, search: next ? `?${next}` : '' },
+          { replace: true },
+        );
+        // Soft refresh of the assignment doc so the page reflects the new
+        // status — easier than re-running the full load effect.
+        (async () => {
+          try {
+            const ref = doc(db, 'tenants', assignment.tenantId!, 'assignments', assignment.id!);
+            const snap = await getDoc(ref);
+            if (snap.exists()) {
+              const d = snap.data() as Record<string, unknown>;
+              setAssignment((prev) => (prev ? { ...prev, status: String(d.status || prev.status) } : prev));
+            }
+          } catch (err) {
+            console.warn('[AssignmentDetails] soft-refresh after accept failed', err);
+          }
+        })();
+      })
+      .catch((err: any) => {
+        console.error('[AssignmentDetails] one-click accept failed', err);
+        setAcceptIntentState('error');
+        setAcceptIntentError(err?.message || 'Could not accept this assignment.');
+      });
+  }, [
+    location.search,
+    location.pathname,
+    navigate,
+    assignment?.tenantId,
+    assignment?.id,
+    assignment?.status,
+    user?.uid,
+    acceptIntentState,
+  ]);
 
   useEffect(() => {
     if (!assignment?.tenantId || !assignment?.jobOrderId) {
@@ -1212,6 +1303,26 @@ const AssignmentDetails: React.FC = () => {
       <Box sx={{ mb: 2 }}>
         <SmsWarningBanner />
       </Box>
+      {/* One-click ACCEPT banner — shown when worker arrives via the
+          `?intent=accept` SMS link. Replaces the legacy "tap ACCEPT
+          button on the landing page" friction step. */}
+      {acceptIntentState === 'firing' && (
+        <Alert severity="info" icon={<CircularProgress size={16} />} sx={{ mb: 2 }}>
+          Accepting your assignment…
+        </Alert>
+      )}
+      {acceptIntentState === 'success' && (
+        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setAcceptIntentState('idle')}>
+          You&apos;ve accepted this assignment. The details are below — please review the
+          start time, location, and what to bring.
+        </Alert>
+      )}
+      {acceptIntentState === 'error' && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setAcceptIntentState('idle')}>
+          We couldn&apos;t accept this assignment automatically: {acceptIntentError || 'unknown error'}.
+          Scroll down and tap Accept manually, or contact your recruiter.
+        </Alert>
+      )}
       {/* Header */}
       <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 3 }} flexWrap="wrap" useFlexGap>
         <Typography variant="h4" sx={{ flexGrow: 1, fontWeight: 700 }}>

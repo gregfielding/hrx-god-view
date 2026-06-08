@@ -84,8 +84,109 @@ function safeClockInHref(raw: unknown): string | null {
   }
 }
 
+/**
+ * Convert plain text to HTML with newlines as `<br>` AND auto-linkify URLs
+ * + US phone numbers.
+ *
+ * Used for every user-provided text section in the confirmation email
+ * (parking, check-in, first-day instructions, what-to-bring, additional
+ * notes, shift description, uniform, email intro). Recruiters paste
+ * Apple/Google Maps links + Streetcar info + carrier portal URLs + venue
+ * contact phone numbers into these fields and expect them to be
+ * clickable in the email.
+ *
+ * Pipeline:
+ *   1. Escape HTML so the input can't inject tags
+ *   2. Replace newlines with `<br>`
+ *   3. Detect URLs (http://, https://, and bare `www.` forms) in the
+ *      already-escaped output and wrap them in `<a>` tags
+ *
+ * URL matching:
+ *   - `https?://` + non-space chars up to whitespace, `<`, or `>`
+ *   - bare `www.` URLs are also caught (and rewritten to `https://www.`
+ *     for the href; the visible text stays as the user typed it)
+ *
+ * Trailing punctuation (`.`, `,`, `;`, `:`, `!`, `?`, `)`, `]`) is trimmed
+ * off the URL so prose like "see https://example.com." doesn't include
+ * the period in the link. The trimmed chars are re-emitted after the
+ * closing `</a>` so the rendered text matches the input.
+ *
+ * IMPORTANT: HTML-escaping comes first, so a URL like
+ * `?a=1&b=2` becomes `?a=1&amp;b=2` in the matched text. Mail clients
+ * (Gmail, Outlook, Apple Mail) all correctly decode `&amp;` in `href`
+ * attributes back to `&` when the user clicks. The visible link text
+ * also renders correctly because the browser/mail client decodes
+ * `&amp;` → `&` when rendering anchor children. So escape-then-linkify
+ * is safe and produces the right output.
+ */
 function nl2br(s: string): string {
-  return escapeHtml(s).replace(/\n/g, '<br>\n');
+  const escaped = escapeHtml(s).replace(/\n/g, '<br>\n');
+  return linkifyUrls(escaped);
+}
+
+/** Trailing chars that almost always belong to surrounding prose, not the URL. */
+const URL_TRAILING_PUNCT = /[.,;:!?)\]]+$/;
+
+/**
+ * Match URLs OR US phone numbers in one pass. URL alternatives come first
+ * so the regex engine prefers them when both could match (e.g., a phone
+ * number embedded in a URL query string is consumed by the URL match).
+ *
+ * Phone matching is conservative: requires at least one explicit separator
+ * (space, dash, dot, or parens around area code) so we don't grab arbitrary
+ * 10-digit numeric strings like account numbers or timestamps. Patterns we
+ * match:
+ *   (555) 123-4567
+ *   555-123-4567
+ *   555.123.4567
+ *   555 123 4567
+ *   +1 555 123 4567
+ *   1-555-123-4567
+ *
+ * Patterns we DON'T match (intentional):
+ *   5551234567   — bare 10 digits, ambiguous with account numbers
+ *   7:15a-8:30a  — `:` isn't a recognized phone separator
+ *   12345-6789   — ZIP+4 is 5-4 not 3-3-4
+ *   123-45-6789  — SSN is 3-2-4 not 3-3-4
+ */
+const URL_OR_PHONE_REGEX =
+  /(https?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+|(?:\+?1[-.\s])?\(?\b\d{3}\)?[-.\s]\d{3}[-.\s]?\d{4}\b)/g;
+
+function linkifyUrls(html: string): string {
+  return html.replace(URL_OR_PHONE_REGEX, (match) => {
+    const isUrl = /^(https?:\/\/|www\.)/i.test(match);
+    if (isUrl) {
+      // Trim trailing punctuation off the URL so "see https://example.com."
+      // doesn't include the period. Re-emit the punctuation after the </a>.
+      const trailingMatch = match.match(URL_TRAILING_PUNCT);
+      const trailing = trailingMatch ? trailingMatch[0] : '';
+      const url = trailing ? match.slice(0, match.length - trailing.length) : match;
+      // Safety: if after trimming there's no URL body left (e.g., the match
+      // was just `https://` or `www.`), bail and leave as-is.
+      if (url === 'https://' || url === 'http://' || url === 'www.') return match;
+      // href: bare `www.X` → `https://www.X`. We don't try to validate the URL
+      // beyond that — the user typed it; trust them. (Email clients sandbox.)
+      // The escaped `&amp;` in the URL stays escaped in the href; clicking
+      // decodes it correctly per the function-level comment above.
+      const href = url.startsWith('www.') ? `https://${url}` : url;
+      return `<a href="${href}" target="_blank" rel="noopener noreferrer" style="color:#1976d2; word-break:break-all;">${url}</a>${trailing}`;
+    }
+    // Phone branch. Normalize to E.164 (+1NXXNXXXXXX) for the tel: href so
+    // mobile dialers parse it consistently. Visible text stays as the user
+    // typed it.
+    const digits = match.replace(/\D/g, '');
+    let e164: string;
+    if (digits.length === 10) {
+      e164 = `+1${digits}`;
+    } else if (digits.length === 11 && digits.startsWith('1')) {
+      e164 = `+${digits}`;
+    } else {
+      // Weird digit count — leave as plain text so we don't generate a
+      // broken tel: link.
+      return match;
+    }
+    return `<a href="tel:${e164}" style="color:#1976d2;">${match}</a>`;
+  });
 }
 
 /** Same section keys as worker Assignment Details (see src/pages/AssignmentDetails.tsx). */

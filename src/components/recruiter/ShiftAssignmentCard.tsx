@@ -37,11 +37,13 @@ import {
   Error as ErrorIcon,
   ExpandLess as ExpandLessIcon,
   ExpandMore as ExpandMoreIcon,
+  ForwardToInbox as ForwardToInboxIcon,
   GetApp as GetAppIcon,
   Lock as LockedIcon,
   LockOpen as UnlockedIcon,
   Refresh as RefreshIcon,
   Sms as SmsIcon,
+  Visibility as VisibilityIcon,
 } from '@mui/icons-material';
 
 import type { JobOrder } from '../../types/recruiter/jobOrder';
@@ -121,6 +123,16 @@ export interface ShiftAssignmentCardProps {
   // ── Export / Preview ────────────────────────────────────────────────
   onExportAssignmentsCsv: () => void;
   onPreviewEmail: () => void;
+  /**
+   * Resend the confirmation email (+ short SMS ping) to every confirmed
+   * worker on this shift. Fires the `resendShiftConfirmationsToConfirmedStaff`
+   * callable. Recruiter typically uses this when the JO's check-in
+   * instructions / parking / start time changed and they want every
+   * confirmed worker to see the latest details.
+   */
+  onResendConfirmations: () => void;
+  /** Spinner state for the resend icon button. */
+  resendingShiftConfirmations?: boolean;
 
   // ── Drag-and-drop dropzone state ────────────────────────────────────
   isAssignmentDragOver: boolean;
@@ -137,7 +149,29 @@ export interface ShiftAssignmentCardProps {
   onConfirmPlacement: (worker: Worker) => void;
   onConfirmForWorker: (worker: Worker) => void;
   onResendOffer: (worker: Worker) => void;
+  /**
+   * Per-worker confirmation resend — fires next to the "Confirmed Jun X"
+   * timestamp on confirmed tiles. Sends the latest assignment-details
+   * email + a short SMS pointer. Shares loading + cooldown state with
+   * the offer-resend path.
+   */
+  onResendConfirmation: (worker: Worker) => void;
   onCancelAssignment: (worker: Worker) => void;
+  /**
+   * Revert a declined assignment back to 'pending' so the recruiter can
+   * re-offer / re-confirm. Clicking the red Declined chip calls this.
+   * Loading state is shared with the confirm-for-worker handler since
+   * the chip itself swaps in for the Accept/Confirm controls.
+   */
+  onRevertDecline: (worker: Worker) => void;
+  /**
+   * Symmetric undo for the red Cancelled chip — flips a cancelled
+   * assignment back to 'pending' so the recruiter can un-do an
+   * accidental cancellation. Only meaningful when the assignment doc
+   * still has status='cancelled' (i.e., the cancel flow's downstream
+   * delete-and-replace-with-placement step hasn't completed yet).
+   */
+  onRevertCancel: (worker: Worker) => void;
   onOpenEditStartDate: (worker: Worker) => void;
 
   // ── Tile readiness/blocker data (forwarded to PlacementWorkerTileMainColumn) ──
@@ -196,6 +230,8 @@ export function ShiftAssignmentCard({
   onOpenBulkSmsDrawer,
   onExportAssignmentsCsv,
   onPreviewEmail,
+  onResendConfirmations,
+  resendingShiftConfirmations,
   isAssignmentDragOver,
   onAssignmentsDragOver,
   onAssignmentsDragLeave,
@@ -208,7 +244,10 @@ export function ShiftAssignmentCard({
   onConfirmPlacement,
   onConfirmForWorker,
   onResendOffer,
+  onResendConfirmation,
   onCancelAssignment,
+  onRevertDecline,
+  onRevertCancel,
   onOpenEditStartDate,
   hiringEntityName,
   entityEmploymentByUserId,
@@ -387,8 +426,8 @@ export function ShiftAssignmentCard({
               })()}
             </Box>
           </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: '0 0 auto', ml: 'auto' }}>
-            <Tooltip title="Export">
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flex: '0 0 auto', ml: 'auto' }}>
+            <Tooltip title="Export confirmed staff as CSV">
               <span>
                 <IconButton
                   size="small"
@@ -400,28 +439,40 @@ export function ShiftAssignmentCard({
                 </IconButton>
               </span>
             </Tooltip>
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={<EmailIcon sx={{ fontSize: '0.85rem' }} />}
-              disabled={!selectedShiftId}
-              onClick={onPreviewEmail}
-              title="Preview the confirmation email workers receive (staff details, parking, check-in, attachments)"
-              sx={{
-                minWidth: 0,
-                py: 0.125,
-                px: 0.75,
-                minHeight: 24,
-                lineHeight: 1.2,
-                fontSize: '0.7rem',
-                fontWeight: 600,
-                textTransform: 'none',
-                borderRadius: '20px',
-                '& .MuiButton-startIcon': { mr: 0.5 },
-              }}
-            >
-              Preview
-            </Button>
+            <Tooltip title="Preview the confirmation email workers receive (staff details, parking, check-in, attachments)">
+              <span>
+                <IconButton
+                  size="small"
+                  disabled={!selectedShiftId}
+                  onClick={onPreviewEmail}
+                  aria-label="Preview confirmation email"
+                >
+                  <VisibilityIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title="Resend the latest confirmation email + SMS to every confirmed worker on this shift">
+              <span>
+                <IconButton
+                  size="small"
+                  disabled={
+                    !selectedShiftId ||
+                    !displayedAssignedWorkers.some(
+                      (w) => w.assignmentStatus === 'confirmed' || w.assignmentStatus === 'active',
+                    ) ||
+                    resendingShiftConfirmations
+                  }
+                  onClick={onResendConfirmations}
+                  aria-label="Resend confirmation to confirmed staff"
+                >
+                  {resendingShiftConfirmations ? (
+                    <CircularProgress size={16} />
+                  ) : (
+                    <ForwardToInboxIcon fontSize="small" />
+                  )}
+                </IconButton>
+              </span>
+            </Tooltip>
           </Box>
         </Box>
         <Collapse in={showBody} timeout="auto" unmountOnExit={false}>
@@ -648,7 +699,19 @@ export function ShiftAssignmentCard({
                               </IconButton>
                             </Tooltip>
                           )}
-                          <Tooltip title={offeringThis ? 'Sending offer…' : isPlacementOnly ? 'Click to offer position (sends accept/decline message)' : isDeclined ? 'Worker declined this assignment' : isCancelled ? 'Assignment was cancelled' : undefined}>
+                          <Tooltip
+                            title={
+                              offeringThis
+                                ? 'Sending offer…'
+                                : isPlacementOnly
+                                  ? 'Click to offer position (sends accept/decline message)'
+                                  : isDeclined
+                                    ? 'Worker declined this assignment. Click to revert — restores Accepted / Confirm so you can re-offer or confirm on their behalf.'
+                                    : isCancelled
+                                      ? 'Assignment was cancelled. Click to undo — restores Accepted / Confirm.'
+                                      : undefined
+                            }
+                          >
                             <Chip
                               size="small"
                               label={statusLabel}
@@ -666,11 +729,28 @@ export function ShiftAssignmentCard({
                                   <LockedIcon />
                                 )
                               }
-                              onClick={isPlacementOnly && !offeringThis ? () => onConfirmPlacement(worker) : undefined}
+                              onClick={
+                                isPlacementOnly && !offeringThis
+                                  ? () => onConfirmPlacement(worker)
+                                  : isDeclined && confirmLoadingAssignmentId !== worker.id
+                                    ? () => onRevertDecline(worker)
+                                    : isCancelled && confirmLoadingAssignmentId !== worker.id
+                                      ? () => onRevertCancel(worker)
+                                      : undefined
+                              }
                               disabled={offeringThis}
                               sx={{
                                 ...placementActionChipSx,
                                 ...(isPlacementOnly && !offeringThis && {
+                                  cursor: 'pointer',
+                                  zIndex: 50,
+                                  position: 'relative',
+                                  '&:hover': { opacity: 0.9 },
+                                }),
+                                // Both Declined and Cancelled chips are clickable to
+                                // revert. Same hover affordance as the placement-only
+                                // chip so the recruiter sees they're interactive.
+                                ...((isDeclined || isCancelled) && confirmLoadingAssignmentId !== worker.id && {
                                   cursor: 'pointer',
                                   zIndex: 50,
                                   position: 'relative',
@@ -731,21 +811,39 @@ export function ShiftAssignmentCard({
                                   ? `Offer sent ${new Date(worker.assignmentOfferSentAt).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}`
                                   : null}
                             </Typography>
-                            {!isConfirmed && worker.assignmentOfferSentAt != null && (() => {
+                            {(() => {
+                              // One refresh icon serves both states:
+                              //   - Pre-confirm (offer-sent): fires `onResendOffer`
+                              //   - Post-confirm: fires `onResendConfirmation`
+                              // Both share loading + cooldown state since the recruiter's
+                              // intent is "resend this worker's message" regardless of
+                              // which side of confirmation it is.
+                              const showOfferResend = !isConfirmed && worker.assignmentOfferSentAt != null;
+                              const showConfirmResend = isConfirmed && worker.assignmentConfirmedAt != null;
+                              if (!showOfferResend && !showConfirmResend) return null;
                               const aid = worker.assignmentId ?? '';
                               const loading = resendLoadingAssignmentId === aid;
                               const cooldownUntil = resendCooldownUntilByAssignmentId[aid] ?? 0;
                               const inCooldown = Date.now() < cooldownUntil;
                               const disabled = loading || inCooldown;
+                              const tooltip = inCooldown
+                                ? 'Please wait before resending'
+                                : showConfirmResend
+                                  ? 'Resend confirmation details (email + SMS) to this worker'
+                                  : 'Resend offer (SMS + push + email)';
+                              const ariaLabel = showConfirmResend ? 'Resend confirmation' : 'Resend offer';
+                              const handler = showConfirmResend
+                                ? () => onResendConfirmation(worker)
+                                : () => onResendOffer(worker);
                               return (
-                                <Tooltip title={inCooldown ? 'Please wait before resending' : 'Resend offer (SMS + push + email)'}>
+                                <Tooltip title={tooltip}>
                                   <span>
                                     <IconButton
                                       size="small"
                                       sx={{ p: 0, color: 'text.secondary' }}
-                                      onClick={() => onResendOffer(worker)}
+                                      onClick={handler}
                                       disabled={disabled}
-                                      aria-label="Resend offer"
+                                      aria-label={ariaLabel}
                                     >
                                       <RefreshIcon
                                         sx={{

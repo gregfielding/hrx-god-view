@@ -108,6 +108,22 @@ const JobPostingDetail: React.FC = () => {
   const [applicationDocId, setApplicationDocId] = useState<string | null>(null);
   const [applicationJobScore, setApplicationJobScore] = useState<JobScoreSummaryStored | null>(null);
   const [acceptedAssignmentId, setAcceptedAssignmentId] = useState<string | null>(null);
+  /**
+   * One-click DECLINE intent state (SMS link → `?intent=decline&assignmentId=…`).
+   *
+   * Lands the worker on this job-post page instead of the assignment
+   * details page so they can immediately re-apply to a different shift
+   * after declining. The effect below fires `respondToAssignment` on
+   * mount, surfaces a confirmation banner, and strips the intent query
+   * so a refresh / share doesn't re-fire the decline.
+   *
+   * Idempotency mirrors the AssignmentDetails accept handler — skip
+   * when status is already terminal, fire only once per visit.
+   */
+  const [declineIntentState, setDeclineIntentState] = useState<
+    'idle' | 'firing' | 'success' | 'error' | 'skipped'
+  >('idle');
+  const [declineIntentError, setDeclineIntentError] = useState<string | null>(null);
   const [assignmentStartDate, setAssignmentStartDate] = useState<any>(null); // recruiter-set start date when worker has assignment
   const [assignmentData, setAssignmentData] = useState<any>(null); // full assignment doc when in accept/decline mode
   const [scheduleShiftData, setScheduleShiftData] = useState<any>(null); // shift doc for schedule card
@@ -799,8 +815,81 @@ const JobPostingDetail: React.FC = () => {
           });
         });
 
+        // ASSIGNMENT-DRIVEN STATUS OVERLAY.
+        //
+        // Applications-only logic above misses the post-placement state
+        // transitions — a worker can have an `accepted`/`hired` application
+        // AND a separate `pending` assignment doc that means "the recruiter
+        // just offered you a specific shift, please confirm or decline".
+        // The jobs-board's per-shift card needs to render green Confirm /
+        // red Decline buttons in that state (ShiftSelector already handles
+        // it when shiftStatus === 'accepted'), but the old query never
+        // populated assignment status, so workers saw the wrong control.
+        //
+        // Pull every active assignment doc for this user × this JO and
+        // overlay its status onto `statuses` keyed by `${shiftId}__${day}`
+        // (day-scoped) and `${shiftId}` (legacy fallback). Assignment
+        // status wins over application status because it's the more
+        // specific signal — once you've been offered the shift, the
+        // application is moot from the worker's perspective.
+        //
+        //   pending / proposed                → 'accepted' (UI label for "offered, awaiting your response")
+        //   confirmed / active / in_progress  → 'confirmed'
+        //   declined / cancelled / completed  → skip (terminal — worker already
+        //                                       made their decision OR shift is done)
+        if (posting?.jobOrderId) {
+          try {
+            const assignmentsRef = collection(db, 'tenants', resolvedTenantId, 'assignments');
+            const assignmentsQ = query(
+              assignmentsRef,
+              where('userId', '==', user.uid),
+              where('jobOrderId', '==', posting.jobOrderId),
+            );
+            const assignmentsSnap = await getDocs(assignmentsQ);
+            assignmentsSnap.forEach((d) => {
+              const a = d.data() as Record<string, unknown>;
+              const rawStatus = String(a.status || '').trim().toLowerCase();
+              if (!rawStatus) return; // phantom doc — same defensive check as the server guard
+              const uiStatus = ((): string | null => {
+                switch (rawStatus) {
+                  case 'pending':
+                  case 'proposed':
+                    return 'accepted';
+                  case 'confirmed':
+                  case 'active':
+                  case 'in_progress':
+                    return 'confirmed';
+                  default:
+                    return null; // declined / cancelled / completed / etc.
+                }
+              })();
+              if (!uiStatus) return;
+              const sId = String(a.shiftId || '');
+              if (!sId) return;
+              const startDate = String(a.startDate || '').slice(0, 10);
+              const dayKey = startDate ? `${sId}__${startDate}` : null;
+              // ShiftSelector renders day-rows for multi-day gigs and
+              // shift-rows otherwise — write both keys so whichever it
+              // looks up resolves. 'confirmed' > 'accepted' in precedence
+              // so a multi-shift state doesn't downgrade itself.
+              const writeKey = (key: string) => {
+                const existing = statuses[key];
+                if (existing === 'confirmed') return;
+                if (uiStatus === 'confirmed' || !existing) {
+                  statuses[key] = uiStatus;
+                  if (!applied.includes(key)) applied.push(key);
+                }
+              };
+              writeKey(sId);
+              if (dayKey) writeKey(dayKey);
+            });
+          } catch (assignErr) {
+            console.warn('loadAppliedShifts: assignment overlay failed', assignErr);
+          }
+        }
+
         console.log(`✅ Loaded applied shifts for user ${user.uid}:`, applied);
-        console.log(`✅ Shift statuses:`, statuses);
+        console.log(`✅ Shift statuses (after assignment overlay):`, statuses);
         setAppliedShifts(applied);
         setShiftStatuses(statuses);
       } catch (err) {
@@ -833,16 +922,157 @@ const JobPostingDetail: React.FC = () => {
     };
   }, [user?.uid, resolvedTenantId, postId, posting?.jobOrderId, dynamicShifts.length, appliedShiftsRefresh]);
 
-  const handleApplyToShift = (shiftId: string, applyDate?: string) => {
+  /**
+   * One-click DECLINE intent handler. Fires when the worker arrives via
+   * the offer SMS's DECLINE link (`?intent=decline&assignmentId=...`).
+   * Same idempotency contract as the AssignmentDetails accept handler.
+   *
+   * Why this lives on JobPostingDetail (and not the assignment page):
+   * after declining, the worker should see *other shifts* on the same
+   * JO so they can re-apply if they declined the wrong one. Landing
+   * them on the assignment detail page would just leave them stuck
+   * staring at the declined assignment.
+   */
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('intent') !== 'decline') return;
+    const aid = params.get('assignmentId');
+    if (!aid) return;
+    if (!user?.uid || !resolvedTenantId) return;
+    if (declineIntentState !== 'idle') return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const assignmentRef = doc(db, 'tenants', resolvedTenantId, 'assignments', aid);
+        const snap = await getDoc(assignmentRef);
+        if (cancelled) return;
+        const data = snap.exists() ? (snap.data() as Record<string, unknown>) : null;
+        const status = String((data?.status as string) || '').toLowerCase();
+
+        const stripIntentFromUrl = () => {
+          const next = new URLSearchParams(location.search);
+          next.delete('intent');
+          next.delete('assignmentId');
+          const qs = next.toString();
+          navigate({ pathname: location.pathname, search: qs ? `?${qs}` : '' }, { replace: true });
+        };
+
+        // Terminal state — already declined / cancelled / confirmed —
+        // skip the callable, just clean up the URL.
+        if (['declined', 'cancelled', 'confirmed', 'active'].includes(status)) {
+          if (cancelled) return;
+          setDeclineIntentState('skipped');
+          stripIntentFromUrl();
+          return;
+        }
+
+        if (cancelled) return;
+        setDeclineIntentState('firing');
+        const respondFn = httpsCallable(functions, 'respondToAssignment');
+        await respondFn({
+          tenantId: resolvedTenantId,
+          assignmentId: aid,
+          decision: 'decline',
+        });
+        if (cancelled) return;
+        setDeclineIntentState('success');
+        stripIntentFromUrl();
+        // Refresh applied-shifts state so the UI re-reads the declined
+        // assignment status without a full reload.
+        setAppliedShiftsRefresh((n) => n + 1);
+      } catch (err: any) {
+        if (cancelled) return;
+        console.error('[JobPostingDetail] one-click decline failed', err);
+        setDeclineIntentState('error');
+        setDeclineIntentError(err?.message || 'Could not decline this assignment.');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [location.search, location.pathname, navigate, user?.uid, resolvedTenantId, declineIntentState]);
+
+  /**
+   * Quick-apply path for users who have already completed the wizard for
+   * this posting. Reads the existing application doc (id =
+   * `${uid}_${postId}` — same convention the wizard uses), appends the
+   * new shift / applyDate to its `shiftIds[]` / `applyDates[]`, and
+   * keeps the user on the jobs-board so they can apply to more shifts
+   * without re-running the wizard for each one.
+   *
+   * Falls back to the wizard if:
+   *   - the existing application doc disappeared (defensive)
+   *   - the existing application is in a terminal-canceled state
+   *     (withdrawn / cancelled / deleted) so we want full wizard ack
+   *
+   * Returns true when quick-apply succeeded (so the caller skips wizard).
+   */
+  const quickApplyToShift = async (shiftId: string, applyDate?: string): Promise<boolean> => {
+    if (!user?.uid || !resolvedTenantId || !postId || !posting) return false;
+    const appDocId = `${user.uid}_${postId}`;
+    const appRef = doc(db, 'tenants', resolvedTenantId, 'applications', appDocId);
+    try {
+      const snap = await getDoc(appRef);
+      if (!snap.exists()) return false;
+      const data = snap.data() as Record<string, unknown>;
+      const status = String(data?.status || '').toLowerCase();
+      // Terminal-canceled states reset the wizard — these need a full
+      // re-acknowledgement.
+      if (status === 'withdrawn' || status === 'cancelled' || status === 'deleted') return false;
+      const existingShiftIds = getApplicationShiftIds(data);
+      const existingApplyDates = getApplicationAppliedDays(data);
+      const nextShiftIds = Array.from(new Set([...existingShiftIds, shiftId]));
+      const nextApplyDates = applyDate
+        ? Array.from(new Set([...existingApplyDates, applyDate]))
+        : existingApplyDates;
+      await setDoc(
+        appRef,
+        {
+          shiftIds: nextShiftIds,
+          ...(nextApplyDates.length > 0
+            ? { applyDates: nextApplyDates, applyDate: nextApplyDates[0] }
+            : {}),
+          // Single-shift fallback for code paths that read `shiftId`.
+          ...(nextShiftIds.length === 1 ? { shiftId: nextShiftIds[0] } : {}),
+          updatedAt: serverTimestamp(),
+          // Keep status anchored at 'submitted' (or higher) — never
+          // downgrade an accepted/hired application.
+          ...(['submitted', 'pending'].includes(status) || !status
+            ? { status: 'submitted' }
+            : {}),
+        },
+        { merge: true },
+      );
+      // Bump refresh so loadAppliedShifts re-reads + the new shift's
+      // button flips to its applied-state immediately.
+      setAppliedShiftsRefresh((n) => n + 1);
+      return true;
+    } catch (err) {
+      console.warn('quickApplyToShift failed, falling back to wizard:', err);
+      return false;
+    }
+  };
+
+  const handleApplyToShift = async (shiftId: string, applyDate?: string) => {
+    const returnTo = `/c1/jobs-board/${postId}`;
+
+    // Authenticated users who already have a completed application on
+    // this posting skip the wizard entirely — we just append the shift
+    // to their existing application doc.
+    if (user?.uid && appliedShifts.length > 0) {
+      const ok = await quickApplyToShift(shiftId, applyDate);
+      if (ok) return;
+      // Fall through to wizard if quick-apply couldn't reuse the doc.
+    }
+
     const params = new URLSearchParams({ shiftId });
     if (applyDate) params.set('applyDate', applyDate);
-    const returnTo = `/c1/jobs-board/${postId}`;
-    if (!user) {
-      params.set('returnTo', returnTo);
-      navigate(`/apply/${posting.tenantId}/${postId}?${params.toString()}`);
-    } else {
-      navigate(`/apply/${posting.tenantId}/${postId}?${params.toString()}`);
-    }
+    // Always pass returnTo so the wizard's success screen sends them
+    // back here instead of /c1/workers/payroll. They came here to
+    // browse shifts; they should come back here to browse more.
+    params.set('returnTo', returnTo);
+    navigate(`/apply/${posting.tenantId}/${postId}?${params.toString()}`);
   };
 
   // Helper to safely format calendar dates (avoids UTC→local timezone shift showing wrong day)
@@ -1523,7 +1753,12 @@ const JobPostingDetail: React.FC = () => {
     skipConfirmPrompt?: boolean;
     suppressAlerts?: boolean;
     redirectOnAccept?: boolean;
-  entryPoint?: 'accept_button' | 'decline_button' | 'offer_confirmation_drawer' | 'unknown';
+  entryPoint?:
+    | 'accept_button'
+    | 'decline_button'
+    | 'offer_confirmation_drawer'
+    | 'quick_confirm_cached_acks'
+    | 'unknown';
   };
 
   const handleAssignmentDecision = async (
@@ -1649,7 +1884,77 @@ const JobPostingDetail: React.FC = () => {
     openOfferConfirmationSheet();
   };
 
+  /**
+   * Session-scoped acknowledgement cache: once the worker has ticked the
+   * 3 boxes (on-time arrival / uniform / no-show) for a shift on a given
+   * JO, we persist that fact in sessionStorage and let subsequent shift
+   * confirmations on the same JO go straight to the accept callable
+   * without re-opening the modal. The acks are a worker-level commitment
+   * that applies equally to every shift on the JO — the modal was
+   * front-loading the same 3 ticks per shift, which made multi-shift
+   * confirm a ~12-tap workflow when it should be 1 tap each.
+   *
+   * sessionStorage = scoped to THIS tab and clears when the tab closes,
+   * so a fresh browser session brings the modal back. localStorage would
+   * be too permanent (we want recruiters to see the modal at least once
+   * per worker visit).
+   *
+   * Keyed by `jobOrderId` — a worker confirming shifts on a DIFFERENT
+   * job order has to re-acknowledge, because the worksite / uniform /
+   * shift expectations can differ across JOs.
+   */
+  const sessionAcksKey = (joId: string) => `offerAcks_${joId}`;
+  const hasSessionAcks = (joId: string | null | undefined): boolean => {
+    if (!joId || typeof window === 'undefined') return false;
+    try {
+      return Boolean(window.sessionStorage.getItem(sessionAcksKey(joId)));
+    } catch {
+      return false;
+    }
+  };
+  const markSessionAcks = (joId: string | null | undefined): void => {
+    if (!joId || typeof window === 'undefined') return;
+    try {
+      window.sessionStorage.setItem(
+        sessionAcksKey(joId),
+        JSON.stringify({
+          ackedAt: new Date().toISOString(),
+          acks: {
+            onTimeArrival: true,
+            understandsUniformAndRequirements: true,
+            understandsNoShowConsequence: true,
+          },
+        }),
+      );
+    } catch {
+      /* ignore quota errors */
+    }
+  };
+
   const handleConfirmAssignmentForShift = async (shiftId: string) => {
+    const joId = posting?.jobOrderId;
+    // Quick-confirm path: this worker already ack'd the operational
+    // commitments on a prior shift this session. Skip the modal and
+    // fire the accept callable directly. `redirectOnAccept: false` so
+    // they stay on the JO posting and can keep confirming the rest.
+    if (joId && hasSessionAcks(joId)) {
+      try {
+        await handleAssignmentDecision('accept', shiftId, {
+          skipConfirmPrompt: true,
+          suppressAlerts: true,
+          redirectOnAccept: false,
+          entryPoint: 'quick_confirm_cached_acks',
+        });
+      } catch (err) {
+        console.error('Quick-confirm failed; falling back to modal:', err);
+        // If the callable fails (e.g. headshot gate, server hiccup), drop
+        // back to the modal so the user sees the full error context.
+        openOfferConfirmationSheet(shiftId);
+      }
+      return;
+    }
+    // First confirm on this JO this session — modal handles the 3 acks,
+    // and `handleSubmitOfferConfirmation` caches them on submit.
     openOfferConfirmationSheet(shiftId);
   };
 
@@ -1707,13 +2012,49 @@ const JobPostingDetail: React.FC = () => {
       await handleAssignmentDecision('accept', offerConfirmationShiftId, {
         skipConfirmPrompt: true,
         suppressAlerts: true,
-        redirectOnAccept: true,
+        // Stay on the jobs board so the worker can keep tapping Confirm
+        // on the rest of their offered shifts. The previous `true` here
+        // bounced them to the assignment-details page after the very
+        // first confirm — which broke the multi-shift confirm flow this
+        // page is built around.
+        redirectOnAccept: false,
         entryPoint: 'offer_confirmation_drawer',
       });
+      // Cache the acks so subsequent Confirm taps on this JO skip the
+      // modal entirely. See `handleConfirmAssignmentForShift` for the
+      // read side.
+      markSessionAcks(posting?.jobOrderId);
       setOfferConfirmationOpen(false);
     } catch (err) {
       console.error('Failed to confirm offer acknowledgement:', err);
-      setOfferConfirmError('We were unable to confirm this shift right now. Please try again.');
+      // Surface the actual rejection reason instead of the generic "try again" —
+      // most common case is the Accept-flow headshot gate (HEADSHOT_MISSING /
+      // PENDING / REJECTED). The `formatHeadshotGateError` helper returns
+      // localized, actionable copy when this is a gate error, null otherwise.
+      const gate = formatHeadshotGateError(err);
+      if (gate) {
+        setOfferConfirmError(
+          `${gate.message} You can upload a new photo from your profile, then come back here and tap Confirm Shift.`,
+        );
+      } else {
+        // Try to surface a usable message from the FirebaseError when one is present.
+        // Server callables throw HttpsError with a human-readable message in `err.message`;
+        // we'd rather show that than the generic copy when it's available.
+        const errMsg =
+          (err && typeof err === 'object' && typeof (err as { message?: unknown }).message === 'string'
+            ? (err as { message: string }).message
+            : '') || '';
+        // Strip Firebase's "Firebase: " prefix and "(functions/<code>)" suffix when present.
+        const cleaned = errMsg
+          .replace(/^Firebase:\s*/i, '')
+          .replace(/\s*\(functions\/[^)]+\)\s*$/i, '')
+          .trim();
+        setOfferConfirmError(
+          cleaned && cleaned.length > 0 && cleaned.length < 300
+            ? `${cleaned} Please try again — if this keeps happening, contact your recruiter.`
+            : 'We were unable to confirm this shift right now. Please try again — if this keeps happening, contact your recruiter.',
+        );
+      }
     } finally {
       setOfferConfirmSubmitting(false);
     }
@@ -1873,6 +2214,27 @@ const JobPostingDetail: React.FC = () => {
         <meta name="description" content={posting.jobDescription?.substring(0, 160) || ''} />
         <script type="application/ld+json">{JSON.stringify(generateJobPostingSchema())}</script>
       </Helmet>
+
+      {/* One-click DECLINE banner — shown when worker arrived via the
+          SMS DECLINE link. After success, the shift list below is the
+          natural next step (apply to a different shift). */}
+      {declineIntentState === 'firing' && (
+        <Alert severity="info" icon={<CircularProgress size={16} />} sx={{ mb: 2 }}>
+          Declining your assignment…
+        </Alert>
+      )}
+      {declineIntentState === 'success' && (
+        <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setDeclineIntentState('idle')}>
+          You&apos;ve declined this assignment. If you changed your mind, you can apply to
+          another shift below.
+        </Alert>
+      )}
+      {declineIntentState === 'error' && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setDeclineIntentState('idle')}>
+          We couldn&apos;t decline this assignment automatically: {declineIntentError || 'unknown error'}.
+          Contact your recruiter if you need to opt out.
+        </Alert>
+      )}
 
       {/* Top row: Back to Jobs Board + Language picker + Sign In or Create Account (when guest) */}
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1, mb: 3 }}>

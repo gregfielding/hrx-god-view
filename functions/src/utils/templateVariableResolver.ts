@@ -7,7 +7,12 @@
 
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
-import { buildWorkerAssignmentResponseUrl, buildWorkerAssignmentUrl } from './workerUrls';
+import {
+  buildWorkerAssignmentResponseUrl,
+  buildWorkerAssignmentUrl,
+  buildWorkerAssignmentAcceptUrl,
+  buildWorkerAssignmentDeclineUrl,
+} from './workerUrls';
 
 const db = admin.firestore();
 
@@ -92,6 +97,10 @@ export interface ResolvedVariables {
   assignmentTimeRange: string;
   /** URL to jobs board posting where worker can accept/decline the assignment */
   assignmentAcceptDeclineUrl: string;
+  /** One-click ACCEPT URL — landing page fires respondToAssignment({decision:'accept'}) on mount */
+  assignmentAcceptUrl: string;
+  /** One-click DECLINE URL — landing page fires respondToAssignment({decision:'decline'}) on mount, then shows reapply CTA */
+  assignmentDeclineUrl: string;
   /** URL to assignment details page (view everything about the assignment) */
   assignmentUrl: string;
   
@@ -181,6 +190,8 @@ export async function resolveTemplateVariables(
     assignmentDate: resolveAssignmentDate(resolvedContext),
     assignmentTimeRange: resolveAssignmentTimeRange(resolvedContext),
     assignmentAcceptDeclineUrl: resolveAssignmentAcceptDeclineUrl(resolvedContext),
+    assignmentAcceptUrl: resolveAssignmentAcceptUrl(resolvedContext),
+    assignmentDeclineUrl: resolveAssignmentDeclineUrl(resolvedContext),
     assignmentUrl: resolveAssignmentUrl(resolvedContext),
     
     // Shift variables
@@ -275,6 +286,31 @@ async function enrichContext(
         }
       } catch (err) {
         logger.warn(`Failed to fetch job post ${context.jobPostId}:`, err);
+      }
+    }
+
+    // Fetch shift if we have shiftId + jobOrderId but no shiftData.
+    // Shifts live under the job order (`tenants/{tid}/job_orders/{joId}/shifts/{sid}`),
+    // not at tenant scope. Required so `{{shiftDate}}`, `{{shiftStartTime}}`,
+    // `{{shiftEndTime}}`, `{{shiftTimeRange}}` resolve when the
+    // `assignment_created` trigger fires with just an assignmentId
+    // (assignmentData → shiftId → shiftData fetch chain).
+    if (
+      context.shiftId &&
+      !context.shiftData &&
+      context.tenantId &&
+      (enriched.jobOrderId || context.jobOrderId)
+    ) {
+      try {
+        const joId = enriched.jobOrderId || context.jobOrderId;
+        const shiftDoc = await db
+          .doc(`tenants/${context.tenantId}/job_orders/${joId}/shifts/${context.shiftId}`)
+          .get();
+        if (shiftDoc.exists) {
+          enriched.shiftData = shiftDoc.data();
+        }
+      } catch (err) {
+        logger.warn(`Failed to fetch shift ${context.shiftId}:`, err);
       }
     }
 
@@ -576,20 +612,24 @@ function resolveApplicationDate(context: TemplateVariableContext): string {
 }
 
 function resolveAssignmentDate(context: TemplateVariableContext): string {
-  const timestamp = 
+  const raw =
     context.assignmentData?.date ||
     context.assignmentData?.assignmentDate ||
     context.assignmentData?.startDate;
-  
-  if (timestamp) {
-    try {
-      const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-      return date.toLocaleDateString();
-    } catch {
-      return '';
-    }
+  if (!raw) return '';
+  try {
+    const date = parseDateValue(raw);
+    if (!date) return '';
+    // Same format + locale-aware as shiftDate so the two read
+    // consistently when both appear in the same template.
+    return date.toLocaleDateString(resolveLocaleFromContext(context), {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    });
+  } catch {
+    return '';
   }
-  return '';
 }
 
 function resolveAssignmentTimeRange(context: TemplateVariableContext): string {
@@ -614,6 +654,25 @@ function resolveAssignmentAcceptDeclineUrl(context: TemplateVariableContext): st
 }
 
 /**
+ * One-click ACCEPT — lands on the assignment details page with
+ * `intent=accept`. The page fires `respondToAssignment` on mount.
+ */
+function resolveAssignmentAcceptUrl(context: TemplateVariableContext): string {
+  return buildWorkerAssignmentAcceptUrl(context.assignmentId);
+}
+
+/**
+ * One-click DECLINE — lands on the job-post page (so they can re-apply
+ * to another shift) with `intent=decline&assignmentId=...`. Falls back
+ * to the assignment page if jobPostId isn't known.
+ */
+function resolveAssignmentDeclineUrl(context: TemplateVariableContext): string {
+  const assignmentId = context.assignmentId;
+  const jobPostId = context.assignmentData?.jobPostId || context.jobPostId || context.jobPostData?.id;
+  return buildWorkerAssignmentDeclineUrl({ assignmentId, jobPostId });
+}
+
+/**
  * URL to assignment details page where worker can view everything about their assignment.
  * Used in Assignment Created / confirmed messages. Path: /c1/workers/assignments/:assignmentId
  */
@@ -623,20 +682,97 @@ function resolveAssignmentUrl(context: TemplateVariableContext): string {
 }
 
 function resolveShiftDate(context: TemplateVariableContext): string {
-  const timestamp = 
+  // Prefer the shift doc's own date; fall back to assignmentData.startDate
+  // so single-day assignments still get a meaningful date when shiftData
+  // is somehow absent (defensive — enrichContext should populate it).
+  const raw =
     context.shiftData?.date ||
     context.shiftData?.shiftDate ||
-    context.shiftData?.startDate;
-  
-  if (timestamp) {
-    try {
-      const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-      return date.toLocaleDateString();
-    } catch {
-      return '';
+    context.shiftData?.startDate ||
+    context.assignmentData?.startDate ||
+    context.assignmentData?.date;
+  if (!raw) return '';
+  try {
+    const date = parseDateValue(raw);
+    if (!date) return '';
+    // SMS-friendly: "Mon, Jun 9" (EN) or "lun, 9 jun" (ES). Year omitted
+    // to keep messages short (offers are always for imminent shifts; year
+    // is implicit). Locale picked from userData.preferredLanguage so
+    // Spanish-language workers see Spanish dates in templates.
+    return date.toLocaleDateString(resolveLocaleFromContext(context), {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    });
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Pick the BCP-47 locale tag used to format dates / numbers in this
+ * worker's templates. Reads `preferredLanguage` (then `languagePreference`,
+ * then `language`) from the user doc and maps to a concrete locale.
+ *
+ * Only 'es' currently has a non-default mapping; everything else falls
+ * back to en-US so we don't accidentally render dates in the wrong
+ * locale just because a stale browser-language tag landed on the user
+ * doc. Mirrors the same conservative normalizer used by
+ * `buildAssignmentOfferSms.resolveOfferLanguage`.
+ */
+function resolveLocaleFromContext(context: TemplateVariableContext): string {
+  const userData = context.userData;
+  if (!userData) return 'en-US';
+  const candidates = [
+    (userData as Record<string, unknown>).preferredLanguage,
+    (userData as Record<string, unknown>).languagePreference,
+    (userData as Record<string, unknown>).language,
+  ];
+  for (const raw of candidates) {
+    const s = String(raw || '').trim().toLowerCase();
+    if (!s) continue;
+    if (s === 'es' || s === 'es-mx' || s === 'es-us' || s === 'spanish' || s.startsWith('es-')) {
+      return 'es-US';
     }
   }
-  return '';
+  return 'en-US';
+}
+
+/**
+ * Normalize the variety of date shapes we see across the codebase into a
+ * concrete Date. Handles: Firestore Timestamp (`toDate`), JS Date, ISO
+ * string, and the bare YYYY-MM-DD form used on shift docs.
+ *
+ * Special case: a bare "YYYY-MM-DD" parsed by `new Date()` is interpreted
+ * as midnight UTC, which can drop a day in US-Pacific renders. We anchor
+ * those at local noon so the displayed calendar day matches the field.
+ */
+function parseDateValue(raw: any): Date | null {
+  if (!raw) return null;
+  if (typeof raw?.toDate === 'function') {
+    try {
+      return raw.toDate();
+    } catch {
+      return null;
+    }
+  }
+  if (raw instanceof Date) {
+    return Number.isFinite(raw.getTime()) ? raw : null;
+  }
+  if (typeof raw === 'string') {
+    const s = raw.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      // YYYY-MM-DD — pin to local noon to dodge UTC→local rollback
+      const [y, m, d] = s.split('-').map(Number);
+      return new Date(y, (m || 1) - 1, d || 1, 12, 0, 0);
+    }
+    const parsed = new Date(s);
+    return Number.isFinite(parsed.getTime()) ? parsed : null;
+  }
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    return new Date(raw);
+  }
+  return null;
 }
 
 function resolveShiftTimeRange(context: TemplateVariableContext): string {
@@ -755,6 +891,8 @@ export function getAvailableVariables(): Array<{ name: string; description: stri
     { name: 'assignmentDate', description: 'Assignment date', example: '12/20/2024' },
     { name: 'assignmentTimeRange', description: 'Assignment time range', example: '9:00 AM - 5:00 PM' },
     { name: 'assignmentAcceptDeclineUrl', description: 'URL to accept or decline assignment (Assignment Created trigger)', example: 'https://hrxone.com/c1/jobs-board/post123?assignmentId=...' },
+    { name: 'assignmentAcceptUrl', description: 'One-click ACCEPT — landing page fires accept on mount, then shows assignment details', example: 'https://hrxone.com/c1/workers/assignments/assign123?intent=accept' },
+    { name: 'assignmentDeclineUrl', description: 'One-click DECLINE — landing page fires decline on mount, then shows the job-post so worker can re-apply to another shift', example: 'https://hrxone.com/c1/jobs-board/post123?intent=decline&assignmentId=assign123' },
     { name: 'assignmentUrl', description: 'URL to assignment details page (view everything about your assignment)', example: 'https://hrxone.com/c1/workers/assignments/assign123' },
     { name: 'shiftId', description: 'Shift ID', example: 'shift456' },
     { name: 'shiftDate', description: 'Shift date', example: '12/25/2024' },

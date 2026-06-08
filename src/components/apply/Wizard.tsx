@@ -3455,11 +3455,20 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   const payrollPath = '/c1/workers/payroll';
 
   if (submittedSuccess) {
+    // If the wizard was launched from JobPostingDetail's per-shift Apply
+    // (which always passes `returnTo=/c1/jobs-board/{postId}`), send the
+    // worker back to the shift list so they can apply to additional
+    // shifts on the same JO with a single click — no wizard re-run. The
+    // legacy default sent everyone to /c1/workers/payroll after submit,
+    // which broke the "apply to multiple shifts" loop the jobs board UX
+    // is built around.
+    const successTo = returnTo || payrollPath;
+    const successDelayMs = returnTo ? 1500 : 3000; // shorter redirect when coming back to the same posting
     return (
       <Box sx={{ px: 0, py: 0, display: 'flex', flexDirection: 'column' }}>
         <PostSubmitRedirect
-          to={payrollPath}
-          delayMs={3000}
+          to={successTo}
+          delayMs={successDelayMs}
           headlineKey="apply.applicationSubmittedMessage"
           subheadKey="apply.settingUpPayroll"
           helperKey="apply.settingUpPayrollHelper"

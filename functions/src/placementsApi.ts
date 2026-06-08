@@ -22,7 +22,11 @@ const PLACEMENT_SMS_SECRETS = [
 ];
 import { ensureWorkerOnboardingPipeline } from './onboarding/workerOnboardingPipeline';
 import { ASSIGNMENT_STATUS_QUERY_LIVE, isAssignmentTerminalNormalized } from './utils/assignmentStatusNormalize';
-import { buildWorkerAssignmentResponseUrl } from './utils/workerUrls';
+import {
+  buildWorkerAssignmentResponseUrl,
+  buildWorkerAssignmentAcceptUrl,
+  buildWorkerAssignmentDeclineUrl,
+} from './utils/workerUrls';
 import { assertWorkerHeadshotApproved } from './avatar/headshotAcceptGate';
 
 if (!admin.apps.length) {
@@ -62,6 +66,74 @@ function overlapsSameDay(aStart: number | null, aEnd: number | null, bStart: num
   const normalizedAEnd = aEnd < aStart ? aEnd + 24 * 60 : aEnd;
   const normalizedBEnd = bEnd < bStart ? bEnd + 24 * 60 : bEnd;
   return aStart < normalizedBEnd && bStart < normalizedAEnd;
+}
+
+/**
+ * Concrete time window for an assignment / shift, in absolute milliseconds.
+ * `end` is normalized to advance one day when the wall-clock end time
+ * falls at or before the start (overnight shifts like 5 PM → 3 AM).
+ */
+interface ShiftWindow {
+  startMs: number;
+  endMs: number;
+}
+
+/**
+ * Build the absolute [start, end) window from a (YYYY-MM-DD, HH:MM, HH:MM)
+ * triple. Returns null when any input is missing or unparseable so callers
+ * can decide whether to fall back to a coarser check.
+ *
+ * Why this replaces the old `overlapsSameDay` for the conflict guard: the
+ * legacy check matched only on `startDate`, which meant "Mon 5 PM → Tue
+ * 3 AM" (startDate=Mon) vs "Tue 5 PM → Wed 3 AM" (startDate=Tue) was
+ * early-returned at the date mismatch and never compared. Recruiters
+ * reported a false "shifts overlap" toast even when their existing shift
+ * ended at 3 AM and the next started 14 hours later — because the
+ * minutes-of-day arithmetic was wrong for the cross-midnight case.
+ * Comparing full ranges in epoch ms makes overnight + same-day +
+ * cross-day all collapse to a single, correct interval-intersect.
+ */
+function computeShiftWindow(
+  startDate: string | undefined,
+  startTime: string | undefined,
+  endTime: string | undefined,
+): ShiftWindow | null {
+  if (!startDate || !startTime || !endTime) return null;
+  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(startDate));
+  if (!dateMatch) return null;
+  const y = Number(dateMatch[1]);
+  const mo = Number(dateMatch[2]);
+  const d = Number(dateMatch[3]);
+  const startParts = String(startTime).split(':').map(Number);
+  const endParts = String(endTime).split(':').map(Number);
+  if (
+    [y, mo, d, ...startParts, ...endParts].some(
+      (v) => !Number.isFinite(v),
+    )
+  ) {
+    return null;
+  }
+  const [sh, sm] = startParts;
+  const [eh, em] = endParts;
+  // Anchor in local server time — same convention the rest of the file
+  // uses when building dates from YYYY-MM-DD inputs.
+  const start = new Date(y, mo - 1, d, sh, sm || 0, 0, 0);
+  let end = new Date(y, mo - 1, d, eh, em || 0, 0, 0);
+  if (end.getTime() <= start.getTime()) {
+    // Overnight — end is on the next calendar day.
+    end = new Date(end.getTime() + 24 * 60 * 60 * 1000);
+  }
+  return { startMs: start.getTime(), endMs: end.getTime() };
+}
+
+/**
+ * Half-open interval intersection: [aStart, aEnd) ∩ [bStart, bEnd) != ∅.
+ * Touching at a single boundary (one shift ends at exactly 5:00 PM, next
+ * starts at 5:00 PM) is NOT an overlap — that's a hand-off, not a
+ * conflict.
+ */
+function shiftWindowsOverlap(a: ShiftWindow, b: ShiftWindow): boolean {
+  return a.startMs < b.endMs && b.startMs < a.endMs;
 }
 
 function buildAssignmentDocId(args: { shiftId: string; userId: string; dayKey: string }): string {
@@ -365,6 +437,7 @@ export const placementsCreateAssignments = onCall(
     sourceId = null,
     applyDate = null,
     applyDates = null,
+    allowOverlapping = false,
   } = (request.data || {}) as {
     tenantId?: string;
     jobOrderId?: string;
@@ -374,6 +447,16 @@ export const placementsCreateAssignments = onCall(
     sourceId?: string | null;
     applyDate?: string | null;
     applyDates?: string[] | null;
+    /**
+     * Recruiter override: when true, the same-day overlap guard
+     * (`overlapping_assignment` skip) is bypassed. The UI surfaces this
+     * flag via an "Assign anyway" action on the conflict toast — the
+     * default-off stance keeps accidental double-books from sneaking
+     * through but lets the recruiter deliberately stack a worker on two
+     * concurrent shifts when needed (e.g., a short break between shift
+     * A's end and shift B's start, or knowingly splitting hours).
+     */
+    allowOverlapping?: boolean;
   };
 
   if (!tenantId || !jobOrderId || !shiftId || !Array.isArray(userIds) || userIds.length === 0) {
@@ -652,18 +735,65 @@ export const placementsCreateAssignments = onCall(
           const phoneE164 = (userData?.phoneE164 || userData?.phone || '').trim();
           const firstName = assignments.length ? (userData?.firstName as string) || 'there' : 'there';
           const jobTitle = shift.defaultJobTitle || jobOrder.jobTitle || 'a position';
-          const dateStrs = assignments.map((a) => {
-            const d = new Date(a.date + 'T12:00:00');
-            return d.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
-          });
-          const dateTimeInfo = dateStrs.length ? ` on ${dateStrs.join(', ')}` : '';
-          const jobUrl = buildWorkerAssignmentResponseUrl({
-            jobPostId,
+          // Build EN + ES variants of the date/time/location phrases so
+          // Spanish-language workers see a fully localized SMS (day name
+          // included), not just "el Sat 6/8" with an English day name.
+          // The helper picks the right pair based on `language`; see
+          // `buildAssignmentOfferSms`.
+          const buildDateStrs = (locale: string) =>
+            assignments.map((a) => {
+              const d = new Date(a.date + 'T12:00:00');
+              return d.toLocaleDateString(locale, {
+                weekday: 'short',
+                month: 'numeric',
+                day: 'numeric',
+              });
+            });
+          const dateStrsEn = buildDateStrs('en-US');
+          const dateStrsEs = buildDateStrs('es-US');
+          // Append shift start/end times when the shift has uniform
+          // hours across the day(s) — parity with `resendAssignmentOffer`
+          // which already appends times. For multi-day shifts with
+          // per-date times in `dateSchedule`, we'd need a different
+          // shape; fall back to date-only in that case.
+          const shiftStart = shift.startTime || shift.defaultStartTime || '';
+          const shiftEnd = shift.endTime || shift.defaultEndTime || '';
+          const hasUniformTimes = Boolean(shiftStart && shiftEnd);
+          // AM/PM stays English on purpose — Spanish speakers in the US
+          // are accustomed to AM/PM in SMS, and "11:00 a. m." reads
+          // weirdly in a quick read.
+          const timeRangeEn = hasUniformTimes
+            ? ` from ${formatTime12h(shiftStart)} - ${formatTime12h(shiftEnd)}`
+            : '';
+          const timeRangeEs = hasUniformTimes
+            ? ` de ${formatTime12h(shiftStart)} a ${formatTime12h(shiftEnd)}`
+            : '';
+          const dateTimeInfo = dateStrsEn.length ? ` on ${dateStrsEn.join(', ')}${timeRangeEn}` : '';
+          const dateTimeInfoEs = dateStrsEs.length ? ` el ${dateStrsEs.join(', ')}${timeRangeEs}` : '';
+          const acceptUrl = buildWorkerAssignmentAcceptUrl(assignments[0].assignmentId);
+          const declineUrl = buildWorkerAssignmentDeclineUrl({
             assignmentId: assignments[0].assignmentId,
-            shiftId,
+            jobPostId,
           });
           const locationText = locationNickname ? ` at ${locationNickname}` : '';
-          const message = `Hi ${firstName}, your application has been accepted for ${jobTitle}${dateTimeInfo}${locationText}. View details and respond: ${jobUrl}`;
+          const locationTextEs = locationNickname ? ` en ${locationNickname}` : '';
+          // New ACCEPT/DECLINE pattern — replaces the legacy single
+          // "View details and respond:" link. EN/ES picked from the
+          // worker doc; see `buildAssignmentOfferSms`.
+          const { buildAssignmentOfferSms, resolveOfferLanguage } = await import(
+            './messaging/buildAssignmentOfferSms'
+          );
+          const message = buildAssignmentOfferSms({
+            firstName,
+            jobTitle,
+            dateTimeInfo,
+            dateTimeInfoEs,
+            locationText,
+            locationTextEs,
+            acceptUrl,
+            declineUrl,
+            language: resolveOfferLanguage(userData),
+          });
           let emailSubject: string | undefined;
           let emailBody: string | undefined;
           try {
@@ -732,9 +862,24 @@ export const placementsCreateAssignments = onCall(
         targetDay: effectiveStartDate,
         isGigJob,
       });
+      // Phantom-doc guard: ~60 zero-field assignment docs live in this
+      // tenant from some earlier write path (no `userId`, no `status`,
+      // no `startDate`). Before this guard, the lookup-by-ID found
+      // them, read `status` as '', `normalizeAssignmentStatus('')`
+      // defaulted to 'pending' (active), and the recruiter saw a
+      // false "already assigned to this shift" toast on a worker whose
+      // placement tile clearly wasn't on the target shift. Require an
+      // explicit non-empty status before considering the slot taken.
       const hasExistingForThisSlot =
-        (assignmentDoc.exists && isAssignmentActiveStatus(existingStatus)) ||
-        Boolean(legacyAssignmentDoc?.exists && legacySameDay && isAssignmentActiveStatus(legacyStatus));
+        (assignmentDoc.exists &&
+          Boolean(existingStatus) &&
+          isAssignmentActiveStatus(existingStatus)) ||
+        Boolean(
+          legacyAssignmentDoc?.exists &&
+            legacySameDay &&
+            legacyStatus &&
+            isAssignmentActiveStatus(legacyStatus),
+        );
       if (hasExistingForThisSlot) {
         skipped.push({ userId, reason: 'already_assigned_to_shift' });
         continue;
@@ -748,14 +893,56 @@ export const placementsCreateAssignments = onCall(
 
       let blockedByOverlap = false;
       let sameDayDifferentShift = false;
+      // Build the new shift's absolute time window once per user so we
+      // can compare it to each existing assignment's window. This
+      // replaces the legacy minute-of-day check that erroneously
+      // matched only on `startDate` — that approach false-positived on
+      // overnight shifts (5 PM → 3 AM ends on the NEXT calendar day, so
+      // a same-startDate compare with a non-overnight 5 PM start
+      // produced incorrect overlap), and false-negatived for the
+      // genuine cross-day cases (Mon 11 PM → Tue 7 AM overlaps a Tue
+      // 6 AM → 2 PM shift — old code returned at the date mismatch).
+      const newShiftStartTime = shift.startTime || shift.defaultStartTime || '';
+      const newShiftEndTime = shift.endTime || shift.defaultEndTime || '';
+      const newWindow = computeShiftWindow(
+        effectiveStartDate,
+        newShiftStartTime,
+        newShiftEndTime,
+      );
+
       activeAssignments.docs.forEach((docSnap) => {
         const assignment = docSnap.data() || {};
         const assignmentShiftId = assignment.shiftId;
         if (assignmentShiftId === shiftId) return;
 
-        const assignmentStartDate = toDateOnly(assignment.startDate);
-        if (assignmentStartDate !== effectiveStartDate) return;
+        const existingStartDate = toDateOnly(assignment.startDate);
+        const existingWindow = computeShiftWindow(
+          existingStartDate,
+          assignment.startTime,
+          assignment.endTime,
+        );
 
+        // Window-based overlap test — handles overnight + cross-day
+        // shifts that the legacy minute-of-day check got wrong.
+        if (newWindow && existingWindow) {
+          if (shiftWindowsOverlap(newWindow, existingWindow)) {
+            blockedByOverlap = true;
+            return;
+          }
+          // Not overlapping. Still flag same-day-second-shift so the
+          // caller can attach the soft warning ("worker on a second
+          // shift today") — purely informational, doesn't block.
+          if (existingStartDate === effectiveStartDate) {
+            sameDayDifferentShift = true;
+          }
+          return;
+        }
+
+        // Fallback: one of the windows didn't have parseable times
+        // (defensive — should be rare). Use the legacy minute-of-day
+        // overlap on same-startDate matches only, which preserves the
+        // pre-fix behavior for that one edge case.
+        if (existingStartDate !== effectiveStartDate) return;
         const existingStart = parseMinutes(assignment.startTime);
         const existingEnd = parseMinutes(assignment.endTime);
         if (overlapsSameDay(shiftStartMin, shiftEndMin, existingStart, existingEnd)) {
@@ -765,9 +952,14 @@ export const placementsCreateAssignments = onCall(
         sameDayDifferentShift = true;
       });
 
-      if (blockedByOverlap) {
+      if (blockedByOverlap && !allowOverlapping) {
         skipped.push({ userId, reason: 'overlapping_assignment' });
         continue;
+      }
+      // Even when overriding, log a warning so the audit trail captures
+      // that this assignment was deliberately stacked on top of another.
+      if (blockedByOverlap && allowOverlapping) {
+        warnings.push('overlapping_assignment_overridden');
       }
       if (sameDayDifferentShift) {
         warnings.push('same_day_second_shift_warning');
@@ -961,9 +1153,16 @@ export const respondToAssignment = onCall(
   const applicationRef = applicationId ? db.doc(`tenants/${tenantId}/applications/${applicationId}`) : null;
 
   if (decision === 'accept') {
-    // Phase 4: universal headshot gate. Throws HttpsError('failed-precondition') with a typed
-    // details.code the client maps to localized retake / pending / error UX.
-    await assertWorkerHeadshotApproved(uid);
+    // Headshot gate removed 2026-06-07 per ops decision — recruiters reported
+    // the gate was silently blocking too many self-confirmations (workers
+    // tapped the SMS link, got a confusing error, and gave up). The
+    // `assertWorkerHeadshotApproved` helper is kept in the codebase for
+    // potential reuse on other surfaces (e.g., first-shift check-in) but is
+    // no longer called from the Accept path.
+    // Audit signal preserved: the placement tile still shows "Headshot
+    // Missing/Rejected" chips so recruiters know which workers have
+    // incomplete profiles, and the HeadshotBypassesSection on
+    // /readiness/employee-readiness still lists historical bypasses.
 
     await assignmentRef.set(
       {
@@ -1222,6 +1421,439 @@ export const confirmAssignmentForWorker = onCall(
 );
 
 /**
+ * Revert a `declined` assignment back to `pending` so the recruiter can
+ * re-offer / re-confirm. Used when a worker declined by mistake (or the
+ * recruiter wants to override the decline after a conversation off-platform).
+ *
+ * Effects:
+ *   - assignment.status: 'declined' → 'pending'
+ *   - clears declinedAt / declinedBy
+ *   - stamps declineRevertedAt / declineRevertedBy for audit
+ *   - linked application: 'withdrawn' → 'accepted' (so it lines up with the
+ *     state placementsCreateAssignments produces after the initial offer)
+ *
+ * Auth: recruiter-level (canManageAssignments). Workers cannot un-decline
+ * their own assignments via this path; they'd have to re-apply.
+ */
+export const revertAssignmentDecline = onCall(
+  { cors: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
+    const { tenantId, assignmentId } = (request.data || {}) as {
+      tenantId?: string;
+      assignmentId?: string;
+    };
+    if (!tenantId || !assignmentId) {
+      throw new HttpsError('invalid-argument', 'tenantId and assignmentId are required');
+    }
+    if (!(await canManageAssignments(request.auth, tenantId, request.auth.uid))) {
+      throw new HttpsError('permission-denied', 'Insufficient permissions to revert declines');
+    }
+
+    const assignmentRef = db.doc(`tenants/${tenantId}/assignments/${assignmentId}`);
+    const assignmentSnap = await assignmentRef.get();
+    if (!assignmentSnap.exists) {
+      throw new HttpsError('not-found', 'Assignment not found');
+    }
+    const assignment = assignmentSnap.data() || {};
+    if (assignment.status !== 'declined') {
+      throw new HttpsError(
+        'failed-precondition',
+        `Assignment status is '${assignment.status}', not 'declined'. Only declined assignments can be reverted via this path.`,
+      );
+    }
+
+    const uid = request.auth.uid;
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    await assignmentRef.set(
+      {
+        status: 'pending',
+        declinedAt: admin.firestore.FieldValue.delete(),
+        declinedBy: admin.firestore.FieldValue.delete(),
+        declineRevertedAt: now,
+        declineRevertedBy: uid,
+        updatedAt: now,
+        updatedBy: uid,
+      },
+      { merge: true },
+    );
+
+    // Restore the linked application from 'withdrawn' (set by the decline
+    // path at L1036) back to 'accepted' (the state right after the offer
+    // was sent at L318) so the worker's posting view aligns with the
+    // assignment again. If the decline path took the multi-day route and
+    // shifted to a remaining day, we leave it alone — recruiters who want
+    // to bring it back to this specific day's offer can manage it from the
+    // application UI.
+    const applicationId = assignment.applicationId as string | undefined;
+    if (applicationId) {
+      const applicationRef = db.doc(`tenants/${tenantId}/applications/${applicationId}`);
+      const appSnap = await applicationRef.get();
+      if (appSnap.exists) {
+        const appData = appSnap.data() as Record<string, any>;
+        if (appData.status === 'withdrawn') {
+          await applicationRef.set(
+            {
+              status: 'accepted',
+              withdrawnAt: admin.firestore.FieldValue.delete(),
+              withdrawnBy: admin.firestore.FieldValue.delete(),
+              updatedAt: now,
+              updatedBy: uid,
+            },
+            { merge: true },
+          );
+        }
+      }
+    }
+
+    return { success: true, status: 'pending' };
+  },
+);
+
+/**
+ * Revert a `cancelled` assignment back to `pending`. Symmetric with
+ * `revertAssignmentDecline` for the recruiter-cancel-by-mistake case
+ * (or "wait, that other worker actually can't make it after all —
+ * undo my cancel and confirm this one again").
+ *
+ * Scope: only handles the case where the assignment doc STILL EXISTS
+ * with status='cancelled'. The full `placementsCancelAssignment` flow
+ * deletes the assignment doc and creates a placement after stamping the
+ * cancellation — that path can't be undone here because the source data
+ * (startDate, applicationId, hireDate, etc.) is gone. In that case the
+ * recruiter sees a "Click to Hire" tile and can re-offer through the
+ * existing flow.
+ *
+ * Effects:
+ *   - assignment.status: 'cancelled' → 'pending'
+ *   - clears cancelledAt / canceledBy
+ *   - stamps cancelRevertedAt / cancelRevertedBy for audit
+ *   - linked application: 'submitted' → 'accepted' (mirror of the
+ *     cancel path's status transition)
+ *
+ * Auth: recruiter-level (canManageAssignments).
+ */
+export const revertAssignmentCancel = onCall(
+  { cors: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
+    const { tenantId, assignmentId } = (request.data || {}) as {
+      tenantId?: string;
+      assignmentId?: string;
+    };
+    if (!tenantId || !assignmentId) {
+      throw new HttpsError('invalid-argument', 'tenantId and assignmentId are required');
+    }
+    if (!(await canManageAssignments(request.auth, tenantId, request.auth.uid))) {
+      throw new HttpsError('permission-denied', 'Insufficient permissions to revert cancellations');
+    }
+
+    const assignmentRef = db.doc(`tenants/${tenantId}/assignments/${assignmentId}`);
+    const assignmentSnap = await assignmentRef.get();
+    if (!assignmentSnap.exists) {
+      // The full cancel flow already deleted the assignment and created
+      // a placement. The recruiter can re-offer from the Placed tile.
+      throw new HttpsError(
+        'failed-precondition',
+        'Assignment no longer exists — the cancellation already completed. The worker now shows as Placed; re-offer from the placements tile instead.',
+      );
+    }
+    const assignment = assignmentSnap.data() || {};
+    const status = String(assignment.status || '').toLowerCase();
+    if (status !== 'cancelled' && status !== 'canceled') {
+      throw new HttpsError(
+        'failed-precondition',
+        `Assignment status is '${assignment.status}', not 'cancelled'. Only cancelled assignments can be reverted via this path.`,
+      );
+    }
+
+    const uid = request.auth.uid;
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    await assignmentRef.set(
+      {
+        status: 'pending',
+        cancelledAt: admin.firestore.FieldValue.delete(),
+        canceledBy: admin.firestore.FieldValue.delete(),
+        cancelRevertedAt: now,
+        cancelRevertedBy: uid,
+        updatedAt: now,
+        updatedBy: uid,
+      },
+      { merge: true },
+    );
+
+    // Restore the linked application back to 'accepted' (where it was
+    // post-offer, pre-cancel) when it's currently 'submitted' from the
+    // cancel path. We only touch 'submitted' so we don't trample any
+    // status the recruiter may have set in the meantime.
+    const applicationId = assignment.applicationId as string | undefined;
+    if (applicationId) {
+      const applicationRef = db.doc(`tenants/${tenantId}/applications/${applicationId}`);
+      const appSnap = await applicationRef.get();
+      if (appSnap.exists) {
+        const appData = appSnap.data() as Record<string, any>;
+        if (appData.status === 'submitted') {
+          await applicationRef.set(
+            {
+              status: 'accepted',
+              statusChangeReason: admin.firestore.FieldValue.delete(),
+              updatedAt: now,
+              updatedBy: uid,
+            },
+            { merge: true },
+          );
+        }
+      }
+    }
+
+    return { success: true, status: 'pending' };
+  },
+);
+
+/**
+ * Resend the shift-details confirmation (email + SMS) to every confirmed
+ * worker on a shift. Used by the placement card's "resend" icon when a
+ * recruiter wants every confirmed worker to re-receive the start-time /
+ * parking / check-in details email (e.g., updates to a JO's check-in
+ * instructions, or just a day-before nudge).
+ *
+ * Email body is freshly built via `buildAssignmentDetailsEmail` per
+ * worker, so any JO/shift edits since the original send are reflected.
+ *
+ * Auth: recruiter-level (canManageAssignments). Workers can't trigger
+ * this on themselves.
+ *
+ * Returns counts: { sent, skipped, failed, errors }. Per-worker failures
+ * do NOT short-circuit the loop — every worker gets attempted, and the
+ * caller sees the summary.
+ */
+export const resendShiftConfirmationsToConfirmedStaff = onCall(
+  {
+    cors: [
+      'http://localhost:3000',
+      'https://hrx1-d3beb.web.app',
+      'https://hrx1-d3beb.firebaseapp.com',
+      'https://hrxone.com',
+      'https://www.hrxone.com',
+    ],
+    secrets: PLACEMENT_SMS_SECRETS,
+  },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
+    const { tenantId, shiftId, jobOrderId } = (request.data || {}) as {
+      tenantId?: string;
+      shiftId?: string;
+      jobOrderId?: string;
+    };
+    if (!tenantId || !shiftId) {
+      throw new HttpsError('invalid-argument', 'tenantId and shiftId are required');
+    }
+    if (!(await canManageAssignments(request.auth, tenantId, request.auth.uid))) {
+      throw new HttpsError('permission-denied', 'Insufficient permissions to resend confirmations');
+    }
+
+    // Find all confirmed assignments on this shift.
+    // We restrict to confirmed/active because that's the state where the
+    // worker has agreed to work and is expecting the details — sending to
+    // pending/declined/cancelled would be spam or confusing.
+    let q = db
+      .collection(`tenants/${tenantId}/assignments`)
+      .where('shiftId', '==', shiftId)
+      .where('status', 'in', ['confirmed', 'active']);
+    if (jobOrderId) {
+      // Narrow further when the caller knows the JO — avoids any cross-JO bleed
+      // if the same shiftId ever recurred under different orders.
+      q = q.where('jobOrderId', '==', jobOrderId);
+    }
+    const snap = await q.get();
+    const assignments = snap.docs.map((d) => ({ id: d.id, data: d.data() }));
+
+    const errors: Array<{ assignmentId: string; userId: string; error: string }> = [];
+    let sent = 0;
+    let skipped = 0;
+
+    const { buildAssignmentDetailsEmail } = await import('./messaging/assignmentDetailsEmail');
+    const { sendLegacyAssignmentMessage } = await import('./messaging/legacyMessageHelpers');
+
+    for (const a of assignments) {
+      const ad = a.data as Record<string, any>;
+      const userId = String(ad.userId || ad.candidateId || '');
+      if (!userId) {
+        skipped++;
+        continue;
+      }
+      try {
+        // Fetch user for phone/email (the helper picks them up from the
+        // user doc when phoneE164 is falsy at the call site).
+        const userSnap = await db.doc(`users/${userId}`).get();
+        const ud = userSnap.exists ? (userSnap.data() as Record<string, any>) : {};
+        const phoneE164 = String(ud.phoneE164 || ud.phone || '').trim() || '+0000000000';
+
+        const built = await buildAssignmentDetailsEmail(tenantId, a.id);
+        const emailSubject = built?.subject;
+        const emailBody = built?.html;
+        if (!emailSubject || !emailBody) {
+          // Couldn't build the email — skip this worker rather than send
+          // a half-broken message. (Most likely cause: assignment is
+          // missing denormalized fields the email template requires.)
+          skipped++;
+          errors.push({
+            assignmentId: a.id,
+            userId,
+            error: 'Could not build email body — missing assignment denorm fields',
+          });
+          continue;
+        }
+
+        // Build a short SMS-side message so the worker also gets a ping.
+        // Mirrors the assignment_created copy with "Updated details" framing
+        // so the worker knows this is a re-send, not a fresh offer.
+        const firstName = ud.firstName || ad.firstName || 'there';
+        const jobTitle = ad.jobTitle || 'your shift';
+        const smsMessage = `Hi ${firstName}, here are the latest details for ${jobTitle}. Check your email for the full briefing (check-in time, parking, what to bring). Reply to your recruiter if anything looks off.`;
+
+        await sendLegacyAssignmentMessage({
+          tenantId,
+          userId,
+          phoneE164,
+          message: smsMessage,
+          messageTypeId: 'assignment_confirmed',
+          source: 'assignment_confirmed_resend',
+          sourceId: a.id,
+          assignmentId: a.id,
+          emailSubject,
+          emailBody,
+        });
+        sent++;
+      } catch (err: any) {
+        errors.push({
+          assignmentId: a.id,
+          userId,
+          error: err?.message || String(err),
+        });
+      }
+    }
+
+    return {
+      success: errors.length === 0,
+      totalConfirmed: assignments.length,
+      sent,
+      skipped,
+      failed: errors.length,
+      errors: errors.slice(0, 20), // cap so we don't blow up the callable response
+    };
+  },
+);
+
+/**
+ * Per-worker version of the resend confirmation. Mirrors
+ * `resendAssignmentOffer` (which resends the accept/decline message for
+ * a pending offer); this one resends the assignment-details confirmation
+ * for a single CONFIRMED worker — same channels (email + SMS), same
+ * template, freshly rebuilt against current JO/shift data.
+ *
+ * Used by the per-tile refresh icon on confirmed worker rows.
+ *
+ * Auth: recruiter-level (canManageAssignments).
+ */
+export const resendAssignmentConfirmation = onCall(
+  {
+    cors: [
+      'http://localhost:3000',
+      'https://hrx1-d3beb.web.app',
+      'https://hrx1-d3beb.firebaseapp.com',
+      'https://hrxone.com',
+      'https://www.hrxone.com',
+    ],
+    secrets: PLACEMENT_SMS_SECRETS,
+  },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
+    const { tenantId, assignmentId } = (request.data || {}) as {
+      tenantId?: string;
+      assignmentId?: string;
+    };
+    if (!tenantId || !assignmentId) {
+      throw new HttpsError('invalid-argument', 'tenantId and assignmentId are required');
+    }
+    if (!(await canManageAssignments(request.auth, tenantId, request.auth.uid))) {
+      throw new HttpsError('permission-denied', 'Insufficient permissions to resend confirmation');
+    }
+
+    const assignmentRef = db.doc(`tenants/${tenantId}/assignments/${assignmentId}`);
+    const assignmentSnap = await assignmentRef.get();
+    if (!assignmentSnap.exists) {
+      throw new HttpsError('not-found', 'Assignment not found');
+    }
+    const assignment = assignmentSnap.data() || {};
+    const status = String(assignment.status || '').toLowerCase();
+    if (status !== 'confirmed' && status !== 'active') {
+      throw new HttpsError(
+        'failed-precondition',
+        `Assignment status is '${assignment.status}'. Confirmation resend only applies to confirmed/active assignments — for pending offers, use Resend Offer instead.`,
+      );
+    }
+
+    const userId = String(assignment.userId || assignment.candidateId || '');
+    if (!userId) {
+      throw new HttpsError('failed-precondition', 'Assignment has no userId/candidateId');
+    }
+
+    const userSnap = await db.doc(`users/${userId}`).get();
+    const ud = userSnap.exists ? (userSnap.data() as Record<string, any>) : {};
+    const phoneE164 = String(ud.phoneE164 || ud.phone || '').trim() || '+0000000000';
+
+    const { buildAssignmentDetailsEmail } = await import('./messaging/assignmentDetailsEmail');
+    const { sendLegacyAssignmentMessage } = await import('./messaging/legacyMessageHelpers');
+
+    const built = await buildAssignmentDetailsEmail(tenantId, assignmentId);
+    if (!built?.subject || !built?.html) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Could not build confirmation email — assignment is missing denormalized fields the template requires. Check the JO/shift for completeness.',
+      );
+    }
+
+    const firstName = ud.firstName || assignment.firstName || 'there';
+    const jobTitle = assignment.jobTitle || 'your shift';
+    const smsMessage = `Hi ${firstName}, here are the latest details for ${jobTitle}. Check your email for the full briefing (check-in time, parking, what to bring). Reply to your recruiter if anything looks off.`;
+
+    await sendLegacyAssignmentMessage({
+      tenantId,
+      userId,
+      phoneE164,
+      message: smsMessage,
+      messageTypeId: 'assignment_confirmed',
+      source: 'assignment_confirmed_resend',
+      sourceId: assignmentId,
+      assignmentId,
+      emailSubject: built.subject,
+      emailBody: built.html,
+    });
+
+    // Stamp resend timestamp on the assignment for audit + UI cooldown
+    await assignmentRef.set(
+      {
+        lastConfirmationResendAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastConfirmationResendBy: request.auth.uid,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+
+    return { success: true };
+  },
+);
+
+/**
  * Cancel an assignment and revert to Placed state.
  * Deletes the assignment and creates a placement so the worker shows as "Placed" again.
  * For testing / recruiter use.
@@ -1416,13 +2048,24 @@ export const resendAssignmentOffer = onCall(
     }
   }
 
+  // EN + ES variants of the date/time phrase — see equivalent block in
+  // `placementsCreateAssignments` for the rationale. AM/PM stays English
+  // since US-based Spanish workers expect that form.
   let dateTimeInfo = '';
+  let dateTimeInfoEs = '';
   if (assignment.startDate) {
     const startDate =
       assignment.startDate?.toDate ? assignment.startDate.toDate() : new Date(assignment.startDate);
-    dateTimeInfo = ` on ${startDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}`;
+    const dateOpts: Intl.DateTimeFormatOptions = {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+    };
+    dateTimeInfo = ` on ${startDate.toLocaleDateString('en-US', dateOpts)}`;
+    dateTimeInfoEs = ` el ${startDate.toLocaleDateString('es-US', dateOpts)}`;
     if (assignment.startTime && assignment.endTime) {
       dateTimeInfo += ` from ${formatTime12h(assignment.startTime)} - ${formatTime12h(assignment.endTime)}`;
+      dateTimeInfoEs += ` de ${formatTime12h(assignment.startTime)} a ${formatTime12h(assignment.endTime)}`;
     }
   }
 
@@ -1453,13 +2096,35 @@ export const resendAssignmentOffer = onCall(
     }
   }
   const locationText = worksiteName ? ` at ${worksiteName}` : '';
-  const jobUrl = buildWorkerAssignmentResponseUrl({
-    jobPostId: assignment.jobPostId,
+  const locationTextEs = worksiteName ? ` en ${worksiteName}` : '';
+  const acceptUrl = buildWorkerAssignmentAcceptUrl(assignmentId);
+  const declineUrl = buildWorkerAssignmentDeclineUrl({
     assignmentId,
-    shiftId: assignment.shiftId || '',
+    jobPostId: assignment.jobPostId,
   });
   const instructionsText = checkInInstructions ? ` Check-in: ${checkInInstructions}` : '';
-  const message = `Hi ${firstName}, your application has been accepted for ${jobTitle}${dateTimeInfo}${locationText}. View details and respond: ${jobUrl}.${instructionsText}`;
+  const instructionsTextEs = checkInInstructions
+    ? ` Instrucciones de llegada: ${checkInInstructions}`
+    : '';
+  // New ACCEPT/DECLINE pattern — see comment on the placementsCreateAssignments
+  // call site for rationale. Same builder, same EN/ES picker, so the
+  // refresh-icon resend looks identical to the original offer SMS.
+  const { buildAssignmentOfferSms, resolveOfferLanguage } = await import(
+    './messaging/buildAssignmentOfferSms'
+  );
+  const message = buildAssignmentOfferSms({
+    firstName,
+    jobTitle,
+    dateTimeInfo,
+    dateTimeInfoEs,
+    locationText,
+    locationTextEs,
+    instructionsText,
+    instructionsTextEs,
+    acceptUrl,
+    declineUrl,
+    language: resolveOfferLanguage(userData),
+  });
 
   let emailSubject: string | undefined;
   let emailBody: string | undefined;

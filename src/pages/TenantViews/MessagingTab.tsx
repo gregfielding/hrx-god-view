@@ -1468,6 +1468,8 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                     setTemplateForm((prev) => ({ ...prev, variables }));
                   }}
                   availableVariables={[
+                    'assignmentAcceptUrl',
+                    'assignmentDeclineUrl',
                     'assignmentAcceptDeclineUrl',
                     'assignmentUrl',
                     'firstName',
@@ -1479,9 +1481,13 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                     'locationCity',
                     'locationState',
                     'locationName',
+                    'locationPhrase',
                     'shiftDate',
-                    'shiftTime',
+                    'shiftStartTime',
                     'shiftEndTime',
+                    'shiftTimeRange',
+                    'assignmentDate',
+                    'assignmentTimeRange',
                     'companyName',
                     'applicationStatus',
                     'assignmentStatus',
@@ -1507,7 +1513,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                 required
                 multiline
                 rows={4}
-                helperText="Use variables like {{firstName}}, {{jobTitle}}, {{locationCity}}, {{assignmentAcceptDeclineUrl}}, {{assignmentUrl}} (full assignment details page), etc."
+                helperText="Use variables like {{firstName}}, {{jobTitle}}, {{locationPhrase}}, {{shiftDate}}, {{shiftTimeRange}} (or {{shiftStartTime}} / {{shiftEndTime}}), {{assignmentAcceptUrl}}, {{assignmentDeclineUrl}}, {{assignmentUrl}}, etc."
                 placeholder="Hi {{firstName}}. Thank you for applying to be a {{jobTitle}} in {{locationCity}}. View details: {{assignmentUrl}}"
               />
             )}
