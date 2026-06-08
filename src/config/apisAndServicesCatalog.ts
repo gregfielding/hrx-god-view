@@ -241,18 +241,8 @@ export const APIS_AND_SERVICES_CATALOG: ApiServiceCatalogEntry[] = [
     technicalNotes: ['See `docs/QUICKBOOKS_ONLINE_INTEGRATION_REFERENCE.md`; types on `RecruiterAccount.integrations.quickbooks`.'],
     internalDocPath: 'docs/QUICKBOOKS_ONLINE_INTEGRATION_REFERENCE.md',
   },
-  {
-    id: 'electronic-signatures',
-    name: 'Electronic signatures (HRX signer)',
-    summary: 'Hosted signing flows for agreements tied to onboarding and documents',
-    categoryId: 'platform',
-    whatItDoes: [
-      'Uses configurable signer base URL for document completion links.',
-    ],
-    surfaces: ['Documents & signatures settings', 'Onboarding packets'],
-    technicalNotes: ['`SIGN_SIGNER_BASE_URL` defaults to app host; not a third-party brand but external-facing URL contract.'],
-    relatedSettingsTab: 'documents',
-  },
+  // 'Electronic signatures (HRX signer)' entry removed 2026-06-05 — the Phase 1C
+  // signature scaffold was deleted; production I-9 signatures flow through Everee.
 ];
 
 export function catalogByCategory(): Record<ApiServiceCategoryId, ApiServiceCatalogEntry[]> {

@@ -22,7 +22,6 @@ import LibraryBooksIcon from '@mui/icons-material/LibraryBooks';
 import CompanySetup from './CompanySetup';
 import EntitiesPage from './settings/EntitiesPage';
 import OnboardingLibraryPage from './settings/OnboardingLibraryPage';
-import SignaturesDocumentsPage from './settings/SignaturesDocumentsPage';
 import MessagingTab from './MessagingTab';
 import SenderManagementPage from './SenderManagementPage';
 import SlackAdminPage from '../Admin/SlackAdminPage';
@@ -31,7 +30,6 @@ import EverifyAdminOpsPage from './EverifyAdminOpsPage';
 import SmartGroupsSettings from './SmartGroupsSettings';
 import { useAuth } from '../../contexts/AuthContext';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
-import DescriptionIcon from '@mui/icons-material/Description';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import BadgeIcon from '@mui/icons-material/Badge';
 import SecurityIcon from '@mui/icons-material/Security';
@@ -72,7 +70,6 @@ const CORE_TAB_ICONS: Record<CoreSettingsTab, React.ReactNode> = {
   'company-setup': <BusinessIcon sx={TAB_ICON_SX} />,
   entities: <AccountBalanceIcon sx={TAB_ICON_SX} />,
   'onboarding-library': <LibraryBooksIcon sx={TAB_ICON_SX} />,
-  documents: <DescriptionIcon sx={TAB_ICON_SX} />,
   messaging: <EmailIcon sx={TAB_ICON_SX} />,
   'messaging-sequences': <AutoAwesomeMotionIcon sx={TAB_ICON_SX} />,
   senders: <PhoneAndroidIcon sx={TAB_ICON_SX} />,
@@ -176,8 +173,6 @@ const SettingsLanding: React.FC = () => {
         return <EntitiesPage />;
       case 'onboarding-library':
         return <OnboardingLibraryPage />;
-      case 'documents':
-        return effectiveTenantId ? <SignaturesDocumentsPage /> : null;
       case 'messaging':
         return effectiveTenantId ? <MessagingTab tenantId={effectiveTenantId} /> : null;
       case 'messaging-sequences':

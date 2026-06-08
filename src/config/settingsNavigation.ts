@@ -9,7 +9,6 @@ export type CoreSettingsTab =
   | 'company-setup'
   | 'entities'
   | 'onboarding-library'
-  | 'documents'
   | 'messaging'
   | 'messaging-sequences'
   | 'senders'
@@ -82,7 +81,6 @@ export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
     label: 'Onboarding',
     items: [
       { key: 'onboarding-library', label: 'Onboarding Library' },
-      { key: 'documents', label: 'Documents & Signatures' },
     ],
   },
   {
