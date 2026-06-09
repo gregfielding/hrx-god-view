@@ -211,6 +211,7 @@ const WorkerDashboard: React.FC = () => {
         // linkage doc isn't COMPLETE yet. Surfaces the "Complete payroll
         // setup" action item (workers can apply/work without finishing it).
         let payrollOnboardingIncomplete = false;
+        let payrollOnboardingEvereeTenantId: string | null = null;
         try {
           const ewSnap = await getDocs(
             query(
@@ -218,13 +219,26 @@ const WorkerDashboard: React.FC = () => {
               where('firebaseUid', '==', user.uid)
             )
           );
-          payrollOnboardingIncomplete = ewSnap.docs.some((d) => {
+          for (const d of ewSnap.docs) {
             const x = d.data() as Record<string, unknown>;
             const complete =
               x.onboardingComplete === true ||
               String(x.onboardingStatus || '').toUpperCase() === 'COMPLETE';
-            return !complete;
-          });
+            if (complete) continue;
+            payrollOnboardingIncomplete = true;
+            // Capture the Everee tenant id so the action item can deep-link
+            // straight to that employer's embed instead of the picker.
+            if (!payrollOnboardingEvereeTenantId) {
+              const tid = x.evereeTenantId;
+              const tidStr =
+                typeof tid === 'number' && Number.isFinite(tid)
+                  ? String(tid)
+                  : typeof tid === 'string'
+                    ? tid.trim()
+                    : '';
+              if (tidStr) payrollOnboardingEvereeTenantId = tidStr;
+            }
+          }
         } catch (ewErr) {
           console.warn('Dashboard: everee_workers query skipped', ewErr);
         }
@@ -260,6 +274,7 @@ const WorkerDashboard: React.FC = () => {
           pendingAssignmentConfirmations: pending,
           tempworks: readTempworksOnboardingFromUserDoc(userDoc),
           payrollOnboardingIncomplete,
+          payrollOnboardingEvereeTenantId,
           compliance: deriveWorkerComplianceSignals(bgRows, evRows),
         });
       } catch (err) {

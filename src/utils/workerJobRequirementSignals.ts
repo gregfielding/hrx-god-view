@@ -34,6 +34,10 @@ export interface WorkerDashboardJobSignals {
    *  onboarded yet (onboardingComplete !== true) — drives the "Complete
    *  payroll setup" dashboard action item. */
   payrollOnboardingIncomplete?: boolean;
+  /** Everee tenant id of the incomplete linkage, so the action item can
+   *  deep-link straight to that employer's embed
+   *  (/c1/workers/payroll/{id}) instead of the generic picker. */
+  payrollOnboardingEvereeTenantId?: string | null;
   compliance: WorkerComplianceSignals;
 }
 

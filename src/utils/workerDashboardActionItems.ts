@@ -278,9 +278,11 @@ function buildWorkerJobRequirementActionItems(signals: WorkerDashboardJobSignals
   }
 
   // Everee payroll onboarding incomplete — workers can apply/work without
-  // finishing it, so this is a non-blocking "important" nudge that links to
-  // the payroll page (the embedded Everee setup), not a forced redirect.
+  // finishing it, so this is a non-blocking "important" nudge. Deep-link
+  // straight to that employer's embed when we know the Everee tenant id;
+  // fall back to the generic payroll index (resolves/pickers) otherwise.
   if (signals.payrollOnboardingIncomplete) {
+    const evTid = signals.payrollOnboardingEvereeTenantId;
     out.push({
       id: 'complete_payroll_setup',
       category: 'important',
@@ -289,7 +291,7 @@ function buildWorkerJobRequirementActionItems(signals: WorkerDashboardJobSignals
       sortOrder: 19,
       primaryLabelKey: 'dashboard.actionItems.payrollSetupPrimary',
       primaryKind: 'navigate',
-      href: '/c1/workers/payroll',
+      href: evTid ? `/c1/workers/payroll/${evTid}` : '/c1/workers/payroll',
       sourceReason: 'Everee payroll onboarding incomplete',
       qaEvaluatedFields: {},
     });
