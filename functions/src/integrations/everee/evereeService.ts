@@ -728,6 +728,80 @@ export async function updateEvereeWorkerAddress(input: {
   return evereeRequest<unknown>(config, 'PUT', path, input.address);
 }
 
+/**
+ * Normalize a stored DOB to Everee's `"YYYY-MM-DD"`, or null when it can't
+ * be parsed. Accepts Firestore Timestamp, Date, ISO `"YYYY-MM-DD"`,
+ * US `"M/D/YYYY"`, and free-form like `"Jun 4, 1990"`. The provision path
+ * previously only accepted an exact `YYYY-MM-DD` and silently dropped every
+ * other shape — which left Everee with no DOB identity signal and tripped
+ * the anti-fraud lockout.
+ */
+export function normalizeDobToISO(raw: unknown): string | null {
+  if (raw == null || raw === '') return null;
+  // Firestore Timestamp
+  const ts = raw as { toDate?: () => Date };
+  if (typeof ts?.toDate === 'function') {
+    try {
+      const d = ts.toDate();
+      if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+    } catch {
+      /* fall through */
+    }
+  }
+  if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+    return raw.toISOString().slice(0, 10);
+  }
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s; // already ISO
+  const us = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); // M/D/YYYY
+  if (us) {
+    const [, m, d, y] = us;
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+  // Free-form fallback ("Jun 4, 1990") — parse as LOCAL and read local parts
+  // so a midnight value can't tz-shift the day.
+  const t = Date.parse(s);
+  if (!Number.isNaN(t)) {
+    const dt = new Date(t);
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const d = String(dt.getDate()).padStart(2, '0');
+    if (y >= 1900 && y <= 2100) return `${y}-${m}-${d}`;
+  }
+  return null;
+}
+
+/**
+ * Backfill a worker's date of birth on an EXISTING Everee record. The DOB
+ * identity signal is what keeps Everee's anti-fraud engine from flipping
+ * `accountAccessPermitted: false`; workers provisioned before DOB was sent
+ * (or whose stored DOB wasn't in `YYYY-MM-DD` so it got dropped) need it
+ * pushed after the fact.
+ *
+ * Wire shape (per the 2026-05-27 probe noted in `WorkerCreateInput.dateOfBirth`
+ * — Everee accepts `dateOfBirth` on the `/personal-info` PUT). The exact path
+ * is NOT otherwise exercised in-repo, so callers should treat this as
+ * best-effort and not let a failure block the (confirmed) address PUT.
+ */
+export async function updateEvereeWorkerPersonalInfo(input: {
+  tenantId: string;
+  entityId: string;
+  /** Everee canonical worker UUID (NOT the HRX uid). */
+  evereeWorkerId: string;
+  /** `"YYYY-MM-DD"`. */
+  dateOfBirth: string;
+}): Promise<unknown> {
+  const config = await getEvereeConfigForEntity(input.tenantId, input.entityId);
+  if (!config) {
+    throw new Error(
+      `updateEvereeWorkerPersonalInfo: no Everee config for entity ${input.entityId}`,
+    );
+  }
+  const path = `/api/v2/workers/${encodeURIComponent(input.evereeWorkerId)}/personal-info`;
+  return evereeRequest<unknown>(config, 'PUT', path, { dateOfBirth: input.dateOfBirth });
+}
+
 /** Create an Everee Embed Component session (short-lived URL for iframe / WebView). */
 export async function createOnboardingSession(input: CreateOnboardingSessionInput): Promise<{
   url: string;

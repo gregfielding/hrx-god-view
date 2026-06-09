@@ -402,9 +402,16 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
       const addr = result.data.address;
       const fmt =
         `${addr.line1}${addr.line2 ? ` ${addr.line2}` : ''}, ${addr.city}, ${addr.state} ${addr.postalCode}`;
+      const dob = (result.data as { dateOfBirth?: string | null; dobPushed?: boolean }).dateOfBirth;
+      const dobPushed = (result.data as { dobPushed?: boolean }).dobPushed;
+      const dobNote = dob
+        ? dobPushed
+          ? ` · DOB ${dob} pushed`
+          : ` · DOB ${dob} could not be pushed`
+        : ' · no DOB on file to push';
       setToast({
         severity: 'success',
-        message: `Address pushed to Everee: ${fmt}`,
+        message: `Pushed to Everee — address: ${fmt}${dobNote}`,
       });
     } catch (err: unknown) {
       const msg = formatFirebaseHttpsError(err) ?? (err instanceof Error ? err.message : String(err));
@@ -696,7 +703,7 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
         <Tooltip
           title={
             evereeWorkerId
-              ? "Push this worker's current HRX home address to Everee. Use after fixing a stale profile address."
+              ? "Push this worker's current HRX home address AND date of birth to Everee. Use to fix a stale address or backfill the DOB identity signal that Everee's anti-fraud lock needs. (SSN must be entered by the worker in the Everee onboarding flow.)"
               : 'Worker is not yet linked to Everee. Use the Sync button first.'
           }
         >
@@ -718,7 +725,7 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
                 Boolean(disabledReason)
               }
             >
-              Push address to Everee
+              Push data to Everee
             </Button>
           </span>
         </Tooltip>

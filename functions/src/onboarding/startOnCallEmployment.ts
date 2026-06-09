@@ -28,7 +28,7 @@ import {
 } from "../messaging/twilioSecrets";
 import { sendGridFromEmail, sendGridFromName } from "../messaging/emailProviderFactory";
 import { getEvereeConfigForEntity } from "../integrations/everee/evereeConfig";
-import { createWorkerIfNeeded } from "../integrations/everee/evereeService";
+import { createWorkerIfNeeded, normalizeDobToISO } from "../integrations/everee/evereeService";
 import { extractEvereeHomeAddressFromUserDoc } from "../integrations/everee/evereeUserAddress";
 import { resolveEvereeWorkerTypeForOnCall } from "../integrations/everee/evereeEntityWorkerType";
 import { mirrorWorkEligibilityFromAuthoritativeSource } from "../utils/workEligibilityMirror";
@@ -511,8 +511,11 @@ export async function runStartOnCallEmploymentFlow(
       // new workers because they had no identity-verification signal
       // (no DOB, no SSN). Validating "YYYY-MM-DD" here so a malformed
       // value can't 422 the create.
-      const rawDob = String(u.dateOfBirth ?? u.dob ?? "").trim();
-      const dateOfBirth = /^\d{4}-\d{2}-\d{2}$/.test(rawDob) ? rawDob : undefined;
+      // Robustly normalize whatever shape DOB is stored in (Timestamp,
+      // ISO, US M/D/YYYY, "Jun 4, 1990") to Everee's YYYY-MM-DD. Pre-fix this
+      // only accepted an exact YYYY-MM-DD and dropped everything else, which
+      // left Everee with no DOB → anti-fraud lockout.
+      const dateOfBirth = normalizeDobToISO(u.dateOfBirth ?? u.dob) ?? undefined;
       await createWorkerIfNeeded({
         tenantId,
         entityId: trimmedEntity,

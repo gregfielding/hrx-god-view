@@ -14,6 +14,8 @@ import {
   pushShift,
   preparePayout,
   ping,
+  normalizeDobToISO,
+  updateEvereeWorkerPersonalInfo,
   type EvereeEmbedExperienceType,
 } from './evereeService';
 import { mirrorWorkEligibilityFromAuthoritativeSource } from '../../utils/workEligibilityMirror';
@@ -134,17 +136,19 @@ async function fillEvereeIdentityFromUserDoc(
     // `dob` or `dateOfBirth`, both as `"YYYY-MM-DD"`. Sanity-check the
     // format before passing to Everee so a malformed value can't trip
     // a 422 on an otherwise-good provision.
-    const rawDob = pick('dob', 'dateOfBirth');
-    const validDob =
-      typeof rawDob === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawDob.trim())
-        ? rawDob.trim()
-        : undefined;
+    // Normalize whatever shape DOB is stored in (Timestamp / ISO / US
+    // M/D/YYYY / "Jun 4, 1990") to Everee's YYYY-MM-DD. Pre-fix this used a
+    // string-only `pick` + exact-ISO regex, so a Timestamp or US-format DOB
+    // was silently dropped → no DOB identity signal → anti-fraud lockout.
+    const validDob = normalizeDobToISO(u.dateOfBirth ?? u.dob) ?? undefined;
     return {
       firstName: has(current.firstName) ? current.firstName : pick('firstName') ?? displayFirst,
       lastName: has(current.lastName) ? current.lastName : pick('lastName') ?? displayLast,
       email: has(current.email) ? current.email : pick('email'),
       phone: has(current.phone) ? current.phone : pick('phoneE164', 'phone', 'phoneNumber'),
-      dateOfBirth: has(current.dateOfBirth) ? current.dateOfBirth : validDob,
+      dateOfBirth: has(current.dateOfBirth)
+        ? normalizeDobToISO(current.dateOfBirth) ?? validDob
+        : validDob,
     };
   } catch (err) {
     logger.warn('[evereeEnsureWorker] user-doc fallback failed', {
@@ -423,10 +427,38 @@ export const evereeUpdateWorkerAddress = onCall(async (request) => {
     address: homeAddress,
   });
 
+  // 4. Best-effort: also push DOB. It's the identity signal Everee's
+  //    anti-fraud engine wants — workers provisioned without it (or whose
+  //    stored DOB wasn't YYYY-MM-DD so it got dropped) show DOB "—" in
+  //    Everee and get locked. Non-fatal: a personal-info PUT failure must
+  //    NOT roll back the (confirmed) address push above.
+  const dateOfBirth = normalizeDobToISO(userData.dateOfBirth ?? (userData as Record<string, unknown>).dob);
+  let dobPushed = false;
+  let dobError: string | null = null;
+  if (dateOfBirth) {
+    try {
+      await updateEvereeWorkerPersonalInfo({ tenantId, entityId, evereeWorkerId, dateOfBirth });
+      dobPushed = true;
+    } catch (err) {
+      dobError = err instanceof Error ? err.message : String(err);
+      logger.warn('[evereeUpdateWorkerAddress] DOB push failed (non-fatal)', {
+        userId,
+        evereeWorkerId,
+        error: dobError,
+      });
+    }
+  }
+  // NOTE: SSN is intentionally not pushed — HRX only stores last-4, and
+  // Everee's TIN verification needs the full SSN, which the worker enters
+  // inside the embedded onboarding flow (no API field to set it from HRX).
+
   return {
     ok: true as const,
     evereeWorkerId,
     address: homeAddress,
+    dateOfBirth: dateOfBirth ?? null,
+    dobPushed,
+    dobError,
   };
 });
 
