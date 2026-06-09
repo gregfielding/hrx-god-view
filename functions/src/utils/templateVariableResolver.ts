@@ -654,11 +654,14 @@ function resolveAssignmentAcceptDeclineUrl(context: TemplateVariableContext): st
 }
 
 /**
- * One-click ACCEPT — lands on the assignment details page with
- * `intent=accept`. The page fires `respondToAssignment` on mount.
+ * One-click ACCEPT — lands on the jobs-board posting (where Confirm/
+ * Decline live) with `intent=accept&assignmentId=…`. Falls back to the
+ * assignment page if jobPostId isn't known.
  */
 function resolveAssignmentAcceptUrl(context: TemplateVariableContext): string {
-  return buildWorkerAssignmentAcceptUrl(context.assignmentId);
+  const assignmentId = context.assignmentId;
+  const jobPostId = context.assignmentData?.jobPostId || context.jobPostId || context.jobPostData?.id;
+  return buildWorkerAssignmentAcceptUrl({ assignmentId, jobPostId });
 }
 
 /**

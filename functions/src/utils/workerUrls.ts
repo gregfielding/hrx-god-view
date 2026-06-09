@@ -185,23 +185,29 @@ export function buildWorkerAssignmentResponseUrl(params: {
 }
 
 /**
- * One-click ACCEPT URL for assignment-offer SMS / email. Worker taps the
- * link → assignment details page loads → page detects `intent=accept` in
- * the query and fires `respondToAssignment({ decision: 'accept' })` on
- * mount, then strips the query so a refresh doesn't re-fire.
+ * One-click ACCEPT URL for assignment-offer SMS / email. Lands on the
+ * JOBS-BOARD POSTING (same as DECLINE) with `intent=accept&assignmentId=…`
+ * — that's where Confirm/Decline live (green Confirm opens the 3-checkbox
+ * acknowledgement sheet). The posting detects the intent and opens the
+ * confirmation sheet for the offered shift.
  *
- * Rationale: the previous flow used a single
- * `{{assignmentAcceptDeclineUrl}}` link that took the worker to the
- * job-post page where they STILL had to find + tap an Accept button.
- * Click-through was poor — many workers got the SMS, opened the page,
- * and bailed. Two explicit verbs (ACCEPT / DECLINE) in the SMS body
- * paired with one-click handlers on the landing page is the new pattern.
+ * Accepts either a plain assignmentId (legacy) or an object with the
+ * jobPostId. Without a jobPostId we fall back to the assignment-details
+ * page so the link still works, just without the posting context.
  */
-export function buildWorkerAssignmentAcceptUrl(assignmentId?: string): string {
-  const id = String(assignmentId || '').trim();
-  if (!id) return buildWorkerAssignmentsUrl();
-  const search = new URLSearchParams({ intent: 'accept' });
-  return `${buildWorkerWebBaseAssignmentPath(id)}?${search.toString()}`;
+export function buildWorkerAssignmentAcceptUrl(
+  arg?: string | { assignmentId?: string; jobPostId?: string },
+): string {
+  const assignmentId = typeof arg === 'string' ? arg : arg?.assignmentId;
+  const jobPostId = typeof arg === 'string' ? undefined : arg?.jobPostId;
+  const aid = String(assignmentId || '').trim();
+  const jpid = String(jobPostId || '').trim();
+  if (!aid) return buildWorkerAssignmentsUrl();
+  const search = new URLSearchParams({ intent: 'accept', assignmentId: aid });
+  if (jpid) {
+    return `${buildWorkerJobPostUrl(jpid)}?${search.toString()}`;
+  }
+  return `${buildWorkerWebBaseAssignmentPath(aid)}?intent=accept`;
 }
 
 /**

@@ -9200,7 +9200,10 @@ export const logAssignmentCreated = onDocumentCreated(
           const { buildWorkerAssignmentAcceptUrl, buildWorkerAssignmentDeclineUrl } = await import(
             './utils/workerUrls'
           );
-          const acceptUrl = buildWorkerAssignmentAcceptUrl(assignmentId);
+          const acceptUrl = buildWorkerAssignmentAcceptUrl({
+            assignmentId,
+            jobPostId: assignment.jobPostId,
+          });
           const declineUrl = buildWorkerAssignmentDeclineUrl({
             assignmentId,
             jobPostId: assignment.jobPostId,

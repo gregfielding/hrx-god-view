@@ -775,7 +775,10 @@ export const placementsCreateAssignments = onCall(
             : '';
           const dateTimeInfo = dateStrsEn.length ? ` on ${dateStrsEn.join(', ')}${timeRangeEn}` : '';
           const dateTimeInfoEs = dateStrsEs.length ? ` el ${dateStrsEs.join(', ')}${timeRangeEs}` : '';
-          const acceptUrl = buildWorkerAssignmentAcceptUrl(assignments[0].assignmentId);
+          const acceptUrl = buildWorkerAssignmentAcceptUrl({
+            assignmentId: assignments[0].assignmentId,
+            jobPostId,
+          });
           const declineUrl = buildWorkerAssignmentDeclineUrl({
             assignmentId: assignments[0].assignmentId,
             jobPostId,
@@ -2113,7 +2116,10 @@ export const resendAssignmentOffer = onCall(
   }
   const locationText = worksiteName ? ` at ${worksiteName}` : '';
   const locationTextEs = worksiteName ? ` en ${worksiteName}` : '';
-  const acceptUrl = buildWorkerAssignmentAcceptUrl(assignmentId);
+  const acceptUrl = buildWorkerAssignmentAcceptUrl({
+    assignmentId,
+    jobPostId: assignment.jobPostId,
+  });
   const declineUrl = buildWorkerAssignmentDeclineUrl({
     assignmentId,
     jobPostId: assignment.jobPostId,

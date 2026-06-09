@@ -136,6 +136,9 @@ const JobPostingDetail: React.FC = () => {
     'idle' | 'firing' | 'success' | 'error' | 'skipped'
   >('idle');
   const [declineIntentError, setDeclineIntentError] = useState<string | null>(null);
+  // One-click ACCEPT intent (SMS link → `?intent=accept&assignmentId=…`):
+  // open the offer-confirmation sheet for the offered shift once.
+  const [acceptIntentHandled, setAcceptIntentHandled] = useState(false);
   const [assignmentStartDate, setAssignmentStartDate] = useState<any>(null); // recruiter-set start date when worker has assignment
   const [assignmentData, setAssignmentData] = useState<any>(null); // full assignment doc when in accept/decline mode
   const [scheduleShiftData, setScheduleShiftData] = useState<any>(null); // shift doc for schedule card
@@ -1052,6 +1055,59 @@ const JobPostingDetail: React.FC = () => {
       window.removeEventListener('focus', handleFocus);
     };
   }, [user?.uid, resolvedTenantId, postId, posting?.jobOrderId, dynamicShifts.length, appliedShiftsRefresh]);
+
+  /**
+   * One-click ACCEPT intent handler. Fires when the worker arrives via the
+   * offer SMS's ACCEPT link (`?intent=accept&assignmentId=...`). Opens the
+   * offer-confirmation sheet (the 3-acknowledgement bottom sheet) for the
+   * offered shift so they confirm here on the posting — we do NOT
+   * auto-confirm, since the acknowledgements are required. Idempotent via
+   * `acceptIntentHandled`.
+   */
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('intent') !== 'accept') return;
+    const aid = params.get('assignmentId');
+    if (!aid) return;
+    if (!user?.uid || !resolvedTenantId || !posting) return;
+    if (acceptIntentHandled) return;
+    setAcceptIntentHandled(true);
+
+    let cancelled = false;
+    (async () => {
+      const stripIntentFromUrl = () => {
+        const next = new URLSearchParams(location.search);
+        next.delete('intent');
+        next.delete('assignmentId');
+        const qs = next.toString();
+        navigate({ pathname: location.pathname, search: qs ? `?${qs}` : '' }, { replace: true });
+      };
+      try {
+        const snap = await getDoc(doc(db, 'tenants', resolvedTenantId, 'assignments', aid));
+        if (cancelled) return;
+        const data = snap.exists() ? (snap.data() as Record<string, unknown>) : null;
+        const status = String((data?.status as string) || '').toLowerCase();
+        const shiftId = String((data?.shiftId as string) || '');
+        stripIntentFromUrl();
+        // Already confirmed / terminal → nothing to confirm; just land here.
+        if (
+          ['confirmed', 'active', 'in_progress', 'completed', 'cancelled', 'canceled', 'declined', 'worker-cancelled'].includes(
+            status,
+          )
+        ) {
+          return;
+        }
+        if (shiftId) openOfferConfirmationSheet(shiftId);
+      } catch (err) {
+        console.warn('[JobPostingDetail] accept-intent open-sheet failed', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // openOfferConfirmationSheet is stable within a render; omitted from deps intentionally.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search, location.pathname, navigate, user?.uid, resolvedTenantId, posting, acceptIntentHandled]);
 
   /**
    * One-click DECLINE intent handler. Fires when the worker arrives via
