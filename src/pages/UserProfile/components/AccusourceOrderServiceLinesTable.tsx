@@ -191,6 +191,19 @@ export interface AccusourceOrderServiceLinesTableProps {
   ) => Promise<void> | void;
   /** Keyed by `${backgroundCheckId}::${serviceKey}` — disables the verdict menu during an in-flight call. */
   adjudicationLoadingKey?: string | null;
+  /**
+   * Fires an à-la-carte re-order of a single service line (e.g. a canceled
+   * or expired drug screen). Parent owns the order callable + confirm. When
+   * provided, canceled/expired lines render a small "Reorder" button.
+   */
+  onReorderLine?: (line: AccusourceScreeningLineItem) => void;
+}
+
+/** Vendor statuses that mean the line never finished and can be re-ordered. */
+function lineLooksReorderable(status: string | null | undefined): boolean {
+  if (status == null) return false;
+  const s = String(status).toLowerCase();
+  return s.includes('cancel') || s.includes('expire') || s.includes('void');
 }
 
 /** Chip color for the verdict pill. Keeps PASSED/FAILED loud and NEEDS_REVIEW amber. */
@@ -250,6 +263,7 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
   canAccusourceAdmin,
   onSetAdjudication,
   adjudicationLoadingKey,
+  onReorderLine,
 }) => {
   // AC.0a — Optimistic local-overrides map keyed by line id. The parent
   // (BackgroundsComplianceTab) currently does NOT re-fetch after
@@ -513,8 +527,28 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
         </Button>
       ) : null;
 
+    // Reorder a dead (canceled/expired/void) line as a single à-la-carte
+    // order — shown in ANY band so a canceled drug screen can be re-run
+    // without re-ordering the whole package.
+    const reorderBtn =
+      canOverride && onReorderLine && lineLooksReorderable(line.status) ? (
+        <Button
+          size="small"
+          variant="outlined"
+          color="primary"
+          onClick={(e) => {
+            e.stopPropagation();
+            onReorderLine(line);
+          }}
+          sx={{ fontSize: '0.72rem', py: 0.3, px: 1.25, minHeight: 28 }}
+        >
+          Reorder
+        </Button>
+      ) : null;
+
+    let bandAction: React.ReactNode = null;
     if (band === 'NEEDS_REVIEW') {
-      return canOverride ? (
+      bandAction = canOverride ? (
         <Button
           size="small"
           variant="contained"
@@ -529,10 +563,8 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
           Review
         </Button>
       ) : null;
-    }
-
-    if (band === 'FAILED') {
-      return (
+    } else if (band === 'FAILED') {
+      bandAction = (
         <Stack direction="row" spacing={0.5} alignItems="center">
           {reportButton('contained')}
           {canOverride && (
@@ -550,42 +582,48 @@ const AccusourceOrderServiceLinesTable: React.FC<AccusourceOrderServiceLinesTabl
           )}
         </Stack>
       );
-    }
-
-    if (band === 'PENDING') {
+    } else if (band === 'PENDING') {
       // Informational only — a small "Awaiting vendor" caption is
       // already implied by the band label; an action button here would
       // just attract clicks the CSA can't act on.
-      return null;
+      bandAction = null;
+    } else {
+      // PASSED — link + kebab on hover.
+      bandAction = (
+        <Stack
+          direction="row"
+          spacing={0.5}
+          alignItems="center"
+          className="ac0a-passed-actions"
+          sx={{
+            '& .ac0a-passed-kebab': { opacity: 0.4, transition: 'opacity 120ms' },
+            '&:hover .ac0a-passed-kebab': { opacity: 1 },
+          }}
+        >
+          {reportButton('text')}
+          {canOverride && (
+            <IconButton
+              size="small"
+              aria-label={`Override verdict for ${line.name}`}
+              className="ac0a-passed-kebab"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleMenuOpen(e, line.id);
+              }}
+              disabled={adjudicationLoadingKey === `${record.id}::${line.id}`}
+            >
+              <MoreVertIcon fontSize="small" />
+            </IconButton>
+          )}
+        </Stack>
+      );
     }
 
-    // PASSED — link + kebab on hover.
+    if (!reorderBtn) return bandAction;
     return (
-      <Stack
-        direction="row"
-        spacing={0.5}
-        alignItems="center"
-        className="ac0a-passed-actions"
-        sx={{
-          '& .ac0a-passed-kebab': { opacity: 0.4, transition: 'opacity 120ms' },
-          '&:hover .ac0a-passed-kebab': { opacity: 1 },
-        }}
-      >
-        {reportButton('text')}
-        {canOverride && (
-          <IconButton
-            size="small"
-            aria-label={`Override verdict for ${line.name}`}
-            className="ac0a-passed-kebab"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleMenuOpen(e, line.id);
-            }}
-            disabled={adjudicationLoadingKey === `${record.id}::${line.id}`}
-          >
-            <MoreVertIcon fontSize="small" />
-          </IconButton>
-        )}
+      <Stack direction="row" spacing={0.5} alignItems="center">
+        {reorderBtn}
+        {bandAction}
       </Stack>
     );
   };

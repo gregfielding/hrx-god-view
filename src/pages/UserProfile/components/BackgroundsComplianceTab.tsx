@@ -53,6 +53,7 @@ import {
   PACKAGE_ROLLUP_LABEL,
   PACKAGE_ROLLUP_COLOR,
 } from '../../../utils/accusourceVerdictBands';
+import type { AccusourceScreeningLineItem } from '../../../utils/accusourceScreeningLineItems';
 import { useAuth } from '../../../contexts/AuthContext';
 import {
   deriveC1EntityKeyFromEntityName,
@@ -556,6 +557,67 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
       setBgMessage(err.message || 'Failed to order screening');
     } finally {
       setBgSubmitting(false);
+    }
+  };
+
+  /**
+   * Phase 2 — re-order a SINGLE service line (e.g. a canceled/expired drug
+   * screen) as an à-la-carte AccuSource order, without re-ordering the whole
+   * package. Reuses the same candidate context as a fresh order; inherits the
+   * original record's account/JO when present.
+   */
+  const handleReorderLine = async (
+    rec: BackgroundCheckRecord,
+    line: AccusourceScreeningLineItem,
+  ): Promise<void> => {
+    const serviceId = String(line.id || '').trim();
+    if (!serviceId || !tenantId || !profileUser) return;
+    const dobForOrder = normalizeUserDocumentDobToYyyyMmDd(profileUser.dateOfBirth ?? profileUser.dob);
+    if (!dobForOrder) {
+      setBgMessageSeverity('error');
+      setBgMessage('AccuSource requires a valid date of birth. Add it on this worker’s Profile → Overview, then retry.');
+      return;
+    }
+    if (!String(profileUser.email || '').trim()) {
+      setBgMessageSeverity('error');
+      setBgMessage('AccuSource requires a work email on the worker profile.');
+      return;
+    }
+    const ok = window.confirm(
+      `Re-order "${line.name}" only?\n\nThis places a NEW à-la-carte AccuSource order for just this screen (not the whole package). The previous result stays on record until the new one comes back.`,
+    );
+    if (!ok) return;
+    const recAny = rec as unknown as Record<string, unknown>;
+    try {
+      await createAccusourceBackgroundCheck({
+        tenantId,
+        candidateId: uid,
+        candidateName:
+          [profileUser.firstName, profileUser.lastName].filter(Boolean).join(' ') ||
+          String(profileUser.email || ''),
+        accountId: String(recAny.accountId || '') || defaultAccountId || undefined,
+        accountName: String(recAny.accountName || '') || defaultAccountName || undefined,
+        jobOrderId: String(recAny.jobOrderId || '') || defaultJobOrderId || undefined,
+        worksiteId: String(recAny.worksiteId || '') || defaultWorksiteId || undefined,
+        // À-la-carte: single service, no package.
+        requestedServices: [serviceId],
+        requestedServicesCatalog: [
+          { id: serviceId, name: String(line.name || serviceId), type: line.type != null ? String(line.type) : undefined },
+        ],
+        candidate: {
+          firstName: String(profileUser.firstName || ''),
+          lastName: String(profileUser.lastName || ''),
+          email: String(profileUser.email || ''),
+          phone: String(profileUser.phone || profileUser.phoneE164 || ''),
+          dateOfBirth: dobForOrder,
+        },
+      });
+      await logCustomActivity(uid, 'screening_line_reordered', `Re-ordered ${line.name}`, 'medium');
+      await loadAll();
+    } catch (e: unknown) {
+      const err = e as { message?: string };
+      setBgMessageSeverity('error');
+      setBgMessage(err.message || 'Failed to re-order screening line');
     }
   };
 
@@ -1127,6 +1189,7 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
                             canAccusourceAdmin={canAccusourceAdmin}
                             onSetAdjudication={setLineAdjudication}
                             adjudicationLoadingKey={adjudicationLoadingKey}
+                            onReorderLine={canAccusourceAdmin ? (line) => void handleReorderLine(r, line) : undefined}
                           />
                         </TableCell>
                       </TableRow>
