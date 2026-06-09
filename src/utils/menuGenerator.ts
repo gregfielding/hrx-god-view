@@ -130,22 +130,21 @@ export async function generateMenuItems(
     // Add basic menu items that don't require specific roles (for users without claims)
     // ChatGPT moved to top bar navigation - removed from sidebar
 
-    // Inbox + Calendar - only for security levels 5-7 (internal team).
-    // Calendar sits directly beneath Inbox per UX cleanup; it used to live in
-    // the top-bar icon row but was moved into the sidebar to declutter the
-    // header (admins-only surface anyway).
-    if (effectiveSecurityLevel && ['5', '6', '7'].includes(String(effectiveSecurityLevel))) {
-      menuItems.push({
-        text: 'Inbox',
-        to: '/inbox',
-        icon: 'inbox',
-      });
-      menuItems.push({
-        text: 'Calendar',
-        to: '/calendar',
-        icon: 'calendar',
-      });
-    }
+    // Inbox + Calendar — DISABLED (2026-06-09): we no longer use the in-app
+    // Gmail/Google-Calendar integration, so these sidebar entries are hidden.
+    // Restore this block to re-enable. Was: security levels 5-7 (internal team).
+    // if (effectiveSecurityLevel && ['5', '6', '7'].includes(String(effectiveSecurityLevel))) {
+    //   menuItems.push({
+    //     text: 'Inbox',
+    //     to: '/inbox',
+    //     icon: 'inbox',
+    //   });
+    //   menuItems.push({
+    //     text: 'Calendar',
+    //     to: '/calendar',
+    //     icon: 'calendar',
+    //   });
+    // }
 
     // Messages → /text-messages — hidden from sidebar (restore block to re-enable).
     // if (effectiveSecurityLevel && ['5', '6', '7'].includes(String(effectiveSecurityLevel))) {
@@ -410,16 +409,16 @@ export async function generateMenuItems(
       },
     );
 
-    // Calendar - admins (5/6/7) only. HRX tenant has no Inbox in this menu,
-    // so Calendar lives here near the top of the admin section. Mirrors the
-    // non-HRX branch where Calendar sits directly beneath Inbox.
-    if (effectiveSecurityLevel && ['5', '6', '7'].includes(String(effectiveSecurityLevel))) {
-      menuItems.push({
-        text: 'Calendar',
-        to: '/calendar',
-        icon: 'calendar',
-      });
-    }
+    // Calendar — DISABLED (2026-06-09): no longer using the in-app
+    // Gmail/Google-Calendar integration. Restore to re-enable.
+    // Was: admins (5/6/7) only, HRX admin section.
+    // if (effectiveSecurityLevel && ['5', '6', '7'].includes(String(effectiveSecurityLevel))) {
+    //   menuItems.push({
+    //     text: 'Calendar',
+    //     to: '/calendar',
+    //     icon: 'calendar',
+    //   });
+    // }
 
     // Add HRX-specific admin menu items
     menuItems.push(
