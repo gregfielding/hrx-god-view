@@ -18,7 +18,6 @@ import { useT } from '../../i18n';
 import HomeIcon from '@mui/icons-material/Home';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import WorkIcon from '@mui/icons-material/Work';
-import ListAltIcon from '@mui/icons-material/ListAlt';
 import InboxIcon from '@mui/icons-material/Inbox';
 import PersonIcon from '@mui/icons-material/Person';
 import PaymentsIcon from '@mui/icons-material/Payments';
@@ -50,7 +49,8 @@ const baseNavConfig = [
   { key: 'nav.findWork', path: '/c1/jobs-board', icon: <WorkIcon /> },
   { key: 'nav.myAccount', path: '/c1/workers/profile', icon: <PersonIcon /> },
   { key: 'nav.myAssignments', path: '/c1/workers/assignments', icon: <AssignmentIcon /> },
-  { key: 'nav.myApplications', path: '/c1/workers/applications', icon: <ListAltIcon /> },
+  // "My Applications" removed from the standing nav — it now lives under
+  // My Schedule → Archive → Applications (avoids two paths to the same list).
   { key: 'nav.payroll', path: '/c1/workers/payroll', icon: <PaymentsIcon /> },
   { key: 'nav.inbox', path: '/c1/workers/notifications', icon: <InboxIcon /> },
   /* Help & Support hidden: import HelpOutlineIcon, append nav.helpSupport -> /c1/workers/support */
