@@ -44,7 +44,10 @@ export type WorkerDashboardActionPrimaryKind =
   | 'navigate'
   | 'enable_sms'
   | 'assignment_accept'
-  | 'tempworks_open';
+  | 'tempworks_open'
+  // Opens `href` in a new tab (external vendor portal, e.g. the AccuSource
+  // applicant setup URL). Same window.open semantics as tempworks_open.
+  | 'external_open';
 
 export type WorkerDashboardActionSecondaryKind =
   | 'dismiss_firestore'
@@ -210,6 +213,7 @@ function buildWorkerJobRequirementActionItems(signals: WorkerDashboardJobSignals
     });
   }
   if (c.backgroundIssueAction) {
+    const portal = c.applicantPortalLink;
     out.push({
       id: 'background_check_issue_requires_action',
       category: 'blocking',
@@ -217,12 +221,15 @@ function buildWorkerJobRequirementActionItems(signals: WorkerDashboardJobSignals
       descriptionKey: 'dashboard.actionItems.backgroundIssueDescription',
       sortOrder: 17,
       primaryLabelKey: 'dashboard.actionItems.backgroundIssuePrimary',
-      primaryKind: 'navigate',
-      href: '/c1/workers/profile',
+      primaryKind: portal ? 'external_open' : 'navigate',
+      href: portal || '/c1/workers/profile',
       sourceReason: 'Background check error — review issue',
       qaEvaluatedFields: {},
     });
   } else if (c.backgroundApplicantAction) {
+    // Prefer deep-linking straight to the AccuSource applicant setup
+    // portal when we have the URL; otherwise fall back to the profile.
+    const portal = c.applicantPortalLink;
     out.push({
       id: 'background_check_action_required',
       category: 'important',
@@ -230,8 +237,8 @@ function buildWorkerJobRequirementActionItems(signals: WorkerDashboardJobSignals
       descriptionKey: 'dashboard.actionItems.backgroundApplicantDescription',
       sortOrder: 19,
       primaryLabelKey: 'dashboard.actionItems.backgroundApplicantPrimary',
-      primaryKind: 'navigate',
-      href: '/c1/workers/profile',
+      primaryKind: portal ? 'external_open' : 'navigate',
+      href: portal || '/c1/workers/profile',
       sourceReason: 'Background check awaiting applicant',
       qaEvaluatedFields: {},
     });

@@ -168,6 +168,12 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
       } else {
         onNavigate('/c1/workers/profile');
       }
+      return;
+    }
+    if (item.primaryKind === 'external_open') {
+      // External vendor portal (e.g. AccuSource applicant setup URL).
+      if (item.href) window.open(item.href, '_blank', 'noopener,noreferrer');
+      else onNavigate('/c1/workers/profile');
     }
   };
 
@@ -320,24 +326,66 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
                   boxShadow: (theme) => `0 0 0 1px ${theme.palette.error.main}22`,
                 }}
               >
-                <CardContent sx={{ py: 2.25, px: { xs: 2, sm: 2.5 }, '&:last-child': { pb: 2.25 } }}>
-                  <Stack spacing={1.5}>
-                    <Chip
-                      size="small"
-                      label={t(categoryLabelKey(item.category))}
-                      color="error"
-                      variant="filled"
-                      sx={{ alignSelf: 'flex-start', fontWeight: 600, height: 26 }}
-                    />
-                    <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.35 }}>
-                      {t(item.titleKey)}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.65, maxWidth: '62ch' }}>
-                      {t(item.descriptionKey)}
-                    </Typography>
+                <CardContent sx={{ py: 1, px: { xs: 1.25, sm: 1.5 }, '&:last-child': { pb: 1 } }}>
+                  <Stack spacing={0.75}>
+                    <Stack
+                      direction="row"
+                      spacing={1.25}
+                      alignItems="center"
+                      justifyContent="space-between"
+                      useFlexGap
+                      flexWrap="wrap"
+                    >
+                      <Box sx={{ minWidth: 0, flex: 1 }}>
+                        <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mb: 0.25 }}>
+                          <Chip
+                            size="small"
+                            label={t(categoryLabelKey(item.category))}
+                            color="error"
+                            variant="filled"
+                            sx={{ fontWeight: 600, height: 18, '& .MuiChip-label': { px: 0.75, fontSize: 10 } }}
+                          />
+                          <Typography
+                            variant="subtitle2"
+                            sx={{ fontWeight: 700, lineHeight: 1.25, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          >
+                            {t(item.titleKey)}
+                          </Typography>
+                        </Stack>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.35 }}
+                        >
+                          {t(item.descriptionKey)}
+                        </Typography>
+                      </Box>
+                      <Stack direction="row" spacing={0.5} alignItems="center" sx={{ flexShrink: 0 }}>
+                        {item.secondaryKind === 'assignment_decline' && item.secondaryLabelKey ? (
+                          <Button
+                            variant="outlined"
+                            color="inherit"
+                            size="small"
+                            disabled={busy}
+                            onClick={() => void runSecondary(item)}
+                          >
+                            {t(item.secondaryLabelKey)}
+                          </Button>
+                        ) : null}
+                        <Button
+                          variant="contained"
+                          color="primary"
+                          size="small"
+                          disabled={busy}
+                          onClick={() => void runPrimary(item)}
+                        >
+                          {busy ? t('dashboard.actionItems.saving') : t(item.primaryLabelKey)}
+                        </Button>
+                      </Stack>
+                    </Stack>
                     {assignmentError ? (
-                      <Stack spacing={0.75} alignItems="flex-start">
-                        <Typography variant="body2" color="error" sx={{ fontWeight: 600 }}>
+                      <Stack spacing={0.5} alignItems="flex-start">
+                        <Typography variant="caption" color="error" sx={{ fontWeight: 600 }}>
                           {assignmentError}
                         </Typography>
                         {assignmentHeadshotRetake ? (
@@ -352,28 +400,6 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
                         ) : null}
                       </Stack>
                     ) : null}
-                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} useFlexGap flexWrap="wrap" sx={{ pt: 0.5 }}>
-                      <Button
-                        variant="contained"
-                        color="primary"
-                        size="medium"
-                        disabled={busy}
-                        onClick={() => void runPrimary(item)}
-                      >
-                        {busy ? t('dashboard.actionItems.saving') : t(item.primaryLabelKey)}
-                      </Button>
-                      {item.secondaryKind === 'assignment_decline' && item.secondaryLabelKey ? (
-                        <Button
-                          variant="outlined"
-                          color="inherit"
-                          size="medium"
-                          disabled={busy}
-                          onClick={() => void runSecondary(item)}
-                        >
-                          {t(item.secondaryLabelKey)}
-                        </Button>
-                      ) : null}
-                    </Stack>
                   </Stack>
                 </CardContent>
               </Card>
@@ -416,59 +442,75 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
                       : {}),
               }}
             >
+              {/* Compact tile: chip + title on one row, a clamped one-line
+                  description, and a small action button — ~70% smaller than
+                  the old full-height card. */}
               <CardContent
                 sx={{
-                  py: 2.25,
-                  px: { xs: 2, sm: 2.5 },
-                  '&:last-child': { pb: 2.25 },
+                  py: 1,
+                  px: { xs: 1.25, sm: 1.5 },
+                  '&:last-child': { pb: 1 },
                 }}
               >
-                <Stack spacing={1.5}>
-                  <Chip
-                    size="small"
-                    label={t(categoryLabelKey(item.category))}
-                    color={categoryChipColor[item.category]}
-                    variant={isRecommended ? 'outlined' : 'filled'}
-                    sx={{ alignSelf: 'flex-start', fontWeight: 600, height: 26 }}
-                  />
-                  <Typography
-                    variant={isRecommended ? 'subtitle1' : 'h6'}
-                    sx={{ fontWeight: 700, lineHeight: 1.35 }}
-                  >
-                    {t(item.titleKey)}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.65, maxWidth: '62ch' }}>
-                    {t(item.descriptionKey)}
-                  </Typography>
-                  <Stack
-                    direction={{ xs: 'column', sm: 'row' }}
-                    spacing={1}
-                    flexWrap="wrap"
-                    useFlexGap
-                    sx={{ pt: 0.5, alignItems: { xs: 'stretch', sm: 'center' } }}
-                  >
+                <Stack
+                  direction="row"
+                  spacing={1.25}
+                  alignItems="center"
+                  justifyContent="space-between"
+                  useFlexGap
+                  flexWrap="wrap"
+                >
+                  <Box sx={{ minWidth: 0, flex: 1 }}>
+                    <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mb: 0.25 }}>
+                      <Chip
+                        size="small"
+                        label={t(categoryLabelKey(item.category))}
+                        color={categoryChipColor[item.category]}
+                        variant={isRecommended ? 'outlined' : 'filled'}
+                        sx={{ fontWeight: 600, height: 18, '& .MuiChip-label': { px: 0.75, fontSize: 10 } }}
+                      />
+                      <Typography
+                        variant="subtitle2"
+                        sx={{ fontWeight: 700, lineHeight: 1.25, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      >
+                        {t(item.titleKey)}
+                      </Typography>
+                    </Stack>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{
+                        display: '-webkit-box',
+                        WebkitLineClamp: 1,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                        lineHeight: 1.35,
+                      }}
+                    >
+                      {t(item.descriptionKey)}
+                    </Typography>
+                  </Box>
+                  <Stack direction="row" spacing={0.5} alignItems="center" sx={{ flexShrink: 0 }}>
+                    {item.category === 'recommended' &&
+                    item.secondaryKind === 'dismiss_firestore' &&
+                    item.secondaryLabelKey ? (
+                      <Button size="small" variant="text" color="inherit" onClick={() => void runSecondary(item)}>
+                        {t(item.secondaryLabelKey)}
+                      </Button>
+                    ) : null}
+                    {item.secondaryKind === 'snooze_sms' && item.secondaryLabelKey ? (
+                      <Button size="small" color="inherit" onClick={() => void runSecondary(item)}>
+                        {t(item.secondaryLabelKey)}
+                      </Button>
+                    ) : null}
                     <Button
                       variant={isRecommended ? 'outlined' : 'contained'}
                       color="primary"
-                      size="medium"
-                      fullWidth
-                      sx={{ maxWidth: { sm: 220 } }}
+                      size="small"
                       onClick={() => void runPrimary(item)}
                     >
                       {t(item.primaryLabelKey)}
                     </Button>
-                    {item.secondaryKind === 'snooze_sms' && item.secondaryLabelKey ? (
-                      <Button size="medium" color="inherit" onClick={() => void runSecondary(item)}>
-                        {t(item.secondaryLabelKey)}
-                      </Button>
-                    ) : null}
-                    {item.category === 'recommended' &&
-                    item.secondaryKind === 'dismiss_firestore' &&
-                    item.secondaryLabelKey ? (
-                      <Button size="medium" variant="text" color="inherit" onClick={() => void runSecondary(item)}>
-                        {t(item.secondaryLabelKey)}
-                      </Button>
-                    ) : null}
                   </Stack>
                 </Stack>
               </CardContent>

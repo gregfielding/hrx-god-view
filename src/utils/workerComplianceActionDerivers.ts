@@ -4,7 +4,7 @@
  */
 
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
-import { shouldShowApplicantPortalCta } from './backgroundCheckApplicantPortal';
+import { shouldShowApplicantPortalCta, resolveApplicantPortalUrl } from './backgroundCheckApplicantPortal';
 
 const EVERIFY_WORKER_ACTION_STATUSES = new Set(['tnc', 'further_action_required']);
 
@@ -47,6 +47,10 @@ export interface WorkerComplianceSignals {
   drugScheduleRequired: boolean;
   drugRescheduleRequired: boolean;
   everifyWorkerAction: boolean;
+  /** AccuSource applicant self-service setup URL, when one is on file —
+   *  so the dashboard "Background check" action item can deep-link the
+   *  worker straight to the portal instead of just the profile page. */
+  applicantPortalLink?: string;
 }
 
 /**
@@ -62,6 +66,7 @@ export function deriveWorkerComplianceSignals(
   let drugScheduleRequired = false;
   let drugRescheduleRequired = false;
   let everifyWorkerAction = false;
+  let applicantPortalLink: string | undefined;
 
   for (const ev of everifyCases) {
     const st = String(ev.status || '').toLowerCase();
@@ -72,6 +77,10 @@ export function deriveWorkerComplianceSignals(
     const hrx = String(c.hrxStatus || '').toLowerCase();
     if (hrx === 'error') {
       backgroundIssueAction = true;
+      // If AccuSource still has an applicant setup URL on this record, keep
+      // it so the dashboard "Review issue" CTA can deep-link to the portal.
+      const link = resolveApplicantPortalUrl(c as unknown as BackgroundCheckRecord);
+      if (link) applicantPortalLink = link;
       continue;
     }
 
@@ -95,6 +104,8 @@ export function deriveWorkerComplianceSignals(
       /** Match recruiter portal CTA: hide once applicant finished partial profile / HRX advanced (e.g. profileCompleted, order completed). */
       else if (shouldShowApplicantPortalCta(c as unknown as BackgroundCheckRecord)) {
         backgroundApplicantAction = true;
+        const link = resolveApplicantPortalUrl(c as unknown as BackgroundCheckRecord);
+        if (link) applicantPortalLink = link;
       }
     }
 
@@ -118,5 +129,6 @@ export function deriveWorkerComplianceSignals(
     drugScheduleRequired,
     drugRescheduleRequired,
     everifyWorkerAction,
+    applicantPortalLink,
   };
 }
