@@ -9113,7 +9113,16 @@ export const logAssignmentCreated = onDocumentCreated(
               .doc(`tenants/${tenantId}/job_orders/${assignment.jobOrderId}`)
               .get();
             jobOrderData = jobOrderDoc.data();
-            if (jobOrderData?.jobTitle) jobTitle = jobOrderData.jobTitle;
+            // Danny bug (2026-06-08): a single job order can span MULTIPLE
+            // roles (a JO titled "Usher" with shifts named "Lead",
+            // "Ticket Takers", …). The assignment doc already carries the
+            // SHIFT-specific title (`assignment.jobTitle`), so only fall
+            // back to the JO-level title when the assignment doesn't have
+            // one — previously this UNCONDITIONALLY overwrote it with the
+            // JO title, so every worker's SMS said "Usher" regardless of
+            // their actual shift. (The email was correct because it reads
+            // the shift title.)
+            if (!assignment.jobTitle && jobOrderData?.jobTitle) jobTitle = jobOrderData.jobTitle;
             if (jobOrderData?.checkInInstructions) checkInInstructions = String(jobOrderData.checkInInstructions);
           } catch (err) {
             logger.warn(`Failed to fetch job order ${assignment.jobOrderId}:`, err);
@@ -9169,7 +9178,64 @@ export const logAssignmentCreated = onDocumentCreated(
           : '/c1/jobs-board';
         const jobUrl = `https://hrxone.com${postingPath}`;
         const instructionsText = checkInInstructions ? ` Check-in: ${checkInInstructions}` : '';
-        const message = `Hi ${firstName}, your application has been accepted for ${jobTitle}${dateTimeInfo}${locationText}. View details and respond: ${jobUrl}.${instructionsText}`;
+
+        // OFFER SMS — this trigger (`logAssignmentCreated`) is the UNIVERSAL
+        // send path: it fires for assignments created by ANY callable
+        // (placementsCreateAssignments, the admin application-accept flow,
+        // etc.) and the dedupe guard makes it the de-facto sole sender. It
+        // previously hardcoded the old single-link "View details and
+        // respond:" copy, which is why editing the message template in the
+        // UI had no effect and the new ACCEPT/DECLINE format never went out.
+        //
+        // For a pending offer, use the same `buildAssignmentOfferSms`
+        // builder placementsCreateAssignments uses — two explicit verbs
+        // (ACCEPT / DECLINE) on their own lines, EN/ES by worker language.
+        // Confirmed-on-create assignments (rare; recruiter confirms on the
+        // worker's behalf) keep a confirmation-style message.
+        let message: string;
+        if (createNorm === 'pending') {
+          const { buildAssignmentOfferSms, resolveOfferLanguage } = await import(
+            './messaging/buildAssignmentOfferSms'
+          );
+          const { buildWorkerAssignmentAcceptUrl, buildWorkerAssignmentDeclineUrl } = await import(
+            './utils/workerUrls'
+          );
+          const acceptUrl = buildWorkerAssignmentAcceptUrl(assignmentId);
+          const declineUrl = buildWorkerAssignmentDeclineUrl({
+            assignmentId,
+            jobPostId: assignment.jobPostId,
+          });
+          let dateTimeInfoEs = '';
+          if (assignment.startDate) {
+            const sd = assignment.startDate.toDate
+              ? assignment.startDate.toDate()
+              : new Date(assignment.startDate);
+            const opts: Intl.DateTimeFormatOptions = { weekday: 'long', month: 'long', day: 'numeric' };
+            dateTimeInfoEs = ` el ${sd.toLocaleDateString('es-US', opts)}`;
+            if (assignment.startTime && assignment.endTime) {
+              dateTimeInfoEs += ` de ${formatTime12h(assignment.startTime)} a ${formatTime12h(assignment.endTime)}`;
+            }
+          }
+          const locationTextEs = worksiteName ? ` en ${worksiteName}` : '';
+          const instructionsTextEs = checkInInstructions
+            ? ` Instrucciones de llegada: ${checkInInstructions}`
+            : '';
+          message = buildAssignmentOfferSms({
+            firstName,
+            jobTitle,
+            dateTimeInfo,
+            dateTimeInfoEs,
+            locationText,
+            locationTextEs,
+            instructionsText,
+            instructionsTextEs,
+            acceptUrl,
+            declineUrl,
+            language: resolveOfferLanguage(userData),
+          });
+        } else {
+          message = `Hi ${firstName}, you're confirmed for ${jobTitle}${dateTimeInfo}${locationText}. View details: ${jobUrl}.${instructionsText}`;
+        }
 
         // Build full assignment details email (subject: "Job Title - Assignment Details")
         let emailSubject: string | undefined;

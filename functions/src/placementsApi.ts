@@ -2041,7 +2041,11 @@ export const resendAssignmentOffer = onCall(
     try {
       const jobOrderDoc = await db.doc(`tenants/${tenantId}/job_orders/${assignment.jobOrderId}`).get();
       jobOrderData = jobOrderDoc.data();
-      if (jobOrderData?.jobTitle) jobTitle = jobOrderData.jobTitle;
+      // Prefer the SHIFT-specific assignment.jobTitle; only fall back to
+      // the JO-level title when the assignment lacks one. See the same
+      // fix in index.ts logAssignmentCreated (Danny "Usher" bug) — a JO
+      // can span multiple roles, so the JO title is the wrong label.
+      if (!assignment.jobTitle && jobOrderData?.jobTitle) jobTitle = jobOrderData.jobTitle;
       if (jobOrderData?.checkInInstructions) checkInInstructions = String(jobOrderData.checkInInstructions);
     } catch (_) {
       /* ignore */
