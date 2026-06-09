@@ -6,7 +6,18 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Box, Stack, Typography, CircularProgress } from '@mui/material';
+import {
+  Box,
+  Stack,
+  Typography,
+  CircularProgress,
+  ToggleButton,
+  ToggleButtonGroup,
+  Tooltip,
+} from '@mui/material';
+import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
+import ViewListIcon from '@mui/icons-material/ViewList';
+import Inventory2OutlinedIcon from '@mui/icons-material/Inventory2Outlined';
 import { collection, doc, query, where, getDocs, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -145,10 +156,10 @@ function docToItem(
 const WorkerAssignments: React.FC = () => {
   const t = useT();
   const { user, activeTenant } = useAuth();
-  // Default to Calendar View (index 1) — the month/week/day calendar is
-  // the most useful at-a-glance surface (own shifts + discoverable open
-  // ones). 0 = List View, 1 = Calendar View, 2 = Archive.
-  const [tabIndex, setTabIndex] = useState(1);
+  // View switcher (icon button group in the header). Calendar is the
+  // default + first position — the most useful at-a-glance surface.
+  //   0 = Calendar, 1 = List, 2 = Archive
+  const [tabIndex, setTabIndex] = useState(0);
   const [upcoming, setUpcoming] = useState<WorkerAssignmentItem[]>([]);
   const [past, setPast] = useState<WorkerAssignmentItem[]>([]);
   // Combined calendar feed: confirmed/accepted assignments + submitted
@@ -500,13 +511,51 @@ const WorkerAssignments: React.FC = () => {
     <Box sx={{ maxWidth: 'lg', mx: 'auto' }}>
       <Stack spacing={4} sx={{ py: 2 }}>
         <SmsWarningBanner />
-        <Box>
-          <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
-            {t('assignments.title')}
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            {t('assignments.subtitle')}
-          </Typography>
+        {/* Header row: title/subtitle on the left, the view switcher
+            (icon button group) right-justified on the same top row. */}
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            gap: 2,
+            flexWrap: 'wrap',
+          }}
+        >
+          <Box>
+            <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
+              {t('assignments.title')}
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              {t('assignments.subtitle')}
+            </Typography>
+          </Box>
+          <ToggleButtonGroup
+            size="small"
+            exclusive
+            value={tabIndex}
+            onChange={(_, v: number | null) => {
+              if (v !== null) setTabIndex(v);
+            }}
+            aria-label={t('assignments.viewMode')}
+            sx={{ flexShrink: 0 }}
+          >
+            <ToggleButton value={0} aria-label={t('assignments.tabCalendar')}>
+              <Tooltip title={t('assignments.tabCalendar')}>
+                <CalendarMonthIcon fontSize="small" />
+              </Tooltip>
+            </ToggleButton>
+            <ToggleButton value={1} aria-label={t('assignments.tabUpcoming')}>
+              <Tooltip title={t('assignments.tabUpcoming')}>
+                <ViewListIcon fontSize="small" />
+              </Tooltip>
+            </ToggleButton>
+            <ToggleButton value={2} aria-label={t('assignments.tabPast')}>
+              <Tooltip title={t('assignments.tabPast')}>
+                <Inventory2OutlinedIcon fontSize="small" />
+              </Tooltip>
+            </ToggleButton>
+          </ToggleButtonGroup>
         </Box>
 
         {loading ? (
@@ -519,7 +568,6 @@ const WorkerAssignments: React.FC = () => {
             past={past}
             calendarItems={calendarItems}
             tabIndex={tabIndex}
-            onTabChange={setTabIndex}
             onCancelShift={handleCancelShift}
           />
         )}
