@@ -46,6 +46,7 @@ import {
   GetApp as GetAppIcon,
   OpenInNew as OpenInNewIcon,
   PersonAddAlt1 as PersonAddIcon,
+  PersonRemove as PersonRemoveIcon,
   NotificationsActive as NotificationsActiveIcon,
   NotificationsOff as NotificationsOffIcon,
 } from '@mui/icons-material';
@@ -331,6 +332,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const [confirmedApplicationsCount, setConfirmedApplicationsCount] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Bumped to force the Worker Pool to re-load after a silent mutation
+  // (e.g. removing an applicant from the selected shift).
+  const [poolRefreshTick, setPoolRefreshTick] = useState(0);
   /**
    * Bottom-center toast for assign-click feedback. The legacy `error`
    * Alert renders at the very top of the placements UI — when the
@@ -1605,7 +1609,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     };
 
     loadWorkforce();
-  }, [tenantId, jobOrderId, selectedWorkforce, selectedShiftId, selectedDay, jobOrder, connectedJobPostIds, shifts]);
+  }, [tenantId, jobOrderId, selectedWorkforce, selectedShiftId, selectedDay, jobOrder, connectedJobPostIds, shifts, poolRefreshTick]);
 
   // Real-time assignment status map for the selected shift.
   useEffect(() => {
@@ -2377,6 +2381,65 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   };
 
+  /**
+   * SILENTLY remove a worker's application from the SELECTED shift only —
+   * no notification fires (we mutate the application's shift arrays, not its
+   * status; the withdrawn/deleted cascade only watches status changes).
+   *
+   * Use case: a worker applied to both the AM and PM shift (open to either).
+   * Once you accept them for one, you can manually drop the other so they
+   * don't get hired for two shifts the same day — kept manual so you CAN
+   * still double-book intentionally.
+   */
+  const handleRemoveApplicationFromShift = async (worker: Worker) => {
+    if (!worker.id || !selectedShiftId || !tenantId) return;
+    const name = [worker.firstName, worker.lastName].filter(Boolean).join(' ') || 'this applicant';
+    const ok = window.confirm(
+      `Remove ${name} from this shift's applicants?\n\nThis silently drops their application for THIS shift only — no message is sent, and their applications to other shifts are unaffected.`
+    );
+    if (!ok) return;
+    try {
+      const appsRef = collection(db, 'tenants', tenantId, 'applications');
+      const snap = await getDocs(query(appsRef, where('userId', '==', worker.id)));
+      const joIds = new Set<string>([jobOrderId, ...connectedJobPostIds].filter(Boolean));
+      let removed = 0;
+      for (const d of snap.docs) {
+        const data = d.data() as Record<string, any>;
+        const belongsToJO =
+          joIds.has(String(data.jobOrderId || '')) ||
+          joIds.has(String(data.jobId || '')) ||
+          joIds.has(String(data.postId || ''));
+        if (!belongsToJO) continue;
+        if (!applicationMatchesShift(data, selectedShiftId)) continue;
+        const shiftIds: string[] = Array.isArray(data.shiftIds) ? data.shiftIds.map(String) : [];
+        const newShiftIds = shiftIds.filter((s) => s !== selectedShiftId);
+        const selectedShifts: any[] = Array.isArray(data.selectedShifts) ? data.selectedShifts : [];
+        const newSelectedShifts = selectedShifts.filter(
+          (s) => String(s?.shiftId ?? s) !== selectedShiftId
+        );
+        const patch: Record<string, unknown> = {
+          shiftIds: newShiftIds,
+          selectedShifts: newSelectedShifts,
+          updatedAt: serverTimestamp(),
+        };
+        // Clear the legacy single shiftId if it pointed at the removed shift.
+        if (String(data.shiftId || '') === selectedShiftId) {
+          patch.shiftId = newShiftIds[0] || '';
+        }
+        // Plain field update — NOT a status change — so no worker SMS/push fires.
+        await updateDoc(doc(db, 'tenants', tenantId, 'applications', d.id), patch);
+        removed += 1;
+      }
+      if (removed === 0) {
+        setError(`No application found for ${name} on this shift.`);
+      }
+      setPoolRefreshTick((n) => n + 1);
+    } catch (err) {
+      console.error('handleRemoveApplicationFromShift failed:', err);
+      setError((err as Error)?.message ?? 'Failed to remove applicant from shift');
+    }
+  };
+
   // Handle offering position: create Assignment (sends accept/decline message). Pass selected day so
   // assignment is for that day only when a day is selected; for "All days" we send all dates.
   const handleConfirmPlacement = async (worker: Worker) => {
@@ -2707,6 +2770,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   };
 
   const selectedShift = shifts.find(s => s.id === selectedShiftId);
+  // Show the silent "remove from shift" action only in the shift-scoped
+  // applicant pools (where each card maps to an application for THIS shift).
+  const isShiftApplicantPool =
+    selectedWorkforce === 'shift_applicants' ||
+    selectedWorkforce === 'selected_day_applicants' ||
+    selectedWorkforce === 'shift_candidates';
 
   /**
    * Phase 2: shifts that should appear as cards in the Assignments
@@ -4241,6 +4310,18 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                         />
                                       </span>
                                     </Tooltip>
+                                    {isShiftApplicantPool && selectedShift ? (
+                                      <Tooltip title="Remove this applicant from the selected shift (silent — no message sent). Use after accepting them for another shift the same day.">
+                                        <IconButton
+                                          size="small"
+                                          aria-label="Remove from this shift"
+                                          onClick={() => handleRemoveApplicationFromShift(worker)}
+                                          sx={{ color: 'text.secondary', '&:hover': { color: 'error.main' } }}
+                                        >
+                                          <PersonRemoveIcon fontSize="small" />
+                                        </IconButton>
+                                      </Tooltip>
+                                    ) : null}
                                   </>
                                 }
                               />
