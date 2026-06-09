@@ -6,11 +6,13 @@
  */
 
 import React from 'react';
-import { Box, Stack } from '@mui/material';
+import { Box, Stack, ToggleButton, ToggleButtonGroup } from '@mui/material';
+import { useT } from '../../../i18n';
 import type { WorkerAssignmentItem } from './WorkerAssignmentCard';
 import WorkerAssignmentCard from './WorkerAssignmentCard';
 import WorkerAssignmentsEmptyState from './WorkerAssignmentsEmptyState';
 import WorkerAssignmentsCalendar from './WorkerAssignmentsCalendar';
+import UserApplications from '../../../pages/UserApplications';
 
 export interface WorkerAssignmentsTabsProps {
   upcoming: WorkerAssignmentItem[];
@@ -34,6 +36,9 @@ const WorkerAssignmentsTabs: React.FC<WorkerAssignmentsTabsProps> = ({
   onCancelShift,
   calendarItems,
 }) => {
+  const t = useT();
+  // Archive sub-toggle: past assignments (default) vs. all applications.
+  const [archiveView, setArchiveView] = React.useState<'assignments' | 'applications'>('assignments');
   const allForCalendar = React.useMemo(() => {
     const merged = calendarItems ?? [...upcoming, ...past];
     merged.sort((a, b) => {
@@ -72,11 +77,26 @@ const WorkerAssignmentsTabs: React.FC<WorkerAssignmentsTabsProps> = ({
         )}
       </div>
 
-      {/* 2 = Archive (past) */}
+      {/* 2 = Archive (past assignments + applications sub-toggle) */}
       <div role="tabpanel" id="assignments-panel-past" hidden={tabIndex !== 2}>
         {tabIndex === 2 && (
           <Stack spacing={2}>
-            {past.length === 0 ? (
+            <ToggleButtonGroup
+              size="small"
+              exclusive
+              value={archiveView}
+              onChange={(_, v: 'assignments' | 'applications' | null) => {
+                if (v) setArchiveView(v);
+              }}
+              aria-label={t('assignments.archiveToggle')}
+            >
+              <ToggleButton value="assignments">{t('assignments.archiveAssignments')}</ToggleButton>
+              <ToggleButton value="applications">{t('assignments.archiveApplications')}</ToggleButton>
+            </ToggleButtonGroup>
+
+            {archiveView === 'applications' ? (
+              <UserApplications embedded />
+            ) : past.length === 0 ? (
               <WorkerAssignmentsEmptyState variant="past" />
             ) : (
               past.map((a) => (

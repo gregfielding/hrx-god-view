@@ -57,7 +57,14 @@ type PendingOfferSet = Set<string>;
 /** Set of "tenantId_jobPostId" for which the user has accepted (confirmed/hired) assignment */
 type HiredOfferSet = Set<string>;
 
-const UserApplications: React.FC = () => {
+interface UserApplicationsProps {
+  /** When embedded inside another page (e.g. My Schedule → Archive →
+   *  Applications), drop the page chrome: no outer maxWidth container and
+   *  no "My Applications" h1 (the host page supplies the heading). */
+  embedded?: boolean;
+}
+
+const UserApplications: React.FC<UserApplicationsProps> = ({ embedded = false }) => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { applicationId: routeApplicationId } = useParams<{ applicationId?: string }>();
@@ -408,15 +415,17 @@ const UserApplications: React.FC = () => {
   }
 
   return (
-    <Box sx={{ maxWidth: 'lg', mx: 'auto', py: 2 }}>
+    <Box sx={embedded ? {} : { maxWidth: 'lg', mx: 'auto', py: 2 }}>
       {linkedApplicationMissing && (
         <Alert severity="warning" sx={{ mb: 2 }}>
           This item is unavailable. You can review your other applications below.
         </Alert>
       )}
-      <Typography variant="h4" component="h1" sx={{ fontWeight: 600, mb: applications.length > 0 ? 2 : 0 }}>
-        {t('applications.title')}
-      </Typography>
+      {!embedded && (
+        <Typography variant="h4" component="h1" sx={{ fontWeight: 600, mb: applications.length > 0 ? 2 : 0 }}>
+          {t('applications.title')}
+        </Typography>
+      )}
       {applications.length === 0 ? (
         <Box sx={{ p: 4, textAlign: 'center' }}>
           <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
