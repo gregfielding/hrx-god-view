@@ -26,6 +26,7 @@ import {
   buildWorkerAssignmentResponseUrl,
   buildWorkerAssignmentAcceptUrl,
   buildWorkerAssignmentDeclineUrl,
+  buildWorkerAssignmentUrl,
 } from './utils/workerUrls';
 import { assertWorkerHeadshotApproved } from './avatar/headshotAcceptGate';
 
@@ -1731,7 +1732,8 @@ export const resendShiftConfirmationsToConfirmedStaff = onCall(
         // so the worker knows this is a re-send, not a fresh offer.
         const firstName = ud.firstName || ad.firstName || 'there';
         const jobTitle = ad.jobTitle || 'your shift';
-        const smsMessage = `Hi ${firstName}, here are the latest details for ${jobTitle}. Check your email for the full briefing (check-in time, parking, what to bring). Reply to your recruiter if anything looks off.`;
+        const assignmentUrl = buildWorkerAssignmentUrl(a.id);
+        const smsMessage = `Hi ${firstName}, here are the latest details for ${jobTitle}. Check your email for the full briefing (check-in time, parking, what to bring), or view them here: ${assignmentUrl} . Reply to your recruiter if anything looks off.`;
 
         await sendLegacyAssignmentMessage({
           tenantId,
@@ -1839,7 +1841,8 @@ export const resendAssignmentConfirmation = onCall(
 
     const firstName = ud.firstName || assignment.firstName || 'there';
     const jobTitle = assignment.jobTitle || 'your shift';
-    const smsMessage = `Hi ${firstName}, here are the latest details for ${jobTitle}. Check your email for the full briefing (check-in time, parking, what to bring). Reply to your recruiter if anything looks off.`;
+    const assignmentUrl = buildWorkerAssignmentUrl(assignmentId);
+    const smsMessage = `Hi ${firstName}, here are the latest details for ${jobTitle}. Check your email for the full briefing (check-in time, parking, what to bring), or view them here: ${assignmentUrl} . Reply to your recruiter if anything looks off.`;
 
     await sendLegacyAssignmentMessage({
       tenantId,
