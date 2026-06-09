@@ -19,7 +19,7 @@ import HomeIcon from '@mui/icons-material/Home';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import WorkIcon from '@mui/icons-material/Work';
 import ListAltIcon from '@mui/icons-material/ListAlt';
-import SettingsIcon from '@mui/icons-material/Settings';
+import InboxIcon from '@mui/icons-material/Inbox';
 import PersonIcon from '@mui/icons-material/Person';
 import PaymentsIcon from '@mui/icons-material/Payments';
 
@@ -41,9 +41,10 @@ const GUEST_NAV_PATHS = new Set([
 //     workers as a direct link when needed — they don't belong in the
 //     standing nav, where they read as a perpetual to-do even after the
 //     worker has completed one.
-//   - "Notifications" → "Settings" (nav.settings) with a gear icon; the
-//     destination page (/c1/workers/notifications) houses notification
-//     preferences, so "Settings" is the truer label.
+//   - "Notifications" → "Inbox" (nav.inbox) with an inbox-tray icon. The
+//     destination page (/c1/workers/notifications) is a notification
+//     feed (applications / assignments / reminders), so "Inbox" reads
+//     truer than the earlier "Settings".
 const baseNavConfig = [
   { key: 'nav.home', path: '/c1/workers/dashboard', icon: <HomeIcon /> },
   { key: 'nav.findWork', path: '/c1/jobs-board', icon: <WorkIcon /> },
@@ -51,7 +52,7 @@ const baseNavConfig = [
   { key: 'nav.myAssignments', path: '/c1/workers/assignments', icon: <AssignmentIcon /> },
   { key: 'nav.myApplications', path: '/c1/workers/applications', icon: <ListAltIcon /> },
   { key: 'nav.payroll', path: '/c1/workers/payroll', icon: <PaymentsIcon /> },
-  { key: 'nav.settings', path: '/c1/workers/notifications', icon: <SettingsIcon /> },
+  { key: 'nav.inbox', path: '/c1/workers/notifications', icon: <InboxIcon /> },
   /* Help & Support hidden: import HelpOutlineIcon, append nav.helpSupport -> /c1/workers/support */
 ];
 

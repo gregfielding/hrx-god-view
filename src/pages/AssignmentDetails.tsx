@@ -59,6 +59,9 @@ interface AssignmentDetails {
   worksiteId?: string;
   /** Shift id for hours, days, and other shift details */
   shiftId?: string;
+  /** Job posting id — used to route back to the jobs-board posting after
+   *  a worker cancels ("I can no longer work"). */
+  jobPostId?: string;
   jobTitle?: string;
   companyName?: string;
   location?: string;
@@ -245,6 +248,8 @@ const AssignmentDetails: React.FC = () => {
   const [assignment, setAssignment] = useState<AssignmentDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Worker self-cancel ("I can no longer work") in-flight flag.
+  const [cancelling, setCancelling] = useState(false);
   const [recruiters, setRecruiters] = useState<Array<{ id: string; displayName: string; email?: string; phone?: string }>>([]);
   const [scheduleShift, setScheduleShift] = useState<{
     shiftMode?: 'single' | 'multi';
@@ -820,6 +825,7 @@ const AssignmentDetails: React.FC = () => {
         companyId: data.companyId,
         worksiteId: data.worksiteId || data.locationId,
         shiftId: data.shiftId,
+        jobPostId: data.jobPostId,
         jobTitle,
         companyName,
         location,
@@ -1091,6 +1097,7 @@ const AssignmentDetails: React.FC = () => {
         companyId: sourceData.companyId ?? jobOrderData.companyId,
         worksiteId: sourceData.locationId ?? jobOrderData.worksiteId ?? jobOrderData.locationId,
         shiftId: sourceData.shiftId,
+        jobPostId: sourceData.jobPostId ?? jobOrderData.jobPostId,
         jobTitle: sourceData.jobTitle || jobOrderData.jobOrderName || jobOrderData.jobTitle || '',
         companyName: sourceData.companyName || jobOrderData.companyName || '',
         location,
@@ -1269,6 +1276,45 @@ const AssignmentDetails: React.FC = () => {
     assignment?.eVerifyRequired ? 'E-Verify' : null,
   ].filter(Boolean) as string[];
 
+  /**
+   * Worker self-cancel ("I can no longer work"). Declines the assignment
+   * via `respondToAssignment` (→ cancelled/declined), then routes the
+   * worker back to the jobs-board posting so they can re-apply if they
+   * change their mind. Mirrors the jobs-board Decline flow.
+   */
+  const handleCantWork = async () => {
+    if (!assignment?.tenantId || !assignment?.id) return;
+    const ok = window.confirm(
+      t('assignments.cantWorkConfirm') ||
+        'Are you sure you can no longer work this shift? This will cancel your assignment.',
+    );
+    if (!ok) return;
+    setCancelling(true);
+    try {
+      const callable = httpsCallable(functions, 'respondToAssignment');
+      await callable({
+        tenantId: assignment.tenantId,
+        assignmentId: assignment.id,
+        decision: 'decline',
+      });
+      navigate(assignment.jobPostId ? `/c1/jobs-board/${assignment.jobPostId}` : '/c1/jobs-board');
+    } catch (err) {
+      console.error('[AssignmentDetails] "cant work" cancel failed', err);
+      window.alert(
+        t('assignments.cantWorkError') ||
+          'We could not cancel this shift. Please try again or contact your recruiter.',
+      );
+      setCancelling(false);
+    }
+  };
+
+  // Only offer self-cancel while the assignment is still live (not
+  // already cancelled / declined / completed).
+  const canSelfCancel = !!assignment &&
+    !['cancelled', 'canceled', 'declined', 'completed', 'terminated'].includes(
+      String(assignment.status || '').toLowerCase(),
+    );
+
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
@@ -1359,7 +1405,7 @@ const AssignmentDetails: React.FC = () => {
                     <WorkIcon color="action" sx={{ flexShrink: 0 }} />
                     <Box>
                       <Typography variant="body2" color="text.secondary">{t('assignment.jobTitle')}</Typography>
-                      <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
                         {assignment.jobTitle || '—'}
                       </Typography>
                     </Box>
@@ -1368,7 +1414,7 @@ const AssignmentDetails: React.FC = () => {
                     <ScheduleIcon color="action" sx={{ flexShrink: 0 }} />
                     <Box>
                       <Typography variant="body2" color="text.secondary">{t('common.startDate')}</Typography>
-                      <Typography variant="body1">
+                      <Typography variant="body2">
                         {assignment.startDate ? formatDate(assignment.startDate) : '—'}
                       </Typography>
                     </Box>
@@ -1377,7 +1423,7 @@ const AssignmentDetails: React.FC = () => {
                     <ScheduleIcon color="action" sx={{ flexShrink: 0 }} />
                     <Box>
                       <Typography variant="body2" color="text.secondary">{t('assignment.time')}</Typography>
-                      <Typography variant="body1">
+                      <Typography variant="body2">
                         {[formatTime(effectiveStartTime), formatTime(effectiveEndTime)].filter(Boolean).join(' – ') || '—'}
                       </Typography>
                     </Box>
@@ -1386,7 +1432,7 @@ const AssignmentDetails: React.FC = () => {
                     <MoneyIcon color="action" sx={{ flexShrink: 0 }} />
                     <Box>
                       <Typography variant="body2" color="text.secondary">{t('jobs.payRate')}</Typography>
-                      <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
                         {formatHourlyPayRateForDisplay(assignment.payRate) ?? '—'}
                       </Typography>
                     </Box>
@@ -1401,7 +1447,7 @@ const AssignmentDetails: React.FC = () => {
                     <LocationIcon color="action" sx={{ flexShrink: 0 }} />
                     <Box>
                       <Typography variant="body2" color="text.secondary">{t('assignment.worksiteName')}</Typography>
-                      <Typography variant="body1">
+                      <Typography variant="body2">
                         {resolvedWorksiteName ?? assignment.worksiteName ?? assignment.location ?? '—'}
                       </Typography>
                     </Box>
@@ -1422,7 +1468,7 @@ const AssignmentDetails: React.FC = () => {
                             {worksiteAddressStr}
                           </Button>
                         ) : (
-                          <Typography variant="body1">—</Typography>
+                          <Typography variant="body2">—</Typography>
                         )}
                     </Box>
                   </Stack>
@@ -1434,7 +1480,7 @@ const AssignmentDetails: React.FC = () => {
                     <CheckroomIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
                     <Box>
                       <Typography variant="body2" color="text.secondary">{t('assignment.requiredUniform')}</Typography>
-                      <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+                      <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
                         {(assignment.uniformRequirements || assignment.customUniformRequirements)
                           ? [assignment.uniformRequirements, assignment.customUniformRequirements].filter(Boolean).join('\n\n')
                           : '—'}
@@ -1446,7 +1492,7 @@ const AssignmentDetails: React.FC = () => {
                       <EngineeringIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
                       <Box>
                         <Typography variant="body2" color="text.secondary">{t('assignment.requiredPpe')}</Typography>
-                        <Typography variant="body1">{assignment.ppeRequirements}</Typography>
+                        <Typography variant="body2">{assignment.ppeRequirements}</Typography>
                       </Box>
                     </Stack>
                   ) : null}
@@ -1455,7 +1501,7 @@ const AssignmentDetails: React.FC = () => {
                       <WorkIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
                       <Box>
                         <Typography variant="body2" color="text.secondary">{t('assignment.physicalRequirements')}</Typography>
-                        <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+                        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
                           {assignment.physicalRequirements}
                         </Typography>
                       </Box>
@@ -1466,7 +1512,7 @@ const AssignmentDetails: React.FC = () => {
                       <EngineeringIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
                       <Box>
                         <Typography variant="body2" color="text.secondary">{t('assignment.criticalRequirements')}</Typography>
-                        <Typography variant="body1">{criticalRequirementLabels.join(', ')}</Typography>
+                        <Typography variant="body2">{criticalRequirementLabels.join(', ')}</Typography>
                       </Box>
                     </Stack>
                   ) : null}
@@ -1702,6 +1748,24 @@ const AssignmentDetails: React.FC = () => {
             </CardContent>
           </Card>
         ) : null}
+
+        {/* Worker self-cancel — red outline button below the recruiter
+            card. Declines the assignment (→ cancelled) and routes back to
+            the jobs-board posting so the worker can re-apply if needed. */}
+        {canSelfCancel && (
+          <Box sx={{ px: 1 }}>
+            <Button
+              variant="outlined"
+              color="error"
+              fullWidth
+              disabled={cancelling}
+              onClick={handleCantWork}
+              sx={{ fontWeight: 600, py: 1.25 }}
+            >
+              {cancelling ? '…' : t('jobs.cantWork')}
+            </Button>
+          </Box>
+        )}
       </Stack>
     </Box>
   );

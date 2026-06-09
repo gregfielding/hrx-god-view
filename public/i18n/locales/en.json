@@ -251,6 +251,8 @@
     "findWork": "Find Work",
     "cancelShiftConfirm": "Are you sure you want to cancel this shift?",
     "cancelShiftError": "Failed to cancel shift. Please try again.",
+    "cantWorkConfirm": "Are you sure you can no longer work this shift? This will cancel your assignment.",
+    "cantWorkError": "We could not cancel this shift. Please try again or contact your recruiter.",
     "viewMode": "View",
     "viewList": "List",
     "viewCards": "Cards"

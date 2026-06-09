@@ -251,6 +251,8 @@
     "findWork": "Buscar trabajo",
     "cancelShiftConfirm": "¿Estás seguro de que quieres cancelar este turno?",
     "cancelShiftError": "No se pudo cancelar el turno. Inténtalo de nuevo.",
+    "cantWorkConfirm": "¿Estás seguro de que ya no puedes trabajar este turno? Esto cancelará tu asignación.",
+    "cantWorkError": "No pudimos cancelar este turno. Inténtalo de nuevo o comunícate con tu reclutador.",
     "viewMode": "Vista",
     "viewList": "Lista",
     "viewCards": "Tarjetas"
