@@ -13,16 +13,20 @@ import React from 'react';
 import { Link, Typography } from '@mui/material';
 import type { TypographyProps } from '@mui/material';
 
-// One regex, three alternatives, in priority order:
+// One regex, four alternatives, in priority order:
 //   1. http(s):// URL
 //   2. bare www. URL
-//   3. US phone number (optional +1, area code, 7 digits, common separators)
+//   3. bare domain WITH a path — e.g. "maps.app.goo.gl/CSKHz…",
+//      "maps.apple/p/abc". Requires a trailing "/path" so we don't
+//      linkify sentence fragments like "Main St." or "Grand Blvd.".
+//   4. US phone number (optional +1, area code, 7 digits, separators)
 // Mirrors the server-side linkifier in messaging/assignmentDetailsEmail.ts.
 const URL_OR_PHONE_REGEX =
-  /(https?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+|(?:\+?1[-.\s])?\(?\b\d{3}\)?[-.\s]\d{3}[-.\s]?\d{4}\b)/g;
+  /(https?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}\/[^\s<>"']*|(?:\+?1[-.\s])?\(?\b\d{3}\)?[-.\s]\d{3}[-.\s]?\d{4}\b)/gi;
 
-function isUrl(token: string): boolean {
-  return /^https?:\/\//i.test(token) || /^www\./i.test(token);
+/** A fully-matched US phone number (vs. a URL). */
+function isPhone(token: string): boolean {
+  return /^(?:\+?1[-.\s])?\(?\d{3}\)?[-.\s]\d{3}[-.\s]?\d{4}$/.test(token.trim());
 }
 
 /** Strip a US phone string to a tel:-safe value (keep leading + if present). */
@@ -61,7 +65,15 @@ const LinkifiedText: React.FC<LinkifiedTextProps> = ({
     if (start > lastIndex) {
       nodes.push(<React.Fragment key={key++}>{text.slice(lastIndex, start)}</React.Fragment>);
     }
-    if (isUrl(token)) {
+    if (isPhone(token)) {
+      nodes.push(
+        <Link key={key++} href={toTelHref(token)} sx={{ whiteSpace: 'nowrap' }}>
+          {token}
+        </Link>,
+      );
+    } else {
+      // URL — http(s), www., or a bare domain-with-path. Prepend https://
+      // when there's no scheme so the link is absolute.
       const href = /^https?:\/\//i.test(token) ? token : `https://${token}`;
       nodes.push(
         <Link
@@ -71,13 +83,6 @@ const LinkifiedText: React.FC<LinkifiedTextProps> = ({
           rel="noopener noreferrer"
           sx={{ wordBreak: 'break-word' }}
         >
-          {token}
-        </Link>,
-      );
-    } else {
-      // phone
-      nodes.push(
-        <Link key={key++} href={toTelHref(token)} sx={{ whiteSpace: 'nowrap' }}>
           {token}
         </Link>,
       );
