@@ -74,6 +74,13 @@ export interface AccuSourceReadinessInput {
    * subsequent edits.
    */
   markedCompleteOutsideHrx?: boolean;
+  /**
+   * Verdict a CSA chose when marking complete outside HRX. `'FAILED'` makes
+   * the manual override resolve to `complete_fail` (worker NOT cleared)
+   * instead of the default `complete_pass`. Undefined ⇒ treated as PASSED
+   * (back-compat with marks written before pass/fail existed).
+   */
+  markedCompleteOutsideHrxVerdict?: 'PASSED' | 'FAILED';
 }
 
 /**
@@ -84,9 +91,10 @@ export interface AccuSourceReadinessInput {
 export function accuSourceToReadinessStatus(
   input: AccuSourceReadinessInput,
 ): EmployeeReadinessItemStatus {
-  // CSA-marked override wins over everything else.
+  // CSA-marked override wins over everything else — but honor the chosen
+  // verdict: a manual FAILED mark must NOT clear the worker.
   if (input.markedCompleteOutsideHrx === true) {
-    return 'complete_pass';
+    return input.markedCompleteOutsideHrxVerdict === 'FAILED' ? 'complete_fail' : 'complete_pass';
   }
 
   const status = input.hrxStatus ?? null;

@@ -176,6 +176,8 @@ export interface BackgroundCheckRecord {
    * intact — see `READINESS_R6_HANDOFF.md` D3.R6.
    */
   markedCompleteOutsideHrx?: boolean;
+  /** PASSED (default) or FAILED when a CSA marked the package complete outside HRX. */
+  markedCompleteOutsideHrxVerdict?: 'PASSED' | 'FAILED';
   markedCompleteOutsideHrxAt?: Timestamp | string | null;
   markedCompleteOutsideHrxBy?: string | null;
   markedCompleteOutsideHrxNotes?: string | null;

@@ -86,6 +86,7 @@ function readinessFingerprint(data: Record<string, unknown> | null): string {
   return [
     data.hrxStatus ?? '',
     data.markedCompleteOutsideHrx ? '1' : '0',
+    String(data.markedCompleteOutsideHrxVerdict ?? ''),
     verdicts,
     // **R.10** — `expired` flips drive a status change to `'expired'` via
     // the short-circuit below. Without this entry, a sweep write that only
@@ -167,6 +168,8 @@ export const onBackgroundCheckWriteUpdateReadiness = onDocumentWritten(
               afterData.providerServiceOrderStatus as Record<string, unknown> | null,
             ),
             markedCompleteOutsideHrx: afterData.markedCompleteOutsideHrx === true,
+            markedCompleteOutsideHrxVerdict:
+              afterData.markedCompleteOutsideHrxVerdict === 'FAILED' ? 'FAILED' : 'PASSED',
           });
 
     // Find every entity employment for this worker in this tenant. A

@@ -161,6 +161,8 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
    *   title + submit label + backend callable.
    */
   const [screeningMode, setScreeningMode] = useState<'order' | 'mark-complete'>('order');
+  // Pass/Fail when marking a screening complete outside HRX (Phase 4).
+  const [markCompleteVerdict, setMarkCompleteVerdict] = useState<'PASSED' | 'FAILED'>('PASSED');
 
   const [profileUser, setProfileUser] = useState<Record<string, unknown> | null>(null);
   const [defaultJobOrderId, setDefaultJobOrderId] = useState('');
@@ -680,6 +682,7 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
               }))
             : undefined,
         notes: bgNotes.trim() || undefined,
+        verdict: markCompleteVerdict,
       });
       if (bgNotes.trim()) {
         await logCustomActivity(
@@ -1245,12 +1248,38 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             {screeningMode === 'mark-complete' && (
-              <Alert severity="info">
-                This records a screening that was already run in AccuSource (for workers entered
-                before the API integration). No request is sent to AccuSource — we write a
-                pre-completed record so the package items show as passed and readiness blockers
-                clear.
-              </Alert>
+              <>
+                <Alert severity={markCompleteVerdict === 'FAILED' ? 'warning' : 'info'}>
+                  This records a screening that was already run outside HRX (e.g. in the AccuSource
+                  portal). No request is sent to AccuSource — we write a pre-completed record.
+                  {markCompleteVerdict === 'FAILED'
+                    ? ' Marked FAILED: the package shows Failed and the worker is NOT cleared.'
+                    : ' Marked PASSED: the package shows Cleared and readiness blockers clear.'}
+                </Alert>
+                <Box>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                    Outcome
+                  </Typography>
+                  <Stack direction="row" spacing={1}>
+                    <Button
+                      size="small"
+                      variant={markCompleteVerdict === 'PASSED' ? 'contained' : 'outlined'}
+                      color="success"
+                      onClick={() => setMarkCompleteVerdict('PASSED')}
+                    >
+                      Passed
+                    </Button>
+                    <Button
+                      size="small"
+                      variant={markCompleteVerdict === 'FAILED' ? 'contained' : 'outlined'}
+                      color="error"
+                      onClick={() => setMarkCompleteVerdict('FAILED')}
+                    >
+                      Failed
+                    </Button>
+                  </Stack>
+                </Box>
+              </>
             )}
             {bgMessage && (
               <Alert

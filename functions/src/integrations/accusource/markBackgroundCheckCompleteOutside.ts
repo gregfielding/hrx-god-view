@@ -40,6 +40,12 @@ type MarkCompletePayload = CreateBackgroundCheckInput & {
   notes?: string;
   /** Pre-fill the `markedCompleteOutsideHrxAt` timestamp (ISO-8601) when back-dating. Defaults to now. */
   completedAtIso?: string;
+  /**
+   * Whether the recruiter is declaring the package PASSED (default) or
+   * FAILED outside HRX. FAILED stamps every line FAILED and resolves
+   * readiness to `complete_fail` (worker NOT cleared).
+   */
+  verdict?: 'PASSED' | 'FAILED';
 };
 
 export const markAccusourceBackgroundCheckCompleteOutside = onCall(
@@ -70,6 +76,9 @@ export const markAccusourceBackgroundCheckCompleteOutside = onCall(
       ? admin.firestore.Timestamp.fromDate(new Date(data.completedAtIso))
       : admin.firestore.Timestamp.now();
 
+    // PASSED (default) or FAILED — stamps every line + drives the readiness gate.
+    const verdict: 'PASSED' | 'FAILED' = data.verdict === 'FAILED' ? 'FAILED' : 'PASSED';
+
     // Service-line map. One entry per requested service, each pre-completed +
     // adjudicated PASSED. We mirror the shape
     // `accusourceWebhookServiceLine.mergeServiceLinePatch` produces so the
@@ -93,8 +102,8 @@ export const markAccusourceBackgroundCheckCompleteOutside = onCall(
       at: completedAt,
       actorUid: uid,
       action: 'marked_complete_outside_hrx' as const,
-      autoVerdict: 'PASSED' as const,
-      autoVerdictReason: buildAutoVerdictReason(data.notes, uid),
+      autoVerdict: verdict,
+      autoVerdictReason: buildAutoVerdictReason(data.notes, uid, verdict),
     };
     for (const serviceId of requestedServices) {
       const meta = catalogById.get(serviceId);
@@ -107,8 +116,8 @@ export const markAccusourceBackgroundCheckCompleteOutside = onCall(
         updatedAt: completedAt,
         providerReportedAt: completedAt,
         adjudication: {
-          autoVerdict: 'PASSED',
-          autoVerdictReason: buildAutoVerdictReason(data.notes, uid),
+          autoVerdict: verdict,
+          autoVerdictReason: buildAutoVerdictReason(data.notes, uid, verdict),
           autoVerdictAt: completedAt,
           manualVerdict: null,
           manualVerdictAt: null,
@@ -163,6 +172,7 @@ export const markAccusourceBackgroundCheckCompleteOutside = onCall(
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       // Audit fields specific to this path.
       markedCompleteOutsideHrx: true,
+      markedCompleteOutsideHrxVerdict: verdict,
       markedCompleteOutsideHrxAt: completedAt,
       markedCompleteOutsideHrxBy: uid,
       markedCompleteOutsideHrxNotes:
@@ -189,8 +199,12 @@ export const markAccusourceBackgroundCheckCompleteOutside = onCall(
   },
 );
 
-function buildAutoVerdictReason(notes: string | undefined, actorUid: string): string {
+function buildAutoVerdictReason(
+  notes: string | undefined,
+  actorUid: string,
+  verdict: 'PASSED' | 'FAILED' = 'PASSED',
+): string {
   const trimmed = typeof notes === 'string' ? notes.trim() : '';
-  const base = `Marked complete outside HRX by ${actorUid}`;
+  const base = `Marked complete (${verdict}) outside HRX by ${actorUid}`;
   return trimmed ? `${base} — ${trimmed}` : base;
 }
