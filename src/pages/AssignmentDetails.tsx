@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { httpsCallable } from 'firebase/functions';
 import UniversalBackButton from '../components/common/UniversalBackButton';
+import LinkifiedText from '../components/common/LinkifiedText';
 import {
   Box,
   Typography,
@@ -1328,12 +1329,10 @@ const AssignmentDetails: React.FC = () => {
         <Typography variant="h4" sx={{ flexGrow: 1, fontWeight: 700 }}>
           {t('assignment.detailsTitle')}
         </Typography>
-        <Chip
-          icon={getStatusIcon(assignment.status)}
-          label={assignment.status.charAt(0).toUpperCase() + assignment.status.slice(1)}
-          color={getStatusColor(assignment.status)}
-          size="medium"
-        />
+        {/* Status chip removed — it surfaced the raw assignment status
+            (e.g. "Pending") which confused confirmed workers. The worker
+            reaches this page from a confirmed/offered shift; the status
+            is implicit and the chip added noise. */}
         <Button
           variant="outlined"
           startIcon={<CalendarMonthIcon />}
@@ -1349,7 +1348,7 @@ const AssignmentDetails: React.FC = () => {
       <Stack spacing={3}>
         {/* Assignment Info (combined): two columns, company/worksite/address looked up when needed */}
         <Card elevation={0} sx={{ borderRadius: 0 }}>
-          <CardContent>
+          <CardContent sx={{ pt: 1, px: 1 }}>
             <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
               {t('assignment.assignmentInfo')}
             </Typography>
@@ -1392,15 +1391,8 @@ const AssignmentDetails: React.FC = () => {
                       </Typography>
                     </Box>
                   </Stack>
-                  <Stack direction="row" spacing={2} alignItems="center">
-                    <BusinessIcon color="action" sx={{ flexShrink: 0 }} />
-                    <Box>
-                      <Typography variant="body2" color="text.secondary">{t('assignment.companyName')}</Typography>
-                      <Typography variant="body1">
-                        {resolvedCompanyName ?? assignment.companyName ?? '—'}
-                      </Typography>
-                    </Box>
-                  </Stack>
+                  {/* Company Name row hidden — we don't expose the
+                      staffing client's business name to workers. */}
                 </Stack>
               </Grid>
               <Grid item xs={12} sm={6}>
@@ -1484,148 +1476,17 @@ const AssignmentDetails: React.FC = () => {
           </CardContent>
         </Card>
 
-        {viewerIsTenantStaff &&
-        assignment.noShowRiskPredictionV1 &&
-        (assignment.noShowRiskPredictionV1.score != null || assignment.noShowRiskPredictionV1.band) ? (
-          <Card elevation={0} sx={{ borderRadius: 0 }}>
-            <CardContent>
-              <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
-                No-show risk (assignment)
-              </Typography>
-              <Stack spacing={1.5}>
-                <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" useFlexGap>
-                  {assignment.noShowRiskPredictionV1.band ? (
-                    <Chip
-                      size="small"
-                      label={String(assignment.noShowRiskPredictionV1.band).charAt(0).toUpperCase() + String(assignment.noShowRiskPredictionV1.band).slice(1)}
-                      color={noShowRiskBandMuiColor(assignment.noShowRiskPredictionV1.band)}
-                      variant="filled"
-                    />
-                  ) : null}
-                  {typeof assignment.noShowRiskPredictionV1.score === 'number' ? (
-                    <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                      Score {Math.round(assignment.noShowRiskPredictionV1.score)}/100
-                    </Typography>
-                  ) : null}
-                </Stack>
-                {assignment.noShowRiskPredictionV1.recommendedAction ? (
-                  <Alert severity="info" sx={{ py: 0.5 }}>
-                    <Typography variant="body2" component="span" fontWeight={600}>
-                      Recommended:{' '}
-                    </Typography>
-                    <Typography variant="body2" component="span">
-                      {assignment.noShowRiskPredictionV1.recommendedAction.replace(/_/g, ' ')}
-                    </Typography>
-                  </Alert>
-                ) : null}
-                {Array.isArray(assignment.noShowRiskPredictionV1.reasons) &&
-                assignment.noShowRiskPredictionV1.reasons.length > 0 ? (
-                  <Box>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75 }}>
-                      Top reasons
-                    </Typography>
-                    <Stack direction="row" flexWrap="wrap" gap={0.5} useFlexGap>
-                      {assignment.noShowRiskPredictionV1.reasons.slice(0, 8).map((r) => (
-                        <Chip key={r} size="small" label={r.replace(/_/g, ' ')} variant="outlined" />
-                      ))}
-                    </Stack>
-                  </Box>
-                ) : null}
-              </Stack>
-            </CardContent>
-          </Card>
-        ) : null}
+        {/* No-show risk (assignment) card removed entirely — this is the
+            worker-facing assignment-details layout, and the internal
+            no-show risk score / "do not auto place" recommendation must
+            never be shown to anyone on this page (it previously leaked to
+            tenant-staff viewers via the viewerIsTenantStaff gate). */}
 
-        {/* Schedule */}
-        <Card elevation={0} sx={{ borderRadius: 0 }}>
-          <CardContent>
-            <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
-              {t('assignment.mySchedule')}
-            </Typography>
-            <Stack spacing={2}>
-              {assignment.startDate ? (
-                <>
-                  <Box>
-                    <Typography variant="body2" color="text.secondary">{t('assignment.date')}</Typography>
-                    <Typography variant="body1">{formatDate(assignment.startDate)}</Typography>
-                  </Box>
-                  {(effectiveStartTime || effectiveEndTime) && (
-                    <Box>
-                      <Typography variant="body2" color="text.secondary">{t('assignment.time')}</Typography>
-                      <Typography variant="body1">
-                        {[formatTime(effectiveStartTime), formatTime(effectiveEndTime)].filter(Boolean).join(' – ')}
-                      </Typography>
-                    </Box>
-                  )}
-                  {assignment.endDate && (
-                    <Box>
-                      <Typography variant="body2" color="text.secondary">{t('assignment.endDate')}</Typography>
-                      <Typography variant="body1">{formatDate(assignment.endDate)}</Typography>
-                    </Box>
-                  )}
-                </>
-              ) : (
-                <>
-                  {scheduleShift?.shiftMode === 'multi' && scheduleShift?.weeklySchedule && Object.keys(scheduleShift.weeklySchedule).length > 0 ? (
-                    <Box>
-                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                        {t('assignment.weeklySchedule')}
-                      </Typography>
-                      <Stack spacing={0.5} component="ul" sx={{ pl: 2.5, m: 0 }}>
-                        {DOW_ORDER.map((dow) => {
-                          const entry = scheduleShift.weeklySchedule![String(dow)];
-                          if (!entry?.enabled) return null;
-                          return (
-                            <Typography key={dow} component="li" variant="body2">
-                              {DOW_LABELS[dow]}: {formatTime(entry.startTime)} – {formatTime(entry.endTime)}
-                            </Typography>
-                          );
-                        })}
-                      </Stack>
-                    </Box>
-                  ) : null}
-                  {(effectiveStartTime || effectiveEndTime) && (
-                    <Box>
-                      <Typography variant="body2" color="text.secondary">{t('assignment.time')}</Typography>
-                      <Typography variant="body1">
-                        {[formatTime(effectiveStartTime), formatTime(effectiveEndTime)].filter(Boolean).join(' – ')}
-                      </Typography>
-                    </Box>
-                  )}
-                  {!effectiveStartTime && !effectiveEndTime && !scheduleShift?.weeklySchedule && (
-                    <Typography variant="body2" color="text.secondary">{t('assignment.noScheduleDetails')}</Typography>
-                  )}
-                </>
-              )}
-
-              {clockInHref ? (
-                <Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-                    {t('assignment.clockInUrl')}
-                  </Typography>
-                  <Link href={clockInHref} target="_blank" rel="noopener noreferrer" sx={{ fontWeight: 600 }}>
-                    {clockInHref}
-                  </Link>
-                </Box>
-              ) : null}
-
-              {/* Shift-Specific Details / Job Description from tenants/.../job_orders/.../shifts/{shiftId} (ShiftSetupTab) */}
-              {shiftSpecificDetailsText ? (
-                <Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>{t('assignment.shiftDetailsOrJobDescription')}</Typography>
-                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{shiftSpecificDetailsText}</Typography>
-                </Box>
-              ) : null}
-
-              {shiftEmailIntroText ? (
-                <Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>{t('assignment.shiftInfoToEmailStaff')}</Typography>
-                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{shiftEmailIntroText}</Typography>
-                </Box>
-              ) : null}
-            </Stack>
-          </CardContent>
-        </Card>
+        {/* "My Schedule" card removed — its Date / Time / End Date simply
+            repeated the Assignment Info card above. Clock-in URL +
+            shift-specific details that previously lived here will be
+            re-homed into their own clearly-labeled sections if/when a
+            worker assignment actually carries them. */}
 
         {/* Staff Instructions: one card per section; show i18n text by preferred language, fallback to legacy .text */}
         {(() => {
@@ -1707,15 +1568,16 @@ const AssignmentDetails: React.FC = () => {
               const files = s.getFiles();
               return (
                 <Card key={s.key} elevation={0} sx={{ borderRadius: 0 }}>
-                  <CardContent>
+                  <CardContent sx={{ pt: 1, px: 1 }}>
                     <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
                       {s.title}
                     </Typography>
                     <Stack spacing={1.5}>
                       {text.trim() !== '' && (
-                        <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
-                          {text}
-                        </Typography>
+                        // Linkify: URLs → new-tab links, phone numbers →
+                        // tel: links. Staff Instructions routinely contain
+                        // maps URLs + an on-site contact number.
+                        <LinkifiedText text={text} variant="body2" color="text.secondary" />
                       )}
                       {Array.isArray(files) && files.length > 0 && (
                         <Stack spacing={1} direction="row" flexWrap="wrap" useFlexGap>
@@ -1743,7 +1605,7 @@ const AssignmentDetails: React.FC = () => {
         {/* Notes */}
         {assignment.notes && (
           <Card elevation={0} sx={{ borderRadius: 0 }}>
-            <CardContent>
+            <CardContent sx={{ pt: 1, px: 1 }}>
               <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
                 Additional Notes
               </Typography>
@@ -1754,28 +1616,14 @@ const AssignmentDetails: React.FC = () => {
           </Card>
         )}
 
-        {/* Metadata */}
-        {(assignment.createdAt || assignment.updatedAt) && (
-          <Paper elevation={0} sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 0 }}>
-            <Stack spacing={1}>
-              {assignment.createdAt && (
-                <Typography variant="caption" color="text.secondary">
-                  Created: {formatDateTime(assignment.createdAt)}
-                </Typography>
-              )}
-              {assignment.updatedAt && (
-                <Typography variant="caption" color="text.secondary">
-                  Last Updated: {formatDateTime(assignment.updatedAt)}
-                </Typography>
-              )}
-            </Stack>
-          </Paper>
-        )}
+        {/* Created / Last Updated metadata block removed — internal
+            timestamps aren't useful to the worker on their own
+            assignment-details page. */}
 
         {/* Location map card — only when we have a worksite address */}
         {worksiteAddressStr && (
           <Card elevation={0} sx={{ borderRadius: 0 }}>
-            <CardContent>
+            <CardContent sx={{ pt: 1, px: 1 }}>
               <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
                 {t('assignment.locationMap')}
               </Typography>
@@ -1819,7 +1667,7 @@ const AssignmentDetails: React.FC = () => {
               title="My Recruiter"
               titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
             />
-            <CardContent sx={{ pt: 0 }}>
+            <CardContent sx={{ pt: 0, px: 1 }}>
               <Stack spacing={2}>
                 {recruiters.map((r) => (
                   <Stack key={r.id} spacing={0.75} component="div">

@@ -7,7 +7,6 @@ import React, { useMemo, useState } from 'react';
 import {
   Box,
   Button,
-  Chip,
   IconButton,
   Paper,
   Stack,
@@ -42,6 +41,36 @@ const MAX_VISIBLE_PER_CELL = 4;
 function startMs(a: WorkerAssignmentItem): number {
   const v = a.startAt;
   return typeof v === 'number' ? v : new Date(v).getTime();
+}
+
+/** Compact start time, Google-Calendar style: "3pm", "10:30am". */
+function compactTime(ms: number, locale: string): string {
+  const d = new Date(ms);
+  const raw = d.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit', hour12: true });
+  // "3:00 PM" → "3pm" ; "10:30 PM" → "10:30pm"
+  return raw.replace(':00', '').replace(/\s/g, '').toLowerCase();
+}
+
+/**
+ * Calendar coloring per shift state — mirrors the jobs-board status
+ * color language so the worker reads a consistent scheme:
+ *   confirmed → blue (scheduled to work)
+ *   accepted  → green (offered, must Confirm/Decline)
+ *   submitted → goldenrod (applied, awaiting review)
+ */
+function calendarKindColor(a: WorkerAssignmentItem): string {
+  switch (a.calendarKind) {
+    case 'confirmed':
+      return '#1976d2'; // blue
+    case 'accepted':
+      return '#2e7d32'; // green
+    case 'submitted':
+      return '#DAA520'; // goldenrod
+    default:
+      if (a.status === 'confirmed') return '#1976d2';
+      if (a.status === 'scheduled') return '#2e7d32';
+      return '#5f6368'; // neutral (cancelled/completed/etc.)
+  }
 }
 
 const WorkerAssignmentsCalendar: React.FC<WorkerAssignmentsCalendarProps> = ({ assignments }) => {
@@ -80,8 +109,17 @@ const WorkerAssignmentsCalendar: React.FC<WorkerAssignmentsCalendarProps> = ({ a
     return { rows: r, weekdayLabels: wk };
   }, [viewMonth, locale]);
 
-  const goDetail = (id: string) => {
-    navigate(`/c1/workers/assignments/${id}`);
+  // Route by calendar kind: confirmed shifts (actual assignments) open
+  // the assignment-details layout; accepted/submitted open the
+  // jobs-board posting so the worker can Confirm/Decline or track their
+  // application. Falls back to assignment details when no jobPostId.
+  const goForItem = (a: WorkerAssignmentItem) => {
+    const kind = a.calendarKind ?? (a.status === 'confirmed' ? 'confirmed' : 'accepted');
+    if (kind === 'confirmed' || !a.jobPostId) {
+      navigate(`/c1/workers/assignments/${a.assignmentId}`);
+    } else {
+      navigate(`/c1/jobs-board/${a.jobPostId}`);
+    }
   };
 
   if (assignments.length === 0) {
@@ -186,27 +224,47 @@ const WorkerAssignmentsCalendar: React.FC<WorkerAssignmentsCalendarProps> = ({ a
                   >
                     {format(day, 'd')}
                   </Typography>
-                  <Stack spacing={0.35} sx={{ maxHeight: 88, overflowY: 'auto' }}>
-                    {visible.map((a) => (
-                      <Chip
-                        key={a.assignmentId}
-                        size="small"
-                        label={a.jobTitle}
-                        onClick={() => goDetail(a.assignmentId)}
-                        sx={{
-                          height: 'auto',
-                          py: 0.25,
-                          '& .MuiChip-label': {
-                            whiteSpace: 'normal',
-                            textAlign: 'left',
-                            display: '-webkit-box',
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: 'vertical',
+                  <Stack spacing={0.25} sx={{ maxHeight: 88, overflowY: 'auto' }}>
+                    {visible.map((a) => {
+                      const color = calendarKindColor(a);
+                      const timeLabel = compactTime(startMs(a), lang === 'es' ? 'es-US' : 'en-US');
+                      return (
+                        // Google-Calendar-style row: compact start time +
+                        // title, colored by status, clickable. No chip
+                        // background — reads as a clean agenda line.
+                        <Box
+                          key={a.assignmentId}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            goForItem(a);
+                          }}
+                          title={`${timeLabel} ${a.jobTitle}`}
+                          sx={{
+                            cursor: 'pointer',
+                            lineHeight: 1.25,
                             overflow: 'hidden',
-                          },
-                        }}
-                      />
-                    ))}
+                            whiteSpace: 'nowrap',
+                            textOverflow: 'ellipsis',
+                            '&:hover': { textDecoration: 'underline' },
+                          }}
+                        >
+                          <Typography
+                            component="span"
+                            variant="caption"
+                            sx={{ fontWeight: 700, color, mr: 0.5 }}
+                          >
+                            {timeLabel}
+                          </Typography>
+                          <Typography
+                            component="span"
+                            variant="caption"
+                            sx={{ color, fontWeight: 500 }}
+                          >
+                            {a.jobTitle}
+                          </Typography>
+                        </Box>
+                      );
+                    })}
                     {extra > 0 && (
                       <Typography variant="caption" color="text.secondary">
                         +{extra} {t('assignments.calendarMore')}

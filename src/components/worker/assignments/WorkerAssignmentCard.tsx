@@ -5,8 +5,7 @@
  */
 
 import React from 'react';
-import { Card, CardContent, CardActions, Typography, Stack, Chip, Button, IconButton } from '@mui/material';
-import ChevronRightIcon from '@mui/icons-material/ChevronRight';
+import { Card, CardContent, CardActions, Typography, Stack, Chip, Button } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { useT, getLanguage } from '../../../i18n';
 import { formatHourlyPayRateForDisplay } from '../../../utils/hourlyPayDisplay';
@@ -34,6 +33,18 @@ export interface WorkerAssignmentItem {
   /** Pay rate for display (e.g. 18.5 = $18.50/hr) */
   payRate?: number;
   status: AssignmentStatus;
+  /** Job posting id — used by the calendar to route accepted/submitted
+   *  shifts back to the public jobs-board posting. */
+  jobPostId?: string;
+  /**
+   * Calendar coloring + click-routing bucket:
+   *   - 'confirmed' → blue text, opens the assignment-details page
+   *   - 'accepted'  → green text, opens the jobs-board posting (worker
+   *                   still needs to Confirm/Decline)
+   *   - 'submitted' → goldenrod text, opens the jobs-board posting
+   * Derived in the page loader; absent items fall back to status.
+   */
+  calendarKind?: 'confirmed' | 'accepted' | 'submitted';
 }
 
 /** Format: Fri, Mar 13 • 1:00 PM – 9:00 PM */
@@ -102,12 +113,19 @@ const WorkerAssignmentCard: React.FC<WorkerAssignmentCardProps> = ({
   const t = useT();
   const locale = localeForLang(getLanguage());
   const dateTimeStr = formatDateAndTime(assignment.startAt, assignment.endAt, locale);
-  const statusKey = getStatusKey(assignment.status);
-  const chipColor = getStatusChipColor(assignment.status);
+  // Past-shift label fix: a confirmed/scheduled shift that lands in the
+  // Past tab (isUpcoming === false) was showing the green "Upcoming"
+  // chip — the worker already worked it. Relabel those as "Completed".
+  // Terminal statuses (cancelled / no-show / completed) keep their own
+  // label + color.
+  const isPastNonTerminal =
+    !isUpcoming && (assignment.status === 'scheduled' || assignment.status === 'confirmed');
+  const statusKey = isPastNonTerminal ? 'assignments.statusCompleted' : getStatusKey(assignment.status);
+  const chipColor: 'default' | 'success' | 'error' | 'warning' = isPastNonTerminal
+    ? 'success'
+    : getStatusChipColor(assignment.status);
   const payStr = formatHourlyPayRateForDisplay(assignment.payRate) ?? '';
   const locationLine = formatLocationLine(assignment);
-
-  const canCancelShift = isUpcoming && (assignment.status === 'scheduled' || assignment.status === 'confirmed') && !!onCancelShift;
 
   const openAssignmentDetails = (source: 'card' | 'view_details' | 'chevron') => {
     const route = `/c1/workers/assignments/${assignment.assignmentId}`;
@@ -128,16 +146,6 @@ const WorkerAssignmentCard: React.FC<WorkerAssignmentCardProps> = ({
     openAssignmentDetails('view_details');
   };
 
-  const handleChevronClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    openAssignmentDetails('chevron');
-  };
-
-  const handleCancelShift = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onCancelShift?.(assignment);
-  };
-
   return (
     <Card
       variant="outlined"
@@ -147,7 +155,6 @@ const WorkerAssignmentCard: React.FC<WorkerAssignmentCardProps> = ({
         borderColor: 'divider',
         boxShadow: 'none',
         cursor: 'pointer',
-        '&:hover': { borderColor: 'primary.light', bgcolor: 'action.hover' },
       }}
     >
       <CardContent sx={{ pb: showViewDetails ? 0 : 2 }}>
@@ -155,11 +162,9 @@ const WorkerAssignmentCard: React.FC<WorkerAssignmentCardProps> = ({
           <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
             {assignment.jobTitle}
           </Typography>
-          {assignment.clientName && (
-            <Typography variant="body2" color="text.secondary">
-              {assignment.clientName}
-            </Typography>
-          )}
+          {/* Company/client name intentionally hidden on the worker-facing
+              card — we don't expose the staffing client's business name
+              (e.g. "Venue Smart, LLC") to workers. */}
           <Typography variant="body1" sx={{ fontWeight: 500 }}>
             {dateTimeStr}
           </Typography>
@@ -179,22 +184,14 @@ const WorkerAssignmentCard: React.FC<WorkerAssignmentCardProps> = ({
         </Stack>
       </CardContent>
       {showViewDetails && (
+        // Only "View Details" — the chevron IconButton and the
+        // "Cancel Shift" button were removed per product: the whole card
+        // is already clickable, and cancellation should go through the
+        // assignment-details page, not a quick destructive action here.
         <CardActions sx={{ justifyContent: 'flex-end', flexWrap: 'wrap', gap: 0.5, px: 2, pt: 0, pb: 1.5 }} onClick={(e) => e.stopPropagation()}>
-          <IconButton
-            size="small"
-            aria-label={t('assignments.viewDetails')}
-            onClick={handleChevronClick}
-          >
-            <ChevronRightIcon fontSize="small" />
-          </IconButton>
           <Button size="small" variant="text" onClick={handleViewDetails}>
             {t('assignments.viewDetails')} →
           </Button>
-          {canCancelShift && (
-            <Button size="small" variant="text" color="error" onClick={handleCancelShift}>
-              {t('assignments.cancelShift')}
-            </Button>
-          )}
         </CardActions>
       )}
     </Card>

@@ -114,6 +114,17 @@ function docToItem(
   const locationShort = rawLocationShort || (fromLocation && !address ? fromLocation : undefined);
   const rawCompany = data.companyName;
   const clientName = rawCompany && !looksLikeDocId(rawCompany) ? rawCompany : undefined;
+  // Calendar bucket: confirmed assignments are blue + open the
+  // assignment-details page; pending/proposed ("accepted" — recruiter
+  // offered, worker hasn't confirmed yet) are green + open the
+  // jobs-board posting so the worker can Confirm/Decline.
+  const rawStatus = String(data.status || '').toLowerCase();
+  const calendarKind: WorkerAssignmentItem['calendarKind'] =
+    rawStatus === 'confirmed' || rawStatus === 'active' || rawStatus === 'in_progress'
+      ? 'confirmed'
+      : rawStatus === 'pending' || rawStatus === 'proposed' || rawStatus === 'scheduled'
+        ? 'accepted'
+        : undefined;
   return {
     assignmentId: docId,
     jobTitle: data.jobTitle || 'Assignment',
@@ -125,6 +136,8 @@ function docToItem(
     address,
     payRate: typeof data.payRate === 'number' ? data.payRate : undefined,
     status,
+    jobPostId: (data.jobPostId as string | undefined) || undefined,
+    calendarKind,
   };
 }
 
@@ -134,6 +147,10 @@ const WorkerAssignments: React.FC = () => {
   const [tabIndex, setTabIndex] = useState(0);
   const [upcoming, setUpcoming] = useState<WorkerAssignmentItem[]>([]);
   const [past, setPast] = useState<WorkerAssignmentItem[]>([]);
+  // Combined calendar feed: confirmed/accepted assignments + submitted
+  // applications (per-shift). Separate from upcoming/past which are
+  // assignment-only card lists.
+  const [calendarItems, setCalendarItems] = useState<WorkerAssignmentItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   const tenantId = activeTenant?.id ?? C1_TENANT_ID;
@@ -267,11 +284,95 @@ const WorkerAssignments: React.FC = () => {
 
         setUpcoming(up);
         setPast(pa);
+
+        // ── Calendar feed ────────────────────────────────────────────
+        // The calendar shows MORE than assignments: it also surfaces
+        // SUBMITTED applications (applied, not yet accepted) as goldenrod
+        // entries so a worker sees everything they're tracking in one
+        // month view. Per-shift, mirroring the jobs-board logic:
+        //   - a shift WITH an assignment is driven by the assignment
+        //     (confirmed=blue, accepted=green) — already in up/pa
+        //   - a shift on an application but with NO assignment is
+        //     'submitted' (goldenrod) and routes to the jobs-board posting
+        const assignmentCalItems = [...up, ...pa].filter(
+          (i) => i.calendarKind === 'confirmed' || i.calendarKind === 'accepted',
+        );
+        const assignedShiftIds = new Set<string>();
+        snap.docs.forEach((d) => {
+          const sid = d.data().shiftId;
+          if (sid) assignedShiftIds.add(String(sid));
+        });
+
+        const submittedItems: WorkerAssignmentItem[] = [];
+        try {
+          const appsRef = collection(db, 'tenants', tenantId, 'applications');
+          const appsSnap = await getDocs(query(appsRef, where('userId', '==', user.uid)));
+          // (jobOrderId, shiftId) → jobPostId; dedup shift-doc reads.
+          const shiftReads = new Map<string, { joId: string; shiftId: string; jobPostId: string }>();
+          appsSnap.docs.forEach((ad) => {
+            const a = ad.data();
+            const status = String(a.status || '').toLowerCase();
+            if (['withdrawn', 'cancelled', 'canceled', 'deleted', 'rejected'].includes(status)) return;
+            const joId = String(a.jobOrderId || '');
+            if (!joId) return;
+            const jobPostId = String(a.jobId || a.postId || '');
+            const sids: string[] = Array.isArray(a.shiftIds)
+              ? a.shiftIds
+              : a.shiftId
+                ? [a.shiftId]
+                : [];
+            for (const sid of sids) {
+              const s = String(sid || '');
+              if (!s || assignedShiftIds.has(s)) continue; // assignment drives this shift
+              shiftReads.set(`${joId}__${s}`, { joId, shiftId: s, jobPostId });
+            }
+          });
+          await Promise.all(
+            Array.from(shiftReads.values()).map(async ({ joId, shiftId, jobPostId }) => {
+              try {
+                const sDoc = await getDoc(
+                  doc(db, 'tenants', tenantId, 'job_orders', joId, 'shifts', shiftId),
+                );
+                if (!sDoc.exists()) return;
+                const sd = sDoc.data() as Record<string, any>;
+                const startAt = toStartAt({
+                  startDate: sd.shiftDate || sd.startDate,
+                  startTime: sd.startTime || sd.defaultStartTime,
+                });
+                if (!startAt) return;
+                const endAt = toEndAt({
+                  startDate: sd.shiftDate || sd.startDate,
+                  endDate: sd.endDate || sd.shiftDate || sd.startDate,
+                  startTime: sd.startTime || sd.defaultStartTime,
+                  endTime: sd.endTime || sd.defaultEndTime,
+                });
+                submittedItems.push({
+                  // Prefix so a submitted key never collides with a real
+                  // assignment id in the calendar's by-day grouping.
+                  assignmentId: `app_${shiftId}`,
+                  jobTitle: sd.shiftTitle || sd.defaultJobTitle || 'Shift',
+                  startAt,
+                  endAt,
+                  status: 'scheduled',
+                  jobPostId: jobPostId || undefined,
+                  calendarKind: 'submitted',
+                });
+              } catch {
+                /* skip unreadable shift */
+              }
+            }),
+          );
+        } catch (appErr) {
+          console.warn('calendar: submitted-applications load failed', appErr);
+        }
+
+        if (!cancelled) setCalendarItems([...assignmentCalItems, ...submittedItems]);
       } catch (err) {
         console.error('Failed to load assignments:', err);
         if (!cancelled) {
           setUpcoming([]);
           setPast([]);
+          setCalendarItems([]);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -303,6 +404,7 @@ const WorkerAssignments: React.FC = () => {
           <WorkerAssignmentsTabs
             upcoming={upcoming}
             past={past}
+            calendarItems={calendarItems}
             tabIndex={tabIndex}
             onTabChange={setTabIndex}
             onCancelShift={handleCancelShift}

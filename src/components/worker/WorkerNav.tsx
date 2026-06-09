@@ -15,15 +15,12 @@ import {
 import MenuIcon from '@mui/icons-material/Menu';
 import { useAuth } from '../../contexts/AuthContext';
 import { useT } from '../../i18n';
-import { C1_WORKER_AI_PRESCREEN_PATH } from '../../constants/c1WorkerRoutes';
-import { useWorkerAiPrescreenSurfaceSignals } from '../../hooks/useWorkerAiPrescreenSurfaceSignals';
-import DashboardIcon from '@mui/icons-material/Dashboard';
+import HomeIcon from '@mui/icons-material/Home';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import WorkIcon from '@mui/icons-material/Work';
 import ListAltIcon from '@mui/icons-material/ListAlt';
-import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
+import SettingsIcon from '@mui/icons-material/Settings';
 import PersonIcon from '@mui/icons-material/Person';
-import QuizOutlinedIcon from '@mui/icons-material/QuizOutlined';
 import PaymentsIcon from '@mui/icons-material/Payments';
 
 const drawerWidth = 240;
@@ -33,18 +30,28 @@ const GUEST_NAV_PATHS = new Set([
   '/c1/workers/dashboard',
   '/c1/jobs-board',
   '/c1/workers/profile',
-  C1_WORKER_AI_PRESCREEN_PATH,
 ]);
 
+// Worker sidebar. Notes on recent label/structure changes (2026-06-08):
+//   - "Dashboard" → "Home" with a HomeIcon (nav.home). The worker landing
+//     page reads as a home, not an analytics dashboard.
+//   - "Find Work" → "Jobs Board" (nav.findWork value changed in i18n).
+//   - "My Assignments" → "My Schedule" (nav.myAssignments value changed).
+//   - Pre-screen entry REMOVED entirely. Interviews are now sent to
+//     workers as a direct link when needed — they don't belong in the
+//     standing nav, where they read as a perpetual to-do even after the
+//     worker has completed one.
+//   - "Notifications" → "Settings" (nav.settings) with a gear icon; the
+//     destination page (/c1/workers/notifications) houses notification
+//     preferences, so "Settings" is the truer label.
 const baseNavConfig = [
-  { key: 'nav.dashboard', path: '/c1/workers/dashboard', icon: <DashboardIcon /> },
+  { key: 'nav.home', path: '/c1/workers/dashboard', icon: <HomeIcon /> },
   { key: 'nav.findWork', path: '/c1/jobs-board', icon: <WorkIcon /> },
   { key: 'nav.myAccount', path: '/c1/workers/profile', icon: <PersonIcon /> },
-  { key: 'nav.prescreen', path: C1_WORKER_AI_PRESCREEN_PATH, icon: <QuizOutlinedIcon /> },
   { key: 'nav.myAssignments', path: '/c1/workers/assignments', icon: <AssignmentIcon /> },
   { key: 'nav.myApplications', path: '/c1/workers/applications', icon: <ListAltIcon /> },
   { key: 'nav.payroll', path: '/c1/workers/payroll', icon: <PaymentsIcon /> },
-  { key: 'nav.notifications', path: '/c1/workers/notifications', icon: <NotificationsNoneIcon /> },
+  { key: 'nav.settings', path: '/c1/workers/notifications', icon: <SettingsIcon /> },
   /* Help & Support hidden: import HelpOutlineIcon, append nav.helpSupport -> /c1/workers/support */
 ];
 
@@ -81,14 +88,7 @@ function DrawerContent({
     onNavClick?.();
   };
 
-  const getLabel = (key: string) => {
-    if (key === 'nav.notifications') {
-      const translated = t('nav.notifications');
-      // Safety guard: never show "Inbox" for this worker nav slot.
-      return translated?.toLowerCase?.() === 'inbox' ? 'Notifications' : translated;
-    }
-    return t(key);
-  };
+  const getLabel = (key: string) => t(key);
 
   return (
     <>
@@ -188,14 +188,15 @@ const WorkerNav: React.FC = () => {
 
   const { activeTenant, user } = useAuth();
   const tenantDisplayName = activeTenant?.name || 'HRX Platform';
-  const { showPrescreenNav } = useWorkerAiPrescreenSurfaceSignals(activeTenant?.id, user?.uid ?? null);
+  // Pre-screen was removed from the standing nav (interviews are sent as a
+  // direct link when needed), so the prescreen-surface-signals hook is no
+  // longer consulted here. Guests see only the public subset.
   const navItems = useMemo(() => {
     if (!user) {
       return baseNavConfig.filter((item) => GUEST_NAV_PATHS.has(item.path));
     }
-    if (showPrescreenNav) return baseNavConfig;
-    return baseNavConfig.filter((item) => item.path !== C1_WORKER_AI_PRESCREEN_PATH);
-  }, [user, showPrescreenNav]);
+    return baseNavConfig;
+  }, [user]);
 
   const closeMobileDrawer = () => setMobileOpen(false);
 

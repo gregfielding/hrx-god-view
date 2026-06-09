@@ -42,6 +42,16 @@
         ]
       },
       {
+        "//": "i18n locale JSON is a FIXED filename (no content hash) so the default max-age=3600 left workers staring at stale UI strings for up to an hour after a deploy (raw `jobs.applyForShift` keys, old menu labels). `no-cache` forces a revalidation on every load — cheap because the etag matches when unchanged (304 Not Modified), but instantly picks up new copy after a deploy.",
+        "source": "/i18n/locales/*.json",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, must-revalidate"
+          }
+        ]
+      },
+      {
         "source": "/apple-app-site-association",
         "headers": [
           {

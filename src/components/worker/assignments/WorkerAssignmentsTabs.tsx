@@ -4,7 +4,10 @@
  */
 
 import React from 'react';
-import { Tabs, Tab, Box, Stack } from '@mui/material';
+import { Tabs, Tab, Box, Stack, useMediaQuery, useTheme } from '@mui/material';
+import ViewListIcon from '@mui/icons-material/ViewList';
+import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
+import Inventory2OutlinedIcon from '@mui/icons-material/Inventory2Outlined';
 import { useT } from '../../../i18n';
 import type { WorkerAssignmentItem } from './WorkerAssignmentCard';
 import WorkerAssignmentCard from './WorkerAssignmentCard';
@@ -14,11 +17,17 @@ import WorkerAssignmentsCalendar from './WorkerAssignmentsCalendar';
 export interface WorkerAssignmentsTabsProps {
   upcoming: WorkerAssignmentItem[];
   past: WorkerAssignmentItem[];
-  /** Controlled tab index: 0 = Upcoming, 1 = Calendar, 2 = Past */
+  /** Controlled tab index: 0 = List, 1 = Calendar, 2 = Archive */
   tabIndex: number;
   onTabChange: (index: number) => void;
   /** When provided, upcoming cards show Cancel Shift and call this on confirm */
   onCancelShift?: (assignment: WorkerAssignmentItem) => void;
+  /**
+   * Calendar feed (confirmed/accepted assignments + submitted
+   * applications). When omitted, the calendar falls back to the
+   * assignment-only upcoming+past merge.
+   */
+  calendarItems?: WorkerAssignmentItem[];
 }
 
 const WorkerAssignmentsTabs: React.FC<WorkerAssignmentsTabsProps> = ({
@@ -27,28 +36,51 @@ const WorkerAssignmentsTabs: React.FC<WorkerAssignmentsTabsProps> = ({
   tabIndex,
   onTabChange,
   onCancelShift,
+  calendarItems,
 }) => {
   const t = useT();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const allForCalendar = React.useMemo(() => {
-    const merged = [...upcoming, ...past];
+    const merged = calendarItems ?? [...upcoming, ...past];
     merged.sort((a, b) => {
       const at = typeof a.startAt === 'number' ? a.startAt : new Date(a.startAt).getTime();
       const bt = typeof b.startAt === 'number' ? b.startAt : new Date(b.startAt).getTime();
       return at - bt;
     });
     return merged;
-  }, [upcoming, past]);
+  }, [calendarItems, upcoming, past]);
+
+  // On mobile, show an icon above the (shorter) label; on desktop, label only.
+  const tabIconProps = (icon: React.ReactElement) =>
+    isMobile ? { icon, iconPosition: 'top' as const } : {};
 
   return (
     <Box>
       <Tabs
         value={tabIndex}
         onChange={(_, v: number) => onTabChange(v)}
+        variant={isMobile ? 'fullWidth' : 'standard'}
         sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}
       >
-        <Tab label={t('assignments.tabUpcoming')} id="assignments-tab-upcoming" aria-controls="assignments-panel-upcoming" />
-        <Tab label={t('assignments.tabCalendar')} id="assignments-tab-calendar" aria-controls="assignments-panel-calendar" />
-        <Tab label={t('assignments.tabPast')} id="assignments-tab-past" aria-controls="assignments-panel-past" />
+        <Tab
+          label={t('assignments.tabUpcoming')}
+          {...tabIconProps(<ViewListIcon />)}
+          id="assignments-tab-upcoming"
+          aria-controls="assignments-panel-upcoming"
+        />
+        <Tab
+          label={t('assignments.tabCalendar')}
+          {...tabIconProps(<CalendarMonthIcon />)}
+          id="assignments-tab-calendar"
+          aria-controls="assignments-panel-calendar"
+        />
+        <Tab
+          label={t('assignments.tabPast')}
+          {...tabIconProps(<Inventory2OutlinedIcon />)}
+          id="assignments-tab-past"
+          aria-controls="assignments-panel-past"
+        />
       </Tabs>
 
       <div

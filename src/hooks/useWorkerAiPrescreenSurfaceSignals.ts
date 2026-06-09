@@ -103,8 +103,25 @@ export function useWorkerAiPrescreenSurfaceSignals(
           return row ? requiredForApplication(row) : true;
         });
 
+        // Nav-visibility rule:
+        //   - If there's an OPEN prescreen action (`items.length > 0`)
+        //     — e.g. the worker started a fresh prescreen tied to a new
+        //     application, or a hiring-required interview is still
+        //     pending — surface the nav so they can finish.
+        //   - Otherwise, only show the standalone nav entry when the
+        //     tenant has it explicitly enabled AND the worker hasn't
+        //     completed any prescreen interview yet. Once they've
+        //     completed one (`latestPrescreenAtMs` set), hide the nav.
+        //     Re-running the prescreen after completion isn't a worker-
+        //     initiated flow, and leaving "Pre-screen" in the sidebar
+        //     reads as "you still have something to do" when in fact
+        //     everything is done.
+        const hasAnyCompletedInterview = Boolean(latestPrescreenAtMs);
         const showNav =
-          (navFlag && tenantInterview.workerAiPrescreenRequired) || items.length > 0;
+          items.length > 0 ||
+          (navFlag &&
+            tenantInterview.workerAiPrescreenRequired &&
+            !hasAnyCompletedInterview);
 
         if (!cancelled) {
           setWorkerAiPrescreenItems(items);
