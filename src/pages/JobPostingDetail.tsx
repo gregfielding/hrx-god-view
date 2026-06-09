@@ -62,6 +62,7 @@ import ShiftSelector from '../components/ShiftSelector';
 import { JobsBoardService } from '../services/recruiter/jobsBoardService';
 import { formatWeeklyScheduleSummary } from '../utils/weeklySchedule';
 import { getDateScheduleEntriesWithHours, getLastShiftDateFromShifts } from '../utils/dateSchedule';
+import { extractDateFromShiftDate } from '../utils/gigShiftApplicationLimits';
 import {
   buildAppliedKeysForApplication,
   getApplicationAppliedDays,
@@ -101,6 +102,14 @@ const JobPostingDetail: React.FC = () => {
   const [careerWeeklyScheduleSummary, setCareerWeeklyScheduleSummary] = useState<string>('');
   const [appliedShifts, setAppliedShifts] = useState<string[]>([]);
   const [shiftStatuses, setShiftStatuses] = useState<Record<string, string>>({}); // Map shiftId -> status
+  /**
+   * Map keyed by `${shiftId}__${YYYY-MM-DD}` (day-scoped) or `${shiftId}`
+   * (legacy fallback) → assignmentId. Built alongside `shiftStatuses` in
+   * `loadAppliedShifts` and handed to ShiftSelector so confirmed shift
+   * rows render a clickable "View Details" CTA that jumps to
+   * /c1/workers/assignments/{assignmentId}.
+   */
+  const [assignmentIdsByShiftKey, setAssignmentIdsByShiftKey] = useState<Record<string, string>>({});
   const [appliedShiftsRefresh, setAppliedShiftsRefresh] = useState(0); // Increment to reload applied shifts (e.g. after cancel for day)
   const [applicationStatus, setApplicationStatus] = useState<string | null>(null);
   /** Bumped after quick apply so application status is re-read while staying on this URL. */
@@ -749,6 +758,7 @@ const JobPostingDetail: React.FC = () => {
       if (!user?.uid || !resolvedTenantId || !postId) {
         setAppliedShifts([]);
         setShiftStatuses({});
+        setAssignmentIdsByShiftKey({});
         return;
       }
 
@@ -782,6 +792,14 @@ const JobPostingDetail: React.FC = () => {
         const statuses: Record<string, string> = {};
         const seenDocs = new Set<string>();
 
+        // Per-shift status precedence: confirmed > accepted > submitted.
+        // Used by both the application overlay (contributes 'submitted')
+        // and the assignment overlay (raises to accepted/confirmed) so a
+        // higher state never gets clobbered by a lower one regardless of
+        // doc-iteration order.
+        const statusRank = (s: string | undefined): number =>
+          s === 'confirmed' ? 3 : s === 'accepted' ? 2 : s === 'submitted' ? 1 : 0;
+
         const multiDayShiftIds = new Set(
           dynamicShifts
             .filter((s: any) => isGigMultiDayShift(s))
@@ -799,7 +817,6 @@ const JobPostingDetail: React.FC = () => {
             // Skip deleted, withdrawn, or cancelled applications
             if (appStatus === 'deleted' || appStatus === 'withdrawn' || appStatus === 'cancelled') return;
 
-            const statusForDisplay = data.status || 'submitted';
             const shiftIds = getApplicationShiftIds(data as Record<string, unknown>);
             if (shiftIds.length === 0) return;
             const appliedKeys = buildAppliedKeysForApplication(
@@ -807,9 +824,25 @@ const JobPostingDetail: React.FC = () => {
               multiDayShiftIds,
             );
             applied.push(...appliedKeys);
+            // CROSS-SHIFT CONTAMINATION FIX (2026-06-08).
+            //
+            // An application is ONE doc that can cover MANY shifts
+            // (shiftIds[]), but it has a single application-wide `status`.
+            // When a recruiter accepts a worker for ONE shift, the hire
+            // flow flips the whole application to `status: 'accepted'`
+            // (see placementsApi linkApplication). The old code here then
+            // propagated that single 'accepted' onto EVERY shift in
+            // shiftIds[] — so accepting the PM shift lit up Confirm/Decline
+            // on the AM shift the recruiter never touched.
+            //
+            // Per-shift accept/confirm state is NOT application-wide — it
+            // lives in per-shift ASSIGNMENT docs (overlay below, keyed by
+            // assignment.shiftId). So the application only ever contributes
+            // the 'submitted' (applied) state here; the assignment overlay
+            // raises specific shifts to accepted/confirmed.
             appliedKeys.forEach((key) => {
-              if (!statuses[key] || statusForDisplay === 'confirmed' || statusForDisplay === 'accepted') {
-                statuses[key] = statusForDisplay;
+              if (statusRank('submitted') > statusRank(statuses[key])) {
+                statuses[key] = 'submitted';
               }
             });
           });
@@ -837,51 +870,101 @@ const JobPostingDetail: React.FC = () => {
         //   confirmed / active / in_progress  → 'confirmed'
         //   declined / cancelled / completed  → skip (terminal — worker already
         //                                       made their decision OR shift is done)
+        // Map of shift key → assignmentId, populated by the overlay
+        // below and handed to ShiftSelector so confirmed rows can deep-
+        // link to /c1/workers/assignments/{id}.
+        const assignmentIdsByKey: Record<string, string> = {};
+
         if (posting?.jobOrderId) {
           try {
-            const assignmentsRef = collection(db, 'tenants', resolvedTenantId, 'assignments');
-            const assignmentsQ = query(
-              assignmentsRef,
-              where('userId', '==', user.uid),
-              where('jobOrderId', '==', posting.jobOrderId),
+            // Normalize an assignment's startDate (Firestore Timestamp OR
+            // string OR ISO datetime) to a bare YYYY-MM-DD. Critical for
+            // multi-day gigs where the per-day row key is
+            // `${shiftId}__${date}` — a Timestamp stringified naively
+            // ("[object Object]") would never match.
+            const normalizeAssignmentDate = (raw: unknown): string => {
+              if (!raw) return '';
+              if (typeof raw === 'string') return raw.slice(0, 10);
+              const ts = raw as { toDate?: () => Date };
+              if (typeof ts.toDate === 'function') {
+                try {
+                  const d = ts.toDate();
+                  const y = d.getFullYear();
+                  const m = String(d.getMonth() + 1).padStart(2, '0');
+                  const day = String(d.getDate()).padStart(2, '0');
+                  return `${y}-${m}-${day}`;
+                } catch {
+                  return '';
+                }
+              }
+              return '';
+            };
+
+            // Query by userId only (NOT jobOrderId) then match by shiftId
+            // against THIS JO's shift set. More robust than a jobOrderId
+            // equality filter — picks up assignments even if their
+            // jobOrderId field is missing/stale, and never strays onto a
+            // different JO's shifts because the shiftId set is the gate.
+            const joShiftIds = new Set(
+              (dynamicShifts || []).map((s: any) => String(s.shiftId)).filter(Boolean),
             );
+            const assignmentsRef = collection(db, 'tenants', resolvedTenantId, 'assignments');
+            const assignmentsQ = query(assignmentsRef, where('userId', '==', user.uid));
             const assignmentsSnap = await getDocs(assignmentsQ);
+
+            // Track per-shift outcome so declined/cancelled shifts with NO
+            // active assignment get freed back to Available (Apply) — a
+            // worker who declined an offer can re-apply.
+            const activeKeys = new Set<string>();
+            const declinedKeys = new Set<string>();
+            const ACTIVE = new Set(['pending', 'proposed', 'confirmed', 'active', 'in_progress']);
+            const DECLINED = new Set(['declined', 'cancelled', 'canceled', 'withdrawn']);
+
             assignmentsSnap.forEach((d) => {
               const a = d.data() as Record<string, unknown>;
               const rawStatus = String(a.status || '').trim().toLowerCase();
               if (!rawStatus) return; // phantom doc — same defensive check as the server guard
-              const uiStatus = ((): string | null => {
-                switch (rawStatus) {
-                  case 'pending':
-                  case 'proposed':
-                    return 'accepted';
-                  case 'confirmed':
-                  case 'active':
-                  case 'in_progress':
-                    return 'confirmed';
-                  default:
-                    return null; // declined / cancelled / completed / etc.
-                }
-              })();
-              if (!uiStatus) return;
               const sId = String(a.shiftId || '');
-              if (!sId) return;
-              const startDate = String(a.startDate || '').slice(0, 10);
-              const dayKey = startDate ? `${sId}__${startDate}` : null;
-              // ShiftSelector renders day-rows for multi-day gigs and
-              // shift-rows otherwise — write both keys so whichever it
-              // looks up resolves. 'confirmed' > 'accepted' in precedence
-              // so a multi-shift state doesn't downgrade itself.
-              const writeKey = (key: string) => {
-                const existing = statuses[key];
-                if (existing === 'confirmed') return;
-                if (uiStatus === 'confirmed' || !existing) {
-                  statuses[key] = uiStatus;
-                  if (!applied.includes(key)) applied.push(key);
-                }
-              };
-              writeKey(sId);
-              if (dayKey) writeKey(dayKey);
+              if (!sId || !joShiftIds.has(sId)) return; // not a shift on THIS JO
+              const dateIso = normalizeAssignmentDate(a.startDate);
+              const keys = dateIso ? [sId, `${sId}__${dateIso}`] : [sId];
+
+              if (ACTIVE.has(rawStatus)) {
+                const uiStatus =
+                  rawStatus === 'pending' || rawStatus === 'proposed' ? 'accepted' : 'confirmed';
+                keys.forEach((key) => {
+                  activeKeys.add(key);
+                  // Rank-based precedence raises the shift to
+                  // accepted/confirmed over the application's 'submitted',
+                  // never downgrades a higher state, and only touches THIS
+                  // assignment's own shiftId — siblings never contaminated.
+                  if (statusRank(uiStatus) > statusRank(statuses[key])) {
+                    statuses[key] = uiStatus;
+                    if (!applied.includes(key)) applied.push(key);
+                  }
+                  // Day-scoped key wins over the legacy shift-only key for
+                  // the "View Details" deep-link id when both resolve.
+                  if (!assignmentIdsByKey[key] || key.includes('__')) {
+                    assignmentIdsByKey[key] = d.id;
+                  }
+                });
+              } else if (DECLINED.has(rawStatus)) {
+                keys.forEach((key) => declinedKeys.add(key));
+              }
+              // completed / other terminal → ignore (shift is in the past
+              // or otherwise resolved; nothing actionable to show).
+            });
+
+            // Free declined/cancelled shifts (with no active assignment)
+            // back to Available so the worker can re-apply. A re-offer
+            // creates a new active assignment which lands in activeKeys
+            // and takes precedence, so this never clobbers a live offer.
+            declinedKeys.forEach((key) => {
+              if (!activeKeys.has(key)) {
+                delete statuses[key];
+                const idx = applied.indexOf(key);
+                if (idx >= 0) applied.splice(idx, 1);
+              }
             });
           } catch (assignErr) {
             console.warn('loadAppliedShifts: assignment overlay failed', assignErr);
@@ -892,6 +975,7 @@ const JobPostingDetail: React.FC = () => {
         console.log(`✅ Shift statuses (after assignment overlay):`, statuses);
         setAppliedShifts(applied);
         setShiftStatuses(statuses);
+        setAssignmentIdsByShiftKey(assignmentIdsByKey);
       } catch (err) {
         console.error('Error loading applied shifts:', err);
         setAppliedShifts([]);
@@ -1008,10 +1092,49 @@ const JobPostingDetail: React.FC = () => {
    *
    * Returns true when quick-apply succeeded (so the caller skips wizard).
    */
+  /**
+   * Optimistically flip a shift's button to its "applied" state before
+   * the Firestore write round-trips. ShiftSelector reads `appliedShifts`
+   * + `shiftStatuses` keyed by `${shiftId}` (single-day shift rows) or
+   * `${shiftId}__${YYYY-MM-DD}` (multi-day gig day rows) — we write both
+   * so whichever the row uses resolves immediately. Returns the keys we
+   * touched so the caller can revert on write failure.
+   *
+   * Without this, the recruiter-reported ~5s lag was the worker staring
+   * at the blue Apply button while the setDoc + the follow-up
+   * loadAppliedShifts re-query round-tripped.
+   */
+  const markShiftAppliedOptimistic = (shiftId: string, applyDate?: string): string[] => {
+    const keys = [shiftId];
+    if (applyDate) keys.push(`${shiftId}__${applyDate}`);
+    setAppliedShifts((prev) => Array.from(new Set([...prev, ...keys])));
+    setShiftStatuses((prev) => {
+      const next = { ...prev };
+      keys.forEach((k) => {
+        // Don't downgrade a row that's already confirmed/accepted.
+        if (next[k] !== 'confirmed' && next[k] !== 'accepted') next[k] = 'submitted';
+      });
+      return next;
+    });
+    return keys;
+  };
+
+  const revertShiftAppliedOptimistic = (keys: string[]): void => {
+    setAppliedShifts((prev) => prev.filter((k) => !keys.includes(k)));
+    setShiftStatuses((prev) => {
+      const next = { ...prev };
+      keys.forEach((k) => {
+        if (next[k] === 'submitted') delete next[k];
+      });
+      return next;
+    });
+  };
+
   const quickApplyToShift = async (shiftId: string, applyDate?: string): Promise<boolean> => {
     if (!user?.uid || !resolvedTenantId || !postId || !posting) return false;
     const appDocId = `${user.uid}_${postId}`;
     const appRef = doc(db, 'tenants', resolvedTenantId, 'applications', appDocId);
+    let optimisticKeys: string[] = [];
     try {
       const snap = await getDoc(appRef);
       if (!snap.exists()) return false;
@@ -1020,6 +1143,8 @@ const JobPostingDetail: React.FC = () => {
       // Terminal-canceled states reset the wizard — these need a full
       // re-acknowledgement.
       if (status === 'withdrawn' || status === 'cancelled' || status === 'deleted') return false;
+      // Committed to writing — flip the UI NOW (before the slow setDoc).
+      optimisticKeys = markShiftAppliedOptimistic(shiftId, applyDate);
       const existingShiftIds = getApplicationShiftIds(data);
       const existingApplyDates = getApplicationAppliedDays(data);
       const nextShiftIds = Array.from(new Set([...existingShiftIds, shiftId]));
@@ -1044,12 +1169,14 @@ const JobPostingDetail: React.FC = () => {
         },
         { merge: true },
       );
-      // Bump refresh so loadAppliedShifts re-reads + the new shift's
-      // button flips to its applied-state immediately.
+      // Bump refresh so loadAppliedShifts re-reads + reconciles the
+      // optimistic state with Firestore truth.
       setAppliedShiftsRefresh((n) => n + 1);
       return true;
     } catch (err) {
       console.warn('quickApplyToShift failed, falling back to wizard:', err);
+      // Revert the optimistic flip so the button returns to Apply.
+      if (optimisticKeys.length > 0) revertShiftAppliedOptimistic(optimisticKeys);
       return false;
     }
   };
@@ -2403,10 +2530,24 @@ const JobPostingDetail: React.FC = () => {
                       const entries = getDateScheduleEntriesWithHours(s.dateSchedule, s.shiftDate, s.endDate);
                       entries.forEach((e) => allDates.push(e.date));
                     } else if (s.shiftDate) {
-                      const d = s.shiftDate?.toDate ? s.shiftDate.toDate() : new Date(s.shiftDate);
-                      if (!isNaN(d.getTime())) {
-                        const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
-                        allDates.push(`${y}-${m}-${day}`);
+                      // Bug fix (Next Shift showing 6/8 for a 6/9 shift):
+                      // a bare "YYYY-MM-DD" string parsed via `new Date()`
+                      // is interpreted as midnight UTC, then read back with
+                      // local getters in US-Pacific — which rolls the day
+                      // BACK to the previous calendar date. For string
+                      // shiftDates use the no-Date split helper so the
+                      // calendar day is preserved exactly. Firestore
+                      // Timestamps (a real instant) still go through
+                      // toDate + local getters.
+                      if (typeof s.shiftDate === 'string') {
+                        const iso = extractDateFromShiftDate(s.shiftDate);
+                        if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) allDates.push(iso);
+                      } else if (s.shiftDate?.toDate) {
+                        const d = s.shiftDate.toDate();
+                        if (!isNaN(d.getTime())) {
+                          const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+                          allDates.push(`${y}-${m}-${day}`);
+                        }
                       }
                     }
                   });
@@ -2976,6 +3117,7 @@ const JobPostingDetail: React.FC = () => {
                     onApplyToShift={handleApplyToShift}
                     appliedShifts={appliedShifts}
                     shiftStatuses={shiftStatuses}
+                    assignmentIdsByShiftKey={assignmentIdsByShiftKey}
                     onConfirmShift={handleConfirmAssignmentForShift}
                     onDeclineShift={handleDeclineAssignmentForShift}
                     onCancelApplication={handleCancelApplicationForDay}

@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -14,6 +15,7 @@ import {
   AccessTime as TimeIcon,
   AttachMoney as AttachMoneyIcon,
   Lock as LockIcon,
+  ArrowForward as ArrowForwardIcon,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import { JobBoardShift } from '../services/recruiter/jobsBoardService';
@@ -35,6 +37,15 @@ interface ShiftSelectorProps {
   onDeclineShift?: (shiftId: string) => void; // Callback for declining a shift assignment
   /** Cancel/withdraw application for this shift (or for this day when date is provided) */
   onCancelApplication?: (shiftId: string, date?: string) => void;
+  /**
+   * Map of `${shiftId}__${YYYY-MM-DD}` (day-scoped) or `${shiftId}`
+   * (legacy) → assignmentId. Populated by `loadAppliedShifts` in
+   * `JobPostingDetail` from the worker's active assignment docs.
+   * Drives the "View Details" CTA on confirmed shift cards so a
+   * confirmed worker can jump straight to the assignment-details
+   * page from the jobs-board listing.
+   */
+  assignmentIdsByShiftKey?: Record<string, string>;
   disabled?: boolean;
   jobPostId?: string; // For building application URLs
   tenantId?: string; // For building application URLs
@@ -60,6 +71,7 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
   onConfirmShift,
   onDeclineShift,
   onCancelApplication,
+  assignmentIdsByShiftKey = {},
   disabled = false,
   jobPostId,
   tenantId,
@@ -67,6 +79,7 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
   showSpots = false,
 }) => {
   const t = useT();
+  const navigate = useNavigate();
   const formatTime = (time: string) => {
     if (!time) return '';
     const [hours, minutes] = time.split(':');
@@ -190,6 +203,14 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
     const isConfirmed = shiftStatus === 'confirmed';
     const isFull = shift.spotsRemaining <= 0;
 
+    // Resolve the assignmentId backing this row so the confirmed-state
+    // "View Details" button can deep-link to /c1/workers/assignments/{id}.
+    // Day-scoped key first (e.g. "abc__2026-06-09"), then legacy
+    // shift-only key. Empty when nothing matches — button stays
+    // status-only in that case.
+    const rowAssignmentId =
+      assignmentIdsByShiftKey[rowKey] || assignmentIdsByShiftKey[shift.shiftId] || '';
+
     const dateLabel = item.type === 'day' ? item.dayLabel : null;
     const timeLabel = item.type === 'day' ? formatDateScheduleEntry(item.date, item.startTime, item.endTime) : null;
     const shiftPayLabel = formatHourlyPayRateForDisplay(shift.payRate);
@@ -275,16 +296,6 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                     </Stack>
                   </>
                 )}
-
-                {shiftPayLabel && (
-                  <Chip
-                    icon={<AttachMoneyIcon />}
-                    label={shiftPayLabel}
-                    size="small"
-                    color="success"
-                    variant="outlined"
-                  />
-                )}
                 {/*
                   Spot-count chip is gated by the post-level
                   `showSpots` prop (sourced from
@@ -306,6 +317,35 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                 )}
               </Stack>
 
+              {/* Pay-rate chip on its own third row (left-aligned), below
+                  the date/time line — keeps the rate visually distinct and
+                  prevents it crowding the date line on narrow screens. */}
+              {shiftPayLabel && (
+                <Box sx={{ mt: 1 }}>
+                  <Chip
+                    icon={<AttachMoneyIcon />}
+                    label={shiftPayLabel}
+                    size="small"
+                    color="success"
+                    variant="outlined"
+                  />
+                </Box>
+              )}
+
+              {/* When the worker has been offered this shift (Confirm /
+                  Decline shown), nudge them that confirming unlocks the
+                  full briefing — reduces "where are the details?" support
+                  pings before they've committed. */}
+              {isOffered && (
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: 'block', mt: 0.75, fontStyle: 'italic' }}
+                >
+                  {t('jobs.confirmDetailsHelper')}
+                </Typography>
+              )}
+
               {/* Shift-specific description is private — may contain operational details
                   (supervisor phone, site entry instructions, etc). Only render it AFTER the
                   worker has been confirmed for this shift (i.e. this is their assignment view),
@@ -321,9 +361,47 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
 
             <Box sx={{ ml: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
               {isConfirmed ? (
-                <Button variant="contained" disabled startIcon={<LockIcon />} sx={{ minWidth: 140, backgroundColor: '#4CAF50 !important', color: '#fff', fontWeight: 600, '&.Mui-disabled': { backgroundColor: '#4CAF50 !important', color: '#fff', opacity: 1 } }}>
-                  Confirmed
-                </Button>
+                // Confirmed shift → clickable green "View Details"
+                // button that deep-links to the assignment-details
+                // page. Falls back to a static "Confirmed" pill when
+                // we somehow don't know the assignmentId (defensive —
+                // should be populated whenever shiftStatus=confirmed).
+                rowAssignmentId ? (
+                  <Button
+                    variant="contained"
+                    onClick={() => navigate(`/c1/workers/assignments/${rowAssignmentId}`)}
+                    startIcon={<LockIcon />}
+                    endIcon={<ArrowForwardIcon />}
+                    sx={{
+                      minWidth: 140,
+                      backgroundColor: '#4CAF50',
+                      color: '#fff',
+                      fontWeight: 600,
+                      '&:hover': { backgroundColor: '#45a049' },
+                    }}
+                  >
+                    View Details
+                  </Button>
+                ) : (
+                  <Button
+                    variant="contained"
+                    disabled
+                    startIcon={<LockIcon />}
+                    sx={{
+                      minWidth: 140,
+                      backgroundColor: '#4CAF50 !important',
+                      color: '#fff',
+                      fontWeight: 600,
+                      '&.Mui-disabled': {
+                        backgroundColor: '#4CAF50 !important',
+                        color: '#fff',
+                        opacity: 1,
+                      },
+                    }}
+                  >
+                    Confirmed
+                  </Button>
+                )
               ) : isOffered ? (
                 // Worker has been offered this shift (assignment.status =
                 // pending/proposed). Replace the blue Apply CTA with an
@@ -337,28 +415,28 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                     variant="contained"
                     onClick={() => onConfirmShift?.(shift.shiftId)}
                     sx={{
-                      minWidth: 140,
+                      minWidth: 160,
                       backgroundColor: '#4CAF50',
                       color: '#fff',
                       fontWeight: 600,
                       '&:hover': { backgroundColor: '#45a049' },
                     }}
                   >
-                    Confirm
+                    {t('jobs.clickToConfirm')}
                   </Button>
                   <Button
                     variant="contained"
                     color="error"
                     onClick={() => onDeclineShift?.(shift.shiftId)}
-                    sx={{ minWidth: 140, fontWeight: 600 }}
+                    sx={{ minWidth: 160, fontWeight: 600 }}
                   >
-                    Decline
+                    {t('jobs.declineShift')}
                   </Button>
                 </>
               ) : hasApplied ? (
-                <Stack direction="column" alignItems="flex-start" spacing={0.75} sx={{ minWidth: 140 }}>
-                  <Button variant="contained" disabled sx={{ minWidth: 140, backgroundColor: '#FFC700 !important', color: '#000', fontWeight: 600, '&.Mui-disabled': { backgroundColor: '#FFC700 !important', color: '#000', opacity: 1 }, cursor: 'default', pointerEvents: 'none' }}>
-                    Application Submitted
+                <Stack direction="column" alignItems="flex-start" spacing={0.75} sx={{ minWidth: 160 }}>
+                  <Button variant="contained" disabled sx={{ minWidth: 160, backgroundColor: '#FFC700 !important', color: '#000', fontWeight: 600, '&.Mui-disabled': { backgroundColor: '#FFC700 !important', color: '#000', opacity: 1 }, cursor: 'default', pointerEvents: 'none' }}>
+                    {t('jobs.shiftRequested')}
                   </Button>
                   {onCancelApplication && (
                     <Button
@@ -366,9 +444,9 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                       size="small"
                       color="error"
                       onClick={() => onCancelApplication(shift.shiftId, item.type === 'day' ? item.date : undefined)}
-                      sx={{ minWidth: 140, fontSize: '0.8rem', textTransform: 'none' }}
+                      sx={{ minWidth: 160, fontSize: '0.8rem', textTransform: 'none' }}
                     >
-                      Cancel
+                      {t('jobs.cantWork')}
                     </Button>
                   )}
                 </Stack>
@@ -377,8 +455,15 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                   Past
                 </Button>
               ) : (
-                <Button variant="contained" disabled={disabled || isFull} onClick={() => handleApply(shift.shiftId, item.type === 'day' ? item.date : undefined)} sx={{ minWidth: 140 }}>
-                  {isFull ? 'Full' : 'Apply'}
+                <Button
+                  variant="contained"
+                  disabled={disabled || isFull}
+                  onClick={() => handleApply(shift.shiftId, item.type === 'day' ? item.date : undefined)}
+                  // Bumped from 140 to 160 to fit the longer "Apply for
+                  // Shift" / "Solicitar turno" labels without wrapping.
+                  sx={{ minWidth: 160 }}
+                >
+                  {isFull ? t('jobs.shiftFull') : t('jobs.applyForShift')}
                 </Button>
               )}
             </Box>
