@@ -239,6 +239,7 @@
     "calendarMonth": "Month",
     "calendarNoShiftsDay": "No shifts on this day.",
     "calendarStatusConfirmed": "CONFIRMED",
+    "calendarStatusAccepted": "ACCEPTED - CLICK TO CONFIRM",
     "calendarStatusPending": "PENDING",
     "calendarStatusAvailable": "AVAILABLE",
     "archiveToggle": "Archive view",

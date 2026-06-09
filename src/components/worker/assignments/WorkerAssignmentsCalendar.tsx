@@ -163,20 +163,23 @@ const WorkerAssignmentsCalendar: React.FC<WorkerAssignmentsCalendarProps> = ({ a
     const color = calendarKindColor(a);
     const timeLabel = compactTime(startMs(a), timeLocale);
     const variant = size === 'md' ? 'body2' : 'caption';
-    // Tooltip: all-caps status word + time + posting/shift + city/state, e.g.
-    // "CONFIRMED · 3pm NASCAR - San Diego - Swing Shift Pre Clean • San Diego, CA".
-    //   confirmed              → CONFIRMED
-    //   accepted / submitted   → PENDING (offered or applied, not yet locked)
-    //   available              → AVAILABLE
+    // Tooltip: all-caps status word + time + posting/shift + city/state.
+    //   confirmed (blue)      → CONFIRMED
+    //   accepted  (green)     → ACCEPTED - CLICK TO CONFIRM (offered, needs
+    //                           the worker's confirmation)
+    //   submitted (goldenrod) → PENDING (applied, awaiting a response)
+    //   available (grey)      → AVAILABLE
     const kind = a.calendarKind ?? (a.status === 'confirmed' ? 'confirmed' : undefined);
     const statusWord =
       kind === 'confirmed'
         ? t('assignments.calendarStatusConfirmed')
-        : kind === 'accepted' || kind === 'submitted'
-          ? t('assignments.calendarStatusPending')
-          : kind === 'available'
-            ? t('assignments.calendarStatusAvailable')
-            : '';
+        : kind === 'accepted'
+          ? t('assignments.calendarStatusAccepted')
+          : kind === 'submitted'
+            ? t('assignments.calendarStatusPending')
+            : kind === 'available'
+              ? t('assignments.calendarStatusAvailable')
+              : '';
     const fullName = a.postTitle ? `${a.postTitle} - ${a.jobTitle}` : a.jobTitle;
     const tooltip = `${statusWord ? `${statusWord} · ` : ''}${timeLabel} ${fullName}${
       a.cityState ? ` • ${a.cityState}` : ''
