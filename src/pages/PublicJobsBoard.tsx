@@ -1915,9 +1915,17 @@ const PublicJobsBoard: React.FC = () => {
                       return Date.now() - createdMs <= 7 * 24 * 60 * 60 * 1000;
                     })();
                     const tags: string[] = [];
-                    if (hasApplied) tags.push(t('jobs.applicationStatusSubmitted'));
-                    if (!hasApplied && isNew) tags.push(t('jobs.newLabel'));
-                    if (!hasApplied && job.jobType === 'gig') tags.push(t('jobs.gig'));
+                    // Gig postings span MANY shifts — applying to one shift
+                    // must NOT make the whole-posting card read "Applied".
+                    // Always tag it "Gig" and never show application status.
+                    const isGig = job.jobType === 'gig';
+                    if (isGig) {
+                      if (isNew) tags.push(t('jobs.newLabel'));
+                      tags.push(t('jobs.gig'));
+                    } else {
+                      if (hasApplied) tags.push(t('jobs.applicationStatusSubmitted'));
+                      else if (isNew) tags.push(t('jobs.newLabel'));
+                    }
                     return tags.length > 0 ? (
                       <Stack direction="row" spacing={0.75} sx={{ mb: 1.5 }} flexWrap="wrap" useFlexGap>
                         {tags.slice(0, 2).map((tag) => (
@@ -1933,7 +1941,11 @@ const PublicJobsBoard: React.FC = () => {
                     const status = userApplicationStatuses[applicationId] || 'submitted';
                     const canReapply =
                       status === 'withdrawn' || status === 'cancelled' || status === 'deleted';
-                    if (hasApplied && !canReapply) {
+                    // Gig postings always get the blue "View Shifts" CTA —
+                    // per-shift apply state lives inside the posting, not on
+                    // this card.
+                    const isGig = job.jobType === 'gig';
+                    if (hasApplied && !canReapply && !isGig) {
                       const buttonProps = getApplicationStatusButton(status);
                       return (
                         <Button
@@ -1965,7 +1977,7 @@ const PublicJobsBoard: React.FC = () => {
                         }}
                         sx={{ mt: 'auto', fontWeight: 700, py: 1.1 }}
                       >
-                        {t('jobs.viewJob')}
+                        {isGig ? t('jobs.viewShifts') : t('jobs.viewJob')}
                       </Button>
                     );
                   })()}
