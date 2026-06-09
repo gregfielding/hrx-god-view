@@ -286,24 +286,41 @@ const WorkerAssignments: React.FC = () => {
         setPast(pa);
 
         // ── Calendar feed ────────────────────────────────────────────
-        // The calendar shows MORE than assignments: it also surfaces
-        // SUBMITTED applications (applied, not yet accepted) as goldenrod
-        // entries so a worker sees everything they're tracking in one
-        // month view. Per-shift, mirroring the jobs-board logic:
-        //   - a shift WITH an assignment is driven by the assignment
-        //     (confirmed=blue, accepted=green) — already in up/pa
-        //   - a shift on an application but with NO assignment is
-        //     'submitted' (goldenrod) and routes to the jobs-board posting
+        // The calendar shows MORE than the worker's own assignments. Each
+        // shift is colored by how engaged the worker is, mirroring the
+        // jobs-board status language:
+        //   confirmed  (blue)      → assignment, scheduled to work
+        //   accepted   (green)     → offered, must Confirm/Decline
+        //   submitted  (goldenrod) → applied, awaiting review
+        //   available  (grey)      → OTHER shifts on a job order the worker
+        //                            has already engaged with — surfaced so
+        //                            they can discover + apply to more dates
         const assignmentCalItems = [...up, ...pa].filter(
           (i) => i.calendarKind === 'confirmed' || i.calendarKind === 'accepted',
         );
-        const assignedShiftIds = new Set<string>();
+
+        // Job orders the worker has ANY engagement with → jobPostId (for
+        // routing the grey "available" items to the public posting). Plus
+        // the set of shiftIds already shown as a colored item, so they're
+        // never duplicated as a grey "available" row.
+        const engagedJOs = new Map<string, string>(); // jobOrderId → jobPostId
+        const activeAssignedShiftIds = new Set<string>();
+        const rememberJO = (joId: string, jobPostId: string) => {
+          if (!joId) return;
+          if (!engagedJOs.has(joId) || (jobPostId && !engagedJOs.get(joId))) engagedJOs.set(joId, jobPostId);
+        };
         snap.docs.forEach((d) => {
-          const sid = d.data().shiftId;
-          if (sid) assignedShiftIds.add(String(sid));
+          const a = d.data();
+          rememberJO(String(a.jobOrderId || ''), String(a.jobPostId || ''));
+          const st = String(a.status || '').toLowerCase();
+          const sid = String(a.shiftId || '');
+          if (sid && ['pending', 'proposed', 'confirmed', 'active', 'in_progress'].includes(st)) {
+            activeAssignedShiftIds.add(sid);
+          }
         });
 
         const submittedItems: WorkerAssignmentItem[] = [];
+        const submittedShiftIds = new Set<string>();
         try {
           const appsRef = collection(db, 'tenants', tenantId, 'applications');
           const appsSnap = await getDocs(query(appsRef, where('userId', '==', user.uid)));
@@ -312,10 +329,13 @@ const WorkerAssignments: React.FC = () => {
           appsSnap.docs.forEach((ad) => {
             const a = ad.data();
             const status = String(a.status || '').toLowerCase();
-            if (['withdrawn', 'cancelled', 'canceled', 'deleted', 'rejected'].includes(status)) return;
             const joId = String(a.jobOrderId || '');
-            if (!joId) return;
             const jobPostId = String(a.jobId || a.postId || '');
+            // Engaged JO even for withdrawn apps — the worker showed
+            // interest in this job order, so keep surfacing its open shifts.
+            if (!['deleted'].includes(status)) rememberJO(joId, jobPostId);
+            if (!joId) return;
+            if (['withdrawn', 'cancelled', 'canceled', 'deleted', 'rejected'].includes(status)) return;
             const sids: string[] = Array.isArray(a.shiftIds)
               ? a.shiftIds
               : a.shiftId
@@ -323,7 +343,8 @@ const WorkerAssignments: React.FC = () => {
                 : [];
             for (const sid of sids) {
               const s = String(sid || '');
-              if (!s || assignedShiftIds.has(s)) continue; // assignment drives this shift
+              if (!s || activeAssignedShiftIds.has(s)) continue; // assignment drives this shift
+              submittedShiftIds.add(s);
               shiftReads.set(`${joId}__${s}`, { joId, shiftId: s, jobPostId });
             }
           });
@@ -366,7 +387,52 @@ const WorkerAssignments: React.FC = () => {
           console.warn('calendar: submitted-applications load failed', appErr);
         }
 
-        if (!cancelled) setCalendarItems([...assignmentCalItems, ...submittedItems]);
+        // ── Available-shift feed (grey) ──────────────────────────────
+        // For every engaged job order, surface the OTHER shifts the worker
+        // is NOT already on (no active assignment, not applied) as grey
+        // "available" items they can tap to apply. Future shifts only —
+        // past dates aren't applyable.
+        const availableItems: WorkerAssignmentItem[] = [];
+        const coveredShiftIds = new Set<string>([...activeAssignedShiftIds, ...submittedShiftIds]);
+        const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+        try {
+          await Promise.all(
+            Array.from(engagedJOs.entries()).map(async ([joId, jobPostId]) => {
+              const shiftsSnap = await getDocs(
+                collection(db, 'tenants', tenantId, 'job_orders', joId, 'shifts'),
+              );
+              shiftsSnap.docs.forEach((sDoc) => {
+                const sid = sDoc.id;
+                if (coveredShiftIds.has(sid)) return; // already shown as a colored item
+                const sd = sDoc.data() as Record<string, any>;
+                const startAt = toStartAt({
+                  startDate: sd.shiftDate || sd.startDate,
+                  startTime: sd.startTime || sd.defaultStartTime,
+                });
+                if (!startAt || startAt < todayMidnight) return; // future, applyable shifts only
+                const endAt = toEndAt({
+                  startDate: sd.shiftDate || sd.startDate,
+                  endDate: sd.endDate || sd.shiftDate || sd.startDate,
+                  startTime: sd.startTime || sd.defaultStartTime,
+                  endTime: sd.endTime || sd.defaultEndTime,
+                });
+                availableItems.push({
+                  assignmentId: `avail_${sid}`,
+                  jobTitle: sd.shiftTitle || sd.defaultJobTitle || 'Shift',
+                  startAt,
+                  endAt,
+                  status: 'scheduled',
+                  jobPostId: jobPostId || undefined,
+                  calendarKind: 'available',
+                });
+              });
+            }),
+          );
+        } catch (availErr) {
+          console.warn('calendar: available-shifts load failed', availErr);
+        }
+
+        if (!cancelled) setCalendarItems([...assignmentCalItems, ...submittedItems, ...availableItems]);
       } catch (err) {
         console.error('Failed to load assignments:', err);
         if (!cancelled) {

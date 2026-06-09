@@ -42,9 +42,11 @@ export interface WorkerAssignmentItem {
    *   - 'accepted'  → green text, opens the jobs-board posting (worker
    *                   still needs to Confirm/Decline)
    *   - 'submitted' → goldenrod text, opens the jobs-board posting
+   *   - 'available' → grey text, an OTHER shift on a job order the worker
+   *                   has engaged with; opens the jobs-board posting to apply
    * Derived in the page loader; absent items fall back to status.
    */
-  calendarKind?: 'confirmed' | 'accepted' | 'submitted';
+  calendarKind?: 'confirmed' | 'accepted' | 'submitted' | 'available';
 }
 
 /** Format: Fri, Mar 13 • 1:00 PM – 9:00 PM */

@@ -57,6 +57,7 @@ function compactTime(ms: number, locale: string): string {
  *   confirmed → blue (scheduled to work)
  *   accepted  → green (offered, must Confirm/Decline)
  *   submitted → goldenrod (applied, awaiting review)
+ *   available → medium grey (other open shift on an engaged job order)
  */
 function calendarKindColor(a: WorkerAssignmentItem): string {
   switch (a.calendarKind) {
@@ -66,6 +67,8 @@ function calendarKindColor(a: WorkerAssignmentItem): string {
       return '#2e7d32'; // green
     case 'submitted':
       return '#DAA520'; // goldenrod
+    case 'available':
+      return '#9e9e9e'; // medium grey — not active, just discoverable
     default:
       if (a.status === 'confirmed') return '#1976d2';
       if (a.status === 'scheduled') return '#2e7d32';
@@ -109,16 +112,20 @@ const WorkerAssignmentsCalendar: React.FC<WorkerAssignmentsCalendarProps> = ({ a
     return { rows: r, weekdayLabels: wk };
   }, [viewMonth, locale]);
 
-  // Route by calendar kind: confirmed shifts (actual assignments) open
-  // the assignment-details layout; accepted/submitted open the
-  // jobs-board posting so the worker can Confirm/Decline or track their
-  // application. Falls back to assignment details when no jobPostId.
+  // Route by calendar kind:
+  //   confirmed                       → assignment-details layout
+  //   accepted / submitted / available → jobs-board posting (Confirm/
+  //                                       Decline, track, or apply)
+  // For non-confirmed kinds without a jobPostId, fall back to the
+  // jobs-board list (NOT a bogus assignment id like "avail_…").
   const goForItem = (a: WorkerAssignmentItem) => {
     const kind = a.calendarKind ?? (a.status === 'confirmed' ? 'confirmed' : 'accepted');
-    if (kind === 'confirmed' || !a.jobPostId) {
+    if (kind === 'confirmed') {
       navigate(`/c1/workers/assignments/${a.assignmentId}`);
-    } else {
+    } else if (a.jobPostId) {
       navigate(`/c1/jobs-board/${a.jobPostId}`);
+    } else {
+      navigate('/c1/jobs-board');
     }
   };
 
