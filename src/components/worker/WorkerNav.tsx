@@ -47,8 +47,8 @@ const GUEST_NAV_PATHS = new Set([
 const baseNavConfig = [
   { key: 'nav.home', path: '/c1/workers/dashboard', icon: <HomeIcon /> },
   { key: 'nav.findWork', path: '/c1/jobs-board', icon: <WorkIcon /> },
-  { key: 'nav.myAccount', path: '/c1/workers/profile', icon: <PersonIcon /> },
   { key: 'nav.myAssignments', path: '/c1/workers/assignments', icon: <AssignmentIcon /> },
+  { key: 'nav.myAccount', path: '/c1/workers/profile', icon: <PersonIcon /> },
   // "My Applications" removed from the standing nav — it now lives under
   // My Schedule → Archive → Applications (avoids two paths to the same list).
   { key: 'nav.payroll', path: '/c1/workers/payroll', icon: <PaymentsIcon /> },
