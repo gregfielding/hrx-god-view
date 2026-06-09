@@ -36,6 +36,11 @@ export interface WorkerAssignmentItem {
   /** Job posting id — used by the calendar to route accepted/submitted
    *  shifts back to the public jobs-board posting. */
   jobPostId?: string;
+  /** Job order id — used to look up the posting display name. */
+  jobOrderId?: string;
+  /** Posting / job-order display name (e.g. "NASCAR - San Diego"). Shown
+   *  in the calendar tooltip as "<postTitle> - <jobTitle>". */
+  postTitle?: string;
   /**
    * Calendar coloring + click-routing bucket:
    *   - 'confirmed' → blue text, opens the assignment-details page

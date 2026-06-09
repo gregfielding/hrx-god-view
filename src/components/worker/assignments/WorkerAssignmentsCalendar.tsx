@@ -163,13 +163,16 @@ const WorkerAssignmentsCalendar: React.FC<WorkerAssignmentsCalendarProps> = ({ a
     const color = calendarKindColor(a);
     const timeLabel = compactTime(startMs(a), timeLocale);
     const variant = size === 'md' ? 'body2' : 'caption';
+    // Tooltip shows the posting name + shift title, e.g.
+    // "2pm NASCAR - San Diego - Swing Shift Pre Clean".
+    const fullName = a.postTitle ? `${a.postTitle} - ${a.jobTitle}` : a.jobTitle;
     return (
       <Box
         onClick={(e) => {
           e.stopPropagation();
           goForItem(a);
         }}
-        title={`${timeLabel} ${a.jobTitle}`}
+        title={`${timeLabel} ${fullName}`}
         sx={{
           cursor: 'pointer',
           lineHeight: 1.3,

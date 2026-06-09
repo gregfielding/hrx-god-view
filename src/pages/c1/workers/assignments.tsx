@@ -137,6 +137,7 @@ function docToItem(
     payRate: typeof data.payRate === 'number' ? data.payRate : undefined,
     status,
     jobPostId: (data.jobPostId as string | undefined) || undefined,
+    jobOrderId: (data.jobOrderId as string | undefined) || undefined,
     calendarKind,
   };
 }
@@ -144,7 +145,10 @@ function docToItem(
 const WorkerAssignments: React.FC = () => {
   const t = useT();
   const { user, activeTenant } = useAuth();
-  const [tabIndex, setTabIndex] = useState(0);
+  // Default to Calendar View (index 1) — the month/week/day calendar is
+  // the most useful at-a-glance surface (own shifts + discoverable open
+  // ones). 0 = List View, 1 = Calendar View, 2 = Archive.
+  const [tabIndex, setTabIndex] = useState(1);
   const [upcoming, setUpcoming] = useState<WorkerAssignmentItem[]>([]);
   const [past, setPast] = useState<WorkerAssignmentItem[]>([]);
   // Combined calendar feed: confirmed/accepted assignments + submitted
@@ -319,6 +323,9 @@ const WorkerAssignments: React.FC = () => {
           }
         });
 
+        // Posting display name per job order ("NASCAR - San Diego"), shown
+        // in the calendar tooltip as "<postTitle> - <shiftTitle>".
+        const joNameById = new Map<string, string>();
         const submittedItems: WorkerAssignmentItem[] = [];
         const submittedShiftIds = new Set<string>();
         try {
@@ -348,6 +355,20 @@ const WorkerAssignments: React.FC = () => {
               shiftReads.set(`${joId}__${s}`, { joId, shiftId: s, jobPostId });
             }
           });
+          // Resolve each engaged job order's display name (one read per JO).
+          await Promise.all(
+            Array.from(engagedJOs.keys()).map(async (joId) => {
+              try {
+                const joDoc = await getDoc(doc(db, 'tenants', tenantId, 'job_orders', joId));
+                if (!joDoc.exists()) return;
+                const jd = joDoc.data() as Record<string, any>;
+                const name = jd.postTitle || jd.jobOrderName || jd.jobTitle || '';
+                if (name) joNameById.set(joId, String(name));
+              } catch {
+                /* best-effort — tooltip just omits the posting name */
+              }
+            }),
+          );
           await Promise.all(
             Array.from(shiftReads.values()).map(async ({ joId, shiftId, jobPostId }) => {
               try {
@@ -376,6 +397,8 @@ const WorkerAssignments: React.FC = () => {
                   endAt,
                   status: 'scheduled',
                   jobPostId: jobPostId || undefined,
+                  jobOrderId: joId,
+                  postTitle: joNameById.get(joId),
                   calendarKind: 'submitted',
                 });
               } catch {
@@ -423,6 +446,8 @@ const WorkerAssignments: React.FC = () => {
                   endAt,
                   status: 'scheduled',
                   jobPostId: jobPostId || undefined,
+                  jobOrderId: joId,
+                  postTitle: joNameById.get(joId),
                   calendarKind: 'available',
                 });
               });
@@ -431,6 +456,13 @@ const WorkerAssignments: React.FC = () => {
         } catch (availErr) {
           console.warn('calendar: available-shifts load failed', availErr);
         }
+
+        // Enrich the worker's own confirmed/accepted items with the posting
+        // name too, so the tooltip is consistent across all calendar kinds.
+        assignmentCalItems.forEach((it) => {
+          const name = it.jobOrderId ? joNameById.get(it.jobOrderId) : undefined;
+          if (name) it.postTitle = name;
+        });
 
         if (!cancelled) setCalendarItems([...assignmentCalItems, ...submittedItems, ...availableItems]);
       } catch (err) {
