@@ -1295,7 +1295,10 @@ const AssignmentDetails: React.FC = () => {
       await callable({
         tenantId: assignment.tenantId,
         assignmentId: assignment.id,
-        decision: 'decline',
+        // 'worker_cancel' → status 'worker-cancelled' (distinct from a
+        // recruiter cancel), so the jobs-board posting offers "Re-apply
+        // to Shift" when they land back on it.
+        decision: 'worker_cancel',
       });
       navigate(assignment.jobPostId ? `/c1/jobs-board/${assignment.jobPostId}` : '/c1/jobs-board');
     } catch (err) {

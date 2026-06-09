@@ -48,7 +48,7 @@ import {
   Directions as DirectionsIcon,
 } from '@mui/icons-material';
 import IconButton from '@mui/material/IconButton';
-import { doc, getDoc, collection, query, where, getDocs, updateDoc, arrayUnion, arrayRemove, serverTimestamp, deleteField, setDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, arrayUnion, arrayRemove, serverTimestamp, deleteField, setDoc, deleteDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 
 import { db, functions } from '../firebase';
@@ -110,6 +110,9 @@ const JobPostingDetail: React.FC = () => {
    * /c1/workers/assignments/{assignmentId}.
    */
   const [assignmentIdsByShiftKey, setAssignmentIdsByShiftKey] = useState<Record<string, string>>({});
+  // Shift key → worker-cancelled assignmentId, so "Re-apply to Shift" can
+  // delete the old assignment before creating a fresh application.
+  const [reapplyAssignmentIdByShiftKey, setReapplyAssignmentIdByShiftKey] = useState<Record<string, string>>({});
   const [appliedShiftsRefresh, setAppliedShiftsRefresh] = useState(0); // Increment to reload applied shifts (e.g. after cancel for day)
   const [applicationStatus, setApplicationStatus] = useState<string | null>(null);
   /** Bumped after quick apply so application status is re-read while staying on this URL. */
@@ -792,13 +795,15 @@ const JobPostingDetail: React.FC = () => {
         const statuses: Record<string, string> = {};
         const seenDocs = new Set<string>();
 
-        // Per-shift status precedence: confirmed > accepted > submitted.
-        // Used by both the application overlay (contributes 'submitted')
-        // and the assignment overlay (raises to accepted/confirmed) so a
+        // Per-shift status precedence: confirmed > accepted > submitted >
+        // reapply. Used by both the application overlay (contributes
+        // 'submitted' or 'reapply') and the assignment overlay (raises to
+        // accepted/confirmed, or 'reapply' for worker-cancelled) so a
         // higher state never gets clobbered by a lower one regardless of
-        // doc-iteration order.
+        // doc-iteration order. 'reapply' (worker-cancelled / withdrawn,
+        // re-appliable) ranks above "nothing" but below a fresh submit.
         const statusRank = (s: string | undefined): number =>
-          s === 'confirmed' ? 3 : s === 'accepted' ? 2 : s === 'submitted' ? 1 : 0;
+          s === 'confirmed' ? 4 : s === 'accepted' ? 3 : s === 'submitted' ? 2 : s === 'reapply' ? 1 : 0;
 
         const multiDayShiftIds = new Set(
           dynamicShifts
@@ -814,8 +819,8 @@ const JobPostingDetail: React.FC = () => {
 
             const data = doc.data();
             const appStatus = (data.status || '').toLowerCase();
-            // Skip deleted, withdrawn, or cancelled applications
-            if (appStatus === 'deleted' || appStatus === 'withdrawn' || appStatus === 'cancelled') return;
+            // Skip hard-dead applications outright.
+            if (appStatus === 'deleted' || appStatus === 'cancelled') return;
 
             const shiftIds = getApplicationShiftIds(data as Record<string, unknown>);
             if (shiftIds.length === 0) return;
@@ -823,6 +828,21 @@ const JobPostingDetail: React.FC = () => {
               data as Record<string, unknown>,
               multiDayShiftIds,
             );
+
+            // A WITHDRAWN application = the worker cancelled their
+            // application on the jobs board. Surface those shifts as
+            // 're-appliable' (goldenrod "Re-apply to Shift") rather than
+            // silently reverting to a plain Apply button — but do NOT mark
+            // them as currently-applied.
+            if (appStatus === 'withdrawn') {
+              appliedKeys.forEach((key) => {
+                if (statusRank('reapply') > statusRank(statuses[key])) {
+                  statuses[key] = 'reapply';
+                }
+              });
+              return;
+            }
+
             applied.push(...appliedKeys);
             // CROSS-SHIFT CONTAMINATION FIX (2026-06-08).
             //
@@ -917,8 +937,14 @@ const JobPostingDetail: React.FC = () => {
             // worker who declined an offer can re-apply.
             const activeKeys = new Set<string>();
             const declinedKeys = new Set<string>();
+            // Shift keys backed by a WORKER-CANCELLED assignment → render
+            // "Re-apply to Shift". Tracked separately from declinedKeys
+            // (which free back to a plain Apply) and from the assignmentId
+            // that re-apply must delete.
+            const reapplyKeys = new Set<string>();
             const ACTIVE = new Set(['pending', 'proposed', 'confirmed', 'active', 'in_progress']);
             const DECLINED = new Set(['declined', 'cancelled', 'canceled', 'withdrawn']);
+            const reapplyAssignmentIdByKey: Record<string, string> = {};
 
             assignmentsSnap.forEach((d) => {
               const a = d.data() as Record<string, unknown>;
@@ -948,6 +974,15 @@ const JobPostingDetail: React.FC = () => {
                     assignmentIdsByKey[key] = d.id;
                   }
                 });
+              } else if (rawStatus === 'worker-cancelled' || rawStatus === 'worker_cancelled') {
+                // Worker pulled out → offer Re-apply. Remember the
+                // assignmentId so the re-apply handler can delete it.
+                keys.forEach((key) => {
+                  reapplyKeys.add(key);
+                  if (!reapplyAssignmentIdByKey[key] || key.includes('__')) {
+                    reapplyAssignmentIdByKey[key] = d.id;
+                  }
+                });
               } else if (DECLINED.has(rawStatus)) {
                 keys.forEach((key) => declinedKeys.add(key));
               }
@@ -955,12 +990,24 @@ const JobPostingDetail: React.FC = () => {
               // or otherwise resolved; nothing actionable to show).
             });
 
+            // Apply worker-cancelled → 'reapply' (after the loop so an
+            // active assignment on the same key always wins).
+            reapplyKeys.forEach((key) => {
+              if (activeKeys.has(key)) return; // a live offer/confirm supersedes
+              if (statusRank('reapply') > statusRank(statuses[key])) {
+                statuses[key] = 'reapply';
+              }
+            });
+            setReapplyAssignmentIdByShiftKey(reapplyAssignmentIdByKey);
+
             // Free declined/cancelled shifts (with no active assignment)
             // back to Available so the worker can re-apply. A re-offer
             // creates a new active assignment which lands in activeKeys
             // and takes precedence, so this never clobbers a live offer.
+            // Skip keys we just marked 'reapply' (worker-cancelled) — those
+            // intentionally show "Re-apply to Shift", not a bare Apply.
             declinedKeys.forEach((key) => {
-              if (!activeKeys.has(key)) {
+              if (!activeKeys.has(key) && !reapplyKeys.has(key)) {
                 delete statuses[key];
                 const idx = applied.indexOf(key);
                 if (idx >= 0) applied.splice(idx, 1);
@@ -1042,9 +1089,9 @@ const JobPostingDetail: React.FC = () => {
           navigate({ pathname: location.pathname, search: qs ? `?${qs}` : '' }, { replace: true });
         };
 
-        // Terminal state — already declined / cancelled / confirmed —
-        // skip the callable, just clean up the URL.
-        if (['declined', 'cancelled', 'confirmed', 'active'].includes(status)) {
+        // Terminal state — already declined / cancelled / worker-cancelled /
+        // confirmed — skip the callable, just clean up the URL.
+        if (['declined', 'cancelled', 'worker-cancelled', 'worker_cancelled', 'confirmed', 'active'].includes(status)) {
           if (cancelled) return;
           setDeclineIntentState('skipped');
           stripIntentFromUrl();
@@ -1057,7 +1104,9 @@ const JobPostingDetail: React.FC = () => {
         await respondFn({
           tenantId: resolvedTenantId,
           assignmentId: aid,
-          decision: 'decline',
+          // SMS DECLINE link = worker pulling out → worker-cancelled so the
+          // shift can be re-applied to from the jobs board.
+          decision: 'worker_cancel',
         });
         if (cancelled) return;
         setDeclineIntentState('success');
@@ -1200,6 +1249,77 @@ const JobPostingDetail: React.FC = () => {
     // browse shifts; they should come back here to browse more.
     params.set('returnTo', returnTo);
     navigate(`/apply/${posting.tenantId}/${postId}?${params.toString()}`);
+  };
+
+  /**
+   * Re-apply to a shift the worker previously pulled out of
+   * (worker-cancelled assignment, or a withdrawn application). Deletes the
+   * old worker-cancelled assignment doc(s) so nothing stale lingers, then
+   * re-activates the application back to 'submitted' (creating a fresh
+   * applied state). Falls back to the wizard if there's no application doc
+   * to revive.
+   */
+  const handleReapplyToShift = async (shiftId: string, applyDate?: string) => {
+    if (!user?.uid || !resolvedTenantId) return;
+    try {
+      // 1) Delete any worker-cancelled assignment for this shift so the
+      //    re-apply starts clean (no orphaned terminal assignment).
+      const assignmentsRef = collection(db, 'tenants', resolvedTenantId, 'assignments');
+      const snap = await getDocs(query(assignmentsRef, where('userId', '==', user.uid), where('shiftId', '==', shiftId)));
+      await Promise.all(
+        snap.docs
+          .filter((d) => {
+            const s = String((d.data() as Record<string, unknown>).status || '').toLowerCase();
+            return s === 'worker-cancelled' || s === 'worker_cancelled';
+          })
+          .map((d) => deleteDoc(doc(db, 'tenants', resolvedTenantId, 'assignments', d.id))),
+      );
+
+      // 2) Re-activate the application doc (revive a withdrawn one) and
+      //    ensure this shift is on it. quickApplyToShift bails on
+      //    withdrawn apps, so write directly here.
+      const appDocId = `${user.uid}_${postId}`;
+      const appRef = doc(db, 'tenants', resolvedTenantId, 'applications', appDocId);
+      const appSnap = await getDoc(appRef);
+      if (appSnap.exists()) {
+        const data = appSnap.data() as Record<string, unknown>;
+        const existingShiftIds = getApplicationShiftIds(data);
+        const existingApplyDates = getApplicationAppliedDays(data);
+        const nextShiftIds = Array.from(new Set([...existingShiftIds, shiftId]));
+        const nextApplyDates = applyDate
+          ? Array.from(new Set([...existingApplyDates, applyDate]))
+          : existingApplyDates;
+        const optimisticKeys = markShiftAppliedOptimistic(shiftId, applyDate);
+        try {
+          await setDoc(
+            appRef,
+            {
+              status: 'submitted',
+              shiftIds: nextShiftIds,
+              ...(nextApplyDates.length > 0 ? { applyDates: nextApplyDates, applyDate: nextApplyDates[0] } : {}),
+              ...(nextShiftIds.length === 1 ? { shiftId: nextShiftIds[0] } : {}),
+              // Clear the withdrawal markers so the app reads as live again.
+              withdrawnAt: deleteField(),
+              withdrawnBy: deleteField(),
+              reappliedAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true },
+          );
+        } catch (writeErr) {
+          revertShiftAppliedOptimistic(optimisticKeys);
+          throw writeErr;
+        }
+        setAppliedShiftsRefresh((n) => n + 1);
+        return;
+      }
+
+      // 3) No application doc to revive → run the normal apply flow.
+      await handleApplyToShift(shiftId, applyDate);
+    } catch (err) {
+      console.error('[JobPostingDetail] re-apply failed', err);
+      alert('We could not re-apply to this shift. Please try again.');
+    }
   };
 
   // Helper to safely format calendar dates (avoids UTC→local timezone shift showing wrong day)
@@ -1889,7 +2009,7 @@ const JobPostingDetail: React.FC = () => {
   };
 
   const handleAssignmentDecision = async (
-    decision: 'accept' | 'decline',
+    decision: 'accept' | 'decline' | 'worker_cancel',
     shiftId?: string,
     options: AssignmentDecisionOptions = {}
   ) => {
@@ -1902,11 +2022,15 @@ const JobPostingDetail: React.FC = () => {
       entryPoint = 'unknown',
     } = options;
 
+    const isWorkerCancel = decision === 'worker_cancel';
+
     if (!skipConfirmPrompt) {
       const confirmMessage =
         decision === 'accept'
           ? 'Are you sure you want to accept this job?'
-          : 'Are you sure you want to decline this job?';
+          : isWorkerCancel
+            ? 'Are you sure you can no longer work this shift? This will cancel your assignment — you can re-apply afterward.'
+            : 'Are you sure you want to decline this job?';
       if (!window.confirm(confirmMessage)) return;
     }
 
@@ -1971,12 +2095,25 @@ const JobPostingDetail: React.FC = () => {
           return;
         }
       } else {
-        if (shiftId) setShiftStatuses((prev) => ({ ...prev, [shiftId]: 'withdrawn' }));
+        // worker_cancel → 'reapply' (worker-cancelled, can re-apply right
+        // here); legacy decline → 'withdrawn'.
+        if (shiftId) {
+          setShiftStatuses((prev) => ({ ...prev, [shiftId]: isWorkerCancel ? 'reapply' : 'withdrawn' }));
+        }
         setApplicationStatus('withdrawn');
         if (user?.uid && assignmentId) {
-          logAssignmentUpdateActivity(user.uid, assignmentId, 'declined').catch((e) =>
-            console.warn('Failed to log assignment declined activity:', e)
+          logAssignmentUpdateActivity(user.uid, assignmentId, isWorkerCancel ? 'worker-cancelled' : 'declined').catch((e) =>
+            console.warn('Failed to log assignment cancel activity:', e)
           );
+        }
+        if (isWorkerCancel) {
+          // Stay on the posting so the worker immediately sees the
+          // "Re-apply to Shift" control on this shift's card.
+          if (!suppressAlerts) {
+            alert('Got it — we let the team know you can no longer work this shift. You can re-apply below anytime.');
+          }
+          setAppliedShiftsRefresh((n) => n + 1);
+          return;
         }
         if (!suppressAlerts) {
           alert('You declined this job. Your application has been withdrawn.');
@@ -2086,11 +2223,12 @@ const JobPostingDetail: React.FC = () => {
   };
 
   const handleDeclineAssignment = async () => {
-    await handleAssignmentDecision('decline', undefined, { entryPoint: 'decline_button' });
+    // Worker-initiated → 'worker_cancel' so the shift becomes re-appliable.
+    await handleAssignmentDecision('worker_cancel', undefined, { entryPoint: 'decline_button' });
   };
 
   const handleDeclineAssignmentForShift = async (shiftId: string) => {
-    await handleAssignmentDecision('decline', shiftId, { entryPoint: 'decline_button' });
+    await handleAssignmentDecision('worker_cancel', shiftId, { entryPoint: 'decline_button' });
   };
 
   const handleSubmitOfferConfirmation = async () => {
@@ -3121,6 +3259,7 @@ const JobPostingDetail: React.FC = () => {
                     onConfirmShift={handleConfirmAssignmentForShift}
                     onDeclineShift={handleDeclineAssignmentForShift}
                     onCancelApplication={handleCancelApplicationForDay}
+                    onReapplyToShift={handleReapplyToShift}
                     jobPostId={postId}
                     tenantId={resolvedTenantId}
                     language={displayLanguage}

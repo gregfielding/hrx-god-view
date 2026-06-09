@@ -14,6 +14,11 @@ const LEGACY_TO_CANONICAL: Record<string, AssignmentStatusCanonical> = {
   declined: 'cancelled',
   canceled: 'cancelled',
   cancelled: 'cancelled',
+  // Worker-initiated pull-out ("I can no longer work" / cancel application).
+  // Distinct raw status so the jobs board can offer "Re-apply to Shift",
+  // but canonically terminal (treated as cancelled everywhere else).
+  'worker-cancelled': 'cancelled',
+  worker_cancelled: 'cancelled',
 };
 
 export function normalizeAssignmentStatus(raw: string | null | undefined): AssignmentStatusCanonical {

@@ -35,7 +35,12 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
-type AssignmentDecision = 'accept' | 'decline';
+// 'decline'       → recruiter-offer declined (legacy) → status 'declined'
+// 'worker_cancel' → worker pulled out themselves ("I can no longer work" /
+//                   cancelled their application on the jobs board) →
+//                   distinct status 'worker-cancelled' so the jobs board
+//                   can offer "Re-apply to Shift".
+type AssignmentDecision = 'accept' | 'decline' | 'worker_cancel';
 
 function toDateOnly(value: any): string {
   if (!value) return '';
@@ -1134,8 +1139,8 @@ export const respondToAssignment = onCall(
     decision?: AssignmentDecision;
   };
 
-  if (!tenantId || !assignmentId || !decision || !['accept', 'decline'].includes(decision)) {
-    throw new HttpsError('invalid-argument', 'tenantId, assignmentId, and decision (accept|decline) are required');
+  if (!tenantId || !assignmentId || !decision || !['accept', 'decline', 'worker_cancel'].includes(decision)) {
+    throw new HttpsError('invalid-argument', 'tenantId, assignmentId, and decision (accept|decline|worker_cancel) are required');
   }
 
   const uid = request.auth.uid;
@@ -1198,11 +1203,18 @@ export const respondToAssignment = onCall(
     return { success: true, status: 'confirmed' };
   }
 
+  // decision === 'decline' | 'worker_cancel' below.
+  // Both withdraw the application the same way; they differ only in the
+  // assignment status they write so the jobs board can distinguish a
+  // worker self-cancel (→ "Re-apply to Shift") from other terminal states.
+  const isWorkerCancel = decision === 'worker_cancel';
+  const cancelStatus = isWorkerCancel ? 'worker-cancelled' : 'declined';
   await assignmentRef.set(
     {
-      status: 'declined',
+      status: cancelStatus,
       declinedAt: now,
       declinedBy: uid,
+      ...(isWorkerCancel ? { workerCancelledAt: now, workerCancelledBy: uid } : {}),
       updatedAt: now,
       updatedBy: uid,
     },
@@ -1258,7 +1270,7 @@ export const respondToAssignment = onCall(
       );
     }
   }
-  return { success: true, status: 'declined' };
+  return { success: true, status: cancelStatus };
   },
 );
 

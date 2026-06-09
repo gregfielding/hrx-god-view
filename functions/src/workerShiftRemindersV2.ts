@@ -279,7 +279,7 @@ function isConfirmedStatus(status: unknown): boolean {
 
 function isCancelLikeStatus(status: unknown): boolean {
   const s = normalizeStatus(status);
-  return ['cancelled', 'canceled', 'declined', 'withdrawn', 'reassigned'].includes(s);
+  return ['cancelled', 'canceled', 'declined', 'withdrawn', 'reassigned', 'worker-cancelled', 'worker_cancelled'].includes(s);
 }
 
 function toTimestamp(value: unknown): admin.firestore.Timestamp | null {

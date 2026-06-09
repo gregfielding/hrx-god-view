@@ -38,6 +38,13 @@ interface ShiftSelectorProps {
   /** Cancel/withdraw application for this shift (or for this day when date is provided) */
   onCancelApplication?: (shiftId: string, date?: string) => void;
   /**
+   * Re-apply to a shift the worker previously pulled out of
+   * (worker-cancelled assignment / withdrawn application). Deletes the old
+   * assignment + revives the application. Drives the "Re-apply to Shift"
+   * button shown when shiftStatus === 'reapply'.
+   */
+  onReapplyToShift?: (shiftId: string, date?: string) => void;
+  /**
    * Map of `${shiftId}__${YYYY-MM-DD}` (day-scoped) or `${shiftId}`
    * (legacy) → assignmentId. Populated by `loadAppliedShifts` in
    * `JobPostingDetail` from the worker's active assignment docs.
@@ -71,6 +78,7 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
   onConfirmShift,
   onDeclineShift,
   onCancelApplication,
+  onReapplyToShift,
   assignmentIdsByShiftKey = {},
   disabled = false,
   jobPostId,
@@ -201,6 +209,9 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
         : shiftStatuses[shift.shiftId] || shiftStatuses[rowKey] || (hasApplied ? 'submitted' : null);
     const isOffered = shiftStatus === 'accepted';
     const isConfirmed = shiftStatus === 'confirmed';
+    // Worker previously pulled out (worker-cancelled assignment / withdrawn
+    // application) → offer "Re-apply to Shift" instead of a plain Apply.
+    const isReapply = shiftStatus === 'reapply';
     const isFull = shift.spotsRemaining <= 0;
 
     // Resolve the assignmentId backing this row so the confirmed-state
@@ -453,6 +464,24 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
               ) : isPast ? (
                 <Button variant="outlined" disabled sx={{ minWidth: 140, color: 'text.secondary' }}>
                   Past
+                </Button>
+              ) : isReapply ? (
+                // Worker pulled out of this shift earlier → goldenrod
+                // "Re-apply to Shift". Deletes the worker-cancelled
+                // assignment + revives the application.
+                <Button
+                  variant="outlined"
+                  disabled={disabled || isFull}
+                  onClick={() => onReapplyToShift?.(shift.shiftId, item.type === 'day' ? item.date : undefined)}
+                  sx={{
+                    minWidth: 160,
+                    fontWeight: 600,
+                    color: '#B8860B',
+                    borderColor: '#DAA520',
+                    '&:hover': { borderColor: '#B8860B', backgroundColor: 'rgba(218,165,32,0.08)' },
+                  }}
+                >
+                  {isFull ? t('jobs.shiftFull') : t('jobs.reapplyToShift')}
                 </Button>
               ) : (
                 <Button

@@ -9416,6 +9416,11 @@ export const logAssignmentUpdated = onDocumentUpdated(
           const rawAfterStatus = String(after.status || '').toLowerCase();
           if (rawAfterStatus === 'declined') {
             message = `Hi ${firstName}, we received your decline for this assignment. Thank you for letting us know.`;
+          } else if (rawAfterStatus === 'worker-cancelled' || rawAfterStatus === 'worker_cancelled') {
+            // Worker pulled out themselves — acknowledge, but do NOT send the
+            // recruiter-reassignment "we're getting you a spot" copy that the
+            // generic 'cancelled' branch (afterN === 'cancelled') would emit.
+            message = `Hi ${firstName}, we received your cancellation for this assignment. Thank you for letting us know.`;
           } else {
             switch (afterN) {
               case 'confirmed':
@@ -9450,7 +9455,7 @@ export const logAssignmentUpdated = onDocumentUpdated(
             if (afterN === 'confirmed') messageTypeId = 'assignment_confirmed';
             else if (afterN === 'in_progress') messageTypeId = 'assignment_active';
             else if (afterN === 'completed') messageTypeId = 'assignment_completed';
-            else if (rawAfterStatus === 'declined') messageTypeId = 'assignment_status_change';
+            else if (rawAfterStatus === 'declined' || rawAfterStatus === 'worker-cancelled' || rawAfterStatus === 'worker_cancelled') messageTypeId = 'assignment_status_change';
             else if (afterN === 'cancelled') messageTypeId = 'assignment_cancelled';
 
             const result = await sendLegacyAssignmentMessage({
@@ -9463,7 +9468,10 @@ export const logAssignmentUpdated = onDocumentUpdated(
               sourceId: assignmentId,
               assignmentId,
               ...(emailSubject && emailBody ? { emailSubject, emailBody } : {}),
-              ...(afterN === 'cancelled' && rawAfterStatus !== 'declined'
+              ...(afterN === 'cancelled' &&
+              rawAfterStatus !== 'declined' &&
+              rawAfterStatus !== 'worker-cancelled' &&
+              rawAfterStatus !== 'worker_cancelled'
                 ? {
                     assignmentData: after,
                     jobOrderId: after.jobOrderId,
