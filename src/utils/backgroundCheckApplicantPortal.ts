@@ -30,6 +30,14 @@ export function shouldShowApplicantPortalCta(r: BackgroundCheckRecord): boolean 
   if (!hrx || hrx === 'draft' || hrx === 'queued') return false;
   if (HRX_NO_PORTAL_CTA.has(hrx)) return false;
   if (r.orderCompleted === true || r.finalReportReady === true) return false;
+  // Expired setup link (stamped by the R.10 daily expiry sweep) — the URL is
+  // dead, so stop offering it. The worker's action item disappears; a
+  // recruiter must re-order / resend to get a fresh link.
+  if (r.expired === true) return false;
+  // Subject already finished the AccuSource partial-profile setup — they took
+  // the action, so the CTA is moot even if HRX hasn't advanced past
+  // awaiting_applicant yet (the webhook can lag).
+  if (r.profileCompleted === true) return false;
   if (hrx !== 'awaiting_applicant') return false;
   return Boolean(resolveApplicantPortalUrl(r));
 }

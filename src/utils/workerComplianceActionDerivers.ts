@@ -77,10 +77,13 @@ export function deriveWorkerComplianceSignals(
     const hrx = String(c.hrxStatus || '').toLowerCase();
     if (hrx === 'error') {
       backgroundIssueAction = true;
-      // If AccuSource still has an applicant setup URL on this record, keep
-      // it so the dashboard "Review issue" CTA can deep-link to the portal.
-      const link = resolveApplicantPortalUrl(c as unknown as BackgroundCheckRecord);
-      if (link) applicantPortalLink = link;
+      // If AccuSource still has a NON-EXPIRED applicant setup URL on this
+      // record, keep it so the "Review issue" CTA can deep-link to the
+      // portal; an expired link falls back to the profile page.
+      if (c.expired !== true) {
+        const link = resolveApplicantPortalUrl(c as unknown as BackgroundCheckRecord);
+        if (link) applicantPortalLink = link;
+      }
       continue;
     }
 
