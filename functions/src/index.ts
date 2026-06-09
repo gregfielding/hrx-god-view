@@ -9423,9 +9423,17 @@ export const logAssignmentUpdated = onDocumentUpdated(
             message = `Hi ${firstName}, we received your cancellation for this assignment. Thank you for letting us know.`;
           } else {
             switch (afterN) {
-              case 'confirmed':
-                message = `Hi ${firstName}, your assignment is confirmed. Review your first-day details and check-in instructions in your account.`;
+              case 'confirmed': {
+                // Match the "Assignment Confirmed (EN)" UI template wording
+                // and ALWAYS include the assignment-details link so the
+                // worker can reach the full briefing (uniform, check-in,
+                // map, recruiter contact) — the old copy pointed vaguely at
+                // "your account" with no link.
+                const { buildWorkerAssignmentUrl } = await import('./utils/workerUrls');
+                const assignmentUrl = buildWorkerAssignmentUrl(assignmentId);
+                message = `Hi ${firstName}, your work assignment is confirmed. Please check your email for complete instructions (also check spam) and visit ${assignmentUrl} for everything you need to know about your new job.`;
                 break;
+              }
               case 'in_progress':
                 message = `Hi ${firstName}, your assignment is now active. Thank you!`;
                 break;
