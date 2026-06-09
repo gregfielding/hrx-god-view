@@ -16,7 +16,14 @@ function tempworksStartedTruthy(at: unknown): boolean {
 
 export interface WorkerDashboardJobSignals {
   tenantId: string;
-  pendingAssignmentConfirmations: Array<{ assignmentId: string; startAtMs?: number }>;
+  pendingAssignmentConfirmations: Array<{
+    assignmentId: string;
+    startAtMs?: number;
+    /** Shift end (ms) — used for the "show until 24h after completion" window. */
+    endAtMs?: number;
+    /** Job posting id so the action item can deep-link to the posting to confirm/decline. */
+    jobPostId?: string;
+  }>;
   tempworks?: {
     required: boolean;
     recruiterVerified: boolean;

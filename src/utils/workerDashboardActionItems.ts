@@ -152,6 +152,15 @@ function buildWorkerJobRequirementActionItems(signals: WorkerDashboardJobSignals
   );
   const firstAssignment = sortedAssignments[0];
   if (firstAssignment) {
+    // Link to the jobs-board POSTING (where Confirm/Decline live) rather
+    // than confirming inline — `intent=accept` opens the confirmation
+    // sheet on landing. Falls back to the assignment-details page when we
+    // don't have a jobPostId. Shows until 24h after the shift ends (the
+    // dashboard loader filters the window before this runs).
+    const jobPostId = firstAssignment.jobPostId;
+    const href = jobPostId
+      ? `/c1/jobs-board/${jobPostId}?intent=accept&assignmentId=${firstAssignment.assignmentId}`
+      : `/c1/workers/assignments/${firstAssignment.assignmentId}`;
     out.push({
       id: 'assignment_confirmation_required',
       category: 'blocking',
@@ -159,9 +168,8 @@ function buildWorkerJobRequirementActionItems(signals: WorkerDashboardJobSignals
       descriptionKey: 'dashboard.actionItems.assignmentConfirmDescription',
       sortOrder: 5,
       primaryLabelKey: 'dashboard.actionItems.assignmentConfirmPrimary',
-      primaryKind: 'assignment_accept',
-      secondaryLabelKey: 'dashboard.actionItems.assignmentDeclinePrimary',
-      secondaryKind: 'assignment_decline',
+      primaryKind: 'navigate',
+      href,
       sourceReason: 'Assignment awaiting worker response',
       qaEvaluatedFields: {
         tenantId: signals.tenantId,

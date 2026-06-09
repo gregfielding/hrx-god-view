@@ -65,6 +65,20 @@ function toStartAt(data: Record<string, unknown>): number {
   return new Date(iso).getTime();
 }
 
+/** Shift end (ms). Falls back to endDate→startDate and endTime→startTime→23:59. */
+function toEndAt(data: Record<string, unknown>): number {
+  const endDate = data.endDate ?? data.startDate;
+  const endTime = (data.endTime as string) || (data.startTime as string) || '23:59';
+  if (!endDate) return 0;
+  const dateStr =
+    typeof endDate === 'string'
+      ? endDate
+      : (endDate as { toDate?: () => Date })?.toDate?.()?.toISOString?.()?.slice(0, 10) ?? '';
+  if (!dateStr) return 0;
+  const iso = `${dateStr}T${String(endTime).slice(0, 5)}:00`;
+  return new Date(iso).getTime();
+}
+
 function looksLikeDocId(s: unknown): boolean {
   if (typeof s !== 'string' || !s) return false;
   const t = s.trim();
@@ -170,11 +184,27 @@ const WorkerDashboard: React.FC = () => {
         const assignmentsRef = collection(db, 'tenants', tenantId, 'assignments');
         const aq = query(assignmentsRef, where('userId', '==', user.uid));
         const snap = await getDocs(aq);
-        const pending: Array<{ assignmentId: string; startAtMs: number }> = [];
+        const pending: Array<{
+          assignmentId: string;
+          startAtMs: number;
+          endAtMs?: number;
+          jobPostId?: string;
+        }> = [];
+        const nowMs = Date.now();
+        const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
         snap.forEach((d) => {
           const data = d.data() as Record<string, unknown>;
           if (assignmentDocNeedsWorkerConfirmation(data)) {
-            pending.push({ assignmentId: d.id, startAtMs: toStartAt(data) });
+            const endAtMs = toEndAt(data);
+            // Surface the "confirm your shift" action item until 24h AFTER
+            // the shift ends; past that the unconfirmed offer is stale.
+            if (endAtMs && nowMs > endAtMs + TWENTY_FOUR_HOURS_MS) return;
+            pending.push({
+              assignmentId: d.id,
+              startAtMs: toStartAt(data),
+              endAtMs: endAtMs || undefined,
+              jobPostId: (data.jobPostId as string) || undefined,
+            });
           }
         });
         let bgRows: Record<string, unknown>[] = [];
