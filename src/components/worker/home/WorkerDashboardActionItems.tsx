@@ -24,6 +24,16 @@ import { formatHeadshotGateError } from '../../../utils/avatarVerification/forma
 
 const SMS_SNOOZE_MS = 24 * 60 * 60 * 1000;
 
+/** Compact action-item button styling — smaller than MUI size="small". */
+const COMPACT_BTN_SX = {
+  py: 0.25,
+  px: 1.25,
+  fontSize: 12,
+  lineHeight: 1.4,
+  minWidth: 0,
+  whiteSpace: 'nowrap' as const,
+};
+
 function smsSnoozeStorageKey(uid: string): string {
   return `worker_sms_warning_dismiss_until_${uid}`;
 }
@@ -337,21 +347,12 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
                       flexWrap="wrap"
                     >
                       <Box sx={{ minWidth: 0, flex: 1 }}>
-                        <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mb: 0.25 }}>
-                          <Chip
-                            size="small"
-                            label={t(categoryLabelKey(item.category))}
-                            color="error"
-                            variant="filled"
-                            sx={{ fontWeight: 600, height: 18, '& .MuiChip-label': { px: 0.75, fontSize: 10 } }}
-                          />
-                          <Typography
-                            variant="subtitle2"
-                            sx={{ fontWeight: 700, lineHeight: 1.25, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                          >
-                            {t(item.titleKey)}
-                          </Typography>
-                        </Stack>
+                        <Typography
+                          variant="subtitle2"
+                          sx={{ fontWeight: 700, lineHeight: 1.25, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        >
+                          {t(item.titleKey)}
+                        </Typography>
                         <Typography
                           variant="caption"
                           color="text.secondary"
@@ -359,6 +360,13 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
                         >
                           {t(item.descriptionKey)}
                         </Typography>
+                        <Chip
+                          size="small"
+                          label={t(categoryLabelKey(item.category))}
+                          color="error"
+                          variant="filled"
+                          sx={{ mt: 0.75, fontWeight: 600, height: 18, '& .MuiChip-label': { px: 0.75, fontSize: 10 } }}
+                        />
                       </Box>
                       <Stack direction="row" spacing={0.5} alignItems="center" sx={{ flexShrink: 0 }}>
                         {item.secondaryKind === 'assignment_decline' && item.secondaryLabelKey ? (
@@ -366,6 +374,7 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
                             variant="outlined"
                             color="inherit"
                             size="small"
+                            sx={COMPACT_BTN_SX}
                             disabled={busy}
                             onClick={() => void runSecondary(item)}
                           >
@@ -376,6 +385,7 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
                           variant="contained"
                           color="primary"
                           size="small"
+                          sx={COMPACT_BTN_SX}
                           disabled={busy}
                           onClick={() => void runPrimary(item)}
                         >
@@ -442,9 +452,9 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
                       : {}),
               }}
             >
-              {/* Compact tile: chip + title on one row, a clamped one-line
-                  description, and a small action button — ~70% smaller than
-                  the old full-height card. */}
+              {/* Compact tile: title + one-line description, the priority
+                  chip on its own row BELOW the text, and a small action
+                  button on the right. */}
               <CardContent
                 sx={{
                   py: 1,
@@ -455,27 +465,18 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
                 <Stack
                   direction="row"
                   spacing={1.25}
-                  alignItems="center"
+                  alignItems="flex-start"
                   justifyContent="space-between"
                   useFlexGap
                   flexWrap="wrap"
                 >
                   <Box sx={{ minWidth: 0, flex: 1 }}>
-                    <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mb: 0.25 }}>
-                      <Chip
-                        size="small"
-                        label={t(categoryLabelKey(item.category))}
-                        color={categoryChipColor[item.category]}
-                        variant={isRecommended ? 'outlined' : 'filled'}
-                        sx={{ fontWeight: 600, height: 18, '& .MuiChip-label': { px: 0.75, fontSize: 10 } }}
-                      />
-                      <Typography
-                        variant="subtitle2"
-                        sx={{ fontWeight: 700, lineHeight: 1.25, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                      >
-                        {t(item.titleKey)}
-                      </Typography>
-                    </Stack>
+                    <Typography
+                      variant="subtitle2"
+                      sx={{ fontWeight: 700, lineHeight: 1.25, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    >
+                      {t(item.titleKey)}
+                    </Typography>
                     <Typography
                       variant="caption"
                       color="text.secondary"
@@ -489,17 +490,24 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
                     >
                       {t(item.descriptionKey)}
                     </Typography>
+                    <Chip
+                      size="small"
+                      label={t(categoryLabelKey(item.category))}
+                      color={categoryChipColor[item.category]}
+                      variant={isRecommended ? 'outlined' : 'filled'}
+                      sx={{ mt: 0.75, fontWeight: 600, height: 18, '& .MuiChip-label': { px: 0.75, fontSize: 10 } }}
+                    />
                   </Box>
                   <Stack direction="row" spacing={0.5} alignItems="center" sx={{ flexShrink: 0 }}>
                     {item.category === 'recommended' &&
                     item.secondaryKind === 'dismiss_firestore' &&
                     item.secondaryLabelKey ? (
-                      <Button size="small" variant="text" color="inherit" onClick={() => void runSecondary(item)}>
+                      <Button size="small" variant="text" color="inherit" sx={COMPACT_BTN_SX} onClick={() => void runSecondary(item)}>
                         {t(item.secondaryLabelKey)}
                       </Button>
                     ) : null}
                     {item.secondaryKind === 'snooze_sms' && item.secondaryLabelKey ? (
-                      <Button size="small" color="inherit" onClick={() => void runSecondary(item)}>
+                      <Button size="small" color="inherit" sx={COMPACT_BTN_SX} onClick={() => void runSecondary(item)}>
                         {t(item.secondaryLabelKey)}
                       </Button>
                     ) : null}
@@ -507,6 +515,7 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
                       variant={isRecommended ? 'outlined' : 'contained'}
                       color="primary"
                       size="small"
+                      sx={COMPACT_BTN_SX}
                       onClick={() => void runPrimary(item)}
                     >
                       {t(item.primaryLabelKey)}

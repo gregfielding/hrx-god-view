@@ -94,6 +94,10 @@ const JobPostingDetail: React.FC = () => {
   const resolvedTenantId = authTenantId || (isC1Route ? 'BCiP2bQ9CgVOCTfV6MhD' : null);
 
   const [posting, setPosting] = useState<any>(null);
+  // Bumped on tab focus/visibility so the posting itself re-loads (picks up
+  // recruiter edits like the "Show spots remaining" toggle without a manual
+  // refresh). The applied-shifts effect already refreshes on focus.
+  const [postingRefresh, setPostingRefresh] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedShifts, setSelectedShifts] = useState<string[]>([]);
@@ -470,7 +474,7 @@ const JobPostingDetail: React.FC = () => {
     };
 
     loadPosting();
-  }, [resolvedTenantId, postId]);
+  }, [resolvedTenantId, postId, postingRefresh]);
 
   // Load application status when posting and user are available
   useEffect(() => {
@@ -1035,16 +1039,20 @@ const JobPostingDetail: React.FC = () => {
 
     loadAppliedShifts();
 
-    // Refresh applied shifts when page becomes visible (e.g., user returns from application wizard)
+    // Refresh applied shifts AND the posting itself when the page becomes
+    // visible / regains focus (e.g., returning from the wizard, or a
+    // recruiter toggled "Show spots remaining" while this tab was open).
     const handleVisibilityChange = () => {
       if (!document.hidden) {
         loadAppliedShifts();
+        setPostingRefresh((n) => n + 1);
       }
     };
 
     // Refresh when window gains focus (user returns to tab)
     const handleFocus = () => {
       loadAppliedShifts();
+      setPostingRefresh((n) => n + 1);
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);

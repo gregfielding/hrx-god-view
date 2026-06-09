@@ -335,8 +335,9 @@ const WorkerDashboard: React.FC = () => {
         {!assignmentsLoading && upcomingAssignments.length > 0 ? (
           <Box component="section" aria-label={t('dashboard.upcomingAssignments.title')}>
             <Typography
-              variant="overline"
-              sx={{ color: 'text.secondary', letterSpacing: '0.08em', fontWeight: 600, display: 'block', mb: 1.5 }}
+              variant="h5"
+              component="h2"
+              sx={{ fontWeight: 700, letterSpacing: -0.02, mb: 1.5 }}
             >
               {t('dashboard.upcomingAssignments.title')}
             </Typography>
