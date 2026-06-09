@@ -71,6 +71,7 @@ import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../../firebase';
 import { p } from '../../data/firestorePaths';
 import { getCalendarDayLocal } from '../../utils/dateUtils';
+import { normalizeAssignmentStatus } from '../../utils/assignmentStatusNormalize';
 import { getDateScheduleEntriesWithHours } from '../../utils/dateSchedule';
 import {
   applicationHasShiftMetadata,
@@ -1714,6 +1715,14 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       { band: string; score: number; reasons: string[]; recommendedAction: string }
     >();
     filtered.forEach((r) => {
+      // Skip CANCELLED/declined/worker-cancelled assignments. They're no
+      // longer on the shift, so they must NOT exclude the worker from the
+      // Worker Pool (the bug where a worker with only a cancelled assignment
+      // on this shift "disappeared" from the pool even though the shift card
+      // — which hides cancelled — showed them as not on it). `completed`
+      // still counts (they worked it), so use the cancelled check, not the
+      // broader terminal check.
+      if (normalizeAssignmentStatus(r.status) === 'cancelled') return;
       if (statusByUser.has(r.userId)) return;
       statusByUser.set(r.userId, r.status);
       idByUser.set(r.userId, r.assignmentId);
