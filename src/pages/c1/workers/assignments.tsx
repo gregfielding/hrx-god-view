@@ -323,9 +323,11 @@ const WorkerAssignments: React.FC = () => {
           }
         });
 
-        // Posting display name per job order ("NASCAR - San Diego"), shown
-        // in the calendar tooltip as "<postTitle> - <shiftTitle>".
+        // Posting display name + worksite city/state per job order, shown
+        // in the calendar tooltip as
+        // "<postTitle> - <shiftTitle> • <city>, <state>".
         const joNameById = new Map<string, string>();
+        const joCityStateById = new Map<string, string>();
         const submittedItems: WorkerAssignmentItem[] = [];
         const submittedShiftIds = new Set<string>();
         try {
@@ -364,6 +366,13 @@ const WorkerAssignments: React.FC = () => {
                 const jd = joDoc.data() as Record<string, any>;
                 const name = jd.postTitle || jd.jobOrderName || jd.jobTitle || '';
                 if (name) joNameById.set(joId, String(name));
+                // worksiteAddress is sometimes flat ({city,state}) and
+                // sometimes nested ({address:{city,state}}).
+                const wa = jd.worksiteAddress || {};
+                const city = wa.city || wa.address?.city || '';
+                const state = wa.state || wa.address?.state || '';
+                const cityState = [city, state].filter(Boolean).join(', ');
+                if (cityState) joCityStateById.set(joId, cityState);
               } catch {
                 /* best-effort — tooltip just omits the posting name */
               }
@@ -399,6 +408,7 @@ const WorkerAssignments: React.FC = () => {
                   jobPostId: jobPostId || undefined,
                   jobOrderId: joId,
                   postTitle: joNameById.get(joId),
+                  cityState: joCityStateById.get(joId),
                   calendarKind: 'submitted',
                 });
               } catch {
@@ -448,6 +458,7 @@ const WorkerAssignments: React.FC = () => {
                   jobPostId: jobPostId || undefined,
                   jobOrderId: joId,
                   postTitle: joNameById.get(joId),
+                  cityState: joCityStateById.get(joId),
                   calendarKind: 'available',
                 });
               });
@@ -462,6 +473,10 @@ const WorkerAssignments: React.FC = () => {
         assignmentCalItems.forEach((it) => {
           const name = it.jobOrderId ? joNameById.get(it.jobOrderId) : undefined;
           if (name) it.postTitle = name;
+          const cs = it.jobOrderId ? joCityStateById.get(it.jobOrderId) : undefined;
+          // Prefer the JO map; fall back to the item's own resolved address.
+          if (cs) it.cityState = cs;
+          else if (!it.cityState && it.locationShort) it.cityState = it.locationShort;
         });
 
         if (!cancelled) setCalendarItems([...assignmentCalItems, ...submittedItems, ...availableItems]);

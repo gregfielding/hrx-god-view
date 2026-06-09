@@ -41,6 +41,8 @@ export interface WorkerAssignmentItem {
   /** Posting / job-order display name (e.g. "NASCAR - San Diego"). Shown
    *  in the calendar tooltip as "<postTitle> - <jobTitle>". */
   postTitle?: string;
+  /** Worksite city + state (e.g. "San Diego, CA") for the calendar tooltip. */
+  cityState?: string;
   /**
    * Calendar coloring + click-routing bucket:
    *   - 'confirmed' → blue text, opens the assignment-details page
