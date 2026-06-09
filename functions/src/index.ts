@@ -565,6 +565,10 @@ export { onUserGroupRolesOrMembersChangeRecomputeWorkersPrimary } from './recrui
 // the per-row evaluator stays in lockstep with the manual button.
 export { onApplicationHiringSignalsChangedAutoOnboard } from './recruiter/onApplicationHiringSignalsChangedAutoOnboard';
 export { onUserGroupMemberAddedAutoOnboard } from './recruiter/onUserGroupMemberAddedAutoOnboard';
+// When a worker completes their home address after an auto-hire whose Everee
+// provisioning bailed for lack of an address, push it to Everee / re-provision
+// (notifications suppressed). See the trigger file for the full rationale.
+export { pushAddressToEvereeOnAddressComplete } from './integrations/everee/pushAddressToEvereeOnAddressComplete';
 export { onJobOrderWriteStampScheduler } from './recruiting/onJobOrderWriteStampScheduler';
 export { onAccountRolesChangeRestampSchedulers } from './recruiting/onAccountRolesChangeRestampSchedulers';
 // Tenant role defaults — atomic add/remove for the four arrays on

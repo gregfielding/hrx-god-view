@@ -361,7 +361,14 @@ export type WorkerOnboardingPipelineTriggerSource =
    * the catchall pattern under the `hire_everyone` quality preset (group
    * used as an invite list).
    */
-  | "auto_user_group_membership_added";
+  | "auto_user_group_membership_added"
+  /**
+   * Worker completed their home address AFTER an auto-hire whose Everee
+   * provisioning had failed for lack of an address
+   * (`pushAddressToEvereeOnAddressComplete`). Re-runs provisioning with
+   * notifications suppressed so we don't re-send onboarding messages.
+   */
+  | "address_backfill";
 
 export async function ensureWorkerOnboardingPipeline(args: {
   tenantId: string;
