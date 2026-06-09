@@ -230,6 +230,68 @@ export function cardHeaderSubBadge(
   return null;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Package-level rollup (AC.0b — "is CORT Basic cleared?")
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Single package-level verdict rolled up from the per-line effective
+ * verdicts. Gives recruiters the one answer they actually want — "is this
+ * person cleared for CORT Basic?" — instead of scanning N line bands.
+ */
+export type PackageRollupVerdict =
+  | 'CLEARED'
+  | 'FAILED'
+  | 'ACTION_NEEDED'
+  | 'IN_PROGRESS'
+  | 'NONE';
+
+export const PACKAGE_ROLLUP_LABEL: Readonly<Record<PackageRollupVerdict, string>> =
+  Object.freeze({
+    CLEARED: 'Cleared',
+    FAILED: 'Failed',
+    ACTION_NEEDED: 'Action needed',
+    IN_PROGRESS: 'In progress',
+    NONE: '—',
+  });
+
+export const PACKAGE_ROLLUP_COLOR: Readonly<
+  Record<PackageRollupVerdict, 'success' | 'error' | 'warning' | 'info' | 'default'>
+> = Object.freeze({
+  CLEARED: 'success',
+  FAILED: 'error',
+  ACTION_NEEDED: 'warning',
+  IN_PROGRESS: 'info',
+  NONE: 'default',
+});
+
+/**
+ * Roll the per-line effective verdicts up to one package verdict.
+ *
+ * Decision (Greg, 2026-06-09): explicit adjudication is the source of truth,
+ * and a line only counts toward "Cleared" when its EFFECTIVE verdict is
+ * PASSED. So a Canceled / Expired / needs-review line blocks "Cleared" until
+ * a recruiter explicitly marks it Passed (its effective verdict flips to
+ * PASSED via the manual override). Vendor status never auto-clears.
+ *
+ *   FAILED        — any line FAILED (hard stop)
+ *   ACTION_NEEDED — any line NEEDS_REVIEW (incl. canceled/expired auto-flagged)
+ *   IN_PROGRESS   — any line still PENDING (and none failed / needs review)
+ *   CLEARED       — every line PASSED
+ *   NONE          — no non-synthetic lines on the record
+ */
+export function computePackageRollup(
+  lines: ReadonlyArray<AccusourceScreeningLineItem>,
+): PackageRollupVerdict {
+  const visible = lines.filter((l) => !isSyntheticOrderRow(l));
+  if (visible.length === 0) return 'NONE';
+  const verdicts = visible.map((l) => l.verdict);
+  if (verdicts.some((v) => v === 'FAILED')) return 'FAILED';
+  if (verdicts.some((v) => v === 'NEEDS_REVIEW')) return 'ACTION_NEEDED';
+  if (verdicts.some((v) => v === 'PENDING')) return 'IN_PROGRESS';
+  return 'CLEARED';
+}
+
 /**
  * "All checks are still in progress with the vendor." special state —
  * true when the worker has lines but ALL of them are PENDING (everything

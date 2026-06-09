@@ -48,6 +48,11 @@ import { AccusourcePackageSelector } from '../../../components/recruiter/Accusou
 import { useAccusourceCatalog } from '../../../hooks/useAccusourceCatalog';
 import { fetchMergedScreeningPackageForCandidate } from '../../../utils/screeningPackageDefaultsLoader';
 import { formatFirebaseHttpsError } from '../../../utils/firebaseHttpsErrors';
+import {
+  computePackageRollup,
+  PACKAGE_ROLLUP_LABEL,
+  PACKAGE_ROLLUP_COLOR,
+} from '../../../utils/accusourceVerdictBands';
 import { useAuth } from '../../../contexts/AuthContext';
 import {
   deriveC1EntityKeyFromEntityName,
@@ -1026,7 +1031,32 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
                           </Typography>
                         )}
                       </TableCell>
-                      <TableCell>{row.packageLabel}</TableCell>
+                      <TableCell>
+                        <Stack direction="row" gap={0.75} alignItems="center" flexWrap="wrap">
+                          <span>{row.packageLabel}</span>
+                          {(() => {
+                            // Package-level rollup: one verdict for the whole
+                            // package (e.g. "CORT Basic · Cleared / Action needed").
+                            // markedCompleteOutsideHrx forces Cleared (manual
+                            // pass) unless a line is hard-FAILED.
+                            const lines = row.screeningServiceLines ?? [];
+                            let rollup = computePackageRollup(lines);
+                            if (r.markedCompleteOutsideHrx === true && rollup !== 'FAILED') {
+                              rollup = 'CLEARED';
+                            }
+                            if (rollup === 'NONE') return null;
+                            return (
+                              <Chip
+                                size="small"
+                                color={PACKAGE_ROLLUP_COLOR[rollup]}
+                                label={PACKAGE_ROLLUP_LABEL[rollup]}
+                                variant={rollup === 'CLEARED' ? 'filled' : 'outlined'}
+                                sx={{ height: 20, fontSize: '0.7rem', fontWeight: 700 }}
+                              />
+                            );
+                          })()}
+                        </Stack>
+                      </TableCell>
                       <TableCell>
                         <Typography variant="body2">{row.statusPrimary}</Typography>
                         {row.statusSecondary ? (
