@@ -30,6 +30,7 @@ export type WorkerDashboardActionId =
   | 're_enable_sms_notifications'
   | 'assignment_confirmation_required'
   | 'complete_tempworks_onboarding'
+  | 'complete_payroll_setup'
   | 'background_check_action_required'
   | 'background_check_issue_requires_action'
   | 'drug_screen_schedule_required'
@@ -105,6 +106,7 @@ function globalPriorityScore(item: WorkerDashboardActionItem): number {
     drug_screen_reschedule_required: 880,
     background_check_issue_requires_action: 860,
     complete_tempworks_onboarding: 800,
+    complete_payroll_setup: 760,
     background_check_action_required: 720,
     drug_screen_schedule_required: 700,
     worker_ai_prescreen_interview: 550,
@@ -272,6 +274,24 @@ function buildWorkerJobRequirementActionItems(signals: WorkerDashboardJobSignals
       href: tw.onboardingUrl || undefined,
       sourceReason: submitted ? 'TempWorks submitted — recruiter verification pending' : 'TempWorks not started',
       qaEvaluatedFields: { submitted, hasUrl: Boolean(tw.onboardingUrl) },
+    });
+  }
+
+  // Everee payroll onboarding incomplete — workers can apply/work without
+  // finishing it, so this is a non-blocking "important" nudge that links to
+  // the payroll page (the embedded Everee setup), not a forced redirect.
+  if (signals.payrollOnboardingIncomplete) {
+    out.push({
+      id: 'complete_payroll_setup',
+      category: 'important',
+      titleKey: 'dashboard.actionItems.payrollSetupTitle',
+      descriptionKey: 'dashboard.actionItems.payrollSetupDescription',
+      sortOrder: 19,
+      primaryLabelKey: 'dashboard.actionItems.payrollSetupPrimary',
+      primaryKind: 'navigate',
+      href: '/c1/workers/payroll',
+      sourceReason: 'Everee payroll onboarding incomplete',
+      qaEvaluatedFields: {},
     });
   }
 

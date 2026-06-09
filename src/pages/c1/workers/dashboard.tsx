@@ -207,6 +207,28 @@ const WorkerDashboard: React.FC = () => {
             });
           }
         });
+        // Everee payroll-onboarding state: incomplete if any employer
+        // linkage doc isn't COMPLETE yet. Surfaces the "Complete payroll
+        // setup" action item (workers can apply/work without finishing it).
+        let payrollOnboardingIncomplete = false;
+        try {
+          const ewSnap = await getDocs(
+            query(
+              collection(db, 'tenants', tenantId, 'everee_workers'),
+              where('firebaseUid', '==', user.uid)
+            )
+          );
+          payrollOnboardingIncomplete = ewSnap.docs.some((d) => {
+            const x = d.data() as Record<string, unknown>;
+            const complete =
+              x.onboardingComplete === true ||
+              String(x.onboardingStatus || '').toUpperCase() === 'COMPLETE';
+            return !complete;
+          });
+        } catch (ewErr) {
+          console.warn('Dashboard: everee_workers query skipped', ewErr);
+        }
+
         let bgRows: Record<string, unknown>[] = [];
         let evRows: Record<string, unknown>[] = [];
         try {
@@ -237,6 +259,7 @@ const WorkerDashboard: React.FC = () => {
           tenantId,
           pendingAssignmentConfirmations: pending,
           tempworks: readTempworksOnboardingFromUserDoc(userDoc),
+          payrollOnboardingIncomplete,
           compliance: deriveWorkerComplianceSignals(bgRows, evRows),
         });
       } catch (err) {

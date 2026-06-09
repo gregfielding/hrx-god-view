@@ -30,6 +30,10 @@ export interface WorkerDashboardJobSignals {
     started: boolean;
     onboardingUrl: string | null;
   };
+  /** True when the worker has an Everee employer linkage that isn't fully
+   *  onboarded yet (onboardingComplete !== true) — drives the "Complete
+   *  payroll setup" dashboard action item. */
+  payrollOnboardingIncomplete?: boolean;
   compliance: WorkerComplianceSignals;
 }
 

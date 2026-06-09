@@ -3455,27 +3455,52 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   const payrollPath = '/c1/workers/payroll';
 
   if (submittedSuccess) {
-    // If the wizard was launched from JobPostingDetail's per-shift Apply
-    // (which always passes `returnTo=/c1/jobs-board/{postId}`), send the
-    // worker back to the shift list so they can apply to additional
-    // shifts on the same JO with a single click — no wizard re-run. The
-    // legacy default sent everyone to /c1/workers/payroll after submit,
-    // which broke the "apply to multiple shifts" loop the jobs board UX
-    // is built around.
-    const successTo = returnTo || payrollPath;
-    const successDelayMs = returnTo ? 1500 : 3000; // shorter redirect when coming back to the same posting
+    // Came from JobPostingDetail's per-shift Apply (returnTo=/c1/jobs-board/
+    // {postId}) → bounce straight back to the shift list so they can apply
+    // to more shifts on the same JO. That flow is fine to auto-redirect.
+    if (returnTo) {
+      return (
+        <Box sx={{ px: 0, py: 0, display: 'flex', flexDirection: 'column' }}>
+          <PostSubmitRedirect
+            to={returnTo}
+            delayMs={1500}
+            headlineKey="apply.applicationSubmittedMessage"
+            subheadKey="apply.settingUpPayroll"
+            helperKey="apply.settingUpPayrollHelper"
+            applicationsPath={applicationsPath}
+            jobsBoardPath={jobsBoardPath}
+            t={t}
+          />
+        </Box>
+      );
+    }
+
+    // Group / auto-hire apply (no returnTo): DON'T force them into Everee
+    // payroll. Workers kept thinking onboarding was required before they
+    // could pick up shifts. Show a clear choice — find shifts now, or set
+    // up payroll — and make it explicit payroll can be finished later
+    // (it's also surfaced as a dashboard action item).
     return (
       <Box sx={{ px: 0, py: 0, display: 'flex', flexDirection: 'column' }}>
-        <PostSubmitRedirect
-          to={successTo}
-          delayMs={successDelayMs}
-          headlineKey="apply.applicationSubmittedMessage"
-          subheadKey="apply.settingUpPayroll"
-          helperKey="apply.settingUpPayrollHelper"
-          applicationsPath={applicationsPath}
-          jobsBoardPath={jobsBoardPath}
-          t={t}
-        />
+        <Paper elevation={0} sx={{ maxWidth: 480, mx: 'auto', mt: { xs: 4, md: 6 }, p: 3, textAlign: 'center' }}>
+          <Typography variant="h6" sx={{ mb: 1, fontWeight: 700 }}>
+            {t('apply.hiredTitle')}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2.5 }}>
+            {t('apply.hiredPayrollOptional')}
+          </Typography>
+          <Stack spacing={1.25} sx={{ mb: 1.5 }}>
+            <Button variant="contained" size="large" fullWidth onClick={() => navigate(jobsBoardPath)}>
+              {t('apply.findShifts')}
+            </Button>
+            <Button variant="outlined" size="large" fullWidth onClick={() => navigate(payrollPath)}>
+              {t('apply.setUpPayroll')}
+            </Button>
+          </Stack>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+            {t('apply.payrollLaterHint')}
+          </Typography>
+        </Paper>
       </Box>
     );
   }
