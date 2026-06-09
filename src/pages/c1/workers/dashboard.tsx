@@ -15,6 +15,7 @@ import {
   Stack,
   Typography,
 } from '@mui/material';
+import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import { useNavigate } from 'react-router-dom';
 
 import { db } from '../../../firebase';
@@ -356,8 +357,8 @@ const WorkerDashboard: React.FC = () => {
                   {index > 0 ? <Divider component="li" /> : null}
                   <ListItemButton
                     onClick={() => navigate(`/c1/workers/assignments/${row.assignmentId}`)}
-                    alignItems="flex-start"
-                    sx={{ py: 1.75, px: 2 }}
+                    alignItems="center"
+                    sx={{ py: 1.75, px: 2, gap: 1.5 }}
                   >
                     <ListItemText
                       primary={row.jobTitle}
@@ -365,6 +366,23 @@ const WorkerDashboard: React.FC = () => {
                       primaryTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
                       secondaryTypographyProps={{ variant: 'body2', color: 'text.secondary' }}
                     />
+                    {/* Arrow affordance (decorative — the whole row navigates). */}
+                    <Box
+                      aria-hidden
+                      sx={{
+                        flexShrink: 0,
+                        width: 40,
+                        height: 40,
+                        borderRadius: '50%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        bgcolor: 'primary.main',
+                        color: '#fff',
+                      }}
+                    >
+                      <ArrowForwardIcon fontSize="small" />
+                    </Box>
                   </ListItemButton>
                 </React.Fragment>
               ))}

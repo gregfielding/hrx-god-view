@@ -7,9 +7,11 @@ import {
   Card,
   CardContent,
   Chip,
+  IconButton,
   Stack,
   Typography,
 } from '@mui/material';
+import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 
@@ -208,6 +210,35 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
     return 'dashboard.priorityStack.categorySnoozable';
   };
 
+  /** Primary CTA rendered as a circular arrow icon button (replaces the
+   *  old text button). aria-label/title carry the original label text. */
+  const PrimaryArrow: React.FC<{
+    label: string;
+    onClick: () => void;
+    disabled?: boolean;
+    outlined?: boolean;
+  }> = ({ label, onClick, disabled, outlined }) => (
+    <IconButton
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      disabled={disabled}
+      sx={{
+        width: 40,
+        height: 40,
+        flexShrink: 0,
+        border: outlined ? '1px solid' : 'none',
+        borderColor: 'primary.main',
+        bgcolor: outlined ? 'transparent' : 'primary.main',
+        color: outlined ? 'primary.main' : '#fff',
+        '&:hover': { bgcolor: outlined ? 'action.hover' : 'primary.dark' },
+        '&.Mui-disabled': { bgcolor: outlined ? 'transparent' : 'action.disabledBackground' },
+      }}
+    >
+      <ArrowForwardIcon fontSize="small" />
+    </IconButton>
+  );
+
   const sectionHeading = (
     <Typography
       variant="h5"
@@ -381,16 +412,11 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
                             {t(item.secondaryLabelKey)}
                           </Button>
                         ) : null}
-                        <Button
-                          variant="contained"
-                          color="primary"
-                          size="small"
-                          sx={COMPACT_BTN_SX}
+                        <PrimaryArrow
+                          label={busy ? t('dashboard.actionItems.saving') : t(item.primaryLabelKey)}
                           disabled={busy}
                           onClick={() => void runPrimary(item)}
-                        >
-                          {busy ? t('dashboard.actionItems.saving') : t(item.primaryLabelKey)}
-                        </Button>
+                        />
                       </Stack>
                     </Stack>
                     {assignmentError ? (
@@ -511,15 +537,11 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
                         {t(item.secondaryLabelKey)}
                       </Button>
                     ) : null}
-                    <Button
-                      variant={isRecommended ? 'outlined' : 'contained'}
-                      color="primary"
-                      size="small"
-                      sx={COMPACT_BTN_SX}
+                    <PrimaryArrow
+                      label={t(item.primaryLabelKey)}
+                      outlined={isRecommended}
                       onClick={() => void runPrimary(item)}
-                    >
-                      {t(item.primaryLabelKey)}
-                    </Button>
+                    />
                   </Stack>
                 </Stack>
               </CardContent>

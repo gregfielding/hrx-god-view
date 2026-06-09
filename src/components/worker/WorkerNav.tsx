@@ -16,7 +16,7 @@ import MenuIcon from '@mui/icons-material/Menu';
 import { useAuth } from '../../contexts/AuthContext';
 import { useT } from '../../i18n';
 import HomeIcon from '@mui/icons-material/Home';
-import AssignmentIcon from '@mui/icons-material/Assignment';
+import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import WorkIcon from '@mui/icons-material/Work';
 import InboxIcon from '@mui/icons-material/Inbox';
 import PersonIcon from '@mui/icons-material/Person';
@@ -47,7 +47,7 @@ const GUEST_NAV_PATHS = new Set([
 const baseNavConfig = [
   { key: 'nav.home', path: '/c1/workers/dashboard', icon: <HomeIcon /> },
   { key: 'nav.findWork', path: '/c1/jobs-board', icon: <WorkIcon /> },
-  { key: 'nav.myAssignments', path: '/c1/workers/assignments', icon: <AssignmentIcon /> },
+  { key: 'nav.myAssignments', path: '/c1/workers/assignments', icon: <CalendarMonthIcon /> },
   { key: 'nav.myAccount', path: '/c1/workers/profile', icon: <PersonIcon /> },
   // "My Applications" removed from the standing nav — it now lives under
   // My Schedule → Archive → Applications (avoids two paths to the same list).
