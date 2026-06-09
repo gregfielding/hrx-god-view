@@ -29,6 +29,10 @@ const WorkerBottomSheet: React.FC<WorkerBottomSheetProps> = ({
       anchor="bottom"
       open={open}
       onClose={onClose}
+      // Sit ABOVE the worker nav drawer (z 1301) and the mobile hamburger
+      // (z 1400) — on desktop the permanent sidebar was covering the left
+      // edge of this sheet (incl. the Cancel button). 1402 clears both.
+      sx={{ zIndex: 1402 }}
       PaperProps={{
         sx: {
           // Anchor explicitly + clamp width so a stray min-width child can never push the sheet
