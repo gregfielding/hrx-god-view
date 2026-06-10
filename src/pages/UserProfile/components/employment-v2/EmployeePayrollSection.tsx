@@ -43,7 +43,6 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import HourglassTopIcon from '@mui/icons-material/HourglassTop';
-import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import SmsIcon from '@mui/icons-material/Sms';
 
@@ -119,19 +118,18 @@ interface EvereeWorkerResponse {
   preferredPaymentMethod?: string | null;
   bankAccounts?: EvereeBankAccount[] | null;
   /**
-   * `false` means Everee's anti-fraud engine has locked the worker's
-   * account — every embed-session URL we mint will render the "Your
-   * onboarding has been locked due to a possible security risk" message
-   * inside the iframe, regardless of how fresh the token is.
+   * `false` means the worker hasn't set up an Everee login password yet, so
+   * they can't log into Everee directly. Per Everee (Piers, 2026-06-09) the
+   * password is created ~halfway through onboarding, at which point this
+   * flips to `true`. It is NOT a lock/block/anti-fraud signal — it's the
+   * normal state for anyone who hasn't reached the password step.
    *
-   * Trigger: too many embedded session creates from one externalWorkerId
-   * in a short window (we observed 12 in 36h with 3-in-30s clusters
-   * tripping the flag for Andrew Freeman, 2026-05-14).
-   *
-   * Remediation: send the worker the Everee-hosted account-setup URL
-   * (different signing context, often bypasses the lock) — see
-   * `evereeSendHostedOnboardingLink`. Or escalate to Everee support to
-   * clear the flag.
+   * The real onboarding "lock" ("locked due to a possible security risk",
+   * e.g. repeated invalid password attempts on an existing account) is a
+   * SEPARATE mechanism that this flag does not reflect, and which we have no
+   * direct API signal for. The Everee-hosted account-setup link
+   * (`evereeSendHostedOnboardingLink`) is the remediation when a worker
+   * actually hits that lock screen.
    */
   accountAccessPermitted?: boolean | null;
 }
@@ -686,13 +684,16 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
       : null;
 
   /**
-   * `false` here means Everee anti-fraud has locked the account; every
-   * embed-session URL we mint will hit the iframe lock screen. We surface a
-   * dedicated remediation banner with a single working escape hatch (hosted
-   * URL) — and a clipboard fallback so admins can DM the link if the
-   * worker's SMS is bouncing.
+   * `accountAccessPermitted === false` does NOT mean the account is locked.
+   * Per Everee (Piers, 2026-06-09) it only means the worker hasn't created
+   * their Everee login password yet — that happens ~halfway through
+   * onboarding, so it's the normal state for anyone who hasn't reached that
+   * step. The real onboarding "lock" (security risk, e.g. repeated bad
+   * password attempts on an existing account) is a separate mechanism this
+   * flag does not reflect. We render a calm informational note + keep the
+   * hosted-link escape hatch for workers who DO hit the real lock screen.
    */
-  const accountLockedByEveree = worker?.accountAccessPermitted === false;
+  const evereeLoginNotSetUp = worker?.accountAccessPermitted === false;
 
   const handleSendHostedLink = async () => {
     if (hostedLinkSending) return;
@@ -773,29 +774,26 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
             Could not load worker details from Everee — {workerError}
           </Alert>
         ) : null}
-        {accountLockedByEveree ? (
-          <Alert
-            severity="warning"
-            icon={<LockOutlinedIcon fontSize="small" />}
-            sx={{ mb: 2 }}
-          >
-            <AlertTitle>Account locked by Everee</AlertTitle>
+        {evereeLoginNotSetUp ? (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            <AlertTitle>Everee login not set up yet</AlertTitle>
             <Typography variant="body2" sx={{ mb: 1.25 }}>
-              Everee&apos;s anti-fraud system has flipped <code>accountAccessPermitted</code>{' '}
-              to <code>false</code> on this worker. Every embedded onboarding link we
-              issue will render the &quot;onboarding has been locked due to a possible
-              security risk&quot; message inside the iframe — sending another reminder
-              SMS won&apos;t fix it.
+              <code>accountAccessPermitted</code> is <code>false</code>, which just
+              means this worker hasn&apos;t created their Everee login password yet —
+              that happens about halfway through onboarding, so it&apos;s normal for
+              anyone who hasn&apos;t reached that step. Per Everee (Piers, 2026-06-09),
+              this flag does <strong>not</strong> mean the account is locked.
             </Typography>
             <Typography variant="body2" sx={{ mb: 1.5 }}>
-              <strong>Recommended:</strong> send the worker the Everee-hosted
-              account-setup URL. It uses a different signing context than the embed
-              tokens and consistently bypasses the lock — workers complete
-              onboarding in Everee&apos;s branded UI and webhooks land in HRX
-              normally. If that also fails, escalate to{' '}
+              A real onboarding <em>lock</em> is a separate thing — Everee locks an
+              onboarding for a possible security risk (e.g. too many failed password
+              attempts on an existing account), and we can&apos;t see that from this
+              flag. If the worker reports the &quot;onboarding has been locked due to a
+              possible security risk&quot; screen, send them the Everee-hosted
+              account-setup link below (different signing context). If that screen
+              still appears, escalate to{' '}
               <MuiLink href="mailto:support@everee.com">support@everee.com</MuiLink>{' '}
-              with the worker id <code>{evereeWorkerId}</code> and ask them to clear
-              the flag.
+              with worker id <code>{evereeWorkerId}</code>.
             </Typography>
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
               <Button
