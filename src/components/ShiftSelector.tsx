@@ -196,7 +196,25 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
           if (!d || isNaN(d.getTime())) return '';
           return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         })();
-    const isPast = shiftDateISO < todayISO;
+    // A shift stays "active" (applyable) until 24h AFTER it ends — not the
+    // instant the calendar day flips. Lets workers grab same-day / just-ended
+    // shifts (e.g. urgent overnight FIFA needs that run past midnight). Falls
+    // back to the legacy date compare when we can't parse an end time.
+    const isPast = (() => {
+      if (!shiftDateISO) return false;
+      const startT = item.type === 'day' ? item.startTime : (shift.startTime ?? '');
+      const endT = item.type === 'day' ? item.endTime : (shift.endTime ?? '');
+      const em = /^(\d{1,2}):(\d{2})/.exec(endT || '');
+      if (!em) return shiftDateISO < todayISO;
+      const sm = /^(\d{1,2}):(\d{2})/.exec(startT || '');
+      const endMins = Number(em[1]) * 60 + Number(em[2]);
+      const startMins = sm ? Number(sm[1]) * 60 + Number(sm[2]) : 0;
+      const end = new Date(`${shiftDateISO}T00:00:00`); // local, matches todayISO
+      // Overnight shift (end at/before start, e.g. 15:00–01:00) ends next day.
+      end.setMinutes(endMins + (endMins <= startMins ? 24 * 60 : 0));
+      const GRACE_MS = 24 * 60 * 60 * 1000;
+      return Date.now() > end.getTime() + GRACE_MS;
+    })();
     const hasAnyDaySpecificForShift = hasDaySpecificKeyForShift(appliedShifts, shift.shiftId);
     const hasAnyDaySpecificStatusForShift = hasDaySpecificKeyForShift(Object.keys(shiftStatuses), shift.shiftId);
     const hasApplied =
