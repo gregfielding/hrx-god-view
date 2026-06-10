@@ -577,6 +577,13 @@ export {
   jobOrderSheetDisable,
   jobOrderSheetSyncNow,
 } from './integrations/googleSheets/jobOrderSheetCallables';
+// Phase 2 — live debounced auto-sync: placement/assignment writes flag the JO
+// dirty; a 1-min cron flushes each dirty JO to its sheet.
+export {
+  onPlacementWriteQueueSheetSync,
+  onAssignmentWriteQueueSheetSync,
+  flushJobOrderSheetSyncQueue,
+} from './integrations/googleSheets/jobOrderSheetTriggers';
 export { onJobOrderWriteStampScheduler } from './recruiting/onJobOrderWriteStampScheduler';
 export { onAccountRolesChangeRestampSchedulers } from './recruiting/onAccountRolesChangeRestampSchedulers';
 // Tenant role defaults — atomic add/remove for the four arrays on
