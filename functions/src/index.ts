@@ -569,6 +569,14 @@ export { onUserGroupMemberAddedAutoOnboard } from './recruiter/onUserGroupMember
 // provisioning bailed for lack of an address, push it to Everee / re-provision
 // (notifications suppressed). See the trigger file for the full rationale.
 export { pushAddressToEvereeOnAddressComplete } from './integrations/everee/pushAddressToEvereeOnAddressComplete';
+
+// Per-job-order Google Sheet roster sync (one sheet/JO, one tab/shift). Phase 1:
+// toggle-on creates + syncs; sync-now re-syncs on demand. See GOOGLE_SHEETS_SETUP.md.
+export {
+  jobOrderSheetEnable,
+  jobOrderSheetDisable,
+  jobOrderSheetSyncNow,
+} from './integrations/googleSheets/jobOrderSheetCallables';
 export { onJobOrderWriteStampScheduler } from './recruiting/onJobOrderWriteStampScheduler';
 export { onAccountRolesChangeRestampSchedulers } from './recruiting/onAccountRolesChangeRestampSchedulers';
 // Tenant role defaults — atomic add/remove for the four arrays on

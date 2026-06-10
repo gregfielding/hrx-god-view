@@ -72,6 +72,7 @@ import { db, functions } from '../../firebase';
 import { p } from '../../data/firestorePaths';
 import { getCalendarDayLocal } from '../../utils/dateUtils';
 import { normalizeAssignmentStatus } from '../../utils/assignmentStatusNormalize';
+import JobOrderSheetSyncControl from './JobOrderSheetSyncControl';
 import { getDateScheduleEntriesWithHours } from '../../utils/dateSchedule';
 import {
   applicationHasShiftMetadata,
@@ -3795,6 +3796,17 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           </Tooltip>
         )}
       </Box>
+
+      {/* Per-JO Google Sheet roster sync (one sheet, a tab per shift). */}
+      {showContent && jobOrder && (
+        <Box sx={{ mb: 2, maxWidth: 560 }}>
+          <JobOrderSheetSyncControl
+            tenantId={tenantId}
+            jobOrderId={jobOrderId}
+            sync={(jobOrder as unknown as { googleSheetSync?: import('./JobOrderSheetSyncControl').JobOrderSheetSyncState })?.googleSheetSync ?? null}
+          />
+        </Box>
+      )}
 
       {/* Error Message */}
         {error && (
