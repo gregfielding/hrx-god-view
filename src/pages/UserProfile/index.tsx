@@ -48,6 +48,7 @@ import {
   getDoc,
   onSnapshot,
   updateDoc,
+  deleteField,
   collection,
   query,
   where,
@@ -633,6 +634,7 @@ const UserProfilePage = () => {
   const handleRemoveUserFromGroup = useCallback(
     async (groupId: string) => {
       if (!uid) return;
+      const tid = (tenantId || authTenantId || activeTenant?.id || '').trim();
       try {
         const userRef = doc(db, 'users', uid);
         const userSnap = await getDoc(userRef);
@@ -658,12 +660,34 @@ const UserProfilePage = () => {
           patch[`tenantIds.${effectiveTenantId}.userGroupIds`] = newIds;
         }
         await updateDoc(userRef, patch);
+        // Mirror onto the group doc (member list reads `memberIds`) so the
+        // removal actually takes effect there too — same as the group-detail
+        // remove. Without this, removing from the profile was a no-op group-side.
+        if (tid) {
+          try {
+            const groupRef = doc(db, 'tenants', tid, 'userGroups', groupId);
+            const gSnap = await getDoc(groupRef);
+            if (gSnap.exists()) {
+              const g = gSnap.data() as Record<string, unknown>;
+              const groupMemberIds = Array.isArray(g?.memberIds) ? (g.memberIds as string[]) : [];
+              if (groupMemberIds.includes(uid)) {
+                await updateDoc(groupRef, {
+                  memberIds: groupMemberIds.filter((id) => id !== uid),
+                  [`memberStatusById.${uid}`]: deleteField(),
+                  updatedAt: new Date(),
+                });
+              }
+            }
+          } catch (groupErr) {
+            console.error('Failed to remove user from group memberIds:', groupErr);
+          }
+        }
         setHeaderUserGroups((prev) => prev.filter((g) => g.id !== groupId));
       } catch (err) {
         console.error('Failed to remove user from group:', err);
       }
     },
-    [uid],
+    [uid, tenantId, authTenantId, activeTenant?.id],
   );
 
   const handleAddUserToGroup = useCallback(
@@ -697,15 +721,31 @@ const UserProfilePage = () => {
           patch[`tenantIds.${effectiveTenantId}.userGroupIds`] = newIds;
         }
         await updateDoc(userRef, patch);
+        // Membership is bidirectional: the group's member list reads the group
+        // doc's `memberIds` (with a `memberStatusById` map), so writing only the
+        // user's `userGroupIds` above left the group side untouched — the add
+        // never showed up. Mirror it onto the group doc here. New members
+        // default to 'member' status (matches the group-detail add); don't
+        // clobber an existing status. This also fires the group's auto-onboard
+        // + primary-recruiter recompute triggers, same as adding from the group page.
         let title = groupId;
         try {
-          const gSnap = await getDoc(doc(db, 'tenants', tid, 'userGroups', groupId));
+          const groupRef = doc(db, 'tenants', tid, 'userGroups', groupId);
+          const gSnap = await getDoc(groupRef);
           if (gSnap.exists()) {
             const g = gSnap.data() as Record<string, unknown>;
             title = String(g?.title || g?.name || groupId);
+            const groupMemberIds = Array.isArray(g?.memberIds) ? (g.memberIds as string[]) : [];
+            if (!groupMemberIds.includes(uid)) {
+              await updateDoc(groupRef, {
+                memberIds: [...groupMemberIds, uid],
+                [`memberStatusById.${uid}`]: 'member',
+                updatedAt: new Date(),
+              });
+            }
           }
-        } catch {
-          /* use groupId */
+        } catch (groupErr) {
+          console.error('Failed to add user to group memberIds:', groupErr);
         }
         setHeaderUserGroups((prev) =>
           [...prev.filter((g) => g.id !== groupId), { id: groupId, title }].sort((a, b) =>
