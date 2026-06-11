@@ -20,6 +20,46 @@ const db = admin.firestore();
 
 const HEADER = ['First Name', 'Last Name', 'Phone', 'Email', 'Status'];
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function is404(e: unknown): boolean {
+  const x = e as { code?: number | string; response?: { status?: number }; message?: string };
+  return (
+    x?.code === 404 ||
+    x?.code === '404' ||
+    x?.response?.status === 404 ||
+    /not\s*found/i.test(String(x?.message || ''))
+  );
+}
+
+/**
+ * Run a Google API call. Retries on 404 (handles the Drive→Sheets eventual-
+ * consistency race right after a file is created in a Shared Drive); on final
+ * failure logs which step + the structured Google error.
+ */
+async function labeled<T>(step: string, ctx: Record<string, unknown>, fn: () => Promise<T>): Promise<T> {
+  // A freshly Drive-created spreadsheet can briefly 404 on the Sheets API
+  // (Drive→Sheets consistency). Re-syncs hit an already-propagated file.
+  const delays = [1500, 3000, 5000]; // ~9.5s of patience
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (is404(e) && attempt < delays.length) {
+        logger.info(`[jobOrderSheetSync] ${step} 404 — retrying`, { ...ctx, attempt: attempt + 1 });
+        await sleep(delays[attempt]);
+        continue;
+      }
+      const ge = e as { response?: { data?: unknown }; message?: string };
+      logger.error(`[jobOrderSheetSync] ${step} failed`, {
+        ...ctx,
+        googleError: JSON.stringify(ge?.response?.data ?? ge?.message ?? String(e)).slice(0, 800),
+      });
+      throw e;
+    }
+  }
+}
+
 /** Map a raw assignment status to a recruiter-facing roster label, or null to exclude. */
 function rosterStatusLabel(raw: string): string | null {
   const s = String(raw || '').toLowerCase();
@@ -39,22 +79,96 @@ function sanitizeTabTitle(name: string): string {
   return name.replace(/[:\\/?*[\]]/g, '-').slice(0, 90).trim() || 'Shift';
 }
 
-function shortDate(raw: unknown): string {
-  let d: Date | null = null;
-  const ts = raw as { toDate?: () => Date };
-  if (typeof ts?.toDate === 'function') d = ts.toDate();
-  else if (typeof raw === 'string' && raw) {
-    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
-    if (m) return `${Number(m[2])}/${Number(m[3])}`;
-    const t = Date.parse(raw);
-    if (!Number.isNaN(t)) d = new Date(t);
+/**
+ * Tab titles must be unique within a spreadsheet. Multiple shifts can resolve
+ * to the same label (e.g. unnamed shifts on the same date → "Shift 6-12"), so
+ * append a counter on collision, re-trimming to the 90-char budget.
+ */
+function uniqueTabTitle(base: string, used: Set<string>): string {
+  let title = base;
+  let n = 2;
+  while (used.has(title)) {
+    const suffix = ` (${n})`;
+    title = `${base.slice(0, 90 - suffix.length).trim()}${suffix}`;
+    n += 1;
   }
-  if (!d || Number.isNaN(d.getTime())) return '';
-  return `${d.getMonth() + 1}/${d.getDate()}`;
+  used.add(title);
+  return title;
+}
+
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/** Pull {y,m,d} from a "YYYY-MM-DD" string or a Firestore Timestamp. */
+function ymdParts(raw: unknown): { y: number; m: number; d: number } | null {
+  const ts = raw as { toDate?: () => Date };
+  if (typeof ts?.toDate === 'function') {
+    const dt = ts.toDate();
+    return { y: dt.getFullYear(), m: dt.getMonth() + 1, d: dt.getDate() };
+  }
+  if (typeof raw === 'string' && raw.trim()) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw.trim());
+    if (m) return { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) };
+    const t = Date.parse(raw);
+    if (!Number.isNaN(t)) {
+      const dt = new Date(t);
+      return { y: dt.getFullYear(), m: dt.getMonth() + 1, d: dt.getDate() };
+    }
+  }
+  return null;
+}
+
+function weekdayName(y: number, m: number, d: number): string {
+  return WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+}
+
+function ordinal(n: number): string {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`;
+}
+
+/** "Friday June 5th" — for tab titles (no year, to stay short). */
+function tabDate(raw: unknown): string {
+  const p = ymdParts(raw);
+  if (!p) return '';
+  return `${weekdayName(p.y, p.m, p.d)} ${MONTHS[p.m - 1]} ${ordinal(p.d)}`;
+}
+
+/** "Friday, June 5, 2026" — for the in-sheet detail heading. */
+function longDate(raw: unknown): string {
+  const p = ymdParts(raw);
+  if (!p) return '';
+  return `${weekdayName(p.y, p.m, p.d)}, ${MONTHS[p.m - 1]} ${p.d}, ${p.y}`;
+}
+
+/** "16:00" → "4:00 PM". */
+function time12(raw: unknown): string {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(raw ?? '').trim());
+  if (!m) return '';
+  let h = Number(m[1]);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h %= 12;
+  if (h === 0) h = 12;
+  return `${h}:${m[2]} ${ampm}`;
+}
+
+/** Sortable value: chronological by date then start time (undated/untimed last). */
+function shiftSortValue(sd: Record<string, unknown>): number {
+  const p = ymdParts(sd.shiftDate ?? sd.startDate);
+  const dateNum = p ? p.y * 10000 + p.m * 100 + p.d : 99999999;
+  const tm = /^(\d{1,2}):(\d{2})/.exec(String(sd.defaultStartTime ?? sd.startTime ?? ''));
+  const minutes = tm ? Number(tm[1]) * 60 + Number(tm[2]) : 9999;
+  return dateNum * 10000 + minutes;
 }
 
 interface ShiftRoster {
   tabTitle: string;
+  /** 2 shift-detail heading rows (single-cell each): title line + date/time/position. */
+  headingLines: [string, string];
   rows: string[][]; // worker rows (no header)
 }
 
@@ -65,12 +179,36 @@ async function buildRosters(tenantId: string, jobOrderId: string): Promise<Shift
     .get();
 
   const out: ShiftRoster[] = [];
-  for (const shiftDoc of shiftsSnap.docs) {
+  const usedTitles = new Set<string>();
+  // Tabs are created in this order, so sort shifts chronologically up front.
+  const sortedDocs = [...shiftsSnap.docs].sort(
+    (a, b) => shiftSortValue(a.data()) - shiftSortValue(b.data()),
+  );
+  for (const shiftDoc of sortedDocs) {
     const sd = shiftDoc.data() as Record<string, unknown>;
     const sid = shiftDoc.id;
-    const name = String(sd.shiftName || sd.name || sd.title || 'Shift');
-    const dateLabel = shortDate(sd.shiftDate ?? sd.startDate);
-    const tabTitle = sanitizeTabTitle(dateLabel ? `${name} ${dateLabel}` : name);
+    const name = String(sd.shiftTitle || sd.shiftName || sd.name || sd.title || 'Shift');
+    const dateRaw = sd.shiftDate ?? sd.startDate;
+    const dateTab = tabDate(dateRaw);
+    // e.g. "PM Cleaners, Friday June 5th"
+    const tabTitle = uniqueTabTitle(
+      sanitizeTabTitle(dateTab ? `${name}, ${dateTab}` : name),
+      usedTitles,
+    );
+
+    // Two heading rows mirroring the shift-accordion header.
+    const staff = sd.totalStaffRequested ?? sd.assignmentsTarget;
+    const over = Number(sd.overstaffCount || 0);
+    const titleLine =
+      staff != null
+        ? `${name}  ·  Staff: ${staff}${over ? ` (+${over} overstaff)` : ''}`
+        : name;
+    const startT = time12(sd.defaultStartTime ?? sd.startTime);
+    const endT = time12(sd.defaultEndTime ?? sd.endTime);
+    const timeStr = startT && endT ? `${startT} – ${endT}` : startT || endT || '';
+    const position = String(sd.defaultJobTitle || sd.jobTitle || '');
+    const detailLine = [longDate(dateRaw), timeStr, position].filter(Boolean).join('    •    ');
+    const headingLines: [string, string] = [titleLine, detailLine];
 
     // Roster = placements ∪ non-cancelled assignments.
     const statusByUser = new Map<string, string>();
@@ -115,7 +253,7 @@ async function buildRosters(tenantId: string, jobOrderId: string): Promise<Shift
       // Sort by status then last name for a stable, readable roster.
       rows.sort((a, b) => (a[4].localeCompare(b[4]) || a[1].localeCompare(b[1])));
     }
-    out.push({ tabTitle, rows });
+    out.push({ tabTitle, headingLines, rows });
   }
   return out;
 }
@@ -128,10 +266,11 @@ async function ensureSpreadsheet(
 ): Promise<{ spreadsheetId: string; url: string; created: boolean }> {
   const joRef = db.doc(`tenants/${tenantId}/job_orders/${jobOrderId}`);
   const joSnap = await joRef.get();
-  const existing = String(
-    (joSnap.data() as Record<string, unknown> | undefined)?.googleSheetSync &&
-      ((joSnap.data() as any).googleSheetSync.spreadsheetId || ''),
-  ).trim();
+  const gss = (joSnap.data() as { googleSheetSync?: { spreadsheetId?: string } } | undefined)
+    ?.googleSheetSync;
+  // NB: must read the field directly — `String(undefined && x)` yields the
+  // literal string "undefined" (truthy), which would wrongly skip creation.
+  const existing = String(gss?.spreadsheetId ?? '').trim();
   if (existing) {
     return {
       spreadsheetId: existing,
@@ -143,24 +282,28 @@ async function ensureSpreadsheet(
   const drive = await getDriveApi();
   const sharedDriveId = getSharedDriveId();
   // Create the spreadsheet file directly in the Shared Drive via Drive API.
-  const file = await drive.files.create({
-    supportsAllDrives: true,
-    requestBody: {
-      name: `${joName} — Roster`,
-      mimeType: 'application/vnd.google-apps.spreadsheet',
-      parents: [sharedDriveId],
-    },
-    fields: 'id, webViewLink',
-  });
+  const file = await labeled('files.create', { sharedDriveId }, () =>
+    drive.files.create({
+      supportsAllDrives: true,
+      requestBody: {
+        name: `${joName} — Roster`,
+        mimeType: 'application/vnd.google-apps.spreadsheet',
+        parents: [sharedDriveId],
+      },
+      fields: 'id, webViewLink',
+    }),
+  );
   const spreadsheetId = String(file.data.id || '');
   if (!spreadsheetId) throw new Error('Drive did not return a spreadsheet id');
 
   // Anyone with the link can VIEW (data flows HRX → sheet, so view-only).
-  await drive.permissions.create({
-    fileId: spreadsheetId,
-    supportsAllDrives: true,
-    requestBody: { type: 'anyone', role: 'reader' },
-  });
+  await labeled('permissions.create', { spreadsheetId }, () =>
+    drive.permissions.create({
+      fileId: spreadsheetId,
+      supportsAllDrives: true,
+      requestBody: { type: 'anyone', role: 'reader' },
+    }),
+  );
 
   const url = String(file.data.webViewLink || `https://docs.google.com/spreadsheets/d/${spreadsheetId}`);
   return { spreadsheetId, url, created: true };
@@ -186,11 +329,18 @@ export async function syncJobOrderToSheet(
   const joName = String(jo.jobOrderName || jo.postTitle || jo.title || `Job Order ${jobOrderId}`);
 
   const { spreadsheetId, url, created } = await ensureSpreadsheet(tenantId, jobOrderId, joName);
+  // Record the new file immediately so a mid-sync failure doesn't orphan it —
+  // a retry then reuses this spreadsheet instead of creating another one.
+  if (created) {
+    await joRef.set({ googleSheetSync: { spreadsheetId, spreadsheetUrl: url } }, { merge: true });
+  }
   const sheets = await getSheetsApi();
   const rosters = await buildRosters(tenantId, jobOrderId);
 
   // Current tabs on the spreadsheet (title → sheetId).
-  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  const meta = await labeled('sheets.get', { spreadsheetId }, () =>
+    sheets.spreadsheets.get({ spreadsheetId }),
+  );
   const tabByTitle = new Map<string, number>();
   (meta.data.sheets || []).forEach((s) => {
     const t = s.properties?.title;
@@ -202,41 +352,134 @@ export async function syncJobOrderToSheet(
     .filter((r) => !tabByTitle.has(r.tabTitle))
     .map((r) => ({ addSheet: { properties: { title: r.tabTitle } } }));
   if (addRequests.length > 0) {
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId,
-      requestBody: { requests: addRequests },
+    await labeled('addSheet.batchUpdate', { spreadsheetId }, () =>
+      sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: addRequests } }),
+    );
+  }
+
+  // Re-read tabs so newly-added sheets have their sheetId for formatting.
+  const idByTitle = new Map<string, number>(tabByTitle);
+  if (addRequests.length > 0) {
+    const meta2 = await labeled('sheets.get', { spreadsheetId }, () =>
+      sheets.spreadsheets.get({ spreadsheetId }),
+    );
+    (meta2.data.sheets || []).forEach((s) => {
+      const t = s.properties?.title;
+      if (t) idByTitle.set(t, s.properties?.sheetId ?? 0);
     });
   }
 
-  // Overwrite each tab: clear, then write header + rows.
+  // Overwrite each tab: clear, then write the 2 heading rows + column header + rows.
   const clearRanges = rosters.map((r) => `'${r.tabTitle}'!A1:Z10000`);
   if (clearRanges.length > 0) {
-    await sheets.spreadsheets.values.batchClear({ spreadsheetId, requestBody: { ranges: clearRanges } });
+    await labeled('values.batchClear', { spreadsheetId }, () =>
+      sheets.spreadsheets.values.batchClear({ spreadsheetId, requestBody: { ranges: clearRanges } }),
+    );
   }
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId,
-    requestBody: {
-      valueInputOption: 'RAW',
-      data: rosters.map((r) => ({
-        range: `'${r.tabTitle}'!A1`,
-        values: [HEADER, ...r.rows],
-      })),
-    },
-  });
+  await labeled('values.batchUpdate', { spreadsheetId }, () =>
+    sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        valueInputOption: 'RAW',
+        data: rosters.map((r) => ({
+          range: `'${r.tabTitle}'!A1`,
+          values: [[r.headingLines[0]], [r.headingLines[1]], HEADER, ...r.rows],
+        })),
+      },
+    }),
+  );
 
-  // Remove the auto-created default "Sheet1" once real tabs exist.
-  if (created) {
-    const defaultId = tabByTitle.get('Sheet1');
-    if (defaultId != null && rosters.length > 0) {
+  // Polish: merge the 2 heading rows so the long title/detail spill rightward
+  // (keeps column A narrow), bold title + column-header rows, freeze, autosize.
+  // Order matters: merge BEFORE autoResize so column A sizes to the names only.
+  const fmtRequests = rosters.flatMap((r) => {
+    const sheetId = idByTitle.get(r.tabTitle);
+    if (sheetId == null) return [];
+    return [
+      // Clear any prior heading merges, then merge each heading row across A:J.
+      {
+        unmergeCells: {
+          range: { sheetId, startRowIndex: 0, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: 26 },
+        },
+      },
+      {
+        mergeCells: {
+          range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 10 },
+          mergeType: 'MERGE_ALL',
+        },
+      },
+      {
+        mergeCells: {
+          range: { sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: 10 },
+          mergeType: 'MERGE_ALL',
+        },
+      },
+      {
+        repeatCell: {
+          range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
+          cell: { userEnteredFormat: { textFormat: { bold: true, fontSize: 12 } } },
+          fields: 'userEnteredFormat.textFormat',
+        },
+      },
+      {
+        repeatCell: {
+          range: { sheetId, startRowIndex: 2, endRowIndex: 3 },
+          cell: { userEnteredFormat: { textFormat: { bold: true } } },
+          fields: 'userEnteredFormat.textFormat',
+        },
+      },
+      {
+        updateSheetProperties: {
+          properties: { sheetId, gridProperties: { frozenRowCount: 3 } },
+          fields: 'gridProperties.frozenRowCount',
+        },
+      },
+      {
+        autoResizeDimensions: {
+          dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 5 },
+        },
+      },
+    ];
+  });
+  if (fmtRequests.length > 0) {
+    await labeled('format.batchUpdate', { spreadsheetId }, () =>
+      sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: fmtRequests } }),
+    );
+  }
+
+  // Remove stale tabs: the default "Sheet1", plus any tab from a previous sync
+  // whose shift was renamed/removed (e.g. old "Shift 6-8" after the title change).
+  // Guarded so we never delete the last sheet.
+  if (rosters.length > 0) {
+    const desired = new Set(rosters.map((r) => r.tabTitle));
+    const staleIds = Array.from(idByTitle.entries())
+      .filter(([title]) => !desired.has(title))
+      .map(([, id]) => id);
+    if (staleIds.length > 0) {
       try {
         await sheets.spreadsheets.batchUpdate({
           spreadsheetId,
-          requestBody: { requests: [{ deleteSheet: { sheetId: defaultId } }] },
+          requestBody: { requests: staleIds.map((sheetId) => ({ deleteSheet: { sheetId } })) },
         });
       } catch (e) {
-        logger.warn('[jobOrderSheetSync] could not delete default Sheet1', { jobOrderId });
+        logger.warn('[jobOrderSheetSync] could not delete stale tabs', { jobOrderId });
       }
     }
+  }
+
+  // Order the tabs chronologically (rosters are already sorted). addSheet only
+  // appends, so existing tabs from a prior sync must be re-indexed explicitly.
+  // Applied 0,1,2,… in order — each move is stable against the running layout.
+  const orderRequests = rosters
+    .map((r, i) => ({ sheetId: idByTitle.get(r.tabTitle), index: i }))
+    .filter((x): x is { sheetId: number; index: number } => x.sheetId != null)
+    .map((x) => ({
+      updateSheetProperties: { properties: { sheetId: x.sheetId, index: x.index }, fields: 'index' },
+    }));
+  if (orderRequests.length > 0) {
+    await labeled('reorder.batchUpdate', { spreadsheetId }, () =>
+      sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: orderRequests } }),
+    );
   }
 
   // Stamp the JO with the linkage + last sync time.
