@@ -167,9 +167,21 @@ function shiftSortValue(sd: Record<string, unknown>): number {
 
 interface ShiftRoster {
   tabTitle: string;
+  /** Shift document id — needed to write placements back from the sheet. */
+  shiftId: string;
   /** 2 shift-detail heading rows (single-cell each): title line + date/time/position. */
   headingLines: [string, string];
-  rows: string[][]; // worker rows (no header)
+  /** worker rows (no header). Each: [first, last, phone, email, status, uid].
+   * The trailing uid lives in a hidden column F and marks HRX-written rows so
+   * the non-destructive sync can tell them apart from hand-typed rows. */
+  rows: string[][];
+}
+
+/** Digits-only 10-digit US phone key (drops +1 / formatting), or '' if not 10. */
+function normPhone(raw: unknown): string {
+  let d = String(raw ?? '').replace(/\D/g, '');
+  if (d.length === 11 && d.startsWith('1')) d = d.slice(1);
+  return d.length === 10 ? d : '';
 }
 
 /** Build the per-shift roster data for a JO. */
@@ -248,12 +260,13 @@ async function buildRosters(tenantId: string, jobOrderId: string): Promise<Shift
           String(ud.phone || ud.phoneE164 || ''),
           String(ud.email || ''),
           statusByUser.get(uid) || '',
+          uid, // hidden col F — marks this row as HRX-written
         ]);
       });
       // Sort by status then last name for a stable, readable roster.
       rows.sort((a, b) => (a[4].localeCompare(b[4]) || a[1].localeCompare(b[1])));
     }
-    out.push({ tabTitle, headingLines, rows });
+    out.push({ tabTitle, shiftId: sid, headingLines, rows });
   }
   return out;
 }
@@ -369,7 +382,46 @@ export async function syncJobOrderToSheet(
     });
   }
 
-  // Overwrite each tab: clear, then write the 2 heading rows + column header + rows.
+  // Non-destructive: read the existing data first so hand-typed rows survive.
+  // A row is "manual" if its hidden col-F marker (uid) is blank but it has
+  // content. We keep those (flagged "Not in HRX") unless their phone now
+  // matches an HRX worker on this shift (then the HRX row represents them).
+  const manualByTitle = new Map<string, string[][]>();
+  try {
+    const got = await labeled('values.batchGet', { spreadsheetId }, () =>
+      sheets.spreadsheets.values.batchGet({
+        spreadsheetId,
+        ranges: rosters.map((r) => `'${r.tabTitle}'!A4:F1000`),
+      }),
+    );
+    const valueRanges = got.data.valueRanges || [];
+    rosters.forEach((r, i) => {
+      const existing = (valueRanges[i]?.values || []) as string[][];
+      const hrxPhones = new Set(r.rows.map((row) => normPhone(row[2])).filter(Boolean));
+      const manual = existing
+        .filter((er) => {
+          const marker = String(er[5] ?? '').trim(); // col F = HRX uid
+          const hasContent = er.slice(0, 5).some((c) => String(c ?? '').trim());
+          if (marker || !hasContent) return false; // HRX-written or blank → not manual
+          const p = normPhone(er[2]);
+          return !p || !hrxPhones.has(p); // drop if their phone is now an HRX row
+        })
+        .map((er) => [
+          String(er[0] ?? ''),
+          String(er[1] ?? ''),
+          String(er[2] ?? ''),
+          String(er[3] ?? ''),
+          'Not in HRX',
+        ]);
+      if (manual.length > 0) manualByTitle.set(r.tabTitle, manual);
+    });
+  } catch (e) {
+    // Fresh sheet or unreadable — proceed with HRX rows only.
+    logger.info('[jobOrderSheetSync] no existing rows to preserve', { spreadsheetId });
+  }
+
+  // Overwrite each tab: clear, then write the 2 heading rows + column header +
+  // HRX rows (uid in hidden col F) + preserved manual rows.
   const clearRanges = rosters.map((r) => `'${r.tabTitle}'!A1:Z10000`);
   if (clearRanges.length > 0) {
     await labeled('values.batchClear', { spreadsheetId }, () =>
@@ -383,7 +435,13 @@ export async function syncJobOrderToSheet(
         valueInputOption: 'RAW',
         data: rosters.map((r) => ({
           range: `'${r.tabTitle}'!A1`,
-          values: [[r.headingLines[0]], [r.headingLines[1]], HEADER, ...r.rows],
+          values: [
+            [r.headingLines[0]],
+            [r.headingLines[1]],
+            HEADER,
+            ...r.rows,
+            ...(manualByTitle.get(r.tabTitle) || []),
+          ],
         })),
       },
     }),
@@ -437,6 +495,14 @@ export async function syncJobOrderToSheet(
       {
         autoResizeDimensions: {
           dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 5 },
+        },
+      },
+      // Hide column F (the HRX-uid marker that drives non-destructive merge).
+      {
+        updateDimensionProperties: {
+          range: { sheetId, dimension: 'COLUMNS', startIndex: 5, endIndex: 6 },
+          properties: { hiddenByUser: true },
+          fields: 'hiddenByUser',
         },
       },
     ];
@@ -496,4 +562,116 @@ export async function syncJobOrderToSheet(
   );
 
   return { spreadsheetId, url, shifts: rosters.length };
+}
+
+/**
+ * Find the single tenant user whose phone matches `phone10` (10-digit key).
+ * Returns the uid, null (no match), or 'ambiguous' (more than one in-tenant).
+ */
+async function findTenantUserByPhone(
+  tenantId: string,
+  phone10: string,
+): Promise<string | null | 'ambiguous'> {
+  const e164 = `+1${phone10}`;
+  const candidates = new Map<string, FirebaseFirestore.DocumentData>();
+  // Try the common stored shapes (phoneE164, +1-prefixed, bare 10-digit).
+  const queries = [
+    db.collection('users').where('phoneE164', '==', e164),
+    db.collection('users').where('phone', '==', e164),
+    db.collection('users').where('phone', '==', phone10),
+  ];
+  for (const q of queries) {
+    const snap = await q.get();
+    snap.forEach((d) => candidates.set(d.id, d.data()));
+  }
+  // Last-ditch: phoneE164 stored without the +1.
+  if (candidates.size === 0) {
+    const snap = await db.collection('users').where('phoneE164', '==', phone10).get();
+    snap.forEach((d) => candidates.set(d.id, d.data()));
+  }
+  const inTenant = Array.from(candidates.entries()).filter(([, u]) => {
+    const tids = u.tenantIds as Record<string, unknown> | undefined;
+    return (tids && tids[tenantId]) || u.tenantId === tenantId;
+  });
+  if (inTenant.length === 0) return null;
+  if (inTenant.length > 1) return 'ambiguous';
+  return inTenant[0][0];
+}
+
+/**
+ * Pull hand-typed rows from the sheet back into HRX. For each manual row
+ * (hidden col-F marker blank) with a phone that matches exactly one tenant
+ * worker not already on that shift, create a placement (silent, like the
+ * drag-drop "place"). Unmatched/ambiguous rows are left for the next sync to
+ * flag "Not in HRX". Never deletes/​unplaces from sheet edits.
+ *
+ * Caller should run a normal sync afterward so placed workers migrate from
+ * manual rows into the HRX roster.
+ */
+export async function pullSheetAdditionsToHrx(
+  tenantId: string,
+  jobOrderId: string,
+  createdBy: string,
+): Promise<{ placed: number; unmatched: number; ambiguous: number }> {
+  const joRef = db.doc(`tenants/${tenantId}/job_orders/${jobOrderId}`);
+  const jo = (await joRef.get()).data() as
+    | { googleSheetSync?: { spreadsheetId?: string } }
+    | undefined;
+  const spreadsheetId = String(jo?.googleSheetSync?.spreadsheetId || '').trim();
+  if (!spreadsheetId) {
+    throw new Error('This job order has no linked sheet — enable sync first.');
+  }
+
+  const sheets = await getSheetsApi();
+  const rosters = await buildRosters(tenantId, jobOrderId);
+  if (rosters.length === 0) return { placed: 0, unmatched: 0, ambiguous: 0 };
+
+  const got = await sheets.spreadsheets.values.batchGet({
+    spreadsheetId,
+    ranges: rosters.map((r) => `'${r.tabTitle}'!A4:F1000`),
+  });
+  const valueRanges = got.data.valueRanges || [];
+
+  let placed = 0;
+  let unmatched = 0;
+  let ambiguous = 0;
+
+  for (let i = 0; i < rosters.length; i += 1) {
+    const r = rosters[i];
+    const existing = (valueRanges[i]?.values || []) as string[][];
+    const hrxPhones = new Set(r.rows.map((row) => normPhone(row[2])).filter(Boolean));
+    for (const er of existing) {
+      const marker = String(er[5] ?? '').trim(); // col F — HRX uid
+      if (marker) continue; // HRX-written row
+      const phone = normPhone(er[2]);
+      if (!phone || hrxPhones.has(phone)) continue; // no phone, or already placed
+      const match = await findTenantUserByPhone(tenantId, phone);
+      if (match === 'ambiguous') {
+        ambiguous += 1;
+        continue;
+      }
+      if (!match) {
+        unmatched += 1;
+        continue;
+      }
+      // Silent placement — same shape as the drag-drop "place".
+      const placementId = `${r.shiftId}__${match}`;
+      await db.doc(`tenants/${tenantId}/placements/${placementId}`).set(
+        {
+          tenantId,
+          jobOrderId,
+          shiftId: r.shiftId,
+          userId: match,
+          createdBy,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          createdVia: 'google_sheet_pull',
+        },
+        { merge: true },
+      );
+      hrxPhones.add(phone); // avoid double-placing if the phone repeats in the tab
+      placed += 1;
+    }
+  }
+
+  return { placed, unmatched, ambiguous };
 }

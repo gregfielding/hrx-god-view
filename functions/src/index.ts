@@ -576,6 +576,7 @@ export {
   jobOrderSheetEnable,
   jobOrderSheetDisable,
   jobOrderSheetSyncNow,
+  jobOrderSheetPullFromSheet,
 } from './integrations/googleSheets/jobOrderSheetCallables';
 // Phase 2 — live debounced auto-sync: placement/assignment writes flag the JO
 // dirty; a 1-min cron flushes each dirty JO to its sheet.

@@ -1,13 +1,14 @@
 /**
  * Callables for the per-job-order Google Sheet roster sync.
- *   - jobOrderSheetEnable  : toggle on → create spreadsheet + initial sync
- *   - jobOrderSheetDisable : toggle off → unlink (sheet is left in the Shared Drive)
- *   - jobOrderSheetSyncNow : manual full re-sync
+ *   - jobOrderSheetEnable    : toggle on → create spreadsheet + initial sync
+ *   - jobOrderSheetDisable   : toggle off → unlink (sheet is left in the Shared Drive)
+ *   - jobOrderSheetSyncNow   : manual full re-sync
+ *   - jobOrderSheetPullFromSheet : place hand-typed rows back into HRX by phone
  */
 import * as admin from 'firebase-admin';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
-import { syncJobOrderToSheet } from './jobOrderSheetSync';
+import { syncJobOrderToSheet, pullSheetAdditionsToHrx } from './jobOrderSheetSync';
 import { isGoogleSheetsConfigured } from './sheetsClient';
 
 if (!admin.apps.length) admin.initializeApp();
@@ -65,6 +66,22 @@ export const jobOrderSheetSyncNow = onCall(RUNTIME, async (request) => {
     const msg = e instanceof Error ? e.message : String(e);
     logger.error('[jobOrderSheetSyncNow] failed', { tenantId, jobOrderId, error: msg });
     throw new HttpsError('internal', `Sync failed: ${msg.slice(0, 300)}`);
+  }
+});
+
+export const jobOrderSheetPullFromSheet = onCall(RUNTIME, async (request) => {
+  const { tenantId, jobOrderId } = readArgs(request.data);
+  await assertCanManage(request.auth, tenantId);
+  try {
+    // Place matched rows, then re-sync so they migrate into the HRX roster and
+    // unmatched rows get flagged "Not in HRX".
+    const pull = await pullSheetAdditionsToHrx(tenantId, jobOrderId, request.auth!.uid!);
+    const sync = await syncJobOrderToSheet(tenantId, jobOrderId);
+    return { ok: true as const, ...pull, ...sync };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    logger.error('[jobOrderSheetPullFromSheet] failed', { tenantId, jobOrderId, error: msg });
+    throw new HttpsError('internal', `Pull from sheet failed: ${msg.slice(0, 300)}`);
   }
 });
 

@@ -21,10 +21,12 @@ import {
 } from '@mui/material';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import SyncIcon from '@mui/icons-material/Sync';
+import MoveToInboxIcon from '@mui/icons-material/MoveToInbox';
 import {
   jobOrderSheetEnable,
   jobOrderSheetDisable,
   jobOrderSheetSyncNow,
+  jobOrderSheetPullFromSheet,
 } from '../../services/jobOrderSheetSync';
 import { formatFirebaseHttpsError } from '../../utils/firebaseHttpsErrors';
 
@@ -58,8 +60,9 @@ function fmtTime(v: JobOrderSheetSyncState['lastSyncedAt']): string {
 }
 
 const JobOrderSheetSyncControl: React.FC<Props> = ({ tenantId, jobOrderId, sync, onChanged }) => {
-  const [busy, setBusy] = useState<null | 'toggle' | 'sync'>(null);
+  const [busy, setBusy] = useState<null | 'toggle' | 'sync' | 'pull'>(null);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [localUrl, setLocalUrl] = useState<string | null>(sync?.spreadsheetUrl ?? null);
 
   const enabled = Boolean(sync?.enabled);
@@ -72,9 +75,36 @@ const JobOrderSheetSyncControl: React.FC<Props> = ({ tenantId, jobOrderId, sync,
   ) => {
     setBusy(kind);
     setError(null);
+    setInfo(null);
     try {
       const res = await fn();
       if (res?.data?.url) setLocalUrl(res.data.url);
+      onChanged?.();
+    } catch (e: unknown) {
+      setError(formatFirebaseHttpsError(e) ?? (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handlePull = async () => {
+    if (busy) return;
+    setBusy('pull');
+    setError(null);
+    setInfo(null);
+    try {
+      const res = await jobOrderSheetPullFromSheet({ tenantId, jobOrderId });
+      const { placed = 0, unmatched = 0, ambiguous = 0 } = res?.data || {};
+      if (res?.data?.url) setLocalUrl(res.data.url);
+      const notMatched = unmatched + ambiguous;
+      setInfo(
+        placed === 0 && notMatched === 0
+          ? 'No new rows to pull — the sheet matches HRX.'
+          : `Placed ${placed} worker${placed === 1 ? '' : 's'} from the sheet.` +
+              (notMatched > 0
+                ? ` ${notMatched} row${notMatched === 1 ? '' : 's'} couldn't be matched (flagged "Not in HRX").`
+                : ''),
+      );
       onChanged?.();
     } catch (e: unknown) {
       setError(formatFirebaseHttpsError(e) ?? (e instanceof Error ? e.message : String(e)));
@@ -142,12 +172,28 @@ const JobOrderSheetSyncControl: React.FC<Props> = ({ tenantId, jobOrderId, sync,
           >
             Sync now
           </Button>
+          <Button
+            size="small"
+            variant="text"
+            startIcon={busy === 'pull' ? <CircularProgress size={14} /> : <MoveToInboxIcon fontSize="small" />}
+            disabled={busy != null}
+            onClick={() => void handlePull()}
+            title="Place people you typed into the sheet (matched by phone) back into HRX"
+          >
+            Pull from sheet
+          </Button>
           {lastSynced ? (
             <Typography variant="caption" color="text.secondary">
               Last synced {lastSynced}
             </Typography>
           ) : null}
         </Stack>
+      ) : null}
+
+      {info ? (
+        <Alert severity="success" sx={{ mt: 1.25 }} onClose={() => setInfo(null)}>
+          {info}
+        </Alert>
       ) : null}
 
       {error ? (
