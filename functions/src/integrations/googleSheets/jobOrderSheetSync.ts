@@ -453,6 +453,15 @@ export async function syncJobOrderToSheet(
   const fmtRequests = rosters.flatMap((r) => {
     const sheetId = idByTitle.get(r.tabTitle);
     if (sheetId == null) return [];
+    // Column A holds the merged heading text in A1, so autoResize would size it
+    // to that long string. Size it from the names instead (we have them here).
+    const firstNames = [
+      'First Name',
+      ...r.rows.map((row) => String(row[0] ?? '')),
+      ...(manualByTitle.get(r.tabTitle) || []).map((m) => String(m[0] ?? '')),
+    ];
+    const maxNameChars = firstNames.reduce((mx, n) => Math.max(mx, n.length), 0);
+    const colAWidth = Math.min(240, Math.max(110, maxNameChars * 9 + 24));
     return [
       // Clear any prior heading merges, then merge each heading row across A:J.
       {
@@ -492,9 +501,18 @@ export async function syncJobOrderToSheet(
           fields: 'gridProperties.frozenRowCount',
         },
       },
+      // Column A: explicit width from the names (autoResize would catch the
+      // merged heading in A1). Columns B–E: autoResize to their content.
+      {
+        updateDimensionProperties: {
+          range: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 1 },
+          properties: { pixelSize: colAWidth },
+          fields: 'pixelSize',
+        },
+      },
       {
         autoResizeDimensions: {
-          dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 5 },
+          dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 1, endIndex: 5 },
         },
       },
       // Hide column F (the HRX-uid marker that drives non-destructive merge).
