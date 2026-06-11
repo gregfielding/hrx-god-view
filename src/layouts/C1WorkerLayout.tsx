@@ -38,6 +38,11 @@ const C1WorkerLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) 
               component="main"
               sx={{
                 flex: 1,
+                // Flex children default to min-width:auto, which refuses to
+                // shrink below the content's intrinsic width — on mobile that
+                // pushes cards wider than the viewport and their overflow:hidden
+                // clips text/buttons. minWidth:0 lets it shrink to fit.
+                minWidth: 0,
                 py: 3,
                 px: { xs: 2, sm: 3 },
                 overflow: 'auto',

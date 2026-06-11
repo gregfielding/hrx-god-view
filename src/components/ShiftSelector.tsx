@@ -261,8 +261,12 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
         }}
       >
         <CardContent sx={{ py: 1, px: 2, '&:last-child': { pb: 1 } }}>
-          <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <Box sx={{ flex: 1 }}>
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            justifyContent="space-between"
+            alignItems={{ xs: 'stretch', sm: 'center' }}
+          >
+            <Box sx={{ flex: 1, minWidth: 0 }}>
               <Typography variant="subtitle1" fontWeight={600} gutterBottom>
                 {getShiftDisplayText(shift as unknown as Record<string, unknown>, 'shiftTitle', language) || shift.shiftTitle}
                 {item.type === 'day' && (
@@ -388,7 +392,16 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                 )}
             </Box>
 
-            <Box sx={{ ml: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <Box
+              sx={{
+                ml: { xs: 0, sm: 2 },
+                mt: { xs: 1.5, sm: 0 },
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 1,
+                flexShrink: 0,
+              }}
+            >
               {isConfirmed ? (
                 // Confirmed shift → clickable green "View Details"
                 // button that deep-links to the assignment-details
