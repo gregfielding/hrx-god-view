@@ -3989,8 +3989,22 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
               </Stack>
             </Grid>
 
-            {/* Right: Worker Pool */}
-            <Grid item xs={12} lg={6}>
+            {/* Right: Worker Pool — sticky on desktop so it stays in view while
+                scrolling the (often long) shifts list. alignSelf:flex-start stops
+                the Grid item from stretching to the tall left column (which would
+                defeat sticky); maxHeight + overflowY lets a big pool scroll inside. */}
+            <Grid
+              item
+              xs={12}
+              lg={6}
+              sx={{
+                alignSelf: { lg: 'flex-start' },
+                position: { lg: 'sticky' },
+                top: { lg: 16 },
+                maxHeight: { lg: 'calc(100vh - 80px)' },
+                overflowY: { lg: 'auto' },
+              }}
+            >
               <Card
                 elevation={0}
                 sx={{
