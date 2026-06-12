@@ -207,7 +207,12 @@ function formatMoney(amount: number | null, currency: string | null): string {
 
 function formatDate(raw: string | null): string {
   if (!raw) return '—';
-  const d = new Date(raw);
+  // Date-only strings ("2026-06-12") parse as UTC midnight and render as the
+  // prior day in US timezones — build a local date from the parts instead.
+  const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw.trim());
+  const d = ymd
+    ? new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]))
+    : new Date(raw);
   if (Number.isNaN(d.getTime())) return raw;
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: '2-digit' });
 }

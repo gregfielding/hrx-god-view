@@ -322,7 +322,15 @@ const StatusChip: React.FC<{ status: string | null }> = ({ status }) => {
 
 function formatDate(iso: string | null | undefined): string | null {
   if (!iso) return null;
-  const d = new Date(iso);
+  // Everee pay dates arrive as date-only strings ("2026-06-12"). `new Date()`
+  // parses those as UTC midnight, which toLocaleDateString then renders as the
+  // PRIOR day in US timezones (Jun 12 → Jun 11). Build a local date from the
+  // parts so the calendar date shows as-is; fall back to native parsing for any
+  // value that carries a time component.
+  const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim());
+  const d = ymd
+    ? new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]))
+    : new Date(iso);
   if (!Number.isFinite(d.getTime())) return null;
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
