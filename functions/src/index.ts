@@ -10964,7 +10964,7 @@ export const executePendingCampaigns = onSchedule({
   maxInstances: 1,
   retryCount: 0,
   timeoutSeconds: 300,
-  memory: '256MiB'
+  memory: '512MiB' // 256MiB OOMs on cold start (bundle ~200+MiB) before the body even runs
 }, async (event) => {
   if (!ENABLE_EXECUTE_CAMPAIGNS) {
     console.info('executePendingCampaigns: disabled by ENABLE_EXECUTE_CAMPAIGNS');

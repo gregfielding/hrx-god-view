@@ -161,7 +161,10 @@ export const autoWithdrawApplicationsOnHire = onDocumentUpdated(
     region: 'us-central1',
     maxInstances: 10,
     timeoutSeconds: 540,
-    memory: '256MiB',
+    // 256MiB OOMs on cold start (the bundle alone is ~200+MiB) and again under
+    // the large batches a bulk-hire produces — it threw ~1.6k OOM errors during
+    // the Jun group-backfill hiring cascade. 512MiB clears both.
+    memory: '512MiB',
   },
   async (event) => {
     const beforeData = event.data?.before.data();
