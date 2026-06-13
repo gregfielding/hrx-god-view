@@ -13,7 +13,7 @@ export const runAIScheduler = onSchedule(
     maxInstances: 1,
     retryCount: 0,
     timeoutSeconds: 60,
-    memory: '256MiB',
+    memory: '512MiB', // 256MiB OOMs on cold start (bundle ~200+MiB)
   },
   async () => {
     await logger.info('runAIScheduler skipped', {

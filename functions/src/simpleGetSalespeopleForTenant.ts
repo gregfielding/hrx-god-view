@@ -43,7 +43,7 @@ function cleanupCache() {
 export const getSalespeopleForTenant = onCall(
   {
     timeoutSeconds: 60,
-    memory: '256MiB',
+    memory: '512MiB', // 256MiB OOMs on cold start (bundle ~200+MiB)
     maxInstances: 3
   },
   async (request) => {

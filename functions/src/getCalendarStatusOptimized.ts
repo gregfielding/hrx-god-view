@@ -197,7 +197,7 @@ function checkForLoop(userId: string): boolean {
 export const getCalendarStatusOptimized = onCall({
   cors: true,
   timeoutSeconds: Math.floor(CALENDAR_CONFIG.MAX_EXECUTION_TIME_MS / 1000),
-  memory: '256MiB',
+  memory: '512MiB', // 256MiB OOMs on cold start (bundle ~200+MiB)
   maxInstances: 5
 }, async (request) => {
   try {

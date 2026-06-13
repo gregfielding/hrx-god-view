@@ -2866,7 +2866,7 @@ export const triggerScheduledCheckins = onSchedule({
   maxInstances: 1,
   retryCount: 0,
   timeoutSeconds: 240,
-  memory: '256MiB'
+  memory: '512MiB' // 256MiB OOMs on cold start (bundle ~200+MiB)
 }, async (event) => {
   if (!ENABLE_SCHEDULED_CHECKINS) {
     console.info('triggerScheduledCheckins: disabled by ENABLE_SCHEDULED_CHECKINS');
