@@ -55,6 +55,17 @@ interface MatchRowResult {
   evereeLinked: boolean;
   block: boolean;
   blockReason: string | null;
+  // Phase 2: paired assignment + resolved pay context.
+  assignmentId: string | null;
+  jobOrderId: string | null;
+  shiftId: string | null;
+  jobTitle: string | null;
+  worksiteId: string | null;
+  worksiteName: string | null;
+  workersCompCode: string | null;
+  payRate: number | null;
+  payRateSource: 'assignment' | 'none';
+  needsPayRate: boolean;
 }
 interface MatchWorkersResponse {
   evereeTenantId: string | null;
@@ -113,7 +124,19 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     setMatchError(null);
     try {
       const fn = httpsCallable<
-        { tenantId: string; hiringEntityId: string; rows: Array<{ rowIndex: number; email: string; firstName: string; lastName: string }> },
+        {
+          tenantId: string;
+          hiringEntityId: string;
+          rows: Array<{
+            rowIndex: number;
+            email: string;
+            firstName: string;
+            lastName: string;
+            workDate: string;
+            site: string;
+            role: string;
+          }>;
+        },
         MatchWorkersResponse
       >(functions, 'importTimesheetMatchWorkers');
       const res = await fn({
@@ -124,6 +147,9 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           email: r.email,
           firstName: r.firstName,
           lastName: r.lastName,
+          workDate: r.workDate,
+          site: r.site,
+          role: r.role,
         })),
       });
       const next = new Map<number, MatchRowResult>();
@@ -288,6 +314,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                 <TableCell align="right">Hours</TableCell>
                 <TableCell>Site</TableCell>
                 <TableCell>Role</TableCell>
+                <TableCell align="right">Pay rate</TableCell>
                 <TableCell align="right">Bill rate</TableCell>
                 <TableCell>Source status</TableCell>
               </TableRow>
@@ -299,12 +326,20 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                 <TableRow key={r.rowIndex} hover sx={{ opacity: r.status === 'importable' ? 1 : 0.65 }}>
                   <TableCell>
                     {match ? (
-                      <Tooltip title={match.block ? match.blockReason ?? 'Blocked' : 'Matched + Everee-linked'}>
+                      <Tooltip
+                        title={
+                          match.block
+                            ? match.blockReason ?? 'Blocked'
+                            : match.needsPayRate
+                              ? 'Matched + Everee-linked, but no assignment paired — enter a pay rate to pay.'
+                              : 'Matched + Everee-linked + pay rate resolved'
+                        }
+                      >
                         <Chip
                           size="small"
-                          color={match.block ? 'warning' : 'success'}
-                          icon={match.block ? undefined : <CheckCircleIcon />}
-                          label={match.block ? 'Blocked' : 'Ready'}
+                          color={match.block ? 'warning' : match.needsPayRate ? 'info' : 'success'}
+                          icon={!match.block && !match.needsPayRate ? <CheckCircleIcon /> : undefined}
+                          label={match.block ? 'Blocked' : match.needsPayRate ? 'Needs rate' : 'Ready'}
                         />
                       </Tooltip>
                     ) : (
@@ -345,6 +380,21 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                   </TableCell>
                   <TableCell>{r.role}</TableCell>
                   <TableCell align="right">
+                    {match && match.payRate != null ? (
+                      <Tooltip title={match.payRateSource === 'assignment' ? 'From paired HRX assignment' : ''}>
+                        <Typography variant="body2">${match.payRate.toFixed(2)}</Typography>
+                      </Tooltip>
+                    ) : match && !match.block && match.needsPayRate ? (
+                      <Typography variant="caption" color="info.main">
+                        needs rate
+                      </Typography>
+                    ) : (
+                      <Typography variant="caption" color="text.secondary">
+                        —
+                      </Typography>
+                    )}
+                  </TableCell>
+                  <TableCell align="right">
                     {r.billRate != null ? `$${r.billRate.toFixed(2)}` : '—'}
                   </TableCell>
                   <TableCell>{r.sourceStatus}</TableCell>
@@ -376,11 +426,16 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
             )}
             {matchByRow.size > 0 &&
               (() => {
-                const ready = [...matchByRow.values()].filter((m) => !m.block).length;
-                const blocked = matchByRow.size - ready;
+                const vals = [...matchByRow.values()];
+                const ready = vals.filter((m) => !m.block && !m.needsPayRate).length;
+                const needsRate = vals.filter((m) => !m.block && m.needsPayRate).length;
+                const blocked = vals.filter((m) => m.block).length;
                 return (
                   <>
                     <Chip size="small" color="success" label={`Ready: ${ready}`} />
+                    {needsRate > 0 && (
+                      <Chip size="small" color="info" label={`Needs pay rate: ${needsRate}`} />
+                    )}
                     {blocked > 0 && (
                       <Chip size="small" color="warning" label={`Blocked: ${blocked}`} />
                     )}

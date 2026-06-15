@@ -1,18 +1,25 @@
 /**
- * importTimesheetMatchWorkers — Phase 1 of the customer-CSV timesheet
- * importer. Given the parsed importable rows (email + name), match each
- * to an HRX user and resolve whether they're payable through the chosen
- * hiring entity's Everee tenant.
+ * importTimesheetMatchWorkers — Phase 1 + 2 of the customer-CSV timesheet
+ * importer. Given the parsed importable rows (email, name, workDate),
+ * for each row:
+ *   - match the email to an HRX user + check Everee linkage for the
+ *     chosen paying entity (Phase 1 — the payable/blocked gate), and
+ *   - best-effort pair an HRX assignment for that worker + work date and
+ *     resolve pay rate / job title / worksite / workers-comp from the
+ *     assignment + its job order + shift (Phase 2).
  *
- * Read-only (no writes). Server-side because matching arbitrary emails to
- * user docs + checking Everee linkage isn't something the client can do
- * under Firestore rules. Emails are deduped + cached so N rows for the
- * same worker cost one lookup.
+ * Read-only (no writes). Server-side because matching arbitrary emails +
+ * reading assignments/JOs/shifts isn't something the client can do under
+ * Firestore rules. Emails are deduped + cached; JOs/shifts are cached
+ * across rows so a week of one crew costs a handful of reads.
  *
- * "Payable" gate (per product decision: block + flag, never silently
- * drop): a row is blocked when the entity isn't Everee-enabled, no HRX
- * user matches the email, the email is ambiguous, or the matched worker
- * has no Everee linkage for this entity (needs onboarding).
+ * Block semantics (per product decision — block + flag, never silently
+ * drop): a row is hard-`block`ed when the entity isn't Everee-enabled, no
+ * HRX user matches, the email is ambiguous, or the worker has no Everee
+ * linkage (needs onboarding). A matched+linked row with no paired
+ * assignment is NOT blocked — it's flagged `needsPayRate` so the
+ * recruiter can enter a rate inline (Phase 3); pay rate otherwise comes
+ * from the paired assignment.
  */
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
@@ -34,6 +41,10 @@ interface MatchRowInput {
   email: string;
   firstName?: string;
   lastName?: string;
+  /** YYYY-MM-DD — used to pair an assignment whose window contains it. */
+  workDate?: string;
+  site?: string;
+  role?: string;
 }
 
 interface MatchRowResult {
@@ -47,6 +58,19 @@ interface MatchRowResult {
   evereeLinked: boolean;
   block: boolean;
   blockReason: string | null;
+  // ── Phase 2: paired assignment + resolved pay context ──
+  assignmentId: string | null;
+  jobOrderId: string | null;
+  shiftId: string | null;
+  jobTitle: string | null;
+  worksiteId: string | null;
+  worksiteName: string | null;
+  workersCompCode: string | null;
+  payRate: number | null;
+  /** 'assignment' when payRate came from a paired assignment, else 'none'. */
+  payRateSource: 'assignment' | 'none';
+  /** True when matched+linked but no pay rate resolved (needs inline entry). */
+  needsPayRate: boolean;
 }
 
 interface MatchWorkersResponse {
@@ -55,8 +79,9 @@ interface MatchWorkersResponse {
   results: MatchRowResult[];
 }
 
-/** sec 5–7 on the active tenant (or HRX) — same gate as the timesheet
- *  grid + createDraftTimesheetEntry. */
+type Assignment = Record<string, any> & { id: string };
+
+/** sec 5–7 on the active tenant (or HRX). */
 async function assertTimesheetEditor(
   uid: string,
   token: Record<string, unknown> | undefined,
@@ -71,8 +96,6 @@ async function assertTimesheetEditor(
   throw new HttpsError('permission-denied', 'Importing timesheets requires tenant security level 5–7.');
 }
 
-/** Find an HRX user by email. Tries the raw + lowercased value; when
- *  several users share the email, prefers one tied to this tenant. */
 async function findUserByEmail(
   email: string,
   tenantId: string,
@@ -90,13 +113,67 @@ async function findUserByEmail(
     const [id, data] = [...found.entries()][0];
     return { id, data };
   }
-  // Multiple users share this email — prefer one attached to this tenant.
   for (const [id, data] of found) {
     const tids = data.tenantIds;
     if (tids && typeof tids === 'object' && tids[tenantId]) return { id, data };
   }
   return 'ambiguous';
 }
+
+/** All of a worker's assignments (by userId + candidateId), deduped, with
+ *  terminal-cancelled ones dropped. */
+async function loadWorkerAssignments(tenantId: string, userId: string): Promise<Assignment[]> {
+  const col = db.collection(`tenants/${tenantId}/assignments`);
+  const [byUser, byCand] = await Promise.all([
+    col.where('userId', '==', userId).get(),
+    col.where('candidateId', '==', userId).get(),
+  ]);
+  const seen = new Map<string, Assignment>();
+  for (const snap of [byUser, byCand]) {
+    snap.forEach((d) => {
+      const data = d.data() as Record<string, any>;
+      const st = String(data.status || '').toLowerCase();
+      if (st === 'cancelled' || st === 'canceled' || st === 'declined') return;
+      seen.set(d.id, { id: d.id, ...data });
+    });
+  }
+  return [...seen.values()];
+}
+
+const ISO = /^\d{4}-\d{2}-\d{2}/;
+const dateOnly = (v: unknown): string => {
+  if (typeof v === 'string' && ISO.test(v)) return v.slice(0, 10);
+  return '';
+};
+
+/** Pick the assignment whose [startDate, endDate] window contains
+ *  `workDate` (empty endDate = ongoing). Prefer a paying rate + the most
+ *  recent start. */
+function pairAssignment(assignments: Assignment[], workDate: string): Assignment | null {
+  if (!workDate) return null;
+  const inWindow = assignments.filter((a) => {
+    const start = dateOnly(a.startDate);
+    if (!start || workDate < start) return false;
+    const end = dateOnly(a.endDate);
+    return !end || workDate <= end;
+  });
+  if (inWindow.length === 0) return null;
+  inWindow.sort((a, b) => {
+    const ar = Number(a.payRate) > 0 ? 1 : 0;
+    const br = Number(b.payRate) > 0 ? 1 : 0;
+    if (ar !== br) return br - ar; // paying rate first
+    return dateOnly(b.startDate).localeCompare(dateOnly(a.startDate)); // most recent start
+  });
+  return inWindow[0];
+}
+
+const pickStr = (...c: unknown[]): string | undefined => {
+  for (const v of c) {
+    if (typeof v === 'string' && v.trim()) return v.trim();
+    if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+  }
+  return undefined;
+};
 
 export const importTimesheetMatchWorkers = onCall(
   { cors: true },
@@ -125,7 +202,7 @@ export const importTimesheetMatchWorkers = onCall(
     const evereeTenantId = evereeCfg?.evereeTenantId ?? null;
     const entityEvereeEnabled = !!evereeTenantId;
 
-    // Resolve once per unique email.
+    // ── Caches ──
     type Resolved =
       | { kind: 'none' }
       | { kind: 'ambiguous' }
@@ -135,12 +212,56 @@ export const importTimesheetMatchWorkers = onCall(
           displayName: string;
           evereeWorkerId: string | null;
           evereeLinked: boolean;
+          assignments: Assignment[];
         };
-    const cache = new Map<string, Resolved>();
+    const emailCache = new Map<string, Resolved>();
+    const joCache = new Map<string, Record<string, any> | null>();
+    const shiftCache = new Map<string, Record<string, any> | null>();
+
+    const loadJobOrder = async (jobOrderId: string): Promise<Record<string, any> | null> => {
+      if (joCache.has(jobOrderId)) return joCache.get(jobOrderId) ?? null;
+      let jo: Record<string, any> | null = null;
+      for (const path of [
+        `tenants/${tenantId}/job_orders/${jobOrderId}`,
+        `tenants/${tenantId}/jobOrders/${jobOrderId}`,
+        `tenants/${tenantId}/recruiter_jobOrders/${jobOrderId}`,
+      ]) {
+        try {
+          const snap = await db.doc(path).get();
+          if (snap.exists) {
+            jo = snap.data() as Record<string, any>;
+            break;
+          }
+        } catch {
+          /* walk next */
+        }
+      }
+      joCache.set(jobOrderId, jo);
+      return jo;
+    };
+
+    const loadShift = async (
+      jobOrderId: string,
+      shiftId: string,
+    ): Promise<Record<string, any> | null> => {
+      const key = `${jobOrderId}/${shiftId}`;
+      if (shiftCache.has(key)) return shiftCache.get(key) ?? null;
+      let shift: Record<string, any> | null = null;
+      try {
+        const snap = await db
+          .doc(`tenants/${tenantId}/job_orders/${jobOrderId}/shifts/${shiftId}`)
+          .get();
+        shift = snap.exists ? (snap.data() as Record<string, any>) : null;
+      } catch {
+        shift = null;
+      }
+      shiftCache.set(key, shift);
+      return shift;
+    };
 
     const resolveEmail = async (email: string): Promise<Resolved> => {
       const key = email.toLowerCase().trim();
-      const cached = cache.get(key);
+      const cached = emailCache.get(key);
       if (cached) return cached;
 
       const u = await findUserByEmail(key, tenantId);
@@ -163,15 +284,37 @@ export const importTimesheetMatchWorkers = onCall(
             evereeWorkerId = await resolveEvereeWorkerUuid(tenantId, u.id, evereeTenantId);
           }
         }
-        resolved = { kind: 'user', userId: u.id, displayName, evereeWorkerId, evereeLinked };
+        const assignments = await loadWorkerAssignments(tenantId, u.id);
+        resolved = {
+          kind: 'user',
+          userId: u.id,
+          displayName,
+          evereeWorkerId,
+          evereeLinked,
+          assignments,
+        };
       }
-      cache.set(key, resolved);
+      emailCache.set(key, resolved);
       return resolved;
+    };
+
+    const EMPTY_FIELDS = {
+      assignmentId: null,
+      jobOrderId: null,
+      shiftId: null,
+      jobTitle: null,
+      worksiteId: null,
+      worksiteName: null,
+      workersCompCode: null,
+      payRate: null,
+      payRateSource: 'none' as const,
+      needsPayRate: true,
     };
 
     const results: MatchRowResult[] = [];
     for (const row of rows) {
       const email = String(row.email || '').trim();
+      const workDate = dateOnly(row.workDate);
       const base: MatchRowResult = {
         rowIndex: row.rowIndex,
         email,
@@ -183,13 +326,13 @@ export const importTimesheetMatchWorkers = onCall(
         evereeLinked: false,
         block: true,
         blockReason: null,
+        ...EMPTY_FIELDS,
       };
 
       if (!email) {
         results.push({ ...base, blockReason: 'No email address.' });
         continue;
       }
-
       const r = await resolveEmail(email);
       if (r.kind === 'none') {
         results.push({ ...base, blockReason: `No HRX worker found for ${email}.` });
@@ -204,7 +347,7 @@ export const importTimesheetMatchWorkers = onCall(
         continue;
       }
 
-      // Matched to a user.
+      // Matched to a user — resolve hard-block first.
       const matchedBase: MatchRowResult = {
         ...base,
         matched: true,
@@ -218,14 +361,58 @@ export const importTimesheetMatchWorkers = onCall(
           ...matchedBase,
           blockReason: 'Selected hiring entity is not configured for Everee payroll.',
         });
-      } else if (!r.evereeLinked) {
+        continue;
+      }
+      if (!r.evereeLinked) {
         results.push({
           ...matchedBase,
           blockReason: `${r.displayName} isn't linked to Everee for this entity — needs onboarding.`,
         });
-      } else {
-        results.push({ ...matchedBase, block: false, blockReason: null });
+        continue;
       }
+
+      // Payable. Best-effort assignment pairing + field resolution.
+      const assignment = pairAssignment(r.assignments, workDate);
+      if (!assignment) {
+        results.push({ ...matchedBase, block: false, blockReason: null }); // needsPayRate stays true
+        continue;
+      }
+      const jobOrderId = pickStr(assignment.jobOrderId) ?? null;
+      const shiftId = pickStr(assignment.shiftId) ?? null;
+      const jo = jobOrderId ? await loadJobOrder(jobOrderId) : null;
+      const shift = jobOrderId && shiftId ? await loadShift(jobOrderId, shiftId) : null;
+      const firstGigPosition =
+        Array.isArray(jo?.gigPositions) && jo!.gigPositions.length > 0
+          ? (jo!.gigPositions[0] as Record<string, any>)
+          : null;
+      const payRate =
+        Number(assignment.payRate) > 0
+          ? Number(assignment.payRate)
+          : Number(jo?.payRate) > 0
+            ? Number(jo?.payRate)
+            : 0;
+      results.push({
+        ...matchedBase,
+        block: false,
+        blockReason: null,
+        assignmentId: assignment.id,
+        jobOrderId,
+        shiftId,
+        jobTitle:
+          pickStr(assignment.jobTitle, shift?.defaultJobTitle, jo?.jobTitle) ?? null,
+        worksiteId: pickStr(jo?.worksiteId, jo?.locationId) ?? null,
+        worksiteName: pickStr(jo?.worksiteName, jo?.locationName) ?? null,
+        workersCompCode:
+          pickStr(
+            shift?.workersCompCode,
+            jo?.workersCompCode,
+            jo?.workersCompClassCode,
+            firstGigPosition?.workersCompClassCode,
+          ) ?? null,
+        payRate: payRate || null,
+        payRateSource: payRate > 0 ? 'assignment' : 'none',
+        needsPayRate: !(payRate > 0),
+      });
     }
 
     return { evereeTenantId, entityEvereeEnabled, results };
