@@ -240,6 +240,7 @@ export { processWorkerAiPrescreenReminders } from './workerAiPrescreen/processWo
 export { triggerRecentUserInterviewBackfill } from './workerAiPrescreen/triggerRecentUserInterviewBackfill';
 export { scheduleWorkerAiPrescreenFollowUpOnUserWrite } from './workerAiPrescreen/scheduleWorkerAiPrescreenFollowUpOnUserWrite';
 export { placementsCreateAssignments, placementsCancelAssignment, openShiftSetEndDate, respondToAssignment, confirmAssignmentForWorker, resendAssignmentOffer, previewAssignmentDetailsEmail, revertAssignmentDecline, revertAssignmentCancel, resendShiftConfirmationsToConfirmedStaff, resendAssignmentConfirmation } from './placementsApi';
+export { completeExpiredOpenShiftAssignments } from './completeExpiredOpenShiftAssignments';
 export { updateExternalOnboardingStepVerification } from './onboardingGate';
 export {
   everifyCreateCase,
