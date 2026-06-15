@@ -36,6 +36,8 @@ import {
   InputLabel,
   MenuItem,
   Select,
+  Tab,
+  Tabs,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -47,6 +49,7 @@ import PeriodPicker, {
   type PeriodPickerScope,
 } from '../components/timesheets/PeriodPicker';
 import TimesheetGrid from '../components/timesheets/TimesheetGrid';
+import CsvTimesheetImport from '../components/timesheets/CsvTimesheetImport';
 import AddRetroactiveWorkerDialog, {
   type AddRetroactiveWorkerDialogShiftOption,
 } from '../components/timesheets/AddRetroactiveWorkerDialog';
@@ -239,6 +242,8 @@ const Timesheets: React.FC = () => {
   // per-day assignment docs.
   const [addWorkerOpen, setAddWorkerOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  // Top-level view: the existing grid, or the new CSV import tab.
+  const [view, setView] = useState<'grid' | 'import'>('grid');
 
   // Replace the default tenant-name top-bar title with "Timesheets".
   const topBarTitleNode = useMemo(
@@ -719,6 +724,28 @@ const Timesheets: React.FC = () => {
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', px: { xs: 2, md: 3 }, pt: 1 }}>
+        <Tabs value={view} onChange={(_e, v) => setView(v as 'grid' | 'import')}>
+          <Tab value="grid" label="Timesheet Grid" sx={{ textTransform: 'none' }} />
+          <Tab value="import" label="Import CSV" sx={{ textTransform: 'none' }} />
+        </Tabs>
+      </Box>
+
+      {view === 'import' ? (
+        <Box
+          sx={{
+            flex: 1,
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            minHeight: 0,
+            px: { xs: 2, md: 3 },
+            pb: 2,
+          }}
+        >
+          <CsvTimesheetImport tenantId={tenantId} />
+        </Box>
+      ) : (
+      <>
       <PageHeader
         hideHeading
         dense
@@ -1030,6 +1057,8 @@ const Timesheets: React.FC = () => {
           })}
           defaultShiftId={shiftFilter === 'all' ? null : shiftFilter}
         />
+      )}
+      </>
       )}
     </Box>
   );
