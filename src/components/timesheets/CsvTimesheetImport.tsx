@@ -30,14 +30,37 @@ import {
   Typography,
 } from '@mui/material';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import Papa from 'papaparse';
+import { httpsCallable } from 'firebase/functions';
 
+import { functions } from '../../firebase';
+import type { HiringEntity } from '../../types/recruiter/hiringEntity';
 import {
   mapIndeedFlexRows,
   looksLikeIndeedFlex,
   type ParsedImport,
   type ImportRowStatus,
 } from '../../utils/timesheets/indeedFlexImport';
+
+/** One worker-match result from the importTimesheetMatchWorkers callable. */
+interface MatchRowResult {
+  rowIndex: number;
+  email: string;
+  matched: boolean;
+  ambiguous: boolean;
+  userId: string | null;
+  displayName: string | null;
+  evereeWorkerId: string | null;
+  evereeLinked: boolean;
+  block: boolean;
+  blockReason: string | null;
+}
+interface MatchWorkersResponse {
+  evereeTenantId: string | null;
+  entityEvereeEnabled: boolean;
+  results: MatchRowResult[];
+}
 
 type CustomerKey = 'indeed_flex';
 
@@ -59,18 +82,74 @@ function statusChipColor(s: ImportRowStatus): 'success' | 'default' | 'warning' 
   return 'default';
 }
 
-const CsvTimesheetImport: React.FC<{ tenantId: string }> = ({ tenantId }) => {
-  void tenantId; // used in later phases (matching/persistence)
+interface CsvTimesheetImportProps {
+  tenantId: string;
+  entities: HiringEntity[];
+  defaultEntityId?: string | null;
+}
+
+const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
+  tenantId,
+  entities,
+  defaultEntityId,
+}) => {
   const [customer, setCustomer] = useState<CustomerKey>('indeed_flex');
+  const [entityId, setEntityId] = useState<string>(defaultEntityId || '');
   const [fileName, setFileName] = useState<string>('');
   const [parsing, setParsing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [parsed, setParsed] = useState<ParsedImport | null>(null);
+  const [matching, setMatching] = useState(false);
+  const [matchError, setMatchError] = useState<string | null>(null);
+  // Match result by source rowIndex (only importable rows are matched).
+  const [matchByRow, setMatchByRow] = useState<Map<number, MatchRowResult>>(new Map());
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const importableRows = parsed?.rows.filter((r) => r.status === 'importable') ?? [];
+
+  const runMatch = async () => {
+    if (!entityId || importableRows.length === 0) return;
+    setMatching(true);
+    setMatchError(null);
+    try {
+      const fn = httpsCallable<
+        { tenantId: string; hiringEntityId: string; rows: Array<{ rowIndex: number; email: string; firstName: string; lastName: string }> },
+        MatchWorkersResponse
+      >(functions, 'importTimesheetMatchWorkers');
+      const res = await fn({
+        tenantId,
+        hiringEntityId: entityId,
+        rows: importableRows.map((r) => ({
+          rowIndex: r.rowIndex,
+          email: r.email,
+          firstName: r.firstName,
+          lastName: r.lastName,
+        })),
+      });
+      const next = new Map<number, MatchRowResult>();
+      (res.data?.results ?? []).forEach((m) => next.set(m.rowIndex, m));
+      setMatchByRow(next);
+      if (res.data && !res.data.entityEvereeEnabled) {
+        setMatchError('The selected hiring entity is not configured for Everee payroll — every row will be blocked until you pick an Everee-enabled entity.');
+      }
+    } catch (err: any) {
+      console.error('importTimesheetMatchWorkers failed:', err);
+      setMatchError(err?.message || 'Failed to match workers.');
+    } finally {
+      setMatching(false);
+    }
+  };
+
+  // Reset match results whenever the parse or entity changes.
+  const resetMatch = () => {
+    setMatchByRow(new Map());
+    setMatchError(null);
+  };
 
   const handleFile = (file: File) => {
     setError(null);
     setParsed(null);
+    resetMatch();
     setFileName(file.name);
     setParsing(true);
     Papa.parse(file, {
@@ -128,11 +207,30 @@ const CsvTimesheetImport: React.FC<{ tenantId: string }> = ({ tenantId }) => {
               setParsed(null);
               setError(null);
               setFileName('');
+              resetMatch();
             }}
           >
             {CUSTOMERS.map((c) => (
               <MenuItem key={c.key} value={c.key}>
                 {c.label}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+
+        <FormControl sx={{ minWidth: 240 }} size="small">
+          <InputLabel>Paying entity</InputLabel>
+          <Select
+            label="Paying entity"
+            value={entityId}
+            onChange={(e) => {
+              setEntityId(e.target.value);
+              resetMatch();
+            }}
+          >
+            {entities.map((ent) => (
+              <MenuItem key={ent.id} value={ent.id}>
+                {ent.name}
               </MenuItem>
             ))}
           </Select>
@@ -184,7 +282,8 @@ const CsvTimesheetImport: React.FC<{ tenantId: string }> = ({ tenantId }) => {
             <TableHead>
               <TableRow>
                 <TableCell>Status</TableCell>
-                <TableCell>Worker</TableCell>
+                <TableCell>Worker (CSV)</TableCell>
+                <TableCell>HRX worker</TableCell>
                 <TableCell>Date</TableCell>
                 <TableCell align="right">Hours</TableCell>
                 <TableCell>Site</TableCell>
@@ -194,12 +293,25 @@ const CsvTimesheetImport: React.FC<{ tenantId: string }> = ({ tenantId }) => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {parsed.rows.map((r) => (
+              {parsed.rows.map((r) => {
+                const match = r.status === 'importable' ? matchByRow.get(r.rowIndex) : undefined;
+                return (
                 <TableRow key={r.rowIndex} hover sx={{ opacity: r.status === 'importable' ? 1 : 0.65 }}>
                   <TableCell>
-                    <Tooltip title={r.excludeReason ?? 'Ready to match + import'}>
-                      <Chip size="small" color={statusChipColor(r.status)} label={STATUS_LABEL[r.status]} />
-                    </Tooltip>
+                    {match ? (
+                      <Tooltip title={match.block ? match.blockReason ?? 'Blocked' : 'Matched + Everee-linked'}>
+                        <Chip
+                          size="small"
+                          color={match.block ? 'warning' : 'success'}
+                          icon={match.block ? undefined : <CheckCircleIcon />}
+                          label={match.block ? 'Blocked' : 'Ready'}
+                        />
+                      </Tooltip>
+                    ) : (
+                      <Tooltip title={r.excludeReason ?? 'Ready to match + import'}>
+                        <Chip size="small" color={statusChipColor(r.status)} label={STATUS_LABEL[r.status]} />
+                      </Tooltip>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2" sx={{ fontWeight: 500 }}>
@@ -208,6 +320,21 @@ const CsvTimesheetImport: React.FC<{ tenantId: string }> = ({ tenantId }) => {
                     <Typography variant="caption" color="text.secondary">
                       {r.email || 'no email'}
                     </Typography>
+                  </TableCell>
+                  <TableCell sx={{ maxWidth: 240 }}>
+                    {r.status !== 'importable' ? (
+                      <Typography variant="caption" color="text.secondary">—</Typography>
+                    ) : !match ? (
+                      <Typography variant="caption" color="text.secondary">not matched yet</Typography>
+                    ) : match.block ? (
+                      <Typography variant="caption" color="warning.main">
+                        {match.blockReason}
+                      </Typography>
+                    ) : (
+                      <Typography variant="body2" noWrap title={match.displayName ?? ''}>
+                        {match.displayName}
+                      </Typography>
+                    )}
                   </TableCell>
                   <TableCell>{r.workDate}</TableCell>
                   <TableCell align="right">{r.hours.toFixed(2)}</TableCell>
@@ -222,21 +349,56 @@ const CsvTimesheetImport: React.FC<{ tenantId: string }> = ({ tenantId }) => {
                   </TableCell>
                   <TableCell>{r.sourceStatus}</TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         </TableContainer>
       )}
 
       {s && s.importable > 0 && (
-        <Box>
-          <Button variant="outlined" disabled sx={{ textTransform: 'none' }}>
-            Match workers → review (next phase)
-          </Button>
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-            Phase 1 will match each importable row to an HRX worker by email and resolve their Everee
-            linkage, pay rate, and assignment.
-          </Typography>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
+            <Button
+              variant="contained"
+              onClick={runMatch}
+              disabled={!entityId || matching}
+              sx={{ textTransform: 'none' }}
+            >
+              {matching
+                ? 'Matching…'
+                : `Match ${s.importable} worker${s.importable === 1 ? '' : 's'} to HRX`}
+            </Button>
+            {!entityId && (
+              <Typography variant="caption" color="text.secondary">
+                Pick a paying entity first.
+              </Typography>
+            )}
+            {matchByRow.size > 0 &&
+              (() => {
+                const ready = [...matchByRow.values()].filter((m) => !m.block).length;
+                const blocked = matchByRow.size - ready;
+                return (
+                  <>
+                    <Chip size="small" color="success" label={`Ready: ${ready}`} />
+                    {blocked > 0 && (
+                      <Chip size="small" color="warning" label={`Blocked: ${blocked}`} />
+                    )}
+                  </>
+                );
+              })()}
+          </Stack>
+          {matchError && (
+            <Alert severity="warning" onClose={() => setMatchError(null)}>
+              {matchError}
+            </Alert>
+          )}
+          {matchByRow.size > 0 && (
+            <Typography variant="caption" color="text.secondary">
+              Blocked rows need an HRX worker + Everee onboarding before they can be paid. Next
+              phase: pair assignments + fill pay rate/WC, then submit to Everee.
+            </Typography>
+          )}
         </Box>
       )}
     </Box>

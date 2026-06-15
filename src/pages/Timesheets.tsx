@@ -742,7 +742,11 @@ const Timesheets: React.FC = () => {
             pb: 2,
           }}
         >
-          <CsvTimesheetImport tenantId={tenantId} />
+          <CsvTimesheetImport
+            tenantId={tenantId}
+            entities={entities}
+            defaultEntityId={entity?.id ?? null}
+          />
         </Box>
       ) : (
       <>
