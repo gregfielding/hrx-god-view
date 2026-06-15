@@ -2002,6 +2002,99 @@ export const resendAssignmentConfirmation = onCall(
 );
 
 /**
+ * openShiftSetEndDate — close-out for open (standing-crew) shifts.
+ *
+ * Stamps an `endDate` (YYYY-MM-DD); past timecards are preserved and the
+ * timesheet resolver simply stops generating rows past that date. Two
+ * modes:
+ *   - `{ assignmentId }` → remove ONE worker from the crew.
+ *   - `{ shiftId, jobOrderId }` → end the WHOLE open shift: stamp the
+ *     shift doc's endDate AND every still-active open assignment on it.
+ *
+ * No SMS — open shifts never carried an offer; removal/close-out is a
+ * recruiter action. endDate is clamped to be on/after each assignment's
+ * startDate so we never create an inverted window.
+ */
+export const openShiftSetEndDate = onCall(
+  { cors: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
+    const { tenantId, assignmentId, shiftId, jobOrderId, endDate } = (request.data || {}) as {
+      tenantId?: string;
+      assignmentId?: string;
+      shiftId?: string;
+      jobOrderId?: string;
+      endDate?: string;
+    };
+    if (!tenantId || !endDate || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+      throw new HttpsError('invalid-argument', 'tenantId and endDate (YYYY-MM-DD) are required');
+    }
+    if (!assignmentId && !shiftId) {
+      throw new HttpsError('invalid-argument', 'Either assignmentId or shiftId is required');
+    }
+    if (!(await canManageAssignments(request.auth, tenantId, request.auth.uid))) {
+      throw new HttpsError('permission-denied', 'Insufficient permissions to manage assignments');
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const isOpenAssignment = (a: Record<string, unknown>): boolean =>
+      a.isOpenShift === true || a.noFixedTimes === true;
+    const clampEnd = (a: Record<string, unknown>): string => {
+      const start = toDateOnly(a.startDate);
+      return start && endDate < start ? start : endDate;
+    };
+
+    // Mode 1 — single worker.
+    if (assignmentId) {
+      const ref = db.doc(`tenants/${tenantId}/assignments/${assignmentId}`);
+      const snap = await ref.get();
+      if (!snap.exists) throw new HttpsError('not-found', 'Assignment not found');
+      const data = snap.data() || {};
+      if (!isOpenAssignment(data)) {
+        throw new HttpsError('failed-precondition', 'Assignment is not an open-shift assignment');
+      }
+      await ref.set(
+        { endDate: clampEnd(data), updatedAt: now, closedOutBy: request.auth.uid, closedOutAt: now },
+        { merge: true },
+      );
+      return { success: true, updated: 1, mode: 'worker' };
+    }
+
+    // Mode 2 — whole shift: stamp the shift doc + every active open assignment.
+    if (!jobOrderId) {
+      throw new HttpsError('invalid-argument', 'jobOrderId is required when ending a shift');
+    }
+    const shiftRef = db.doc(`tenants/${tenantId}/job_orders/${jobOrderId}/shifts/${shiftId}`);
+    const shiftSnap = await shiftRef.get();
+    if (!shiftSnap.exists) throw new HttpsError('not-found', 'Shift not found');
+    await shiftRef.set({ endDate, updatedAt: now }, { merge: true });
+
+    const assignmentsSnap = await db
+      .collection(`tenants/${tenantId}/assignments`)
+      .where('shiftId', '==', shiftId)
+      .get();
+    let updated = 0;
+    const batch = db.batch();
+    assignmentsSnap.docs.forEach((d) => {
+      const a = d.data() || {};
+      if (!isOpenAssignment(a)) return;
+      const st = String(a.status || '').toLowerCase();
+      if (st === 'cancelled' || st === 'canceled' || st === 'completed') return;
+      batch.set(
+        d.ref,
+        { endDate: clampEnd(a), updatedAt: now, closedOutBy: request.auth!.uid, closedOutAt: now },
+        { merge: true },
+      );
+      updated += 1;
+    });
+    await batch.commit();
+    return { success: true, updated, mode: 'shift' };
+  },
+);
+
+/**
  * Cancel an assignment and revert to Placed state.
  * Deletes the assignment and creates a placement so the worker shows as "Placed" again.
  * For testing / recruiter use.

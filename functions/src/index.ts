@@ -239,7 +239,7 @@ export {
 export { processWorkerAiPrescreenReminders } from './workerAiPrescreen/processWorkerAiPrescreenReminders';
 export { triggerRecentUserInterviewBackfill } from './workerAiPrescreen/triggerRecentUserInterviewBackfill';
 export { scheduleWorkerAiPrescreenFollowUpOnUserWrite } from './workerAiPrescreen/scheduleWorkerAiPrescreenFollowUpOnUserWrite';
-export { placementsCreateAssignments, placementsCancelAssignment, respondToAssignment, confirmAssignmentForWorker, resendAssignmentOffer, previewAssignmentDetailsEmail, revertAssignmentDecline, revertAssignmentCancel, resendShiftConfirmationsToConfirmedStaff, resendAssignmentConfirmation } from './placementsApi';
+export { placementsCreateAssignments, placementsCancelAssignment, openShiftSetEndDate, respondToAssignment, confirmAssignmentForWorker, resendAssignmentOffer, previewAssignmentDetailsEmail, revertAssignmentDecline, revertAssignmentCancel, resendShiftConfirmationsToConfirmedStaff, resendAssignmentConfirmation } from './placementsApi';
 export { updateExternalOnboardingStepVerification } from './onboardingGate';
 export {
   everifyCreateCase,

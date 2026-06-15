@@ -378,6 +378,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   // real assignment row arrives in `assignmentRows`.
   const [pendingHireWorkerIds, setPendingHireWorkerIds] = useState<Set<string>>(new Set());
   const [cancelAssignmentWorker, setCancelAssignmentWorker] = useState<Worker | null>(null);
+  // Open-shift close-out: removing a worker from the standing crew stamps
+  // an endDate on their assignment (keeps past timecards) rather than
+  // cancelling it. Date defaults to today.
+  const [removeFromCrewWorker, setRemoveFromCrewWorker] = useState<Worker | null>(null);
+  const [removeFromCrewDate, setRemoveFromCrewDate] = useState<string>('');
+  const [removingFromCrew, setRemovingFromCrew] = useState(false);
   const [previewEmailOpen, setPreviewEmailOpen] = useState(false);
   const [previewEmailSubject, setPreviewEmailSubject] = useState<string>('');
   const [previewEmailHtml, setPreviewEmailHtml] = useState<string>('');
@@ -3659,12 +3665,52 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
    *      assignment, but the guard keeps us honest if the data layer
    *      changes upstream.
    */
+  // Open-shift close-out: open the "Remove from crew" dialog (stamps an
+  // endDate on the assignment) instead of the cancel-assignment dialog.
+  const openRemoveFromCrew = (worker: Worker) => {
+    const d = new Date();
+    const todayIso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+      d.getDate(),
+    ).padStart(2, '0')}`;
+    setRemoveFromCrewDate(todayIso);
+    setRemoveFromCrewWorker(worker);
+  };
+
+  const handleRemoveFromCrew = async (worker: Worker, endDate: string) => {
+    if (!tenantId || !worker.assignmentId) {
+      setError('Missing assignment to remove from crew');
+      return;
+    }
+    setRemovingFromCrew(true);
+    try {
+      setError(null);
+      const fn = httpsCallable(functions, 'openShiftSetEndDate');
+      await fn({ tenantId, assignmentId: worker.assignmentId, endDate });
+      setRemoveFromCrewWorker(null);
+      setPoolRefreshTick((n) => n + 1);
+      setAssignToast({
+        message: `${worker.displayName ?? 'Worker'} removed from the crew effective ${endDate}.`,
+        severity: 'success',
+      });
+    } catch (err: any) {
+      console.error('Remove from crew failed:', err);
+      setError(err?.message || 'Failed to remove worker from crew');
+    } finally {
+      setRemovingFromCrew(false);
+    }
+  };
+
   const handleUnplaceToWorkerPool = async (worker: Worker) => {
     if (worker.isPlacementOnly) {
       await deletePlacement(worker);
       return;
     }
     if (worker.assignmentStatus || worker.assignmentId) {
+      // Open shift: stamp an endDate (remove from crew) rather than cancel.
+      if ((selectedShift as any)?.shiftType === 'open') {
+        openRemoveFromCrew(worker);
+        return;
+      }
       // Route to the same confirm dialog the per-row "Cancel" button
       // uses so the recruiter gets the explicit "this will notify the
       // worker" copy before we touch the assignment doc.
@@ -4021,7 +4067,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         resendingShiftConfirmations={resendingShiftIds.has(shift.id)}
                         onResendOffer={handleResendOffer}
                         onResendConfirmation={handleResendConfirmation}
-                        onCancelAssignment={(worker) => setCancelAssignmentWorker(worker)}
+                        onCancelAssignment={(worker) =>
+                          (shift as any).shiftType === 'open'
+                            ? openRemoveFromCrew(worker)
+                            : setCancelAssignmentWorker(worker)
+                        }
                         onOpenEditStartDate={handleOpenEditStartDate}
                         hiringEntityName={hiringEntityName}
                         entityEmploymentByUserId={entityEmploymentByUserId}
@@ -4589,6 +4639,49 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             <Button onClick={() => setCancelAssignmentWorker(null)}>Cancel</Button>
             <Button variant="contained" color="error" onClick={() => cancelAssignmentWorker && handleCancelAssignment(cancelAssignmentWorker)}>
               Remove assignment
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Open-shift close-out: remove a worker from the standing crew by
+            stamping an endDate on their assignment (past timecards kept). */}
+        <Dialog
+          open={!!removeFromCrewWorker}
+          onClose={() => !removingFromCrew && setRemoveFromCrewWorker(null)}
+          maxWidth="xs"
+          fullWidth
+        >
+          <DialogTitle>Remove from crew?</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" sx={{ mb: 2 }}>
+              {removeFromCrewWorker?.displayName ?? 'This worker'} will stop appearing on this
+              open shift's timecards after the date below. Their already-entered hours are
+              kept, and no message is sent.
+            </Typography>
+            <TextField
+              fullWidth
+              label="Last day on crew"
+              type="date"
+              value={removeFromCrewDate}
+              onChange={(e) => setRemoveFromCrewDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              disabled={removingFromCrew}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setRemoveFromCrewWorker(null)} disabled={removingFromCrew}>
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              color="error"
+              disabled={removingFromCrew || !removeFromCrewDate}
+              onClick={() =>
+                removeFromCrewWorker &&
+                handleRemoveFromCrew(removeFromCrewWorker, removeFromCrewDate)
+              }
+            >
+              {removingFromCrew ? 'Removing…' : 'Remove from crew'}
             </Button>
           </DialogActions>
         </Dialog>
