@@ -1455,12 +1455,58 @@ export class JobsBoardService {
           ? (jobOrderData.autoCreatedUserGroupId as string).trim()
           : '';
 
+      // Re-stamp the post's worksite + company from the JO (authoritative).
+      // The post's worksite is denormalized at creation and was never
+      // re-synced, so a JO worksite change left the post — and the worker
+      // apply wizard that reads it — stale (FIFA KC → Riviera → reverted
+      // bug). Mirrors the server trigger `syncJobOrderWorksiteToPostings`;
+      // kept here so client-initiated syncs (shift edits) heal the post
+      // immediately. Resolve the address from the location doc when the JO
+      // only carries an id.
+      const joWorksiteId =
+        typeof jobOrderData.worksiteId === 'string' ? jobOrderData.worksiteId.trim() : '';
+      let joWorksiteName =
+        typeof jobOrderData.worksiteName === 'string' ? jobOrderData.worksiteName.trim() : '';
+      let joWorksiteAddress: Record<string, unknown> =
+        jobOrderData.worksiteAddress && typeof jobOrderData.worksiteAddress === 'object'
+          ? { ...(jobOrderData.worksiteAddress as Record<string, unknown>) }
+          : {};
+      if (joWorksiteId && (!joWorksiteAddress.city || !joWorksiteAddress.state)) {
+        try {
+          const locSnap = await getDoc(doc(db, 'tenants', tenantId, 'locations', joWorksiteId));
+          if (locSnap.exists()) {
+            const loc = locSnap.data() as Record<string, any>;
+            const addr = (loc.address as Record<string, any>) || {};
+            joWorksiteAddress = {
+              street: joWorksiteAddress.street ?? addr.street ?? '',
+              city: joWorksiteAddress.city ?? addr.city ?? '',
+              state: joWorksiteAddress.state ?? addr.state ?? '',
+              zipCode: joWorksiteAddress.zipCode ?? addr.zipCode ?? '',
+              ...(addr.coordinates ? { coordinates: addr.coordinates } : {}),
+              ...joWorksiteAddress,
+            };
+            if (!joWorksiteName) joWorksiteName = String(loc.nickname || loc.title || loc.name || '');
+          }
+        } catch {
+          /* best-effort */
+        }
+      }
+      const joCompanyId =
+        typeof jobOrderData.companyId === 'string' ? jobOrderData.companyId : '';
+      const joCompanyName =
+        typeof jobOrderData.companyName === 'string' ? jobOrderData.companyName : '';
+
       for (const post of posts) {
         const postRef = doc(db, 'tenants', tenantId, 'job_postings', post.id);
         const updateData: Record<string, unknown> = {
           updatedAt: new Date(),
           ...(startDate != null && { startDate }),
           ...(endDate != null && { endDate }),
+          ...(joWorksiteId && { worksiteId: joWorksiteId }),
+          ...(joWorksiteName && { worksiteName: joWorksiteName }),
+          ...(Object.keys(joWorksiteAddress).length > 0 && { worksiteAddress: joWorksiteAddress }),
+          ...(joCompanyId && { companyId: joCompanyId }),
+          ...(joCompanyName && { companyName: joCompanyName }),
         };
         if (joAutoGroupId) {
           const existingGroups = normalizeAutoAddGroups(

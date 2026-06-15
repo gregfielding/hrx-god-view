@@ -241,6 +241,7 @@ export { triggerRecentUserInterviewBackfill } from './workerAiPrescreen/triggerR
 export { scheduleWorkerAiPrescreenFollowUpOnUserWrite } from './workerAiPrescreen/scheduleWorkerAiPrescreenFollowUpOnUserWrite';
 export { placementsCreateAssignments, placementsCancelAssignment, openShiftSetEndDate, respondToAssignment, confirmAssignmentForWorker, resendAssignmentOffer, previewAssignmentDetailsEmail, revertAssignmentDecline, revertAssignmentCancel, resendShiftConfirmationsToConfirmedStaff, resendAssignmentConfirmation } from './placementsApi';
 export { completeExpiredOpenShiftAssignments } from './completeExpiredOpenShiftAssignments';
+export { syncJobOrderWorksiteToPostings } from './syncJobOrderWorksiteToPostings';
 export { updateExternalOnboardingStepVerification } from './onboardingGate';
 export {
   everifyCreateCase,
