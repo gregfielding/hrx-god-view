@@ -15,8 +15,10 @@ import {
   Button,
   Chip,
   FormControl,
+  FormControlLabel,
   InputLabel,
   MenuItem,
+  Switch,
   Paper,
   Select,
   Stack,
@@ -114,6 +116,9 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   const [matchError, setMatchError] = useState<string | null>(null);
   // Match result by source rowIndex (only importable rows are matched).
   const [matchByRow, setMatchByRow] = useState<Map<number, MatchRowResult>>(new Map());
+  // Excluded rows (future / absence / no-email) are hidden by default —
+  // they're noise; the recruiter cares about the payable (importable) rows.
+  const [showExcluded, setShowExcluded] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const importableRows = parsed?.rows.filter((r) => r.status === 'importable') ?? [];
@@ -299,6 +304,19 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           {s.excludedAbsence > 0 && <Chip label={`Absence: ${s.excludedAbsence}`} />}
           {s.excludedNoEmail > 0 && <Chip color="warning" label={`No email: ${s.excludedNoEmail}`} />}
           {s.excludedOther > 0 && <Chip color="warning" label={`Other: ${s.excludedOther}`} />}
+          {s.total - s.importable > 0 && (
+            <FormControlLabel
+              sx={{ ml: 1 }}
+              control={
+                <Switch
+                  size="small"
+                  checked={showExcluded}
+                  onChange={(e) => setShowExcluded(e.target.checked)}
+                />
+              }
+              label={`Show ${s.total - s.importable} excluded (future / absence)`}
+            />
+          )}
         </Stack>
       )}
 
@@ -320,7 +338,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
               </TableRow>
             </TableHead>
             <TableBody>
-              {parsed.rows.map((r) => {
+              {(showExcluded ? parsed.rows : parsed.rows.filter((r) => r.status === 'importable')).map((r) => {
                 const match = r.status === 'importable' ? matchByRow.get(r.rowIndex) : undefined;
                 return (
                 <TableRow key={r.rowIndex} hover sx={{ opacity: r.status === 'importable' ? 1 : 0.65 }}>

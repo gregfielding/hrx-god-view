@@ -99,6 +99,7 @@ async function assertTimesheetEditor(
 async function findUserByEmail(
   email: string,
   tenantId: string,
+  evereeTenantId: string | null,
 ): Promise<{ id: string; data: Record<string, any> } | null | 'ambiguous'> {
   const variants = Array.from(
     new Set([email, email.toLowerCase(), email.trim()].map((v) => v.trim()).filter(Boolean)),
@@ -113,9 +114,31 @@ async function findUserByEmail(
     const [id, data] = [...found.entries()][0];
     return { id, data };
   }
-  for (const [id, data] of found) {
-    const tids = data.tenantIds;
-    if (tids && typeof tids === 'object' && tids[tenantId]) return { id, data };
+
+  // Several users share this email (duplicate records). Narrow to the
+  // ones attached to this tenant first.
+  let candidates = [...found.entries()].filter(
+    ([, data]) => data.tenantIds && typeof data.tenantIds === 'object' && data.tenantIds[tenantId],
+  );
+  if (candidates.length === 0) candidates = [...found.entries()];
+  if (candidates.length === 1) {
+    const [id, data] = candidates[0];
+    return { id, data };
+  }
+
+  // Still ambiguous — prefer the record that's actually Everee-linked for
+  // the paying entity (the payable one). Resolves the common "two HRX
+  // users, one onboarded" duplicate without guessing.
+  if (evereeTenantId) {
+    const linked: Array<[string, Record<string, any>]> = [];
+    for (const [id, data] of candidates) {
+      // eslint-disable-next-line no-await-in-loop
+      if (await resolveExternalWorkerId(tenantId, id, evereeTenantId)) linked.push([id, data]);
+    }
+    if (linked.length === 1) {
+      const [id, data] = linked[0];
+      return { id, data };
+    }
   }
   return 'ambiguous';
 }
@@ -264,7 +287,7 @@ export const importTimesheetMatchWorkers = onCall(
       const cached = emailCache.get(key);
       if (cached) return cached;
 
-      const u = await findUserByEmail(key, tenantId);
+      const u = await findUserByEmail(key, tenantId, evereeTenantId);
       let resolved: Resolved;
       if (u === null) {
         resolved = { kind: 'none' };
