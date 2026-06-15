@@ -511,6 +511,15 @@ export async function resolveTimesheetGrid(
   };
   const tuples: Tuple[] = [];
 
+  // Open-shift rows are capped at today — no point materializing a blank
+  // row (and a Firestore read) for a day that hasn't happened yet. Past
+  // and current periods are unaffected; only future days in the current
+  // period (and any future period) are skipped.
+  const _now = new Date();
+  const todayIso = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(
+    _now.getDate(),
+  ).padStart(2, '0')}`;
+
   for (const a of overlapping) {
     let perAssignmentDayCount = 0;
     // We've already validated a.startDate via the overlap check, so
@@ -536,6 +545,7 @@ export async function resolveTimesheetGrid(
       if (startStr && !isoDateGte(d, startStr)) continue;
       if (endStr && !isoDateLte(d, endStr)) continue;
       if (isOpen) {
+        if (d > todayIso) continue; // don't materialize future days
         tuples.push({ assignment: a, workDate: d, scheduled: OPEN_SHIFT_SCHEDULED });
         perAssignmentDayCount += 1;
         continue;
