@@ -152,6 +152,7 @@ function docToItem(
     calendarKind,
     isOpenShift: data.isOpenShift === true || data.noFixedTimes === true,
     openEndDate: typeof data.endDate === 'string' ? data.endDate : '',
+    startDateRaw: typeof data.startDate === 'string' ? data.startDate : '',
   };
 }
 

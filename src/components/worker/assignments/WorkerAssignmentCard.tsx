@@ -37,8 +37,13 @@ export interface WorkerAssignmentItem {
    *  The worker's schedule is managed by their C1 recruiter/manager, so
    *  the card shows a date range + explainer instead of clock times. */
   isOpenShift?: boolean;
-  /** Raw open-shift end date (YYYY-MM-DD), or '' for ongoing/rolling. */
+  /** Raw open-shift end date (YYYY-MM-DD), or '' for ongoing/rolling.
+   *  Also serves as the raw end date for any assignment (multi-day check). */
   openEndDate?: string;
+  /** Raw assignment start date (YYYY-MM-DD). Compared with the raw end
+   *  date to detect a genuine multi-day (spanning) assignment without
+   *  false-positiving on overnight single-day shifts that cross midnight. */
+  startDateRaw?: string;
   /** Job posting id — used by the calendar to route accepted/submitted
    *  shifts back to the public jobs-board posting. */
   jobPostId?: string;
@@ -152,9 +157,20 @@ const WorkerAssignmentCard: React.FC<WorkerAssignmentCardProps> = ({
           : t('assignments.openShiftOngoing')
       }`
     : '';
+  // A genuine multi-day (spanning) assignment — the end date is a later
+  // calendar day than the start. `formatDateAndTime` only renders the
+  // start date + times, so a 2-day assignment used to read as a single
+  // day. Compare the raw date fields (not the timestamps) so overnight
+  // single-day shifts that cross midnight (startDate === endDate) are NOT
+  // treated as multi-day. (Mark's "2-day shift shows 1 day" report.)
+  const startDateRaw = (assignment.startDateRaw || '').slice(0, 10);
+  const endDateRaw = (assignment.openEndDate || '').slice(0, 10);
+  const isMultiDay = !isOpenShift && !!startDateRaw && !!endDateRaw && endDateRaw > startDateRaw;
   const dateTimeStr = isOpenShift
     ? `${openDateLine} • ${t('assignments.openShiftNoTimes')}`
-    : formatDateAndTime(assignment.startAt, assignment.endAt, locale);
+    : isMultiDay
+      ? `${formatDateOnly(assignment.startAt, locale)} – ${formatDateOnly(endDateRaw, locale)}`
+      : formatDateAndTime(assignment.startAt, assignment.endAt, locale);
   // Past-shift label fix: a confirmed/scheduled shift that lands in the
   // Past tab (isUpcoming === false) was showing the green "Upcoming"
   // chip — the worker already worked it. Relabel those as "Completed".

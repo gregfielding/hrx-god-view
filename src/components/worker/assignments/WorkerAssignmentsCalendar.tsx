@@ -98,11 +98,29 @@ const WorkerAssignmentsCalendar: React.FC<WorkerAssignmentsCalendarProps> = ({ a
 
   const byDay = useMemo(() => {
     const map = new Map<string, WorkerAssignmentItem[]>();
+    const parseLocalYmd = (s: string): Date | null => {
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || '');
+      return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
+    };
     for (const a of assignments) {
-      const key = format(new Date(startMs(a)), 'yyyy-MM-dd');
-      const list = map.get(key);
-      if (list) list.push(a);
-      else map.set(key, [a]);
+      // Multi-day (spanning) assignment → place it on EVERY calendar day in
+      // its [startDate, endDate] span, not just the start day (that made a
+      // 2-day shift read as a single day — Mark's report). Raw date fields
+      // keep overnight single-day shifts (start === end) on one day. Open
+      // shifts are skipped so an ongoing crew doesn't flood the calendar.
+      const startYmd = (a.startDateRaw || '').slice(0, 10);
+      const endYmd = (a.openEndDate || '').slice(0, 10);
+      const startD = parseLocalYmd(startYmd);
+      const endD = parseLocalYmd(endYmd);
+      const keys =
+        !a.isOpenShift && startD && endD && endYmd > startYmd
+          ? eachDayOfInterval({ start: startD, end: endD }).map((d) => format(d, 'yyyy-MM-dd'))
+          : [format(new Date(startMs(a)), 'yyyy-MM-dd')];
+      for (const key of keys) {
+        const list = map.get(key);
+        if (list) list.push(a);
+        else map.set(key, [a]);
+      }
     }
     for (const [, list] of map) {
       list.sort((x, y) => startMs(x) - startMs(y));
