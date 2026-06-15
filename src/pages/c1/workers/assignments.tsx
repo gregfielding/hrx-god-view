@@ -150,6 +150,8 @@ function docToItem(
     jobPostId: (data.jobPostId as string | undefined) || undefined,
     jobOrderId: (data.jobOrderId as string | undefined) || undefined,
     calendarKind,
+    isOpenShift: data.isOpenShift === true || data.noFixedTimes === true,
+    openEndDate: typeof data.endDate === 'string' ? data.endDate : '',
   };
 }
 

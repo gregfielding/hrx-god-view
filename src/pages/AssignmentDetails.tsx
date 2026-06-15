@@ -80,6 +80,9 @@ interface AssignmentDetails {
   endTime?: string;
   /** gig = fixed end date possible; career = often ongoing */
   jobOrderType?: 'gig' | 'career';
+  /** Open shift = standing-crew assignment, no fixed times; the worker's
+   *  schedule is managed by their C1 recruiter/manager. */
+  isOpenShift?: boolean;
   status: string;
   hoursWorked?: number;
   totalEarnings?: number;
@@ -837,6 +840,7 @@ const AssignmentDetails: React.FC = () => {
         startTime: data.startTime,
         endTime: data.endTime,
         jobOrderType: data.jobOrderType === 'career' || data.jobOrderType === 'gig' ? data.jobOrderType : undefined,
+        isOpenShift: data.isOpenShift === true || data.noFixedTimes === true,
         status: (data.status || 'pending').toLowerCase(),
         hoursWorked: data.hoursWorked,
         totalEarnings: data.totalEarnings,
@@ -1109,6 +1113,7 @@ const AssignmentDetails: React.FC = () => {
         startTime: sourceData.startTime,
         endTime: sourceData.endTime,
         jobOrderType: sourceData.jobOrderType === 'career' || sourceData.jobOrderType === 'gig' ? sourceData.jobOrderType : (jobOrderData.jobType === 'career' || jobOrderData.jobType === 'gig' ? jobOrderData.jobType : undefined),
+        isOpenShift: sourceData.isOpenShift === true || sourceData.noFixedTimes === true,
         status: sourceData.status || 'confirmed',
         hoursWorked: sourceData.hoursWorked,
         totalEarnings: sourceData.totalEarnings,
@@ -1314,6 +1319,9 @@ const AssignmentDetails: React.FC = () => {
   // Only offer self-cancel while the assignment is still live (not
   // already cancelled / declined / completed).
   const canSelfCancel = !!assignment &&
+    // Open shifts are managed by the recruiter/manager — the worker
+    // can't self-cancel a standing-crew assignment.
+    !assignment.isOpenShift &&
     !['cancelled', 'canceled', 'declined', 'completed', 'terminated'].includes(
       String(assignment.status || '').toLowerCase(),
     );
@@ -1395,6 +1403,11 @@ const AssignmentDetails: React.FC = () => {
 
       {/* Main content: full-width stack; My Recruiter appended at bottom only when assigned */}
       <Stack spacing={3}>
+        {assignment.isOpenShift && (
+          <Alert severity="info" icon={<ScheduleIcon />} sx={{ borderRadius: 0 }}>
+            {t('assignments.openShiftExplainer')}
+          </Alert>
+        )}
         {/* Assignment Info (combined): two columns, company/worksite/address looked up when needed */}
         <Card elevation={0} sx={{ borderRadius: 0 }}>
           <CardContent sx={{ pt: 1, px: 1 }}>

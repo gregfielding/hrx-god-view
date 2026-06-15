@@ -33,6 +33,12 @@ export interface WorkerAssignmentItem {
   /** Pay rate for display (e.g. 18.5 = $18.50/hr) */
   payRate?: number;
   status: AssignmentStatus;
+  /** Open shift = a standing-crew assignment with no fixed daily times.
+   *  The worker's schedule is managed by their C1 recruiter/manager, so
+   *  the card shows a date range + explainer instead of clock times. */
+  isOpenShift?: boolean;
+  /** Raw open-shift end date (YYYY-MM-DD), or '' for ongoing/rolling. */
+  openEndDate?: string;
   /** Job posting id — used by the calendar to route accepted/submitted
    *  shifts back to the public jobs-board posting. */
   jobPostId?: string;
@@ -67,6 +73,21 @@ function formatDateAndTime(startAt: number | string, endAt?: number | string, lo
     return `${dayDate} • ${time} – ${endTime}`;
   }
   return `${dayDate} • ${time}`;
+}
+
+/** Date only (no clock time): "Fri, Mar 13". 'YYYY-MM-DD' strings are
+ *  parsed as LOCAL to avoid the UTC-midnight off-by-one. */
+function formatDateOnly(value: number | string | undefined, locale = 'en-US'): string {
+  if (value == null || value === '') return '';
+  let d: Date;
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) {
+    const [y, m, day] = value.slice(0, 10).split('-').map(Number);
+    d = new Date(y, m - 1, day);
+  } else {
+    d = typeof value === 'number' ? new Date(value) : new Date(value);
+  }
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 /** Single location line: if both venue name and address exist, combine; otherwise show whichever exists. */
@@ -121,7 +142,19 @@ const WorkerAssignmentCard: React.FC<WorkerAssignmentCardProps> = ({
   const navigate = useNavigate();
   const t = useT();
   const locale = localeForLang(getLanguage());
-  const dateTimeStr = formatDateAndTime(assignment.startAt, assignment.endAt, locale);
+  const isOpenShift = assignment.isOpenShift === true;
+  // Open shift: no clock times — show a date range (or "ongoing") + an
+  // explainer instead of a start/end time the worker can't rely on.
+  const openDateLine = isOpenShift
+    ? `${formatDateOnly(assignment.startAt, locale)} – ${
+        assignment.openEndDate
+          ? formatDateOnly(assignment.openEndDate, locale)
+          : t('assignments.openShiftOngoing')
+      }`
+    : '';
+  const dateTimeStr = isOpenShift
+    ? `${openDateLine} • ${t('assignments.openShiftNoTimes')}`
+    : formatDateAndTime(assignment.startAt, assignment.endAt, locale);
   // Past-shift label fix: a confirmed/scheduled shift that lands in the
   // Past tab (isUpcoming === false) was showing the green "Upcoming"
   // chip — the worker already worked it. Relabel those as "Completed".
@@ -177,6 +210,21 @@ const WorkerAssignmentCard: React.FC<WorkerAssignmentCardProps> = ({
           <Typography variant="body1" sx={{ fontWeight: 500 }}>
             {dateTimeStr}
           </Typography>
+          {isOpenShift && (
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'text.secondary',
+                fontStyle: 'italic',
+                bgcolor: 'action.hover',
+                borderRadius: 1,
+                px: 1,
+                py: 0.75,
+              }}
+            >
+              {t('assignments.openShiftExplainer')}
+            </Typography>
+          )}
           {locationLine && (
             <Typography variant="body2" color="text.secondary">
               {locationLine}
