@@ -96,6 +96,8 @@ export interface ShiftAssignmentCardProps {
   selectedShiftId: string;
   /** The shift doc matching `selectedShiftId` (undefined if not found). */
   selectedShift: ShiftForCard | undefined;
+  /** Per-shift placed/confirmed counts for the header (undefined while loading). */
+  fillCounts?: { placed: number; confirmed: number };
   selectedDay: string;
   dayOptions: DayOptionForCard[];
   jobOrder: JobOrder | null;
@@ -211,6 +213,7 @@ export function ShiftAssignmentCard({
   lockedShiftId,
   selectedShiftId,
   selectedShift,
+  fillCounts,
   selectedDay,
   dayOptions,
   jobOrder,
@@ -395,6 +398,11 @@ export function ShiftAssignmentCard({
                           : ''
                       }`
                     : '';
+                // Placed = anyone placed or non-cancelled-assigned on this shift;
+                // Confirmed = confirmed assignments. Shown next to the staff need.
+                const fillLabel = fillCounts
+                  ? `${fillCounts.placed} placed · ${fillCounts.confirmed} confirmed`
+                  : '';
                 const secondLine = selectedShift
                   ? buildShiftPickerSecondLine(selectedShift as any, (jobOrder as any)?.jobTitle)
                   : '';
@@ -408,6 +416,22 @@ export function ShiftAssignmentCard({
                           sx={{ ml: 0.75, fontSize: '0.78rem', color: 'text.secondary', fontWeight: 500 }}
                         >
                           · {staffLabel}
+                        </Typography>
+                      )}
+                      {fillCounts && (
+                        <Typography
+                          component="span"
+                          sx={{ ml: 0.75, fontSize: '0.78rem', fontWeight: 600 }}
+                        >
+                          <Box component="span" sx={{ color: 'text.secondary' }}>
+                            · {fillCounts.placed} placed
+                          </Box>{' '}
+                          <Box
+                            component="span"
+                            sx={{ color: fillCounts.confirmed > 0 ? 'success.main' : 'text.secondary' }}
+                          >
+                            · {fillCounts.confirmed} confirmed
+                          </Box>
                         </Typography>
                       )}
                     </Typography>

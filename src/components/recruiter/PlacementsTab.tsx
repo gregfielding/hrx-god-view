@@ -553,6 +553,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const [pendingAssignmentCancels, setPendingAssignmentCancels] = useState<Set<string>>(new Set());
   // For Career: user IDs placed or assigned on any shift of this job (so labor pool excludes them)
   const [allShiftsPlacedOrAssignedUserIds, setAllShiftsPlacedOrAssignedUserIds] = useState<Set<string>>(new Set());
+  // Per-shift placed/confirmed counts for the shift-card headers (derived from
+  // the same all-shifts listener below — no extra reads).
+  const [shiftFillCounts, setShiftFillCounts] = useState<Map<string, { placed: number; confirmed: number }>>(new Map());
 
   const placementEntityKey = useMemo(
     () => deriveC1EntityKeyFromEntityName(hiringEntityName || ''),
@@ -1852,12 +1855,18 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     return () => unsubscribe();
   }, [tenantId, selectedShiftId]);
 
-  // For Career jobs: listen to placements + assignments across all shifts so labor pool can exclude anyone already placed
-  const allShiftsPlacedOrAssignedRef = useRef<Map<string, Set<string>>>(new Map());
+  // Listen to placements + assignments across all shifts so the labor pool can
+  // exclude anyone already placed AND each shift-card header can show its
+  // placed/confirmed counts. We keep the raw (shiftId, userId, status) rows per
+  // chunk so both the global exclusion set and the per-shift counts come from
+  // the same snapshots (no extra reads).
+  type AllShiftRow = { kind: 'placement' | 'assignment'; shiftId: string; userId: string; status: string };
+  const allShiftsRowsRef = useRef<Map<string, AllShiftRow[]>>(new Map());
   useEffect(() => {
     if (!tenantId || shifts.length === 0) {
       setAllShiftsPlacedOrAssignedUserIds(new Set());
-      allShiftsPlacedOrAssignedRef.current = new Map();
+      setShiftFillCounts(new Map());
+      allShiftsRowsRef.current = new Map();
       return;
     }
     const shiftIds = shifts.map((s) => s.id);
@@ -1865,45 +1874,90 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     const assignmentsRef = collection(db, 'tenants', tenantId, 'assignments');
     const chunkSize = 10;
     const unsubs: Array<() => void> = [];
+    const CANCELLED = new Set([
+      'cancelled', 'canceled', 'declined', 'worker-cancelled', 'worker_cancelled', 'deleted',
+    ]);
 
     const mergeAndSet = () => {
       const combined = new Set<string>();
-      allShiftsPlacedOrAssignedRef.current.forEach((s) => s.forEach((id) => combined.add(id)));
+      const placedByShift = new Map<string, Set<string>>();
+      const confirmedByShift = new Map<string, Set<string>>();
+      const addTo = (m: Map<string, Set<string>>, sid: string, uid: string) => {
+        let s = m.get(sid);
+        if (!s) m.set(sid, (s = new Set()));
+        s.add(uid);
+      };
+      allShiftsRowsRef.current.forEach((rows) => {
+        rows.forEach((r) => {
+          if (!r.userId) return;
+          combined.add(r.userId);
+          if (!r.shiftId) return;
+          if (r.kind === 'placement') {
+            addTo(placedByShift, r.shiftId, r.userId);
+          } else {
+            const st = r.status.toLowerCase();
+            if (!CANCELLED.has(st)) addTo(placedByShift, r.shiftId, r.userId);
+            if (st === 'confirmed') addTo(confirmedByShift, r.shiftId, r.userId);
+          }
+        });
+      });
       setAllShiftsPlacedOrAssignedUserIds(combined);
+      const counts = new Map<string, { placed: number; confirmed: number }>();
+      placedByShift.forEach((set, sid) =>
+        counts.set(sid, { placed: set.size, confirmed: confirmedByShift.get(sid)?.size ?? 0 }),
+      );
+      confirmedByShift.forEach((set, sid) => {
+        if (!counts.has(sid)) counts.set(sid, { placed: 0, confirmed: set.size });
+      });
+      setShiftFillCounts(counts);
     };
 
     for (let i = 0; i < shiftIds.length; i += chunkSize) {
       const chunk = shiftIds.slice(i, i + chunkSize);
       const placeKey = `placements-${i}`;
-      const placeQ = query(placementsRef, where('shiftId', 'in', chunk));
       unsubs.push(
         onSnapshot(
-          placeQ,
+          query(placementsRef, where('shiftId', 'in', chunk)),
           (snap) => {
-            const ids = new Set<string>();
-            snap.docs.forEach((d) => {
-              const uid = String((d.data() as { userId?: string })?.userId || '');
-              if (uid) ids.add(uid);
-            });
-            allShiftsPlacedOrAssignedRef.current.set(placeKey, ids);
+            allShiftsRowsRef.current.set(
+              placeKey,
+              snap.docs.map((d) => {
+                const x = d.data() as { shiftId?: string; userId?: string };
+                return {
+                  kind: 'placement' as const,
+                  shiftId: String(x?.shiftId || ''),
+                  userId: String(x?.userId || ''),
+                  status: '',
+                };
+              }),
+            );
             mergeAndSet();
           },
           (err) => console.warn('Placements (all shifts) onSnapshot error:', err),
         ),
       );
       const assignKey = `assignments-${i}`;
-      const assignQ = query(assignmentsRef, where('shiftId', 'in', chunk));
       unsubs.push(
         onSnapshot(
-          assignQ,
+          query(assignmentsRef, where('shiftId', 'in', chunk)),
           (snap) => {
-            const ids = new Set<string>();
-            snap.docs.forEach((d) => {
-              const data = d.data() as { userId?: string; candidateId?: string };
-              const uid = String(data?.userId || data?.candidateId || '');
-              if (uid) ids.add(uid);
-            });
-            allShiftsPlacedOrAssignedRef.current.set(assignKey, ids);
+            allShiftsRowsRef.current.set(
+              assignKey,
+              snap.docs.map((d) => {
+                const x = d.data() as {
+                  shiftId?: string;
+                  userId?: string;
+                  candidateId?: string;
+                  status?: string;
+                };
+                return {
+                  kind: 'assignment' as const,
+                  shiftId: String(x?.shiftId || ''),
+                  userId: String(x?.userId || x?.candidateId || ''),
+                  status: String(x?.status || ''),
+                };
+              }),
+            );
             mergeAndSet();
           },
           (err) => console.warn('Assignments (all shifts) onSnapshot error:', err),
@@ -1913,7 +1967,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
 
     return () => {
       unsubs.forEach((u) => u());
-      allShiftsPlacedOrAssignedRef.current = new Map();
+      allShiftsRowsRef.current = new Map();
     };
   }, [tenantId, shifts]);
 
@@ -3909,6 +3963,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         lockedShiftId={lockedShiftId}
                         selectedShiftId={isExpanded ? selectedShiftId : shift.id}
                         selectedShift={shift}
+                        fillCounts={shiftFillCounts.get(shift.id)}
                         selectedDay={selectedDay}
                         dayOptions={isExpanded ? dayOptions : []}
                         jobOrder={jobOrder}
