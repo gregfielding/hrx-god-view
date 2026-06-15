@@ -571,6 +571,136 @@ export const placementsCreateAssignments = onCall(
   const skipped: Array<{ userId: string; reason: string }> = [];
   const failed: Array<{ userId: string; error: string }> = [];
 
+  // ---- Open shift fast path -------------------------------------------
+  // An "open" shift is a standing-crew assignment over a date range with
+  // no fixed daily times. Placing a worker creates ONE ongoing "active"
+  // assignment per worker — there's no offer to accept and no
+  // accept/decline SMS (`suppressInitialNotification`), and the same-day
+  // time-overlap guard doesn't apply (no times). Hours are entered
+  // weekly later. Isolated from the standard offer/overlap machinery on
+  // purpose so the normal placement flow is untouched.
+  const isOpenShift = String(shift.shiftType || '').toLowerCase() === 'open';
+  if (isOpenShift) {
+    const openStartDate = effectiveStartDate || shiftDate || '';
+    const openEndDate = toDateOnly(shift.endDate) || ''; // '' = ongoing / rolling
+    for (const userId of uniqueUserIds) {
+      try {
+        const userSnap = await db.doc(`users/${userId}`).get();
+        if (!userSnap.exists) {
+          skipped.push({ userId, reason: 'user_not_found' });
+          continue;
+        }
+        const userData = userSnap.data() || {};
+        const firstName =
+          String(userData.firstName || '').trim() ||
+          String(userData.displayName || '').split(' ')[0] ||
+          '';
+        const lastName =
+          String(userData.lastName || '').trim() ||
+          String(userData.displayName || '').split(' ').slice(1).join(' ').trim() ||
+          '';
+        // One assignment per (open shift, worker) — simple/legacy id, not
+        // day-scoped: the crew membership is continuous, not per-day.
+        const assignmentRef = db
+          .collection(`tenants/${tenantId}/assignments`)
+          .doc(buildLegacyAssignmentDocId({ shiftId, userId }));
+        const existing = await assignmentRef.get();
+        const existingStatus = existing.exists
+          ? String((existing.data() || {}).status || '').toLowerCase()
+          : '';
+        if (existing.exists && isAssignmentActiveStatus(existingStatus)) {
+          skipped.push({ userId, reason: 'already_assigned_to_shift' });
+          continue;
+        }
+        const onboardingStatus =
+          onboardingConfig.entityId &&
+          onboardingConfig.requirementPackageId &&
+          onboardingConfig.packageData
+            ? 'not_started'
+            : 'blocked';
+        const assignmentData: any = {
+          tenantId,
+          jobOrderId,
+          shiftId,
+          candidateId: userId,
+          userId,
+          status: 'active',
+          isOpenShift: true,
+          noFixedTimes: true,
+          startDate: openStartDate,
+          endDate: openEndDate,
+          startTime: '',
+          endTime: '',
+          payRate: resolvedPayRate,
+          billRate: resolvedBillRate,
+          timesheetMode: jobOrder.timesheetMode || 'mobile',
+          firstName,
+          lastName,
+          email: userData.email || '',
+          phone: userData.phone || userData.phoneE164 || '',
+          companyId: jobOrder.companyId || '',
+          companyName: jobOrder.companyName || '',
+          companyTitle: jobOrder.companyName || '',
+          locationId: locationId || '',
+          locationIds: locationId ? [locationId] : [],
+          locationNickname,
+          worksiteName: locationNickname,
+          latitude,
+          longitude,
+          jobOrderType: jobOrder.jobType || 'gig',
+          jobTitle: shift.defaultJobTitle || jobOrder.jobTitle || '',
+          shiftTitle: shift.shiftTitle || '',
+          assignmentSource: sourceType,
+          sourceGroupId: sourceType === 'group' ? sourceId : null,
+          placementMode: 'assign_now',
+          jobPostId: jobPostId || null,
+          createdBy,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          assignedAt: admin.firestore.FieldValue.serverTimestamp(),
+          // No worker offer/accept step for an open shift.
+          suppressInitialNotification: true,
+          entityId: onboardingConfig.entityId ?? null,
+          requirementPackageId: onboardingConfig.requirementPackageId ?? null,
+          onboardingInstanceId: assignmentRef.id,
+          onboardingStatus,
+          onboardingPercent: 0,
+        };
+        await assignmentRef.set(assignmentData, { merge: false });
+        await ensureOnboardingInstance({
+          tenantId,
+          assignmentId: assignmentRef.id,
+          userId,
+          jobOrderId,
+          shiftId,
+          entityId: onboardingConfig.entityId,
+          requirementPackageId: onboardingConfig.requirementPackageId,
+          packageData: onboardingConfig.packageData,
+          createdBy,
+          blockedReason: onboardingConfig.blockedReason,
+        });
+        const applicationId = await resolveApplicationForAssignment({
+          tenantId,
+          jobOrderId,
+          shiftId,
+          userId,
+          createdBy,
+          assignmentId: assignmentRef.id,
+          jobPostId,
+          entityId: onboardingConfig.entityId,
+        });
+        await assignmentRef.set(
+          { applicationId, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+          { merge: true },
+        );
+        created.push({ userId, assignmentId: assignmentRef.id, warnings: [] });
+      } catch (error: any) {
+        failed.push({ userId, error: error?.message || 'unknown_error' });
+      }
+    }
+    return { success: failed.length === 0, created, skipped, failed, openShift: true };
+  }
+
   if (useBulkDates && bulkDates) {
     const createdByUserId = new Map<string, Array<{ assignmentId: string; date: string }>>();
     for (const userId of uniqueUserIds) {

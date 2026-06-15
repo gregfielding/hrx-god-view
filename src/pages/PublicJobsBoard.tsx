@@ -740,11 +740,15 @@ const PublicJobsBoard: React.FC = () => {
                     try {
                       const shiftsRef = collection(db, 'tenants', specificTenantId, 'job_orders', (post as any).jobOrderId, 'shifts');
                       const shiftsSnap = await getDocs(shiftsRef);
-                      const shifts = shiftsSnap.docs.map((d) => d.data()).map((data: any) => ({
-                        shiftDate: data.shiftDate,
-                        endDate: data.endDate,
-                        dateSchedule: data.dateSchedule,
-                      }));
+                      const shifts = shiftsSnap.docs
+                        .map((d) => d.data())
+                        // Exclude open shifts (standing-crew, no fixed times) — not posted.
+                        .filter((data: any) => data.shiftType !== 'open' && data.hideFromJobsBoard !== true)
+                        .map((data: any) => ({
+                          shiftDate: data.shiftDate,
+                          endDate: data.endDate,
+                          dateSchedule: data.dateSchedule,
+                        }));
                       const lastStr = getLastShiftDateFromShifts(shifts);
                       if (lastStr) {
                         const lastDate = new Date(lastStr);
@@ -1012,11 +1016,16 @@ const PublicJobsBoard: React.FC = () => {
                       try {
                         const shiftsRef = collection(db, 'tenants', tenantId, 'job_orders', (post as any).jobOrderId, 'shifts');
                         const shiftsSnap = await getDocs(shiftsRef);
-                        const shifts = shiftsSnap.docs.map((d) => d.data()).map((data: any) => ({
-                          shiftDate: data.shiftDate,
-                          endDate: data.endDate,
-                          dateSchedule: data.dateSchedule,
-                        }));
+                        const shifts = shiftsSnap.docs
+                          .map((d) => d.data())
+                          // Exclude open shifts (standing-crew, no fixed times) — they're
+                          // not posted and must not inflate the public date range.
+                          .filter((data: any) => data.shiftType !== 'open' && data.hideFromJobsBoard !== true)
+                          .map((data: any) => ({
+                            shiftDate: data.shiftDate,
+                            endDate: data.endDate,
+                            dateSchedule: data.dateSchedule,
+                          }));
                         const lastStr = getLastShiftDateFromShifts(shifts);
                         if (lastStr) {
                           const lastDate = new Date(lastStr);

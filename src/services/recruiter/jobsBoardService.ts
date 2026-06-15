@@ -527,6 +527,9 @@ export class JobsBoardService {
         const data: any = d.data();
         const status = (data.status || 'open').toLowerCase();
         if (status !== 'open' && status !== 'filled') return;
+        // shiftType:'open' = a standing-crew shift with no fixed times. Never
+        // posted to the public board — recruiters staff it directly.
+        if (data.shiftType === 'open' || data.hideFromJobsBoard === true) return;
 
         const defaultJobTitle = data.defaultJobTitle || jobOrderData?.jobTitle;
         const payRate = getPayRateForJobTitle(defaultJobTitle) || jobOrderData?.payRate;
@@ -629,6 +632,9 @@ export class JobsBoardService {
         const data: any = d.data();
         const status = (data.status || 'open').toLowerCase();
         if (status !== 'open' && status !== 'filled') return;
+        // shiftType:'open' = a standing-crew shift with no fixed times. Never
+        // posted to the public board — recruiters staff it directly.
+        if (data.shiftType === 'open' || data.hideFromJobsBoard === true) return;
 
         const defaultJobTitle = data.defaultJobTitle || jobOrderData?.jobTitle;
         const payRate = getPayRateForJobTitle(defaultJobTitle) || jobOrderData?.payRate;

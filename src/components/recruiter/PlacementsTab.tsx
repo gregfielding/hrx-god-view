@@ -1195,6 +1195,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         });
 
         const sortedShifts = allShifts.sort((a, b) => {
+          // Pin open shifts (standing-crew, no fixed times) to the top so
+          // the recruiter sees the ongoing crew first in the dropdown/cards.
+          const aOpen = (a as any).shiftType === 'open' ? 0 : 1;
+          const bOpen = (b as any).shiftType === 'open' ? 0 : 1;
+          if (aOpen !== bOpen) return aOpen - bOpen;
           const dateA = getCalendarDayLocal(a.shiftDate);
           const dateB = getCalendarDayLocal(b.shiftDate);
           return dateA.localeCompare(dateB);
@@ -1897,7 +1902,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           } else {
             const st = r.status.toLowerCase();
             if (!CANCELLED.has(st)) addTo(placedByShift, r.shiftId, r.userId);
-            if (st === 'confirmed') addTo(confirmedByShift, r.shiftId, r.userId);
+            // Count confirmed-or-working as "confirmed" — open-shift crew are
+            // created as 'active' (no offer step), and standard workers go
+            // 'active'/'in_progress' once their shift starts.
+            if (st === 'confirmed' || st === 'active' || st === 'in_progress')
+              addTo(confirmedByShift, r.shiftId, r.userId);
           }
         });
       });
@@ -2402,8 +2411,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           const createdNames = created
             .map((c: { userId: string }) => nameById.get(c.userId) || c.userId.slice(0, 8))
             .join(', ');
+          // Open shifts create an active standing assignment with no worker
+          // offer/SMS — say so instead of "offer SMS sent."
           setAssignToast({
-            message: `Assigned ${createdNames} to ${shiftLabel} — offer SMS sent.`,
+            message: data?.openShift === true
+              ? `Added ${createdNames} to ${shiftLabel} (open shift — no offer sent).`
+              : `Assigned ${createdNames} to ${shiftLabel} — offer SMS sent.`,
             severity: 'success',
           });
         }

@@ -47,6 +47,23 @@ export function buildShiftPickerSecondLine(
   if (!shift || typeof shift !== 'object') return '';
   const s = shift as Record<string, unknown>;
   const startDateStr = getCalendarDayLocal(s.shiftDate as any);
+
+  // Open shift: a standing-crew date range with no fixed daily times. Show
+  // the range (or "ongoing" when there's no end date) and flag it clearly
+  // instead of an empty time slot.
+  if (s.shiftType === 'open') {
+    const openEnd = s.endDate ? getCalendarDayLocal(s.endDate as any) : '';
+    const dateLabel = startDateStr
+      ? openEnd && openEnd !== startDateStr
+        ? `${formatLocalGigDay(startDateStr)} – ${formatLocalGigDay(openEnd)}`
+        : `${formatLocalGigDay(startDateStr)} – ongoing`
+      : 'date range';
+    const openJobTitle = String(s.defaultJobTitle ?? s.jobTitle ?? jobOrderJobTitle ?? '').trim();
+    const openParts: string[] = ['Open shift (no set times)', dateLabel];
+    if (openJobTitle) openParts.push(openJobTitle);
+    return openParts.join(' • ');
+  }
+
   const endDateStr =
     s.shiftMode === 'multi' &&
     s.endDate &&

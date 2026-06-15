@@ -32,6 +32,7 @@ import {
   DialogTitle,
   FormControl,
   FormControlLabel,
+  FormLabel,
   Grid,
   IconButton,
   InputAdornment,
@@ -40,6 +41,8 @@ import {
   Select,
   Stack,
   Switch,
+  ToggleButton,
+  ToggleButtonGroup,
   TextField,
   Tooltip,
   Typography,
@@ -111,6 +114,10 @@ export interface ShiftFormShift {
   poNumber?: string;
   shiftDate: string;
   shiftMode?: 'single' | 'multi';
+  /** 'open' = a date-range standing-crew shift with no fixed times; placed
+   *  workers get ongoing assignments, hours are entered weekly. Default
+   *  'standard' = a normal scheduled shift. */
+  shiftType?: 'standard' | 'open';
   endDate?: string;
   weeklySchedule?: Record<
     string,
@@ -636,6 +643,8 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
     showStaffNeeded: boolean;
     poNumber: string;
     shiftMode: 'single' | 'multi';
+    /** 'open' = standing-crew date-range shift with no fixed times. */
+    shiftType: 'standard' | 'open';
     shiftDate: string;
     endDate: string;
     weeklySchedule: Record<
@@ -709,6 +718,10 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
         showStaffNeeded: editingShift.showStaffNeeded || false,
         poNumber: editingShift.poNumber || '',
         shiftMode: mode,
+        shiftType:
+          (editingShift as { shiftType?: 'standard' | 'open' }).shiftType === 'open'
+            ? 'open'
+            : 'standard',
         shiftDate: editingShift.shiftDate,
         endDate: endDateVal,
         weeklySchedule,
@@ -736,6 +749,7 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
       showStaffNeeded: jobOrder?.showWorkersNeeded === true,
       poNumber: '',
       shiftMode: 'single',
+      shiftType: 'standard',
       shiftDate: '',
       endDate: '',
       weeklySchedule: buildDefaultWeeklySchedule('', ''),
@@ -1088,9 +1102,15 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
     shiftData: any,
     isSchedule: boolean,
     gigJob: boolean,
+    isOpen = false,
   ) => {
     const dataForAdd = { ...shiftData };
-    if (!isSchedule) {
+    if (isOpen) {
+      // Open shift: keep endDate (already cleaned to a string or absent),
+      // but it never carries per-day/weekly schedule maps.
+      delete dataForAdd.weeklySchedule;
+      delete dataForAdd.dateSchedule;
+    } else if (!isSchedule) {
       delete dataForAdd.endDate;
       delete dataForAdd.weeklySchedule;
       delete dataForAdd.dateSchedule;
@@ -1112,7 +1132,12 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
         setError('Shift title is required');
         return;
       }
-      if (!isGigJob && (!formData.defaultStartTime || !formData.defaultEndTime)) {
+      // Open shifts have no fixed times — skip the time-required check.
+      if (
+        formData.shiftType !== 'open' &&
+        !isGigJob &&
+        (!formData.defaultStartTime || !formData.defaultEndTime)
+      ) {
         setError('Start and end times are required');
         return;
       }
@@ -1121,13 +1146,25 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
         return;
       }
 
+      // An open shift is never a standard "schedule" — it carries no
+      // per-day/weekly times, just a date range — so force isSchedule
+      // false and let the open branch below stamp its own fields.
       const isSchedule =
+        formData.shiftType !== 'open' &&
         formData.shiftMode === 'multi' &&
         (!isGigJob ||
           (!!formData.endDate && formData.endDate !== formData.shiftDate));
 
       if (!formData.shiftDate) {
-        setError(isSchedule ? 'Start date is required' : 'Shift date is required');
+        setError(formData.shiftType === 'open' || isSchedule ? 'Start date is required' : 'Shift date is required');
+        return;
+      }
+      if (
+        formData.shiftType === 'open' &&
+        formData.endDate &&
+        formData.endDate < formData.shiftDate
+      ) {
+        setError('End date must be on or after start date');
         return;
       }
       if (isGigJob && isSchedule && !formData.endDate) {
@@ -1421,6 +1458,33 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
         }
       }
 
+      // Open shift: a standing date-range assignment with no fixed daily
+      // times. Stamp the markers, keep endDate (if any) as the close-out
+      // boundary, and clear the scheduling fields the standard path uses.
+      // Hidden from the public jobs board so workers can't apply to it.
+      if (formData.shiftType === 'open') {
+        shiftData.shiftType = 'open';
+        shiftData.noFixedTimes = true;
+        shiftData.hideFromJobsBoard = true;
+        shiftData.shiftMode = 'single';
+        shiftData.defaultStartTime = '';
+        shiftData.defaultEndTime = '';
+        if (formData.endDate) {
+          shiftData.endDate = formData.endDate;
+        } else if (editingShift) {
+          shiftData.endDate = deleteField();
+        }
+        if (editingShift) {
+          shiftData.weeklySchedule = deleteField();
+          shiftData.dateSchedule = deleteField();
+        }
+      } else if (editingShift) {
+        // Standard shift (possibly converted away from open) — clear markers.
+        shiftData.shiftType = deleteField();
+        shiftData.noFixedTimes = deleteField();
+        shiftData.hideFromJobsBoard = deleteField();
+      }
+
       const plainNext: Record<string, unknown> = {
         shiftDate: formData.shiftDate,
         shiftMode: isSchedule ? 'multi' : 'single',
@@ -1447,9 +1511,14 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
         plainNext.weeklySchedule = {};
         plainNext.dateSchedule = {};
       }
+      if (formData.shiftType === 'open') {
+        plainNext.endDate = formData.endDate || '';
+        plainNext.weeklySchedule = {};
+        plainNext.dateSchedule = {};
+      }
 
       if (!editingShift) {
-        await persistNewShift(shiftData, isSchedule, isGigJob);
+        await persistNewShift(shiftData, isSchedule, isGigJob, formData.shiftType === 'open');
         JobsBoardService.getInstance()
           .syncJobOrderToLinkedPostings(tenantId, jobOrderId)
           .catch(() => {});
@@ -1529,8 +1598,11 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
     workerNotifySaving ||
     !formData.shiftTitle ||
     !formData.shiftDate ||
-    (!isGigJob && (!formData.defaultStartTime || !formData.defaultEndTime)) ||
-    (isGigJob &&
+    (formData.shiftType !== 'open' &&
+      !isGigJob &&
+      (!formData.defaultStartTime || !formData.defaultEndTime)) ||
+    (formData.shiftType !== 'open' &&
+      isGigJob &&
       formData.shiftMode === 'multi' &&
       (!formData.endDate || formData.endDate < formData.shiftDate));
 
@@ -1925,6 +1997,97 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
           value={formData.poNumber}
           onChange={(e) => setFormData({ ...formData, poNumber: e.target.value })}
         />
+
+        {/* Shift Type: Standard (scheduled) vs Open (no-fixed-times, standing-crew) */}
+        <FormControl fullWidth>
+          <FormLabel sx={{ mb: 0.75, fontSize: '0.8rem', fontWeight: 600 }}>
+            Shift type
+          </FormLabel>
+          <ToggleButtonGroup
+            exclusive
+            color="primary"
+            size="small"
+            value={formData.shiftType || 'standard'}
+            onChange={(_e, next) => {
+              if (!next) return;
+              setFormData((prev) => ({ ...prev, shiftType: next }));
+            }}
+          >
+            <ToggleButton value="standard" sx={{ textTransform: 'none', px: 2 }}>
+              Standard shift
+            </ToggleButton>
+            <ToggleButton value="open" sx={{ textTransform: 'none', px: 2 }}>
+              Open shift (no set times)
+            </ToggleButton>
+          </ToggleButtonGroup>
+        </FormControl>
+
+        {formData.shiftType === 'open' ? (
+          /* ---- Open shift: a date range with no fixed daily times ---- */
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <Alert severity="info" sx={{ '& .MuiAlert-message': { width: '100%' } }}>
+              An <strong>Open Shift</strong> is a standing assignment over a date range with
+              no fixed daily times. Place your regular crew here — they get an ongoing
+              assignment and you enter their hours weekly. It won't appear on the public jobs
+              board for workers to apply to.
+            </Alert>
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={4}>
+                <TextField
+                  fullWidth
+                  label="Start date"
+                  type="date"
+                  value={formData.shiftDate}
+                  onChange={(e) => {
+                    const nextStart = e.target.value;
+                    let nextEnd = formData.endDate;
+                    if (nextEnd && nextStart && nextEnd < nextStart) nextEnd = nextStart;
+                    setFormData({ ...formData, shiftDate: nextStart, endDate: nextEnd });
+                  }}
+                  InputLabelProps={{ shrink: true }}
+                  required
+                />
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <TextField
+                  fullWidth
+                  label="End date (optional)"
+                  type="date"
+                  value={formData.endDate || ''}
+                  onChange={(e) => {
+                    const nextEnd = e.target.value;
+                    const nextStart = formData.shiftDate;
+                    setFormData({
+                      ...formData,
+                      endDate:
+                        nextStart && nextEnd && nextEnd < nextStart ? nextStart : nextEnd,
+                    });
+                  }}
+                  InputLabelProps={{ shrink: true }}
+                  helperText="Blank = ongoing / rolling crew (close out later)"
+                />
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <TextField
+                  fullWidth
+                  label="Workers needed (crew size)"
+                  type="number"
+                  inputProps={{ min: 1, max: 999 }}
+                  value={formData.totalStaffRequested ?? 1}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      totalStaffRequested: Math.max(1, parseInt(e.target.value, 10) || 1),
+                    })
+                  }
+                  InputLabelProps={{ shrink: true }}
+                  helperText="Target headcount for this crew"
+                />
+              </Grid>
+            </Grid>
+          </Box>
+        ) : (
+          <>
 
         {/* Single vs Multi toggle */}
         <FormControlLabel
@@ -2515,6 +2678,8 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
               })}
             </Grid>
           </Box>
+        )}
+          </>
         )}
 
         <TextField
