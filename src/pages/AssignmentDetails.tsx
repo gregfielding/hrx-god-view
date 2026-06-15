@@ -1544,11 +1544,51 @@ const AssignmentDetails: React.FC = () => {
             never be shown to anyone on this page (it previously leaked to
             tenant-staff viewers via the viewerIsTenantStaff gate). */}
 
-        {/* "My Schedule" card removed — its Date / Time / End Date simply
-            repeated the Assignment Info card above. Clock-in URL +
-            shift-specific details that previously lived here will be
-            re-homed into their own clearly-labeled sections if/when a
-            worker assignment actually carries them. */}
+        {/* Shift-specific details + clock-in URL, re-homed here from the
+            removed "My Schedule" card. Sourced from the shift doc
+            (`scheduleShift`), i18n-aware for the description. */}
+        {(() => {
+          const sDesc =
+            (preferredLanguage === 'es' && scheduleShift?.shiftDescription_i18n?.es?.trim()) ||
+            scheduleShift?.shiftDescription?.trim() ||
+            '';
+          const clockUrl = scheduleShift?.clockInUrl?.trim() || '';
+          if (!sDesc && !clockUrl) return null;
+          return (
+            <Card elevation={0} sx={{ borderRadius: 0 }}>
+              <CardContent sx={{ pt: 1, px: 1 }}>
+                <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
+                  Shift details
+                </Typography>
+                {clockUrl && (
+                  <Box sx={{ mb: sDesc ? 2 : 0 }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                      Clock-in
+                    </Typography>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      href={clockUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      sx={{ textTransform: 'none' }}
+                    >
+                      Open clock-in
+                    </Button>
+                  </Box>
+                )}
+                {sDesc && (
+                  <Box>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                      Shift-specific details
+                    </Typography>
+                    <LinkifiedText text={sDesc} variant="body2" color="text.secondary" />
+                  </Box>
+                )}
+              </CardContent>
+            </Card>
+          );
+        })()}
 
         {/* Staff Instructions: one card per section; show i18n text by preferred language, fallback to legacy .text */}
         {(() => {
