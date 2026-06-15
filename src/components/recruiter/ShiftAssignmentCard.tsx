@@ -175,6 +175,10 @@ export interface ShiftAssignmentCardProps {
    */
   onRevertCancel: (worker: Worker) => void;
   onOpenEditStartDate: (worker: Worker) => void;
+  /** Open-shift close-out: end the whole standing crew (stamps an endDate
+   *  on the shift + every active open assignment). Only rendered for open
+   *  shifts. */
+  onEndOpenShift?: () => void;
 
   // ── Tile readiness/blocker data (forwarded to PlacementWorkerTileMainColumn) ──
   hiringEntityName: string | null | undefined;
@@ -245,6 +249,7 @@ export function ShiftAssignmentCard({
   resendLoadingAssignmentId,
   resendCooldownUntilByAssignmentId,
   onConfirmPlacement,
+  onEndOpenShift,
   onConfirmForWorker,
   onResendOffer,
   onResendConfirmation,
@@ -451,6 +456,19 @@ export function ShiftAssignmentCard({
             </Box>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flex: '0 0 auto', ml: 'auto' }}>
+            {(selectedShift as any)?.shiftType === 'open' && onEndOpenShift && (
+              <Tooltip title="End this open shift — stamps an end date on the shift and every active crew assignment (keeps past timecards)">
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="warning"
+                  onClick={onEndOpenShift}
+                  sx={{ textTransform: 'none', whiteSpace: 'nowrap' }}
+                >
+                  End open shift
+                </Button>
+              </Tooltip>
+            )}
             <Tooltip title="Export confirmed staff as CSV">
               <span>
                 <IconButton

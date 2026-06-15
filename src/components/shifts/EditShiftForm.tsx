@@ -1527,7 +1527,10 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
       }
 
       const diff = computeShiftNotifyDiff(editingShift as any, plainNext);
-      if (shouldPromptShiftWorkerNotify(diff)) {
+      // Open shifts never notify workers — they have no fixed times to
+      // confirm, and editing one (e.g. stamping an end date) shouldn't pop
+      // the "Notify assigned workers?" prompt. Skip straight to the save.
+      if (formData.shiftType !== 'open' && shouldPromptShiftWorkerNotify(diff)) {
         // Pre-check assignments. Toggling single -> multi (or any
         // schedule edit) makes `scheduleChanged === true`, which used
         // to ALWAYS open the "Notify assigned workers?" dialog — even

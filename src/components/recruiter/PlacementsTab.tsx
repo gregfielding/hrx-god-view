@@ -384,6 +384,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const [removeFromCrewWorker, setRemoveFromCrewWorker] = useState<Worker | null>(null);
   const [removeFromCrewDate, setRemoveFromCrewDate] = useState<string>('');
   const [removingFromCrew, setRemovingFromCrew] = useState(false);
+  // Open-shift close-out: end the whole shift (cascades endDate to the
+  // shift doc + every active crew assignment).
+  const [endOpenShift, setEndOpenShift] = useState<Shift | null>(null);
+  const [endOpenShiftDate, setEndOpenShiftDate] = useState<string>('');
+  const [endingOpenShift, setEndingOpenShift] = useState(false);
   const [previewEmailOpen, setPreviewEmailOpen] = useState(false);
   const [previewEmailSubject, setPreviewEmailSubject] = useState<string>('');
   const [previewEmailHtml, setPreviewEmailHtml] = useState<string>('');
@@ -3700,6 +3705,42 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   };
 
+  const openEndOpenShiftDialog = (shift: Shift) => {
+    const d = new Date();
+    const todayIso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+      d.getDate(),
+    ).padStart(2, '0')}`;
+    setEndOpenShiftDate(todayIso);
+    setEndOpenShift(shift);
+  };
+
+  const handleEndOpenShift = async (shift: Shift, endDate: string) => {
+    if (!tenantId || !jobOrderId || !shift.id) {
+      setError('Missing shift to end');
+      return;
+    }
+    setEndingOpenShift(true);
+    try {
+      setError(null);
+      const fn = httpsCallable(functions, 'openShiftSetEndDate');
+      const res = await fn({ tenantId, jobOrderId, shiftId: shift.id, endDate });
+      const updated = (res?.data as any)?.updated ?? 0;
+      setEndOpenShift(null);
+      setPoolRefreshTick((n) => n + 1);
+      setAssignToast({
+        message: `Open shift ended effective ${endDate} — ${updated} crew assignment${
+          updated === 1 ? '' : 's'
+        } closed out.`,
+        severity: 'success',
+      });
+    } catch (err: any) {
+      console.error('End open shift failed:', err);
+      setError(err?.message || 'Failed to end open shift');
+    } finally {
+      setEndingOpenShift(false);
+    }
+  };
+
   const handleUnplaceToWorkerPool = async (worker: Worker) => {
     if (worker.isPlacementOnly) {
       await deletePlacement(worker);
@@ -4060,6 +4101,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         resendLoadingAssignmentId={resendLoadingAssignmentId}
                         resendCooldownUntilByAssignmentId={resendCooldownUntilByAssignmentId}
                         onConfirmPlacement={handleConfirmPlacement}
+                        onEndOpenShift={
+                          (shift as any).shiftType === 'open'
+                            ? () => openEndOpenShiftDialog(shift)
+                            : undefined
+                        }
                         onConfirmForWorker={handleConfirmForWorker}
                         onRevertDecline={handleRevertDecline}
                         onRevertCancel={handleRevertCancel}
@@ -4682,6 +4728,46 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
               }
             >
               {removingFromCrew ? 'Removing…' : 'Remove from crew'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Open-shift close-out: end the whole shift — stamps an endDate on
+            the shift doc + every active crew assignment. */}
+        <Dialog
+          open={!!endOpenShift}
+          onClose={() => !endingOpenShift && setEndOpenShift(null)}
+          maxWidth="xs"
+          fullWidth
+        >
+          <DialogTitle>End open shift?</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" sx={{ mb: 2 }}>
+              This ends <strong>{endOpenShift?.shiftTitle || 'this open shift'}</strong> for the
+              whole crew. Every active worker stops appearing on timecards after the date below;
+              already-entered hours are kept and no message is sent.
+            </Typography>
+            <TextField
+              fullWidth
+              label="Last day of the shift"
+              type="date"
+              value={endOpenShiftDate}
+              onChange={(e) => setEndOpenShiftDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              disabled={endingOpenShift}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setEndOpenShift(null)} disabled={endingOpenShift}>
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              color="warning"
+              disabled={endingOpenShift || !endOpenShiftDate}
+              onClick={() => endOpenShift && handleEndOpenShift(endOpenShift, endOpenShiftDate)}
+            >
+              {endingOpenShift ? 'Ending…' : 'End open shift'}
             </Button>
           </DialogActions>
         </Dialog>
