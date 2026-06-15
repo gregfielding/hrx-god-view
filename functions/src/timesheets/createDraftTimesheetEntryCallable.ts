@@ -239,6 +239,14 @@ function checkAssignmentScheduledForDate(
     }
   }
 
+  // Open shift (standing-crew, no fixed times): there's no weeklySchedule
+  // to validate against. The date-window check above is the only gate —
+  // the recruiter enters total hours manually (actualHoursOverride), so
+  // the entry is created with no scheduled start/end/break.
+  if (assignment.isOpenShift === true || assignment.noFixedTimes === true) {
+    return { ok: true, resolution: { startTime: '', endTime: '', breakMinutes: 0 } };
+  }
+
   const dow = dowFromIso(workDate);
   if (dow < 0 || dow > 6) {
     return { ok: false, reason: `workDate ${workDate} could not be parsed.` };

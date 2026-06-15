@@ -95,6 +95,10 @@ export interface AssignmentSnapshot {
   payRate: number;
   billRate: number;
   shiftBreakDefaultMinutes: number;
+  /** True for open-shift (standing-crew) assignments — no fixed daily
+   *  times. The grid generates a blank row per calendar day and the
+   *  recruiter enters total hours manually (actualHoursOverride). */
+  isOpenShift: boolean;
 }
 
 /** A "scheduled time" extracted from `weeklySchedule[dow]` for a given
@@ -108,6 +112,11 @@ export interface ScheduledShift {
   /** Minutes — sourced from `assignment.shiftBreakDefaultMinutes`. */
   breakMinutes: number;
 }
+
+/** Synthetic "no fixed times" schedule used to seed open-shift rows.
+ *  Scheduled hours compute to 0; the recruiter enters the real total via
+ *  the manual hours-override cell. */
+const OPEN_SHIFT_SCHEDULED: ScheduledShift = { startTime: '', endTime: '', breakMinutes: 0 };
 
 /** WC display block stamped onto each row by the resolver. Same chain
  *  the server pre-flight uses, so the grid's resolved value matches
@@ -320,6 +329,7 @@ function buildAssignmentSnapshot(
       typeof raw.shiftBreakDefaultMinutes === 'number'
         ? raw.shiftBreakDefaultMinutes
         : 0,
+    isOpenShift: rawAny.isOpenShift === true || rawAny.noFixedTimes === true,
   };
 }
 
@@ -509,6 +519,15 @@ export async function resolveTimesheetGrid(
     const startStr = isYyyyMmDdString(a.startDate) ? a.startDate.trim() : null;
     const endStr =
       isYyyyMmDdString(a.endDate) ? a.endDate.trim() : null;
+    // Open shift = standing-crew assignment with no fixed daily times.
+    // It carries no weeklySchedule, so the per-DOW expansion below would
+    // yield zero rows. Instead generate a blank row for EVERY calendar
+    // day in the assignment's active window ∩ the period; the recruiter
+    // enters total hours per worked day (actualHoursOverride) and leaves
+    // off-days blank (no entry doc is created for an untouched row).
+    const isOpen =
+      (a as unknown as Record<string, unknown>).isOpenShift === true ||
+      (a as unknown as Record<string, unknown>).noFixedTimes === true;
 
     for (const d of periodDates) {
       // Day must also be inside the assignment's own active window.
@@ -516,12 +535,17 @@ export async function resolveTimesheetGrid(
       // Tuesday would still yield a Wed row.
       if (startStr && !isoDateGte(d, startStr)) continue;
       if (endStr && !isoDateLte(d, endStr)) continue;
+      if (isOpen) {
+        tuples.push({ assignment: a, workDate: d, scheduled: OPEN_SHIFT_SCHEDULED });
+        perAssignmentDayCount += 1;
+        continue;
+      }
       const scheduled = scheduledShiftForDate(a, d);
       if (!scheduled) continue;
       tuples.push({ assignment: a, workDate: d, scheduled });
       perAssignmentDayCount += 1;
     }
-    if (perAssignmentDayCount === 0 && !a.weeklySchedule) {
+    if (perAssignmentDayCount === 0 && !a.weeklySchedule && !isOpen) {
       errors.push(
         `Assignment ${a.id} overlaps the period but has no weeklySchedule — no rows generated.`,
       );

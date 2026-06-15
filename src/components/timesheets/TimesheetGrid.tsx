@@ -461,12 +461,22 @@ const WorkerSiteCell: React.FC<{ row: TimesheetGridRow }> = ({ row }) => (
 
 const ScheduledCell: React.FC<{ row: TimesheetGridRow }> = ({ row }) => (
   <TableCell>
-    {row.scheduled.startTime}–{row.scheduled.endTime}
-    {row.scheduled.breakMinutes > 0 ? (
-      <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>
-        ({row.scheduled.breakMinutes}m brk)
+    {row.assignment.isOpenShift ? (
+      // Open shift: no fixed schedule — the recruiter enters total hours
+      // manually, so there's no scheduled start/end to show.
+      <Typography component="span" variant="caption" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+        Open · enter hours
       </Typography>
-    ) : null}
+    ) : (
+      <>
+        {row.scheduled.startTime}–{row.scheduled.endTime}
+        {row.scheduled.breakMinutes > 0 ? (
+          <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>
+            ({row.scheduled.breakMinutes}m brk)
+          </Typography>
+        ) : null}
+      </>
+    )}
   </TableCell>
 );
 
