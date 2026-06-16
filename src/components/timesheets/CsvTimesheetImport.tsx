@@ -43,6 +43,7 @@ import {
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import Papa from 'papaparse';
+import * as XLSX from 'xlsx';
 import { httpsCallable } from 'firebase/functions';
 import { collection, getDocs } from 'firebase/firestore';
 
@@ -54,6 +55,10 @@ import {
   type ParsedImport,
   type ImportRowStatus,
 } from '../../utils/timesheets/indeedFlexImport';
+import {
+  mapConnectTeamRows,
+  looksLikeConnectTeam,
+} from '../../utils/timesheets/connectTeamImport';
 
 /** One worker-match result from the importTimesheetMatchWorkers callable. */
 interface MatchRowResult {
@@ -116,10 +121,26 @@ interface MatchWorkersResponse {
   results: MatchRowResult[];
 }
 
-type CustomerKey = 'indeed_flex';
+type CustomerKey = 'indeed_flex' | 'connect_team';
 
-const CUSTOMERS: Array<{ key: CustomerKey; label: string }> = [
-  { key: 'indeed_flex', label: 'Indeed Flex' },
+const CUSTOMERS: Array<{
+  key: CustomerKey;
+  label: string;
+  /** File kind the export comes as. */
+  fileKind: 'csv' | 'xlsx';
+  /** Account this customer's timesheets always belong to (informational). */
+  account?: string;
+  /** Substring used to auto-select the paying entity when picked. */
+  defaultEntityMatch?: string;
+}> = [
+  { key: 'indeed_flex', label: 'Indeed Flex', fileKind: 'csv' },
+  {
+    key: 'connect_team',
+    label: 'Connect Team',
+    fileKind: 'xlsx',
+    account: 'VenueSmart',
+    defaultEntityMatch: 'c1 events',
+  },
 ];
 
 const STATUS_LABEL: Record<ImportRowStatus, string> = {
@@ -388,6 +409,48 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     resetMatch();
     setFileName(file.name);
     setParsing(true);
+
+    // Connect Team exports as .xlsx (parse the "All Employees" sheet with
+    // SheetJS); Indeed Flex exports as CSV (PapaParse).
+    if (customer === 'connect_team') {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target?.result as ArrayBuffer);
+          const wb = XLSX.read(data, { type: 'array' });
+          const sheetName =
+            wb.SheetNames.find((n) => n.trim().toLowerCase() === 'all employees') ||
+            wb.SheetNames[0];
+          const ws = wb.Sheets[sheetName];
+          const rawRows = XLSX.utils.sheet_to_json(ws, {
+            raw: false,
+            defval: '',
+          }) as Array<Record<string, unknown>>;
+          if (!rawRows.length) {
+            setError('That file has no data rows.');
+            return;
+          }
+          if (!looksLikeConnectTeam(rawRows)) {
+            setError(
+              "This doesn't look like a Connect Team export — it's missing expected columns (First name, Last name, Start Date, Daily total hours, Type). Check the file or customer selection.",
+            );
+            return;
+          }
+          setParsed(mapConnectTeamRows(rawRows));
+        } catch (err: any) {
+          setError(`Failed to parse the Excel file: ${err?.message || err}`);
+        } finally {
+          setParsing(false);
+        }
+      };
+      reader.onerror = () => {
+        setError('Failed to read the file.');
+        setParsing(false);
+      };
+      reader.readAsArrayBuffer(file);
+      return;
+    }
+
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
@@ -545,11 +608,19 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
             label="Customer"
             value={customer}
             onChange={(e) => {
-              setCustomer(e.target.value as CustomerKey);
+              const next = e.target.value as CustomerKey;
+              setCustomer(next);
               setParsed(null);
               setError(null);
               setFileName('');
               resetMatch();
+              // Auto-select the customer's standing paying entity (e.g.
+              // Connect Team / VenueSmart always pays via C1 Events LLC).
+              const match = CUSTOMERS.find((c) => c.key === next)?.defaultEntityMatch;
+              if (match) {
+                const ent = entities.find((x) => x.name.toLowerCase().includes(match));
+                if (ent) setEntityId(ent.id);
+              }
             }}
           >
             {CUSTOMERS.map((c) => (
@@ -585,12 +656,20 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           disabled={parsing}
           sx={{ textTransform: 'none' }}
         >
-          {parsing ? 'Parsing…' : 'Upload CSV'}
+          {parsing
+            ? 'Parsing…'
+            : customer === 'connect_team'
+              ? 'Upload Excel'
+              : 'Upload CSV'}
         </Button>
         <input
           ref={fileInputRef}
           type="file"
-          accept=".csv,text/csv"
+          accept={
+            customer === 'connect_team'
+              ? '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+              : '.csv,text/csv'
+          }
           hidden
           onChange={onPick}
         />
