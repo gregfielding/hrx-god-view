@@ -374,6 +374,7 @@ export { onAssignmentWriteEnsureDenormFields } from './timesheets/onAssignmentWr
 export { createDraftTimesheetEntryCallable } from './timesheets/createDraftTimesheetEntryCallable';
 export { importTimesheetMatchWorkers } from './timesheets/importTimesheetMatchWorkers';
 export { saveTimesheetSiteMapping } from './timesheets/timesheetSiteMappings';
+export { saveTimesheetWorkerAlias } from './timesheets/timesheetWorkerAliases';
 export { approveTimesheetEntriesCallable } from './timesheets/approveTimesheetEntriesCallable';
 // Mirror of approve in reverse — flips `approved` rows back to `draft`
 // so recruiters can pull a row out of the Submit-to-Everee queue when

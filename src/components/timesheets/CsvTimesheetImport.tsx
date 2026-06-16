@@ -79,6 +79,17 @@ interface MatchRowResult {
   payRate: number | null;
   payRateSource: 'assignment' | 'site_mapping' | 'none';
   needsPayRate: boolean;
+  /** Candidate HRX workers to resolve a no-match / ambiguous email. */
+  suggestions?: WorkerSuggestion[];
+}
+
+/** A candidate HRX worker offered when an email doesn't resolve cleanly. */
+interface WorkerSuggestion {
+  userId: string;
+  displayName: string | null;
+  email: string | null;
+  evereeLinked: boolean;
+  reason: string;
 }
 
 /** A pickable HRX job order for the site-mapping dialog. */
@@ -146,6 +157,13 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   const [mapJobOrder, setMapJobOrder] = useState<JobOrderOption | null>(null);
   const [savingMapping, setSavingMapping] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
+  // Worker resolution (slice #1): pick the right HRX worker for an
+  // unresolved CSV email, then remember it as an alias.
+  const [resolveRow, setResolveRow] = useState<{ email: string; name: string } | null>(null);
+  const [resolveSuggestions, setResolveSuggestions] = useState<WorkerSuggestion[]>([]);
+  const [resolvePick, setResolvePick] = useState<string>('');
+  const [savingAlias, setSavingAlias] = useState(false);
+  const [resolveError, setResolveError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const importableRows = parsed?.rows.filter((r) => r.status === 'importable') ?? [];
@@ -211,6 +229,36 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
       setMapError(err?.message || 'Failed to save the site mapping.');
     } finally {
       setSavingMapping(false);
+    }
+  };
+
+  const openResolveDialog = (email: string, name: string, suggestions: WorkerSuggestion[]) => {
+    setResolveRow({ email, name });
+    setResolveSuggestions(suggestions);
+    setResolvePick(suggestions[0]?.userId ?? '');
+    setResolveError(null);
+  };
+
+  const saveAlias = async () => {
+    if (!resolveRow || !resolvePick) return;
+    setSavingAlias(true);
+    setResolveError(null);
+    try {
+      const fn = httpsCallable<
+        { tenantId: string; email: string; userId: string },
+        { ok: true; docId: string; displayName: string | null }
+      >(functions, 'saveTimesheetWorkerAlias');
+      await fn({ tenantId, email: resolveRow.email, userId: resolvePick });
+      setResolveRow(null);
+      setResolveSuggestions([]);
+      setResolvePick('');
+      // Re-run the match so every row with this email resolves to the worker.
+      await runMatch();
+    } catch (err: any) {
+      console.error('saveTimesheetWorkerAlias failed:', err);
+      setResolveError(err?.message || 'Failed to save the worker match.');
+    } finally {
+      setSavingAlias(false);
     }
   };
 
@@ -481,9 +529,29 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                     {r.status !== 'importable' ? null : !match ? (
                       <Typography variant="caption" color="text.secondary">not matched yet</Typography>
                     ) : match.block ? (
-                      <Typography variant="caption" color="warning.main" display="block">
-                        {match.blockReason}
-                      </Typography>
+                      <>
+                        <Typography variant="caption" color="warning.main" display="block">
+                          {match.blockReason}
+                        </Typography>
+                        {match.suggestions && match.suggestions.length > 0 && (
+                          <Link
+                            component="button"
+                            type="button"
+                            variant="caption"
+                            underline="hover"
+                            onClick={() =>
+                              openResolveDialog(
+                                r.email,
+                                [r.firstName, r.lastName].filter(Boolean).join(' '),
+                                match.suggestions!,
+                              )
+                            }
+                            sx={{ display: 'block', mt: 0.25 }}
+                          >
+                            Resolve worker ({match.suggestions.length}) →
+                          </Link>
+                        )}
+                      </>
                     ) : (
                       <Typography variant="caption" color="success.main" display="block" noWrap title={match.displayName ?? ''}>
                         ✓ {match.displayName}
@@ -715,6 +783,78 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
             sx={{ textTransform: 'none' }}
           >
             {savingMapping ? 'Saving…' : 'Save mapping & re-match'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={resolveRow != null}
+        onClose={() => (savingAlias ? null : setResolveRow(null))}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>Resolve worker</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              The CSV email didn’t match a single HRX worker. Pick the right person — we’ll remember
+              this email → worker so future imports resolve automatically.
+            </Typography>
+            <Box>
+              <Typography variant="caption" color="text.secondary">
+                CSV worker
+              </Typography>
+              <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                {resolveRow?.name || '—'}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {resolveRow?.email}
+              </Typography>
+            </Box>
+            <FormControl fullWidth size="small" disabled={savingAlias}>
+              <InputLabel>HRX worker</InputLabel>
+              <Select
+                label="HRX worker"
+                value={resolvePick}
+                onChange={(e) => setResolvePick(e.target.value)}
+                renderValue={(val) => {
+                  const sug = resolveSuggestions.find((x) => x.userId === val);
+                  return sug ? sug.displayName || sug.email || sug.userId : '';
+                }}
+              >
+                {resolveSuggestions.map((sug) => (
+                  <MenuItem key={sug.userId} value={sug.userId}>
+                    <Box>
+                      <Typography variant="body2">
+                        {sug.displayName || '(no name)'}
+                        {sug.evereeLinked ? ' · Everee ✓' : ' · not linked'}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {sug.email || 'no email'} — {sug.reason}
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            {resolveError && (
+              <Alert severity="error" onClose={() => setResolveError(null)}>
+                {resolveError}
+              </Alert>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setResolveRow(null)} disabled={savingAlias} sx={{ textTransform: 'none' }}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={saveAlias}
+            disabled={!resolvePick || savingAlias}
+            sx={{ textTransform: 'none' }}
+          >
+            {savingAlias ? 'Saving…' : 'Use this match & re-match'}
           </Button>
         </DialogActions>
       </Dialog>

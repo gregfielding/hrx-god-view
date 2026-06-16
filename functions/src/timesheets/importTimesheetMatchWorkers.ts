@@ -31,6 +31,7 @@ import {
 } from '../payroll/workerContextResolver';
 import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
 import { normalizeSite, siteMappingDocId } from './timesheetSiteMappings';
+import { normalizeEmail, workerAliasDocId } from './timesheetWorkerAliases';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -78,6 +79,19 @@ interface MatchRowResult {
   payRateSource: 'assignment' | 'site_mapping' | 'none';
   /** True when matched+linked but no pay rate resolved (needs inline entry). */
   needsPayRate: boolean;
+  /** Candidate HRX workers offered when the email doesn't resolve cleanly
+   *  (no match → name fallback; ambiguous → the colliding records). The
+   *  recruiter picks one to create a remembered email→worker alias. */
+  suggestions?: WorkerSuggestion[];
+}
+
+/** A candidate HRX worker for resolving an unmatched / ambiguous email. */
+interface WorkerSuggestion {
+  userId: string;
+  displayName: string | null;
+  email: string | null;
+  evereeLinked: boolean;
+  reason: string;
 }
 
 interface MatchWorkersResponse {
@@ -103,23 +117,35 @@ async function assertTimesheetEditor(
   throw new HttpsError('permission-denied', 'Importing timesheets requires tenant security level 5–7.');
 }
 
+type EmailLookup =
+  | { kind: 'none' }
+  | { kind: 'one'; id: string; data: Record<string, any> }
+  | { kind: 'ambiguous'; candidates: Array<{ id: string; data: Record<string, any> }> };
+
 async function findUserByEmail(
   email: string,
   tenantId: string,
   evereeTenantId: string | null,
-): Promise<{ id: string; data: Record<string, any> } | null | 'ambiguous'> {
+): Promise<EmailLookup> {
+  // Expand the query set so a messy customer email still hits a clean HRX
+  // record: raw, lowercased, trimmed, and the canonical form (+tag stripped,
+  // Gmail dots removed). De-duplicated to keep the query count small.
   const variants = Array.from(
-    new Set([email, email.toLowerCase(), email.trim()].map((v) => v.trim()).filter(Boolean)),
+    new Set(
+      [email, email.toLowerCase(), email.trim(), normalizeEmail(email)]
+        .map((v) => v.trim())
+        .filter(Boolean),
+    ),
   );
   const found = new Map<string, Record<string, any>>();
   for (const v of variants) {
     const snap = await db.collection('users').where('email', '==', v).limit(5).get();
     snap.forEach((d) => found.set(d.id, d.data() as Record<string, any>));
   }
-  if (found.size === 0) return null;
+  if (found.size === 0) return { kind: 'none' };
   if (found.size === 1) {
     const [id, data] = [...found.entries()][0];
-    return { id, data };
+    return { kind: 'one', id, data };
   }
 
   // Several users share this email (duplicate records). Narrow to the
@@ -130,7 +156,7 @@ async function findUserByEmail(
   if (candidates.length === 0) candidates = [...found.entries()];
   if (candidates.length === 1) {
     const [id, data] = candidates[0];
-    return { id, data };
+    return { kind: 'one', id, data };
   }
 
   // Still ambiguous — prefer the record that's actually Everee-linked for
@@ -144,10 +170,38 @@ async function findUserByEmail(
     }
     if (linked.length === 1) {
       const [id, data] = linked[0];
-      return { id, data };
+      return { kind: 'one', id, data };
     }
   }
-  return 'ambiguous';
+  return { kind: 'ambiguous', candidates: candidates.map(([id, data]) => ({ id, data })) };
+}
+
+/** Load a single user doc by id (for alias resolution). */
+async function findUserById(uid: string): Promise<Record<string, any> | null> {
+  const snap = await db.collection('users').doc(uid).get();
+  return snap.exists ? (snap.data() as Record<string, any>) : null;
+}
+
+/**
+ * Bounded name lookup for the suggestion fallback. Queries the indexed
+ * `lastName` field (a few case variants), each capped — NEVER an unbounded
+ * tenant-wide scan. Returns the raw candidates; the caller filters by first
+ * name + tenant membership.
+ */
+async function queryUsersByLastName(
+  lastName: string,
+): Promise<Array<{ id: string; data: Record<string, any> }>> {
+  const ln = String(lastName || '').trim();
+  if (!ln) return [];
+  const titleCase = ln.charAt(0).toUpperCase() + ln.slice(1).toLowerCase();
+  const variants = Array.from(new Set([ln, ln.toLowerCase(), ln.toUpperCase(), titleCase]));
+  const found = new Map<string, Record<string, any>>();
+  for (const v of variants) {
+    // eslint-disable-next-line no-await-in-loop
+    const snap = await db.collection('users').where('lastName', '==', v).limit(10).get();
+    snap.forEach((d) => found.set(d.id, d.data() as Record<string, any>));
+  }
+  return [...found.entries()].map(([id, data]) => ({ id, data }));
 }
 
 /** All of a worker's assignments (by userId + candidateId), deduped, with
@@ -321,7 +375,7 @@ export const importTimesheetMatchWorkers = onCall(
     // ── Caches ──
     type Resolved =
       | { kind: 'none' }
-      | { kind: 'ambiguous' }
+      | { kind: 'ambiguous'; suggestions: WorkerSuggestion[] }
       | {
           kind: 'user';
           userId: string;
@@ -331,6 +385,8 @@ export const importTimesheetMatchWorkers = onCall(
           assignments: Assignment[];
         };
     const emailCache = new Map<string, Resolved>();
+    const aliasCache = new Map<string, string | null>();
+    const nameCache = new Map<string, WorkerSuggestion[]>();
     const joCache = new Map<string, Record<string, any> | null>();
     const shiftCache = new Map<string, Record<string, any> | null>();
 
@@ -410,40 +466,137 @@ export const importTimesheetMatchWorkers = onCall(
       };
     };
 
+    const buildUserResolved = async (
+      id: string,
+      data: Record<string, any>,
+    ): Promise<Resolved> => {
+      const displayName =
+        [data.firstName, data.lastName].filter(Boolean).join(' ') ||
+        (data.displayName as string) ||
+        id;
+      let evereeLinked = false;
+      let evereeWorkerId: string | null = null;
+      if (evereeTenantId) {
+        const ext = await resolveExternalWorkerId(tenantId, id, evereeTenantId);
+        evereeLinked = !!ext;
+        if (evereeLinked) {
+          evereeWorkerId = await resolveEvereeWorkerUuid(tenantId, id, evereeTenantId);
+        }
+      }
+      const assignments = await loadWorkerAssignments(tenantId, id);
+      return { kind: 'user', userId: id, displayName, evereeWorkerId, evereeLinked, assignments };
+    };
+
+    const buildSuggestion = async (
+      id: string,
+      data: Record<string, any>,
+      reason: string,
+    ): Promise<WorkerSuggestion> => {
+      let evereeLinked = false;
+      if (evereeTenantId) {
+        evereeLinked = !!(await resolveExternalWorkerId(tenantId, id, evereeTenantId));
+      }
+      return {
+        userId: id,
+        displayName:
+          [data.firstName, data.lastName].filter(Boolean).join(' ') ||
+          (typeof data.displayName === 'string' ? data.displayName : null),
+        email: typeof data.email === 'string' ? data.email : null,
+        evereeLinked,
+        reason,
+      };
+    };
+
+    // Name fallback (per row, cached by name) — when no email matched, offer
+    // same-last-name workers whose first name is consistent. Suggestions are
+    // never auto-applied; the recruiter confirms one to create an alias.
+    const nameSuggestions = async (
+      firstName: string,
+      lastName: string,
+    ): Promise<WorkerSuggestion[]> => {
+      const ln = String(lastName || '').trim();
+      if (!ln) return [];
+      const fn = String(firstName || '').trim().toLowerCase();
+      const cacheKey = `${ln.toLowerCase()}|${fn}`;
+      const cached = nameCache.get(cacheKey);
+      if (cached) return cached;
+      const rows = await queryUsersByLastName(ln);
+      const scored = rows
+        .map((x) => {
+          const dfn = String(x.data.firstName || '').trim().toLowerCase();
+          const firstOk = !fn || !dfn || dfn === fn || dfn.startsWith(fn) || fn.startsWith(dfn);
+          const tenantMember = !!(
+            x.data.tenantIds &&
+            typeof x.data.tenantIds === 'object' &&
+            x.data.tenantIds[tenantId]
+          );
+          return { ...x, firstOk, tenantMember };
+        })
+        .filter((x) => x.firstOk)
+        .sort((a, b) => Number(b.tenantMember) - Number(a.tenantMember))
+        .slice(0, 5);
+      const out: WorkerSuggestion[] = [];
+      for (const x of scored) {
+        // eslint-disable-next-line no-await-in-loop
+        out.push(
+          await buildSuggestion(
+            x.id,
+            x.data,
+            x.tenantMember ? 'name match (this tenant)' : 'name match',
+          ),
+        );
+      }
+      nameCache.set(cacheKey, out);
+      return out;
+    };
+
+    const resolveAlias = async (email: string): Promise<string | null> => {
+      const norm = normalizeEmail(email);
+      if (!norm) return null;
+      if (aliasCache.has(norm)) return aliasCache.get(norm) ?? null;
+      let uid: string | null = null;
+      try {
+        const snap = await db
+          .doc(`tenants/${tenantId}/timesheet_worker_aliases/${workerAliasDocId(email)}`)
+          .get();
+        uid = snap.exists ? String((snap.data() as any).userId || '') || null : null;
+      } catch {
+        uid = null;
+      }
+      aliasCache.set(norm, uid);
+      return uid;
+    };
+
     const resolveEmail = async (email: string): Promise<Resolved> => {
       const key = email.toLowerCase().trim();
       const cached = emailCache.get(key);
       if (cached) return cached;
-
-      const u = await findUserByEmail(key, tenantId, evereeTenantId);
       let resolved: Resolved;
-      if (u === null) {
-        resolved = { kind: 'none' };
-      } else if (u === 'ambiguous') {
-        resolved = { kind: 'ambiguous' };
-      } else {
-        const displayName =
-          [u.data.firstName, u.data.lastName].filter(Boolean).join(' ') ||
-          (u.data.displayName as string) ||
-          email;
-        let evereeLinked = false;
-        let evereeWorkerId: string | null = null;
-        if (evereeTenantId) {
-          const ext = await resolveExternalWorkerId(tenantId, u.id, evereeTenantId);
-          evereeLinked = !!ext;
-          if (evereeLinked) {
-            evereeWorkerId = await resolveEvereeWorkerUuid(tenantId, u.id, evereeTenantId);
-          }
+
+      // 1. A remembered email→worker alias wins outright.
+      const aliasUid = await resolveAlias(email);
+      if (aliasUid) {
+        const data = await findUserById(aliasUid);
+        if (data) {
+          resolved = await buildUserResolved(aliasUid, data);
+          emailCache.set(key, resolved);
+          return resolved;
         }
-        const assignments = await loadWorkerAssignments(tenantId, u.id);
-        resolved = {
-          kind: 'user',
-          userId: u.id,
-          displayName,
-          evereeWorkerId,
-          evereeLinked,
-          assignments,
-        };
+      }
+
+      // 2. Email lookup (expanded variants + duplicate tiebreak).
+      const u = await findUserByEmail(key, tenantId, evereeTenantId);
+      if (u.kind === 'one') {
+        resolved = await buildUserResolved(u.id, u.data);
+      } else if (u.kind === 'ambiguous') {
+        const suggestions: WorkerSuggestion[] = [];
+        for (const c of u.candidates) {
+          // eslint-disable-next-line no-await-in-loop
+          suggestions.push(await buildSuggestion(c.id, c.data, 'shares this email'));
+        }
+        resolved = { kind: 'ambiguous', suggestions };
+      } else {
+        resolved = { kind: 'none' };
       }
       emailCache.set(key, resolved);
       return resolved;
@@ -488,7 +641,15 @@ export const importTimesheetMatchWorkers = onCall(
       }
       const r = await resolveEmail(email);
       if (r.kind === 'none') {
-        results.push({ ...base, blockReason: `No HRX worker found for ${email}.` });
+        const suggestions = await nameSuggestions(
+          String(row.firstName || ''),
+          String(row.lastName || ''),
+        );
+        results.push({
+          ...base,
+          blockReason: `No HRX worker found for ${email}.`,
+          ...(suggestions.length ? { suggestions } : {}),
+        });
         continue;
       }
       if (r.kind === 'ambiguous') {
@@ -496,6 +657,7 @@ export const importTimesheetMatchWorkers = onCall(
           ...base,
           ambiguous: true,
           blockReason: 'Multiple HRX users share this email — resolve manually.',
+          ...(r.suggestions.length ? { suggestions: r.suggestions } : {}),
         });
         continue;
       }
