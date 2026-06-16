@@ -30,6 +30,7 @@ import {
   resolveEvereeWorkerUuid,
 } from '../payroll/workerContextResolver';
 import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
+import { normalizeSite, siteMappingDocId } from './timesheetSiteMappings';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -67,8 +68,8 @@ interface MatchRowResult {
   worksiteName: string | null;
   workersCompCode: string | null;
   payRate: number | null;
-  /** 'assignment' when payRate came from a paired assignment, else 'none'. */
-  payRateSource: 'assignment' | 'none';
+  /** Where the resolved pay context came from. */
+  payRateSource: 'assignment' | 'site_mapping' | 'none';
   /** True when matched+linked but no pay rate resolved (needs inline entry). */
   needsPayRate: boolean;
 }
@@ -198,15 +199,67 @@ const pickStr = (...c: unknown[]): string | undefined => {
   return undefined;
 };
 
+/** Resolve pay context from a JO + role (no assignment/shift) — used for
+ *  site-mapped rows. Picks the JO position matching the role when possible,
+ *  else the first position / JO-level rate. */
+function resolveJobOrderFields(
+  jo: Record<string, any>,
+  role: string,
+): {
+  payRate: number;
+  jobTitle: string | null;
+  worksiteId: string | null;
+  worksiteName: string | null;
+  workersCompCode: string | null;
+} {
+  const positions: Array<Record<string, any>> =
+    (Array.isArray(jo.positions) && jo.positions.length
+      ? jo.positions
+      : Array.isArray(jo.gigPositions)
+        ? jo.gigPositions
+        : []) || [];
+  const roleNorm = String(role || '').trim().toLowerCase();
+  const pos =
+    positions.find((p) => String(p?.jobTitle || '').trim().toLowerCase() === roleNorm) ||
+    (roleNorm
+      ? positions.find((p) => String(p?.jobTitle || '').trim().toLowerCase().includes(roleNorm))
+      : undefined) ||
+    positions[0] ||
+    null;
+  const payRate =
+    Number(pos?.payRate) > 0
+      ? Number(pos.payRate)
+      : Number(jo.payRate) > 0
+        ? Number(jo.payRate)
+        : 0;
+  const firstGig =
+    Array.isArray(jo.gigPositions) && jo.gigPositions.length > 0 ? jo.gigPositions[0] : null;
+  return {
+    payRate,
+    jobTitle: pickStr(pos?.jobTitle, jo.jobTitle, role) ?? null,
+    worksiteId: pickStr(jo.worksiteId, jo.locationId) ?? null,
+    worksiteName: pickStr(jo.worksiteName, jo.locationName) ?? null,
+    workersCompCode:
+      pickStr(
+        pos?.workersCompCode,
+        pos?.workersCompClassCode,
+        jo.workersCompCode,
+        jo.workersCompClassCode,
+        firstGig?.workersCompClassCode,
+      ) ?? null,
+  };
+}
+
 export const importTimesheetMatchWorkers = onCall(
   { cors: true },
   async (request): Promise<MatchWorkersResponse> => {
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required');
     }
-    const { tenantId, hiringEntityId, rows } = (request.data || {}) as {
+    const { tenantId, hiringEntityId, customer, rows } = (request.data || {}) as {
       tenantId?: string;
       hiringEntityId?: string;
+      customer?: string;
       rows?: MatchRowInput[];
     };
     if (!tenantId || !hiringEntityId || !Array.isArray(rows)) {
@@ -280,6 +333,39 @@ export const importTimesheetMatchWorkers = onCall(
       }
       shiftCache.set(key, shift);
       return shift;
+    };
+
+    // Site → JO mapping resolution (for rows with no paired assignment).
+    const siteMapCache = new Map<string, { jobOrderId: string } | null>();
+    const resolveSiteMapping = async (
+      site: string,
+      role: string,
+    ): Promise<Partial<MatchRowResult> | null> => {
+      const c = String(customer || '').trim();
+      const sNorm = normalizeSite(site);
+      if (!c || !sNorm) return null;
+      let mapping = siteMapCache.get(sNorm);
+      if (mapping === undefined) {
+        const docId = siteMappingDocId(c, site);
+        const snap = await db.doc(`tenants/${tenantId}/timesheet_site_mappings/${docId}`).get();
+        const data = snap.exists ? (snap.data() as Record<string, any>) : null;
+        mapping = data?.jobOrderId ? { jobOrderId: String(data.jobOrderId) } : null;
+        siteMapCache.set(sNorm, mapping);
+      }
+      if (!mapping) return null;
+      const jo = await loadJobOrder(mapping.jobOrderId);
+      if (!jo) return null;
+      const f = resolveJobOrderFields(jo, role);
+      return {
+        assignmentId: null,
+        jobOrderId: mapping.jobOrderId,
+        shiftId: null,
+        jobTitle: f.jobTitle,
+        worksiteId: f.worksiteId,
+        worksiteName: f.worksiteName,
+        workersCompCode: f.workersCompCode,
+        payRate: f.payRate || null,
+      };
     };
 
     const resolveEmail = async (email: string): Promise<Resolved> => {
@@ -397,7 +483,21 @@ export const importTimesheetMatchWorkers = onCall(
       // Payable. Best-effort assignment pairing + field resolution.
       const assignment = pairAssignment(r.assignments, workDate);
       if (!assignment) {
-        results.push({ ...matchedBase, block: false, blockReason: null }); // needsPayRate stays true
+        // No HRX assignment — fall back to a saved Site→JO mapping for this
+        // customer + site, if one exists.
+        const mapped = await resolveSiteMapping(String(row.site || ''), String(row.role || ''));
+        if (mapped) {
+          results.push({
+            ...matchedBase,
+            block: false,
+            blockReason: null,
+            ...mapped,
+            payRateSource: 'site_mapping',
+            needsPayRate: !(Number(mapped.payRate) > 0),
+          });
+        } else {
+          results.push({ ...matchedBase, block: false, blockReason: null }); // needsPayRate stays true
+        }
         continue;
       }
       const jobOrderId = pickStr(assignment.jobOrderId) ?? null;

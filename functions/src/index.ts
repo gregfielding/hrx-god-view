@@ -373,6 +373,7 @@ export { onAssignmentWriteEnsureDenormFields } from './timesheets/onAssignmentWr
 // resolver chain when P1.B denorm fields are absent.
 export { createDraftTimesheetEntryCallable } from './timesheets/createDraftTimesheetEntryCallable';
 export { importTimesheetMatchWorkers } from './timesheets/importTimesheetMatchWorkers';
+export { saveTimesheetSiteMapping } from './timesheets/timesheetSiteMappings';
 export { approveTimesheetEntriesCallable } from './timesheets/approveTimesheetEntriesCallable';
 // Mirror of approve in reverse — flips `approved` rows back to `draft`
 // so recruiters can pull a row out of the Submit-to-Everee queue when

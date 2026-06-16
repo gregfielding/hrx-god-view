@@ -11,12 +11,19 @@
 import React, { useRef, useState } from 'react';
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   Chip,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControl,
   FormControlLabel,
   InputLabel,
+  Link,
   MenuItem,
   Switch,
   Paper,
@@ -28,6 +35,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TextField,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -35,8 +43,9 @@ import UploadFileIcon from '@mui/icons-material/UploadFile';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import Papa from 'papaparse';
 import { httpsCallable } from 'firebase/functions';
+import { collection, getDocs } from 'firebase/firestore';
 
-import { functions } from '../../firebase';
+import { db, functions } from '../../firebase';
 import type { HiringEntity } from '../../types/recruiter/hiringEntity';
 import {
   mapIndeedFlexRows,
@@ -66,8 +75,16 @@ interface MatchRowResult {
   worksiteName: string | null;
   workersCompCode: string | null;
   payRate: number | null;
-  payRateSource: 'assignment' | 'none';
+  payRateSource: 'assignment' | 'site_mapping' | 'none';
   needsPayRate: boolean;
+}
+
+/** A pickable HRX job order for the site-mapping dialog. */
+interface JobOrderOption {
+  id: string;
+  jobTitle: string;
+  accountName: string;
+  label: string;
 }
 interface MatchWorkersResponse {
   evereeTenantId: string | null;
@@ -119,9 +136,81 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   // Excluded rows (future / absence / no-email) are hidden by default —
   // they're noise; the recruiter cares about the payable (importable) rows.
   const [showExcluded, setShowExcluded] = useState(false);
+  // Site → job order mapping (P3): job-order options loaded lazily on first
+  // map-dialog open, then cached; the dialog itself is keyed on the site string.
+  const [jobOrders, setJobOrders] = useState<JobOrderOption[] | null>(null);
+  const [jobOrdersLoading, setJobOrdersLoading] = useState(false);
+  const [mapSite, setMapSite] = useState<string | null>(null);
+  const [mapJobOrder, setMapJobOrder] = useState<JobOrderOption | null>(null);
+  const [savingMapping, setSavingMapping] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const importableRows = parsed?.rows.filter((r) => r.status === 'importable') ?? [];
+
+  // Lazily load the tenant's job orders for the mapping picker. Walks the
+  // three doc-path candidates the rest of the codebase uses and merges by id.
+  const loadJobOrders = async () => {
+    if (jobOrders || jobOrdersLoading) return;
+    setJobOrdersLoading(true);
+    try {
+      const byId = new Map<string, JobOrderOption>();
+      for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
+        try {
+          const snap = await getDocs(collection(db, 'tenants', tenantId, coll));
+          snap.forEach((d) => {
+            if (byId.has(d.id)) return;
+            const jo = d.data() as Record<string, any>;
+            const jobTitle = String(jo.jobTitle || jo.title || '').trim();
+            const accountName = String(
+              jo.recruiterAccountName || jo.accountName || jo.companyName || '',
+            ).trim();
+            byId.set(d.id, {
+              id: d.id,
+              jobTitle,
+              accountName,
+              label: `${jobTitle || '(untitled job order)'}${accountName ? ` — ${accountName}` : ''}`,
+            });
+          });
+        } catch {
+          /* collection may not exist; try next */
+        }
+      }
+      const opts = [...byId.values()].sort((a, b) => a.label.localeCompare(b.label));
+      setJobOrders(opts);
+    } finally {
+      setJobOrdersLoading(false);
+    }
+  };
+
+  const openMapDialog = (site: string) => {
+    setMapSite(site);
+    setMapJobOrder(null);
+    setMapError(null);
+    void loadJobOrders();
+  };
+
+  const saveMapping = async () => {
+    if (!mapSite || !mapJobOrder) return;
+    setSavingMapping(true);
+    setMapError(null);
+    try {
+      const fn = httpsCallable<
+        { tenantId: string; customer: string; site: string; jobOrderId: string },
+        { ok: true; docId: string; accountName: string | null }
+      >(functions, 'saveTimesheetSiteMapping');
+      await fn({ tenantId, customer, site: mapSite, jobOrderId: mapJobOrder.id });
+      setMapSite(null);
+      setMapJobOrder(null);
+      // Re-run the match so every row with this site picks up the new mapping.
+      await runMatch();
+    } catch (err: any) {
+      console.error('saveTimesheetSiteMapping failed:', err);
+      setMapError(err?.message || 'Failed to save the site mapping.');
+    } finally {
+      setSavingMapping(false);
+    }
+  };
 
   const runMatch = async () => {
     if (!entityId || importableRows.length === 0) return;
@@ -132,6 +221,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
         {
           tenantId: string;
           hiringEntityId: string;
+          customer: string;
           rows: Array<{
             rowIndex: number;
             email: string;
@@ -147,6 +237,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
       const res = await fn({
         tenantId,
         hiringEntityId: entityId,
+        customer,
         rows: importableRows.map((r) => ({
           rowIndex: r.rowIndex,
           email: r.email,
@@ -393,13 +484,33 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                   <TableCell align="right">{r.hours.toFixed(2)}</TableCell>
                   <TableCell sx={{ maxWidth: 280 }}>
                     <Typography variant="body2" noWrap title={r.site}>
-                      {r.site}
+                      {r.site || '—'}
                     </Typography>
+                    {match && !match.block && match.needsPayRate && r.site && (
+                      <Link
+                        component="button"
+                        type="button"
+                        variant="caption"
+                        underline="hover"
+                        onClick={() => openMapDialog(r.site)}
+                        sx={{ display: 'block', mt: 0.25 }}
+                      >
+                        {match.payRateSource === 'site_mapping' ? 'Re-map site →' : 'Map site → job order'}
+                      </Link>
+                    )}
                   </TableCell>
                   <TableCell>{r.role}</TableCell>
                   <TableCell align="right">
                     {match && match.payRate != null ? (
-                      <Tooltip title={match.payRateSource === 'assignment' ? 'From paired HRX assignment' : ''}>
+                      <Tooltip
+                        title={
+                          match.payRateSource === 'assignment'
+                            ? 'From paired HRX assignment'
+                            : match.payRateSource === 'site_mapping'
+                              ? 'From mapped site → job order'
+                              : ''
+                        }
+                      >
                         <Typography variant="body2">${match.payRate.toFixed(2)}</Typography>
                       </Tooltip>
                     ) : match && !match.block && match.needsPayRate ? (
@@ -468,12 +579,76 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           )}
           {matchByRow.size > 0 && (
             <Typography variant="caption" color="text.secondary">
-              Blocked rows need an HRX worker + Everee onboarding before they can be paid. Next
-              phase: pair assignments + fill pay rate/WC, then submit to Everee.
+              Blocked rows need an HRX worker + Everee onboarding before they can be paid.
+              “Needs rate” rows have no paired assignment — map their site to a job order to pull
+              the pay rate, WC code, and worksite, then submit to Everee.
             </Typography>
           )}
         </Box>
       )}
+
+      <Dialog open={mapSite != null} onClose={() => (savingMapping ? null : setMapSite(null))} fullWidth maxWidth="sm">
+        <DialogTitle>Map site to a job order</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              Connect this customer site to an HRX job order. We’ll pull the pay rate, WC code, and
+              worksite from the job order and remember this mapping for future imports.
+            </Typography>
+            <Box>
+              <Typography variant="caption" color="text.secondary">
+                Customer site
+              </Typography>
+              <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                {mapSite}
+              </Typography>
+            </Box>
+            <Autocomplete<JobOrderOption>
+              options={jobOrders ?? []}
+              loading={jobOrdersLoading}
+              value={mapJobOrder}
+              onChange={(_e, val) => setMapJobOrder(val)}
+              getOptionLabel={(o) => o.label}
+              isOptionEqualToValue={(a, b) => a.id === b.id}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="HRX job order"
+                  placeholder="Search job orders…"
+                  size="small"
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {jobOrdersLoading ? <CircularProgress size={16} /> : null}
+                        {params.InputProps.endAdornment}
+                      </>
+                    ),
+                  }}
+                />
+              )}
+            />
+            {mapError && (
+              <Alert severity="error" onClose={() => setMapError(null)}>
+                {mapError}
+              </Alert>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setMapSite(null)} disabled={savingMapping} sx={{ textTransform: 'none' }}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={saveMapping}
+            disabled={!mapJobOrder || savingMapping}
+            sx={{ textTransform: 'none' }}
+          >
+            {savingMapping ? 'Saving…' : 'Save mapping & re-match'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
