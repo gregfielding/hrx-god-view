@@ -368,13 +368,17 @@ export const importTimesheetMatchWorkers = onCall(
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required');
     }
-    const { tenantId, hiringEntityId, hiringEntityName, customer, rows } = (request.data || {}) as {
-      tenantId?: string;
-      hiringEntityId?: string;
-      hiringEntityName?: string;
-      customer?: string;
-      rows?: MatchRowInput[];
-    };
+    const { tenantId, hiringEntityId, hiringEntityName, customer, customerAccount, rows } =
+      (request.data || {}) as {
+        tenantId?: string;
+        hiringEntityId?: string;
+        hiringEntityName?: string;
+        customer?: string;
+        /** Standing account for this customer (e.g. Connect Team → "VenueSmart").
+         *  Used to break same-name ties toward a worker assigned to that account. */
+        customerAccount?: string;
+        rows?: MatchRowInput[];
+      };
     if (!tenantId || !hiringEntityId || !Array.isArray(rows)) {
       throw new HttpsError('invalid-argument', 'tenantId, hiringEntityId, and rows[] are required');
     }
@@ -729,6 +733,45 @@ export const importTimesheetMatchWorkers = onCall(
       return uid;
     };
 
+    // Does this worker have a (non-cancelled) assignment under a job order for
+    // the customer's standing account (e.g. VenueSmart)? Used to break a
+    // same-name tie toward the person actually staffed on that client's work.
+    const normAcct = (s: unknown): string =>
+      String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const accountNorm = normAcct(customerAccount);
+    const assignedAccountCache = new Map<string, boolean>();
+    const isAssignedToAccount = async (userId: string): Promise<boolean> => {
+      if (!accountNorm) return false;
+      if (assignedAccountCache.has(userId)) return assignedAccountCache.get(userId)!;
+      let hit = false;
+      try {
+        const assignments = await loadWorkerAssignments(tenantId, userId);
+        for (const a of assignments) {
+          const aAcct = normAcct(pickStr(a.accountName, a.recruiterAccountName, a.companyName));
+          if (aAcct && aAcct.includes(accountNorm)) {
+            hit = true;
+            break;
+          }
+          const joId = pickStr(a.jobOrderId);
+          if (joId) {
+            // eslint-disable-next-line no-await-in-loop
+            const jo = await loadJobOrder(joId);
+            const joAcct = normAcct(
+              pickStr(jo?.recruiterAccountName, jo?.accountName, jo?.companyName),
+            );
+            if (joAcct && joAcct.includes(accountNorm)) {
+              hit = true;
+              break;
+            }
+          }
+        }
+      } catch {
+        hit = false;
+      }
+      assignedAccountCache.set(userId, hit);
+      return hit;
+    };
+
     const nameMatchCache = new Map<string, Resolved>();
     const resolveByName = async (firstName: string, lastName: string): Promise<Resolved> => {
       const fn = firstName.trim();
@@ -750,8 +793,9 @@ export const importTimesheetMatchWorkers = onCall(
       }
 
       // 2. Conservative match: EXACT first+last among this tenant's workers.
-      // Auto-match only when exactly ONE such worker is Everee-linked on the
-      // paying entity; any duplicate name or no Everee link → needs selection.
+      // One candidate → match. Multiple → disambiguate by active-Everee-account
+      // and customer-account assignment (see below); auto-match only when a
+      // signal uniquely identifies one, else surface candidates for a pick.
       const fnNorm = fn.toLowerCase();
       if (!ln || !fnNorm) {
         resolved = { kind: 'none' };
@@ -770,21 +814,56 @@ export const importTimesheetMatchWorkers = onCall(
       });
       if (candidates.length === 0) {
         resolved = { kind: 'none' };
+      } else if (candidates.length === 1) {
+        // Only one worker by that name — match them. (If they're not Everee-
+        // linked they'll surface as blocked with the actionable reason.)
+        resolved = await buildUserResolved(candidates[0].id, candidates[0].data);
       } else {
-        const linked: typeof candidates = [];
+        // Multiple same-name workers — disambiguate by signal: who has an
+        // active Everee account, and who's assigned to the customer's account
+        // (e.g. VenueSmart). Auto-match only when a signal UNIQUELY identifies
+        // one; otherwise present the candidates (annotated) for a manual pick.
+        const scored: Array<{
+          id: string;
+          data: Record<string, any>;
+          linked: boolean;
+          vsAssigned: boolean;
+        }> = [];
         for (const c of candidates) {
           // eslint-disable-next-line no-await-in-loop
-          if (evereeTenantId && (await resolveExternalWorkerId(tenantId, c.id, evereeTenantId))) {
-            linked.push(c);
-          }
+          const linked = evereeTenantId
+            ? !!(await resolveExternalWorkerId(tenantId, c.id, evereeTenantId))
+            : false;
+          // eslint-disable-next-line no-await-in-loop
+          const vsAssigned = await isAssignedToAccount(c.id);
+          scored.push({ id: c.id, data: c.data, linked, vsAssigned });
         }
-        if (linked.length === 1) {
-          resolved = await buildUserResolved(linked[0].id, linked[0].data);
+        const strong = scored.filter((c) => c.linked && c.vsAssigned);
+        const linkedOnly = scored.filter((c) => c.linked);
+        let pick: (typeof scored)[number] | null = null;
+        if (strong.length === 1) {
+          pick = strong[0]; // active Everee account + assigned to this account
+        } else if (linkedOnly.length === 1) {
+          pick = linkedOnly[0]; // the only one with an active Everee account
+        }
+        if (pick) {
+          resolved = await buildUserResolved(pick.id, pick.data);
         } else {
+          // Surface candidates, strongest signal first, annotated so the
+          // recruiter can pick the right one in the Resolve dialog.
+          const order = (c: (typeof scored)[number]) =>
+            (c.linked ? 2 : 0) + (c.vsAssigned ? 1 : 0);
+          const sorted = [...scored].sort((a, b) => order(b) - order(a));
           const suggestions: WorkerSuggestion[] = [];
-          for (const c of candidates) {
+          for (const c of sorted) {
+            const reason = [
+              c.linked ? 'Everee active' : 'no Everee account',
+              accountNorm ? (c.vsAssigned ? `assigned to ${customerAccount}` : `no ${customerAccount} job`) : '',
+            ]
+              .filter(Boolean)
+              .join(' · ');
             // eslint-disable-next-line no-await-in-loop
-            suggestions.push(await buildSuggestion(c.id, c.data, 'name match'));
+            suggestions.push(await buildSuggestion(c.id, c.data, reason));
           }
           resolved = { kind: 'ambiguous', suggestions };
         }
