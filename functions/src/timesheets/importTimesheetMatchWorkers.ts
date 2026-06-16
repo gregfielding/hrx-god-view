@@ -574,6 +574,98 @@ export const importTimesheetMatchWorkers = onCall(
       };
     };
 
+    // Auto JO-name match (for rows with no manual mapping): partial-match the
+    // row's site (the customer's "Type"/event, e.g. "Railbird Music Festival")
+    // against the customer account's (VenueSmart) job orders by name. Those
+    // JOs carry the pay rate / WC / worksite on their positions, so a confident
+    // name match resolves the row with no manual mapping. Marked "probable"
+    // (site_mapping) — a name match, not a paired assignment.
+    let accountJoCache: Array<{ id: string; name: string; jo: Record<string, any> }> | null = null;
+    const loadCustomerAccountJobOrders = async () => {
+      if (accountJoCache) return accountJoCache;
+      const acct = String(customerAccount || '').trim();
+      const byId = new Map<string, { id: string; name: string; jo: Record<string, any> }>();
+      if (acct) {
+        for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
+          for (const field of ['recruiterAccountName', 'accountName', 'companyName']) {
+            try {
+              // eslint-disable-next-line no-await-in-loop
+              const snap = await db
+                .collection(`tenants/${tenantId}/${coll}`)
+                .where(field, '==', acct)
+                .limit(200)
+                .get();
+              snap.forEach((d) => {
+                if (byId.has(d.id)) return;
+                const jo = d.data() as Record<string, any>;
+                const name = pickStr(jo.jobTitle, jo.title, jo.name, jo.positionTitle) || '';
+                byId.set(d.id, { id: d.id, name, jo });
+              });
+            } catch {
+              /* field/index may not exist on this collection — skip */
+            }
+          }
+        }
+      }
+      accountJoCache = [...byId.values()];
+      return accountJoCache;
+    };
+
+    const normJoName = (s: unknown): string =>
+      String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+    const joNameMatchCache = new Map<string, Partial<MatchRowResult> | null>();
+    const resolveByJobOrderName = async (
+      site: string,
+      role: string,
+    ): Promise<Partial<MatchRowResult> | null> => {
+      const target = normJoName(site);
+      if (!target || !String(customerAccount || '').trim()) return null;
+      if (joNameMatchCache.has(target)) return joNameMatchCache.get(target) ?? null;
+      const jos = await loadCustomerAccountJobOrders();
+      const tTokens = new Set(target.split(' ').filter((w) => w.length > 2));
+      let best: { id: string; jo: Record<string, any> } | null = null;
+      let bestScore = 0;
+      for (const j of jos) {
+        const n = normJoName(j.name);
+        if (!n) continue;
+        let score = 0;
+        if (n === target) score = 1;
+        else if (n.includes(target) || target.includes(n)) score = 0.9;
+        else if (tTokens.size) {
+          const shared = n.split(' ').filter((w) => tTokens.has(w)).length;
+          score = shared / tTokens.size;
+        }
+        if (score > bestScore) {
+          bestScore = score;
+          best = { id: j.id, jo: j.jo };
+        }
+      }
+      let result: Partial<MatchRowResult> | null = null;
+      if (best && bestScore >= 0.8) {
+        const accountId = pickStr(best.jo.recruiterAccountId, best.jo.accountId);
+        const { fields: f, filledWorksite, filledWc } = await backfillFromAccount(
+          accountId,
+          resolveJobOrderFields(best.jo, role),
+        );
+        result = {
+          assignmentId: null,
+          jobOrderId: best.id,
+          shiftId: null,
+          jobTitle: f.jobTitle,
+          worksiteId: f.worksiteId,
+          worksiteName: f.worksiteName,
+          worksiteAddress: f.worksiteAddress,
+          workersCompCode: f.workersCompCode,
+          workersCompRate: f.workersCompRate,
+          payRate: f.payRate || null,
+          workersCompSource: f.workersCompCode ? (filledWc ? 'account' : 'site_mapping') : 'none',
+          worksiteSource: f.worksiteAddress ? (filledWorksite ? 'account' : 'site_mapping') : 'none',
+        };
+      }
+      joNameMatchCache.set(target, result);
+      return result;
+    };
+
     const buildUserResolved = async (
       id: string,
       data: Record<string, any>,
@@ -1054,9 +1146,12 @@ export const importTimesheetMatchWorkers = onCall(
       // Payable. Best-effort assignment pairing + field resolution.
       const assignment = pairAssignment(r.assignments, workDate);
       if (!assignment) {
-        // No HRX assignment — fall back to a saved Site→JO mapping for this
-        // customer + site, if one exists.
-        const mapped = await resolveSiteMapping(String(row.site || ''), String(row.role || ''));
+        // No HRX assignment — resolve pay context from a saved Site→JO mapping
+        // first, then (Connect Team / VenueSmart) an auto partial-name match of
+        // the row's "Type" against the customer account's job orders.
+        const mapped =
+          (await resolveSiteMapping(String(row.site || ''), String(row.role || ''))) ||
+          (await resolveByJobOrderName(String(row.site || ''), String(row.role || '')));
         if (mapped) {
           results.push({
             ...matchedBase,

@@ -29,6 +29,7 @@ import {
   Switch,
   Paper,
   Select,
+  Snackbar,
   Stack,
   Table,
   TableBody,
@@ -251,6 +252,13 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   const [overrides, setOverrides] = useState<Map<number, RowOverride>>(new Map());
   const [editing, setEditing] = useState<{ rowIndex: number; field: OverrideField } | null>(null);
   const [editValue, setEditValue] = useState('');
+  // After typing a pay rate, offer to copy it to every other worker on the
+  // same Type/site (e.g. all Railbird workers) in one tap.
+  const [bulkRatePrompt, setBulkRatePrompt] = useState<{
+    site: string;
+    rate: number;
+    rowIndexes: number[];
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const importableRows = parsed?.rows.filter((r) => r.status === 'importable') ?? [];
@@ -557,6 +565,8 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     if (!editing) return;
     const { rowIndex, field } = editing;
     const raw = editValue.trim();
+    const num = raw === '' ? null : Number(raw.replace(/[^0-9.]/g, ''));
+    const validNum = num != null && Number.isFinite(num) && num >= 0 ? num : null;
     setOverrides((prev) => {
       const next = new Map(prev);
       const cur: RowOverride = { ...(next.get(rowIndex) || {}) };
@@ -564,15 +574,38 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
         delete cur[field];
       } else if (field === 'workersCompCode') {
         cur.workersCompCode = raw;
-      } else {
-        const n = Number(raw.replace(/[^0-9.]/g, ''));
-        if (Number.isFinite(n) && n >= 0) cur[field] = n;
+      } else if (validNum != null) {
+        cur[field] = validNum;
       }
       if (Object.keys(cur).length === 0) next.delete(rowIndex);
       else next.set(rowIndex, cur);
       return next;
     });
     setEditing(null);
+    // Smart copy: a pay rate is usually the same for every worker at a given
+    // event, so after typing one, offer to apply it to the rest of that Type.
+    if (field === 'payRate' && validNum != null && parsed) {
+      const site = parsed.rows.find((r) => r.rowIndex === rowIndex)?.site || '';
+      if (site) {
+        const rowIndexes = parsed.rows
+          .filter((r) => r.status === 'importable' && r.site === site && r.rowIndex !== rowIndex)
+          .map((r) => r.rowIndex);
+        if (rowIndexes.length > 0) setBulkRatePrompt({ site, rate: validNum, rowIndexes });
+      }
+    }
+  };
+
+  const applyRateToSite = () => {
+    if (!bulkRatePrompt) return;
+    const { rate, rowIndexes } = bulkRatePrompt;
+    setOverrides((prev) => {
+      const next = new Map(prev);
+      for (const ri of rowIndexes) {
+        next.set(ri, { ...(next.get(ri) || {}), payRate: rate });
+      }
+      return next;
+    });
+    setBulkRatePrompt(null);
   };
 
   /** Render a value that becomes an inline TextField on click. */
@@ -1220,6 +1253,28 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           </Button>
         </DialogActions>
       </Dialog>
+
+      <Snackbar
+        open={!!bulkRatePrompt}
+        autoHideDuration={12000}
+        onClose={() => setBulkRatePrompt(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        message={
+          bulkRatePrompt
+            ? `Apply $${bulkRatePrompt.rate.toFixed(2)} to all ${bulkRatePrompt.rowIndexes.length} other “${bulkRatePrompt.site}” worker${bulkRatePrompt.rowIndexes.length === 1 ? '' : 's'}?`
+            : ''
+        }
+        action={
+          <>
+            <Button color="primary" size="small" onClick={applyRateToSite} sx={{ textTransform: 'none' }}>
+              Apply to all
+            </Button>
+            <Button color="inherit" size="small" onClick={() => setBulkRatePrompt(null)} sx={{ textTransform: 'none' }}>
+              Dismiss
+            </Button>
+          </>
+        }
+      />
     </Box>
   );
 };
