@@ -29,7 +29,8 @@ import {
   resolveExternalWorkerId,
   resolveEvereeWorkerUuid,
 } from '../payroll/workerContextResolver';
-import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
+import { getEvereeConfigForEntity, evereePaths } from '../integrations/everee/evereeConfig';
+import { extractEvereeHomeAddressFromUserDoc } from '../integrations/everee/evereeUserAddress';
 import { normalizeSite, siteMappingDocId } from './timesheetSiteMappings';
 import { normalizeEmail, workerAliasDocId } from './timesheetWorkerAliases';
 import {
@@ -354,9 +355,10 @@ export const importTimesheetMatchWorkers = onCall(
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required');
     }
-    const { tenantId, hiringEntityId, customer, rows } = (request.data || {}) as {
+    const { tenantId, hiringEntityId, hiringEntityName, customer, rows } = (request.data || {}) as {
       tenantId?: string;
       hiringEntityId?: string;
+      hiringEntityName?: string;
       customer?: string;
       rows?: MatchRowInput[];
     };
@@ -675,6 +677,82 @@ export const importTimesheetMatchWorkers = onCall(
       return resolved;
     };
 
+    // Actionable "not linked to the paying entity" reason. A matched worker
+    // who isn't linked here may already be set up (or onboarding) on a
+    // DIFFERENT entity, and/or be blocked from provisioning by an incomplete
+    // home address. Surfacing both turns a dead-end "needs onboarding" into a
+    // next step. Computed once per worker (cached) — only for blocked rows.
+    const payingEntityLabel = String(hiringEntityName || '').trim() || 'this entity';
+    const entityStateCache = new Map<string, 'complete' | 'provisioned' | 'none'>();
+    const entityEvereeState = async (
+      entityId: string,
+      userId: string,
+    ): Promise<'complete' | 'provisioned' | 'none'> => {
+      const ck = `${entityId}__${userId}`;
+      const hit = entityStateCache.get(ck);
+      if (hit) return hit;
+      let state: 'complete' | 'provisioned' | 'none' = 'none';
+      try {
+        const snap = await db.doc(evereePaths.worker(tenantId, entityId, userId)).get();
+        if (snap.exists) {
+          const d = (snap.data() || {}) as Record<string, any>;
+          const mirror = (d.readinessMirror || {}) as Record<string, unknown>;
+          state =
+            mirror.onboardingComplete === true ||
+            String(d.status || '').trim().toLowerCase() === 'onboarding_complete' ||
+            d.apiObservedOnboardingCompleteAt != null
+              ? 'complete'
+              : 'provisioned';
+        }
+      } catch {
+        state = 'none';
+      }
+      entityStateCache.set(ck, state);
+      return state;
+    };
+    const notLinkedReasonCache = new Map<string, string>();
+    const buildNotLinkedReason = async (userId: string, displayName: string): Promise<string> => {
+      if (notLinkedReasonCache.has(userId)) return notLinkedReasonCache.get(userId)!;
+      const who = displayName || 'This worker';
+      let reason = `${who} isn't linked to Everee for ${payingEntityLabel} — needs onboarding.`;
+      try {
+        const empSnap = await db
+          .collection(`tenants/${tenantId}/entity_employments`)
+          .where('userId', '==', userId)
+          .limit(10)
+          .get();
+        let completeElsewhere: string | null = null;
+        let onboardingElsewhere: string | null = null;
+        for (const d of empSnap.docs) {
+          const e = d.data() as Record<string, any>;
+          const eId = String(e.entityId || '').trim();
+          if (!eId || eId === String(hiringEntityId || '').trim()) continue;
+          const label =
+            String(e.entityName || '').trim() ||
+            String(e.entityKey || '').trim() ||
+            'another entity';
+          // eslint-disable-next-line no-await-in-loop
+          const state = await entityEvereeState(eId, userId);
+          if (state === 'complete' && !completeElsewhere) completeElsewhere = label;
+          else if (state === 'provisioned' && !onboardingElsewhere) onboardingElsewhere = label;
+        }
+        if (completeElsewhere) {
+          reason = `${who} is set up on ${completeElsewhere}, not ${payingEntityLabel} — likely the wrong paying entity (or needs ${payingEntityLabel} onboarding).`;
+        } else if (onboardingElsewhere) {
+          reason = `${who} isn't linked to ${payingEntityLabel}. Onboarding on ${onboardingElsewhere} (not finished).`;
+        }
+        const userSnap = await db.doc(`users/${userId}`).get();
+        const addr = userSnap.exists ? extractEvereeHomeAddressFromUserDoc(userSnap.data()) : null;
+        if (!addr) {
+          reason += " Profile home address is incomplete — can't provision to Everee until it's set.";
+        }
+      } catch {
+        /* keep the base reason */
+      }
+      notLinkedReasonCache.set(userId, reason);
+      return reason;
+    };
+
     const EMPTY_FIELDS = {
       assignmentId: null,
       jobOrderId: null,
@@ -754,7 +832,7 @@ export const importTimesheetMatchWorkers = onCall(
       if (!r.evereeLinked) {
         results.push({
           ...matchedBase,
-          blockReason: `${r.displayName} isn't linked to Everee for this entity — needs onboarding.`,
+          blockReason: await buildNotLinkedReason(r.userId, r.displayName),
         });
         continue;
       }

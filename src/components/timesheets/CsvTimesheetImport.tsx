@@ -286,6 +286,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
         {
           tenantId: string;
           hiringEntityId: string;
+          hiringEntityName: string;
           customer: string;
           rows: Array<{
             rowIndex: number;
@@ -302,6 +303,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
       const res = await fn({
         tenantId,
         hiringEntityId: entityId,
+        hiringEntityName: entities.find((e) => e.id === entityId)?.name || '',
         customer,
         rows: importableRows.map((r) => ({
           rowIndex: r.rowIndex,
