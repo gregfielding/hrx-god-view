@@ -82,6 +82,11 @@ interface MatchRowResult {
   payRate: number | null;
   /** Where the resolved pay context came from. */
   payRateSource: 'assignment' | 'site_mapping' | 'none';
+  /** Provenance of WC + worksite (assignment/JO = exact, site_mapping =
+   *  probable, account = account-level fallback, none = unresolved). Drives
+   *  the grid's confidence color-coding. */
+  workersCompSource: 'assignment' | 'site_mapping' | 'account' | 'none';
+  worksiteSource: 'assignment' | 'site_mapping' | 'account' | 'none';
   /** True when matched+linked but no pay rate resolved (needs inline entry). */
   needsPayRate: boolean;
   /** Candidate HRX workers offered when the email doesn't resolve cleanly
@@ -487,22 +492,33 @@ export const importTimesheetMatchWorkers = onCall(
     const backfillFromAccount = async (
       accountId: string | undefined,
       fields: ResolvedFields,
-    ): Promise<ResolvedFields> => {
+    ): Promise<{ fields: ResolvedFields; filledWorksite: boolean; filledWc: boolean }> => {
       const needWorksite = !fields.worksiteAddress;
       const needWc = !fields.workersCompCode;
       const needWcRate = fields.workersCompRate == null;
-      if ((!needWorksite && !needWc && !needWcRate) || !accountId) return fields;
+      if ((!needWorksite && !needWc && !needWcRate) || !accountId) {
+        return { fields, filledWorksite: false, filledWc: false };
+      }
       const acc = await loadAccountFallback(accountId);
-      if (!acc) return fields;
+      if (!acc) return { fields, filledWorksite: false, filledWc: false };
       const out = { ...fields };
+      let filledWorksite = false;
+      let filledWc = false;
       if (needWorksite && acc.worksiteAddress) {
         out.worksiteId = acc.worksiteId ?? fields.worksiteId;
         out.worksiteName = acc.worksiteName ?? fields.worksiteName;
         out.worksiteAddress = acc.worksiteAddress;
+        filledWorksite = true;
       }
-      if (needWc && acc.workersCompCode) out.workersCompCode = acc.workersCompCode;
-      if (needWcRate && acc.workersCompRate != null) out.workersCompRate = acc.workersCompRate;
-      return out;
+      if (needWc && acc.workersCompCode) {
+        out.workersCompCode = acc.workersCompCode;
+        filledWc = true;
+      }
+      if (needWcRate && acc.workersCompRate != null) {
+        out.workersCompRate = acc.workersCompRate;
+        filledWc = true;
+      }
+      return { fields: out, filledWorksite, filledWc };
     };
 
     // Site → JO mapping resolution (for rows with no paired assignment).
@@ -526,7 +542,10 @@ export const importTimesheetMatchWorkers = onCall(
       const jo = await loadJobOrder(mapping.jobOrderId);
       if (!jo) return null;
       const accountId = pickStr(jo.recruiterAccountId, jo.accountId);
-      const f = await backfillFromAccount(accountId, resolveJobOrderFields(jo, role));
+      const { fields: f, filledWorksite, filledWc } = await backfillFromAccount(
+        accountId,
+        resolveJobOrderFields(jo, role),
+      );
       return {
         assignmentId: null,
         jobOrderId: mapping.jobOrderId,
@@ -538,6 +557,8 @@ export const importTimesheetMatchWorkers = onCall(
         workersCompCode: f.workersCompCode,
         workersCompRate: f.workersCompRate,
         payRate: f.payRate || null,
+        workersCompSource: f.workersCompCode ? (filledWc ? 'account' : 'site_mapping') : 'none',
+        worksiteSource: f.worksiteAddress ? (filledWorksite ? 'account' : 'site_mapping') : 'none',
       };
     };
 
@@ -765,6 +786,8 @@ export const importTimesheetMatchWorkers = onCall(
       workersCompRate: null,
       payRate: null,
       payRateSource: 'none' as const,
+      workersCompSource: 'none' as const,
+      worksiteSource: 'none' as const,
       needsPayRate: true,
     };
 
@@ -874,7 +897,7 @@ export const importTimesheetMatchWorkers = onCall(
       // Resolve from assignment/shift/JO, then backfill any gaps (WC code/rate,
       // worksite address) from the child account.
       const accountId = pickStr(jo?.recruiterAccountId, jo?.accountId, assignment.accountId);
-      const f = await backfillFromAccount(accountId, {
+      const { fields: f, filledWorksite, filledWc } = await backfillFromAccount(accountId, {
         payRate,
         jobTitle: pickStr(assignment.jobTitle, shift?.defaultJobTitle, jo?.jobTitle) ?? null,
         worksiteId: pickStr(jo?.worksiteId, jo?.locationId) ?? null,
@@ -908,6 +931,8 @@ export const importTimesheetMatchWorkers = onCall(
         workersCompRate: f.workersCompRate,
         payRate: payRate || null,
         payRateSource: payRate > 0 ? 'assignment' : 'none',
+        workersCompSource: f.workersCompCode ? (filledWc ? 'account' : 'assignment') : 'none',
+        worksiteSource: f.worksiteAddress ? (filledWorksite ? 'account' : 'assignment') : 'none',
         needsPayRate: !(payRate > 0),
       });
     }

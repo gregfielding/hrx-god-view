@@ -79,6 +79,8 @@ interface MatchRowResult {
   workersCompRate: number | null;
   payRate: number | null;
   payRateSource: 'assignment' | 'site_mapping' | 'none';
+  workersCompSource: 'assignment' | 'site_mapping' | 'account' | 'none';
+  worksiteSource: 'assignment' | 'site_mapping' | 'account' | 'none';
   needsPayRate: boolean;
   /** Candidate HRX workers to resolve a no-match / ambiguous email. */
   suggestions?: WorkerSuggestion[];
@@ -133,6 +135,49 @@ function statusChipColor(s: ImportRowStatus): 'success' | 'default' | 'warning' 
   if (s === 'excluded_no_email' || s === 'excluded_other') return 'warning';
   return 'default';
 }
+
+/** Confidence levels for the per-field provenance color-coding. */
+type Conf = 'exact' | 'probable' | 'guess' | 'select' | 'problem';
+const CONF_TOKEN: Record<Conf, string> = {
+  exact: 'primary.main', // blue — assignment / unique match / linked / typed
+  probable: 'success.main', // green — remembered site→JO mapping
+  guess: 'warning.main', // amber — account-level fallback
+  select: 'text.disabled', // grey — needs selection
+  problem: 'error.main', // red — not linked / ambiguous / no match
+};
+const CONF_LABEL: Record<Conf, string> = {
+  exact: 'Exact match',
+  probable: 'Probable (remembered mapping)',
+  guess: 'Guess (account default)',
+  select: 'Needs selection',
+  problem: 'Problem',
+};
+const sourceConf = (src: 'assignment' | 'site_mapping' | 'account' | 'none'): Conf =>
+  src === 'assignment'
+    ? 'exact'
+    : src === 'site_mapping'
+      ? 'probable'
+      : src === 'account'
+        ? 'guess'
+        : 'select';
+
+const ConfDot: React.FC<{ level: Conf; title?: string }> = ({ level, title }) => (
+  <Tooltip title={title || CONF_LABEL[level]}>
+    <Box
+      component="span"
+      sx={{
+        display: 'inline-block',
+        width: 8,
+        height: 8,
+        borderRadius: '50%',
+        bgcolor: CONF_TOKEN[level],
+        mr: 0.75,
+        flexShrink: 0,
+        verticalAlign: 'middle',
+      }}
+    />
+  </Tooltip>
+);
 
 interface CsvTimesheetImportProps {
   tenantId: string;
@@ -598,6 +643,25 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           </Box>{' '}
           — typed values override the resolved ones for this import.
         </Typography>
+        <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap sx={{ alignItems: 'center' }}>
+          <Typography variant="caption" color="text.secondary">Confidence:</Typography>
+          {(['exact', 'probable', 'guess', 'select', 'problem'] as Conf[]).map((lvl) => (
+            <Box key={lvl} sx={{ display: 'inline-flex', alignItems: 'center' }}>
+              <ConfDot level={lvl} />
+              <Typography variant="caption" color="text.secondary">
+                {lvl === 'exact'
+                  ? 'Exact (assignment / match / typed)'
+                  : lvl === 'probable'
+                    ? 'Probable (site mapping)'
+                    : lvl === 'guess'
+                      ? 'Guess (account default)'
+                      : lvl === 'select'
+                        ? 'Needs selection'
+                        : 'Problem'}
+              </Typography>
+            </Box>
+          ))}
+        </Stack>
         <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: '60vh' }}>
           <Table size="small" stickyHeader>
             <TableHead>
@@ -657,6 +721,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                     ) : match.block ? (
                       <>
                         <Typography variant="caption" color="warning.main" display="block">
+                          <ConfDot level={match.suggestions && match.suggestions.length > 0 ? 'select' : 'problem'} />
                           {match.blockReason}
                         </Typography>
                         {match.suggestions && match.suggestions.length > 0 && (
@@ -680,7 +745,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                       </>
                     ) : (
                       <Typography variant="caption" color="success.main" display="block" noWrap title={match.displayName ?? ''}>
-                        ✓ {match.displayName}
+                        <ConfDot level="exact" /> ✓ {match.displayName}
                       </Typography>
                     )}
                   </TableCell>
@@ -699,11 +764,13 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                           noWrap
                           display="block"
                         >
-                          {match!.evereeWorkerId}
+                          <ConfDot level="exact" /> {match!.evereeWorkerId}
                         </Typography>
                       </Tooltip>
                     ) : (
-                      <Typography variant="caption" color="warning.main">not linked</Typography>
+                      <Typography variant="caption" color="warning.main">
+                        <ConfDot level="problem" /> not linked
+                      </Typography>
                     )}
                   </TableCell>
                   <TableCell align="right" sx={evCol}>
@@ -715,22 +782,18 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                           eff.payRate,
                           eff.payRate != null ? (
                             <Typography component="span" variant="body2">
+                              <ConfDot
+                                level={overrides.get(r.rowIndex)?.payRate != null ? 'exact' : sourceConf(match!.payRateSource)}
+                              />
                               ${eff.payRate.toFixed(2)}
                             </Typography>
                           ) : (
                             <Typography component="span" variant="caption" color="info.main">
-                              + add rate
+                              <ConfDot level="select" /> + add rate
                             </Typography>
                           ),
                           { prefix: '$', align: 'right', placeholder: '0.00' },
                         )}
-                        {!overrides.get(r.rowIndex)?.payRate &&
-                          eff.payRate != null &&
-                          match!.payRateSource !== 'none' && (
-                            <Typography variant="caption" color="text.disabled" display="block">
-                              {match!.payRateSource === 'assignment' ? 'assignment' : 'site map'}
-                            </Typography>
-                          )}
                       </>
                     ) : (
                       <Typography variant="caption" color="text.secondary">—</Typography>
@@ -745,11 +808,14 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                           eff.workersCompCode,
                           eff.workersCompCode ? (
                             <Typography component="span" variant="body2" sx={{ fontFamily: 'monospace' }}>
+                              <ConfDot
+                                level={overrides.get(r.rowIndex)?.workersCompCode != null ? 'exact' : sourceConf(match!.workersCompSource)}
+                              />
                               {eff.workersCompCode}
                             </Typography>
                           ) : (
                             <Typography component="span" variant="caption" color="text.secondary">
-                              + WC code
+                              <ConfDot level="select" /> + WC code
                             </Typography>
                           ),
                           { width: 72, placeholder: 'code' },
@@ -780,6 +846,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                     {payable ? (
                       <>
                         <Typography variant="body2" noWrap title={match!.worksiteName ?? ''}>
+                          <ConfDot level={match!.worksiteAddress ? sourceConf(match!.worksiteSource) : 'select'} />
                           {match!.worksiteName || (
                             <Typography component="span" variant="caption" color="text.secondary">
                               no worksite
