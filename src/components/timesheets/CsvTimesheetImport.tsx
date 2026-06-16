@@ -789,8 +789,10 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           {is1099Entity
             ? '(n/a — 1099 contractors carry no workers’ comp)'
             : '(W-2 only; rate is internal — not sent)'}
-          , and the worksite address (sent as a flat work-location:
-          street → line1, city, state, zip → postalCode). Pay rate and WC code/rate are{' '}
+          {is1099Entity
+            ? ' — for 1099, worker + pay rate + hours are all Everee needs (no worksite).'
+            : ', and the worksite address (sent as a flat work-location: street → line1, city, state, zip → postalCode).'}{' '}
+          Pay rate and WC code/rate are{' '}
           <Box component="span" sx={{ borderBottom: '1px dashed', borderColor: 'primary.main', color: 'primary.main' }}>
             click-to-edit
           </Box>{' '}
@@ -1009,8 +1011,16 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                     {payable ? (
                       <>
                         <Typography variant="body2" noWrap title={match!.worksiteName ?? ''}>
-                          <ConfDot level={match!.worksiteAddress ? sourceConf(match!.worksiteSource) : 'select'} />
-                          {match!.worksiteName || (
+                          {match!.worksiteName ? (
+                            <>
+                              <ConfDot level={match!.worksiteAddress ? sourceConf(match!.worksiteSource) : 'select'} />
+                              {match!.worksiteName}
+                            </>
+                          ) : is1099Entity ? (
+                            <Typography component="span" variant="caption" color="text.disabled">
+                              n/a · 1099
+                            </Typography>
+                          ) : (
                             <Typography component="span" variant="caption" color="text.secondary">
                               no worksite
                             </Typography>
@@ -1023,7 +1033,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                               .join(' · ')}
                           </Typography>
                         )}
-                        {eff.needsPayRate && r.site && (
+                        {!is1099Entity && eff.needsPayRate && r.site && (
                           <Link
                             component="button"
                             type="button"
