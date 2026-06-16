@@ -2284,17 +2284,25 @@ const RecruiterAccountDetails: React.FC = () => {
         getDocs(collection(db, 'tenants', tenantId, 'userGroups')),
         getDocs(collection(db, 'tenants', tenantId, 'savedSmartGroups')),
         getDocs(collection(db, p.entities(tenantId))),
-        // Tenant-scoped: users with this tenant as active, or with this tenant at security 5–7 (so salespeople aren’t missed by a global limit)
+        // Salespeople/recruiters are sec 5–7 STAFF only (see filter below),
+        // so query just those — never all `activeTenantId == tenantId`
+        // users, which on a large tenant pulls thousands of worker docs and
+        // hangs the page (5+ MB, 20s+). Union a global top-level
+        // `securityLevel` query (covers staff whose level is stored at the
+        // top level) with the per-tenant nested query; both return a small
+        // staff set. Mixed string+number values cover either storage type.
         Promise.all([
-          getDocs(query(collection(db, 'users'), where('activeTenantId', '==', tenantId))),
+          getDocs(
+            query(collection(db, 'users'), where('securityLevel', 'in', ['5', '6', '7', 5, 6, 7]))
+          ),
           getDocs(
             query(
               collection(db, 'users'),
-              where(`tenantIds.${tenantId}.securityLevel`, 'in', ['5', '6', '7'])
+              where(`tenantIds.${tenantId}.securityLevel`, 'in', ['5', '6', '7', 5, 6, 7])
             )
           ),
-        ]).then(([activeSnap, tenantSnap]) => {
-          const byId = new Map(activeSnap.docs.map((d) => [d.id, d]));
+        ]).then(([topSnap, tenantSnap]) => {
+          const byId = new Map(topSnap.docs.map((d) => [d.id, d]));
           tenantSnap.docs.forEach((d) => byId.set(d.id, d));
           return { docs: [...byId.values()] };
         }),
