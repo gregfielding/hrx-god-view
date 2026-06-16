@@ -8,7 +8,7 @@
  * as the foundation.
  */
 
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Autocomplete,
@@ -572,11 +572,51 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   // the WC column is shown as not-applicable rather than a payload field.
   const is1099Entity = entities.find((e) => e.id === entityId)?.workerType === '1099';
 
+  // ── Carry a worker's resolved rate across their other same-event rows ──
+  // A worker who's Ready on one day (assignment/site rate, or a typed rate)
+  // for an event usually earns the same rate on their other days of that
+  // event. Carry it so those "needs rate" rows resolve with zero typing.
+  // Keyed by (userId | event) so a worker at two events keeps two rates.
+  const carriedRateByRow = useMemo(() => {
+    const out = new Map<number, number>();
+    const rows = parsed?.rows ?? [];
+    const knownByGroup = new Map<string, number>();
+    const groupKey = (uid: string, site: string) => `${uid}|${(site || '').trim().toLowerCase()}`;
+    // Pass 1: collect a known rate per (worker, event) — typed override wins,
+    // else a resolved assignment/site rate.
+    for (const r of rows) {
+      if (r.status !== 'importable') continue;
+      const m = matchByRow.get(r.rowIndex);
+      if (!m || m.block || !m.userId) continue;
+      const ov = overrides.get(r.rowIndex)?.payRate;
+      const rate = ov != null ? ov : Number(m.payRate) > 0 ? Number(m.payRate) : null;
+      if (rate != null && rate > 0) {
+        const k = groupKey(m.userId, r.site);
+        if (!knownByGroup.has(k)) knownByGroup.set(k, rate);
+      }
+    }
+    // Pass 2: fill rows that lack their own rate from the group's known rate.
+    for (const r of rows) {
+      if (r.status !== 'importable') continue;
+      const m = matchByRow.get(r.rowIndex);
+      if (!m || m.block || !m.userId) continue;
+      const ov = overrides.get(r.rowIndex)?.payRate;
+      const hasOwn = ov != null || Number(m.payRate) > 0;
+      if (hasOwn) continue;
+      const carried = knownByGroup.get(groupKey(m.userId, r.site));
+      if (carried != null) out.set(r.rowIndex, carried);
+    }
+    return out;
+  }, [parsed, matchByRow, overrides]);
+
   // ── Inline editing ──
-  // Effective value = manual override (if any) layered over the resolved match.
+  // Effective value = manual override > resolved match > carried sibling rate.
   const effective = (match: MatchRowResult | undefined, rowIndex: number) => {
     const o = overrides.get(rowIndex) || {};
-    const payRate = o.payRate != null ? o.payRate : match?.payRate ?? null;
+    const carried = carriedRateByRow.get(rowIndex);
+    const resolved = Number(match?.payRate) > 0 ? (match!.payRate as number) : null;
+    const payRateCarried = o.payRate == null && resolved == null && carried != null;
+    const payRate = o.payRate != null ? o.payRate : resolved != null ? resolved : carried ?? null;
     const workersCompCode =
       o.workersCompCode != null ? o.workersCompCode : match?.workersCompCode ?? null;
     const workersCompRate =
@@ -586,6 +626,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
       workersCompCode,
       workersCompRate,
       needsPayRate: !(Number(payRate) > 0),
+      payRateCarried,
       edited: o,
     };
   };
@@ -1058,12 +1099,22 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                           'payRate',
                           eff.payRate,
                           eff.payRate != null ? (
-                            <Typography component="span" variant="body2">
-                              <ConfDot
-                                level={overrides.get(r.rowIndex)?.payRate != null ? 'exact' : sourceConf(match!.payRateSource)}
-                              />
-                              ${eff.payRate.toFixed(2)}
-                            </Typography>
+                            <Tooltip
+                              title={eff.payRateCarried ? "Carried from this worker's other shift at this event" : ''}
+                            >
+                              <Typography component="span" variant="body2">
+                                <ConfDot
+                                  level={
+                                    overrides.get(r.rowIndex)?.payRate != null
+                                      ? 'exact'
+                                      : eff.payRateCarried
+                                        ? 'probable'
+                                        : sourceConf(match!.payRateSource)
+                                  }
+                                />
+                                ${eff.payRate.toFixed(2)}
+                              </Typography>
+                            </Tooltip>
                           ) : (
                             <Typography component="span" variant="caption" color="info.main">
                               <ConfDot level="select" /> + add rate
