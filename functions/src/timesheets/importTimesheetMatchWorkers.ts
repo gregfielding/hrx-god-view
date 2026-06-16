@@ -210,13 +210,6 @@ function nameKey(s: unknown): string {
     .replace(/\s+/g, ' ')
     .trim();
 }
-const caseVariants = (w: string): string[] => {
-  const t = w.trim();
-  if (!t) return [];
-  return Array.from(
-    new Set([t, t.toLowerCase(), t.toUpperCase(), t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()]),
-  );
-};
 
 /**
  * Bounded name lookup. Queries the indexed `lastName` field for the full last
@@ -232,14 +225,14 @@ async function queryUsersByLastName(
   if (!ln) return [];
   const tokens = ln.split(/\s+/).filter(Boolean);
   const bases = Array.from(new Set([ln, tokens[tokens.length - 1] || ln, tokens[0] || ln]));
-  const variants = Array.from(new Set(bases.flatMap(caseVariants)));
+  // Title-case + as-typed only (HRX stores names title-cased) — keeps the
+  // per-name read count low for a 1000+ row batch.
+  const tc = (w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  const variants = Array.from(new Set(bases.flatMap((b) => [b, tc(b)])));
   const found = new Map<string, Record<string, any>>();
   for (const v of variants) {
-    // Exact, plus prefix range — so a CSV "Santiago" also finds an HRX worker
-    // stored as "Santiago Guillén" (last name is the first token of theirs).
-    // eslint-disable-next-line no-await-in-loop
-    const eq = await db.collection('users').where('lastName', '==', v).limit(10).get();
-    eq.forEach((d) => found.set(d.id, d.data() as Record<string, any>));
+    // Prefix range (subsumes the exact match) — so a CSV "Santiago" also
+    // finds an HRX "Santiago Guillén".
     // eslint-disable-next-line no-await-in-loop
     const pre = await db
       .collection('users')
@@ -393,7 +386,9 @@ function resolveJobOrderFields(
 }
 
 export const importTimesheetMatchWorkers = onCall(
-  { cors: true },
+  // Large batches (1000+ rows) do many Firestore reads; give headroom beyond
+  // the 60s default and more CPU for the concurrent per-row resolution.
+  { cors: true, timeoutSeconds: 300, memory: '1GiB' },
   async (request): Promise<MatchWorkersResponse> => {
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required');
@@ -1110,8 +1105,7 @@ export const importTimesheetMatchWorkers = onCall(
       needsPayRate: true,
     };
 
-    const results: MatchRowResult[] = [];
-    for (const row of rows) {
+    const processRow = async (row: MatchRowInput): Promise<MatchRowResult> => {
       const email = String(row.email || '').trim();
       const firstName = String(row.firstName || '').trim();
       const lastName = String(row.lastName || '').trim();
@@ -1142,33 +1136,30 @@ export const importTimesheetMatchWorkers = onCall(
         viaName = true;
         r = await resolveByName(firstName, lastName);
       } else {
-        results.push({ ...base, blockReason: 'No email or name on this row to match.' });
-        continue;
+        return { ...base, blockReason: 'No email or name on this row to match.' };
       }
 
       if (r.kind === 'none') {
         // Email path: offer name suggestions. Name path: candidates already
         // exhausted, so no suggestions — it's a genuine no-match.
         const suggestions = viaName ? [] : await nameSuggestions(firstName, lastName);
-        results.push({
+        return {
           ...base,
           blockReason: viaName
             ? `No HRX worker named ${fullName || '(unknown)'} in this tenant.`
             : `No HRX worker found for ${email}.`,
           ...(suggestions.length ? { suggestions } : {}),
-        });
-        continue;
+        };
       }
       if (r.kind === 'ambiguous') {
-        results.push({
+        return {
           ...base,
           ambiguous: true,
           blockReason: viaName
             ? `Multiple HRX workers named ${fullName} — pick the right one.`
             : 'Multiple HRX users share this email — resolve manually.',
           ...(r.suggestions.length ? { suggestions: r.suggestions } : {}),
-        });
-        continue;
+        };
       }
 
       // Matched to a user — resolve hard-block first.
@@ -1182,18 +1173,16 @@ export const importTimesheetMatchWorkers = onCall(
         evereeLinked: r.evereeLinked,
       };
       if (!entityEvereeEnabled) {
-        results.push({
+        return {
           ...matchedBase,
           blockReason: 'Selected hiring entity is not configured for Everee payroll.',
-        });
-        continue;
+        };
       }
       if (!r.evereeLinked) {
-        results.push({
+        return {
           ...matchedBase,
           blockReason: await buildNotLinkedReason(r.userId, r.displayName),
-        });
-        continue;
+        };
       }
 
       // Payable. Best-effort assignment pairing + field resolution.
@@ -1205,19 +1194,16 @@ export const importTimesheetMatchWorkers = onCall(
         const mapped =
           (await resolveSiteMapping(String(row.site || ''), String(row.role || ''))) ||
           (await resolveByJobOrderName(String(row.site || ''), String(row.role || '')));
-        if (mapped) {
-          results.push({
-            ...matchedBase,
-            block: false,
-            blockReason: null,
-            ...mapped,
-            payRateSource: 'site_mapping',
-            needsPayRate: !(Number(mapped.payRate) > 0),
-          });
-        } else {
-          results.push({ ...matchedBase, block: false, blockReason: null }); // needsPayRate stays true
-        }
-        continue;
+        return mapped
+          ? {
+              ...matchedBase,
+              block: false,
+              blockReason: null,
+              ...mapped,
+              payRateSource: 'site_mapping',
+              needsPayRate: !(Number(mapped.payRate) > 0),
+            }
+          : { ...matchedBase, block: false, blockReason: null }; // needsPayRate stays true
       }
       const jobOrderId = pickStr(assignment.jobOrderId) ?? null;
       const shiftId = pickStr(assignment.shiftId) ?? null;
@@ -1255,7 +1241,7 @@ export const importTimesheetMatchWorkers = onCall(
           firstGigPosition?.workersCompRate,
         ),
       });
-      results.push({
+      return {
         ...matchedBase,
         block: false,
         blockReason: null,
@@ -1273,6 +1259,21 @@ export const importTimesheetMatchWorkers = onCall(
         workersCompSource: f.workersCompCode ? (filledWc ? 'account' : 'assignment') : 'none',
         worksiteSource: f.worksiteAddress ? (filledWorksite ? 'account' : 'assignment') : 'none',
         needsPayRate: !(payRate > 0),
+      };
+    };
+
+    // Process rows with bounded concurrency so a 1000+ row batch fits the
+    // function deadline (sequential per-row Firestore reads were hitting
+    // deadline-exceeded). Caches warm across chunks, so repeated workers /
+    // sites don't re-query.
+    const results: MatchRowResult[] = new Array(rows.length);
+    const CONCURRENCY = 25;
+    for (let i = 0; i < rows.length; i += CONCURRENCY) {
+      const chunk = rows.slice(i, i + CONCURRENCY);
+      // eslint-disable-next-line no-await-in-loop
+      const settled = await Promise.all(chunk.map((row) => processRow(row)));
+      settled.forEach((res, j) => {
+        results[i + j] = res;
       });
     }
 

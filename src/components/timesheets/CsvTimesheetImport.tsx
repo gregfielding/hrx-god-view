@@ -405,7 +405,9 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           }>;
         },
         MatchWorkersResponse
-      >(functions, 'importTimesheetMatchWorkers');
+        // Large batches take a while server-side — raise the client deadline
+        // well past the SDK's 70s default.
+      >(functions, 'importTimesheetMatchWorkers', { timeout: 300000 });
       const res = await fn({
         tenantId,
         hiringEntityId: entityId,
