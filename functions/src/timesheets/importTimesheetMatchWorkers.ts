@@ -235,9 +235,19 @@ async function queryUsersByLastName(
   const variants = Array.from(new Set(bases.flatMap(caseVariants)));
   const found = new Map<string, Record<string, any>>();
   for (const v of variants) {
+    // Exact, plus prefix range — so a CSV "Santiago" also finds an HRX worker
+    // stored as "Santiago Guillén" (last name is the first token of theirs).
     // eslint-disable-next-line no-await-in-loop
-    const snap = await db.collection('users').where('lastName', '==', v).limit(10).get();
-    snap.forEach((d) => found.set(d.id, d.data() as Record<string, any>));
+    const eq = await db.collection('users').where('lastName', '==', v).limit(10).get();
+    eq.forEach((d) => found.set(d.id, d.data() as Record<string, any>));
+    // eslint-disable-next-line no-await-in-loop
+    const pre = await db
+      .collection('users')
+      .where('lastName', '>=', v)
+      .where('lastName', '<', `${v}`)
+      .limit(15)
+      .get();
+    pre.forEach((d) => found.set(d.id, d.data() as Record<string, any>));
   }
   return [...found.entries()].map(([id, data]) => ({ id, data }));
 }
@@ -922,21 +932,30 @@ export const importTimesheetMatchWorkers = onCall(
       // without auto-matching unrelated people.
       const csvTokens = nameKey(`${fn} ${ln}`).split(' ').filter(Boolean);
       const csvFirst = csvTokens[0] || '';
-      const csvLast = csvTokens[csvTokens.length - 1] || '';
+      const csvSet = new Set(csvTokens);
       const candidates = rows.filter((x) => {
         const tenantMember = !!(
           x.data.tenantIds &&
           typeof x.data.tenantIds === 'object' &&
           x.data.tenantIds[tenantId]
         );
-        if (!tenantMember || !csvFirst || !csvLast) return false;
+        if (!tenantMember || !csvFirst) return false;
         const hTokens = nameKey(
           `${x.data.firstName || ''} ${x.data.lastName || ''}`.trim() || x.data.displayName || '',
         )
           .split(' ')
           .filter(Boolean);
-        if (!hTokens.length) return false;
-        return hTokens[0] === csvFirst && hTokens[hTokens.length - 1] === csvLast;
+        if (hTokens.length < 2 || hTokens[0] !== csvFirst) return false;
+        // First name anchors; then one name's token set ⊆ the other's. Catches
+        // middle names ("Alondra Lucy Hernandez" ⊇ "Alondra Hernandez") AND
+        // partial last names ("Doris Santiago" ⊆ "Doris Santiago Guillén")
+        // without matching a different surname. When the looser rule yields
+        // several people, the Everee + VenueSmart-assignment tiebreak (below)
+        // or a manual pick decides — never a wrong auto-pay.
+        const hSet = new Set(hTokens);
+        const csvSubset = csvTokens.every((t) => hSet.has(t));
+        const hSubset = hTokens.every((t) => csvSet.has(t));
+        return csvSubset || hSubset;
       });
       if (candidates.length === 0) {
         resolved = { kind: 'none' };
