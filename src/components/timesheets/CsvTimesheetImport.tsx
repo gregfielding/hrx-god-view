@@ -523,6 +523,11 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   // (vs. CSV-source / HRX-match context columns).
   const evCol = { bgcolor: 'rgba(25, 118, 210, 0.06)' } as const;
 
+  // 1099 entities (e.g. C1 Events LLC) pay independent contractors — Everee
+  // does NOT take a workers-comp code/rate for them (WC is a W-2 concern), so
+  // the WC column is shown as not-applicable rather than a payload field.
+  const is1099Entity = entities.find((e) => e.id === entityId)?.workerType === '1099';
+
   // ── Inline editing ──
   // Effective value = manual override (if any) layered over the resolved match.
   const effective = (match: MatchRowResult | undefined, rowIndex: number) => {
@@ -745,8 +750,11 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
         <>
         <Typography variant="caption" color="text.secondary">
           The <Box component="span" sx={{ px: 0.5, py: 0.1, borderRadius: 0.5, ...evCol }}>tinted</Box>{' '}
-          columns are the exact fields submitted to Everee: worker ID, pay rate, WC code (rate is
-          internal — not sent), and the worksite address (sent as a flat work-location:
+          columns are the exact fields submitted to Everee: worker ID, pay rate, WC code{' '}
+          {is1099Entity
+            ? '(n/a — 1099 contractors carry no workers’ comp)'
+            : '(W-2 only; rate is internal — not sent)'}
+          , and the worksite address (sent as a flat work-location:
           street → line1, city, state, zip → postalCode). Pay rate and WC code/rate are{' '}
           <Box component="span" sx={{ borderBottom: '1px dashed', borderColor: 'primary.main', color: 'primary.main' }}>
             click-to-edit
@@ -916,7 +924,13 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                     )}
                   </TableCell>
                   <TableCell sx={evCol}>
-                    {payable ? (
+                    {!payable ? (
+                      <Typography variant="caption" color="text.secondary">—</Typography>
+                    ) : is1099Entity ? (
+                      <Tooltip title="1099 contractor — workers’ comp isn’t sent to Everee">
+                        <Typography variant="caption" color="text.disabled">n/a · 1099</Typography>
+                      </Tooltip>
+                    ) : (
                       <>
                         {editableCell(
                           r.rowIndex,
@@ -954,8 +968,6 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                           )}
                         </Box>
                       </>
-                    ) : (
-                      <Typography variant="caption" color="text.secondary">—</Typography>
                     )}
                   </TableCell>
                   <TableCell sx={{ ...evCol, maxWidth: 280 }}>
