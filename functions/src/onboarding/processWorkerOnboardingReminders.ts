@@ -8,6 +8,7 @@ import { logger } from 'firebase-functions/v2';
 import { sendWorkerMessageInternal } from '../twilio';
 import { userDocHasUsablePhone } from '../workerAiPrescreen/evaluateAiPrescreenEligibility';
 import { resolveWorkerOnboardingLink } from '../integrations/everee/resolveWorkerOnboardingLink';
+import { evereePaths } from '../integrations/everee/evereeConfig';
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -203,6 +204,39 @@ async function isI9IncompleteForEmployment(args: {
   return forEntity.some((d) => String((d.data() as { status?: string }).status || '').toLowerCase() !== 'approved');
 }
 
+/**
+ * Authoritative "already done on Everee" check. The reminder cadence reads
+ * the `entity_employments` mirror (`payrollStatus` / `onboardingComplete`),
+ * which `mirrorEvereeOnboardingCompleteToEmployments` keeps in sync — BUT
+ * that mirror only runs on a preflight/reconcile touch, so the historical
+ * backlog (workers who finished on Everee before the mirror existed, or
+ * whose touch never re-fired) keeps a stale `in_progress` row. Once the
+ * scan budget grew (200→500) and the events R4/R5 cadence shipped, the
+ * scheduler started reaching that backlog and texting people who are
+ * "all set on Everee" to set up their payroll. Consult the Everee snapshot
+ * (`everee_workers/{entityId}__{userId}`) directly so completion wins over
+ * the stale mirror. Fail-open: a read error falls through to the old logic.
+ */
+async function isEvereeOnboardingComplete(
+  tenantId: string,
+  userId: string,
+  entityId: string | null,
+): Promise<boolean> {
+  if (!entityId || !String(entityId).trim()) return false;
+  try {
+    const snap = await db.doc(evereePaths.worker(tenantId, String(entityId).trim(), userId)).get();
+    if (!snap.exists) return false;
+    const d = (snap.data() || {}) as Record<string, unknown>;
+    const mirror = (d.readinessMirror || {}) as Record<string, unknown>;
+    if (mirror.onboardingComplete === true) return true;
+    if (String(d.status || '').trim().toLowerCase() === 'onboarding_complete') return true;
+    if (d.apiObservedOnboardingCompleteAt != null) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 async function hasIncompleteOnboarding(args: {
   tenantId: string;
   userId: string;
@@ -210,6 +244,12 @@ async function hasIncompleteOnboarding(args: {
 }): Promise<boolean> {
   const { tenantId, userId, emp } = args;
   if (emp.onboardingComplete === true) {
+    return false;
+  }
+  // Everee is the source of truth for onboarding completion. If the worker
+  // finished there (their I-9 + payroll live in Everee), they have nothing
+  // left to do — don't text them, even if the local mirror is stale.
+  if (await isEvereeOnboardingComplete(tenantId, userId, (emp.entityId as string) || null)) {
     return false;
   }
   const payrollOk = isPayrollComplete(emp.payrollStatus);
