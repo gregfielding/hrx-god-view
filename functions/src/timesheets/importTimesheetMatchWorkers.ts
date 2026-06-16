@@ -32,6 +32,10 @@ import {
 import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
 import { normalizeSite, siteMappingDocId } from './timesheetSiteMappings';
 import { normalizeEmail, workerAliasDocId } from './timesheetWorkerAliases';
+import {
+  loadWorksiteFromChildLocation,
+  type AccountDoc,
+} from '../jobOrders/gigJobOrderFromChildAccount';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -431,6 +435,74 @@ export const importTimesheetMatchWorkers = onCall(
       return shift;
     };
 
+    // Account-level fallback: when the job order is silent on WC code/rate or
+    // worksite address, fill from the child account (its top-level WC fields +
+    // its CRM-location worksite). Lets a thin JO still produce a complete
+    // Everee payload — mirrors how gigJobOrderFromChildAccount hydrates a JO.
+    type AccountFallback = {
+      workersCompCode: string | null;
+      workersCompRate: number | null;
+      worksiteId: string | null;
+      worksiteName: string | null;
+      worksiteAddress: { street: string; city: string; state: string; zip: string } | null;
+    };
+    const accountCache = new Map<string, AccountFallback | null>();
+    const loadAccountFallback = async (accountId: string): Promise<AccountFallback | null> => {
+      if (!accountId) return null;
+      if (accountCache.has(accountId)) return accountCache.get(accountId) ?? null;
+      let result: AccountFallback | null = null;
+      try {
+        const snap = await db.doc(`tenants/${tenantId}/accounts/${accountId}`).get();
+        if (snap.exists) {
+          const acc = snap.data() as AccountDoc;
+          const worksite = await loadWorksiteFromChildLocation(db, tenantId, acc);
+          result = {
+            workersCompCode:
+              typeof acc.workersCompCode === 'string' && acc.workersCompCode.trim()
+                ? acc.workersCompCode.trim()
+                : null,
+            workersCompRate: pickNum(acc.workersCompRate),
+            worksiteId: worksite?.worksiteId ?? null,
+            worksiteName: worksite?.worksiteName ?? null,
+            worksiteAddress: worksite
+              ? {
+                  street: worksite.worksiteAddress.street,
+                  city: worksite.worksiteAddress.city,
+                  state: worksite.worksiteAddress.state,
+                  zip: worksite.worksiteAddress.zipCode,
+                }
+              : null,
+          };
+        }
+      } catch {
+        result = null;
+      }
+      accountCache.set(accountId, result);
+      return result;
+    };
+
+    type ResolvedFields = ReturnType<typeof resolveJobOrderFields>;
+    const backfillFromAccount = async (
+      accountId: string | undefined,
+      fields: ResolvedFields,
+    ): Promise<ResolvedFields> => {
+      const needWorksite = !fields.worksiteAddress;
+      const needWc = !fields.workersCompCode;
+      const needWcRate = fields.workersCompRate == null;
+      if ((!needWorksite && !needWc && !needWcRate) || !accountId) return fields;
+      const acc = await loadAccountFallback(accountId);
+      if (!acc) return fields;
+      const out = { ...fields };
+      if (needWorksite && acc.worksiteAddress) {
+        out.worksiteId = acc.worksiteId ?? fields.worksiteId;
+        out.worksiteName = acc.worksiteName ?? fields.worksiteName;
+        out.worksiteAddress = acc.worksiteAddress;
+      }
+      if (needWc && acc.workersCompCode) out.workersCompCode = acc.workersCompCode;
+      if (needWcRate && acc.workersCompRate != null) out.workersCompRate = acc.workersCompRate;
+      return out;
+    };
+
     // Site → JO mapping resolution (for rows with no paired assignment).
     const siteMapCache = new Map<string, { jobOrderId: string } | null>();
     const resolveSiteMapping = async (
@@ -451,7 +523,8 @@ export const importTimesheetMatchWorkers = onCall(
       if (!mapping) return null;
       const jo = await loadJobOrder(mapping.jobOrderId);
       if (!jo) return null;
-      const f = resolveJobOrderFields(jo, role);
+      const accountId = pickStr(jo.recruiterAccountId, jo.accountId);
+      const f = await backfillFromAccount(accountId, resolveJobOrderFields(jo, role));
       return {
         assignmentId: null,
         jobOrderId: mapping.jobOrderId,
@@ -720,15 +793,12 @@ export const importTimesheetMatchWorkers = onCall(
           : Number(jo?.payRate) > 0
             ? Number(jo?.payRate)
             : 0;
-      results.push({
-        ...matchedBase,
-        block: false,
-        blockReason: null,
-        assignmentId: assignment.id,
-        jobOrderId,
-        shiftId,
-        jobTitle:
-          pickStr(assignment.jobTitle, shift?.defaultJobTitle, jo?.jobTitle) ?? null,
+      // Resolve from assignment/shift/JO, then backfill any gaps (WC code/rate,
+      // worksite address) from the child account.
+      const accountId = pickStr(jo?.recruiterAccountId, jo?.accountId, assignment.accountId);
+      const f = await backfillFromAccount(accountId, {
+        payRate,
+        jobTitle: pickStr(assignment.jobTitle, shift?.defaultJobTitle, jo?.jobTitle) ?? null,
         worksiteId: pickStr(jo?.worksiteId, jo?.locationId) ?? null,
         worksiteName: pickStr(jo?.worksiteName, jo?.locationName) ?? null,
         worksiteAddress: joWorksiteAddress(jo),
@@ -744,6 +814,20 @@ export const importTimesheetMatchWorkers = onCall(
           jo?.workersCompRate,
           firstGigPosition?.workersCompRate,
         ),
+      });
+      results.push({
+        ...matchedBase,
+        block: false,
+        blockReason: null,
+        assignmentId: assignment.id,
+        jobOrderId,
+        shiftId,
+        jobTitle: f.jobTitle,
+        worksiteId: f.worksiteId,
+        worksiteName: f.worksiteName,
+        worksiteAddress: f.worksiteAddress,
+        workersCompCode: f.workersCompCode,
+        workersCompRate: f.workersCompRate,
         payRate: payRate || null,
         payRateSource: payRate > 0 ? 'assignment' : 'none',
         needsPayRate: !(payRate > 0),
