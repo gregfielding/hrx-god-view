@@ -718,6 +718,22 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     }
   }, [visibleStepIndices.length, activeStep, stepStorageKey]);
 
+  // An UNauthenticated worker must start at the Personal Info step (step 0)
+  // so the account is created there. A saved step (localStorage) or ?step=
+  // param must never drop them past it — otherwise they reach the final step
+  // with no account and get stuck on "complete the Personal Info step"
+  // (reported live: workers stuck at the headshot step). Gate on
+  // onAuthStateChanged so this only fires once auth has RESOLVED as logged
+  // out — never resetting a genuinely-authenticated worker mid auth-restore.
+  useEffect(() => {
+    const unsub = auth.onAuthStateChanged((u) => {
+      if (!u && !uid) {
+        setActiveStep((prev) => (prev > 0 ? 0 : prev));
+      }
+    });
+    return () => unsub();
+  }, [uid]);
+
   // Check if step was restored from localStorage
   useEffect(() => {
     try {
@@ -2158,11 +2174,17 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   const handleSubmit = async () => {
     setSaving(true);
     try {
-      // Account should already be created after Personal Info step
+      // Account should already be created after Personal Info step. If it
+      // isn't (e.g. the worker reached the final step unauthenticated because
+      // earlier steps auto-skipped), DON'T dead-end on the alert — send them
+      // back to the Personal Info step so they can actually create the account
+      // and finish signing up.
       const effectiveUid: string | null = auth.currentUser?.uid || uid || null;
       if (!effectiveUid) {
         alert(t('apply.completePersonalInfo'));
         setSaving(false);
+        const personalIdx = visibleStepIndices.indexOf(0);
+        setActiveStep(personalIdx >= 0 ? personalIdx : 0);
         return;
       }
 
