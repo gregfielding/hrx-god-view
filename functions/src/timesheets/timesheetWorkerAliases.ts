@@ -44,6 +44,23 @@ export function workerAliasDocId(email: string): string {
   return normalizeEmail(email).replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 480);
 }
 
+/** Canonical "first last" key — for customers (e.g. Connect Team) whose
+ *  export has no email, so workers are matched/remembered by name. */
+export function normalizeName(firstName: string, lastName: string): string {
+  return `${String(firstName || '')} ${String(lastName || '')}`
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+/** Doc id for a name alias, scoped per customer (name collisions are common,
+ *  so a VenueSmart "John Smith" mapping shouldn't leak to another customer). */
+export function nameAliasDocId(customer: string, firstName: string, lastName: string): string {
+  const c = String(customer || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  const n = normalizeName(firstName, lastName).replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return `name__${c}__${n}`.slice(0, 480);
+}
+
 async function assertTimesheetEditor(
   uid: string,
   token: Record<string, unknown> | undefined,
@@ -64,13 +81,23 @@ export const saveTimesheetWorkerAlias = onCall(
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required');
     }
-    const { tenantId, email, userId } = (request.data || {}) as {
+    const { tenantId, email, userId, customer, firstName, lastName } = (request.data || {}) as {
       tenantId?: string;
       email?: string;
       userId?: string;
+      customer?: string;
+      firstName?: string;
+      lastName?: string;
     };
-    if (!tenantId || !email || !userId) {
-      throw new HttpsError('invalid-argument', 'tenantId, email, and userId are required');
+    // Either an email alias (most customers) OR a name alias (Connect Team /
+    // any no-email export). For a name alias we need customer + a name.
+    const hasEmail = !!(email && email.trim());
+    const hasName = !!(customer && (firstName || lastName));
+    if (!tenantId || !userId || (!hasEmail && !hasName)) {
+      throw new HttpsError(
+        'invalid-argument',
+        'tenantId, userId, and either email or (customer + name) are required',
+      );
     }
     await assertTimesheetEditor(
       request.auth.uid,
@@ -86,14 +113,23 @@ export const saveTimesheetWorkerAlias = onCall(
       (typeof u.displayName === 'string' ? u.displayName : null) ||
       null;
 
-    const docId = workerAliasDocId(email);
+    const docId = hasEmail
+      ? workerAliasDocId(email as string)
+      : nameAliasDocId(customer as string, firstName || '', lastName || '');
     await db.doc(`tenants/${tenantId}/timesheet_worker_aliases/${docId}`).set(
       {
         tenantId,
-        email,
-        normalizedEmail: normalizeEmail(email),
         userId,
         displayName,
+        ...(hasEmail
+          ? { kind: 'email', email, normalizedEmail: normalizeEmail(email as string) }
+          : {
+              kind: 'name',
+              customer,
+              firstName: firstName || '',
+              lastName: lastName || '',
+              normalizedName: normalizeName(firstName || '', lastName || ''),
+            }),
         mappedBy: request.auth.uid,
         mappedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),

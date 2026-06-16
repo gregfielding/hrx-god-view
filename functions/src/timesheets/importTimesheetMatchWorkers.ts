@@ -32,7 +32,12 @@ import {
 import { getEvereeConfigForEntity, evereePaths } from '../integrations/everee/evereeConfig';
 import { extractEvereeHomeAddressFromUserDoc } from '../integrations/everee/evereeUserAddress';
 import { normalizeSite, siteMappingDocId } from './timesheetSiteMappings';
-import { normalizeEmail, workerAliasDocId } from './timesheetWorkerAliases';
+import {
+  normalizeEmail,
+  workerAliasDocId,
+  normalizeName,
+  nameAliasDocId,
+} from './timesheetWorkerAliases';
 import {
   loadWorksiteFromChildLocation,
   type AccountDoc,
@@ -63,6 +68,9 @@ interface MatchRowResult {
   displayName: string | null;
   evereeWorkerId: string | null;
   evereeLinked: boolean;
+  /** Matched by name (no-email customers like Connect Team) — lower
+   *  confidence than an email/alias match, shown "probable" in the grid. */
+  matchedByName: boolean;
   block: boolean;
   blockReason: string | null;
   // ── Phase 2: paired assignment + resolved pay context ──
@@ -698,6 +706,93 @@ export const importTimesheetMatchWorkers = onCall(
       return resolved;
     };
 
+    // ── Name-based matching (no-email customers, e.g. Connect Team) ──
+    const nameAliasCache = new Map<string, string | null>();
+    const resolveNameAlias = async (
+      firstName: string,
+      lastName: string,
+    ): Promise<string | null> => {
+      const c = String(customer || '').trim();
+      if (!c || (!firstName && !lastName)) return null;
+      const nk = normalizeName(firstName, lastName);
+      if (nameAliasCache.has(nk)) return nameAliasCache.get(nk) ?? null;
+      let uid: string | null = null;
+      try {
+        const snap = await db
+          .doc(`tenants/${tenantId}/timesheet_worker_aliases/${nameAliasDocId(c, firstName, lastName)}`)
+          .get();
+        uid = snap.exists ? String((snap.data() as any).userId || '') || null : null;
+      } catch {
+        uid = null;
+      }
+      nameAliasCache.set(nk, uid);
+      return uid;
+    };
+
+    const nameMatchCache = new Map<string, Resolved>();
+    const resolveByName = async (firstName: string, lastName: string): Promise<Resolved> => {
+      const fn = firstName.trim();
+      const ln = lastName.trim();
+      const key = `${fn.toLowerCase()}|${ln.toLowerCase()}`;
+      const cached = nameMatchCache.get(key);
+      if (cached) return cached;
+
+      let resolved: Resolved;
+      // 1. A remembered name→worker alias for this customer wins.
+      const aliasUid = await resolveNameAlias(fn, ln);
+      if (aliasUid) {
+        const data = await findUserById(aliasUid);
+        if (data) {
+          resolved = await buildUserResolved(aliasUid, data);
+          nameMatchCache.set(key, resolved);
+          return resolved;
+        }
+      }
+
+      // 2. Conservative match: EXACT first+last among this tenant's workers.
+      // Auto-match only when exactly ONE such worker is Everee-linked on the
+      // paying entity; any duplicate name or no Everee link → needs selection.
+      const fnNorm = fn.toLowerCase();
+      if (!ln || !fnNorm) {
+        resolved = { kind: 'none' };
+        nameMatchCache.set(key, resolved);
+        return resolved;
+      }
+      const rows = await queryUsersByLastName(ln);
+      const candidates = rows.filter((x) => {
+        const dfn = String(x.data.firstName || '').trim().toLowerCase();
+        const tenantMember = !!(
+          x.data.tenantIds &&
+          typeof x.data.tenantIds === 'object' &&
+          x.data.tenantIds[tenantId]
+        );
+        return dfn === fnNorm && tenantMember;
+      });
+      if (candidates.length === 0) {
+        resolved = { kind: 'none' };
+      } else {
+        const linked: typeof candidates = [];
+        for (const c of candidates) {
+          // eslint-disable-next-line no-await-in-loop
+          if (evereeTenantId && (await resolveExternalWorkerId(tenantId, c.id, evereeTenantId))) {
+            linked.push(c);
+          }
+        }
+        if (linked.length === 1) {
+          resolved = await buildUserResolved(linked[0].id, linked[0].data);
+        } else {
+          const suggestions: WorkerSuggestion[] = [];
+          for (const c of candidates) {
+            // eslint-disable-next-line no-await-in-loop
+            suggestions.push(await buildSuggestion(c.id, c.data, 'name match'));
+          }
+          resolved = { kind: 'ambiguous', suggestions };
+        }
+      }
+      nameMatchCache.set(key, resolved);
+      return resolved;
+    };
+
     // Actionable "not linked to the paying entity" reason. A matched worker
     // who isn't linked here may already be set up (or onboarding) on a
     // DIFFERENT entity, and/or be blocked from provisioning by an incomplete
@@ -794,6 +889,9 @@ export const importTimesheetMatchWorkers = onCall(
     const results: MatchRowResult[] = [];
     for (const row of rows) {
       const email = String(row.email || '').trim();
+      const firstName = String(row.firstName || '').trim();
+      const lastName = String(row.lastName || '').trim();
+      const fullName = [firstName, lastName].filter(Boolean).join(' ');
       const workDate = dateOnly(row.workDate);
       const base: MatchRowResult = {
         rowIndex: row.rowIndex,
@@ -804,24 +902,35 @@ export const importTimesheetMatchWorkers = onCall(
         displayName: null,
         evereeWorkerId: null,
         evereeLinked: false,
+        matchedByName: false,
         block: true,
         blockReason: null,
         ...EMPTY_FIELDS,
       };
 
-      if (!email) {
-        results.push({ ...base, blockReason: 'No email address.' });
+      // Email is the primary key (Indeed Flex); no-email customers (Connect
+      // Team) fall back to conservative name matching.
+      let r: Resolved;
+      let viaName = false;
+      if (email) {
+        r = await resolveEmail(email);
+      } else if (firstName || lastName) {
+        viaName = true;
+        r = await resolveByName(firstName, lastName);
+      } else {
+        results.push({ ...base, blockReason: 'No email or name on this row to match.' });
         continue;
       }
-      const r = await resolveEmail(email);
+
       if (r.kind === 'none') {
-        const suggestions = await nameSuggestions(
-          String(row.firstName || ''),
-          String(row.lastName || ''),
-        );
+        // Email path: offer name suggestions. Name path: candidates already
+        // exhausted, so no suggestions — it's a genuine no-match.
+        const suggestions = viaName ? [] : await nameSuggestions(firstName, lastName);
         results.push({
           ...base,
-          blockReason: `No HRX worker found for ${email}.`,
+          blockReason: viaName
+            ? `No HRX worker named ${fullName || '(unknown)'} in this tenant.`
+            : `No HRX worker found for ${email}.`,
           ...(suggestions.length ? { suggestions } : {}),
         });
         continue;
@@ -830,7 +939,9 @@ export const importTimesheetMatchWorkers = onCall(
         results.push({
           ...base,
           ambiguous: true,
-          blockReason: 'Multiple HRX users share this email — resolve manually.',
+          blockReason: viaName
+            ? `Multiple HRX workers named ${fullName} — pick the right one.`
+            : 'Multiple HRX users share this email — resolve manually.',
           ...(r.suggestions.length ? { suggestions: r.suggestions } : {}),
         });
         continue;
@@ -840,6 +951,7 @@ export const importTimesheetMatchWorkers = onCall(
       const matchedBase: MatchRowResult = {
         ...base,
         matched: true,
+        matchedByName: viaName,
         userId: r.userId,
         displayName: r.displayName,
         evereeWorkerId: r.evereeWorkerId,

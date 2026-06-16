@@ -70,6 +70,7 @@ interface MatchRowResult {
   displayName: string | null;
   evereeWorkerId: string | null;
   evereeLinked: boolean;
+  matchedByName: boolean;
   block: boolean;
   blockReason: string | null;
   // Phase 2: paired assignment + resolved pay context.
@@ -234,7 +235,12 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   const [mapError, setMapError] = useState<string | null>(null);
   // Worker resolution (slice #1): pick the right HRX worker for an
   // unresolved CSV email, then remember it as an alias.
-  const [resolveRow, setResolveRow] = useState<{ email: string; name: string } | null>(null);
+  const [resolveRow, setResolveRow] = useState<{
+    email: string;
+    firstName: string;
+    lastName: string;
+    name: string;
+  } | null>(null);
   const [resolveSuggestions, setResolveSuggestions] = useState<WorkerSuggestion[]>([]);
   const [resolvePick, setResolvePick] = useState<string>('');
   const [savingAlias, setSavingAlias] = useState(false);
@@ -313,8 +319,14 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     }
   };
 
-  const openResolveDialog = (email: string, name: string, suggestions: WorkerSuggestion[]) => {
-    setResolveRow({ email, name });
+  const openResolveDialog = (
+    row: { email: string; firstName: string; lastName: string },
+    suggestions: WorkerSuggestion[],
+  ) => {
+    setResolveRow({
+      ...row,
+      name: [row.firstName, row.lastName].filter(Boolean).join(' '),
+    });
     setResolveSuggestions(suggestions);
     setResolvePick(suggestions[0]?.userId ?? '');
     setResolveError(null);
@@ -326,14 +338,33 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     setResolveError(null);
     try {
       const fn = httpsCallable<
-        { tenantId: string; email: string; userId: string },
+        {
+          tenantId: string;
+          userId: string;
+          email?: string;
+          customer?: string;
+          firstName?: string;
+          lastName?: string;
+        },
         { ok: true; docId: string; displayName: string | null }
       >(functions, 'saveTimesheetWorkerAlias');
-      await fn({ tenantId, email: resolveRow.email, userId: resolvePick });
+      // Email customers key the alias on email; no-email customers (Connect
+      // Team) key it on the worker's name, scoped to the customer.
+      await fn(
+        resolveRow.email
+          ? { tenantId, userId: resolvePick, email: resolveRow.email }
+          : {
+              tenantId,
+              userId: resolvePick,
+              customer,
+              firstName: resolveRow.firstName,
+              lastName: resolveRow.lastName,
+            },
+      );
       setResolveRow(null);
       setResolveSuggestions([]);
       setResolvePick('');
-      // Re-run the match so every row with this email resolves to the worker.
+      // Re-run the match so every row for this worker resolves.
       await runMatch();
     } catch (err: any) {
       console.error('saveTimesheetWorkerAlias failed:', err);
@@ -731,7 +762,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                 {lvl === 'exact'
                   ? 'Exact (assignment / match / typed)'
                   : lvl === 'probable'
-                    ? 'Probable (site mapping)'
+                    ? 'Probable (site mapping / name match)'
                     : lvl === 'guess'
                       ? 'Guess (account default)'
                       : lvl === 'select'
@@ -811,8 +842,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                             underline="hover"
                             onClick={() =>
                               openResolveDialog(
-                                r.email,
-                                [r.firstName, r.lastName].filter(Boolean).join(' '),
+                                { email: r.email, firstName: r.firstName, lastName: r.lastName },
                                 match.suggestions!,
                               )
                             }
@@ -823,8 +853,15 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                         )}
                       </>
                     ) : (
-                      <Typography variant="caption" color="success.main" display="block" noWrap title={match.displayName ?? ''}>
-                        <ConfDot level="exact" /> ✓ {match.displayName}
+                      <Typography
+                        variant="caption"
+                        color={match.matchedByName ? 'success.dark' : 'success.main'}
+                        display="block"
+                        noWrap
+                        title={match.matchedByName ? `${match.displayName} (matched by name)` : match.displayName ?? ''}
+                      >
+                        <ConfDot level={match.matchedByName ? 'probable' : 'exact'} /> ✓ {match.displayName}
+                        {match.matchedByName ? ' (by name)' : ''}
                       </Typography>
                     )}
                   </TableCell>
@@ -1108,8 +1145,8 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
             <Typography variant="body2" color="text.secondary">
-              The CSV email didn’t match a single HRX worker. Pick the right person — we’ll remember
-              this email → worker so future imports resolve automatically.
+              This row didn’t resolve to a single HRX worker. Pick the right person — we’ll remember
+              it ({resolveRow?.email ? 'by email' : 'by name'}) so future imports resolve automatically.
             </Typography>
             <Box>
               <Typography variant="caption" color="text.secondary">
