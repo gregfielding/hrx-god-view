@@ -73,7 +73,9 @@ interface MatchRowResult {
   jobTitle: string | null;
   worksiteId: string | null;
   worksiteName: string | null;
+  worksiteAddress: { street: string; city: string; state: string; zip: string } | null;
   workersCompCode: string | null;
+  workersCompRate: number | null;
   payRate: number | null;
   payRateSource: 'assignment' | 'site_mapping' | 'none';
   needsPayRate: boolean;
@@ -311,6 +313,10 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
 
   const s = parsed?.summary;
 
+  // Subtle tint marking the columns that are the actual Everee payload
+  // (vs. CSV-source / HRX-match context columns).
+  const evCol = { bgcolor: 'rgba(25, 118, 210, 0.06)' } as const;
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2, maxWidth: 1400 }}>
       <Alert severity="info" sx={{ '& .MuiAlert-message': { width: '100%' } }}>
@@ -412,25 +418,33 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
       )}
 
       {parsed && (
+        <>
+        <Typography variant="caption" color="text.secondary">
+          The <Box component="span" sx={{ px: 0.5, py: 0.1, borderRadius: 0.5, ...evCol }}>tinted</Box>{' '}
+          columns are the exact fields submitted to Everee: worker ID, pay rate, WC code (rate is
+          internal — not sent), and the worksite address (sent as a flat work-location:
+          street → line1, city, state, zip → postalCode).
+        </Typography>
         <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: '60vh' }}>
           <Table size="small" stickyHeader>
             <TableHead>
               <TableRow>
                 <TableCell>Status</TableCell>
-                <TableCell>Worker (CSV)</TableCell>
-                <TableCell>HRX worker</TableCell>
+                <TableCell>Worker</TableCell>
                 <TableCell>Date</TableCell>
                 <TableCell align="right">Hours</TableCell>
-                <TableCell>Site</TableCell>
-                <TableCell>Role</TableCell>
-                <TableCell align="right">Pay rate</TableCell>
-                <TableCell align="right">Bill rate</TableCell>
+                <TableCell sx={evCol}>Everee worker ID</TableCell>
+                <TableCell align="right" sx={evCol}>Pay rate</TableCell>
+                <TableCell sx={evCol}>WC code / rate</TableCell>
+                <TableCell sx={evCol}>Worksite → Everee</TableCell>
                 <TableCell>Source status</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {(showExcluded ? parsed.rows : parsed.rows.filter((r) => r.status === 'importable')).map((r) => {
                 const match = r.status === 'importable' ? matchByRow.get(r.rowIndex) : undefined;
+                const payable = match && !match.block;
+                const addr = match?.worksiteAddress;
                 return (
                 <TableRow key={r.rowIndex} hover sx={{ opacity: r.status === 'importable' ? 1 : 0.65 }}>
                   <TableCell>
@@ -440,7 +454,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                           match.block
                             ? match.blockReason ?? 'Blocked'
                             : match.needsPayRate
-                              ? 'Matched + Everee-linked, but no assignment paired — enter a pay rate to pay.'
+                              ? 'Matched + Everee-linked, but no assignment paired — map the site (or enter a rate) to pay.'
                               : 'Matched + Everee-linked + pay rate resolved'
                         }
                       >
@@ -457,50 +471,48 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                       </Tooltip>
                     )}
                   </TableCell>
-                  <TableCell>
+                  <TableCell sx={{ maxWidth: 220 }}>
                     <Typography variant="body2" sx={{ fontWeight: 500 }}>
                       {[r.firstName, r.lastName].filter(Boolean).join(' ') || '—'}
                     </Typography>
-                    <Typography variant="caption" color="text.secondary">
+                    <Typography variant="caption" color="text.secondary" display="block">
                       {r.email || 'no email'}
                     </Typography>
-                  </TableCell>
-                  <TableCell sx={{ maxWidth: 240 }}>
-                    {r.status !== 'importable' ? (
-                      <Typography variant="caption" color="text.secondary">—</Typography>
-                    ) : !match ? (
+                    {r.status !== 'importable' ? null : !match ? (
                       <Typography variant="caption" color="text.secondary">not matched yet</Typography>
                     ) : match.block ? (
-                      <Typography variant="caption" color="warning.main">
+                      <Typography variant="caption" color="warning.main" display="block">
                         {match.blockReason}
                       </Typography>
                     ) : (
-                      <Typography variant="body2" noWrap title={match.displayName ?? ''}>
-                        {match.displayName}
+                      <Typography variant="caption" color="success.main" display="block" noWrap title={match.displayName ?? ''}>
+                        ✓ {match.displayName}
                       </Typography>
                     )}
                   </TableCell>
                   <TableCell>{r.workDate}</TableCell>
                   <TableCell align="right">{r.hours.toFixed(2)}</TableCell>
-                  <TableCell sx={{ maxWidth: 280 }}>
-                    <Typography variant="body2" noWrap title={r.site}>
-                      {r.site || '—'}
-                    </Typography>
-                    {match && !match.block && match.needsPayRate && r.site && (
-                      <Link
-                        component="button"
-                        type="button"
-                        variant="caption"
-                        underline="hover"
-                        onClick={() => openMapDialog(r.site)}
-                        sx={{ display: 'block', mt: 0.25 }}
-                      >
-                        {match.payRateSource === 'site_mapping' ? 'Re-map site →' : 'Map site → job order'}
-                      </Link>
+
+                  {/* ── Everee payload ── */}
+                  <TableCell sx={{ ...evCol, maxWidth: 200 }}>
+                    {!payable ? (
+                      <Typography variant="caption" color="text.secondary">—</Typography>
+                    ) : match!.evereeWorkerId ? (
+                      <Tooltip title={match!.evereeWorkerId}>
+                        <Typography
+                          variant="caption"
+                          sx={{ fontFamily: 'monospace' }}
+                          noWrap
+                          display="block"
+                        >
+                          {match!.evereeWorkerId}
+                        </Typography>
+                      </Tooltip>
+                    ) : (
+                      <Typography variant="caption" color="warning.main">not linked</Typography>
                     )}
                   </TableCell>
-                  <TableCell>{r.role}</TableCell>
-                  <TableCell align="right">
+                  <TableCell align="right" sx={evCol}>
                     {match && match.payRate != null ? (
                       <Tooltip
                         title={
@@ -513,26 +525,83 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                       >
                         <Typography variant="body2">${match.payRate.toFixed(2)}</Typography>
                       </Tooltip>
-                    ) : match && !match.block && match.needsPayRate ? (
-                      <Typography variant="caption" color="info.main">
-                        needs rate
-                      </Typography>
+                    ) : payable && match!.needsPayRate ? (
+                      <Typography variant="caption" color="info.main">needs rate</Typography>
                     ) : (
-                      <Typography variant="caption" color="text.secondary">
-                        —
+                      <Typography variant="caption" color="text.secondary">—</Typography>
+                    )}
+                  </TableCell>
+                  <TableCell sx={evCol}>
+                    {payable && match!.workersCompCode ? (
+                      <>
+                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                          {match!.workersCompCode}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {match!.workersCompRate != null
+                            ? `$${match!.workersCompRate.toFixed(2)} rate`
+                            : 'no rate'}
+                        </Typography>
+                      </>
+                    ) : (
+                      <Typography variant="caption" color="text.secondary">—</Typography>
+                    )}
+                  </TableCell>
+                  <TableCell sx={{ ...evCol, maxWidth: 280 }}>
+                    {payable ? (
+                      <>
+                        <Typography variant="body2" noWrap title={match!.worksiteName ?? ''}>
+                          {match!.worksiteName || (
+                            <Typography component="span" variant="caption" color="text.secondary">
+                              no worksite
+                            </Typography>
+                          )}
+                        </Typography>
+                        {addr && (
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            {[addr.street, [addr.city, addr.state].filter(Boolean).join(', '), addr.zip]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </Typography>
+                        )}
+                        {match!.needsPayRate && r.site && (
+                          <Link
+                            component="button"
+                            type="button"
+                            variant="caption"
+                            underline="hover"
+                            onClick={() => openMapDialog(r.site)}
+                            sx={{ display: 'block', mt: 0.25 }}
+                          >
+                            {match!.payRateSource === 'site_mapping' ? 'Re-map site →' : 'Map site → job order'}
+                          </Link>
+                        )}
+                        <Typography variant="caption" color="text.disabled" display="block" noWrap title={r.site}>
+                          CSV: {r.site || '—'}
+                        </Typography>
+                      </>
+                    ) : (
+                      <Typography variant="caption" color="text.secondary" noWrap title={r.site} display="block">
+                        {r.site || '—'}
                       </Typography>
                     )}
                   </TableCell>
-                  <TableCell align="right">
-                    {r.billRate != null ? `$${r.billRate.toFixed(2)}` : '—'}
+
+                  <TableCell>
+                    {r.sourceStatus}
+                    {r.billRate != null && (
+                      <Typography variant="caption" color="text.disabled" display="block">
+                        bill ${r.billRate.toFixed(2)}
+                      </Typography>
+                    )}
                   </TableCell>
-                  <TableCell>{r.sourceStatus}</TableCell>
                 </TableRow>
                 );
               })}
             </TableBody>
           </Table>
         </TableContainer>
+        </>
       )}
 
       {s && s.importable > 0 && (

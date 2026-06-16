@@ -66,7 +66,13 @@ interface MatchRowResult {
   jobTitle: string | null;
   worksiteId: string | null;
   worksiteName: string | null;
+  /** HRX worksite address — maps to Everee's flat work-location body
+   *  (street→line1, city, state, zip→postalCode) resolved at submit. */
+  worksiteAddress: { street: string; city: string; state: string; zip: string } | null;
+  /** Everee workers-comp CLASS CODE (the only WC field Everee accepts). */
   workersCompCode: string | null;
+  /** WC rate — internal billing figure (C1 Select); NOT sent to Everee. */
+  workersCompRate: number | null;
   payRate: number | null;
   /** Where the resolved pay context came from. */
   payRateSource: 'assignment' | 'site_mapping' | 'none';
@@ -199,6 +205,32 @@ const pickStr = (...c: unknown[]): string | undefined => {
   return undefined;
 };
 
+/** First positive finite number among the candidates, else null. */
+const pickNum = (...c: unknown[]): number | null => {
+  for (const v of c) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+};
+
+/** Normalize a JO's worksite address to the shape the worker-side import
+ *  grid shows and Everee's flat work-location body consumes. Returns null
+ *  when no address component is present. */
+function joWorksiteAddress(
+  jo: Record<string, any> | null,
+): { street: string; city: string; state: string; zip: string } | null {
+  const a = (jo?.worksiteAddress && typeof jo.worksiteAddress === 'object'
+    ? jo.worksiteAddress
+    : {}) as Record<string, any>;
+  const street = String(a.street ?? a.line1 ?? a.addressLine1 ?? '').trim();
+  const city = String(a.city ?? '').trim();
+  const state = String(a.state ?? '').trim();
+  const zip = String(a.zip ?? a.postalCode ?? a.postal ?? '').trim();
+  if (!street && !city && !state && !zip) return null;
+  return { street, city, state, zip };
+}
+
 /** Resolve pay context from a JO + role (no assignment/shift) — used for
  *  site-mapped rows. Picks the JO position matching the role when possible,
  *  else the first position / JO-level rate. */
@@ -210,7 +242,9 @@ function resolveJobOrderFields(
   jobTitle: string | null;
   worksiteId: string | null;
   worksiteName: string | null;
+  worksiteAddress: { street: string; city: string; state: string; zip: string } | null;
   workersCompCode: string | null;
+  workersCompRate: number | null;
 } {
   const positions: Array<Record<string, any>> =
     (Array.isArray(jo.positions) && jo.positions.length
@@ -239,6 +273,7 @@ function resolveJobOrderFields(
     jobTitle: pickStr(pos?.jobTitle, jo.jobTitle, role) ?? null,
     worksiteId: pickStr(jo.worksiteId, jo.locationId) ?? null,
     worksiteName: pickStr(jo.worksiteName, jo.locationName) ?? null,
+    worksiteAddress: joWorksiteAddress(jo),
     workersCompCode:
       pickStr(
         pos?.workersCompCode,
@@ -247,6 +282,11 @@ function resolveJobOrderFields(
         jo.workersCompClassCode,
         firstGig?.workersCompClassCode,
       ) ?? null,
+    workersCompRate: pickNum(
+      pos?.workersCompRate,
+      jo.workersCompRate,
+      firstGig?.workersCompRate,
+    ),
   };
 }
 
@@ -363,7 +403,9 @@ export const importTimesheetMatchWorkers = onCall(
         jobTitle: f.jobTitle,
         worksiteId: f.worksiteId,
         worksiteName: f.worksiteName,
+        worksiteAddress: f.worksiteAddress,
         workersCompCode: f.workersCompCode,
+        workersCompRate: f.workersCompRate,
         payRate: f.payRate || null,
       };
     };
@@ -414,7 +456,9 @@ export const importTimesheetMatchWorkers = onCall(
       jobTitle: null,
       worksiteId: null,
       worksiteName: null,
+      worksiteAddress: null,
       workersCompCode: null,
+      workersCompRate: null,
       payRate: null,
       payRateSource: 'none' as const,
       needsPayRate: true,
@@ -525,6 +569,7 @@ export const importTimesheetMatchWorkers = onCall(
           pickStr(assignment.jobTitle, shift?.defaultJobTitle, jo?.jobTitle) ?? null,
         worksiteId: pickStr(jo?.worksiteId, jo?.locationId) ?? null,
         worksiteName: pickStr(jo?.worksiteName, jo?.locationName) ?? null,
+        worksiteAddress: joWorksiteAddress(jo),
         workersCompCode:
           pickStr(
             shift?.workersCompCode,
@@ -532,6 +577,11 @@ export const importTimesheetMatchWorkers = onCall(
             jo?.workersCompClassCode,
             firstGigPosition?.workersCompClassCode,
           ) ?? null,
+        workersCompRate: pickNum(
+          shift?.workersCompRate,
+          jo?.workersCompRate,
+          firstGigPosition?.workersCompRate,
+        ),
         payRate: payRate || null,
         payRateSource: payRate > 0 ? 'assignment' : 'none',
         needsPayRate: !(payRate > 0),
