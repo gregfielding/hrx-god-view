@@ -54,6 +54,7 @@ import {
   mapIndeedFlexRows,
   looksLikeIndeedFlex,
   type ParsedImport,
+  type ParsedTimesheetRow,
   type ImportRowStatus,
 } from '../../utils/timesheets/indeedFlexImport';
 import {
@@ -220,6 +221,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [parsed, setParsed] = useState<ParsedImport | null>(null);
   const [matching, setMatching] = useState(false);
+  const [matchProgress, setMatchProgress] = useState<{ done: number; total: number } | null>(null);
   const [matchError, setMatchError] = useState<string | null>(null);
   // Match result by source rowIndex (only importable rows are matched).
   const [matchByRow, setMatchByRow] = useState<Map<number, MatchRowResult>>(new Map());
@@ -382,59 +384,80 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     }
   };
 
+  /** Match in batches: bounded per-call work (fits the deadline at any file
+   *  size), live progress as each batch lands, and a failed batch costs only
+   *  itself — the rest still resolve. */
+  const MATCH_BATCH_SIZE = 400;
   const runMatch = async () => {
     if (!entityId || importableRows.length === 0) return;
     setMatching(true);
     setMatchError(null);
+    const fn = httpsCallable<
+      {
+        tenantId: string;
+        hiringEntityId: string;
+        hiringEntityName: string;
+        customer: string;
+        customerAccount: string;
+        rows: Array<{
+          rowIndex: number;
+          email: string;
+          firstName: string;
+          lastName: string;
+          workDate: string;
+          site: string;
+          role: string;
+        }>;
+      },
+      MatchWorkersResponse
+    >(functions, 'importTimesheetMatchWorkers', { timeout: 300000 });
+    const payload = (r: ParsedTimesheetRow) => ({
+      rowIndex: r.rowIndex,
+      email: r.email,
+      firstName: r.firstName,
+      lastName: r.lastName,
+      workDate: r.workDate,
+      site: r.site,
+      role: r.role,
+    });
+    const merged = new Map<number, MatchRowResult>();
+    let entityEvereeEnabled = true;
+    let failed = 0;
     try {
-      const fn = httpsCallable<
-        {
-          tenantId: string;
-          hiringEntityId: string;
-          hiringEntityName: string;
-          customer: string;
-          customerAccount: string;
-          rows: Array<{
-            rowIndex: number;
-            email: string;
-            firstName: string;
-            lastName: string;
-            workDate: string;
-            site: string;
-            role: string;
-          }>;
-        },
-        MatchWorkersResponse
-        // Large batches take a while server-side — raise the client deadline
-        // well past the SDK's 70s default.
-      >(functions, 'importTimesheetMatchWorkers', { timeout: 300000 });
-      const res = await fn({
-        tenantId,
-        hiringEntityId: entityId,
-        hiringEntityName: entities.find((e) => e.id === entityId)?.name || '',
-        customer,
-        customerAccount: CUSTOMERS.find((c) => c.key === customer)?.account || '',
-        rows: importableRows.map((r) => ({
-          rowIndex: r.rowIndex,
-          email: r.email,
-          firstName: r.firstName,
-          lastName: r.lastName,
-          workDate: r.workDate,
-          site: r.site,
-          role: r.role,
-        })),
-      });
-      const next = new Map<number, MatchRowResult>();
-      (res.data?.results ?? []).forEach((m) => next.set(m.rowIndex, m));
-      setMatchByRow(next);
-      if (res.data && !res.data.entityEvereeEnabled) {
-        setMatchError('The selected hiring entity is not configured for Everee payroll — every row will be blocked until you pick an Everee-enabled entity.');
+      for (let i = 0; i < importableRows.length; i += MATCH_BATCH_SIZE) {
+        const slice = importableRows.slice(i, i + MATCH_BATCH_SIZE);
+        setMatchProgress({ done: i, total: importableRows.length });
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const res = await fn({
+            tenantId,
+            hiringEntityId: entityId,
+            hiringEntityName: entities.find((e) => e.id === entityId)?.name || '',
+            customer,
+            customerAccount: CUSTOMERS.find((c) => c.key === customer)?.account || '',
+            rows: slice.map(payload),
+          });
+          (res.data?.results ?? []).forEach((m) => merged.set(m.rowIndex, m));
+          if (res.data && !res.data.entityEvereeEnabled) entityEvereeEnabled = false;
+        } catch (err: any) {
+          console.error(`importTimesheetMatchWorkers batch @${i} failed:`, err);
+          failed += slice.length;
+        }
+        // Show results live as each batch completes.
+        setMatchByRow(new Map(merged));
       }
-    } catch (err: any) {
-      console.error('importTimesheetMatchWorkers failed:', err);
-      setMatchError(err?.message || 'Failed to match workers.');
+      if (!entityEvereeEnabled) {
+        setMatchError(
+          'The selected hiring entity is not configured for Everee payroll — every row will be blocked until you pick an Everee-enabled entity.',
+        );
+      } else if (failed > 0) {
+        setMatchError(
+          `${failed} row${failed === 1 ? '' : 's'} couldn’t be matched (a batch errored) — click Match again to retry.`,
+        );
+      }
     } finally {
       setMatching(false);
+      setMatchProgress(null);
     }
   };
 
@@ -1085,7 +1108,9 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
               sx={{ textTransform: 'none' }}
             >
               {matching
-                ? 'Matching…'
+                ? matchProgress
+                  ? `Matching ${Math.min(matchProgress.done + MATCH_BATCH_SIZE, matchProgress.total)}/${matchProgress.total}…`
+                  : 'Matching…'
                 : `Match ${s.importable} worker${s.importable === 1 ? '' : 's'} to HRX`}
             </Button>
             {!entityId && (
