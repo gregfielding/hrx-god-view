@@ -22,6 +22,7 @@ import {
   DialogTitle,
   FormControl,
   FormControlLabel,
+  InputAdornment,
   InputLabel,
   Link,
   MenuItem,
@@ -91,6 +92,14 @@ interface WorkerSuggestion {
   evereeLinked: boolean;
   reason: string;
 }
+
+/** Inline, manually-entered overrides for a row's Everee-bound fields. */
+interface RowOverride {
+  payRate?: number;
+  workersCompCode?: string;
+  workersCompRate?: number;
+}
+type OverrideField = keyof RowOverride;
 
 /** A pickable HRX job order for the site-mapping dialog. */
 interface JobOrderOption {
@@ -164,6 +173,12 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   const [resolvePick, setResolvePick] = useState<string>('');
   const [savingAlias, setSavingAlias] = useState(false);
   const [resolveError, setResolveError] = useState<string | null>(null);
+  // Inline cell overrides (this import session): manually-entered pay rate /
+  // WC code / WC rate, keyed by row. They win over the resolved value and
+  // survive a re-match; they flow into the Everee submit payload (P4).
+  const [overrides, setOverrides] = useState<Map<number, RowOverride>>(new Map());
+  const [editing, setEditing] = useState<{ rowIndex: number; field: OverrideField } | null>(null);
+  const [editValue, setEditValue] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const importableRows = parsed?.rows.filter((r) => r.status === 'importable') ?? [];
@@ -316,6 +331,8 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   const resetMatch = () => {
     setMatchByRow(new Map());
     setMatchError(null);
+    setOverrides(new Map());
+    setEditing(null);
   };
 
   const handleFile = (file: File) => {
@@ -364,6 +381,108 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   // Subtle tint marking the columns that are the actual Everee payload
   // (vs. CSV-source / HRX-match context columns).
   const evCol = { bgcolor: 'rgba(25, 118, 210, 0.06)' } as const;
+
+  // ── Inline editing ──
+  // Effective value = manual override (if any) layered over the resolved match.
+  const effective = (match: MatchRowResult | undefined, rowIndex: number) => {
+    const o = overrides.get(rowIndex) || {};
+    const payRate = o.payRate != null ? o.payRate : match?.payRate ?? null;
+    const workersCompCode =
+      o.workersCompCode != null ? o.workersCompCode : match?.workersCompCode ?? null;
+    const workersCompRate =
+      o.workersCompRate != null ? o.workersCompRate : match?.workersCompRate ?? null;
+    return {
+      payRate,
+      workersCompCode,
+      workersCompRate,
+      needsPayRate: !(Number(payRate) > 0),
+      edited: o,
+    };
+  };
+
+  const startEdit = (rowIndex: number, field: OverrideField, current: string | number | null) => {
+    setEditing({ rowIndex, field });
+    setEditValue(current == null ? '' : String(current));
+  };
+  const cancelEdit = () => setEditing(null);
+  const commitEdit = () => {
+    if (!editing) return;
+    const { rowIndex, field } = editing;
+    const raw = editValue.trim();
+    setOverrides((prev) => {
+      const next = new Map(prev);
+      const cur: RowOverride = { ...(next.get(rowIndex) || {}) };
+      if (raw === '') {
+        delete cur[field];
+      } else if (field === 'workersCompCode') {
+        cur.workersCompCode = raw;
+      } else {
+        const n = Number(raw.replace(/[^0-9.]/g, ''));
+        if (Number.isFinite(n) && n >= 0) cur[field] = n;
+      }
+      if (Object.keys(cur).length === 0) next.delete(rowIndex);
+      else next.set(rowIndex, cur);
+      return next;
+    });
+    setEditing(null);
+  };
+
+  /** Render a value that becomes an inline TextField on click. */
+  const editableCell = (
+    rowIndex: number,
+    field: OverrideField,
+    current: string | number | null,
+    display: React.ReactNode,
+    opts?: { prefix?: string; width?: number; placeholder?: string; align?: 'left' | 'right' },
+  ) => {
+    const isEditing = editing?.rowIndex === rowIndex && editing.field === field;
+    const isOverridden = overrides.get(rowIndex)?.[field] != null;
+    if (isEditing) {
+      return (
+        <TextField
+          size="small"
+          autoFocus
+          variant="standard"
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          onBlur={commitEdit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commitEdit();
+            } else if (e.key === 'Escape') {
+              cancelEdit();
+            }
+          }}
+          placeholder={opts?.placeholder}
+          sx={{ width: opts?.width ?? 84 }}
+          inputProps={{ style: { textAlign: opts?.align ?? 'left' } }}
+          InputProps={
+            opts?.prefix
+              ? { startAdornment: <InputAdornment position="start">{opts.prefix}</InputAdornment> }
+              : undefined
+          }
+        />
+      );
+    }
+    return (
+      <Tooltip title={isOverridden ? 'Edited — click to change' : 'Click to edit'}>
+        <Box
+          component="span"
+          onClick={() => startEdit(rowIndex, field, current)}
+          sx={{
+            cursor: 'pointer',
+            borderBottom: '1px dashed',
+            borderColor: isOverridden ? 'primary.main' : 'divider',
+            color: isOverridden ? 'primary.main' : 'inherit',
+            display: 'inline-block',
+          }}
+        >
+          {display}
+        </Box>
+      </Tooltip>
+    );
+  };
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2, maxWidth: 1400 }}>
@@ -471,7 +590,11 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           The <Box component="span" sx={{ px: 0.5, py: 0.1, borderRadius: 0.5, ...evCol }}>tinted</Box>{' '}
           columns are the exact fields submitted to Everee: worker ID, pay rate, WC code (rate is
           internal — not sent), and the worksite address (sent as a flat work-location:
-          street → line1, city, state, zip → postalCode).
+          street → line1, city, state, zip → postalCode). Pay rate and WC code/rate are{' '}
+          <Box component="span" sx={{ borderBottom: '1px dashed', borderColor: 'primary.main', color: 'primary.main' }}>
+            click-to-edit
+          </Box>{' '}
+          — typed values override the resolved ones for this import.
         </Typography>
         <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: '60vh' }}>
           <Table size="small" stickyHeader>
@@ -493,6 +616,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                 const match = r.status === 'importable' ? matchByRow.get(r.rowIndex) : undefined;
                 const payable = match && !match.block;
                 const addr = match?.worksiteAddress;
+                const eff = effective(match, r.rowIndex);
                 return (
                 <TableRow key={r.rowIndex} hover sx={{ opacity: r.status === 'importable' ? 1 : 0.65 }}>
                   <TableCell>
@@ -501,16 +625,16 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                         title={
                           match.block
                             ? match.blockReason ?? 'Blocked'
-                            : match.needsPayRate
-                              ? 'Matched + Everee-linked, but no assignment paired — map the site (or enter a rate) to pay.'
+                            : eff.needsPayRate
+                              ? 'Matched + Everee-linked, but no pay rate yet — map the site, or click the pay-rate cell to type one.'
                               : 'Matched + Everee-linked + pay rate resolved'
                         }
                       >
                         <Chip
                           size="small"
-                          color={match.block ? 'warning' : match.needsPayRate ? 'info' : 'success'}
-                          icon={!match.block && !match.needsPayRate ? <CheckCircleIcon /> : undefined}
-                          label={match.block ? 'Blocked' : match.needsPayRate ? 'Needs rate' : 'Ready'}
+                          color={match.block ? 'warning' : eff.needsPayRate ? 'info' : 'success'}
+                          icon={!match.block && !eff.needsPayRate ? <CheckCircleIcon /> : undefined}
+                          label={match.block ? 'Blocked' : eff.needsPayRate ? 'Needs rate' : 'Ready'}
                         />
                       </Tooltip>
                     ) : (
@@ -581,35 +705,70 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                     )}
                   </TableCell>
                   <TableCell align="right" sx={evCol}>
-                    {match && match.payRate != null ? (
-                      <Tooltip
-                        title={
-                          match.payRateSource === 'assignment'
-                            ? 'From paired HRX assignment'
-                            : match.payRateSource === 'site_mapping'
-                              ? 'From mapped site → job order'
-                              : ''
-                        }
-                      >
-                        <Typography variant="body2">${match.payRate.toFixed(2)}</Typography>
-                      </Tooltip>
-                    ) : payable && match!.needsPayRate ? (
-                      <Typography variant="caption" color="info.main">needs rate</Typography>
+                    {payable ? (
+                      <>
+                        {editableCell(
+                          r.rowIndex,
+                          'payRate',
+                          eff.payRate,
+                          eff.payRate != null ? (
+                            <Typography component="span" variant="body2">
+                              ${eff.payRate.toFixed(2)}
+                            </Typography>
+                          ) : (
+                            <Typography component="span" variant="caption" color="info.main">
+                              + add rate
+                            </Typography>
+                          ),
+                          { prefix: '$', align: 'right', placeholder: '0.00' },
+                        )}
+                        {!overrides.get(r.rowIndex)?.payRate &&
+                          eff.payRate != null &&
+                          match!.payRateSource !== 'none' && (
+                            <Typography variant="caption" color="text.disabled" display="block">
+                              {match!.payRateSource === 'assignment' ? 'assignment' : 'site map'}
+                            </Typography>
+                          )}
+                      </>
                     ) : (
                       <Typography variant="caption" color="text.secondary">—</Typography>
                     )}
                   </TableCell>
                   <TableCell sx={evCol}>
-                    {payable && match!.workersCompCode ? (
+                    {payable ? (
                       <>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                          {match!.workersCompCode}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {match!.workersCompRate != null
-                            ? `$${match!.workersCompRate.toFixed(2)} rate`
-                            : 'no rate'}
-                        </Typography>
+                        {editableCell(
+                          r.rowIndex,
+                          'workersCompCode',
+                          eff.workersCompCode,
+                          eff.workersCompCode ? (
+                            <Typography component="span" variant="body2" sx={{ fontFamily: 'monospace' }}>
+                              {eff.workersCompCode}
+                            </Typography>
+                          ) : (
+                            <Typography component="span" variant="caption" color="text.secondary">
+                              + WC code
+                            </Typography>
+                          ),
+                          { width: 72, placeholder: 'code' },
+                        )}
+                        <Box sx={{ mt: 0.25 }}>
+                          {editableCell(
+                            r.rowIndex,
+                            'workersCompRate',
+                            eff.workersCompRate,
+                            eff.workersCompRate != null ? (
+                              <Typography component="span" variant="caption" color="text.secondary">
+                                ${eff.workersCompRate.toFixed(2)} rate
+                              </Typography>
+                            ) : (
+                              <Typography component="span" variant="caption" color="text.disabled">
+                                + WC rate
+                              </Typography>
+                            ),
+                            { prefix: '$', width: 76, placeholder: '0.00' },
+                          )}
+                        </Box>
                       </>
                     ) : (
                       <Typography variant="caption" color="text.secondary">—</Typography>
@@ -632,7 +791,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                               .join(' · ')}
                           </Typography>
                         )}
-                        {match!.needsPayRate && r.site && (
+                        {eff.needsPayRate && r.site && (
                           <Link
                             component="button"
                             type="button"
@@ -693,8 +852,12 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
             {matchByRow.size > 0 &&
               (() => {
                 const vals = [...matchByRow.values()];
-                const ready = vals.filter((m) => !m.block && !m.needsPayRate).length;
-                const needsRate = vals.filter((m) => !m.block && m.needsPayRate).length;
+                const ready = vals.filter(
+                  (m) => !m.block && !effective(m, m.rowIndex).needsPayRate,
+                ).length;
+                const needsRate = vals.filter(
+                  (m) => !m.block && effective(m, m.rowIndex).needsPayRate,
+                ).length;
                 const blocked = vals.filter((m) => m.block).length;
                 return (
                   <>
