@@ -261,6 +261,15 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     rate: number;
     rowIndexes: number[];
   } | null>(null);
+  // Submit-to-Everee (P4): dry-run preview, then live submit.
+  const [submitting, setSubmitting] = useState(false);
+  const [submitPreview, setSubmitPreview] = useState<{
+    count: number;
+    totalAmount: number;
+    preview: Array<{ workerName: string; workDate: string; hours: number; payRate: number; amount: number }>;
+  } | null>(null);
+  const [submitResult, setSubmitResult] = useState<{ submitted: number; failed: number; totalAmount: number; errors: string[] } | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const importableRows = parsed?.rows.filter((r) => r.status === 'importable') ?? [];
@@ -688,6 +697,88 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
         </Box>
       </Tooltip>
     );
+  };
+
+  // ── Submit to Everee (P4) ──
+  // The Ready rows: matched + Everee-linked + a resolved/typed pay rate.
+  const buildReadyRows = () =>
+    (parsed?.rows ?? [])
+      .filter((r) => r.status === 'importable')
+      .map((r) => ({ r, match: matchByRow.get(r.rowIndex) }))
+      .filter(({ r, match }) => {
+        if (!match || match.block) return false;
+        return !effective(match, r.rowIndex).needsPayRate && !!match.userId;
+      })
+      .map(({ r, match }) => ({
+        userId: match!.userId as string,
+        workDate: r.workDate,
+        hours: r.hours,
+        payRate: effective(match, r.rowIndex).payRate as number,
+        workerName: match!.displayName || [r.firstName, r.lastName].filter(Boolean).join(' '),
+      }));
+  const readyCount = buildReadyRows().length;
+
+  const submitCallable = () =>
+    httpsCallable<
+      {
+        tenantId: string;
+        hiringEntityId: string;
+        customer: string;
+        dryRun: boolean;
+        rows: Array<{ userId: string; workDate: string; hours: number; payRate: number; workerName: string }>;
+      },
+      {
+        dryRun: boolean;
+        count?: number;
+        totalAmount?: number;
+        preview?: Array<{ workerName: string; workDate: string; hours: number; payRate: number; amount: number }>;
+        submitted?: number;
+        failed?: number;
+        errors?: string[];
+      }
+    >(functions, 'submitImportTimesheetBatch', { timeout: 300000 });
+
+  const previewSubmit = async () => {
+    const rows = buildReadyRows();
+    if (!entityId || rows.length === 0) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    setSubmitResult(null);
+    try {
+      const res = await submitCallable()({ tenantId, hiringEntityId: entityId, customer, dryRun: true, rows });
+      setSubmitPreview({
+        count: res.data?.count ?? rows.length,
+        totalAmount: res.data?.totalAmount ?? 0,
+        preview: res.data?.preview ?? [],
+      });
+    } catch (err: any) {
+      console.error('submitImportTimesheetBatch (dry-run) failed:', err);
+      setSubmitError(err?.message || 'Failed to preview the submission.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const confirmSubmit = async () => {
+    const rows = buildReadyRows();
+    if (!entityId || rows.length === 0) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const res = await submitCallable()({ tenantId, hiringEntityId: entityId, customer, dryRun: false, rows });
+      setSubmitPreview(null);
+      setSubmitResult({
+        submitted: res.data?.submitted ?? 0,
+        failed: res.data?.failed ?? 0,
+        totalAmount: res.data?.totalAmount ?? 0,
+        errors: res.data?.errors ?? [],
+      });
+    } catch (err: any) {
+      console.error('submitImportTimesheetBatch (live) failed:', err);
+      setSubmitError(err?.message || 'Failed to submit to Everee.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -1141,6 +1232,38 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                 );
               })()}
           </Stack>
+          {readyCount > 0 && (
+            <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
+              <Button
+                variant="contained"
+                color="success"
+                onClick={previewSubmit}
+                disabled={submitting || matching}
+                sx={{ textTransform: 'none' }}
+              >
+                {submitting ? 'Working…' : `Submit ${readyCount} Ready to Everee →`}
+              </Button>
+              <Typography variant="caption" color="text.secondary">
+                Previews the payload first — nothing is sent until you confirm.
+              </Typography>
+            </Stack>
+          )}
+          {submitResult && (
+            <Alert
+              severity={submitResult.failed > 0 || submitResult.errors.length ? 'warning' : 'success'}
+              onClose={() => setSubmitResult(null)}
+            >
+              Submitted {submitResult.submitted} payable{submitResult.submitted === 1 ? '' : 's'} to
+              Everee (${submitResult.totalAmount.toFixed(2)}).
+              {submitResult.failed > 0 ? ` ${submitResult.failed} failed.` : ''}
+              {submitResult.errors.length > 0 ? ` ${submitResult.errors.join('; ')}` : ''}
+            </Alert>
+          )}
+          {submitError && (
+            <Alert severity="error" onClose={() => setSubmitError(null)}>
+              {submitError}
+            </Alert>
+          )}
           {matchError && (
             <Alert severity="warning" onClose={() => setMatchError(null)}>
               {matchError}
@@ -1149,12 +1272,76 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           {matchByRow.size > 0 && (
             <Typography variant="caption" color="text.secondary">
               Blocked rows need an HRX worker + Everee onboarding before they can be paid.
-              “Needs rate” rows have no paired assignment — map their site to a job order to pull
-              the pay rate, WC code, and worksite, then submit to Everee.
+              “Needs rate” rows have no paired assignment — map their site to a job order or type a
+              pay rate. Ready rows submit to Everee as contractor pay (hours × rate).
             </Typography>
           )}
         </Box>
       )}
+
+      <Dialog
+        open={submitPreview != null}
+        onClose={() => (submitting ? null : setSubmitPreview(null))}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>Submit to Everee — preview</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ pt: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              This is exactly what will be sent to Everee as contractor pay (1099). Nothing has been
+              submitted yet — review, then confirm.
+            </Typography>
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+              <Chip color="success" label={`${submitPreview?.count ?? 0} payable${(submitPreview?.count ?? 0) === 1 ? '' : 's'}`} />
+              <Chip label={`Total $${(submitPreview?.totalAmount ?? 0).toFixed(2)}`} />
+            </Stack>
+            <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 320 }}>
+              <Table size="small" stickyHeader>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Worker</TableCell>
+                    <TableCell>Date</TableCell>
+                    <TableCell align="right">Hours</TableCell>
+                    <TableCell align="right">Rate</TableCell>
+                    <TableCell align="right">Amount</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {(submitPreview?.preview ?? []).map((p, idx) => (
+                    <TableRow key={`${p.workerName}-${p.workDate}-${idx}`}>
+                      <TableCell>{p.workerName || '—'}</TableCell>
+                      <TableCell>{p.workDate}</TableCell>
+                      <TableCell align="right">{p.hours.toFixed(2)}</TableCell>
+                      <TableCell align="right">${p.payRate.toFixed(2)}</TableCell>
+                      <TableCell align="right">${p.amount.toFixed(2)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+            {submitError && (
+              <Alert severity="error" onClose={() => setSubmitError(null)}>
+                {submitError}
+              </Alert>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSubmitPreview(null)} disabled={submitting} sx={{ textTransform: 'none' }}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="success"
+            onClick={confirmSubmit}
+            disabled={submitting || !(submitPreview?.count ?? 0)}
+            sx={{ textTransform: 'none' }}
+          >
+            {submitting ? 'Submitting…' : `Submit ${submitPreview?.count ?? 0} to Everee`}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={mapSite != null} onClose={() => (savingMapping ? null : setMapSite(null))} fullWidth maxWidth="sm">
         <DialogTitle>Map site to a job order</DialogTitle>
