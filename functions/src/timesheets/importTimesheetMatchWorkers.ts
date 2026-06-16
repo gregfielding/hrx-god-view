@@ -200,19 +200,39 @@ async function findUserById(uid: string): Promise<Record<string, any> | null> {
   return snap.exists ? (snap.data() as Record<string, any>) : null;
 }
 
+/** Accent/punctuation-insensitive name key for comparison. */
+function nameKey(s: unknown): string {
+  return String(s || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '') // strip diacritics (José → jose)
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+const caseVariants = (w: string): string[] => {
+  const t = w.trim();
+  if (!t) return [];
+  return Array.from(
+    new Set([t, t.toLowerCase(), t.toUpperCase(), t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()]),
+  );
+};
+
 /**
- * Bounded name lookup for the suggestion fallback. Queries the indexed
- * `lastName` field (a few case variants), each capped — NEVER an unbounded
- * tenant-wide scan. Returns the raw candidates; the caller filters by first
- * name + tenant membership.
+ * Bounded name lookup. Queries the indexed `lastName` field for the full last
+ * name AND its last token (so a CSV multi-token last name like "Martinez
+ * Ramirez" still finds an HRX worker stored as "Ramirez"), each case variant
+ * capped — NEVER an unbounded tenant-wide scan. Caller filters by first/last
+ * name tokens + tenant membership.
  */
 async function queryUsersByLastName(
   lastName: string,
 ): Promise<Array<{ id: string; data: Record<string, any> }>> {
   const ln = String(lastName || '').trim();
   if (!ln) return [];
-  const titleCase = ln.charAt(0).toUpperCase() + ln.slice(1).toLowerCase();
-  const variants = Array.from(new Set([ln, ln.toLowerCase(), ln.toUpperCase(), titleCase]));
+  const tokens = ln.split(/\s+/).filter(Boolean);
+  const bases = Array.from(new Set([ln, tokens[tokens.length - 1] || ln, tokens[0] || ln]));
+  const variants = Array.from(new Set(bases.flatMap(caseVariants)));
   const found = new Map<string, Record<string, any>>();
   for (const v of variants) {
     // eslint-disable-next-line no-await-in-loop
@@ -895,14 +915,28 @@ export const importTimesheetMatchWorkers = onCall(
         return resolved;
       }
       const rows = await queryUsersByLastName(ln);
+      // Anchor match: same first-token-of-first-name AND last-token-of-last-name
+      // (accent/punctuation-insensitive). This catches middle names ("Alondra
+      // Lucy Hernandez" ↔ "Alondra Hernandez"), multi-token last names
+      // ("Aaron Barrios Hernandez"), and accents ("Alvarez" ↔ "Alvares")
+      // without auto-matching unrelated people.
+      const csvTokens = nameKey(`${fn} ${ln}`).split(' ').filter(Boolean);
+      const csvFirst = csvTokens[0] || '';
+      const csvLast = csvTokens[csvTokens.length - 1] || '';
       const candidates = rows.filter((x) => {
-        const dfn = String(x.data.firstName || '').trim().toLowerCase();
         const tenantMember = !!(
           x.data.tenantIds &&
           typeof x.data.tenantIds === 'object' &&
           x.data.tenantIds[tenantId]
         );
-        return dfn === fnNorm && tenantMember;
+        if (!tenantMember || !csvFirst || !csvLast) return false;
+        const hTokens = nameKey(
+          `${x.data.firstName || ''} ${x.data.lastName || ''}`.trim() || x.data.displayName || '',
+        )
+          .split(' ')
+          .filter(Boolean);
+        if (!hTokens.length) return false;
+        return hTokens[0] === csvFirst && hTokens[hTokens.length - 1] === csvLast;
       });
       if (candidates.length === 0) {
         resolved = { kind: 'none' };
