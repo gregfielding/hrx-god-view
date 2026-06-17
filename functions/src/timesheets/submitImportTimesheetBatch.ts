@@ -546,6 +546,7 @@ async function submitW2(args: PathArgs) {
       const workLocationId = await resolveLocation(p.row);
       const start = workDateEpochSeconds(p.workDate);
       const end = start + Math.max(1, Math.round(p.hours * 3600));
+      const gross = Math.round(p.hours * p.payRate * 100) / 100;
       const input: CreateWorkedShiftInput = {
         externalWorkerId: p.userId,
         shiftStartEpochSeconds: start,
@@ -553,9 +554,24 @@ async function submitW2(args: PathArgs) {
         effectiveHourlyPayRate: { amount: p.payRate.toFixed(2), currency: 'USD' },
         workersCompClassCode: p.wc,
         note: dayLabel(`Imported from ${cust}`, p.row.eventLabel, p.workDate),
+        // Fully Classified Shifts is enabled on all C1 Everee instances, so
+        // the endpoint REQUIRES fullyClassifiedHours (it does NOT auto-classify
+        // when omitted — that returns 400). Imported timesheets carry only a
+        // daily total (no clock detail), and the canonical entry stores them
+        // straight-time (totalRegularHours = hours, OT/DT = 0), so we send a
+        // single REGULAR_TIME segment for the day. Daily/weekly OT is not
+        // auto-applied — it would need an explicit multistate classifier.
+        fullyClassifiedHours: [
+          {
+            type: 'REGULAR_TIME',
+            startEpochSeconds: start,
+            endEpochSeconds: end,
+            hourlyPayRate: { amount: p.payRate.toFixed(2), currency: 'USD' },
+            grossPayAmount: { amount: gross.toFixed(2), currency: 'USD' },
+          },
+        ],
       };
       if (workLocationId != null) input.overrideWorkLocationId = workLocationId;
-      // No fullyClassifiedHours — Everee's engine computes daily/weekly OT/DT.
       const res = await createWorkedShift(cfg, input);
       submitted += 1;
       statusWrites.push({ plan: p, workedShiftId: res.workedShiftId });

@@ -252,8 +252,8 @@ const ImportGridSubmitBar: React.FC<ImportGridSubmitBarProps> = ({
                 {byCustomer.size > 1 ? ` across ${byCustomer.size} customers` : ''}.
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                {preview.estimate ? '~' : ''}${preview.totalAmount.toFixed(2)}
-                {preview.estimate ? ' straight-time (Everee adds OT/DT at the pay run)' : ''}.
+                ${preview.totalAmount.toFixed(2)}
+                {preview.estimate ? ' — straight-time (overtime is not auto-applied)' : ''}.
               </Typography>
             </Box>
           ) : null}

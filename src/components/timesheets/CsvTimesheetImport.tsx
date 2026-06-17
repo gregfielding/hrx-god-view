@@ -308,6 +308,10 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     name: string;
     accountType: string;
     parentName?: string;
+    /** True when this is a child account (has a parent). Only child accounts
+     *  are scoped to their specifically-linked locations; standalone/national
+     *  parents expose every location under their company. */
+    isChild: boolean;
     companyIds: string[];
     linkedLocations: Array<{ companyId: string; locationId: string }>;
   };
@@ -967,6 +971,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
             name: String(data.name || data.accountName || id),
             accountType: String(data.accountType || 'standalone'),
             parentName,
+            isChild: !!data.parentAccountId,
             companyIds,
             linkedLocations,
           };
@@ -1003,8 +1008,8 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     setWsWorksitePick(null);
     try {
       const out: WsWorksite[] = [];
-      if (acc.linkedLocations.length > 0) {
-        // Child account → its specifically linked worksite(s).
+      if (acc.isChild && acc.linkedLocations.length > 0) {
+        // Child account → its specifically linked worksite(s) only.
         await Promise.all(
           acc.linkedLocations.map(async ({ companyId, locationId }) => {
             const s = await getDoc(
@@ -1014,7 +1019,9 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           }),
         );
       } else {
-        // Standalone / national → all locations under each linked company.
+        // Standalone / national parent → EVERY location under each linked
+        // company (a standalone's `associations.locations` is just its primary
+        // pointer, not the full set — so we enumerate the company instead).
         await Promise.all(
           acc.companyIds.map(async (companyId) => {
             const snap = await getDocs(
@@ -1933,7 +1940,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                               ? `Paid by Everee ($${submitted.amount.toFixed(2)})`
                               : is1099Entity
                                 ? `Submitted to Everee as a $${submitted.amount.toFixed(2)} payable`
-                                : `Submitted to Everee — $${submitted.amount.toFixed(2)} straight-time; Everee adds any OT/DT at the pay run`
+                                : `Submitted to Everee — $${submitted.amount.toFixed(2)} straight-time (overtime not auto-applied)`
                           }
                         >
                           <Chip
@@ -2447,15 +2454,15 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                 }
               />
               <Chip
-                label={`${submitPreview?.evereeClassifiesOt ? '~' : ''}$${(submitPreview?.totalAmount ?? 0).toFixed(2)}${
+                label={`$${(submitPreview?.totalAmount ?? 0).toFixed(2)}${
                   submitPreview?.evereeClassifiesOt ? ' straight-time' : ''
                 }`}
               />
             </Stack>
             {submitPreview?.evereeClassifiesOt && (
               <Alert severity="info" sx={{ py: 0.5 }}>
-                Total is straight-time (hours × rate). Everee’s payroll engine computes any
-                overtime / double-time at the pay run, so the final gross may be higher.
+                Hours are submitted straight-time (hours × rate) — overtime / double-time is
+                not auto-applied. If any worker should be paid OT, classify it in Everee.
               </Alert>
             )}
             <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 320 }}>
