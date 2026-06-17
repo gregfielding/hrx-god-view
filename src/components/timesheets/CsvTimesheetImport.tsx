@@ -747,14 +747,53 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     setFileName(file.name);
     setParsing(true);
 
-    // Connect Team exports as .xlsx (parse the "All Employees" sheet with
-    // SheetJS); Indeed Flex exports as CSV (PapaParse).
-    if (customer === 'connect_team') {
+    // The file CONTAINER (Excel vs CSV) is detected from the file itself, so a
+    // recruiter can upload either format regardless of customer — some export
+    // Connect Team as .csv, or Indeed Flex saved as .xlsx. The selected
+    // customer only decides which COLUMN MAPPING to apply.
+    const isExcel =
+      /\.xls[xm]?$/i.test(file.name) ||
+      file.type.includes('spreadsheetml') ||
+      file.type === 'application/vnd.ms-excel';
+
+    // Map the raw rows through the selected customer's column mapping +
+    // shape check, then publish. Always clears `parsing`.
+    const finish = (rawRows: Array<Record<string, unknown>>) => {
+      try {
+        if (!rawRows.length) {
+          setError('That file has no data rows.');
+          return;
+        }
+        if (customer === 'connect_team') {
+          if (!looksLikeConnectTeam(rawRows)) {
+            setError(
+              "This doesn't look like a Connect Team export — it's missing expected columns (First name, Last name, Start Date, Daily total hours, Type). Check the file or customer selection.",
+            );
+            return;
+          }
+          setParsed(mapConnectTeamRows(rawRows));
+        } else {
+          if (!looksLikeIndeedFlex(rawRows)) {
+            setError(
+              "This doesn't look like an Indeed Flex export — it's missing expected columns (Email, Date, Hours, Timesheet Status). Check the file or customer selection.",
+            );
+            return;
+          }
+          setParsed(mapIndeedFlexRows(rawRows));
+        }
+      } finally {
+        setParsing(false);
+      }
+    };
+
+    if (isExcel) {
       const reader = new FileReader();
       reader.onload = (e) => {
         try {
           const data = new Uint8Array(e.target?.result as ArrayBuffer);
           const wb = XLSX.read(data, { type: 'array' });
+          // Connect Team's data lives on an "All Employees" sheet; otherwise
+          // take the first sheet.
           const sheetName =
             wb.SheetNames.find((n) => n.trim().toLowerCase() === 'all employees') ||
             wb.SheetNames[0];
@@ -763,20 +802,9 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
             raw: false,
             defval: '',
           }) as Array<Record<string, unknown>>;
-          if (!rawRows.length) {
-            setError('That file has no data rows.');
-            return;
-          }
-          if (!looksLikeConnectTeam(rawRows)) {
-            setError(
-              "This doesn't look like a Connect Team export — it's missing expected columns (First name, Last name, Start Date, Daily total hours, Type). Check the file or customer selection.",
-            );
-            return;
-          }
-          setParsed(mapConnectTeamRows(rawRows));
+          finish(rawRows);
         } catch (err: any) {
           setError(`Failed to parse the Excel file: ${err?.message || err}`);
-        } finally {
           setParsing(false);
         }
       };
@@ -791,24 +819,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
-      complete: (results) => {
-        try {
-          const rawRows = (results.data as Array<Record<string, unknown>>) || [];
-          if (!rawRows.length) {
-            setError('That file has no data rows.');
-            return;
-          }
-          if (customer === 'indeed_flex' && !looksLikeIndeedFlex(rawRows)) {
-            setError(
-              "This doesn't look like an Indeed Flex export — it's missing expected columns (Email, Date, Hours, Timesheet Status). Check the file or customer selection.",
-            );
-            return;
-          }
-          setParsed(mapIndeedFlexRows(rawRows));
-        } finally {
-          setParsing(false);
-        }
-      },
+      complete: (results) => finish((results.data as Array<Record<string, unknown>>) || []),
       error: (err) => {
         setError(`Failed to parse CSV: ${err.message}`);
         setParsing(false);
@@ -1775,20 +1786,14 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           disabled={parsing}
           sx={{ textTransform: 'none' }}
         >
-          {parsing
-            ? 'Parsing…'
-            : customer === 'connect_team'
-              ? 'Upload Excel'
-              : 'Upload CSV'}
+          {parsing ? 'Parsing…' : 'Upload CSV / Excel'}
         </Button>
         <input
           ref={fileInputRef}
           type="file"
-          accept={
-            customer === 'connect_team'
-              ? '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-              : '.csv,text/csv'
-          }
+          // Accept either container — the parser detects Excel vs CSV from the
+          // file and applies the selected customer's column mapping.
+          accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
           hidden
           onChange={onPick}
         />

@@ -739,6 +739,7 @@ const ImportRow: React.FC<{
             value={payRate > 0 ? payRate : null}
             onSave={savePayRate}
             validate={validatePayRate}
+            emptyDisplay="+ rate"
             ariaLabel="Imported pay rate"
           />
         ) : payRate > 0 ? (
