@@ -34,6 +34,7 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  IconButton,
   Link,
   Paper,
   Stack,
@@ -43,14 +44,18 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   Tooltip,
   Typography,
 } from '@mui/material';
 import {
+  Edit as EditIcon,
   TableChart as TableChartIcon,
 } from '@mui/icons-material';
 import { FirebaseError } from 'firebase/app';
+import { httpsCallable } from 'firebase/functions';
 
+import { functions } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { TimesheetEditorProvider } from '../../contexts/TimesheetEditorContext';
 import useTimesheetEntryEditor from '../../hooks/useTimesheetEntryEditor';
@@ -74,6 +79,8 @@ import NotesCell from './cells/NotesCell';
 import NumberCell from './cells/NumberCell';
 import TimeCell from './cells/TimeCell';
 import EditWorkersCompDialog from './EditWorkersCompDialog';
+import ImportRowWorkerPicker from './ImportRowWorkerPicker';
+import ImportGridSubmitBar from './ImportGridSubmitBar';
 import TimesheetTotalsHeader from './TimesheetTotalsHeader';
 import {
   type TimesheetGridRow,
@@ -456,11 +463,17 @@ interface CreatingState {
  * aligned no matter which kind of row is rendering.
  * ------------------------------------------------------------------------- */
 
-const WorkerSiteCell: React.FC<{ row: TimesheetGridRow }> = ({ row }) => (
+const WorkerSiteCell: React.FC<{ row: TimesheetGridRow; action?: React.ReactNode }> = ({
+  row,
+  action,
+}) => (
   <TableCell>
-    <Typography variant="body2" fontWeight={600}>
-      {row.assignment.workerDisplayName ?? row.assignment.candidateId}
-    </Typography>
+    <Stack direction="row" spacing={0.25} alignItems="center">
+      <Typography variant="body2" fontWeight={600}>
+        {row.assignment.workerDisplayName ?? row.assignment.candidateId}
+      </Typography>
+      {action}
+    </Stack>
     {row.assignment.worksiteDisplayName ? (
       <Typography variant="caption" color="text.secondary">
         {row.assignment.worksiteDisplayName}
@@ -603,19 +616,46 @@ const ImportRow: React.FC<{
   status: TimesheetRowDisplayStatus;
   actualHrs: number;
   tenantId?: string;
+  hiringEntityId?: string | null;
   refreshEntry: (entryId: string) => void;
-}> = ({ row, status, actualHrs, tenantId, refreshEntry }) => {
+  /** Full grid reload — needed after a worker reassign because the entry's
+   *  synthetic doc id changes (keyed by worker), so a single-entry refresh
+   *  can't find the moved row. */
+  reloadAll: () => void;
+}> = ({ row, status, actualHrs, tenantId, hiringEntityId, refreshEntry, reloadAll }) => {
   const imp = row.entry.import;
   const payRate = typeof row.entry.payRate === 'number' ? row.entry.payRate : 0;
   const wcCode = row.resolvedWorkersCompCode ?? imp?.workersCompCode ?? null;
   const wcRate = row.resolvedWorkersCompRate;
   const blocked = imp?.matchStatus === 'blocked';
+  // Rows live in Everee (submitted/paid) are frozen — no WC edit, no reassign.
+  const live = imp?.matchStatus === 'submitted' || imp?.matchStatus === 'paid';
   // WC is editable inline here (writes straight to the entry via the same
   // callable the regular grid uses); everything else is resolved/fixed in the
-  // Import CSV tab. Locked once the row is live in Everee.
-  const wcLocked = imp?.matchStatus === 'submitted' || imp?.matchStatus === 'paid';
-  const wcEditable = !!tenantId && !wcLocked;
+  // Import CSV tab.
+  const wcEditable = !!tenantId && !live;
+  const canReassign = !!tenantId && !!hiringEntityId && !live;
+  const hoursEditable = !!tenantId && !live;
   const [wcDialogOpen, setWcDialogOpen] = React.useState(false);
+  const [pickerOpen, setPickerOpen] = React.useState(false);
+
+  // Edit actual hours (e.g. zero out a day already covered by an advance).
+  // A server callable keeps actualHoursOverride + totalRegularHours in sync —
+  // the rules client-allowlist permits only the former, and submit reads the
+  // override with a fallback to the total, so they must move together.
+  const saveHours = React.useCallback(
+    async (value: number | null) => {
+      if (!tenantId) return;
+      const fn = httpsCallable<{ tenantId: string; entryId: string; hours: number }, { ok: true }>(
+        functions,
+        'setImportEntryHours',
+        { timeout: 60000 },
+      );
+      await fn({ tenantId, entryId: row.entry.id, hours: value ?? 0 });
+      await refreshEntry(row.entry.id);
+    },
+    [tenantId, row.entry.id, refreshEntry],
+  );
   const wcCellSx = {
     fontVariantNumeric: 'tabular-nums' as const,
     cursor: wcEditable ? 'pointer' : 'default',
@@ -624,7 +664,18 @@ const ImportRow: React.FC<{
   };
   return (
     <TableRow hover sx={{ backgroundColor: blocked ? 'warning.50' : 'action.hover' }}>
-      <WorkerSiteCell row={row} />
+      <WorkerSiteCell
+        row={row}
+        action={
+          canReassign ? (
+            <Tooltip title="Change / fix the matched HRX worker">
+              <IconButton size="small" onClick={() => setPickerOpen(true)} sx={{ p: 0.25 }}>
+                <EditIcon sx={{ fontSize: 15 }} />
+              </IconButton>
+            </Tooltip>
+          ) : undefined
+        }
+      />
       <TableCell>{row.workDate}</TableCell>
       <TableCell>
         <Typography component="span" variant="caption" color="text.secondary" sx={{ fontStyle: 'italic' }}>
@@ -642,8 +693,18 @@ const ImportRow: React.FC<{
         )}
       </TableCell>
       <TableCell>—</TableCell>
-      <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-        {actualHrs > 0 ? formatHours(actualHrs) : '—'}
+      <TableCell align="right">
+        {hoursEditable ? (
+          <HoursOverrideCell
+            value={actualHrs}
+            onSave={saveHours}
+            ariaLabel="Imported actual hours"
+          />
+        ) : (
+          <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+            {actualHrs > 0 ? formatHours(actualHrs) : '—'}
+          </Typography>
+        )}
       </TableCell>
       <TableCell align="right">—</TableCell>
       <TableCell align="right">—</TableCell>
@@ -682,6 +743,22 @@ const ImportRow: React.FC<{
           initialCode={wcCode}
           initialRate={wcRate}
           rowLabel={`${row.assignment.workerDisplayName ?? ''} · ${row.workDate}`.trim()}
+        />
+      )}
+      {tenantId && hiringEntityId && (
+        <ImportRowWorkerPicker
+          open={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          onReassigned={() => {
+            setPickerOpen(false);
+            // The doc id moved (keyed by worker) — reload the whole grid.
+            reloadAll();
+          }}
+          tenantId={tenantId}
+          hiringEntityId={hiringEntityId}
+          entryId={row.entry.id}
+          csvWorkerName={imp?.csvWorkerName ?? null}
+          currentWorkerName={row.assignment.workerDisplayName ?? null}
         />
       )}
     </TableRow>
@@ -956,6 +1033,46 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
     });
   }, [rawRows, narrowJobOrderIds, narrowShiftId]);
 
+  // Import rows are entity-anchored — only the `entity_period` filter surfaces
+  // them, and that's the only scope where reassign + import-submit make sense.
+  const importHiringEntityId =
+    filter?.kind === 'entity_period' ? filter.hiringEntityId : null;
+
+  // Sortable columns. Default mirrors the resolver's worker-name ordering.
+  type GridSortKey = 'worker' | 'notes';
+  const [sortBy, setSortBy] = useState<GridSortKey>('worker');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const toggleSort = (key: GridSortKey) => {
+    if (sortBy === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortBy(key);
+      setSortDir('asc');
+    }
+  };
+  const sortedRows = useMemo(() => {
+    const workerKey = (r: TimesheetGridRow) =>
+      (r.assignment.workerDisplayName ?? r.assignment.candidateId ?? '').toLowerCase();
+    const notesKey = (r: TimesheetGridRow) => {
+      if (r.kind !== 'entry') return '';
+      // Notes column shows the worksite line for import rows, the entry note
+      // otherwise — sort by whatever's actually displayed.
+      return (r.isImport ? r.entry.import?.csvSite ?? '' : r.entry.notes ?? '').toLowerCase();
+    };
+    const primary = sortBy === 'worker' ? workerKey : notesKey;
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      const pa = primary(a);
+      const pb = primary(b);
+      if (pa !== pb) return pa < pb ? -dir : dir;
+      // Stable, readable tiebreak: worker then work date.
+      const wa = workerKey(a);
+      const wb = workerKey(b);
+      if (wa !== wb) return wa < wb ? -1 : 1;
+      return a.workDate < b.workDate ? -1 : a.workDate > b.workDate ? 1 : 0;
+    });
+  }, [rows, sortBy, sortDir]);
+
   /* -------------------------------------------------------------------
    * Auto-materialize draft entries on JO/shift narrow.
    *
@@ -1158,6 +1275,16 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
           mergeEntryUpdate={mergeEntryUpdate}
         />
 
+        {/* Imported (CSV) rows submit to Everee on their own track — separate
+            from the approved scheduled-entry batch above. Shows only when this
+            entity view holds Ready import rows. */}
+        <ImportGridSubmitBar
+          rows={rows}
+          tenantId={tenantId}
+          hiringEntityId={importHiringEntityId}
+          onSubmitted={refresh}
+        />
+
         {autoCreating ? (
           <Alert
             severity="info"
@@ -1213,7 +1340,15 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
               <Table size="small">
                 <TableHead>
                   <TableRow>
-                    <TableCell>Worker</TableCell>
+                    <TableCell sortDirection={sortBy === 'worker' ? sortDir : false}>
+                      <TableSortLabel
+                        active={sortBy === 'worker'}
+                        direction={sortBy === 'worker' ? sortDir : 'asc'}
+                        onClick={() => toggleSort('worker')}
+                      >
+                        Worker
+                      </TableSortLabel>
+                    </TableCell>
                     <TableCell>Work date</TableCell>
                     <TableCell>Scheduled</TableCell>
                     <TableCell align="right">Sched hrs</TableCell>
@@ -1222,7 +1357,15 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                     <TableCell align="right">Actual hrs</TableCell>
                     <TableCell align="right">Tips</TableCell>
                     <TableCell align="right">Bonus</TableCell>
-                    <TableCell>Notes</TableCell>
+                    <TableCell sortDirection={sortBy === 'notes' ? sortDir : false}>
+                      <TableSortLabel
+                        active={sortBy === 'notes'}
+                        direction={sortBy === 'notes' ? sortDir : 'asc'}
+                        onClick={() => toggleSort('notes')}
+                      >
+                        Notes
+                      </TableSortLabel>
+                    </TableCell>
                     <TableCell align="right">Pay rate</TableCell>
                     {/* WC code / rate (2026-06-03). Read display sourced
                         from the resolver's resolution chain; click to
@@ -1235,7 +1378,7 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {rows.map((row) => {
+                  {sortedRows.map((row) => {
                     const status = displayStatusForRow(row);
                     const scheduledHrs = scheduledHoursForRow(row);
                     const actualHrs = actualHoursForRow(row);
@@ -1264,7 +1407,9 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                           status={status}
                           actualHrs={actualHrs}
                           tenantId={tenantId}
+                          hiringEntityId={importHiringEntityId}
                           refreshEntry={refreshEntry}
+                          reloadAll={refresh}
                         />
                       );
                     }

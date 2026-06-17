@@ -1309,6 +1309,23 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     setSubmitting(true);
     setSubmitError(null);
     try {
+      // HRX is the system of record. Persist the ENTIRE grid (matched,
+      // needs-rate, needs-wc, blocked — not just the Ready rows we're about
+      // to send) to `timesheet_entries` FIRST, so the import is saved to HRX
+      // before anything reaches Everee. This makes "Save progress" optional:
+      // submitting can no longer leave HRX empty or silently drop blocked
+      // rows. If the persist fails, abort before calling Everee.
+      try {
+        await persistImportRows(entityId);
+      } catch (saveErr: any) {
+        console.error('Pre-submit persist to HRX failed:', saveErr);
+        setSubmitError(
+          `Could not save the import to HRX before submitting (${saveErr?.message || 'unknown error'}). ` +
+            'Nothing was sent to Everee — please retry.',
+        );
+        setSubmitting(false);
+        return;
+      }
       const res = await submitCallable()({ tenantId, hiringEntityId: entityId, customer, dryRun: false, rows });
       setSubmitPreview(null);
       setSubmitResult({
@@ -1452,20 +1469,32 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
         };
       });
 
+  /**
+   * Persist the WHOLE import grid to HRX `timesheet_entries` — every
+   * importable row (ready, needs-rate, needs-wc, blocked, already-submitted).
+   * This is the single write path for "save to HRX" and is shared by the
+   * manual "Save progress" button AND the submit flow, so HRX always holds the
+   * records before anything is sent to Everee. Returns the upserted count.
+   */
+  const persistImportRows = async (eid: string): Promise<number> => {
+    const rows = buildSaveRows();
+    if (rows.length === 0) return 0;
+    const fn = httpsCallable<
+      { tenantId: string; hiringEntityId: string; customer: string; rows: typeof rows },
+      { ok: boolean; upserted: number; byStatus: Record<string, number> }
+    >(functions, 'saveImportTimesheetRows', { timeout: 300000 });
+    const res = await fn({ tenantId, hiringEntityId: eid, customer, rows });
+    return res.data?.upserted ?? rows.length;
+  };
+
   const saveProgress = async () => {
     if (!entityId) return;
-    const rows = buildSaveRows();
-    if (rows.length === 0) return;
     setSaving(true);
     setSaveResult(null);
     setMatchError(null);
     try {
-      const fn = httpsCallable<
-        { tenantId: string; hiringEntityId: string; customer: string; rows: typeof rows },
-        { ok: boolean; upserted: number; byStatus: Record<string, number> }
-      >(functions, 'saveImportTimesheetRows', { timeout: 300000 });
-      const res = await fn({ tenantId, hiringEntityId: entityId, customer, rows });
-      setSaveResult({ upserted: res.data?.upserted ?? rows.length });
+      const upserted = await persistImportRows(entityId);
+      if (upserted > 0) setSaveResult({ upserted });
     } catch (err: any) {
       console.error('saveImportTimesheetRows failed:', err);
       setMatchError(err?.message || 'Failed to save progress.');
@@ -2344,7 +2373,9 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                 {submitting ? 'Working…' : `Submit ${readyCount} Ready to Everee →`}
               </Button>
               <Typography variant="caption" color="text.secondary">
-                Previews the payload first — nothing is sent until you confirm.
+                Previews the payload first — nothing is sent until you confirm. On confirm, the
+                whole import (including blocked rows) is saved to HRX timesheets before the Ready
+                rows go to Everee.
               </Typography>
             </Stack>
           )}

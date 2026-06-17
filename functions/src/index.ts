@@ -378,6 +378,8 @@ export { saveTimesheetWorkerAlias } from './timesheets/timesheetWorkerAliases';
 export { submitImportTimesheetBatch, voidImportTimesheetPayable } from './timesheets/submitImportTimesheetBatch';
 export { searchTimesheetWorkers } from './timesheets/searchTimesheetWorkers';
 export { saveImportTimesheetRows, deleteStaleImportEntries } from './timesheets/saveImportTimesheetRows';
+export { reassignImportEntryWorker } from './timesheets/reassignImportEntryWorker';
+export { setImportEntryHours } from './timesheets/setImportEntryHours';
 export { approveTimesheetEntriesCallable } from './timesheets/approveTimesheetEntriesCallable';
 // Mirror of approve in reverse — flips `approved` rows back to `draft`
 // so recruiters can pull a row out of the Submit-to-Everee queue when
