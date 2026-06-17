@@ -209,7 +209,7 @@ const ImportRowWorkerPicker: React.FC<ImportRowWorkerPickerProps> = ({
                       disableRipple
                     />
                     <ListItemText
-                      primary={`${h.displayName || '(no name)'}${h.inTenant ? '' : ' · other tenant'}`}
+                      primary={`${h.displayName || '(no name)'}${h.inTenant ? '' : ' · not in this tenant'}`}
                       secondary={[h.email, h.phone].filter(Boolean).join(' · ') || '—'}
                       primaryTypographyProps={{ variant: 'body2' }}
                       secondaryTypographyProps={{ variant: 'caption' }}

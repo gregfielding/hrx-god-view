@@ -50,6 +50,7 @@ import {
   Stack,
   Table,
   TableBody,
+  TextField,
   TableCell,
   TableContainer,
   TableHead,
@@ -61,6 +62,7 @@ import {
 import {
   DeleteOutline as DeleteIcon,
   Edit as EditIcon,
+  OpenInNew as OpenInNewIcon,
   TableChart as TableChartIcon,
 } from '@mui/icons-material';
 import { FirebaseError } from 'firebase/app';
@@ -488,6 +490,24 @@ const WorkerSiteCell: React.FC<{
       <Typography variant="body2" fontWeight={600}>
         {row.assignment.workerDisplayName ?? row.assignment.candidateId}
       </Typography>
+      {(() => {
+        const uid = (row.assignment.workerId || row.assignment.candidateId || '').trim();
+        return uid ? (
+          <Tooltip title="Open worker record in a new tab">
+            <IconButton
+              size="small"
+              component="a"
+              href={`/users/${uid}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              sx={{ p: 0.25 }}
+            >
+              <OpenInNewIcon sx={{ fontSize: 14 }} color="action" />
+            </IconButton>
+          </Tooltip>
+        ) : null;
+      })()}
       {action}
     </Stack>
     <Stack direction="row" spacing={0.25} alignItems="center">
@@ -647,7 +667,10 @@ const ImportRow: React.FC<{
    *  synthetic doc id changes (keyed by worker), so a single-entry refresh
    *  can't find the moved row. */
   reloadAll: () => void;
-}> = ({ row, status, actualHrs, tenantId, hiringEntityId, refreshEntry, reloadAll }) => {
+  /** Drop a single row from the local view without a full reload (used after
+   *  delete, so the recruiter can clear several rows back-to-back). */
+  onDeleted: (entryId: string) => void;
+}> = ({ row, status, actualHrs, tenantId, hiringEntityId, refreshEntry, reloadAll, onDeleted }) => {
   const imp = row.entry.import;
   const payRate = typeof row.entry.payRate === 'number' ? row.entry.payRate : 0;
   const wcCode = row.resolvedWorkersCompCode ?? imp?.workersCompCode ?? null;
@@ -688,13 +711,15 @@ const ImportRow: React.FC<{
       );
       await fn({ tenantId, entryId: row.entry.id });
       setDeleteOpen(false);
-      reloadAll();
+      // Drop just this row locally — no full reload, so deleting several in a
+      // row stays snappy.
+      onDeleted(row.entry.id);
     } catch (e) {
       console.error('deleteImportEntry failed:', e);
     } finally {
       setDeleting(false);
     }
-  }, [tenantId, row.entry.id, reloadAll]);
+  }, [tenantId, row.entry.id, onDeleted]);
 
   // Edit actual hours (e.g. zero out a day already covered by an advance).
   // A server callable keeps actualHoursOverride + totalRegularHours in sync —
@@ -1195,38 +1220,89 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
     }
   };
   const sortedRows = useMemo(() => {
-    const workerKey = (r: TimesheetGridRow) =>
-      (r.assignment.workerDisplayName ?? r.assignment.candidateId ?? '').toLowerCase();
+    // Worker sort = LAST name, then full name (roster convention) — sorting on
+    // the raw "First Last" string put everyone in first-name order, which read
+    // as "broken". localeCompare handles case/accents/punctuation cleanly.
+    const nameParts = (r: TimesheetGridRow) => {
+      const full = (r.assignment.workerDisplayName ?? r.assignment.candidateId ?? '').trim();
+      const toks = full.split(/\s+/).filter(Boolean);
+      return { last: (toks[toks.length - 1] ?? '').toLowerCase(), full: full.toLowerCase() };
+    };
+    const cmpName = (a: TimesheetGridRow, b: TimesheetGridRow) => {
+      const na = nameParts(a);
+      const nb = nameParts(b);
+      return na.last.localeCompare(nb.last) || na.full.localeCompare(nb.full);
+    };
     const notesKey = (r: TimesheetGridRow) => {
       if (r.kind !== 'entry') return '';
       // Notes column shows the worksite line for import rows, the entry note
       // otherwise — sort by whatever's actually displayed.
       return (r.isImport ? r.entry.import?.csvSite ?? '' : r.entry.notes ?? '').toLowerCase();
     };
-    const primary = sortBy === 'worker' ? workerKey : notesKey;
     const dir = sortDir === 'asc' ? 1 : -1;
+    const byDate = (a: TimesheetGridRow, b: TimesheetGridRow) =>
+      a.workDate < b.workDate ? -1 : a.workDate > b.workDate ? 1 : 0;
     return [...rows].sort((a, b) => {
-      const pa = primary(a);
-      const pb = primary(b);
-      if (pa !== pb) return pa < pb ? -dir : dir;
-      // Stable, readable tiebreak: worker then work date.
-      const wa = workerKey(a);
-      const wb = workerKey(b);
-      if (wa !== wb) return wa < wb ? -1 : 1;
-      return a.workDate < b.workDate ? -1 : a.workDate > b.workDate ? 1 : 0;
+      const primary =
+        sortBy === 'worker' ? cmpName(a, b) : notesKey(a).localeCompare(notesKey(b));
+      if (primary !== 0) return dir * primary;
+      // Tiebreak: when sorting by notes, group by worker; then by date
+      // (dates stay ascending within a worker regardless of direction).
+      if (sortBy !== 'worker') {
+        const n = cmpName(a, b);
+        if (n !== 0) return n;
+      }
+      return byDate(a, b);
     });
   }, [rows, sortBy, sortDir]);
 
   // Status filter — narrows the rendered rows to one display status (e.g. show
   // only blocked import rows for cleanup). 'all' = no filter.
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const displayedRows = useMemo(
-    () =>
-      statusFilter === 'all'
-        ? sortedRows
-        : sortedRows.filter((r) => displayStatusForRow(r) === statusFilter),
-    [sortedRows, statusFilter],
-  );
+  // Free-text search WITHIN the current view — composes AFTER the status
+  // filter, so "search blocked rows" works as expected. Token-based across the
+  // worker name / email / worksite / notes / date that the row actually shows.
+  const [gridSearch, setGridSearch] = useState<string>('');
+  // Rows deleted this session — dropped from the view immediately (no reload),
+  // so deleting several in a row is snappy. A real reload re-queries Firestore
+  // (where they're already gone), so the set just needs to survive until then.
+  const [deletedIds, setDeletedIds] = useState<Set<string>>(() => new Set());
+  const handleRowDeleted = useCallback((entryId: string) => {
+    setDeletedIds((prev) => {
+      const next = new Set(prev);
+      next.add(entryId);
+      return next;
+    });
+  }, []);
+  const displayedRows = useMemo(() => {
+    const q = gridSearch.trim().toLowerCase();
+    const qTokens = q.split(/\s+/).filter(Boolean);
+    const matchesSearch = (r: TimesheetGridRow) => {
+      if (qTokens.length === 0) return true;
+      const e = r.kind === 'entry' ? r.entry : null;
+      const imp = e?.import;
+      const hay = [
+        r.assignment.workerDisplayName,
+        r.assignment.candidateId,
+        r.assignment.worksiteDisplayName,
+        imp?.csvWorkerName,
+        imp?.csvEmail,
+        imp?.csvSite,
+        e?.notes,
+        r.workDate,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return qTokens.every((t) => hay.includes(t));
+    };
+    return sortedRows.filter(
+      (r) =>
+        !(r.kind === 'entry' && deletedIds.has(r.entry.id)) &&
+        (statusFilter === 'all' || displayStatusForRow(r) === statusFilter) &&
+        matchesSearch(r),
+    );
+  }, [sortedRows, statusFilter, gridSearch, deletedIds]);
   // Options offered: the import lifecycle (the managed surface) + the common
   // scheduled statuses. Built from STATUS_LABELS so labels stay in sync.
   const STATUS_FILTER_OPTIONS: TimesheetRowDisplayStatus[] = [
@@ -1514,12 +1590,31 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                 ))}
               </Select>
             </FormControl>
-            {statusFilter !== 'all' && (
+            <TextField
+              size="small"
+              placeholder="Search these rows…"
+              value={gridSearch}
+              onChange={(e) => setGridSearch(e.target.value)}
+              sx={{ minWidth: 220 }}
+              helperText={
+                statusFilter !== 'all'
+                  ? `Searches within "${STATUS_LABELS[statusFilter as TimesheetRowDisplayStatus] ?? statusFilter}"`
+                  : 'Worker · worksite · notes · date'
+              }
+            />
+            {(statusFilter !== 'all' || gridSearch.trim() !== '') && (
               <>
                 <Typography variant="body2" color="text.secondary">
                   {displayedRows.length} of {rows.length} rows
                 </Typography>
-                <Button size="small" onClick={() => setStatusFilter('all')} sx={{ textTransform: 'none' }}>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    setStatusFilter('all');
+                    setGridSearch('');
+                  }}
+                  sx={{ textTransform: 'none' }}
+                >
                   Clear
                 </Button>
               </>
@@ -1537,7 +1632,13 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
         ) : displayedRows.length === 0 ? (
           <Paper variant="outlined" sx={{ p: 3 }}>
             <Typography variant="body2" color="text.secondary" align="center">
-              No rows match the “{STATUS_LABELS[statusFilter as TimesheetRowDisplayStatus] ?? statusFilter}” status filter.
+              No rows match
+              {statusFilter !== 'all'
+                ? ` the “${STATUS_LABELS[statusFilter as TimesheetRowDisplayStatus] ?? statusFilter}” status`
+                : ''}
+              {statusFilter !== 'all' && gridSearch.trim() ? ' and' : ''}
+              {gridSearch.trim() ? ` the search “${gridSearch.trim()}”` : ''}
+              .
             </Typography>
           </Paper>
         ) : (
@@ -1616,6 +1717,7 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                           hiringEntityId={importHiringEntityId}
                           refreshEntry={refreshEntry}
                           reloadAll={refresh}
+                          onDeleted={handleRowDeleted}
                         />
                       );
                     }

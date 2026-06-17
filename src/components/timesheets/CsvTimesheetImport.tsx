@@ -586,7 +586,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
         email: c.email,
         phone: c.phone,
         evereeLinked: false, // resolved on re-match
-        reason: c.inTenant ? 'search' : 'search · other tenant',
+        reason: c.inTenant ? 'search' : 'search · not in this tenant',
       }));
       setResolveSuggestions((prev) => {
         const byId = new Map(prev.map((s) => [s.userId, s]));

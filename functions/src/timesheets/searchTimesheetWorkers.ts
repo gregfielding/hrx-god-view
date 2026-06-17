@@ -26,8 +26,14 @@ const db = admin.firestore();
 interface WorkerHit {
   userId: string;
   displayName: string | null;
+  firstName: string | null;
+  lastName: string | null;
   email: string | null;
   phone: string | null;
+  /** Home city/state (best-effort) — shown in the Placements "search all
+   *  users" option and used to seed the pool Worker tile. */
+  city: string | null;
+  state: string | null;
   /** Member of the requesting tenant — surfaced first + flagged in the UI. */
   inTenant: boolean;
 }
@@ -50,19 +56,25 @@ function titleCase(w: string): string {
   return w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w;
 }
 
+function str(v: unknown): string | null {
+  return typeof v === 'string' && v.trim() ? v : null;
+}
+
 function toHit(id: string, data: Record<string, any>, tenantId: string): WorkerHit {
+  const firstName = str(data.firstName);
+  const lastName = str(data.lastName);
+  // Match the city/state resolution used in PlacementsTab (top-level → addressInfo → address).
+  const city = str(data.city) || str(data.addressInfo?.city) || str(data.address?.city);
+  const state = str(data.state) || str(data.addressInfo?.state) || str(data.address?.state);
   return {
     userId: id,
-    displayName:
-      [data.firstName, data.lastName].filter(Boolean).join(' ') ||
-      (typeof data.displayName === 'string' ? data.displayName : null),
-    email: typeof data.email === 'string' ? data.email : null,
-    phone:
-      typeof data.phone === 'string'
-        ? data.phone
-        : typeof data.phoneNumber === 'string'
-          ? data.phoneNumber
-          : null,
+    displayName: [firstName, lastName].filter(Boolean).join(' ') || str(data.displayName),
+    firstName,
+    lastName,
+    email: str(data.email),
+    phone: str(data.phone) || str(data.phoneNumber),
+    city,
+    state,
     inTenant: !!(data.tenantIds && typeof data.tenantIds === 'object' && data.tenantIds[tenantId]),
   };
 }

@@ -171,6 +171,23 @@ interface Shift {
 }
 
 /**
+ * One result from the `searchTimesheetWorkers` callable, reused here to back
+ * the Worker Pool's "Search all users" Autocomplete. Mirrors the callable's
+ * `WorkerHit` shape (identity + contact + best-effort city/state).
+ */
+interface SearchAllHit {
+  userId: string;
+  displayName: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+  phone: string | null;
+  city: string | null;
+  state: string | null;
+  inTenant: boolean;
+}
+
+/**
  * Normalize a Firestore field that may hold either an array of strings or an
  * array of `{ label | name | value }` objects (the shape used by the
  * Skills/Languages UI). Mirrors the helper in `mapUserDataToRecruiterUser`.
@@ -285,6 +302,21 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   // Data state
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
+  /**
+   * "Search all users" pool (Greg, 2026-06-17). When the Workforce
+   * dropdown is set to `search_all`, the pool is driven by these
+   * manually-picked workers instead of the auto-loaded `workers` — the
+   * recruiter searches the whole users collection (via
+   * `searchTimesheetWorkers`) and adds people to the pool one at a time,
+   * then drags them onto a shift like any other pool worker. Kept in a
+   * separate state so the `loadWorkforce` effect (which re-runs on every
+   * pool refresh) can't clobber the manual picks.
+   */
+  const [searchAllWorkers, setSearchAllWorkers] = useState<Worker[]>([]);
+  /** Free-text query + async results for the `search_all` Autocomplete. */
+  const [searchAllInput, setSearchAllInput] = useState('');
+  const [searchAllOptions, setSearchAllOptions] = useState<SearchAllHit[]>([]);
+  const [searchAllLoading, setSearchAllLoading] = useState(false);
   /** Job-order-scoped application job scores (userId → jobScore); shared with assignment column tiles. */
   const [placementJobFitByUserId, setPlacementJobFitByUserId] = useState<Map<string, number>>(() => new Map());
   const [placementAppNoShowRiskByUserId, setPlacementAppNoShowRiskByUserId] = useState<
@@ -1265,6 +1297,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         setLoading(false);
         return;
       }
+      if (selectedWorkforce === 'search_all') {
+        // Pool is driven by `searchAllWorkers` (manual picks), not an
+        // auto-load — leave it untouched so a pool refresh can't wipe picks.
+        setLoading(false);
+        return;
+      }
 
       const jobType = String((jobOrder as any)?.jobType || '').toLowerCase();
       const isGig = jobType === 'gig';
@@ -1631,6 +1669,40 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
 
     loadWorkforce();
   }, [tenantId, jobOrderId, selectedWorkforce, selectedShiftId, selectedDay, jobOrder, connectedJobPostIds, shifts, poolRefreshTick]);
+
+  // "Search all users" — debounced free-text lookup against the whole users
+  // collection via the same `searchTimesheetWorkers` callable the CSV importer
+  // uses. Only runs while the search_all pool is active.
+  useEffect(() => {
+    if (selectedWorkforce !== 'search_all') return;
+    const q = searchAllInput.trim();
+    if (q.length < 2) {
+      setSearchAllOptions([]);
+      setSearchAllLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setSearchAllLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const fn = httpsCallable<
+          { tenantId: string; query: string },
+          { candidates: SearchAllHit[] }
+        >(functions, 'searchTimesheetWorkers', { timeout: 30000 });
+        const res = await fn({ tenantId, query: q });
+        if (!cancelled) setSearchAllOptions(res.data?.candidates ?? []);
+      } catch (err) {
+        console.error('searchTimesheetWorkers (Placements search_all) failed:', err);
+        if (!cancelled) setSearchAllOptions([]);
+      } finally {
+        if (!cancelled) setSearchAllLoading(false);
+      }
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [selectedWorkforce, searchAllInput, tenantId]);
 
   // Real-time assignment status map for the selected shift.
   useEffect(() => {
@@ -2259,6 +2331,10 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       });
     
     options.push({ value: 'choose_group', label: 'Choose Group' });
+    // Search the entire users collection and add people to the pool one at a
+    // time — for placing a worker who isn't an applicant/candidate/group
+    // member of this JO (e.g. a known worker the recruiter wants to slot in).
+    options.push({ value: 'search_all', label: 'Search all users' });
     return options;
   }
 
@@ -3236,10 +3312,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     // Gig/other: assignedUserIds = placementUserIds + (assignment user IDs for selected day when selectedDay set) + pending; excludes from pool anyone "placed for the selected day"
     return assignedUserIds;
   }, [isCareerForPool, safeSelectedWorkforce, allShiftsPlacedOrAssignedUserIds, assignedUserIds]);
-  const availableWorkers = useMemo(
-    () => workers.filter((w) => !poolExcludeIds.has(w.id)),
-    [workers, poolExcludeIds],
-  );
+  const availableWorkers = useMemo(() => {
+    // In "Search all users" mode the pool is the manually-picked list, not
+    // the auto-loaded workforce. Either way, drop anyone already placed or
+    // assigned for the selected day.
+    const source = safeSelectedWorkforce === 'search_all' ? searchAllWorkers : workers;
+    return source.filter((w) => !poolExcludeIds.has(w.id));
+  }, [safeSelectedWorkforce, searchAllWorkers, workers, poolExcludeIds]);
   /**
    * Worker Pool name search.
    *
@@ -4325,6 +4404,114 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                       />
                     </Box>
                   )}
+                  {safeSelectedWorkforce === 'search_all' && (
+                    /*
+                     * "Search all users" picker (Greg, 2026-06-17). Async
+                     * Autocomplete backed by the `searchTimesheetWorkers`
+                     * callable (whole users collection, name / email / phone).
+                     * On pick, the worker is appended to `searchAllWorkers`
+                     * — the pool's source in this mode — so they render as a
+                     * normal pool tile the recruiter can drag onto a shift.
+                     * Options show Name · City, State · email · phone.
+                     */
+                    <Box sx={{ mb: 1 }}>
+                      <Autocomplete<SearchAllHit>
+                        size="small"
+                        fullWidth
+                        openOnFocus
+                        blurOnSelect
+                        clearOnBlur={false}
+                        value={null}
+                        options={searchAllOptions}
+                        loading={searchAllLoading}
+                        filterOptions={(x) => x}
+                        getOptionLabel={(o) =>
+                          o.displayName ||
+                          [o.firstName, o.lastName].filter(Boolean).join(' ') ||
+                          o.email ||
+                          o.userId
+                        }
+                        isOptionEqualToValue={(o, v) => o.userId === v.userId}
+                        onInputChange={(_e, value, reason) => {
+                          if (reason === 'input') setSearchAllInput(value);
+                        }}
+                        noOptionsText={
+                          searchAllInput.trim().length < 2
+                            ? 'Type a name, email, or phone…'
+                            : searchAllLoading
+                              ? 'Searching…'
+                              : 'No matches'
+                        }
+                        onChange={(_e, hit) => {
+                          if (!hit) return;
+                          setSearchAllWorkers((prev) => {
+                            if (prev.some((w) => w.id === hit.userId)) return prev;
+                            const w: Worker = {
+                              id: hit.userId,
+                              firstName: hit.firstName ?? '',
+                              lastName: hit.lastName ?? '',
+                              email: hit.email ?? undefined,
+                              phone: hit.phone ?? undefined,
+                              displayName: hit.displayName ?? undefined,
+                              city: hit.city ?? undefined,
+                              state: hit.state ?? undefined,
+                            };
+                            return [...prev, w];
+                          });
+                          setSearchAllInput('');
+                          setSearchAllOptions([]);
+                        }}
+                        renderOption={(props, o) => {
+                          const name =
+                            o.displayName ||
+                            [o.firstName, o.lastName].filter(Boolean).join(' ') ||
+                            '(no name)';
+                          const loc = [o.city, o.state].filter(Boolean).join(', ');
+                          const contact = [o.email, o.phone].filter(Boolean).join(' · ');
+                          return (
+                            <li {...props} key={o.userId}>
+                              <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                                <Typography variant="body2">
+                                  {name}
+                                  {!o.inTenant && (
+                                    <Typography
+                                      component="span"
+                                      variant="caption"
+                                      color="text.secondary"
+                                    >
+                                      {' · not in this tenant'}
+                                    </Typography>
+                                  )}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {[loc, contact].filter(Boolean).join(' · ') || '—'}
+                                </Typography>
+                              </Box>
+                            </li>
+                          );
+                        }}
+                        renderInput={(params) => (
+                          <TextField
+                            {...params}
+                            label="Search all users"
+                            placeholder="Name, email, or phone…"
+                            InputLabelProps={{ shrink: true }}
+                            InputProps={{
+                              ...params.InputProps,
+                              endAdornment: (
+                                <>
+                                  {searchAllLoading ? (
+                                    <CircularProgress color="inherit" size={16} />
+                                  ) : null}
+                                  {params.InputProps.endAdornment}
+                                </>
+                              ),
+                            }}
+                          />
+                        )}
+                      />
+                    </Box>
+                  )}
                   {/* Replaces the old "Drag into Assignments to place. Drop
                       Placed workers here to unplace." caption — recruiters
                       asked for a name filter because scrolling a 90-person
@@ -4401,7 +4588,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                     </Box>
                   ) : availableWorkers.length === 0 ? (
                     <Alert severity="info">
-                      No available workers for the selected workforce option.
+                      {safeSelectedWorkforce === 'search_all'
+                        ? 'Search above and add workers to build the pool.'
+                        : 'No available workers for the selected workforce option.'}
                     </Alert>
                   ) : availableWorkersFiltered.length === 0 ? (
                     <Alert severity="info">
