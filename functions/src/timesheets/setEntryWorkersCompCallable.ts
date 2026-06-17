@@ -110,6 +110,42 @@ export const setEntryWorkersComp = onCall<Input, Promise<Output>>(
     }
     await entryRef.update(entryUpdates);
 
+    // CSV-import entries mirror WC into the `import` sidecar + recompute the
+    // import lifecycle (Needs WC → Ready) so the grid + Import tab agree and
+    // the row becomes submittable. `typed` source = a manual recruiter edit,
+    // which the Import tab restores on resume.
+    if (entry.source === 'csv_import') {
+      const finalCode =
+        workersCompCode === undefined
+          ? (typeof entry.workersCompCode === 'string' ? entry.workersCompCode : null)
+          : typeof workersCompCode === 'string' && workersCompCode.trim()
+            ? workersCompCode.trim()
+            : null;
+      const finalRate =
+        workersCompRate === undefined
+          ? (typeof entry.workersCompRate === 'number' ? (entry.workersCompRate as number) : null)
+          : typeof workersCompRate === 'number' && Number.isFinite(workersCompRate)
+            ? workersCompRate
+            : null;
+      const imp = (entry.import as Record<string, unknown>) || {};
+      const ms = String(imp.matchStatus || '');
+      const importPatch: Record<string, unknown> = {
+        'import.workersCompCode': finalCode,
+        'import.workersCompRate': finalRate,
+        'import.workersCompSource': 'typed',
+      };
+      // Don't disturb live/blocked rows; otherwise re-derive ready/needs_*.
+      if (!['submitted', 'paid', 'voided', 'blocked'].includes(ms)) {
+        const payRate = Number(entry.payRate);
+        importPatch['import.matchStatus'] = !(payRate > 0)
+          ? 'needs_rate'
+          : !finalCode
+            ? 'needs_wc'
+            : 'ready';
+      }
+      await entryRef.update(importPatch);
+    }
+
     // Mirror to the shift when (a) we know the shiftId AND (b) the shift
     // doc currently doesn't have the field. This back-fills the
     // canonical source so OTHER entries on the same shift inherit

@@ -602,53 +602,89 @@ const ImportRow: React.FC<{
   row: Extract<TimesheetGridRow, { kind: 'entry' }>;
   status: TimesheetRowDisplayStatus;
   actualHrs: number;
-}> = ({ row, status, actualHrs }) => {
+  tenantId?: string;
+  refreshEntry: (entryId: string) => void;
+}> = ({ row, status, actualHrs, tenantId, refreshEntry }) => {
   const imp = row.entry.import;
   const payRate = typeof row.entry.payRate === 'number' ? row.entry.payRate : 0;
   const wcCode = row.resolvedWorkersCompCode ?? imp?.workersCompCode ?? null;
   const wcRate = row.resolvedWorkersCompRate;
   const blocked = imp?.matchStatus === 'blocked';
+  // WC is editable inline here (writes straight to the entry via the same
+  // callable the regular grid uses); everything else is resolved/fixed in the
+  // Import CSV tab. Locked once the row is live in Everee.
+  const wcLocked = imp?.matchStatus === 'submitted' || imp?.matchStatus === 'paid';
+  const wcEditable = !!tenantId && !wcLocked;
+  const [wcDialogOpen, setWcDialogOpen] = React.useState(false);
+  const wcCellSx = {
+    fontVariantNumeric: 'tabular-nums' as const,
+    cursor: wcEditable ? 'pointer' : 'default',
+    color: wcCode ? 'text.primary' : 'text.disabled',
+    '&:hover': wcEditable ? { backgroundColor: 'action.hover' } : undefined,
+  };
   return (
-    <Tooltip
-      title="Imported from a CSV timesheet — resolve, fix, and submit these in the Import CSV tab."
-      placement="top-start"
-    >
-      <TableRow hover sx={{ backgroundColor: blocked ? 'warning.50' : 'action.hover' }}>
-        <WorkerSiteCell row={row} />
-        <TableCell>{row.workDate}</TableCell>
-        <TableCell>
-          <Typography component="span" variant="caption" color="text.secondary" sx={{ fontStyle: 'italic' }}>
-            Imported
+    <TableRow hover sx={{ backgroundColor: blocked ? 'warning.50' : 'action.hover' }}>
+      <WorkerSiteCell row={row} />
+      <TableCell>{row.workDate}</TableCell>
+      <TableCell>
+        <Typography component="span" variant="caption" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+          Imported
+        </Typography>
+      </TableCell>
+      <TableCell align="right">—</TableCell>
+      <TableCell>
+        {blocked && imp?.blockReason ? (
+          <Typography variant="caption" color="warning.main">
+            {imp.blockReason}
           </Typography>
-        </TableCell>
-        <TableCell align="right">—</TableCell>
-        <TableCell>
-          {blocked && imp?.blockReason ? (
-            <Typography variant="caption" color="warning.main">
-              {imp.blockReason}
-            </Typography>
-          ) : (
-            '—'
-          )}
-        </TableCell>
-        <TableCell>—</TableCell>
-        <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-          {actualHrs > 0 ? formatHours(actualHrs) : '—'}
-        </TableCell>
-        <TableCell align="right">—</TableCell>
-        <TableCell align="right">—</TableCell>
-        <TableCell>{imp?.csvSite || '—'}</TableCell>
-        <TableCell align="right">{payRate > 0 ? formatMoney(payRate) : '—'}</TableCell>
-        <TableCell align="right" sx={{ fontFamily: 'monospace' }}>{wcCode || '—'}</TableCell>
-        <TableCell align="right">{typeof wcRate === 'number' ? wcRate.toFixed(2) : '—'}</TableCell>
-        <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-          {payRate > 0 && actualHrs > 0 ? formatMoney(actualHrs * payRate) : '—'}
-        </TableCell>
-        <TableCell>
-          <StatusPill status={status} />
-        </TableCell>
-      </TableRow>
-    </Tooltip>
+        ) : (
+          '—'
+        )}
+      </TableCell>
+      <TableCell>—</TableCell>
+      <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+        {actualHrs > 0 ? formatHours(actualHrs) : '—'}
+      </TableCell>
+      <TableCell align="right">—</TableCell>
+      <TableCell align="right">—</TableCell>
+      <TableCell>{imp?.csvSite || '—'}</TableCell>
+      <TableCell align="right">{payRate > 0 ? formatMoney(payRate) : '—'}</TableCell>
+      <TableCell
+        align="right"
+        onClick={() => wcEditable && setWcDialogOpen(true)}
+        sx={{ ...wcCellSx, fontFamily: 'monospace' }}
+      >
+        {wcCode || (wcEditable ? '+ WC' : '—')}
+      </TableCell>
+      <TableCell align="right" onClick={() => wcEditable && setWcDialogOpen(true)} sx={wcCellSx}>
+        {typeof wcRate === 'number' ? wcRate.toFixed(2) : '—'}
+      </TableCell>
+      <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+        {payRate > 0 && actualHrs > 0 ? formatMoney(actualHrs * payRate) : '—'}
+      </TableCell>
+      <TableCell>
+        <Tooltip title="Imported from a CSV timesheet — resolve / submit in the Import CSV tab (WC is editable here).">
+          <span>
+            <StatusPill status={status} />
+          </span>
+        </Tooltip>
+      </TableCell>
+      {tenantId && (
+        <EditWorkersCompDialog
+          open={wcDialogOpen}
+          onClose={() => setWcDialogOpen(false)}
+          onSuccess={() => {
+            setWcDialogOpen(false);
+            refreshEntry(row.entry.id);
+          }}
+          tenantId={tenantId}
+          entryId={row.entry.id}
+          initialCode={wcCode}
+          initialRate={wcRate}
+          rowLabel={`${row.assignment.workerDisplayName ?? ''} · ${row.workDate}`.trim()}
+        />
+      )}
+    </TableRow>
   );
 };
 
@@ -1222,7 +1258,14 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                     // in the Import CSV tab; the grid just surfaces them.
                     if (row.kind === 'entry' && row.isImport) {
                       return (
-                        <ImportRow key={row.key} row={row} status={status} actualHrs={actualHrs} />
+                        <ImportRow
+                          key={row.key}
+                          row={row}
+                          status={status}
+                          actualHrs={actualHrs}
+                          tenantId={tenantId}
+                          refreshEntry={refreshEntry}
+                        />
                       );
                     }
 
