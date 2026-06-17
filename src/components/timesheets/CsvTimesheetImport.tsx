@@ -134,9 +134,15 @@ interface JobOrderOption {
   jobTitle: string;     // role / O*NET title (e.g. "Warehouse Associate")
   type: string;         // 'gig' | 'career' | 'open' | ''
   accountName: string;
+  worksiteId: string;
   worksiteName: string;
+  street: string;
   city: string;
   state: string;
+  zip: string;
+  payRate: number | null;
+  workersCompCode: string | null;
+  workersCompRate: number | null;
   label: string;        // single line shown once selected
   searchText: string;   // lowercased haystack for filtering
 }
@@ -401,9 +407,41 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
             const wa = (jo.worksiteAddress && typeof jo.worksiteAddress === 'object'
               ? jo.worksiteAddress
               : {}) as Record<string, any>;
+            const street = String(wa.street || jo.street || '').trim();
             const city = String(wa.city || jo.worksiteCity || jo.city || '').trim();
             const state = String(wa.state || jo.worksiteState || '').trim();
+            const zip = String(wa.zipCode || wa.zip || jo.zipCode || jo.zip || '').trim();
             const jobOrderNumber = String(jo.jobOrderNumber ?? '').trim();
+            // Pay / WC chain mirrors the server's resolveJobOrderFields:
+            // position[0] → JO-level → gigPosition[0].
+            const positions: Array<Record<string, any>> =
+              (Array.isArray(jo.positions) && jo.positions.length
+                ? jo.positions
+                : Array.isArray(jo.gigPositions)
+                  ? jo.gigPositions
+                  : []) || [];
+            const pos = positions[0] || {};
+            const firstGig = Array.isArray(jo.gigPositions) && jo.gigPositions.length ? jo.gigPositions[0] : {};
+            const num = (...xs: any[]) => {
+              for (const x of xs) {
+                const n = Number(x);
+                if (Number.isFinite(n) && n > 0) return n;
+              }
+              return null;
+            };
+            const str = (...xs: any[]) => {
+              for (const x of xs) if (typeof x === 'string' && x.trim()) return x.trim();
+              return null;
+            };
+            const payRate = num(pos.payRate, jo.payRate);
+            const workersCompCode = str(
+              pos.workersCompCode,
+              pos.workersCompClassCode,
+              jo.workersCompCode,
+              jo.workersCompClassCode,
+              firstGig.workersCompClassCode,
+            );
+            const workersCompRate = num(pos.workersCompRate, jo.workersCompRate, firstGig.workersCompRate);
             const primary = title || jobTitle || '(untitled job order)';
             byId.set(d.id, {
               id: d.id,
@@ -412,9 +450,15 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
               jobTitle,
               type,
               accountName,
+              worksiteId: String(jo.worksiteId || jo.locationId || '').trim(),
               worksiteName,
+              street,
               city,
               state,
+              zip,
+              payRate,
+              workersCompCode,
+              workersCompRate,
               label: `${jobOrderNumber ? `#${jobOrderNumber} ` : ''}${primary}${accountName ? ` — ${accountName}` : ''}`,
               searchText: [jobOrderNumber, title, jobTitle, type, accountName, worksiteName, city, state]
                 .filter(Boolean)
@@ -450,9 +494,45 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
         { ok: true; docId: string; accountName: string | null }
       >(functions, 'saveTimesheetSiteMapping');
       await fn({ tenantId, customer, site: mapSite, jobOrderId: mapJobOrder.id });
+      // Apply the JO's pay rate / WC / worksite to every row with this CSV site
+      // RIGHT NOW (client overrides) so the cells update immediately, regardless
+      // of how the re-match resolves. The saved mapping handles future imports.
+      const jo = mapJobOrder;
+      const siteNorm = mapSite.trim().toLowerCase();
+      const wsOv: WorksiteOverride | null = jo.worksiteId
+        ? {
+            worksiteId: jo.worksiteId,
+            worksiteName: jo.worksiteName || jo.worksiteId,
+            worksiteAddress: { street: jo.street, city: jo.city, state: jo.state, zip: jo.zip },
+          }
+        : null;
+      setOverrides((prev) => {
+        const next = new Map(prev);
+        (parsed?.rows ?? []).forEach((r) => {
+          if (r.status !== 'importable' || (r.site || '').trim().toLowerCase() !== siteNorm) return;
+          const ov = { ...(next.get(r.rowIndex) || {}) };
+          if (jo.payRate != null) ov.payRate = jo.payRate;
+          if (jo.workersCompCode) ov.workersCompCode = jo.workersCompCode;
+          if (jo.workersCompRate != null) ov.workersCompRate = jo.workersCompRate;
+          next.set(r.rowIndex, ov);
+        });
+        return next;
+      });
+      if (wsOv) {
+        setWorksiteOverrideByRow((prev) => {
+          const next = new Map(prev);
+          (parsed?.rows ?? []).forEach((r) => {
+            if (r.status === 'importable' && (r.site || '').trim().toLowerCase() === siteNorm) {
+              next.set(r.rowIndex, wsOv);
+            }
+          });
+          return next;
+        });
+      }
       setMapSite(null);
       setMapJobOrder(null);
-      // Re-run the match so every row with this site picks up the new mapping.
+      // Re-run the match so the mapping persists into resolution for other rows
+      // / future imports; the overrides above win in the meantime.
       await runMatch();
     } catch (err: any) {
       console.error('saveTimesheetSiteMapping failed:', err);
