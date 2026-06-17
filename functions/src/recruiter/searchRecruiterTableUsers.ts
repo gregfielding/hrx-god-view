@@ -23,8 +23,26 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
-/** Align with `src/constants/tenantWorkerSecurityLevels.ts` — Firestore `in` is type-sensitive. */
-const TENANT_LISTABLE_SECURITY_LEVELS: Array<string | number> = ['0', '1', '2', '3', '4', 0, 1, 2, 3, 4];
+/**
+ * Include a user in tenant-search results when they belong to THIS tenant (at
+ * any security level) OR aren't attached to any tenant at all (orphan / mis-
+ * provisioned records — e.g. an imported worker whose `tenantIds` was never
+ * set, like the "William Amaro Rodriguez" case). EXCLUDES users who belong only
+ * to a DIFFERENT tenant, so scanning the whole `users` collection can never leak
+ * another tenant's people. (This instance is effectively single-tenant, but the
+ * guard keeps it correct if that ever changes.)
+ *
+ * Replaces the old `tenantIds.{t}.securityLevel in [0..4]` scan filter, which
+ * silently dropped orphans (no nested securityLevel) — the bug that made the
+ * All-Users search miss people the global timesheet lookup could find.
+ */
+function userInTenantOrOrphan(data: Record<string, unknown>, tenantId: string): boolean {
+  const t = data.tenantIds;
+  if (!t || typeof t !== 'object') return true;
+  const keys = Object.keys(t as Record<string, unknown>);
+  if (keys.length === 0) return true;
+  return Object.prototype.hasOwnProperty.call(t, tenantId);
+}
 
 const BATCH_SIZE = 500;
 const MAX_MATCH_IDS = 2500;
@@ -201,10 +219,15 @@ export const searchRecruiterTableUsers = onCall(
       let capped = false;
 
       while (batches < MAX_BATCHES && userIds.length < MAX_MATCH_IDS) {
+        // Scan the WHOLE users collection (ordered by doc id so every doc is
+        // visited — orphans have no nested securityLevel and some lack
+        // createdAt, both of which the old filtered+createdAt-ordered query
+        // dropped). The per-doc `userInTenantOrOrphan` guard keeps it scoped to
+        // this tenant + unattached users; the matcher does the name/email/phone
+        // filtering. ~8.5k docs ≪ the 200k batch cap, so coverage is complete.
         const base = db
           .collection('users')
-          .where(`tenantIds.${tenantId}.securityLevel`, 'in', TENANT_LISTABLE_SECURITY_LEVELS)
-          .orderBy('createdAt', 'desc')
+          .orderBy(FieldPath.documentId())
           .limit(BATCH_SIZE);
         const snap = await (lastDoc ? base.startAfter(lastDoc) : base).get();
         if (snap.empty) {
@@ -216,6 +239,7 @@ export const searchRecruiterTableUsers = onCall(
 
         for (const doc of snap.docs) {
           const data = doc.data() as Record<string, unknown>;
+          if (!userInTenantOrOrphan(data, tenantId)) continue;
           if (hasEntity && entityUserIds && !entityUserIds.has(doc.id)) continue;
           if (!firestoreUserDocMatchesRecruiterSearch(data, tenantId, searchQuery)) continue;
           if (hasGroup && !firestoreUserDocMatchesRecruiterGroup(data, tenantId, groupIdRaw)) continue;
