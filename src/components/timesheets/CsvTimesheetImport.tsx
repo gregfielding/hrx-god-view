@@ -358,7 +358,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
       worksiteName?: string | null;
     }>;
   } | null>(null);
-  const [submitResult, setSubmitResult] = useState<{ submitted: number; failed: number; totalAmount: number; errors: string[] } | null>(null);
+  const [submitResult, setSubmitResult] = useState<{ submitted: number; failed: number; totalAmount: number; errors: string[]; payoutError?: string } | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   // Per-payable submitted status (persisted) keyed by externalId, so the grid
   // shows what's already been sent + lets the recruiter void it.
@@ -1296,6 +1296,8 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
         submitted?: number;
         failed?: number;
         errors?: string[];
+        payRunId?: number;
+        payoutError?: string;
       }
     >(functions, 'submitImportTimesheetBatch', { timeout: 300000 });
 
@@ -1351,6 +1353,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
         failed: res.data?.failed ?? 0,
         totalAmount: res.data?.totalAmount ?? 0,
         errors: res.data?.errors ?? [],
+        payoutError: res.data?.payoutError,
       });
       // Refresh the per-row submitted state so the just-sent rows flip to
       // "Submitted ✓" and drop out of the Ready count.
@@ -2393,7 +2396,11 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           )}
           {submitResult && (
             <Alert
-              severity={submitResult.failed > 0 || submitResult.errors.length ? 'warning' : 'success'}
+              severity={
+                submitResult.payoutError || submitResult.failed > 0 || submitResult.errors.length
+                  ? 'warning'
+                  : 'success'
+              }
               onClose={() => setSubmitResult(null)}
             >
               Submitted {submitResult.submitted}{' '}
@@ -2404,6 +2411,9 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
               {is1099Entity ? '' : ' straight-time'}).
               {submitResult.failed > 0 ? ` ${submitResult.failed} failed.` : ''}
               {submitResult.errors.length > 0 ? ` ${submitResult.errors.join('; ')}` : ''}
+              {submitResult.payoutError
+                ? ` ⚠️ Payables created, but the payout request to Everee failed (${submitResult.payoutError}) — they won't appear as a payment until you re-submit.`
+                : ''}
             </Alert>
           )}
           {submitError && (

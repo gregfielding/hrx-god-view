@@ -57,6 +57,8 @@ interface SubmitResponse {
   submitted?: number;
   failed?: number;
   errors?: string[];
+  payRunId?: number;
+  payoutError?: string;
 }
 
 export interface ImportGridSubmitBarProps {
@@ -134,7 +136,7 @@ const ImportGridSubmitBar: React.FC<ImportGridSubmitBarProps> = ({
   const [preview, setPreview] = useState<{ count: number; totalAmount: number; estimate: boolean } | null>(
     null,
   );
-  const [result, setResult] = useState<{ submitted: number; failed: number; errors: string[] } | null>(
+  const [result, setResult] = useState<{ submitted: number; failed: number; errors: string[]; payoutError?: string } | null>(
     null,
   );
   const [error, setError] = useState<string | null>(null);
@@ -180,6 +182,7 @@ const ImportGridSubmitBar: React.FC<ImportGridSubmitBarProps> = ({
       let submitted = 0;
       let failed = 0;
       const errors: string[] = [];
+      const payoutErrors: string[] = [];
       for (const [customer, list] of byCustomer) {
         // eslint-disable-next-line no-await-in-loop
         const res = await submitCallable()({
@@ -192,8 +195,9 @@ const ImportGridSubmitBar: React.FC<ImportGridSubmitBarProps> = ({
         submitted += res.data?.submitted ?? 0;
         failed += res.data?.failed ?? 0;
         if (res.data?.errors?.length) errors.push(...res.data.errors);
+        if (res.data?.payoutError) payoutErrors.push(`${customer}: ${res.data.payoutError}`);
       }
-      setResult({ submitted, failed, errors });
+      setResult({ submitted, failed, errors, payoutError: payoutErrors.join('; ') || undefined });
       setPreview(null);
       onSubmitted?.();
     } catch (err: any) {
@@ -259,10 +263,17 @@ const ImportGridSubmitBar: React.FC<ImportGridSubmitBarProps> = ({
           ) : null}
 
           {result ? (
-            <Alert severity={result.failed > 0 || result.errors.length ? 'warning' : 'success'}>
+            <Alert
+              severity={
+                result.payoutError || result.failed > 0 || result.errors.length ? 'warning' : 'success'
+              }
+            >
               Submitted {result.submitted} {result.submitted === 1 ? 'row' : 'rows'} to Everee.
               {result.failed > 0 ? ` ${result.failed} failed.` : ''}
               {result.errors.length > 0 ? ` ${result.errors.slice(0, 5).join('; ')}` : ''}
+              {result.payoutError
+                ? ` ⚠️ Payables created, but the payout request failed (${result.payoutError}) — they won't appear as a payment until you re-submit.`
+                : ''}
             </Alert>
           ) : null}
 
