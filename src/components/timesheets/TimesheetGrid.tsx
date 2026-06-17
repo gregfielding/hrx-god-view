@@ -32,11 +32,21 @@ import {
   Box,
   Card,
   CardContent,
+  Button,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  FormControl,
   IconButton,
+  InputLabel,
   Link,
+  MenuItem,
   Paper,
+  Select,
   Stack,
   Table,
   TableBody,
@@ -49,6 +59,7 @@ import {
   Typography,
 } from '@mui/material';
 import {
+  DeleteOutline as DeleteIcon,
   Edit as EditIcon,
   TableChart as TableChartIcon,
 } from '@mui/icons-material';
@@ -657,9 +668,33 @@ const ImportRow: React.FC<{
   const canReassign = !!tenantId && !!hiringEntityId && !live;
   const hoursEditable = !!tenantId && !live;
   const worksiteEditable = !!tenantId && !live;
+  const deletable = !!tenantId && !live;
   const [wcDialogOpen, setWcDialogOpen] = React.useState(false);
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [worksitePickerOpen, setWorksitePickerOpen] = React.useState(false);
+  const [deleteOpen, setDeleteOpen] = React.useState(false);
+  const [deleting, setDeleting] = React.useState(false);
+
+  // Delete an import row (e.g. a blocked worker who won't be onboarded). Live
+  // rows are refused server-side — void them first.
+  const doDelete = React.useCallback(async () => {
+    if (!tenantId) return;
+    setDeleting(true);
+    try {
+      const fn = httpsCallable<{ tenantId: string; entryId: string }, { ok: true }>(
+        functions,
+        'deleteImportEntry',
+        { timeout: 60000 },
+      );
+      await fn({ tenantId, entryId: row.entry.id });
+      setDeleteOpen(false);
+      reloadAll();
+    } catch (e) {
+      console.error('deleteImportEntry failed:', e);
+    } finally {
+      setDeleting(false);
+    }
+  }, [tenantId, row.entry.id, reloadAll]);
 
   // Edit actual hours (e.g. zero out a day already covered by an advance).
   // A server callable keeps actualHoursOverride + totalRegularHours in sync —
@@ -786,11 +821,20 @@ const ImportRow: React.FC<{
         {payRate > 0 && actualHrs > 0 ? formatMoney(actualHrs * payRate) : '—'}
       </TableCell>
       <TableCell>
-        <Tooltip title="Imported from a CSV timesheet — resolve / submit in the Import CSV tab (WC is editable here).">
-          <span>
-            <StatusPill status={status} />
-          </span>
-        </Tooltip>
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          <Tooltip title="Imported from a CSV timesheet — resolve / submit in the Import CSV tab (WC is editable here).">
+            <span>
+              <StatusPill status={status} />
+            </span>
+          </Tooltip>
+          {deletable && (
+            <Tooltip title="Delete this imported row">
+              <IconButton size="small" onClick={() => setDeleteOpen(true)} sx={{ p: 0.25 }}>
+                <DeleteIcon sx={{ fontSize: 16 }} color="action" />
+              </IconButton>
+            </Tooltip>
+          )}
+        </Stack>
       </TableCell>
       {tenantId && (
         <EditWorkersCompDialog
@@ -836,6 +880,31 @@ const ImportRow: React.FC<{
           currentWorksiteName={row.assignment.worksiteDisplayName ?? imp?.csvSite ?? null}
         />
       )}
+      <Dialog open={deleteOpen} onClose={() => !deleting && setDeleteOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Delete imported row?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Remove the imported timesheet row for{' '}
+            <strong>{row.assignment.workerDisplayName ?? imp?.csvWorkerName ?? 'this worker'}</strong>{' '}
+            on <strong>{row.workDate}</strong>? This deletes it from HRX. It won't affect Everee
+            (this row isn't submitted).
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteOpen(false)} disabled={deleting} sx={{ textTransform: 'none' }}>
+            Cancel
+          </Button>
+          <Button
+            onClick={doDelete}
+            disabled={deleting}
+            color="error"
+            variant="contained"
+            sx={{ textTransform: 'none' }}
+          >
+            {deleting ? 'Deleting…' : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </TableRow>
   );
 };
@@ -1148,6 +1217,31 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
     });
   }, [rows, sortBy, sortDir]);
 
+  // Status filter — narrows the rendered rows to one display status (e.g. show
+  // only blocked import rows for cleanup). 'all' = no filter.
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const displayedRows = useMemo(
+    () =>
+      statusFilter === 'all'
+        ? sortedRows
+        : sortedRows.filter((r) => displayStatusForRow(r) === statusFilter),
+    [sortedRows, statusFilter],
+  );
+  // Options offered: the import lifecycle (the managed surface) + the common
+  // scheduled statuses. Built from STATUS_LABELS so labels stay in sync.
+  const STATUS_FILTER_OPTIONS: TimesheetRowDisplayStatus[] = [
+    'import_blocked',
+    'import_needs_rate',
+    'import_needs_wc',
+    'import_ready',
+    'import_submitted',
+    'import_paid',
+    'draft',
+    'approved',
+    'sent_to_everee',
+    'paid',
+  ];
+
   /* -------------------------------------------------------------------
    * Auto-materialize draft entries on JO/shift narrow.
    *
@@ -1402,6 +1496,37 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
           </Alert>
         ) : null}
 
+        {!loading && rows.length > 0 ? (
+          <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
+            <FormControl size="small" sx={{ minWidth: 200 }}>
+              <InputLabel id="ts-status-filter-label">Status</InputLabel>
+              <Select
+                labelId="ts-status-filter-label"
+                label="Status"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(String(e.target.value))}
+              >
+                <MenuItem value="all">All statuses</MenuItem>
+                {STATUS_FILTER_OPTIONS.map((s) => (
+                  <MenuItem key={s} value={s}>
+                    {STATUS_LABELS[s] ?? s}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            {statusFilter !== 'all' && (
+              <>
+                <Typography variant="body2" color="text.secondary">
+                  {displayedRows.length} of {rows.length} rows
+                </Typography>
+                <Button size="small" onClick={() => setStatusFilter('all')} sx={{ textTransform: 'none' }}>
+                  Clear
+                </Button>
+              </>
+            )}
+          </Stack>
+        ) : null}
+
         {loading ? (
           <LoadingState filter={filter} />
         ) : rows.length === 0 && !error ? (
@@ -1409,6 +1534,12 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
             filter={filter}
             consideredAssignmentCount={consideredAssignmentCount}
           />
+        ) : displayedRows.length === 0 ? (
+          <Paper variant="outlined" sx={{ p: 3 }}>
+            <Typography variant="body2" color="text.secondary" align="center">
+              No rows match the “{STATUS_LABELS[statusFilter as TimesheetRowDisplayStatus] ?? statusFilter}” status filter.
+            </Typography>
+          </Paper>
         ) : (
           <Paper variant="outlined">
             <TableContainer>
@@ -1453,7 +1584,7 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {sortedRows.map((row) => {
+                  {displayedRows.map((row) => {
                     const status = displayStatusForRow(row);
                     const scheduledHrs = scheduledHoursForRow(row);
                     const actualHrs = actualHoursForRow(row);
