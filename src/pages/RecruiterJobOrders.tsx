@@ -370,124 +370,145 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
         docsToMap = snap.docs as any;
       }
 
-      const newJobOrders: JobOrderWithDetails[] = await Promise.all(
-        docsToMap.map(async (jobOrderDoc) => {
-          const data = jobOrderDoc.data() as JobOrder;
-          
-          // Derive job title from flat field or gig position
-          const derivedJobTitle =
-            (data as any).jobTitle ||
-            (Array.isArray((data as any).gigPositions) && (data as any).gigPositions[0]?.jobTitle) ||
-            undefined;
+      // ── N+1 elimination ──
+      // Previously each JO triggered up to 3 sequential getDoc()s (company,
+      // location, first recruiter) inside one big Promise.all — ~1,500 reads
+      // for a 500-JO page, which saturated the client and hung the spinner.
+      // Companies + recruiters are heavily shared across JOs, so we collect
+      // the UNIQUE ids, fetch each referenced doc exactly once, then enrich
+      // every JO from in-memory maps (pure, zero I/O).
+      const rawList = docsToMap.map((d) => ({ id: d.id, data: d.data() as JobOrder }));
 
-          // Fetch company name
-          let companyName = 'Unknown Company';
-          const flatCompanyId = (data as any).companyId || (data as any).deal?.companyId;
-          if (flatCompanyId) {
-            try {
-              const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', flatCompanyId);
-              const companySnap = await getDoc(companyRef);
-              if (companySnap.exists()) {
-                const companyData = companySnap.data() as any;
-                companyName = companyData.companyName || companyData.name || 'Unknown Company';
-              }
-            } catch (error) {
-              // Silently handle errors
+      const companyIds = new Set<string>();
+      const recruiterIds = new Set<string>();
+      const locationPairs = new Map<string, { companyId: string; worksiteId: string }>();
+      for (const { data } of rawList) {
+        const cId = (data as any).companyId || (data as any).deal?.companyId;
+        const wId = (data as any).worksiteId || (data as any).deal?.locationId;
+        if (cId) companyIds.add(cId);
+        if (cId && wId) locationPairs.set(`${cId}${wId}`, { companyId: cId, worksiteId: wId });
+        const ar = (data as any).assignedRecruiters;
+        if (Array.isArray(ar) && ar.length > 0 && ar[0]) recruiterIds.add(ar[0]);
+      }
+
+      const companyNameById = new Map<string, string>();
+      const recruiterNameById = new Map<string, string>();
+      const locationByKey = new Map<string, any>();
+      await Promise.all([
+        ...[...companyIds].map(async (cId) => {
+          try {
+            const s = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', cId));
+            if (s.exists()) {
+              const cd = s.data() as any;
+              companyNameById.set(cId, cd.companyName || cd.name || 'Unknown Company');
             }
+          } catch {
+            /* ignore — falls back to 'Unknown Company' */
           }
-          
-          // Location display line + city/state line — same pattern as Jobs Board (`formatWorksiteCityStateZip(post.worksiteAddress)`).
-          const flatWorksiteId = (data as any).worksiteId || (data as any).deal?.locationId;
-          const wa = (data as any).worksiteAddress as Record<string, unknown> | undefined;
-          const waInner =
-            wa && typeof wa === 'object' ? ((wa as any).address as Record<string, unknown> | undefined) : undefined;
-          let city = String(wa?.city ?? waInner?.city ?? (data as any).city ?? '').trim();
-          let state = String(wa?.state ?? waInner?.state ?? '').trim();
-          let zipCode = String(
-            (wa as any)?.zipCode ?? (wa as any)?.zip ?? waInner?.zipCode ?? (data as any).zipCode ?? (data as any).zip ?? '',
-          ).trim();
-
-          let locationName =
-            String((data as any).worksiteName || (data as any).deal?.locationName || '').trim() || 'No Location';
-
-          // Always hydrate from CRM location when worksite + company are known — job orders often store only
-          // worksiteName on the doc while city/state live on `crm_companies/{id}/locations/{id}`.
-          if (flatWorksiteId && flatCompanyId) {
-            try {
-              const locationRef = doc(
-                db,
-                'tenants',
-                tenantId,
-                'crm_companies',
-                flatCompanyId,
-                'locations',
-                flatWorksiteId,
+        }),
+        ...[...recruiterIds].map(async (rId) => {
+          try {
+            const s = await getDoc(doc(db, 'users', rId));
+            if (s.exists()) {
+              const rd = s.data() as any;
+              recruiterNameById.set(
+                rId,
+                `${rd.firstName || ''} ${rd.lastName || ''}`.trim() || rd.displayName || rId,
               );
-              const locationSnap = await getDoc(locationRef);
-              if (locationSnap.exists()) {
-                const ld = locationSnap.data() as any;
-                const ac = ld.address || {};
-                if (locationName === 'No Location') {
-                  locationName = String(ld.nickname || ld.name || locationName).trim() || 'No Location';
-                }
-                if (!city) city = String(ld.city || ac.city || '').trim();
-                if (!state) state = String(ld.state || ac.state || '').trim();
-                if (!zipCode) {
-                  zipCode = String(ld.zipCode || ld.zip || ac.zipCode || ac.zip || '').trim();
-                }
-              }
-            } catch {
-              /* ignore */
             }
+          } catch {
+            /* ignore */
           }
+        }),
+        ...[...locationPairs.entries()].map(async ([key, { companyId, worksiteId }]) => {
+          try {
+            const s = await getDoc(
+              doc(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations', worksiteId),
+            );
+            if (s.exists()) locationByKey.set(key, s.data());
+          } catch {
+            /* ignore */
+          }
+        }),
+      ]);
 
-          const worksiteAddress: { city?: string; state?: string; zipCode?: string } | undefined =
-            city || state || zipCode
-              ? {
-                  city: city || undefined,
-                  state: state ? normalizeStateCode(state) || state : undefined,
-                  zipCode: zipCode || undefined,
-                }
-              : undefined;
-          const worksiteCity = worksiteAddress?.city;
-          
-          // Fetch recruiter names from assignedRecruiters array
-          let recruiterName = 'Unassigned';
-          const assignedRecruiters = (data as any).assignedRecruiters || [];
-          if (Array.isArray(assignedRecruiters) && assignedRecruiters.length > 0) {
-            try {
-              // Fetch the first recruiter's name
-              const recruiterId = assignedRecruiters[0];
-              const recruiterRef = doc(db, 'users', recruiterId);
-              const recruiterSnap = await getDoc(recruiterRef);
-              if (recruiterSnap.exists()) {
-                const recruiterData = recruiterSnap.data();
-                recruiterName = `${recruiterData.firstName || ''} ${recruiterData.lastName || ''}`.trim() || recruiterData.displayName || recruiterId;
-                // If there are multiple recruiters, append count
-                if (assignedRecruiters.length > 1) {
-                  recruiterName += ` (+${assignedRecruiters.length - 1})`;
-                }
-              }
-            } catch (error) {
-              // Silently handle errors
-              recruiterName = assignedRecruiters.length > 1 
-                ? `${assignedRecruiters.length} recruiters`
-                : 'Unassigned';
-            }
+      const newJobOrders: JobOrderWithDetails[] = rawList.map(({ id, data }) => {
+        // Derive job title from flat field or gig position
+        const derivedJobTitle =
+          (data as any).jobTitle ||
+          (Array.isArray((data as any).gigPositions) && (data as any).gigPositions[0]?.jobTitle) ||
+          undefined;
+
+        const flatCompanyId = (data as any).companyId || (data as any).deal?.companyId;
+        const companyName = flatCompanyId
+          ? companyNameById.get(flatCompanyId) || 'Unknown Company'
+          : 'Unknown Company';
+
+        // Location display line + city/state line.
+        const flatWorksiteId = (data as any).worksiteId || (data as any).deal?.locationId;
+        const wa = (data as any).worksiteAddress as Record<string, unknown> | undefined;
+        const waInner =
+          wa && typeof wa === 'object' ? ((wa as any).address as Record<string, unknown> | undefined) : undefined;
+        let city = String(wa?.city ?? waInner?.city ?? (data as any).city ?? '').trim();
+        let state = String(wa?.state ?? waInner?.state ?? '').trim();
+        let zipCode = String(
+          (wa as any)?.zipCode ?? (wa as any)?.zip ?? waInner?.zipCode ?? (data as any).zipCode ?? (data as any).zip ?? '',
+        ).trim();
+
+        let locationName =
+          String((data as any).worksiteName || (data as any).deal?.locationName || '').trim() || 'No Location';
+
+        // Hydrate from the (deduped) CRM location when worksite + company are known.
+        const ld = flatWorksiteId && flatCompanyId
+          ? locationByKey.get(`${flatCompanyId}${flatWorksiteId}`)
+          : undefined;
+        if (ld) {
+          const ac = ld.address || {};
+          if (locationName === 'No Location') {
+            locationName = String(ld.nickname || ld.name || locationName).trim() || 'No Location';
           }
-          
-          return {
-            ...data,
-            id: jobOrderDoc.id,
-            companyName,
-            locationName,
-            worksiteAddress,
-            worksiteCity,
-            jobTitle: derivedJobTitle,
-            recruiterName
-          };
-        })
-      );
+          if (!city) city = String(ld.city || ac.city || '').trim();
+          if (!state) state = String(ld.state || ac.state || '').trim();
+          if (!zipCode) {
+            zipCode = String(ld.zipCode || ld.zip || ac.zipCode || ac.zip || '').trim();
+          }
+        }
+
+        const worksiteAddress: { city?: string; state?: string; zipCode?: string } | undefined =
+          city || state || zipCode
+            ? {
+                city: city || undefined,
+                state: state ? normalizeStateCode(state) || state : undefined,
+                zipCode: zipCode || undefined,
+              }
+            : undefined;
+        const worksiteCity = worksiteAddress?.city;
+
+        // Recruiter name from the (deduped) users map.
+        let recruiterName = 'Unassigned';
+        const assignedRecruiters = (data as any).assignedRecruiters || [];
+        if (Array.isArray(assignedRecruiters) && assignedRecruiters.length > 0) {
+          const resolved = recruiterNameById.get(assignedRecruiters[0]);
+          if (resolved) {
+            recruiterName = resolved;
+            if (assignedRecruiters.length > 1) recruiterName += ` (+${assignedRecruiters.length - 1})`;
+          } else {
+            recruiterName =
+              assignedRecruiters.length > 1 ? `${assignedRecruiters.length} recruiters` : 'Unassigned';
+          }
+        }
+
+        return {
+          ...data,
+          id,
+          companyName,
+          locationName,
+          worksiteAddress,
+          worksiteCity,
+          jobTitle: derivedJobTitle,
+          recruiterName,
+        };
+      });
 
       // Sort by worksite state (client-side — not on Firestore index)
       if (sortField === 'worksiteState') {
