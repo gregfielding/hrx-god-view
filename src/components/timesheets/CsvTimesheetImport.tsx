@@ -129,9 +129,16 @@ type OverrideField = keyof RowOverride;
 /** A pickable HRX job order for the site-mapping dialog. */
 interface JobOrderOption {
   id: string;
-  jobTitle: string;
+  jobOrderNumber: string;
+  title: string;        // recruiter-facing JO title (e.g. "Loader / Crew")
+  jobTitle: string;     // role / O*NET title (e.g. "Warehouse Associate")
+  type: string;         // 'gig' | 'career' | 'open' | ''
   accountName: string;
-  label: string;
+  worksiteName: string;
+  city: string;
+  state: string;
+  label: string;        // single line shown once selected
+  searchText: string;   // lowercased haystack for filtering
 }
 interface MatchWorkersResponse {
   evereeTenantId: string | null;
@@ -378,15 +385,41 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           snap.forEach((d) => {
             if (byId.has(d.id)) return;
             const jo = d.data() as Record<string, any>;
-            const jobTitle = String(jo.jobTitle || jo.title || '').trim();
+            const title = String(jo.title || '').trim();
+            const jobTitle = String(
+              jo.jobTitle || (Array.isArray(jo.gigPositions) && jo.gigPositions[0]?.jobTitle) || '',
+            ).trim();
+            const type = String(
+              jo.type || jo.jobOrderType || (jo.shiftType === 'open' ? 'open' : ''),
+            )
+              .trim()
+              .toLowerCase();
             const accountName = String(
               jo.recruiterAccountName || jo.accountName || jo.companyName || '',
             ).trim();
+            const worksiteName = String(jo.worksiteName || jo.locationName || '').trim();
+            const wa = (jo.worksiteAddress && typeof jo.worksiteAddress === 'object'
+              ? jo.worksiteAddress
+              : {}) as Record<string, any>;
+            const city = String(wa.city || jo.worksiteCity || jo.city || '').trim();
+            const state = String(wa.state || jo.worksiteState || '').trim();
+            const jobOrderNumber = String(jo.jobOrderNumber ?? '').trim();
+            const primary = title || jobTitle || '(untitled job order)';
             byId.set(d.id, {
               id: d.id,
+              jobOrderNumber,
+              title,
               jobTitle,
+              type,
               accountName,
-              label: `${jobTitle || '(untitled job order)'}${accountName ? ` — ${accountName}` : ''}`,
+              worksiteName,
+              city,
+              state,
+              label: `${jobOrderNumber ? `#${jobOrderNumber} ` : ''}${primary}${accountName ? ` — ${accountName}` : ''}`,
+              searchText: [jobOrderNumber, title, jobTitle, type, accountName, worksiteName, city, state]
+                .filter(Boolean)
+                .join(' ')
+                .toLowerCase(),
             });
           });
         } catch {
@@ -2368,6 +2401,47 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
               onChange={(_e, val) => setMapJobOrder(val)}
               getOptionLabel={(o) => o.label}
               isOptionEqualToValue={(a, b) => a.id === b.id}
+              filterOptions={(opts, state) => {
+                const q = state.inputValue.trim().toLowerCase();
+                if (!q) return opts;
+                const tokens = q.split(/\s+/).filter(Boolean);
+                return opts.filter((o) => tokens.every((t) => o.searchText.includes(t)));
+              }}
+              renderOption={(props, o) => {
+                const primary = o.title || o.jobTitle || '(untitled job order)';
+                const loc = [o.worksiteName, [o.city, o.state].filter(Boolean).join(', ')]
+                  .filter(Boolean)
+                  .join(' · ');
+                const secondary = [o.jobTitle && o.jobTitle !== o.title ? o.jobTitle : '', o.accountName, loc]
+                  .filter(Boolean)
+                  .join(' · ');
+                return (
+                  <Box component="li" {...props} sx={{ display: 'block !important', py: 0.75 }}>
+                    <Stack direction="row" spacing={0.75} alignItems="center">
+                      {o.jobOrderNumber && (
+                        <Typography variant="caption" color="text.disabled" sx={{ fontFamily: 'monospace' }}>
+                          #{o.jobOrderNumber}
+                        </Typography>
+                      )}
+                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                        {primary}
+                      </Typography>
+                      {o.type && (
+                        <Chip
+                          size="small"
+                          label={o.type.charAt(0).toUpperCase() + o.type.slice(1)}
+                          sx={{ height: 18, fontSize: 11 }}
+                        />
+                      )}
+                    </Stack>
+                    {secondary && (
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        {secondary}
+                      </Typography>
+                    )}
+                  </Box>
+                );
+              }}
               renderInput={(params) => (
                 <TextField
                   {...params}
