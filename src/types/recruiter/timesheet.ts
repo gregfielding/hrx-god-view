@@ -77,11 +77,66 @@ export interface TimesheetEntryEvereeState {
   payRunId?: string;
   /** Everee's id for the worked-shift POST that this entry produced. */
   workedShiftId?: string;
+  /** Everee externalIds for the payable(s) this entry produced (1099 /
+   *  CSV-import contractor pay). Parallel to `workedShiftId` for W-2. */
+  payableExternalIds?: string[];
   /** Raw Everee status string — kept verbatim for debug/audit purposes. */
   status?: string;
   errorCode?: string;
   errorMessage?: string;
   respondedAt?: Date | FieldValue;
+}
+
+/** Lifecycle of a CSV-import row, tracked on the entry's `import` sidecar.
+ *  Distinct from the canonical `TimesheetEntryStatus` so the importer's
+ *  resolution states survive without polluting the payroll status enum. */
+export type ImportMatchStatus =
+  | 'ready'        // matched + Everee-linked + pay rate (+ WC for W-2)
+  | 'needs_rate'   // matched + linked but no pay rate
+  | 'needs_wc'     // W-2 matched + rate but no WC class code
+  | 'blocked'      // not in HRX / not Everee-linked / ambiguous
+  | 'submitted'    // sent to Everee (mirrors timesheet_import_payables)
+  | 'voided';      // retracted in Everee, re-sendable
+
+/**
+ * Import provenance + resolution state, present only on entries written by
+ * the CSV timesheet importer (`source === 'csv_import'`). Lets the Grid
+ * surface import rows — including blocked / unmatched ones that have no HRX
+ * assignment — and lets the Import tab resume a half-finished cleanup.
+ */
+export interface TimesheetEntryImportState {
+  /** 'indeed_flex' | 'connect_team' | … */
+  customer: string;
+  matchStatus: ImportMatchStatus;
+  /** CSV-provided identity — shown when `workerId` is empty (unmatched). */
+  csvWorkerName: string;
+  csvEmail: string;
+  /** CSV "Type"/site/event (the per-day pay-stub label). */
+  csvSite?: string;
+  csvRole?: string;
+  blockReason?: string | null;
+  ambiguous?: boolean;
+  evereeWorkerId?: string | null;
+  evereeLinked?: boolean;
+  matchedByName?: boolean;
+  matchedManual?: boolean;
+  /** Recruiter's manual worker pick (survives re-match). */
+  forcedUserId?: string | null;
+  worksiteId?: string | null;
+  worksiteName?: string | null;
+  worksiteAddress?: { street: string; city: string; state: string; zip: string } | null;
+  workersCompCode?: string | null;
+  workersCompRate?: number | null;
+  payRateSource?: 'assignment' | 'site_mapping' | 'account' | 'typed' | 'carried' | 'none';
+  workersCompSource?: 'assignment' | 'site_mapping' | 'account' | 'typed' | 'none';
+  worksiteSource?: 'assignment' | 'site_mapping' | 'account' | 'none';
+  /** The Everee externalId this row maps to — joins the entry to its
+   *  idempotency ledger doc (timesheet_import_payables). */
+  externalId?: string;
+  /** Stable CSV-derived key used in the synthetic doc id for unmatched rows. */
+  csvKey?: string;
+  /** Source-file row index (audit only; not stable across re-uploads). */
+  rowIndex?: number;
 }
 
 export interface TimesheetBatchEvereeState {
@@ -257,6 +312,15 @@ export interface TimesheetEntryV2 {
   approvedAt?: Date | FieldValue;
   sentToEvereeAt?: Date | FieldValue;
   everee?: TimesheetEntryEvereeState;
+
+  /* ---------- CSV import provenance (only when imported) ---------------- */
+  /** Marks an entry written by the CSV timesheet importer. The recompute
+   *  trigger short-circuits on this (Everee classifies OT, not HRX), and the
+   *  grid resolver surfaces these via a direct query (they often have no
+   *  assignment). Absent on normal scheduled entries. */
+  source?: 'csv_import';
+  /** Import resolution state — present only when `source === 'csv_import'`. */
+  import?: TimesheetEntryImportState;
 
   /* ---------- Audit ----------------------------------------------------- */
   createdBy: string;

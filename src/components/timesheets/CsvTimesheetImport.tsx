@@ -8,7 +8,7 @@
  * as the foundation.
  */
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Autocomplete,
@@ -22,10 +22,15 @@ import {
   DialogTitle,
   FormControl,
   FormControlLabel,
+  IconButton,
   InputAdornment,
   InputLabel,
   Link,
+  List,
+  ListItemButton,
+  ListItemText,
   MenuItem,
+  Radio,
   Switch,
   Paper,
   Select,
@@ -43,6 +48,8 @@ import {
 } from '@mui/material';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import EditIcon from '@mui/icons-material/Edit';
+import SearchIcon from '@mui/icons-material/Search';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { httpsCallable } from 'firebase/functions';
@@ -61,6 +68,7 @@ import {
   mapConnectTeamRows,
   looksLikeConnectTeam,
 } from '../../utils/timesheets/connectTeamImport';
+import { importCsvKey } from '../../utils/timesheets/importEntryKeys';
 
 /** One worker-match result from the importTimesheetMatchWorkers callable. */
 interface MatchRowResult {
@@ -70,9 +78,14 @@ interface MatchRowResult {
   ambiguous: boolean;
   userId: string | null;
   displayName: string | null;
+  /** Matched HRX worker's contact info (not the CSV's). */
+  matchedEmail: string | null;
+  matchedPhone: string | null;
   evereeWorkerId: string | null;
   evereeLinked: boolean;
   matchedByName: boolean;
+  /** Recruiter manually picked this worker via the lookup pencil. */
+  matchedManual: boolean;
   block: boolean;
   blockReason: string | null;
   // Phase 2: paired assignment + resolved pay context.
@@ -99,6 +112,7 @@ interface WorkerSuggestion {
   userId: string;
   displayName: string | null;
   email: string | null;
+  phone: string | null;
   evereeLinked: boolean;
   reason: string;
 }
@@ -239,6 +253,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   // Worker resolution (slice #1): pick the right HRX worker for an
   // unresolved CSV email, then remember it as an alias.
   const [resolveRow, setResolveRow] = useState<{
+    rowIndex: number;
     email: string;
     firstName: string;
     lastName: string;
@@ -248,6 +263,15 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   const [resolvePick, setResolvePick] = useState<string>('');
   const [savingAlias, setSavingAlias] = useState(false);
   const [resolveError, setResolveError] = useState<string | null>(null);
+  // Free-text worker search inside the resolve/lookup dialog.
+  const [resolveQuery, setResolveQuery] = useState('');
+  const [resolveSearching, setResolveSearching] = useState(false);
+  // Apply the pick to every row with the same CSV name (remembered alias) vs.
+  // just this one row (a session-only forced override).
+  const [resolveApplyAll, setResolveApplyAll] = useState(true);
+  // Recruiter-forced worker per row (lookup pencil, "this row only"). Survives
+  // re-match; flows into the match payload as forcedUserId. Cleared on reset.
+  const [forcedUserIdByRow, setForcedUserIdByRow] = useState<Map<number, string>>(new Map());
   // Inline cell overrides (this import session): manually-entered pay rate /
   // WC code / WC rate, keyed by row. They win over the resolved value and
   // survive a re-match; they flow into the Everee submit payload (P4).
@@ -283,6 +307,12 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   // shows what's already been sent + lets the recruiter void it.
   const [submittedByExtId, setSubmittedByExtId] = useState<Map<string, { status: string; amount: number }>>(new Map());
   const [voidingExtId, setVoidingExtId] = useState<string | null>(null);
+  // Manual "Save progress" — persists the current grid to timesheet_entries.
+  const [saving, setSaving] = useState(false);
+  const [saveResult, setSaveResult] = useState<{ upserted: number } | null>(null);
+  // One-shot guard so resume-from-saved restores overrides/forced picks only
+  // once per uploaded file (keyed by file name + entity + customer).
+  const resumeKeyRef = useRef<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const importableRows = parsed?.rows.filter((r) => r.status === 'importable') ?? [];
@@ -352,55 +382,100 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   };
 
   const openResolveDialog = (
+    rowIndex: number,
     row: { email: string; firstName: string; lastName: string },
     suggestions: WorkerSuggestion[],
   ) => {
     setResolveRow({
+      rowIndex,
       ...row,
       name: [row.firstName, row.lastName].filter(Boolean).join(' '),
     });
     setResolveSuggestions(suggestions);
     setResolvePick(suggestions[0]?.userId ?? '');
+    setResolveQuery('');
+    // Default to "all rows named X" for no-email customers (name is the key);
+    // for email customers default to this row only.
+    setResolveApplyAll(!row.email);
     setResolveError(null);
   };
 
-  const saveAlias = async () => {
+  // Free-text HRX worker lookup inside the dialog — merges hits into the
+  // candidate list (deduped), so a wrong/missing auto-match can be corrected.
+  const runWorkerSearch = async () => {
+    const q = resolveQuery.trim();
+    if (q.length < 2) return;
+    setResolveSearching(true);
+    setResolveError(null);
+    try {
+      const fn = httpsCallable<
+        { tenantId: string; query: string },
+        { candidates: Array<{ userId: string; displayName: string | null; email: string | null; phone: string | null; inTenant: boolean }> }
+      >(functions, 'searchTimesheetWorkers', { timeout: 30000 });
+      const res = await fn({ tenantId, query: q });
+      const hits: WorkerSuggestion[] = (res.data?.candidates ?? []).map((c) => ({
+        userId: c.userId,
+        displayName: c.displayName,
+        email: c.email,
+        phone: c.phone,
+        evereeLinked: false, // resolved on re-match
+        reason: c.inTenant ? 'search' : 'search · other tenant',
+      }));
+      setResolveSuggestions((prev) => {
+        const byId = new Map(prev.map((s) => [s.userId, s]));
+        hits.forEach((h) => byId.set(h.userId, h));
+        return [...byId.values()];
+      });
+      if (hits.length && !resolvePick) setResolvePick(hits[0].userId);
+      if (!hits.length) setResolveError(`No HRX worker matched “${q}”.`);
+    } catch (err: any) {
+      console.error('searchTimesheetWorkers failed:', err);
+      setResolveError(err?.message || 'Worker search failed.');
+    } finally {
+      setResolveSearching(false);
+    }
+  };
+
+  const applyResolvedWorker = async () => {
     if (!resolveRow || !resolvePick) return;
     setSavingAlias(true);
     setResolveError(null);
     try {
-      const fn = httpsCallable<
-        {
-          tenantId: string;
-          userId: string;
-          email?: string;
-          customer?: string;
-          firstName?: string;
-          lastName?: string;
-        },
-        { ok: true; docId: string; displayName: string | null }
-      >(functions, 'saveTimesheetWorkerAlias');
-      // Email customers key the alias on email; no-email customers (Connect
-      // Team) key it on the worker's name, scoped to the customer.
-      await fn(
-        resolveRow.email
-          ? { tenantId, userId: resolvePick, email: resolveRow.email }
-          : {
-              tenantId,
-              userId: resolvePick,
-              customer,
-              firstName: resolveRow.firstName,
-              lastName: resolveRow.lastName,
-            },
-      );
+      const next = new Map(forcedUserIdByRow);
+      if (resolveApplyAll) {
+        // Remember the pick for every row with this CSV name (persists across
+        // imports). Email customers key on email; no-email on name+customer.
+        const fn = httpsCallable<
+          { tenantId: string; userId: string; email?: string; customer?: string; firstName?: string; lastName?: string },
+          { ok: true; docId: string; displayName: string | null }
+        >(functions, 'saveTimesheetWorkerAlias');
+        await fn(
+          resolveRow.email
+            ? { tenantId, userId: resolvePick, email: resolveRow.email }
+            : { tenantId, userId: resolvePick, customer, firstName: resolveRow.firstName, lastName: resolveRow.lastName },
+        );
+        // Also force this session's same-name rows immediately (the alias takes
+        // over on the next clean match; forcing avoids a stale flash).
+        const name = resolveRow.name.trim().toLowerCase();
+        (parsed?.rows ?? []).forEach((r) => {
+          if (r.status !== 'importable') return;
+          const rn = [r.firstName, r.lastName].filter(Boolean).join(' ').trim().toLowerCase();
+          if (rn && rn === name) next.set(r.rowIndex, resolvePick);
+        });
+      } else {
+        // This row only — a session-scoped forced override (not remembered).
+        next.set(resolveRow.rowIndex, resolvePick);
+      }
+      setForcedUserIdByRow(next);
       setResolveRow(null);
       setResolveSuggestions([]);
       setResolvePick('');
-      // Re-run the match so every row for this worker resolves.
-      await runMatch();
+      setResolveQuery('');
+      // Pass the fresh map — state isn't visible to runMatch's closure yet.
+      await runMatch(next);
     } catch (err: any) {
-      console.error('saveTimesheetWorkerAlias failed:', err);
-      setResolveError(err?.message || 'Failed to save the worker match.');
+      console.error('applyResolvedWorker failed:', err);
+      setResolveError(err?.message || 'Failed to apply the worker match.');
     } finally {
       setSavingAlias(false);
     }
@@ -410,8 +485,12 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
    *  size), live progress as each batch lands, and a failed batch costs only
    *  itself — the rest still resolve. */
   const MATCH_BATCH_SIZE = 400;
-  const runMatch = async () => {
+  // `forcedOverride` lets a caller (the worker-lookup pencil) pass the
+  // just-updated forced-worker map synchronously, since React state from a
+  // setState in the same tick isn't visible to this closure yet.
+  const runMatch = async (forcedOverride?: Map<number, string>) => {
     if (!entityId || importableRows.length === 0) return;
+    const forced = forcedOverride ?? forcedUserIdByRow;
     setMatching(true);
     setMatchError(null);
     const fn = httpsCallable<
@@ -429,6 +508,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           workDate: string;
           site: string;
           role: string;
+          forcedUserId?: string;
         }>;
       },
       MatchWorkersResponse
@@ -441,6 +521,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
       workDate: r.workDate,
       site: r.site,
       role: r.role,
+      ...(forced.get(r.rowIndex) ? { forcedUserId: forced.get(r.rowIndex) } : {}),
     });
     const merged = new Map<number, MatchRowResult>();
     let entityEvereeEnabled = true;
@@ -492,6 +573,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     setOverrides(new Map());
     setEditing(null);
     setSubmittedByExtId(new Map());
+    setForcedUserIdByRow(new Map());
   };
 
   const handleFile = (file: File) => {
@@ -796,6 +878,9 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           hours: r.hours,
           payRate: eff.payRate as number,
           workerName: match!.displayName || [r.firstName, r.lastName].filter(Boolean).join(' '),
+          // The event/site this day belongs to — used for the per-day pay-stub
+          // line label (both worker types).
+          eventLabel: r.site || match!.worksiteName || null,
           // W-2 only — omitted/ignored server-side for 1099.
           workersCompCode: is1099Entity ? null : eff.workersCompCode ?? null,
           worksiteId: is1099Entity ? null : match!.worksiteId ?? null,
@@ -818,6 +903,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           hours: number;
           payRate: number;
           workerName: string;
+          eventLabel?: string | null;
           workersCompCode?: string | null;
           worksiteId?: string | null;
           worksiteName?: string | null;
@@ -922,16 +1008,30 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
 
   const voidCallable = () =>
     httpsCallable<
-      { tenantId: string; hiringEntityId: string; externalId: string },
+      {
+        tenantId: string;
+        hiringEntityId: string;
+        externalId: string;
+        userId?: string;
+        workDate?: string;
+        customer?: string;
+      },
       { ok: boolean; externalId: string }
     >(functions, 'voidImportTimesheetPayable', { timeout: 120000 });
 
-  const voidRow = async (externalId: string) => {
+  const voidRow = async (externalId: string, userId?: string | null, workDate?: string) => {
     if (!entityId) return;
     setVoidingExtId(externalId);
     setSubmitError(null);
     try {
-      await voidCallable()({ tenantId, hiringEntityId: entityId, externalId });
+      await voidCallable()({
+        tenantId,
+        hiringEntityId: entityId,
+        externalId,
+        userId: userId || undefined,
+        workDate: workDate || undefined,
+        customer,
+      });
       await loadSubmitted();
     } catch (err: any) {
       console.error('voidImportTimesheetPayable failed:', err);
@@ -940,6 +1040,177 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
       setVoidingExtId(null);
     }
   };
+
+  // ── Save progress (persist the whole grid to timesheet_entries) ──
+  type ImportMatchStatus = 'ready' | 'needs_rate' | 'needs_wc' | 'blocked' | 'submitted' | 'voided';
+  const matchStatusFor = (
+    m: MatchRowResult,
+    eff: ReturnType<typeof effective>,
+    submitted: boolean,
+  ): ImportMatchStatus => {
+    if (submitted) return 'submitted';
+    if (m.block) return 'blocked';
+    if (eff.needsPayRate) return 'needs_rate';
+    if (rowNeedsWc(eff)) return 'needs_wc';
+    return 'ready';
+  };
+
+  /** Every matched-or-attempted importable row → a SaveImportRow snapshot. */
+  const buildSaveRows = () =>
+    (parsed?.rows ?? [])
+      .filter((r) => r.status === 'importable')
+      .map((r) => ({ r, m: matchByRow.get(r.rowIndex) }))
+      .filter((x): x is { r: ParsedTimesheetRow; m: MatchRowResult } => !!x.m)
+      .map(({ r, m }) => {
+        const eff = effective(m, r.rowIndex);
+        const submitted = !!submittedStatusFor(m.userId, r.workDate);
+        const typedRate = overrides.get(r.rowIndex)?.payRate != null;
+        const typedWc = overrides.get(r.rowIndex)?.workersCompCode != null;
+        return {
+          rowIndex: r.rowIndex,
+          workDate: r.workDate,
+          hours: r.hours,
+          userId: m.userId || '',
+          csvKey: importCsvKey({ firstName: r.firstName, lastName: r.lastName, email: r.email }),
+          csvWorkerName: m.displayName || [r.firstName, r.lastName].filter(Boolean).join(' '),
+          csvEmail: m.matchedEmail || r.email || '',
+          csvSite: r.site || '',
+          csvRole: r.role || '',
+          matchStatus: matchStatusFor(m, eff, submitted),
+          blockReason: m.blockReason ?? null,
+          ambiguous: !!m.ambiguous,
+          evereeWorkerId: m.evereeWorkerId,
+          evereeLinked: m.evereeLinked,
+          matchedByName: m.matchedByName,
+          matchedManual: m.matchedManual,
+          forcedUserId: forcedUserIdByRow.get(r.rowIndex) || null,
+          assignmentId: m.assignmentId,
+          jobOrderId: m.jobOrderId,
+          shiftId: m.shiftId,
+          worksiteId: is1099Entity ? null : m.worksiteId,
+          worksiteName: m.worksiteName,
+          worksiteAddress: m.worksiteAddress,
+          workState: m.worksiteAddress?.state ?? null,
+          payRate: eff.payRate,
+          workersCompCode: is1099Entity ? null : eff.workersCompCode,
+          workersCompRate: is1099Entity ? null : eff.workersCompRate,
+          billRate: r.billRate ?? null,
+          payRateSource: typedRate ? 'typed' : eff.payRateCarried ? 'carried' : m.payRateSource,
+          workersCompSource: typedWc ? 'typed' : m.workersCompSource,
+          worksiteSource: m.worksiteSource,
+        };
+      });
+
+  const saveProgress = async () => {
+    if (!entityId) return;
+    const rows = buildSaveRows();
+    if (rows.length === 0) return;
+    setSaving(true);
+    setSaveResult(null);
+    setMatchError(null);
+    try {
+      const fn = httpsCallable<
+        { tenantId: string; hiringEntityId: string; customer: string; rows: typeof rows },
+        { ok: boolean; upserted: number; byStatus: Record<string, number> }
+      >(functions, 'saveImportTimesheetRows', { timeout: 300000 });
+      const res = await fn({ tenantId, hiringEntityId: entityId, customer, rows });
+      setSaveResult({ upserted: res.data?.upserted ?? rows.length });
+    } catch (err: any) {
+      console.error('saveImportTimesheetRows failed:', err);
+      setMatchError(err?.message || 'Failed to save progress.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Resume: restore typed rate/WC overrides + forced worker picks from
+  // previously-saved import entries, keyed by csvKey|workDate. Runs once per
+  // uploaded file (before Match), so a re-upload + Match picks up where the
+  // recruiter left off. Blocked/submitted state reproduces from the match +
+  // the payables ledger, so we only restore the recruiter's manual edits here.
+  const loadImportEntries = async (rows: ParsedTimesheetRow[]) => {
+    if (!tenantId || !entityId || !customer) return;
+    const importable = rows.filter((r) => r.status === 'importable');
+    if (importable.length === 0) return;
+    const dates = importable.map((r) => r.workDate).filter(Boolean).sort();
+    const minDate = dates[0];
+    const maxDate = dates[dates.length - 1];
+    try {
+      const snap = await getDocs(
+        query(
+          collection(db, 'tenants', tenantId, 'timesheet_entries'),
+          where('source', '==', 'csv_import'),
+          where('hiringEntityId', '==', entityId),
+          where('workDate', '>=', minDate),
+          where('workDate', '<=', maxDate),
+        ),
+      );
+      const byKey = new Map<
+        string,
+        { payRate?: number; workersCompCode?: string; forcedUserId?: string | null; payRateSource?: string; workersCompSource?: string }
+      >();
+      snap.forEach((d) => {
+        const data = d.data() as any;
+        const imp = (data.import || {}) as any;
+        if (imp.customer !== customer) return;
+        byKey.set(`${imp.csvKey || ''}|${data.workDate || ''}`, {
+          payRate: typeof data.payRate === 'number' ? data.payRate : undefined,
+          workersCompCode: typeof data.workersCompCode === 'string' ? data.workersCompCode : undefined,
+          forcedUserId: imp.forcedUserId ?? null,
+          payRateSource: imp.payRateSource,
+          workersCompSource: imp.workersCompSource,
+        });
+      });
+      if (byKey.size === 0) return;
+      const nextOverrides = new Map(overrides);
+      const nextForced = new Map(forcedUserIdByRow);
+      let restored = 0;
+      for (const r of importable) {
+        const ck = importCsvKey({ firstName: r.firstName, lastName: r.lastName, email: r.email });
+        const p = byKey.get(`${ck}|${r.workDate}`);
+        if (!p) continue;
+        if (p.forcedUserId && nextForced.get(r.rowIndex) !== p.forcedUserId) {
+          nextForced.set(r.rowIndex, p.forcedUserId);
+          restored += 1;
+        }
+        const ov = { ...(nextOverrides.get(r.rowIndex) || {}) };
+        let ovChanged = false;
+        if (p.payRateSource === 'typed' && Number(p.payRate) > 0 && ov.payRate == null) {
+          ov.payRate = Number(p.payRate);
+          ovChanged = true;
+        }
+        if (p.workersCompSource === 'typed' && p.workersCompCode && ov.workersCompCode == null) {
+          ov.workersCompCode = p.workersCompCode;
+          ovChanged = true;
+        }
+        if (ovChanged) {
+          nextOverrides.set(r.rowIndex, ov);
+          restored += 1;
+        }
+      }
+      if (restored > 0) {
+        setOverrides(nextOverrides);
+        setForcedUserIdByRow(nextForced);
+        setSaveResult(null);
+        setMatchError(
+          `Restored ${restored} saved edit${restored === 1 ? '' : 's'} from a previous session — click Match to re-apply.`,
+        );
+      }
+    } catch (err) {
+      console.error('loadImportEntries (resume) failed:', err);
+    }
+  };
+
+  // Once a file is parsed AND an entity + customer are chosen, restore any
+  // saved edits from a prior session — once per (file, entity, customer).
+  useEffect(() => {
+    if (!parsed || !entityId || !customer) return;
+    const rk = `${fileName}|${entityId}|${customer}`;
+    if (resumeKeyRef.current === rk) return;
+    resumeKeyRef.current = rk;
+    void loadImportEntries(parsed.rows);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parsed, entityId, customer, fileName]);
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2, maxWidth: 1400 }}>
@@ -1144,7 +1415,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                           underline="hover"
                           color="error"
                           disabled={voidingExtId === extId}
-                          onClick={() => voidRow(extId)}
+                          onClick={() => voidRow(extId, match?.userId, r.workDate)}
                         >
                           {voidingExtId === extId ? 'Voiding…' : 'Void'}
                         </Link>
@@ -1182,13 +1453,40 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                       </Tooltip>
                     )}
                   </TableCell>
-                  <TableCell sx={{ maxWidth: 220 }}>
-                    <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                      {[r.firstName, r.lastName].filter(Boolean).join(' ') || '—'}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary" display="block">
-                      {r.email || 'no email'}
-                    </Typography>
+                  <TableCell sx={{ maxWidth: 240 }}>
+                    <Stack direction="row" alignItems="center" spacing={0.5}>
+                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                        {[r.firstName, r.lastName].filter(Boolean).join(' ') || '—'}
+                      </Typography>
+                      {r.status === 'importable' && (
+                        <Tooltip title="Look up / change the HRX worker for this row">
+                          <IconButton
+                            size="small"
+                            onClick={() =>
+                              openResolveDialog(
+                                r.rowIndex,
+                                { email: r.email, firstName: r.firstName, lastName: r.lastName },
+                                match?.suggestions ?? [],
+                              )
+                            }
+                            sx={{ p: 0.25 }}
+                          >
+                            <EditIcon sx={{ fontSize: 15 }} />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                    </Stack>
+                    {/* Contact: the matched HRX worker's email/phone when found,
+                        else the CSV's (Connect Team has none → "no email"). */}
+                    {match && (match.matchedEmail || match.matchedPhone) ? (
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        {[match.matchedEmail, match.matchedPhone].filter(Boolean).join(' · ')}
+                      </Typography>
+                    ) : (
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        {r.email || 'no email'}
+                      </Typography>
+                    )}
                     {r.status !== 'importable' ? null : !match ? (
                       <Typography variant="caption" color="text.secondary">not matched yet</Typography>
                     ) : match.block ? (
@@ -1197,34 +1495,35 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                           <ConfDot level={match.suggestions && match.suggestions.length > 0 ? 'select' : 'problem'} />
                           {match.blockReason}
                         </Typography>
-                        {match.suggestions && match.suggestions.length > 0 && (
-                          <Link
-                            component="button"
-                            type="button"
-                            variant="caption"
-                            underline="hover"
-                            onClick={() =>
-                              openResolveDialog(
-                                { email: r.email, firstName: r.firstName, lastName: r.lastName },
-                                match.suggestions!,
-                              )
-                            }
-                            sx={{ display: 'block', mt: 0.25 }}
-                          >
-                            Resolve worker ({match.suggestions.length}) →
-                          </Link>
-                        )}
+                        <Link
+                          component="button"
+                          type="button"
+                          variant="caption"
+                          underline="hover"
+                          onClick={() =>
+                            openResolveDialog(
+                              r.rowIndex,
+                              { email: r.email, firstName: r.firstName, lastName: r.lastName },
+                              match.suggestions ?? [],
+                            )
+                          }
+                          sx={{ display: 'block', mt: 0.25 }}
+                        >
+                          {match.suggestions && match.suggestions.length > 0
+                            ? `Resolve worker (${match.suggestions.length}) →`
+                            : 'Look up worker →'}
+                        </Link>
                       </>
                     ) : (
                       <Typography
                         variant="caption"
-                        color={match.matchedByName ? 'success.dark' : 'success.main'}
+                        color={match.matchedManual ? 'info.main' : match.matchedByName ? 'success.dark' : 'success.main'}
                         display="block"
                         noWrap
-                        title={match.matchedByName ? `${match.displayName} (matched by name)` : match.displayName ?? ''}
+                        title={match.displayName ?? ''}
                       >
-                        <ConfDot level={match.matchedByName ? 'probable' : 'exact'} /> ✓ {match.displayName}
-                        {match.matchedByName ? ' (by name)' : ''}
+                        <ConfDot level={match.matchedManual ? 'exact' : match.matchedByName ? 'probable' : 'exact'} /> ✓ {match.displayName}
+                        {match.matchedManual ? ' (manual)' : match.matchedByName ? ' (by name)' : ''}
                       </Typography>
                     )}
                   </TableCell>
@@ -1406,7 +1705,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
             <Button
               variant="contained"
-              onClick={runMatch}
+              onClick={() => runMatch()}
               disabled={!entityId || matching}
               sx={{ textTransform: 'none' }}
             >
@@ -1416,9 +1715,24 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                   : 'Matching…'
                 : `Match ${s.importable} worker${s.importable === 1 ? '' : 's'} to HRX`}
             </Button>
+            {matchByRow.size > 0 && (
+              <Button
+                variant="outlined"
+                onClick={saveProgress}
+                disabled={saving || matching}
+                sx={{ textTransform: 'none' }}
+              >
+                {saving ? 'Saving…' : 'Save progress'}
+              </Button>
+            )}
             {!entityId && (
               <Typography variant="caption" color="text.secondary">
                 Pick a paying entity first.
+              </Typography>
+            )}
+            {saveResult && (
+              <Typography variant="caption" color="success.main">
+                Saved {saveResult.upserted} row{saveResult.upserted === 1 ? '' : 's'} to timesheets ✓
               </Typography>
             )}
             {matchByRow.size > 0 &&
@@ -1679,50 +1993,105 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
         fullWidth
         maxWidth="sm"
       >
-        <DialogTitle>Resolve worker</DialogTitle>
+        <DialogTitle>Look up worker</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
-            <Typography variant="body2" color="text.secondary">
-              This row didn’t resolve to a single HRX worker. Pick the right person — we’ll remember
-              it ({resolveRow?.email ? 'by email' : 'by name'}) so future imports resolve automatically.
-            </Typography>
             <Box>
               <Typography variant="caption" color="text.secondary">
-                CSV worker
+                CSV row
               </Typography>
               <Typography variant="body2" sx={{ fontWeight: 500 }}>
                 {resolveRow?.name || '—'}
               </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {resolveRow?.email}
-              </Typography>
+              {resolveRow?.email && (
+                <Typography variant="caption" color="text.secondary">
+                  {resolveRow.email}
+                </Typography>
+              )}
             </Box>
-            <FormControl fullWidth size="small" disabled={savingAlias}>
-              <InputLabel>HRX worker</InputLabel>
-              <Select
-                label="HRX worker"
-                value={resolvePick}
-                onChange={(e) => setResolvePick(e.target.value)}
-                renderValue={(val) => {
-                  const sug = resolveSuggestions.find((x) => x.userId === val);
-                  return sug ? sug.displayName || sug.email || sug.userId : '';
-                }}
-              >
-                {resolveSuggestions.map((sug) => (
-                  <MenuItem key={sug.userId} value={sug.userId}>
-                    <Box>
-                      <Typography variant="body2">
-                        {sug.displayName || '(no name)'}
-                        {sug.evereeLinked ? ' · Everee ✓' : ' · not linked'}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {sug.email || 'no email'} — {sug.reason}
-                      </Typography>
-                    </Box>
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+
+            {/* Free-text search — name, email, or phone. */}
+            <TextField
+              size="small"
+              fullWidth
+              label="Search HRX by name, email, or phone"
+              value={resolveQuery}
+              onChange={(e) => setResolveQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  runWorkerSearch();
+                }
+              }}
+              disabled={savingAlias}
+              InputProps={{
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <IconButton
+                      size="small"
+                      onClick={runWorkerSearch}
+                      disabled={resolveSearching || resolveQuery.trim().length < 2}
+                    >
+                      {resolveSearching ? <CircularProgress size={16} /> : <SearchIcon fontSize="small" />}
+                    </IconButton>
+                  </InputAdornment>
+                ),
+              }}
+            />
+
+            {resolveSuggestions.length > 0 ? (
+              <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, maxHeight: 240, overflow: 'auto' }}>
+                <List dense disablePadding>
+                  {resolveSuggestions.map((sug) => (
+                    <ListItemButton
+                      key={sug.userId}
+                      selected={resolvePick === sug.userId}
+                      onClick={() => setResolvePick(sug.userId)}
+                      dense
+                    >
+                      <Radio
+                        edge="start"
+                        size="small"
+                        checked={resolvePick === sug.userId}
+                        tabIndex={-1}
+                        disableRipple
+                      />
+                      <ListItemText
+                        primary={`${sug.displayName || '(no name)'}${sug.evereeLinked ? ' · Everee ✓' : ''}`}
+                        secondary={
+                          [sug.email, sug.phone].filter(Boolean).join(' · ') || sug.reason
+                        }
+                        primaryTypographyProps={{ variant: 'body2' }}
+                        secondaryTypographyProps={{ variant: 'caption' }}
+                      />
+                    </ListItemButton>
+                  ))}
+                </List>
+              </Box>
+            ) : (
+              <Typography variant="caption" color="text.secondary">
+                Search above to find the right HRX worker.
+              </Typography>
+            )}
+
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={resolveApplyAll}
+                  onChange={(e) => setResolveApplyAll(e.target.checked)}
+                  disabled={savingAlias}
+                />
+              }
+              label={
+                <Typography variant="body2">
+                  Apply to all rows named “{resolveRow?.name}”{' '}
+                  <Typography component="span" variant="caption" color="text.secondary">
+                    (remembered for future imports)
+                  </Typography>
+                </Typography>
+              }
+            />
+
             {resolveError && (
               <Alert severity="error" onClose={() => setResolveError(null)}>
                 {resolveError}
@@ -1736,11 +2105,11 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           </Button>
           <Button
             variant="contained"
-            onClick={saveAlias}
+            onClick={applyResolvedWorker}
             disabled={!resolvePick || savingAlias}
             sx={{ textTransform: 'none' }}
           >
-            {savingAlias ? 'Saving…' : 'Use this match & re-match'}
+            {savingAlias ? 'Applying…' : resolveApplyAll ? 'Use for all & re-match' : 'Use for this row'}
           </Button>
         </DialogActions>
       </Dialog>

@@ -57,6 +57,10 @@ interface MatchRowInput {
   workDate?: string;
   site?: string;
   role?: string;
+  /** Recruiter manually picked this HRX worker for the row (worker-lookup
+   *  pencil). When set, resolution skips email/name matching and binds this
+   *  exact user — the rest of the cascade (Everee link, pay, WC) still runs. */
+  forcedUserId?: string;
 }
 
 interface MatchRowResult {
@@ -66,11 +70,18 @@ interface MatchRowResult {
   ambiguous: boolean;
   userId: string | null;
   displayName: string | null;
+  /** The matched HRX worker's contact info (NOT the CSV's) — shown on the row
+   *  so the recruiter can confirm identity even when the CSV had no email. */
+  matchedEmail: string | null;
+  matchedPhone: string | null;
   evereeWorkerId: string | null;
   evereeLinked: boolean;
   /** Matched by name (no-email customers like Connect Team) — lower
    *  confidence than an email/alias match, shown "probable" in the grid. */
   matchedByName: boolean;
+  /** Manually picked by the recruiter (worker-lookup pencil) — highest
+   *  confidence; overrides any auto match for this row. */
+  matchedManual: boolean;
   block: boolean;
   blockReason: string | null;
   // ── Phase 2: paired assignment + resolved pay context ──
@@ -108,6 +119,7 @@ interface WorkerSuggestion {
   userId: string;
   displayName: string | null;
   email: string | null;
+  phone: string | null;
   evereeLinked: boolean;
   reason: string;
 }
@@ -428,6 +440,8 @@ export const importTimesheetMatchWorkers = onCall(
           kind: 'user';
           userId: string;
           displayName: string;
+          email: string | null;
+          phone: string | null;
           evereeWorkerId: string | null;
           evereeLinked: boolean;
           assignments: Assignment[];
@@ -709,7 +723,14 @@ export const importTimesheetMatchWorkers = onCall(
         }
       }
       const assignments = await loadWorkerAssignments(tenantId, id);
-      return { kind: 'user', userId: id, displayName, evereeWorkerId, evereeLinked, assignments };
+      const email = typeof data.email === 'string' ? data.email : null;
+      const phone =
+        typeof data.phone === 'string'
+          ? data.phone
+          : typeof data.phoneNumber === 'string'
+            ? data.phoneNumber
+            : null;
+      return { kind: 'user', userId: id, displayName, email, phone, evereeWorkerId, evereeLinked, assignments };
     };
 
     const buildSuggestion = async (
@@ -727,6 +748,12 @@ export const importTimesheetMatchWorkers = onCall(
           [data.firstName, data.lastName].filter(Boolean).join(' ') ||
           (typeof data.displayName === 'string' ? data.displayName : null),
         email: typeof data.email === 'string' ? data.email : null,
+        phone:
+          typeof data.phone === 'string'
+            ? data.phone
+            : typeof data.phoneNumber === 'string'
+              ? data.phoneNumber
+              : null,
         evereeLinked,
         reason,
       };
@@ -1118,19 +1145,33 @@ export const importTimesheetMatchWorkers = onCall(
         ambiguous: false,
         userId: null,
         displayName: null,
+        matchedEmail: null,
+        matchedPhone: null,
         evereeWorkerId: null,
         evereeLinked: false,
         matchedByName: false,
+        matchedManual: false,
         block: true,
         blockReason: null,
         ...EMPTY_FIELDS,
       };
 
-      // Email is the primary key (Indeed Flex); no-email customers (Connect
-      // Team) fall back to conservative name matching.
+      // A recruiter-forced worker (lookup pencil) wins over email/name
+      // matching; everything downstream (Everee link, pay, WC) still runs.
+      // Email is otherwise the primary key (Indeed Flex); no-email customers
+      // (Connect Team) fall back to conservative name matching.
+      const forcedUserId = String(row.forcedUserId || '').trim();
       let r: Resolved;
       let viaName = false;
-      if (email) {
+      let viaManual = false;
+      if (forcedUserId) {
+        viaManual = true;
+        const snap = await db.collection('users').doc(forcedUserId).get();
+        if (!snap.exists) {
+          return { ...base, blockReason: 'Selected HRX worker no longer exists.' };
+        }
+        r = await buildUserResolved(forcedUserId, (snap.data() || {}) as Record<string, any>);
+      } else if (email) {
         r = await resolveEmail(email);
       } else if (firstName || lastName) {
         viaName = true;
@@ -1167,8 +1208,11 @@ export const importTimesheetMatchWorkers = onCall(
         ...base,
         matched: true,
         matchedByName: viaName,
+        matchedManual: viaManual,
         userId: r.userId,
         displayName: r.displayName,
+        matchedEmail: r.email,
+        matchedPhone: r.phone,
         evereeWorkerId: r.evereeWorkerId,
         evereeLinked: r.evereeLinked,
       };

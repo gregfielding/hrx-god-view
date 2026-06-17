@@ -121,7 +121,19 @@ function formatHours(hours: number): string {
  * chip. The per-row status pill in the table itself still reads "—"
  * for empty rows (handled in `TimesheetGrid`'s StatusPill).
  */
-type ChipStatus = Exclude<TimesheetRowDisplayStatus, 'no_entry'>;
+// Header chips summarize the canonical entry lifecycle. `no_entry` (empty
+// rows) and the `import_*` states (CSV-import rows, summarized in the Import
+// tab) are intentionally excluded.
+type ChipStatus = Exclude<
+  TimesheetRowDisplayStatus,
+  | 'no_entry'
+  | 'import_ready'
+  | 'import_needs_rate'
+  | 'import_needs_wc'
+  | 'import_blocked'
+  | 'import_submitted'
+  | 'import_voided'
+>;
 
 const STATUS_LABELS: Record<ChipStatus, string> = {
   draft: 'draft',
@@ -187,6 +199,10 @@ export const TimesheetTotalsHeader: React.FC<TimesheetTotalsHeaderProps> = ({
     const ids: string[] = [];
     for (const r of rows) {
       if (r.kind !== 'entry') continue;
+      // CSV-import rows are resolved + submitted in the Import CSV tab via
+      // their own Everee path — never push them through the assignment-based
+      // approve/batch pipeline (they have no assignment and would error).
+      if (r.isImport || r.entry.source === 'csv_import') continue;
       // Re-approve errored entries too — the pre-flight stamps this
       // status when the underlying data was missing (WC code, worker
       // linkage, etc.); once the recruiter fixes the data the bulk

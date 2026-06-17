@@ -468,12 +468,17 @@ async function recomputeScope(scope: WorkweekScope): Promise<number> {
   const days: DayInput[] = [];
   let stateCode = 'DEFAULT';
   let stateCodePicked = false;
-  // Sort docs by workDate ascending for deterministic state pick.
-  const sortedDocs = [...siblingsSnap.docs].sort((a, b) => {
-    const aw = a.data().workDate as string | undefined;
-    const bw = b.data().workDate as string | undefined;
-    return (aw ?? '') < (bw ?? '') ? -1 : (aw ?? '') > (bw ?? '') ? 1 : 0;
-  });
+  // Sort docs by workDate ascending for deterministic state pick. Exclude
+  // CSV-import siblings entirely — they hold straight-time hours that Everee
+  // classifies, and must NOT be pulled into HRX's weekly OT cascade (else a
+  // real worker's scheduled edit would reclassify their import rows).
+  const sortedDocs = [...siblingsSnap.docs]
+    .filter((d) => d.data().source !== 'csv_import')
+    .sort((a, b) => {
+      const aw = a.data().workDate as string | undefined;
+      const bw = b.data().workDate as string | undefined;
+      return (aw ?? '') < (bw ?? '') ? -1 : (aw ?? '') > (bw ?? '') ? 1 : 0;
+    });
   for (const doc of sortedDocs) {
     const data = doc.data();
     const dayInput = buildDayInput(doc.id, data);
@@ -578,6 +583,14 @@ export const onTimesheetEntryWriteRecomputePayBreakdown = onDocumentWritten(
     const afterData = event.data?.after?.exists
       ? (event.data.after.data() as EntryData)
       : null;
+
+    // CSV-import entries carry straight-time hours that Everee classifies
+    // for OT/DT at the pay run — HRX must NOT reclassify them. Short-circuit
+    // before any reads so their totals stay exactly as written and there's
+    // zero sibling fan-out on a 1000-row save.
+    if (afterData?.source === 'csv_import' || (!afterData && beforeData?.source === 'csv_import')) {
+      return;
+    }
 
     // Tier-1 pre-compute gate. Cheapest possible exit — runs before
     // any reads.

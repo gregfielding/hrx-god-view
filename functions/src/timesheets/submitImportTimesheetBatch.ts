@@ -32,7 +32,6 @@ import * as admin from 'firebase-admin';
 import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
 import { canManageEveree } from '../integrations/everee/evereeAccessGate';
 import {
-  buildPayableExternalId,
   bulkCreatePayables,
   deletePayable,
   type CreatePayableInput,
@@ -43,6 +42,7 @@ import {
   deleteWorkedShift,
   type CreateWorkedShiftInput,
 } from '../integrations/everee/evereeWorkedShifts';
+import { importEntryDocId, importExternalId } from './importEntryKeys';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -58,11 +58,23 @@ interface SubmitRow {
   payRate: number;
   /** For display/labeling only. */
   workerName?: string;
+  /** The event/site this day belongs to (CSV "Type"/site). Used only to make
+   *  the per-day pay-stub line legible (e.g. "Contractor pay — Railbird — Jun 7"). */
+  eventLabel?: string | null;
   // ── W-2 only ──
   workersCompCode?: string | null;
   worksiteId?: string | null;
   worksiteName?: string | null;
   worksiteAddress?: { street?: string; city?: string; state?: string; zip?: string } | null;
+}
+
+/** A per-day pay-stub line label. Each imported row is one day, so this keeps
+ *  the stub itemized by date rather than a single weekly lump. */
+function dayLabel(base: string, eventLabel: string | null | undefined, workDate: string): string {
+  return [base, String(eventLabel || '').trim() || null, workDate]
+    .filter(Boolean)
+    .join(' — ')
+    .slice(0, 120);
 }
 
 interface ComposedPreview {
@@ -88,19 +100,66 @@ function payableStatusDocId(externalId: string): string {
     .slice(0, 480);
 }
 
-/** Synthetic worked-shift / payable externalId for an imported row. Mirrors
- *  the client's `rowExternalId` so a row can be matched to its status doc. */
-function importExternalId(
-  tenantId: string,
-  customer: string,
-  userId: string,
-  workDate: string,
-  kind: 'CONTRACTOR' | 'WORKED_SHIFT',
-): string {
-  if (kind === 'CONTRACTOR') {
-    return buildPayableExternalId({ tenantId, assignmentId: `import-${customer}-${userId}`, workDate, kind });
-  }
-  return `${tenantId}::import-${customer}-${userId}::${workDate}::WORKED_SHIFT`;
+/** Build the merge payload that mirrors a submitted import row onto its
+ *  canonical `timesheet_entries` doc, so the Timesheet Grid reflects truth even
+ *  if the recruiter never clicked "Save progress".
+ *
+ *  Set only fields this path owns — Firestore `merge:true` deep-merges nested
+ *  maps, so writing `null` for a field a prior Save populated would clobber it.
+ *  We therefore omit unknown fields rather than null them. */
+function importEntryStamp(args: {
+  tenantId: string;
+  hiringEntityId: string;
+  customer: string;
+  userId: string;
+  workDate: string;
+  hours: number;
+  payRate: number;
+  workerName?: string;
+  eventLabel?: string | null;
+  workersCompCode?: string | null;
+  worksiteId?: string | null;
+  worksiteName?: string | null;
+  worksiteState?: string | null;
+  externalId: string;
+  uid: string;
+}): Record<string, unknown> {
+  const importSidecar: Record<string, unknown> = {
+    customer: args.customer,
+    matchStatus: 'submitted',
+    externalId: args.externalId,
+  };
+  if (args.workerName) importSidecar.csvWorkerName = args.workerName;
+  if (args.eventLabel) importSidecar.csvSite = args.eventLabel;
+  if (args.worksiteId) importSidecar.worksiteId = args.worksiteId;
+  if (args.worksiteName) importSidecar.worksiteName = args.worksiteName;
+  if (args.workersCompCode) importSidecar.workersCompCode = args.workersCompCode;
+
+  const out: Record<string, unknown> = {
+    id: importEntryDocId({ customer: args.customer, userId: args.userId, workDate: args.workDate }),
+    tenantId: args.tenantId,
+    source: 'csv_import',
+    hiringEntityId: args.hiringEntityId,
+    workerId: args.userId,
+    workDate: args.workDate,
+    actualHoursOverride: args.hours,
+    totalRegularHours: args.hours,
+    totalOTHours: 0,
+    totalFlsaOTHours: 0,
+    totalNonFlsaOTHours: 0,
+    totalDoubleTimeHours: 0,
+    mealBreakPenaltyHours: 0,
+    restBreakPenaltyHours: 0,
+    payRate: args.payRate,
+    status: 'sent_to_everee',
+    sentToEvereeAt: admin.firestore.FieldValue.serverTimestamp(),
+    import: importSidecar,
+    updatedBy: args.uid,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+  if (args.worksiteState) out.workState = args.worksiteState;
+  if (args.workersCompCode) out.workersCompCode = args.workersCompCode;
+  return out;
 }
 
 /** Noon-UTC of the work date — avoids a TZ off-by-one when Everee renders the
@@ -210,11 +269,11 @@ async function submit1099(args: PathArgs) {
       continue;
     }
     const amount = Math.round(hours * payRate * 100) / 100;
-    const externalId = importExternalId(tenantId, cust, userId, workDate, 'CONTRACTOR');
+    const externalId = importExternalId({ tenantId, customer: cust, userId, workDate, kind: 'CONTRACTOR' });
     payables.push({
       externalId,
       externalWorkerId: userId,
-      label: 'Contractor pay',
+      label: dayLabel('Contractor pay', row.eventLabel, workDate),
       type: 'contractor',
       payCode: 'CONTRACTOR',
       timestamp: workDateEpochSeconds(workDate),
@@ -272,10 +331,23 @@ async function submit1099(args: PathArgs) {
 
   const submittedSet = new Set(submitted);
   const byExternalId = new Map(preview.map((p) => [p.externalId, p]));
+  const rowByExternalId = new Map(
+    rows.map((r) => [
+      importExternalId({
+        tenantId,
+        customer: cust,
+        userId: String(r.userId || '').trim(),
+        workDate: String(r.workDate || '').trim(),
+        kind: 'CONTRACTOR',
+      }),
+      r,
+    ]),
+  );
   let writer = db.batch();
   let pending = 0;
   for (const externalId of submittedSet) {
     const p = byExternalId.get(externalId);
+    const row = rowByExternalId.get(externalId);
     writer.set(
       db.doc(`tenants/${tenantId}/timesheet_import_payables/${payableStatusDocId(externalId)}`),
       {
@@ -298,7 +370,38 @@ async function submit1099(args: PathArgs) {
       },
       { merge: true },
     );
-    if (++pending >= 450) {
+    // Mirror onto the canonical timesheet entry (Grid = source of truth).
+    if (p) {
+      const docId = importEntryDocId({ customer: cust, userId: p.externalWorkerId, workDate: p.workDate });
+      writer.set(
+        db.doc(`tenants/${tenantId}/timesheet_entries/${docId}`),
+        {
+          ...importEntryStamp({
+            tenantId,
+            hiringEntityId,
+            customer: cust,
+            userId: p.externalWorkerId,
+            workDate: p.workDate,
+            hours: p.hours,
+            payRate: p.payRate,
+            workerName: p.workerName,
+            eventLabel: row?.eventLabel ?? null,
+            externalId,
+            uid,
+          }),
+          // Nested map (NOT dotted keys) — set(merge:true) deep-merges this,
+          // dotted strings would create a literal "everee.x" field.
+          everee: {
+            payableExternalIds: [externalId],
+            status: 'SUBMITTED',
+            respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+        },
+        { merge: true },
+      );
+      pending += 1;
+    }
+    if (++pending >= 400) {
       // eslint-disable-next-line no-await-in-loop
       await writer.commit();
       writer = db.batch();
@@ -361,7 +464,7 @@ async function submitW2(args: PathArgs) {
       hours,
       payRate,
       wc,
-      externalId: importExternalId(tenantId, cust, userId, workDate, 'WORKED_SHIFT'),
+      externalId: importExternalId({ tenantId, customer: cust, userId, workDate, kind: 'WORKED_SHIFT' }),
     });
   }
 
@@ -458,7 +561,7 @@ async function submitW2(args: PathArgs) {
         shiftEndEpochSeconds: end,
         effectiveHourlyPayRate: { amount: p.payRate.toFixed(2), currency: 'USD' },
         workersCompClassCode: p.wc,
-        note: `Imported from ${cust} timesheet`,
+        note: dayLabel(`Imported from ${cust}`, p.row.eventLabel, p.workDate),
       };
       if (workLocationId != null) input.overrideWorkLocationId = workLocationId;
       // No fullyClassifiedHours — Everee's engine computes daily/weekly OT/DT.
@@ -520,7 +623,38 @@ async function submitW2(args: PathArgs) {
       },
       { merge: true },
     );
-    if (++pending >= 450) {
+    // Mirror onto the canonical timesheet entry (Grid = source of truth).
+    const entryDocId = importEntryDocId({ customer: cust, userId: plan.userId, workDate: plan.workDate });
+    writer.set(
+      db.doc(`tenants/${tenantId}/timesheet_entries/${entryDocId}`),
+      {
+        ...importEntryStamp({
+          tenantId,
+          hiringEntityId,
+          customer: cust,
+          userId: plan.userId,
+          workDate: plan.workDate,
+          hours: plan.hours,
+          payRate: plan.payRate,
+          workerName: p?.workerName,
+          eventLabel: plan.row.eventLabel ?? null,
+          workersCompCode: plan.wc,
+          worksiteId: plan.row.worksiteId ?? null,
+          worksiteName: plan.row.worksiteName ?? null,
+          worksiteState: plan.row.worksiteAddress?.state ?? null,
+          externalId: plan.externalId,
+          uid,
+        }),
+        everee: {
+          workedShiftId: String(workedShiftId),
+          status: 'SUBMITTED',
+          respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+      },
+      { merge: true },
+    );
+    pending += 2;
+    if (pending >= 400) {
       // eslint-disable-next-line no-await-in-loop
       await writer.commit();
       writer = db.batch();
@@ -556,10 +690,15 @@ export const voidImportTimesheetPayable = onCall(
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required');
     }
-    const { tenantId, hiringEntityId, externalId } = (request.data || {}) as {
+    const { tenantId, hiringEntityId, externalId, userId, workDate, customer } = (request.data || {}) as {
       tenantId?: string;
       hiringEntityId?: string;
       externalId?: string;
+      /** Optional — lets the void reconstruct the canonical entry id to flip it
+       *  back to re-sendable. The client always sends these for import rows. */
+      userId?: string;
+      workDate?: string;
+      customer?: string;
     };
     if (!tenantId || !hiringEntityId || !externalId) {
       throw new HttpsError('invalid-argument', 'tenantId, hiringEntityId, and externalId are required');
@@ -597,6 +736,33 @@ export const voidImportTimesheetPayable = onCall(
       },
       { merge: true },
     );
+
+    // Flip the canonical entry back to a re-sendable draft so the Grid + Import
+    // tab both show it as no-longer-submitted. Prefer the explicit identity the
+    // client passes; fall back to the status doc's recorded worker + date.
+    const vUserId = String(userId || data.externalWorkerId || '').trim();
+    const vWorkDate = String(workDate || data.workDate || '').trim();
+    const vCustomer = String(customer || data.customer || '').trim();
+    if (vUserId && vWorkDate && vCustomer) {
+      const entryDocId = importEntryDocId({ customer: vCustomer, userId: vUserId, workDate: vWorkDate });
+      await db.doc(`tenants/${tenantId}/timesheet_entries/${entryDocId}`).set(
+        {
+          status: 'draft',
+          sentToEvereeAt: admin.firestore.FieldValue.delete(),
+          // Nested maps deep-merge under set(merge:true); dotted keys would
+          // create literal "import.x"/"everee.x" fields instead.
+          import: { matchStatus: 'voided' },
+          everee: {
+            workedShiftId: admin.firestore.FieldValue.delete(),
+            payableExternalIds: admin.firestore.FieldValue.delete(),
+            status: 'VOIDED',
+          },
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedBy: request.auth.uid,
+        },
+        { merge: true },
+      );
+    }
     return { ok: true, externalId };
   },
 );

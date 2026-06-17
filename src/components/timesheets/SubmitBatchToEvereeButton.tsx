@@ -97,6 +97,8 @@ function summarizeApproved(rows: TimesheetGridRow[]): ApprovedSummary {
   let totalGrossPay = 0;
   for (const row of rows) {
     if (row.kind !== 'entry') continue;
+    // CSV-import rows submit via the Import CSV tab's own Everee path.
+    if (row.isImport || row.entry.source === 'csv_import') continue;
     if (row.entry.status !== 'approved') continue;
     // Defensive: skip approved-but-empty rows. The bulk-approve
     // affordance already filters these out, but a per-row pill click

@@ -212,6 +212,13 @@ const STATUS_LABELS: Record<TimesheetRowDisplayStatus, string> = {
   sent_to_everee: '✓ Sent to Everee',
   paid: '✓ Paid',
   error: 'error',
+  // CSV-import rows (surfaced from the Import tab; resolved/fixed there).
+  import_ready: 'Ready (import)',
+  import_needs_rate: 'Needs rate (import)',
+  import_needs_wc: 'Needs WC (import)',
+  import_blocked: 'Blocked (import)',
+  import_submitted: '✓ Submitted (import)',
+  import_voided: 'Voided (import)',
 };
 
 const STATUS_COLORS: Record<
@@ -230,6 +237,12 @@ const STATUS_COLORS: Record<
   sent_to_everee: 'success',
   paid: 'success',
   error: 'error',
+  import_ready: 'success',
+  import_needs_rate: 'info',
+  import_needs_wc: 'info',
+  import_blocked: 'warning',
+  import_submitted: 'success',
+  import_voided: 'default',
 };
 
 interface StatusPillProps {
@@ -573,6 +586,67 @@ const EmptyRow: React.FC<EmptyRowProps> = ({
         <StatusPill status={status} />
       </TableCell>
     </TableRow>
+  );
+};
+
+/* -------------------------------------------------------------------------
+ * Import-row renderer (CSV-import entry; READ-ONLY in the grid — the
+ * recruiter resolves/fixes/submits these in the Import CSV tab, which owns
+ * the worker-lookup + rate + WC tooling. The grid shows them so paid AND
+ * blocked import rows are visible and never lost.)
+ * ------------------------------------------------------------------------- */
+
+const ImportRow: React.FC<{
+  row: Extract<TimesheetGridRow, { kind: 'entry' }>;
+  status: TimesheetRowDisplayStatus;
+  actualHrs: number;
+}> = ({ row, status, actualHrs }) => {
+  const imp = row.entry.import;
+  const payRate = typeof row.entry.payRate === 'number' ? row.entry.payRate : 0;
+  const wcCode = row.resolvedWorkersCompCode ?? imp?.workersCompCode ?? null;
+  const wcRate = row.resolvedWorkersCompRate;
+  const blocked = imp?.matchStatus === 'blocked';
+  return (
+    <Tooltip
+      title="Imported from a CSV timesheet — resolve, fix, and submit these in the Import CSV tab."
+      placement="top-start"
+    >
+      <TableRow hover sx={{ backgroundColor: blocked ? 'warning.50' : 'action.hover' }}>
+        <WorkerSiteCell row={row} />
+        <TableCell>{row.workDate}</TableCell>
+        <TableCell>
+          <Typography component="span" variant="caption" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+            Imported
+          </Typography>
+        </TableCell>
+        <TableCell align="right">—</TableCell>
+        <TableCell>
+          {blocked && imp?.blockReason ? (
+            <Typography variant="caption" color="warning.main">
+              {imp.blockReason}
+            </Typography>
+          ) : (
+            '—'
+          )}
+        </TableCell>
+        <TableCell>—</TableCell>
+        <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+          {actualHrs > 0 ? formatHours(actualHrs) : '—'}
+        </TableCell>
+        <TableCell align="right">—</TableCell>
+        <TableCell align="right">—</TableCell>
+        <TableCell>{imp?.csvSite || '—'}</TableCell>
+        <TableCell align="right">{payRate > 0 ? formatMoney(payRate) : '—'}</TableCell>
+        <TableCell align="right" sx={{ fontFamily: 'monospace' }}>{wcCode || '—'}</TableCell>
+        <TableCell align="right">{typeof wcRate === 'number' ? wcRate.toFixed(2) : '—'}</TableCell>
+        <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+          {payRate > 0 && actualHrs > 0 ? formatMoney(actualHrs * payRate) : '—'}
+        </TableCell>
+        <TableCell>
+          <StatusPill status={status} />
+        </TableCell>
+      </TableRow>
+    </Tooltip>
   );
 };
 
@@ -1139,6 +1213,14 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                           tenantId={tenantId}
                           onCreated={refresh}
                         />
+                      );
+                    }
+
+                    // CSV-import rows are read-only here — resolved/submitted
+                    // in the Import CSV tab; the grid just surfaces them.
+                    if (row.kind === 'entry' && row.isImport) {
+                      return (
+                        <ImportRow key={row.key} row={row} status={status} actualHrs={actualHrs} />
                       );
                     }
 

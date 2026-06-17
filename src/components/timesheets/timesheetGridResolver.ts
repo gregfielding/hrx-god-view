@@ -141,6 +141,10 @@ export type TimesheetGridRow =
       workDate: IsoDate;
       scheduled: ScheduledShift;
       entry: TimesheetEntryV2;
+      /** True for CSV-import entries (source: 'csv_import') surfaced via the
+       *  resolver's second query path — they often have no assignment, carry
+       *  an `import` sidecar, and render an import-specific status pill. */
+      isImport?: boolean;
     } & ResolvedWorkersComp)
   | ({
       kind: 'empty';
@@ -330,6 +334,34 @@ function buildAssignmentSnapshot(
         ? raw.shiftBreakDefaultMinutes
         : 0,
     isOpenShift: rawAny.isOpenShift === true || rawAny.noFixedTimes === true,
+  };
+}
+
+/**
+ * Synthesize an AssignmentSnapshot for a CSV-import entry, which usually has
+ * no real assignment. Pulls identity + display from the entry's `import`
+ * sidecar so the grid's WorkerSiteCell shows the worker (or the CSV name when
+ * unmatched) and the worksite, without an assignment doc behind it.
+ */
+function buildImportSnapshot(entry: TimesheetEntryV2): AssignmentSnapshot {
+  const imp = entry.import;
+  const displayName =
+    (imp?.csvWorkerName && imp.csvWorkerName.trim()) ||
+    (entry.workerId ? entry.workerId : null);
+  return {
+    id: entry.assignmentId || entry.id,
+    jobOrderId: entry.jobOrderId || '',
+    shiftId: entry.shiftId || null,
+    candidateId: entry.workerId || '',
+    workerId: entry.workerId || '',
+    hiringEntityId: entry.hiringEntityId || null,
+    workerDisplayName: displayName,
+    worksiteState: entry.workState || null,
+    worksiteDisplayName: imp?.worksiteName ?? imp?.csvSite ?? null,
+    payRate: typeof entry.payRate === 'number' ? entry.payRate : 0,
+    billRate: typeof entry.billRate === 'number' ? entry.billRate : 0,
+    shiftBreakDefaultMinutes: 0,
+    isOpenShift: false,
   };
 }
 
@@ -610,6 +642,48 @@ export async function resolveTimesheetGrid(
     rows.push(...results);
   }
 
+  // Step 3b: CSV-import entries. These are worker-anchored and usually have
+  // no assignment, so the assignment-driven pass above never surfaces them.
+  // Query them directly for the period and synthesize a row each, so the Grid
+  // is the single source of truth — paid AND blocked import rows both show.
+  const importHiringEntityId =
+    filter.kind === 'entity_period' ? filter.hiringEntityId : null;
+  if (importHiringEntityId) {
+    try {
+      const importSnap = await getDocs(
+        query(
+          entriesCol,
+          where('source', '==', 'csv_import'),
+          where('hiringEntityId', '==', importHiringEntityId),
+          where('workDate', '>=', period.start),
+          where('workDate', '<=', period.end),
+        ),
+      );
+      for (const d of importSnap.docs) {
+        const entry = { ...(d.data() as TimesheetEntryV2), id: d.id };
+        const wd = entry.workDate;
+        if (!isYyyyMmDdString(wd)) continue;
+        rows.push({
+          kind: 'entry',
+          key: d.id,
+          assignment: buildImportSnapshot(entry),
+          workDate: wd.trim() as IsoDate,
+          scheduled: OPEN_SHIFT_SCHEDULED,
+          entry,
+          isImport: true,
+        });
+      }
+    } catch (err) {
+      // Isolated — a missing composite index degrades gracefully (assignment
+      // rows still render) rather than blanking the grid.
+      errors.push(
+        `Failed to load imported timesheet rows: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
   // Step 4a: Workers' Comp resolution (2026-06-03). Same chain the
   // server pre-flight uses — entry override → shift → JO legacy → JO
   // canonical → JO position[0]. Done client-side so the WC Code / WC
@@ -809,10 +883,24 @@ export function actualHoursForRow(row: TimesheetGridRow): number {
 }
 
 /** Status string used by the row's status pill. Empty rows show the
- *  literal "—" instead of any draft state — they have no entry yet. */
-export type TimesheetRowDisplayStatus = TimesheetEntryStatus | 'no_entry';
+ *  literal "—" instead of any draft state — they have no entry yet.
+ *  Import rows surface their `import.matchStatus` (blocked / needs_rate /
+ *  submitted / …) rather than the canonical `draft` they map to. */
+export type TimesheetRowDisplayStatus =
+  | TimesheetEntryStatus
+  | 'no_entry'
+  | 'import_ready'
+  | 'import_needs_rate'
+  | 'import_needs_wc'
+  | 'import_blocked'
+  | 'import_submitted'
+  | 'import_voided';
 
 export function displayStatusForRow(row: TimesheetGridRow): TimesheetRowDisplayStatus {
   if (row.kind === 'empty') return 'no_entry';
+  if (row.kind === 'entry' && row.isImport) {
+    const ms = row.entry.import?.matchStatus;
+    if (ms) return `import_${ms}` as TimesheetRowDisplayStatus;
+  }
   return row.entry.status;
 }
