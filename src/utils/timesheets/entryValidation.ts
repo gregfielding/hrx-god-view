@@ -137,6 +137,16 @@ export function validateBonusAmount(
 }
 
 /**
+ * `payRate` — hourly pay rate (used by the inline edit on CSV-import rows).
+ * Non-negative; 0 clears it back to "needs rate".
+ */
+export function validatePayRate(
+  raw: string | number | null | undefined,
+): ValidationResult<number> {
+  return validateNonNegativeNumber(raw, 'Pay rate must be a non-negative number');
+}
+
+/**
  * `notes` — free text, capped to 1000 chars. The cap exists because
  * the inbound payload travels through Firestore's 1MB doc limit; with
  * the rest of the entry's fields, a 1000-char notes field leaves

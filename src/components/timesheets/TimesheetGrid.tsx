@@ -70,6 +70,7 @@ import { createDraftTimesheetEntry } from '../../utils/timesheets/createDraftTim
 import { formatPeriodLabel } from '../../utils/timesheets/dateRange';
 import {
   validateBonusAmount,
+  validatePayRate,
   validateTips,
 } from '../../utils/timesheets/entryValidation';
 
@@ -626,7 +627,13 @@ const ImportRow: React.FC<{
   const imp = row.entry.import;
   const payRate = typeof row.entry.payRate === 'number' ? row.entry.payRate : 0;
   const wcCode = row.resolvedWorkersCompCode ?? imp?.workersCompCode ?? null;
-  const wcRate = row.resolvedWorkersCompRate;
+  // Fall back to the import sidecar (mirrors the wcCode fallback above) so an
+  // inline WC edit shows immediately — refreshEntry refetches the entry but
+  // doesn't re-run the resolver's WC chain, leaving resolvedWorkersCompRate
+  // stale until a full reload.
+  const wcRate =
+    row.resolvedWorkersCompRate ??
+    (typeof imp?.workersCompRate === 'number' ? imp.workersCompRate : undefined);
   const blocked = imp?.matchStatus === 'blocked';
   // Rows live in Everee (submitted/paid) are frozen — no WC edit, no reassign.
   const live = imp?.matchStatus === 'submitted' || imp?.matchStatus === 'paid';
@@ -652,6 +659,23 @@ const ImportRow: React.FC<{
         { timeout: 60000 },
       );
       await fn({ tenantId, entryId: row.entry.id, hours: value ?? 0 });
+      await refreshEntry(row.entry.id);
+    },
+    [tenantId, row.entry.id, refreshEntry],
+  );
+
+  // Edit pay rate inline (resolves a "needs rate" row). Server-side because
+  // payRate isn't client-writable and setting it recomputes the import
+  // lifecycle (needs_rate → needs_wc / ready).
+  const savePayRate = React.useCallback(
+    async (value: number) => {
+      if (!tenantId) return;
+      const fn = httpsCallable<{ tenantId: string; entryId: string; payRate: number }, { ok: true }>(
+        functions,
+        'setImportEntryPayRate',
+        { timeout: 60000 },
+      );
+      await fn({ tenantId, entryId: row.entry.id, payRate: value });
       await refreshEntry(row.entry.id);
     },
     [tenantId, row.entry.id, refreshEntry],
@@ -709,7 +733,20 @@ const ImportRow: React.FC<{
       <TableCell align="right">—</TableCell>
       <TableCell align="right">—</TableCell>
       <TableCell>{imp?.csvSite || '—'}</TableCell>
-      <TableCell align="right">{payRate > 0 ? formatMoney(payRate) : '—'}</TableCell>
+      <TableCell align="right">
+        {hoursEditable ? (
+          <NumberCell
+            value={payRate > 0 ? payRate : null}
+            onSave={savePayRate}
+            validate={validatePayRate}
+            ariaLabel="Imported pay rate"
+          />
+        ) : payRate > 0 ? (
+          formatMoney(payRate)
+        ) : (
+          '—'
+        )}
+      </TableCell>
       <TableCell
         align="right"
         onClick={() => wcEditable && setWcDialogOpen(true)}
