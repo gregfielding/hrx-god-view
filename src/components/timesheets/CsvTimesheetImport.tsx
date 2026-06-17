@@ -266,7 +266,16 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   const [submitPreview, setSubmitPreview] = useState<{
     count: number;
     totalAmount: number;
-    preview: Array<{ workerName: string; workDate: string; hours: number; payRate: number; amount: number }>;
+    evereeClassifiesOt: boolean;
+    preview: Array<{
+      workerName: string;
+      workDate: string;
+      hours: number;
+      payRate: number;
+      amount: number;
+      workersCompCode?: string | null;
+      worksiteName?: string | null;
+    }>;
   } | null>(null);
   const [submitResult, setSubmitResult] = useState<{ submitted: number; failed: number; totalAmount: number; errors: string[] } | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -748,11 +757,17 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   };
 
   // ── Submit to Everee (P4) ──
-  // Deterministic Everee externalId for an import payable — must byte-match the
-  // server's `buildPayableExternalId({assignmentId: 'import-{customer}-{uid}'})`
-  // so a row can be looked up against its submitted/voided status doc.
+  // Deterministic Everee externalId for an import submission — must byte-match
+  // the server's `importExternalId`. 1099 rows become payables (CONTRACTOR),
+  // W-2 rows become worked shifts (WORKED_SHIFT); the suffix tracks the entity
+  // type so a row can be looked up against its submitted/voided status doc.
   const rowExternalId = (userId: string, workDate: string) =>
-    `${tenantId}::import-${customer}-${userId}::${workDate}::CONTRACTOR`;
+    `${tenantId}::import-${customer}-${userId}::${workDate}::${is1099Entity ? 'CONTRACTOR' : 'WORKED_SHIFT'}`;
+
+  // W-2 worked shifts require a WC class code (comp-insurance classification);
+  // a W-2 row without one isn't submittable. 1099 never needs WC.
+  const rowNeedsWc = (eff: ReturnType<typeof effective>) =>
+    !is1099Entity && !String(eff.workersCompCode || '').trim();
 
   // A row already submitted to Everee (and not since voided).
   const submittedStatusFor = (userId?: string, workDate?: string) => {
@@ -761,24 +776,33 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     return st && st.status === 'submitted' ? st : undefined;
   };
 
-  // The Ready rows: matched + Everee-linked + a resolved/typed pay rate, and not
-  // already submitted to Everee.
+  // The Ready rows: matched + Everee-linked + a resolved/typed pay rate (and a
+  // WC code for W-2), and not already submitted to Everee.
   const buildReadyRows = () =>
     (parsed?.rows ?? [])
       .filter((r) => r.status === 'importable')
       .map((r) => ({ r, match: matchByRow.get(r.rowIndex) }))
       .filter(({ r, match }) => {
-        if (!match || match.block) return false;
+        if (!match || match.block || !match.userId) return false;
         if (submittedStatusFor(match.userId, r.workDate)) return false;
-        return !effective(match, r.rowIndex).needsPayRate && !!match.userId;
+        const eff = effective(match, r.rowIndex);
+        return !eff.needsPayRate && !rowNeedsWc(eff);
       })
-      .map(({ r, match }) => ({
-        userId: match!.userId as string,
-        workDate: r.workDate,
-        hours: r.hours,
-        payRate: effective(match, r.rowIndex).payRate as number,
-        workerName: match!.displayName || [r.firstName, r.lastName].filter(Boolean).join(' '),
-      }));
+      .map(({ r, match }) => {
+        const eff = effective(match, r.rowIndex);
+        return {
+          userId: match!.userId as string,
+          workDate: r.workDate,
+          hours: r.hours,
+          payRate: eff.payRate as number,
+          workerName: match!.displayName || [r.firstName, r.lastName].filter(Boolean).join(' '),
+          // W-2 only — omitted/ignored server-side for 1099.
+          workersCompCode: is1099Entity ? null : eff.workersCompCode ?? null,
+          worksiteId: is1099Entity ? null : match!.worksiteId ?? null,
+          worksiteName: is1099Entity ? null : match!.worksiteName ?? null,
+          worksiteAddress: is1099Entity ? null : match!.worksiteAddress ?? null,
+        };
+      });
   const readyCount = buildReadyRows().length;
 
   const submitCallable = () =>
@@ -788,13 +812,34 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
         hiringEntityId: string;
         customer: string;
         dryRun: boolean;
-        rows: Array<{ userId: string; workDate: string; hours: number; payRate: number; workerName: string }>;
+        rows: Array<{
+          userId: string;
+          workDate: string;
+          hours: number;
+          payRate: number;
+          workerName: string;
+          workersCompCode?: string | null;
+          worksiteId?: string | null;
+          worksiteName?: string | null;
+          worksiteAddress?: { street?: string; city?: string; state?: string; zip?: string } | null;
+        }>;
       },
       {
         dryRun: boolean;
+        workerType?: string;
+        evereeClassifiesOt?: boolean;
         count?: number;
+        skippedNoWc?: number;
         totalAmount?: number;
-        preview?: Array<{ workerName: string; workDate: string; hours: number; payRate: number; amount: number }>;
+        preview?: Array<{
+          workerName: string;
+          workDate: string;
+          hours: number;
+          payRate: number;
+          amount: number;
+          workersCompCode?: string | null;
+          worksiteName?: string | null;
+        }>;
         submitted?: number;
         failed?: number;
         errors?: string[];
@@ -812,6 +857,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
       setSubmitPreview({
         count: res.data?.count ?? rows.length,
         totalAmount: res.data?.totalAmount ?? 0,
+        evereeClassifiesOt: !!res.data?.evereeClassifiesOt,
         preview: res.data?.preview ?? [],
       });
     } catch (err: any) {
@@ -1068,6 +1114,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                 const payable = match && !match.block;
                 const addr = match?.worksiteAddress;
                 const eff = effective(match, r.rowIndex);
+                const needsWc = rowNeedsWc(eff);
                 const submitted = submittedStatusFor(match?.userId, r.workDate);
                 const extId = match?.userId ? rowExternalId(match.userId, r.workDate) : '';
                 return (
@@ -1075,13 +1122,19 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                   <TableCell>
                     {submitted ? (
                       <Stack spacing={0.25} alignItems="flex-start">
-                        <Tooltip title={`Submitted to Everee as a $${submitted.amount.toFixed(2)} payable`}>
+                        <Tooltip
+                          title={
+                            is1099Entity
+                              ? `Submitted to Everee as a $${submitted.amount.toFixed(2)} payable`
+                              : `Submitted to Everee — $${submitted.amount.toFixed(2)} straight-time; Everee adds any OT/DT at the pay run`
+                          }
+                        >
                           <Chip
                             size="small"
                             color="success"
                             variant="outlined"
                             icon={<CheckCircleIcon />}
-                            label={`Submitted $${submitted.amount.toFixed(2)}`}
+                            label={`Submitted ${is1099Entity ? '' : '~'}$${submitted.amount.toFixed(2)}`}
                           />
                         </Tooltip>
                         <Link
@@ -1103,14 +1156,24 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                             ? match.blockReason ?? 'Blocked'
                             : eff.needsPayRate
                               ? 'Matched + Everee-linked, but no pay rate yet — map the site, or click the pay-rate cell to type one.'
-                              : 'Matched + Everee-linked + pay rate resolved'
+                              : needsWc
+                                ? 'Matched + Everee-linked + pay rate, but no workers-comp code yet — click the WC cell to add one (required for W-2).'
+                                : 'Matched + Everee-linked + pay rate resolved'
                         }
                       >
                         <Chip
                           size="small"
-                          color={match.block ? 'warning' : eff.needsPayRate ? 'info' : 'success'}
-                          icon={!match.block && !eff.needsPayRate ? <CheckCircleIcon /> : undefined}
-                          label={match.block ? 'Blocked' : eff.needsPayRate ? 'Needs rate' : 'Ready'}
+                          color={match.block ? 'warning' : eff.needsPayRate || needsWc ? 'info' : 'success'}
+                          icon={!match.block && !eff.needsPayRate && !needsWc ? <CheckCircleIcon /> : undefined}
+                          label={
+                            match.block
+                              ? 'Blocked'
+                              : eff.needsPayRate
+                                ? 'Needs rate'
+                                : needsWc
+                                  ? 'Needs WC'
+                                  : 'Ready'
+                          }
                         />
                       </Tooltip>
                     ) : (
@@ -1368,18 +1431,28 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                   ({ r, m }) => submittedStatusFor(m.userId, r.workDate),
                 ).length;
                 const live = rows.filter(({ r, m }) => !submittedStatusFor(m.userId, r.workDate));
-                const ready = live.filter(
-                  ({ m }) => !m.block && !effective(m, m.rowIndex).needsPayRate,
-                ).length;
+                const ready = live.filter(({ m }) => {
+                  if (m.block) return false;
+                  const eff = effective(m, m.rowIndex);
+                  return !eff.needsPayRate && !rowNeedsWc(eff);
+                }).length;
                 const needsRate = live.filter(
                   ({ m }) => !m.block && effective(m, m.rowIndex).needsPayRate,
                 ).length;
+                const needsWc = live.filter(({ m }) => {
+                  if (m.block) return false;
+                  const eff = effective(m, m.rowIndex);
+                  return !eff.needsPayRate && rowNeedsWc(eff);
+                }).length;
                 const blocked = live.filter(({ m }) => m.block).length;
                 return (
                   <>
                     <Chip size="small" color="success" label={`Ready: ${ready}`} />
                     {needsRate > 0 && (
                       <Chip size="small" color="info" label={`Needs pay rate: ${needsRate}`} />
+                    )}
+                    {needsWc > 0 && (
+                      <Chip size="small" color="info" label={`Needs WC code: ${needsWc}`} />
                     )}
                     {blocked > 0 && (
                       <Chip size="small" color="warning" label={`Blocked: ${blocked}`} />
@@ -1417,8 +1490,12 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
               severity={submitResult.failed > 0 || submitResult.errors.length ? 'warning' : 'success'}
               onClose={() => setSubmitResult(null)}
             >
-              Submitted {submitResult.submitted} payable{submitResult.submitted === 1 ? '' : 's'} to
-              Everee (${submitResult.totalAmount.toFixed(2)}).
+              Submitted {submitResult.submitted}{' '}
+              {is1099Entity
+                ? `payable${submitResult.submitted === 1 ? '' : 's'}`
+                : `worked shift${submitResult.submitted === 1 ? '' : 's'}`}{' '}
+              to Everee ({is1099Entity ? '' : '~'}${submitResult.totalAmount.toFixed(2)}
+              {is1099Entity ? '' : ' straight-time'}).
               {submitResult.failed > 0 ? ` ${submitResult.failed} failed.` : ''}
               {submitResult.errors.length > 0 ? ` ${submitResult.errors.join('; ')}` : ''}
             </Alert>
@@ -1437,7 +1514,11 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
             <Typography variant="caption" color="text.secondary">
               Blocked rows need an HRX worker + Everee onboarding before they can be paid.
               “Needs rate” rows have no paired assignment — map their site to a job order or type a
-              pay rate. Ready rows submit to Everee as contractor pay (hours × rate).
+              pay rate.{!is1099Entity && ' “Needs WC” rows need a workers-comp class code.'} Ready rows
+              submit to Everee as{' '}
+              {is1099Entity
+                ? 'contractor pay (hours × rate).'
+                : 'worked shifts — Everee classifies any OT/DT at the pay run.'}
             </Typography>
           )}
         </Box>
@@ -1453,13 +1534,31 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
         <DialogContent>
           <Stack spacing={1.5} sx={{ pt: 1 }}>
             <Typography variant="body2" color="text.secondary">
-              This is exactly what will be sent to Everee as contractor pay (1099). Nothing has been
-              submitted yet — review, then confirm.
+              {is1099Entity
+                ? 'This is exactly what will be sent to Everee as contractor pay (1099). Nothing has been submitted yet — review, then confirm.'
+                : 'Each row is sent to Everee as a worked shift (W-2). Nothing has been submitted yet — review, then confirm.'}
             </Typography>
             <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-              <Chip color="success" label={`${submitPreview?.count ?? 0} payable${(submitPreview?.count ?? 0) === 1 ? '' : 's'}`} />
-              <Chip label={`Total $${(submitPreview?.totalAmount ?? 0).toFixed(2)}`} />
+              <Chip
+                color="success"
+                label={
+                  is1099Entity
+                    ? `${submitPreview?.count ?? 0} payable${(submitPreview?.count ?? 0) === 1 ? '' : 's'}`
+                    : `${submitPreview?.count ?? 0} worked shift${(submitPreview?.count ?? 0) === 1 ? '' : 's'}`
+                }
+              />
+              <Chip
+                label={`${submitPreview?.evereeClassifiesOt ? '~' : ''}$${(submitPreview?.totalAmount ?? 0).toFixed(2)}${
+                  submitPreview?.evereeClassifiesOt ? ' straight-time' : ''
+                }`}
+              />
             </Stack>
+            {submitPreview?.evereeClassifiesOt && (
+              <Alert severity="info" sx={{ py: 0.5 }}>
+                Total is straight-time (hours × rate). Everee’s payroll engine computes any
+                overtime / double-time at the pay run, so the final gross may be higher.
+              </Alert>
+            )}
             <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 320 }}>
               <Table size="small" stickyHeader>
                 <TableHead>
@@ -1468,6 +1567,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                     <TableCell>Date</TableCell>
                     <TableCell align="right">Hours</TableCell>
                     <TableCell align="right">Rate</TableCell>
+                    {!is1099Entity && <TableCell>WC</TableCell>}
                     <TableCell align="right">Amount</TableCell>
                   </TableRow>
                 </TableHead>
@@ -1478,6 +1578,9 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                       <TableCell>{p.workDate}</TableCell>
                       <TableCell align="right">{p.hours.toFixed(2)}</TableCell>
                       <TableCell align="right">${p.payRate.toFixed(2)}</TableCell>
+                      {!is1099Entity && (
+                        <TableCell sx={{ fontFamily: 'monospace' }}>{p.workersCompCode || '—'}</TableCell>
+                      )}
                       <TableCell align="right">${p.amount.toFixed(2)}</TableCell>
                     </TableRow>
                   ))}
