@@ -42,6 +42,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   TextField,
   Tooltip,
   Typography,
@@ -53,7 +54,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { httpsCallable } from 'firebase/functions';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 
 import { db, functions } from '../../firebase';
 import type { HiringEntity } from '../../types/recruiter/hiringEntity';
@@ -272,6 +273,45 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   // Recruiter-forced worker per row (lookup pencil, "this row only"). Survives
   // re-match; flows into the match payload as forcedUserId. Cleared on reset.
   const [forcedUserIdByRow, setForcedUserIdByRow] = useState<Map<number, string>>(new Map());
+  // Manually-picked worksite per row (worksite-lookup pencil). Wins over the
+  // resolved worksite; flows into Save + the Everee work location (W-2).
+  type WorksiteOverride = {
+    worksiteId: string;
+    worksiteName: string;
+    worksiteAddress: { street: string; city: string; state: string; zip: string };
+    accountName?: string;
+  };
+  const [worksiteOverrideByRow, setWorksiteOverrideByRow] = useState<Map<number, WorksiteOverride>>(
+    new Map(),
+  );
+  // Sortable import-grid columns (Worker / Date / Worksite).
+  const [gridSort, setGridSort] = useState<{ field: 'worker' | 'date' | 'worksite'; dir: 'asc' | 'desc' } | null>(
+    null,
+  );
+  // Worksite-lookup dialog (pencil on the Worksite cell): pick an account,
+  // then a worksite within it. Accounts are loaded once + cached.
+  type WsAccount = {
+    id: string;
+    name: string;
+    accountType: string;
+    parentName?: string;
+    companyIds: string[];
+    linkedLocations: Array<{ companyId: string; locationId: string }>;
+  };
+  type WsWorksite = {
+    worksiteId: string;
+    companyId: string;
+    worksiteName: string;
+    address: { street: string; city: string; state: string; zip: string };
+  };
+  const [worksiteDialog, setWorksiteDialog] = useState<{ rowIndex: number; csvSite: string } | null>(null);
+  const [wsAccounts, setWsAccounts] = useState<WsAccount[] | null>(null);
+  const [wsAccountsLoading, setWsAccountsLoading] = useState(false);
+  const [wsAccountPick, setWsAccountPick] = useState<WsAccount | null>(null);
+  const [wsWorksites, setWsWorksites] = useState<WsWorksite[]>([]);
+  const [wsWorksitesLoading, setWsWorksitesLoading] = useState(false);
+  const [wsWorksitePick, setWsWorksitePick] = useState<WsWorksite | null>(null);
+  const [wsApplyAllSite, setWsApplyAllSite] = useState(true);
   // Inline cell overrides (this import session): manually-entered pay rate /
   // WC code / WC rate, keyed by row. They win over the resolved value and
   // survive a re-match; they flow into the Everee submit payload (P4).
@@ -582,6 +622,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     setEditing(null);
     setSubmittedByExtId(new Map());
     setForcedUserIdByRow(new Map());
+    setWorksiteOverrideByRow(new Map());
   };
 
   const handleFile = (file: File) => {
@@ -737,6 +778,189 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     };
   };
 
+  // Effective worksite = manual worksite-lookup override > resolved match.
+  const effectiveWorksite = (match: MatchRowResult | undefined, rowIndex: number) => {
+    const ov = worksiteOverrideByRow.get(rowIndex);
+    if (ov) {
+      return {
+        worksiteId: ov.worksiteId,
+        worksiteName: ov.worksiteName,
+        worksiteAddress: ov.worksiteAddress,
+        source: 'override' as const,
+      };
+    }
+    return {
+      worksiteId: match?.worksiteId ?? null,
+      worksiteName: match?.worksiteName ?? null,
+      worksiteAddress: match?.worksiteAddress ?? null,
+      source: 'match' as const,
+    };
+  };
+
+  // ── Worksite lookup (pick an HRX account → worksite, client-side) ──
+  const openWorksiteDialog = (rowIndex: number, csvSite: string) => {
+    setWorksiteDialog({ rowIndex, csvSite });
+    setWsAccountPick(null);
+    setWsWorksites([]);
+    setWsWorksitePick(null);
+    setWsApplyAllSite(true);
+    if (!wsAccounts && !wsAccountsLoading) void loadWsAccounts();
+  };
+
+  const loadWsAccounts = async () => {
+    if (!tenantId) return;
+    setWsAccountsLoading(true);
+    try {
+      const snap = await getDocs(collection(db, 'tenants', tenantId, 'accounts'));
+      const raw = snap.docs.map((d) => ({ id: d.id, data: d.data() as any }));
+      const byId = new Map(raw.map((r) => [r.id, r.data]));
+      const list: WsAccount[] = raw
+        .filter(({ data }) => data.active !== false)
+        .map(({ id, data }) => {
+          const assoc = data.associations || {};
+          let companyIds: string[] = Array.isArray(assoc.companyIds)
+            ? assoc.companyIds.filter((x: any) => typeof x === 'string' && x.trim())
+            : [];
+          // Child accounts with no companyIds inherit the parent's.
+          if (companyIds.length === 0 && data.parentAccountId) {
+            const pa = byId.get(data.parentAccountId)?.associations;
+            if (Array.isArray(pa?.companyIds)) {
+              companyIds = pa.companyIds.filter((x: any) => typeof x === 'string' && x.trim());
+            }
+          }
+          const linkedLocations = Array.isArray(assoc.locations)
+            ? assoc.locations
+                .filter((x: any) => x && typeof x.companyId === 'string' && typeof x.locationId === 'string')
+                .map((x: any) => ({ companyId: String(x.companyId), locationId: String(x.locationId) }))
+            : [];
+          const parentName = data.parentAccountId
+            ? String(byId.get(data.parentAccountId)?.name || '').trim() || undefined
+            : undefined;
+          return {
+            id,
+            name: String(data.name || data.accountName || id),
+            accountType: String(data.accountType || 'standalone'),
+            parentName,
+            companyIds,
+            linkedLocations,
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+      setWsAccounts(list);
+    } catch (err) {
+      console.error('loadWsAccounts failed:', err);
+      setWsAccounts([]);
+    } finally {
+      setWsAccountsLoading(false);
+    }
+  };
+
+  const toWsWorksite = (id: string, companyId: string, d: any): WsWorksite => {
+    const a = d.address || {};
+    return {
+      worksiteId: id,
+      companyId,
+      worksiteName: String(d.nickname || d.name || 'Location'),
+      address: {
+        street: String(a.street || d.street || ''),
+        city: String(a.city || d.city || ''),
+        state: String(a.state || d.state || ''),
+        zip: String(a.zipCode || a.zip || d.zipCode || d.zip || ''),
+      },
+    };
+  };
+
+  const loadWsWorksites = async (acc: WsAccount) => {
+    if (!tenantId) return;
+    setWsWorksitesLoading(true);
+    setWsWorksites([]);
+    setWsWorksitePick(null);
+    try {
+      const out: WsWorksite[] = [];
+      if (acc.linkedLocations.length > 0) {
+        // Child account → its specifically linked worksite(s).
+        await Promise.all(
+          acc.linkedLocations.map(async ({ companyId, locationId }) => {
+            const s = await getDoc(
+              doc(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations', locationId),
+            );
+            if (s.exists()) out.push(toWsWorksite(s.id, companyId, s.data()));
+          }),
+        );
+      } else {
+        // Standalone / national → all locations under each linked company.
+        await Promise.all(
+          acc.companyIds.map(async (companyId) => {
+            const snap = await getDocs(
+              collection(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations'),
+            );
+            snap.forEach((d) => out.push(toWsWorksite(d.id, companyId, d.data())));
+          }),
+        );
+      }
+      out.sort((a, b) => a.worksiteName.localeCompare(b.worksiteName));
+      setWsWorksites(out);
+      if (out.length === 1) setWsWorksitePick(out[0]);
+    } catch (err) {
+      console.error('loadWsWorksites failed:', err);
+    } finally {
+      setWsWorksitesLoading(false);
+    }
+  };
+
+  const applyWorksite = () => {
+    if (!worksiteDialog || !wsWorksitePick) return;
+    const ov: WorksiteOverride = {
+      worksiteId: wsWorksitePick.worksiteId,
+      worksiteName: wsWorksitePick.worksiteName,
+      worksiteAddress: wsWorksitePick.address,
+      accountName: wsAccountPick?.name,
+    };
+    const site = worksiteDialog.csvSite.trim().toLowerCase();
+    setWorksiteOverrideByRow((prev) => {
+      const next = new Map(prev);
+      next.set(worksiteDialog.rowIndex, ov);
+      if (wsApplyAllSite && site) {
+        (parsed?.rows ?? []).forEach((r) => {
+          if (r.status === 'importable' && (r.site || '').trim().toLowerCase() === site) {
+            next.set(r.rowIndex, ov);
+          }
+        });
+      }
+      return next;
+    });
+    setWorksiteDialog(null);
+  };
+
+  // ── Sortable grid columns (Worker / Date / Worksite) ──
+  const toggleSort = (field: 'worker' | 'date' | 'worksite') => {
+    setGridSort((prev) =>
+      prev?.field === field
+        ? prev.dir === 'asc'
+          ? { field, dir: 'desc' }
+          : null // asc → desc → off
+        : { field, dir: 'asc' },
+    );
+  };
+  const sortImportRows = (rows: ParsedTimesheetRow[]): ParsedTimesheetRow[] => {
+    if (!gridSort) return rows;
+    const dir = gridSort.dir === 'asc' ? 1 : -1;
+    const keyOf = (r: ParsedTimesheetRow): string => {
+      const m = matchByRow.get(r.rowIndex);
+      if (gridSort.field === 'date') return r.workDate || '';
+      if (gridSort.field === 'worksite') {
+        const ews = effectiveWorksite(m, r.rowIndex);
+        return (ews.worksiteName || r.site || '').toLowerCase();
+      }
+      return (m?.displayName || [r.firstName, r.lastName].filter(Boolean).join(' ') || '').toLowerCase();
+    };
+    return [...rows].sort((a, b) => {
+      const ka = keyOf(a);
+      const kb = keyOf(b);
+      return ka < kb ? -dir : ka > kb ? dir : 0;
+    });
+  };
+
   const startEdit = (rowIndex: number, field: OverrideField, current: string | number | null) => {
     setEditing({ rowIndex, field });
     setEditValue(current == null ? '' : String(current));
@@ -881,6 +1105,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
       })
       .map(({ r, match }) => {
         const eff = effective(match, r.rowIndex);
+        const ews = effectiveWorksite(match, r.rowIndex);
         return {
           userId: match!.userId as string,
           workDate: r.workDate,
@@ -889,12 +1114,12 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           workerName: match!.displayName || [r.firstName, r.lastName].filter(Boolean).join(' '),
           // The event/site this day belongs to — used for the per-day pay-stub
           // line label (both worker types).
-          eventLabel: r.site || match!.worksiteName || null,
+          eventLabel: r.site || ews.worksiteName || null,
           // W-2 only — omitted/ignored server-side for 1099.
           workersCompCode: is1099Entity ? null : eff.workersCompCode ?? null,
-          worksiteId: is1099Entity ? null : match!.worksiteId ?? null,
-          worksiteName: is1099Entity ? null : match!.worksiteName ?? null,
-          worksiteAddress: is1099Entity ? null : match!.worksiteAddress ?? null,
+          worksiteId: ews.worksiteId,
+          worksiteName: ews.worksiteName,
+          worksiteAddress: ews.worksiteAddress,
         };
       });
   const readyCount = buildReadyRows().length;
@@ -1072,8 +1297,10 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
       .filter((x): x is { r: ParsedTimesheetRow; m: MatchRowResult } => !!x.m)
       .map(({ r, m }) => {
         const eff = effective(m, r.rowIndex);
+        const ews = effectiveWorksite(m, r.rowIndex);
         const submitted = !!submittedStatusFor(m.userId, r.workDate);
         const typedRate = overrides.get(r.rowIndex)?.payRate != null;
+        const worksiteOverridden = worksiteOverrideByRow.has(r.rowIndex);
         const typedWc = overrides.get(r.rowIndex)?.workersCompCode != null;
         return {
           rowIndex: r.rowIndex,
@@ -1096,17 +1323,17 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           assignmentId: m.assignmentId,
           jobOrderId: m.jobOrderId,
           shiftId: m.shiftId,
-          worksiteId: is1099Entity ? null : m.worksiteId,
-          worksiteName: m.worksiteName,
-          worksiteAddress: m.worksiteAddress,
-          workState: m.worksiteAddress?.state ?? null,
+          worksiteId: ews.worksiteId,
+          worksiteName: ews.worksiteName,
+          worksiteAddress: ews.worksiteAddress,
+          workState: ews.worksiteAddress?.state ?? null,
           payRate: eff.payRate,
           workersCompCode: is1099Entity ? null : eff.workersCompCode,
           workersCompRate: is1099Entity ? null : eff.workersCompRate,
           billRate: r.billRate ?? null,
           payRateSource: typedRate ? 'typed' : eff.payRateCarried ? 'carried' : m.payRateSource,
           workersCompSource: typedWc ? 'typed' : m.workersCompSource,
-          worksiteSource: m.worksiteSource,
+          worksiteSource: worksiteOverridden ? 'assignment' : m.worksiteSource,
         };
       });
 
@@ -1468,21 +1695,48 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
             <TableHead>
               <TableRow>
                 <TableCell>Status</TableCell>
-                <TableCell>Worker</TableCell>
-                <TableCell>Date</TableCell>
+                <TableCell sortDirection={gridSort?.field === 'worker' ? gridSort.dir : false}>
+                  <TableSortLabel
+                    active={gridSort?.field === 'worker'}
+                    direction={gridSort?.field === 'worker' ? gridSort.dir : 'asc'}
+                    onClick={() => toggleSort('worker')}
+                  >
+                    Worker
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sortDirection={gridSort?.field === 'date' ? gridSort.dir : false}>
+                  <TableSortLabel
+                    active={gridSort?.field === 'date'}
+                    direction={gridSort?.field === 'date' ? gridSort.dir : 'asc'}
+                    onClick={() => toggleSort('date')}
+                  >
+                    Date
+                  </TableSortLabel>
+                </TableCell>
                 <TableCell align="right">Hours</TableCell>
                 <TableCell sx={evCol}>Everee worker ID</TableCell>
                 <TableCell align="right" sx={evCol}>Pay rate</TableCell>
                 <TableCell sx={evCol}>WC code / rate</TableCell>
-                <TableCell sx={evCol}>Worksite → Everee</TableCell>
+                <TableCell sx={evCol} sortDirection={gridSort?.field === 'worksite' ? gridSort.dir : false}>
+                  <TableSortLabel
+                    active={gridSort?.field === 'worksite'}
+                    direction={gridSort?.field === 'worksite' ? gridSort.dir : 'asc'}
+                    onClick={() => toggleSort('worksite')}
+                  >
+                    Worksite → Everee
+                  </TableSortLabel>
+                </TableCell>
                 <TableCell>Source status</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {(showExcluded ? parsed.rows : parsed.rows.filter((r) => r.status === 'importable')).map((r) => {
+              {sortImportRows(
+                showExcluded ? parsed.rows : parsed.rows.filter((r) => r.status === 'importable'),
+              ).map((r) => {
                 const match = r.status === 'importable' ? matchByRow.get(r.rowIndex) : undefined;
                 const payable = match && !match.block;
-                const addr = match?.worksiteAddress;
+                const ews = effectiveWorksite(match, r.rowIndex);
+                const addr = ews.worksiteAddress;
                 const eff = effective(match, r.rowIndex);
                 const needsWc = rowNeedsWc(eff);
                 const submitted = submittedStatusFor(match?.userId, r.workDate);
@@ -1743,24 +1997,39 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                     )}
                   </TableCell>
                   <TableCell sx={{ ...evCol, maxWidth: 280 }}>
-                    {payable ? (
+                    {r.status === 'importable' ? (
                       <>
-                        <Typography variant="body2" noWrap title={match!.worksiteName ?? ''}>
-                          {match!.worksiteName ? (
-                            <>
-                              <ConfDot level={match!.worksiteAddress ? sourceConf(match!.worksiteSource) : 'select'} />
-                              {match!.worksiteName}
-                            </>
-                          ) : is1099Entity ? (
-                            <Typography component="span" variant="caption" color="text.disabled">
-                              n/a · 1099
-                            </Typography>
-                          ) : (
-                            <Typography component="span" variant="caption" color="text.secondary">
-                              no worksite
-                            </Typography>
-                          )}
-                        </Typography>
+                        <Stack direction="row" alignItems="center" spacing={0.5}>
+                          <Typography variant="body2" noWrap title={ews.worksiteName ?? ''} sx={{ flex: 1, minWidth: 0 }}>
+                            {ews.worksiteName ? (
+                              <>
+                                <ConfDot
+                                  level={
+                                    worksiteOverrideByRow.has(r.rowIndex)
+                                      ? 'exact'
+                                      : ews.worksiteAddress
+                                        ? sourceConf(match?.worksiteSource ?? 'none')
+                                        : 'select'
+                                  }
+                                />
+                                {ews.worksiteName}
+                              </>
+                            ) : is1099Entity ? (
+                              <Typography component="span" variant="caption" color="text.disabled">
+                                n/a · 1099
+                              </Typography>
+                            ) : (
+                              <Typography component="span" variant="caption" color="text.secondary">
+                                no worksite
+                              </Typography>
+                            )}
+                          </Typography>
+                          <Tooltip title="Look up / set the HRX worksite for this event">
+                            <IconButton size="small" onClick={() => openWorksiteDialog(r.rowIndex, r.site)} sx={{ p: 0.25 }}>
+                              <EditIcon sx={{ fontSize: 15 }} />
+                            </IconButton>
+                          </Tooltip>
+                        </Stack>
                         {addr && (
                           <Typography variant="caption" color="text.secondary" display="block">
                             {[addr.street, [addr.city, addr.state].filter(Boolean).join(', '), addr.zip]
@@ -1777,7 +2046,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                             onClick={() => openMapDialog(r.site)}
                             sx={{ display: 'block', mt: 0.25 }}
                           >
-                            {match!.payRateSource === 'site_mapping' ? 'Re-map site →' : 'Map site → job order'}
+                            {match?.payRateSource === 'site_mapping' ? 'Re-map site →' : 'Map site → job order'}
                           </Link>
                         )}
                         <Typography variant="caption" color="text.disabled" display="block" noWrap title={r.site}>
@@ -2257,6 +2526,123 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
             sx={{ textTransform: 'none' }}
           >
             {clearing ? 'Removing…' : `Remove ${staleConfirm?.count ?? 0}`}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={worksiteDialog != null}
+        onClose={() => setWorksiteDialog(null)}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>Look up worksite</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Box>
+              <Typography variant="caption" color="text.secondary">
+                CSV site
+              </Typography>
+              <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                {worksiteDialog?.csvSite || '—'}
+              </Typography>
+            </Box>
+
+            <Autocomplete
+              size="small"
+              options={wsAccounts ?? []}
+              loading={wsAccountsLoading}
+              value={wsAccountPick}
+              onChange={(_e, val) => {
+                setWsAccountPick(val);
+                setWsWorksitePick(null);
+                setWsWorksites([]);
+                if (val) void loadWsWorksites(val);
+              }}
+              getOptionLabel={(a) => (a.parentName ? `${a.parentName} › ${a.name}` : a.name)}
+              isOptionEqualToValue={(a, b) => a.id === b.id}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Account"
+                  placeholder="Pick the HRX account"
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {wsAccountsLoading ? <CircularProgress size={16} /> : null}
+                        {params.InputProps.endAdornment}
+                      </>
+                    ),
+                  }}
+                />
+              )}
+            />
+
+            <Autocomplete
+              size="small"
+              disabled={!wsAccountPick}
+              options={wsWorksites}
+              loading={wsWorksitesLoading}
+              value={wsWorksitePick}
+              onChange={(_e, val) => setWsWorksitePick(val)}
+              getOptionLabel={(w) =>
+                `${w.worksiteName}${[w.address.city, w.address.state].filter(Boolean).length ? ' — ' + [w.address.city, w.address.state].filter(Boolean).join(', ') : ''}`
+              }
+              isOptionEqualToValue={(a, b) => a.worksiteId === b.worksiteId}
+              noOptionsText={wsAccountPick ? 'No worksites on this account' : 'Pick an account first'}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Worksite"
+                  placeholder="Search worksites in this account"
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {wsWorksitesLoading ? <CircularProgress size={16} /> : null}
+                        {params.InputProps.endAdornment}
+                      </>
+                    ),
+                  }}
+                />
+              )}
+            />
+            {wsWorksitePick && (
+              <Typography variant="caption" color="text.secondary">
+                {[
+                  wsWorksitePick.address.street,
+                  [wsWorksitePick.address.city, wsWorksitePick.address.state].filter(Boolean).join(', '),
+                  wsWorksitePick.address.zip,
+                ]
+                  .filter(Boolean)
+                  .join(' · ') || 'No address on file'}
+              </Typography>
+            )}
+
+            <FormControlLabel
+              control={
+                <Switch checked={wsApplyAllSite} onChange={(e) => setWsApplyAllSite(e.target.checked)} />
+              }
+              label={
+                <Typography variant="body2">
+                  Apply to all rows with site “{worksiteDialog?.csvSite}”
+                </Typography>
+              }
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setWorksiteDialog(null)} sx={{ textTransform: 'none' }}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={applyWorksite}
+            disabled={!wsWorksitePick}
+            sx={{ textTransform: 'none' }}
+          >
+            Use worksite
           </Button>
         </DialogActions>
       </Dialog>
