@@ -278,6 +278,22 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      // CSV-import Everee idempotency ledger (one doc per submitted import
+      // row; written only by submitImportTimesheetBatch / void / the payment
+      // webhook via the Admin SDK). The Import tab reads it to show which
+      // rows are submitted/paid and to offer Void. Read mirrors
+      // `timesheet_entries`: recruiter band + HRX. All client writes denied —
+      // the ledger is server-managed.
+      match /timesheet_import_payables/{payableId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          (request.auth.token.roles != null && hasTenantRole(tenantId, request.auth.token.roles)) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5)
+        );
+        allow create, update, delete: if false;
+      }
+
       // TS.1.P4 — Timesheet batches. One doc per Everee submission;
       // wraps N entry ids and tracks aggregate Everee state. All writes
       // are server-only — the orchestrator (`submitTimesheetBatch`)
