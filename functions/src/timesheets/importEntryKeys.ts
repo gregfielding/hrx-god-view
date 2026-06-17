@@ -24,6 +24,12 @@ function slug(v: string): string {
     .replace(/^_+|_+$/g, '');
 }
 
+/** Firestore-safe doc id for an Everee externalId (which contains `::`). The
+ *  id of a row's `timesheet_import_payables` ledger doc. */
+export function payableStatusDocId(externalId: string): string {
+  return slug(externalId).slice(0, 480);
+}
+
 /**
  * Stable identity key for a CSV row that has no HRX userId (blocked /
  * unmatched). Derived from the normalized name + email so it matches the

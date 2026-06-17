@@ -56,6 +56,7 @@ import { defineSecret } from 'firebase-functions/params';
 import { logger } from 'firebase-functions/v2';
 import { evereePaths } from './evereeConfig';
 import { reconcileWorkerInternal } from './evereeReconcileWorker';
+import { importEntryDocId, payableStatusDocId } from '../../timesheets/importEntryKeys';
 
 /**
  * Per-tenant Everee webhook secrets. Bound at deploy time so Cloud
@@ -915,6 +916,54 @@ async function applyEntryStatusUpdate(
 }
 
 /**
+ * CSV-import payables/worked-shifts don't map to an `{assignmentId}_{workDate}`
+ * entry, so `applyEntryStatusUpdate` no-ops for them. Instead, recover the row
+ * from its `timesheet_import_payables` ledger doc (keyed by the sanitized
+ * externalId) and stamp BOTH the ledger doc and the canonical import entry as
+ * paid — flipping the Timesheet Grid + Import tab from "submitted" to "paid".
+ *
+ * Returns an action string when this WAS an import row (handled), else null so
+ * the caller continues with the normal entry/adjustment path.
+ */
+async function markImportEntryPaid(
+  tenantId: string,
+  externalId: string,
+  eventId: string,
+): Promise<string | null> {
+  // Import externalIds are `{tenantId}::import-{customer}-{userId}::{date}::{kind}`.
+  if (!externalId.includes('::import-')) return null;
+  const ledgerRef = db().doc(
+    `tenants/${tenantId}/timesheet_import_payables/${payableStatusDocId(externalId)}`,
+  );
+  const snap = await ledgerRef.get();
+  if (!snap.exists) return null;
+  const d = snap.data() || {};
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  await ledgerRef.set(
+    { status: 'paid', paidAt: now, updatedAt: now, lastWebhookEventId: eventId },
+    { merge: true },
+  );
+  const customer = String(d.customer || '');
+  const userId = String(d.externalWorkerId || '');
+  const workDate = String(d.workDate || '');
+  if (customer && userId && workDate) {
+    await db()
+      .doc(`tenants/${tenantId}/timesheet_entries/${importEntryDocId({ customer, userId, workDate })}`)
+      .set(
+        {
+          status: 'paid',
+          import: { matchStatus: 'paid' },
+          everee: { status: 'PAID', respondedAt: now },
+          lastWebhookEventId: eventId,
+          updatedAt: now,
+        },
+        { merge: true },
+      );
+  }
+  return `Marked import row ${externalId} paid`;
+}
+
+/**
  * Same shape as `applyEntryStatusUpdate` but for adjustments. Kept
  * separate so the field paths stay obvious (adjustment.everee vs
  * entry.everee — same nested shape, different parent collection).
@@ -1038,6 +1087,12 @@ async function handlePaymentPaid(
     return actions;
   }
   for (const externalId of externalIds) {
+    // CSV-import rows first — they don't map to an assignment-keyed entry.
+    const importAction = await markImportEntryPaid(tenantId, externalId, data.eventId);
+    if (importAction) {
+      actions.push(importAction);
+      continue;
+    }
     const parsed = parsePayableExternalId(externalId);
     if (!parsed) {
       actions.push(`Skipped unparseable externalId: ${externalId}`);
@@ -1121,6 +1176,15 @@ async function handlePayablesStatusChanged(
   }
 
   for (const externalId of externalIds) {
+    // CSV-import rows first — only the PAID terminal state is mirrored onto
+    // the import entry (error/void corrections flow through the Import tab).
+    if (nextLocalStatus === 'paid') {
+      const importAction = await markImportEntryPaid(tenantId, externalId, data.eventId);
+      if (importAction) {
+        actions.push(importAction);
+        continue;
+      }
+    }
     const parsed = parsePayableExternalId(externalId);
     if (!parsed) {
       actions.push(`Skipped unparseable externalId: ${externalId}`);

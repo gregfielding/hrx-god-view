@@ -68,7 +68,7 @@ import {
   mapConnectTeamRows,
   looksLikeConnectTeam,
 } from '../../utils/timesheets/connectTeamImport';
-import { importCsvKey } from '../../utils/timesheets/importEntryKeys';
+import { importCsvKey, importEntryDocId } from '../../utils/timesheets/importEntryKeys';
 
 /** One worker-match result from the importTimesheetMatchWorkers callable. */
 interface MatchRowResult {
@@ -310,6 +310,14 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   // Manual "Save progress" — persists the current grid to timesheet_entries.
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{ upserted: number } | null>(null);
+  // Clear-stale (re-upload orphan cleanup): dry-run count → confirm → delete.
+  const [clearing, setClearing] = useState(false);
+  const [staleConfirm, setStaleConfirm] = useState<{
+    count: number;
+    keepDocIds: string[];
+    minDate: string;
+    maxDate: string;
+  } | null>(null);
   // One-shot guard so resume-from-saved restores overrides/forced picks only
   // once per uploaded file (keyed by file name + entity + customer).
   const resumeKeyRef = useRef<string>('');
@@ -851,11 +859,12 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   const rowNeedsWc = (eff: ReturnType<typeof effective>) =>
     !is1099Entity && !String(eff.workersCompCode || '').trim();
 
-  // A row already submitted to Everee (and not since voided).
+  // A row that's live in Everee (submitted or paid) — terminal, not
+  // re-submittable. `paid` rows can't be voided (the pay run finalized).
   const submittedStatusFor = (userId?: string, workDate?: string) => {
     if (!userId || !workDate) return undefined;
     const st = submittedByExtId.get(rowExternalId(userId, workDate));
-    return st && st.status === 'submitted' ? st : undefined;
+    return st && (st.status === 'submitted' || st.status === 'paid') ? st : undefined;
   };
 
   // The Ready rows: matched + Everee-linked + a resolved/typed pay rate (and a
@@ -1120,6 +1129,96 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
       setMatchError(err?.message || 'Failed to save progress.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // ── Clear stale rows (re-upload orphans) ──
+  const staleCallable = () =>
+    httpsCallable<
+      {
+        tenantId: string;
+        hiringEntityId: string;
+        customer: string;
+        keepDocIds: string[];
+        minDate: string;
+        maxDate: string;
+        dryRun: boolean;
+      },
+      { dryRun: boolean; staleCount?: number; deleted?: number; liveKept?: number }
+    >(functions, 'deleteStaleImportEntries', { timeout: 120000 });
+
+  /** Doc ids for every row currently in the grid — the set to KEEP. */
+  const currentKeepDocIds = () => {
+    const ids: string[] = [];
+    let minDate = '';
+    let maxDate = '';
+    for (const r of parsed?.rows ?? []) {
+      if (r.status !== 'importable') continue;
+      const m = matchByRow.get(r.rowIndex);
+      const csvKey = importCsvKey({ firstName: r.firstName, lastName: r.lastName, email: r.email });
+      ids.push(importEntryDocId({ customer, userId: m?.userId || '', csvKey, workDate: r.workDate }));
+      if (r.workDate) {
+        if (!minDate || r.workDate < minDate) minDate = r.workDate;
+        if (!maxDate || r.workDate > maxDate) maxDate = r.workDate;
+      }
+    }
+    return { ids, minDate, maxDate };
+  };
+
+  const clearStale = async () => {
+    if (!entityId) return;
+    const { ids, minDate, maxDate } = currentKeepDocIds();
+    if (!minDate || !maxDate) return;
+    setClearing(true);
+    setMatchError(null);
+    try {
+      const res = await staleCallable()({
+        tenantId,
+        hiringEntityId: entityId,
+        customer,
+        keepDocIds: ids,
+        minDate,
+        maxDate,
+        dryRun: true,
+      });
+      const count = res.data?.staleCount ?? 0;
+      if (count === 0) {
+        setSaveResult(null);
+        setMatchError('No stale rows to clear — every saved row is in this file (or already paid).');
+      } else {
+        setStaleConfirm({ count, keepDocIds: ids, minDate, maxDate });
+      }
+    } catch (err: any) {
+      console.error('deleteStaleImportEntries (dry-run) failed:', err);
+      setMatchError(err?.message || 'Failed to check for stale rows.');
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  const confirmClearStale = async () => {
+    if (!entityId || !staleConfirm) return;
+    setClearing(true);
+    try {
+      const res = await staleCallable()({
+        tenantId,
+        hiringEntityId: entityId,
+        customer,
+        keepDocIds: staleConfirm.keepDocIds,
+        minDate: staleConfirm.minDate,
+        maxDate: staleConfirm.maxDate,
+        dryRun: false,
+      });
+      setStaleConfirm(null);
+      setSaveResult(null);
+      setMatchError(
+        `Removed ${res.data?.deleted ?? 0} stale row${(res.data?.deleted ?? 0) === 1 ? '' : 's'} from timesheets.`,
+      );
+    } catch (err: any) {
+      console.error('deleteStaleImportEntries failed:', err);
+      setMatchError(err?.message || 'Failed to clear stale rows.');
+    } finally {
+      setClearing(false);
     }
   };
 
@@ -1395,30 +1494,39 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                       <Stack spacing={0.25} alignItems="flex-start">
                         <Tooltip
                           title={
-                            is1099Entity
-                              ? `Submitted to Everee as a $${submitted.amount.toFixed(2)} payable`
-                              : `Submitted to Everee — $${submitted.amount.toFixed(2)} straight-time; Everee adds any OT/DT at the pay run`
+                            submitted.status === 'paid'
+                              ? `Paid by Everee ($${submitted.amount.toFixed(2)})`
+                              : is1099Entity
+                                ? `Submitted to Everee as a $${submitted.amount.toFixed(2)} payable`
+                                : `Submitted to Everee — $${submitted.amount.toFixed(2)} straight-time; Everee adds any OT/DT at the pay run`
                           }
                         >
                           <Chip
                             size="small"
                             color="success"
-                            variant="outlined"
+                            variant={submitted.status === 'paid' ? 'filled' : 'outlined'}
                             icon={<CheckCircleIcon />}
-                            label={`Submitted ${is1099Entity ? '' : '~'}$${submitted.amount.toFixed(2)}`}
+                            label={
+                              submitted.status === 'paid'
+                                ? `Paid $${submitted.amount.toFixed(2)}`
+                                : `Submitted ${is1099Entity ? '' : '~'}$${submitted.amount.toFixed(2)}`
+                            }
                           />
                         </Tooltip>
-                        <Link
-                          component="button"
-                          type="button"
-                          variant="caption"
-                          underline="hover"
-                          color="error"
-                          disabled={voidingExtId === extId}
-                          onClick={() => voidRow(extId, match?.userId, r.workDate)}
-                        >
-                          {voidingExtId === extId ? 'Voiding…' : 'Void'}
-                        </Link>
+                        {/* Paid rows can't be voided — the Everee pay run finalized. */}
+                        {submitted.status !== 'paid' && (
+                          <Link
+                            component="button"
+                            type="button"
+                            variant="caption"
+                            underline="hover"
+                            color="error"
+                            disabled={voidingExtId === extId}
+                            onClick={() => voidRow(extId, match?.userId, r.workDate)}
+                          >
+                            {voidingExtId === extId ? 'Voiding…' : 'Void'}
+                          </Link>
+                        )}
                       </Stack>
                     ) : match ? (
                       <Tooltip
@@ -1724,6 +1832,19 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
               >
                 {saving ? 'Saving…' : 'Save progress'}
               </Button>
+            )}
+            {matchByRow.size > 0 && (
+              <Tooltip title="Remove previously-saved rows for this week that aren't in the current file (paid/submitted rows are kept)">
+                <Button
+                  variant="text"
+                  color="inherit"
+                  onClick={clearStale}
+                  disabled={clearing || matching || saving}
+                  sx={{ textTransform: 'none' }}
+                >
+                  {clearing ? 'Checking…' : 'Clear stale rows'}
+                </Button>
+              </Tooltip>
             )}
             {!entityId && (
               <Typography variant="caption" color="text.secondary">
@@ -2110,6 +2231,32 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
             sx={{ textTransform: 'none' }}
           >
             {savingAlias ? 'Applying…' : resolveApplyAll ? 'Use for all & re-match' : 'Use for this row'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={staleConfirm != null} onClose={() => (clearing ? null : setStaleConfirm(null))} maxWidth="xs" fullWidth>
+        <DialogTitle>Clear stale rows?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            {staleConfirm?.count} previously-saved row{(staleConfirm?.count ?? 0) === 1 ? '' : 's'} for this
+            week {(staleConfirm?.count ?? 0) === 1 ? 'is' : 'are'} no longer in the current file. Remove{' '}
+            {(staleConfirm?.count ?? 0) === 1 ? 'it' : 'them'} from timesheets? Submitted / paid rows are
+            always kept.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setStaleConfirm(null)} disabled={clearing} sx={{ textTransform: 'none' }}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={confirmClearStale}
+            disabled={clearing}
+            sx={{ textTransform: 'none' }}
+          >
+            {clearing ? 'Removing…' : `Remove ${staleConfirm?.count ?? 0}`}
           </Button>
         </DialogActions>
       </Dialog>

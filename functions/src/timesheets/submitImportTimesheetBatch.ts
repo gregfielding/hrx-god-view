@@ -42,7 +42,7 @@ import {
   deleteWorkedShift,
   type CreateWorkedShiftInput,
 } from '../integrations/everee/evereeWorkedShifts';
-import { importEntryDocId, importExternalId } from './importEntryKeys';
+import { importEntryDocId, importExternalId, payableStatusDocId } from './importEntryKeys';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -89,15 +89,6 @@ interface ComposedPreview {
   amount: number;
   workersCompCode?: string | null;
   worksiteName?: string | null;
-}
-
-/** Firestore-safe doc id for an externalId (which contains `::`). */
-function payableStatusDocId(externalId: string): string {
-  return String(externalId || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 480);
 }
 
 /** Build the merge payload that mirrors a submitted import row onto its

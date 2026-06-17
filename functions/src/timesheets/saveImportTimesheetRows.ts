@@ -23,6 +23,10 @@ import * as admin from 'firebase-admin';
 
 import { importEntryDocId } from './importEntryKeys';
 
+/** Entry states that are live in Everee — never deletable as "stale". */
+const LIVE_STATUSES = new Set(['sent_to_everee', 'paid']);
+const LIVE_MATCH_STATUSES = new Set(['submitted', 'paid']);
+
 if (!admin.apps.length) {
   admin.initializeApp();
 }
@@ -277,5 +281,84 @@ export const saveImportTimesheetRows = onCall(
     await flush();
 
     return { ok: true, upserted: planned.length, byStatus, entryIds };
+  },
+);
+
+/**
+ * deleteStaleImportEntries — remove orphan import rows left by a re-upload.
+ *
+ * When a recruiter re-uploads a corrected week, rows that were in the prior
+ * upload but absent from the new one become stale `timesheet_entries`. This
+ * deletes them — scoped to (hiringEntity, customer) within a workDate range,
+ * and ONLY rows NOT in `keepDocIds` and NOT live in Everee (submitted/paid are
+ * always kept). `dryRun` returns the count without deleting so the client can
+ * confirm first.
+ */
+export const deleteStaleImportEntries = onCall(
+  { cors: true, memory: '512MiB', timeoutSeconds: 120 },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
+    const { tenantId, hiringEntityId, customer, keepDocIds, minDate, maxDate, dryRun } =
+      (request.data || {}) as {
+        tenantId?: string;
+        hiringEntityId?: string;
+        customer?: string;
+        keepDocIds?: string[];
+        minDate?: string;
+        maxDate?: string;
+        dryRun?: boolean;
+      };
+    if (!tenantId || !hiringEntityId || !customer || !minDate || !maxDate) {
+      throw new HttpsError(
+        'invalid-argument',
+        'tenantId, hiringEntityId, customer, minDate, and maxDate are required',
+      );
+    }
+    await assertTimesheetEditor(request.auth.uid, request.auth.token as Record<string, unknown>, tenantId);
+
+    const keep = new Set(Array.isArray(keepDocIds) ? keepDocIds : []);
+    const snap = await db
+      .collection(`tenants/${tenantId}/timesheet_entries`)
+      .where('source', '==', 'csv_import')
+      .where('hiringEntityId', '==', hiringEntityId)
+      .where('workDate', '>=', String(minDate))
+      .where('workDate', '<=', String(maxDate))
+      .get();
+
+    const stale: string[] = [];
+    let live = 0;
+    snap.forEach((d) => {
+      const data = d.data() || {};
+      if (String((data.import || {}).customer || '') !== customer) return;
+      if (keep.has(d.id)) return;
+      if (LIVE_STATUSES.has(String(data.status || '')) || LIVE_MATCH_STATUSES.has(String((data.import || {}).matchStatus || ''))) {
+        live += 1;
+        return; // never delete a row that's live in Everee
+      }
+      stale.push(d.id);
+    });
+
+    if (dryRun) {
+      return { dryRun: true, staleCount: stale.length, liveKept: live, sample: stale.slice(0, 20) };
+    }
+
+    let deleted = 0;
+    let writer = db.batch();
+    let pending = 0;
+    for (const id of stale) {
+      writer.delete(db.doc(`tenants/${tenantId}/timesheet_entries/${id}`));
+      deleted += 1;
+      if (++pending >= 450) {
+        // eslint-disable-next-line no-await-in-loop
+        await writer.commit();
+        writer = db.batch();
+        pending = 0;
+      }
+    }
+    if (pending > 0) await writer.commit();
+
+    return { dryRun: false, deleted, liveKept: live };
   },
 );

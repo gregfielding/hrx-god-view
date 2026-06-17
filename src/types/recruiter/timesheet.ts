@@ -96,6 +96,7 @@ export type ImportMatchStatus =
   | 'needs_wc'     // W-2 matched + rate but no WC class code
   | 'blocked'      // not in HRX / not Everee-linked / ambiguous
   | 'submitted'    // sent to Everee (mirrors timesheet_import_payables)
+  | 'paid'         // Everee paid it out (stamped by the payment webhook)
   | 'voided';      // retracted in Everee, re-sendable
 
 /**

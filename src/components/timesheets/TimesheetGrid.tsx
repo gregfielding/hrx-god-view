@@ -218,6 +218,7 @@ const STATUS_LABELS: Record<TimesheetRowDisplayStatus, string> = {
   import_needs_wc: 'Needs WC (import)',
   import_blocked: 'Blocked (import)',
   import_submitted: '✓ Submitted (import)',
+  import_paid: '✓ Paid (import)',
   import_voided: 'Voided (import)',
 };
 
@@ -242,6 +243,7 @@ const STATUS_COLORS: Record<
   import_needs_wc: 'info',
   import_blocked: 'warning',
   import_submitted: 'success',
+  import_paid: 'success',
   import_voided: 'default',
 };
 

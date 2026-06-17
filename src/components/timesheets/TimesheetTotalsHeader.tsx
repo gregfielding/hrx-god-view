@@ -132,6 +132,7 @@ type ChipStatus = Exclude<
   | 'import_needs_wc'
   | 'import_blocked'
   | 'import_submitted'
+  | 'import_paid'
   | 'import_voided'
 >;
 

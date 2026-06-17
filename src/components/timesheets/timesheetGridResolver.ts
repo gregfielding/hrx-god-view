@@ -894,6 +894,7 @@ export type TimesheetRowDisplayStatus =
   | 'import_needs_wc'
   | 'import_blocked'
   | 'import_submitted'
+  | 'import_paid'
   | 'import_voided';
 
 export function displayStatusForRow(row: TimesheetGridRow): TimesheetRowDisplayStatus {
