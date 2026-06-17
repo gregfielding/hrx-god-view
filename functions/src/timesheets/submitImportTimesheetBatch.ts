@@ -269,6 +269,13 @@ async function submit1099(args: PathArgs) {
   const payables: CreatePayableInput[] = [];
   const preview: ComposedPreview[] = [];
   let skipped = 0;
+  // Contractor pay isn't tied to a specific work day the way W-2 hours are, and
+  // Everee rejects a payable dated before the worker's start date (contractors
+  // are often onboarded after the work week). So stamp every contractor payable
+  // at the PAY DATE (today) — always on/after the hire date, no per-worker
+  // lookup needed. The actual work date stays in the pay-stub label + the HRX
+  // record (preview.workDate / the canonical entry).
+  const payTimestamp = workDateEpochSeconds(new Date().toISOString().slice(0, 10));
   for (const row of rows) {
     const userId = String(row.userId || '').trim();
     const hours = Number(row.hours);
@@ -286,7 +293,7 @@ async function submit1099(args: PathArgs) {
       label: dayLabel('Contractor pay', row.eventLabel, workDate),
       type: 'contractor',
       payCode: 'CONTRACTOR',
-      timestamp: workDateEpochSeconds(workDate),
+      timestamp: payTimestamp,
       amount: { amount: amount.toFixed(2), currency: 'USD' },
       payableModel: 'PRE_CALCULATED',
     });
