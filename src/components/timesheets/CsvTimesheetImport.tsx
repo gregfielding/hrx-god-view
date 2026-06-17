@@ -1333,7 +1333,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           billRate: r.billRate ?? null,
           payRateSource: typedRate ? 'typed' : eff.payRateCarried ? 'carried' : m.payRateSource,
           workersCompSource: typedWc ? 'typed' : m.workersCompSource,
-          worksiteSource: worksiteOverridden ? 'assignment' : m.worksiteSource,
+          worksiteSource: worksiteOverridden ? 'manual' : m.worksiteSource,
         };
       });
 
@@ -1473,7 +1473,17 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
       );
       const byKey = new Map<
         string,
-        { payRate?: number; workersCompCode?: string; forcedUserId?: string | null; payRateSource?: string; workersCompSource?: string }
+        {
+          payRate?: number;
+          workersCompCode?: string;
+          forcedUserId?: string | null;
+          payRateSource?: string;
+          workersCompSource?: string;
+          worksiteSource?: string;
+          worksiteId?: string;
+          worksiteName?: string;
+          worksiteAddress?: { street?: string; city?: string; state?: string; zip?: string } | null;
+        }
       >();
       snap.forEach((d) => {
         const data = d.data() as any;
@@ -1485,11 +1495,16 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           forcedUserId: imp.forcedUserId ?? null,
           payRateSource: imp.payRateSource,
           workersCompSource: imp.workersCompSource,
+          worksiteSource: imp.worksiteSource,
+          worksiteId: typeof imp.worksiteId === 'string' ? imp.worksiteId : undefined,
+          worksiteName: typeof imp.worksiteName === 'string' ? imp.worksiteName : undefined,
+          worksiteAddress: imp.worksiteAddress ?? null,
         });
       });
       if (byKey.size === 0) return;
       const nextOverrides = new Map(overrides);
       const nextForced = new Map(forcedUserIdByRow);
+      const nextWorksites = new Map(worksiteOverrideByRow);
       let restored = 0;
       for (const r of importable) {
         const ck = importCsvKey({ firstName: r.firstName, lastName: r.lastName, email: r.email });
@@ -1513,10 +1528,26 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           nextOverrides.set(r.rowIndex, ov);
           restored += 1;
         }
+        // Restore a manually-picked worksite (worksiteSource === 'manual').
+        if (p.worksiteSource === 'manual' && p.worksiteId && !nextWorksites.has(r.rowIndex)) {
+          const a = p.worksiteAddress || {};
+          nextWorksites.set(r.rowIndex, {
+            worksiteId: p.worksiteId,
+            worksiteName: p.worksiteName || p.worksiteId,
+            worksiteAddress: {
+              street: String(a.street || ''),
+              city: String(a.city || ''),
+              state: String(a.state || ''),
+              zip: String(a.zip || ''),
+            },
+          });
+          restored += 1;
+        }
       }
       if (restored > 0) {
         setOverrides(nextOverrides);
         setForcedUserIdByRow(nextForced);
+        setWorksiteOverrideByRow(nextWorksites);
         setSaveResult(null);
         setMatchError(
           `Restored ${restored} saved edit${restored === 1 ? '' : 's'} from a previous session — click Match to re-apply.`,
