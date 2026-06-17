@@ -162,6 +162,25 @@ function workDateEpochSeconds(workDate: string): number {
   return Math.floor(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0) / 1000);
 }
 
+/**
+ * Snap a day's decimal hours to a WHOLE MINUTE. Everee floors the worked-shift
+ * window to the minute but evaluates the classified segment at full precision,
+ * so a sub-minute synthetic window (e.g. 5.99h = 5:59:24) gets truncated below
+ * the classified hours → "unpayable duration" (500). Rounding the day to the
+ * nearest minute and deriving the window, the classified segment, and the gross
+ * all from that value keeps the three in lockstep. The pay delta is ≤30s/day
+ * (standard minute rounding for an imported daily total with no clock detail).
+ */
+function minuteAlignedDay(hours: number, rate: number): {
+  seconds: number;
+  hours: number;
+  gross: number;
+} {
+  const seconds = Math.max(60, Math.round(Number(hours) * 60) * 60);
+  const h = seconds / 3600;
+  return { seconds, hours: h, gross: Math.round(h * Number(rate) * 100) / 100 };
+}
+
 /** Run async tasks with bounded concurrency, preserving input order. */
 async function mapWithConcurrency<T, R>(
   items: T[],
@@ -466,7 +485,8 @@ async function submitW2(args: PathArgs) {
     workDate: p.workDate,
     hours: p.hours,
     payRate: p.payRate,
-    amount: Math.round(p.hours * p.payRate * 100) / 100,
+    // Minute-aligned gross — matches exactly what the worked shift will pay.
+    amount: minuteAlignedDay(p.hours, p.payRate).gross,
     workersCompCode: p.wc,
     worksiteName: p.row.worksiteName ?? null,
   }));
@@ -545,8 +565,11 @@ async function submitW2(args: PathArgs) {
     try {
       const workLocationId = await resolveLocation(p.row);
       const start = workDateEpochSeconds(p.workDate);
-      const end = start + Math.max(1, Math.round(p.hours * 3600));
-      const gross = Math.round(p.hours * p.payRate * 100) / 100;
+      // Whole-minute window/segment/gross so Everee's minute-floored shift
+      // window matches the classified hours (see minuteAlignedDay).
+      const aligned = minuteAlignedDay(p.hours, p.payRate);
+      const end = start + aligned.seconds;
+      const gross = aligned.gross;
       const input: CreateWorkedShiftInput = {
         externalWorkerId: p.userId,
         shiftStartEpochSeconds: start,
