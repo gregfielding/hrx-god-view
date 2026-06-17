@@ -706,7 +706,13 @@ function parseEmbedSessionResponse(response: unknown): {
  * Wire shape (from sandbox probe — see
  * `memory/feedback_everee_wire_gotchas.md` §6):
  *   PUT /api/v2/workers/{workerId}/address
- *   { line1, line2?, city, state, postalCode }
+ *   { line1, line2?, city, state, postalCode, effectiveDate }
+ *
+ * `effectiveDate` (YYYY-MM-DD) is now REQUIRED — Everee 500s with
+ * "effectiveDate is marked non-null but is null" without it (discovered
+ * 2026-06-17 fixing Marquis Dennis's stub CA address). Defaults to today for a
+ * recruiter-initiated correction; pass an earlier date to backdate so the new
+ * address covers already-worked (unpaid) shifts.
  *
  * Returns the raw Everee response so callers can confirm the new
  * `homeAddress.current` matches what they sent.
@@ -717,6 +723,8 @@ export async function updateEvereeWorkerAddress(input: {
   /** Everee canonical worker UUID (NOT the HRX uid). */
   evereeWorkerId: string;
   address: EvereeAddress;
+  /** When the address takes effect (YYYY-MM-DD). Defaults to today. */
+  effectiveDate?: string;
 }): Promise<unknown> {
   const config = await getEvereeConfigForEntity(input.tenantId, input.entityId);
   if (!config) {
@@ -724,8 +732,9 @@ export async function updateEvereeWorkerAddress(input: {
       `updateEvereeWorkerAddress: no Everee config for entity ${input.entityId}`,
     );
   }
+  const effectiveDate = input.effectiveDate || new Date().toISOString().slice(0, 10);
   const path = `/api/v2/workers/${encodeURIComponent(input.evereeWorkerId)}/address`;
-  return evereeRequest<unknown>(config, 'PUT', path, input.address);
+  return evereeRequest<unknown>(config, 'PUT', path, { ...input.address, effectiveDate });
 }
 
 /**
