@@ -46,7 +46,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { httpsCallable } from 'firebase/functions';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 
 import { db, functions } from '../../firebase';
 import type { HiringEntity } from '../../types/recruiter/hiringEntity';
@@ -270,6 +270,10 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   } | null>(null);
   const [submitResult, setSubmitResult] = useState<{ submitted: number; failed: number; totalAmount: number; errors: string[] } | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Per-payable submitted status (persisted) keyed by externalId, so the grid
+  // shows what's already been sent + lets the recruiter void it.
+  const [submittedByExtId, setSubmittedByExtId] = useState<Map<string, { status: string; amount: number }>>(new Map());
+  const [voidingExtId, setVoidingExtId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const importableRows = parsed?.rows.filter((r) => r.status === 'importable') ?? [];
@@ -468,6 +472,8 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
       setMatching(false);
       setMatchProgress(null);
     }
+    // Surface any rows already submitted to Everee for this customer.
+    await loadSubmitted();
   };
 
   // Reset match results whenever the parse or entity changes.
@@ -476,6 +482,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     setMatchError(null);
     setOverrides(new Map());
     setEditing(null);
+    setSubmittedByExtId(new Map());
   };
 
   const handleFile = (file: File) => {
@@ -741,13 +748,28 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   };
 
   // ── Submit to Everee (P4) ──
-  // The Ready rows: matched + Everee-linked + a resolved/typed pay rate.
+  // Deterministic Everee externalId for an import payable — must byte-match the
+  // server's `buildPayableExternalId({assignmentId: 'import-{customer}-{uid}'})`
+  // so a row can be looked up against its submitted/voided status doc.
+  const rowExternalId = (userId: string, workDate: string) =>
+    `${tenantId}::import-${customer}-${userId}::${workDate}::CONTRACTOR`;
+
+  // A row already submitted to Everee (and not since voided).
+  const submittedStatusFor = (userId?: string, workDate?: string) => {
+    if (!userId || !workDate) return undefined;
+    const st = submittedByExtId.get(rowExternalId(userId, workDate));
+    return st && st.status === 'submitted' ? st : undefined;
+  };
+
+  // The Ready rows: matched + Everee-linked + a resolved/typed pay rate, and not
+  // already submitted to Everee.
   const buildReadyRows = () =>
     (parsed?.rows ?? [])
       .filter((r) => r.status === 'importable')
       .map((r) => ({ r, match: matchByRow.get(r.rowIndex) }))
       .filter(({ r, match }) => {
         if (!match || match.block) return false;
+        if (submittedStatusFor(match.userId, r.workDate)) return false;
         return !effective(match, r.rowIndex).needsPayRate && !!match.userId;
       })
       .map(({ r, match }) => ({
@@ -814,11 +836,62 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
         totalAmount: res.data?.totalAmount ?? 0,
         errors: res.data?.errors ?? [],
       });
+      // Refresh the per-row submitted state so the just-sent rows flip to
+      // "Submitted ✓" and drop out of the Ready count.
+      await loadSubmitted();
     } catch (err: any) {
       console.error('submitImportTimesheetBatch (live) failed:', err);
       setSubmitError(err?.message || 'Failed to submit to Everee.');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // Load the per-payable status docs for this customer so the grid can show
+  // which rows are already in Everee (across sessions) and offer a Void.
+  const loadSubmitted = async () => {
+    if (!tenantId || !customer) return;
+    try {
+      const snap = await getDocs(
+        query(
+          collection(db, 'tenants', tenantId, 'timesheet_import_payables'),
+          where('customer', '==', customer),
+        ),
+      );
+      const next = new Map<string, { status: string; amount: number }>();
+      snap.forEach((d) => {
+        const data = d.data() as { externalId?: string; status?: string; amount?: number };
+        if (data.externalId) {
+          next.set(data.externalId, {
+            status: String(data.status || ''),
+            amount: Number(data.amount || 0),
+          });
+        }
+      });
+      setSubmittedByExtId(next);
+    } catch (err) {
+      console.error('loadSubmitted failed:', err);
+    }
+  };
+
+  const voidCallable = () =>
+    httpsCallable<
+      { tenantId: string; hiringEntityId: string; externalId: string },
+      { ok: boolean; externalId: string }
+    >(functions, 'voidImportTimesheetPayable', { timeout: 120000 });
+
+  const voidRow = async (externalId: string) => {
+    if (!entityId) return;
+    setVoidingExtId(externalId);
+    setSubmitError(null);
+    try {
+      await voidCallable()({ tenantId, hiringEntityId: entityId, externalId });
+      await loadSubmitted();
+    } catch (err: any) {
+      console.error('voidImportTimesheetPayable failed:', err);
+      setSubmitError(err?.message || 'Failed to void the payable in Everee.');
+    } finally {
+      setVoidingExtId(null);
     }
   };
 
@@ -995,10 +1068,35 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                 const payable = match && !match.block;
                 const addr = match?.worksiteAddress;
                 const eff = effective(match, r.rowIndex);
+                const submitted = submittedStatusFor(match?.userId, r.workDate);
+                const extId = match?.userId ? rowExternalId(match.userId, r.workDate) : '';
                 return (
                 <TableRow key={r.rowIndex} hover sx={{ opacity: r.status === 'importable' ? 1 : 0.65 }}>
                   <TableCell>
-                    {match ? (
+                    {submitted ? (
+                      <Stack spacing={0.25} alignItems="flex-start">
+                        <Tooltip title={`Submitted to Everee as a $${submitted.amount.toFixed(2)} payable`}>
+                          <Chip
+                            size="small"
+                            color="success"
+                            variant="outlined"
+                            icon={<CheckCircleIcon />}
+                            label={`Submitted $${submitted.amount.toFixed(2)}`}
+                          />
+                        </Tooltip>
+                        <Link
+                          component="button"
+                          type="button"
+                          variant="caption"
+                          underline="hover"
+                          color="error"
+                          disabled={voidingExtId === extId}
+                          onClick={() => voidRow(extId)}
+                        >
+                          {voidingExtId === extId ? 'Voiding…' : 'Void'}
+                        </Link>
+                      </Stack>
+                    ) : match ? (
                       <Tooltip
                         title={
                           match.block
@@ -1262,14 +1360,21 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
             )}
             {matchByRow.size > 0 &&
               (() => {
-                const vals = [...matchByRow.values()];
-                const ready = vals.filter(
-                  (m) => !m.block && !effective(m, m.rowIndex).needsPayRate,
+                const rows = (parsed?.rows ?? [])
+                  .filter((r) => r.status === 'importable')
+                  .map((r) => ({ r, m: matchByRow.get(r.rowIndex) }))
+                  .filter((x): x is { r: ParsedTimesheetRow; m: MatchRowResult } => !!x.m);
+                const submittedCount = rows.filter(
+                  ({ r, m }) => submittedStatusFor(m.userId, r.workDate),
                 ).length;
-                const needsRate = vals.filter(
-                  (m) => !m.block && effective(m, m.rowIndex).needsPayRate,
+                const live = rows.filter(({ r, m }) => !submittedStatusFor(m.userId, r.workDate));
+                const ready = live.filter(
+                  ({ m }) => !m.block && !effective(m, m.rowIndex).needsPayRate,
                 ).length;
-                const blocked = vals.filter((m) => m.block).length;
+                const needsRate = live.filter(
+                  ({ m }) => !m.block && effective(m, m.rowIndex).needsPayRate,
+                ).length;
+                const blocked = live.filter(({ m }) => m.block).length;
                 return (
                   <>
                     <Chip size="small" color="success" label={`Ready: ${ready}`} />
@@ -1278,6 +1383,14 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                     )}
                     {blocked > 0 && (
                       <Chip size="small" color="warning" label={`Blocked: ${blocked}`} />
+                    )}
+                    {submittedCount > 0 && (
+                      <Chip
+                        size="small"
+                        color="success"
+                        variant="outlined"
+                        label={`Submitted: ${submittedCount}`}
+                      />
                     )}
                   </>
                 );

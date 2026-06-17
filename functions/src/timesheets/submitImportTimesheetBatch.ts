@@ -26,6 +26,7 @@ import { canManageEveree } from '../integrations/everee/evereeAccessGate';
 import {
   buildPayableExternalId,
   bulkCreatePayables,
+  deletePayable,
   type CreatePayableInput,
 } from '../integrations/everee/evereePayables';
 
@@ -53,6 +54,15 @@ interface ComposedPayablePreview {
   hours: number;
   payRate: number;
   amount: number;
+}
+
+/** Firestore-safe doc id for a payable's externalId (which contains `::`). */
+function payableStatusDocId(externalId: string): string {
+  return String(externalId || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 480);
 }
 
 /** Noon-UTC of the work date — avoids a TZ off-by-one when Everee renders the
@@ -185,6 +195,45 @@ export const submitImportTimesheetBatch = onCall(
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
+    // Per-payable status docs so the import grid can show "Submitted" per row
+    // across sessions, and the void path has a handle. Keyed by sanitized
+    // externalId for O(1) lookup.
+    const submittedSet = new Set(submitted);
+    const byExternalId = new Map(preview.map((p) => [p.externalId, p]));
+    let writer = db.batch();
+    let pending = 0;
+    for (const externalId of submittedSet) {
+      const p = byExternalId.get(externalId);
+      writer.set(
+        db.doc(`tenants/${tenantId}/timesheet_import_payables/${payableStatusDocId(externalId)}`),
+        {
+          externalId,
+          externalWorkerId: p?.externalWorkerId ?? null,
+          workerName: p?.workerName ?? null,
+          customer: cust,
+          hiringEntityId,
+          evereeTenantId: cfg.evereeTenantId,
+          workDate: p?.workDate ?? null,
+          hours: p?.hours ?? null,
+          payRate: p?.payRate ?? null,
+          amount: p?.amount ?? null,
+          status: 'submitted',
+          batchId: batchRef.id,
+          submittedByUid: request.auth.uid,
+          submittedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      if (++pending >= 450) {
+        // eslint-disable-next-line no-await-in-loop
+        await writer.commit();
+        writer = db.batch();
+        pending = 0;
+      }
+    }
+    if (pending > 0) await writer.commit();
+
     return {
       dryRun: false,
       batchId: batchRef.id,
@@ -193,5 +242,45 @@ export const submitImportTimesheetBatch = onCall(
       errors,
       totalAmount,
     };
+  },
+);
+
+/**
+ * Retract a previously-submitted import payable. Deletes it in Everee (only
+ * works before the pay run finalizes) and marks the local status doc voided so
+ * the row returns to "Ready" and can be re-submitted.
+ */
+export const voidImportTimesheetPayable = onCall(
+  { memory: '512MiB', timeoutSeconds: 60 },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
+    const { tenantId, hiringEntityId, externalId } = (request.data || {}) as {
+      tenantId?: string;
+      hiringEntityId?: string;
+      externalId?: string;
+    };
+    if (!tenantId || !hiringEntityId || !externalId) {
+      throw new HttpsError('invalid-argument', 'tenantId, hiringEntityId, and externalId are required');
+    }
+    if (!(await canManageEveree(request.auth as any, tenantId))) {
+      throw new HttpsError('permission-denied', 'Not allowed to void payables for this tenant.');
+    }
+    const cfg = await getEvereeConfigForEntity(tenantId, hiringEntityId);
+    if (!cfg?.evereeTenantId) {
+      throw new HttpsError('failed-precondition', 'Selected entity is not configured for Everee.');
+    }
+    await deletePayable(cfg, externalId);
+    await db.doc(`tenants/${tenantId}/timesheet_import_payables/${payableStatusDocId(externalId)}`).set(
+      {
+        status: 'voided',
+        voidedByUid: request.auth.uid,
+        voidedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    return { ok: true, externalId };
   },
 );
