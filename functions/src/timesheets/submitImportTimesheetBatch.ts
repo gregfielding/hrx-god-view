@@ -34,6 +34,7 @@ import { canManageEveree } from '../integrations/everee/evereeAccessGate';
 import {
   bulkCreatePayables,
   deletePayable,
+  requestPayablePayout,
   type CreatePayableInput,
 } from '../integrations/everee/evereePayables';
 import { ensureEvereeWorkLocation } from '../integrations/everee/evereeWorkLocations';
@@ -427,10 +428,31 @@ async function submit1099(args: PathArgs) {
   }
   if (pending > 0) await writer.commit();
 
+  // Creating payables alone leaves them as raw line items — they only show up
+  // as a "Needs Approval" PAYMENT after a payout request groups them. The
+  // regular payroll flow (finalizeTimesheetBatch) does this; the import path
+  // must too, or the contractor pay never surfaces in Everee. Scoped to the
+  // externalIds we just created; idempotent (Everee dedupes already-paid).
+  let payRunId: number | undefined;
+  let payoutError: string | undefined;
+  if (submitted.length > 0) {
+    try {
+      const r = await requestPayablePayout(cfg, {
+        externalIds: [...submittedSet],
+        includeWorkersOnRegularPayCycle: false,
+      });
+      payRunId = r.id || undefined;
+    } catch (e) {
+      payoutError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   return {
     dryRun: false,
     workerType,
     batchId: batchRef.id,
+    payRunId,
+    payoutError,
     submitted: submitted.length,
     failed: payables.length - submitted.length,
     errors,
