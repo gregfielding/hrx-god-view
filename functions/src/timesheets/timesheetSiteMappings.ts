@@ -71,11 +71,15 @@ export const saveTimesheetSiteMapping = onCall(
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required');
     }
-    const { tenantId, customer, site, jobOrderId } = (request.data || {}) as {
+    const { tenantId, customer, site, jobOrderId, positionJobTitle } = (request.data || {}) as {
       tenantId?: string;
       customer?: string;
       site?: string;
       jobOrderId?: string;
+      /** The specific position the recruiter picked (JOs can carry several,
+       *  each with its own pay rate + WC). Used at match time to resolve the
+       *  right one. */
+      positionJobTitle?: string;
     };
     if (!tenantId || !customer || !site || !jobOrderId) {
       throw new HttpsError(
@@ -110,6 +114,7 @@ export const saveTimesheetSiteMapping = onCall(
         site,
         normalizedSite: normalizeSite(site),
         jobOrderId,
+        positionJobTitle: typeof positionJobTitle === 'string' ? positionJobTitle : '',
         accountId,
         accountName,
         jobTitle: typeof jo.jobTitle === 'string' ? jo.jobTitle : null,

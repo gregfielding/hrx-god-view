@@ -389,12 +389,8 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
         try {
           const snap = await getDocs(collection(db, 'tenants', tenantId, coll));
           snap.forEach((d) => {
-            if (byId.has(d.id)) return;
             const jo = d.data() as Record<string, any>;
             const title = String(jo.title || '').trim();
-            const jobTitle = String(
-              jo.jobTitle || (Array.isArray(jo.gigPositions) && jo.gigPositions[0]?.jobTitle) || '',
-            ).trim();
             const type = String(
               jo.type || jo.jobOrderType || (jo.shiftType === 'open' ? 'open' : ''),
             )
@@ -412,16 +408,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
             const state = String(wa.state || jo.worksiteState || '').trim();
             const zip = String(wa.zipCode || wa.zip || jo.zipCode || jo.zip || '').trim();
             const jobOrderNumber = String(jo.jobOrderNumber ?? '').trim();
-            // Pay / WC chain mirrors the server's resolveJobOrderFields:
-            // position[0] → JO-level → gigPosition[0].
-            const positions: Array<Record<string, any>> =
-              (Array.isArray(jo.positions) && jo.positions.length
-                ? jo.positions
-                : Array.isArray(jo.gigPositions)
-                  ? jo.gigPositions
-                  : []) || [];
-            const pos = positions[0] || {};
-            const firstGig = Array.isArray(jo.gigPositions) && jo.gigPositions.length ? jo.gigPositions[0] : {};
+            const worksiteId = String(jo.worksiteId || jo.locationId || '').trim();
             const num = (...xs: any[]) => {
               for (const x of xs) {
                 const n = Number(x);
@@ -433,37 +420,52 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
               for (const x of xs) if (typeof x === 'string' && x.trim()) return x.trim();
               return null;
             };
-            const payRate = num(pos.payRate, jo.payRate);
-            const workersCompCode = str(
-              pos.workersCompCode,
-              pos.workersCompClassCode,
-              jo.workersCompCode,
-              jo.workersCompClassCode,
-              firstGig.workersCompClassCode,
-            );
-            const workersCompRate = num(pos.workersCompRate, jo.workersCompRate, firstGig.workersCompRate);
-            const primary = title || jobTitle || '(untitled job order)';
-            byId.set(d.id, {
-              id: d.id,
-              jobOrderNumber,
-              title,
-              jobTitle,
-              type,
-              accountName,
-              worksiteId: String(jo.worksiteId || jo.locationId || '').trim(),
-              worksiteName,
-              street,
-              city,
-              state,
-              zip,
-              payRate,
-              workersCompCode,
-              workersCompRate,
-              label: `${jobOrderNumber ? `#${jobOrderNumber} ` : ''}${primary}${accountName ? ` — ${accountName}` : ''}`,
-              searchText: [jobOrderNumber, title, jobTitle, type, accountName, worksiteName, city, state]
-                .filter(Boolean)
-                .join(' ')
-                .toLowerCase(),
+            // One option PER POSITION — a JO can carry several, each with its
+            // own pay rate + WC. Mirrors the server resolveJobOrderFields chain
+            // (position → JO-level → gigPosition[0]).
+            const positions: Array<Record<string, any>> =
+              (Array.isArray(jo.positions) && jo.positions.length
+                ? jo.positions
+                : Array.isArray(jo.gigPositions) && jo.gigPositions.length
+                  ? jo.gigPositions
+                  : [{}]) || [{}];
+            const firstGig = Array.isArray(jo.gigPositions) && jo.gigPositions.length ? jo.gigPositions[0] : {};
+            positions.forEach((pos) => {
+              const jobTitle = str(pos.jobTitle, jo.jobTitle, firstGig.jobTitle) || '';
+              const key = `${d.id}::${jobTitle.toLowerCase()}`;
+              if (byId.has(key)) return;
+              const payRate = num(pos.payRate, jo.payRate);
+              const workersCompCode = str(
+                pos.workersCompCode,
+                pos.workersCompClassCode,
+                jo.workersCompCode,
+                jo.workersCompClassCode,
+                firstGig.workersCompClassCode,
+              );
+              const workersCompRate = num(pos.workersCompRate, jo.workersCompRate, firstGig.workersCompRate);
+              const primary = title || jobTitle || '(untitled job order)';
+              byId.set(key, {
+                id: d.id,
+                jobOrderNumber,
+                title,
+                jobTitle,
+                type,
+                accountName,
+                worksiteId,
+                worksiteName,
+                street,
+                city,
+                state,
+                zip,
+                payRate,
+                workersCompCode,
+                workersCompRate,
+                label: `${jobOrderNumber ? `#${jobOrderNumber} ` : ''}${primary}${jobTitle && jobTitle !== title ? ` · ${jobTitle}` : ''}${accountName ? ` — ${accountName}` : ''}`,
+                searchText: [jobOrderNumber, title, jobTitle, type, accountName, worksiteName, city, state, workersCompCode]
+                  .filter(Boolean)
+                  .join(' ')
+                  .toLowerCase(),
+              });
             });
           });
         } catch {
@@ -490,10 +492,10 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     setMapError(null);
     try {
       const fn = httpsCallable<
-        { tenantId: string; customer: string; site: string; jobOrderId: string },
+        { tenantId: string; customer: string; site: string; jobOrderId: string; positionJobTitle?: string },
         { ok: true; docId: string; accountName: string | null }
       >(functions, 'saveTimesheetSiteMapping');
-      await fn({ tenantId, customer, site: mapSite, jobOrderId: mapJobOrder.id });
+      await fn({ tenantId, customer, site: mapSite, jobOrderId: mapJobOrder.id, positionJobTitle: mapJobOrder.jobTitle });
       // Apply the JO's pay rate / WC / worksite to every row with this CSV site
       // RIGHT NOW (client overrides) so the cells update immediately, regardless
       // of how the re-match resolves. The saved mapping handles future imports.
@@ -1858,6 +1860,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                   </TableSortLabel>
                 </TableCell>
                 <TableCell align="right">Hours</TableCell>
+                <TableCell>Job title</TableCell>
                 <TableCell sx={evCol}>Everee worker ID</TableCell>
                 <TableCell align="right" sx={evCol}>Pay rate</TableCell>
                 <TableCell sx={evCol}>WC code / rate</TableCell>
@@ -2035,6 +2038,18 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                   </TableCell>
                   <TableCell>{r.workDate}</TableCell>
                   <TableCell align="right">{r.hours.toFixed(2)}</TableCell>
+                  {/* Resolved position / job title — drives pay rate + WC. */}
+                  <TableCell sx={{ maxWidth: 160 }}>
+                    {match?.jobTitle ? (
+                      <Typography variant="body2" noWrap title={match.jobTitle}>
+                        {match.jobTitle}
+                      </Typography>
+                    ) : (
+                      <Typography variant="caption" color="text.secondary">
+                        {r.role || '—'}
+                      </Typography>
+                    )}
+                  </TableCell>
 
                   {/* ── Everee payload ── */}
                   <TableCell sx={{ ...evCol, maxWidth: 200 }}>
@@ -2480,7 +2495,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
               value={mapJobOrder}
               onChange={(_e, val) => setMapJobOrder(val)}
               getOptionLabel={(o) => o.label}
-              isOptionEqualToValue={(a, b) => a.id === b.id}
+              isOptionEqualToValue={(a, b) => a.id === b.id && a.jobTitle === b.jobTitle}
               filterOptions={(opts, state) => {
                 const q = state.inputValue.trim().toLowerCase();
                 if (!q) return opts;
@@ -2488,11 +2503,16 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                 return opts.filter((o) => tokens.every((t) => o.searchText.includes(t)));
               }}
               renderOption={(props, o) => {
-                const primary = o.title || o.jobTitle || '(untitled job order)';
                 const loc = [o.worksiteName, [o.city, o.state].filter(Boolean).join(', ')]
                   .filter(Boolean)
                   .join(' · ');
-                const secondary = [o.jobTitle && o.jobTitle !== o.title ? o.jobTitle : '', o.accountName, loc]
+                // Line 2: position (job title) · pay · WC — the fields that
+                // drive the row's pay/WC, so the recruiter picks the right one.
+                const pay = o.payRate != null ? `$${o.payRate.toFixed(2)}/hr` : '';
+                const wc = o.workersCompCode
+                  ? `WC ${o.workersCompCode}${o.workersCompRate != null ? ` ($${o.workersCompRate.toFixed(2)})` : ''}`
+                  : 'no WC';
+                const secondary = [o.jobTitle ? `Position: ${o.jobTitle}` : '', pay, wc, o.accountName, loc]
                   .filter(Boolean)
                   .join(' · ');
                 return (
@@ -2504,12 +2524,21 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                         </Typography>
                       )}
                       <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                        {primary}
+                        {o.title || o.jobTitle || '(untitled job order)'}
                       </Typography>
                       {o.type && (
                         <Chip
                           size="small"
                           label={o.type.charAt(0).toUpperCase() + o.type.slice(1)}
+                          sx={{ height: 18, fontSize: 11 }}
+                        />
+                      )}
+                      {!o.workersCompCode && (
+                        <Chip
+                          size="small"
+                          color="warning"
+                          variant="outlined"
+                          label="no WC"
                           sx={{ height: 18, fontSize: 11 }}
                         />
                       )}

@@ -573,7 +573,7 @@ export const importTimesheetMatchWorkers = onCall(
     };
 
     // Site → JO mapping resolution (for rows with no paired assignment).
-    const siteMapCache = new Map<string, { jobOrderId: string } | null>();
+    const siteMapCache = new Map<string, { jobOrderId: string; positionJobTitle: string } | null>();
     const resolveSiteMapping = async (
       site: string,
       role: string,
@@ -586,16 +586,20 @@ export const importTimesheetMatchWorkers = onCall(
         const docId = siteMappingDocId(c, site);
         const snap = await db.doc(`tenants/${tenantId}/timesheet_site_mappings/${docId}`).get();
         const data = snap.exists ? (snap.data() as Record<string, any>) : null;
-        mapping = data?.jobOrderId ? { jobOrderId: String(data.jobOrderId) } : null;
+        mapping = data?.jobOrderId
+          ? { jobOrderId: String(data.jobOrderId), positionJobTitle: String(data.positionJobTitle || '') }
+          : null;
         siteMapCache.set(sNorm, mapping);
       }
       if (!mapping) return null;
       const jo = await loadJobOrder(mapping.jobOrderId);
       if (!jo) return null;
       const accountId = pickStr(jo.recruiterAccountId, jo.accountId);
+      // Prefer the position the recruiter picked when they mapped (JOs can have
+      // multiple positions with different pay/WC); fall back to the CSV role.
       const { fields: f, filledWorksite, filledWc } = await backfillFromAccount(
         accountId,
-        resolveJobOrderFields(jo, role),
+        resolveJobOrderFields(jo, mapping.positionJobTitle || role),
       );
       return {
         assignmentId: null,
