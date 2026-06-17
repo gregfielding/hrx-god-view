@@ -134,7 +134,23 @@ export const searchTimesheetWorkers = onCall(
       for (const field of ['lastName', 'firstName']) {
         for (const v of probes) {
           // eslint-disable-next-line no-await-in-loop
-          add(await prefixQuery(field, v, 12));
+          add(await prefixQuery(field, v, 25));
+        }
+      }
+      // Full "First Last" query: a prefix on a COMMON first or last name gets
+      // truncated by the limit before reaching the target — e.g. >25 "Jeremy"s
+      // and >25 "Walker"s, neither slice containing "Jeremy Walker", so the
+      // token filter below drops everything. Add exact-match probes on each
+      // name part (single-field equality → no composite index, generous limit)
+      // so the intersection is captured; the token filter keeps only full hits.
+      if (tokens.length >= 2) {
+        const eqProbes = Array.from(new Set([first, last].flatMap((t) => [t, titleCase(t)])));
+        for (const field of ['firstName', 'lastName']) {
+          for (const v of eqProbes) {
+            // eslint-disable-next-line no-await-in-loop
+            const snap = await db.collection('users').where(field, '==', v).limit(150).get();
+            add(snap.docs.map((d) => ({ id: d.id, data: d.data() as Record<string, any> })));
+          }
         }
       }
     }
