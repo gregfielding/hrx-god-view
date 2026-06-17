@@ -385,25 +385,49 @@ export const submitTimesheetBatch = onCall<SubmitTimesheetBatchInput>(
       const worksiteTz = resolveWorksiteTz(workState, worksiteState);
       let shiftStartEpochSeconds: number;
       let shiftEndEpochSeconds: number;
-      try {
-        shiftStartEpochSeconds = workToEpochSeconds(workDate, scheduledStart, worksiteTz);
-        shiftEndEpochSeconds = workToEpochSeconds(workDate, scheduledEnd, worksiteTz);
-      } catch (e) {
-        await stampEntryPreflightError(
-          entryRef,
-          'bad_time_inputs',
-          e instanceof Error ? e.message : String(e),
-        );
-        preflightErrors.push({
-          entryId,
-          code: 'bad_time_inputs',
-          message: e instanceof Error ? e.message : String(e),
-        });
-        continue;
-      }
-      // If the entry crosses midnight, end < start; bump end by 24h.
-      if (shiftEndEpochSeconds <= shiftStartEpochSeconds) {
-        shiftEndEpochSeconds += 24 * 3600;
+      // Open-shift / manual hours-only entries carry a daily total
+      // (`actualHoursOverride`) with NO clock times, so `workToEpochSeconds('')`
+      // throws "bad inputs". Synthesize a minute-aligned window anchored at
+      // worksite-noon; the widen step below then sizes it to the classified
+      // hours. (Everee floors the shift window to the minute, so the synthetic
+      // window must be whole minutes — see the import path's minuteAlignedDay.)
+      const hasClockTimes = !!scheduledStart && !!scheduledEnd;
+      if (!hasClockTimes) {
+        const hrs = Number(entry.actualHoursOverride ?? entry.totalRegularHours ?? 0);
+        if (!(hrs > 0)) {
+          await stampEntryPreflightError(entryRef, 'bad_time_inputs', 'Hours-only entry has no hours to submit.');
+          preflightErrors.push({ entryId, code: 'bad_time_inputs', message: 'Hours-only entry has no hours to submit.' });
+          continue;
+        }
+        try {
+          shiftStartEpochSeconds = workToEpochSeconds(workDate, '12:00', worksiteTz);
+        } catch (e) {
+          await stampEntryPreflightError(entryRef, 'bad_time_inputs', e instanceof Error ? e.message : String(e));
+          preflightErrors.push({ entryId, code: 'bad_time_inputs', message: e instanceof Error ? e.message : String(e) });
+          continue;
+        }
+        shiftEndEpochSeconds = shiftStartEpochSeconds + Math.max(60, Math.round(hrs * 60) * 60);
+      } else {
+        try {
+          shiftStartEpochSeconds = workToEpochSeconds(workDate, scheduledStart, worksiteTz);
+          shiftEndEpochSeconds = workToEpochSeconds(workDate, scheduledEnd, worksiteTz);
+        } catch (e) {
+          await stampEntryPreflightError(
+            entryRef,
+            'bad_time_inputs',
+            e instanceof Error ? e.message : String(e),
+          );
+          preflightErrors.push({
+            entryId,
+            code: 'bad_time_inputs',
+            message: e instanceof Error ? e.message : String(e),
+          });
+          continue;
+        }
+        // If the entry crosses midnight, end < start; bump end by 24h.
+        if (shiftEndEpochSeconds <= shiftStartEpochSeconds) {
+          shiftEndEpochSeconds += 24 * 3600;
+        }
       }
 
       // **Widen the shift window to fit the actual classified hours.**

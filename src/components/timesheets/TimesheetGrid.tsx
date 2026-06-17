@@ -81,6 +81,7 @@ import NumberCell from './cells/NumberCell';
 import TimeCell from './cells/TimeCell';
 import EditWorkersCompDialog from './EditWorkersCompDialog';
 import ImportRowWorkerPicker from './ImportRowWorkerPicker';
+import ImportRowWorksitePicker from './ImportRowWorksitePicker';
 import ImportGridSubmitBar from './ImportGridSubmitBar';
 import TimesheetTotalsHeader from './TimesheetTotalsHeader';
 import {
@@ -464,10 +465,13 @@ interface CreatingState {
  * aligned no matter which kind of row is rendering.
  * ------------------------------------------------------------------------- */
 
-const WorkerSiteCell: React.FC<{ row: TimesheetGridRow; action?: React.ReactNode }> = ({
-  row,
-  action,
-}) => (
+const WorkerSiteCell: React.FC<{
+  row: TimesheetGridRow;
+  action?: React.ReactNode;
+  /** Optional inline action rendered next to the worksite line (e.g. an
+   *  import row's "set worksite" pencil). */
+  worksiteAction?: React.ReactNode;
+}> = ({ row, action, worksiteAction }) => (
   <TableCell>
     <Stack direction="row" spacing={0.25} alignItems="center">
       <Typography variant="body2" fontWeight={600}>
@@ -475,16 +479,25 @@ const WorkerSiteCell: React.FC<{ row: TimesheetGridRow; action?: React.ReactNode
       </Typography>
       {action}
     </Stack>
-    {row.assignment.worksiteDisplayName ? (
-      <Typography variant="caption" color="text.secondary">
-        {row.assignment.worksiteDisplayName}
-        {row.assignment.worksiteState ? ` · ${row.assignment.worksiteState}` : ''}
-      </Typography>
-    ) : row.assignment.worksiteState ? (
-      <Typography variant="caption" color="text.secondary">
-        {row.assignment.worksiteState}
-      </Typography>
-    ) : null}
+    <Stack direction="row" spacing={0.25} alignItems="center">
+      {row.assignment.worksiteDisplayName ? (
+        <Typography variant="caption" color="text.secondary">
+          {row.assignment.worksiteDisplayName}
+          {row.assignment.worksiteState ? ` · ${row.assignment.worksiteState}` : ''}
+        </Typography>
+      ) : row.assignment.worksiteState ? (
+        <Typography variant="caption" color="text.secondary">
+          {row.assignment.worksiteState}
+        </Typography>
+      ) : (
+        worksiteAction ? (
+          <Typography variant="caption" color="text.disabled">
+            No worksite
+          </Typography>
+        ) : null
+      )}
+      {worksiteAction}
+    </Stack>
   </TableCell>
 );
 
@@ -643,8 +656,10 @@ const ImportRow: React.FC<{
   const wcEditable = !!tenantId && !live;
   const canReassign = !!tenantId && !!hiringEntityId && !live;
   const hoursEditable = !!tenantId && !live;
+  const worksiteEditable = !!tenantId && !live;
   const [wcDialogOpen, setWcDialogOpen] = React.useState(false);
   const [pickerOpen, setPickerOpen] = React.useState(false);
+  const [worksitePickerOpen, setWorksitePickerOpen] = React.useState(false);
 
   // Edit actual hours (e.g. zero out a day already covered by an advance).
   // A server callable keeps actualHoursOverride + totalRegularHours in sync —
@@ -695,6 +710,15 @@ const ImportRow: React.FC<{
             <Tooltip title="Change / fix the matched HRX worker">
               <IconButton size="small" onClick={() => setPickerOpen(true)} sx={{ p: 0.25 }}>
                 <EditIcon sx={{ fontSize: 15 }} />
+              </IconButton>
+            </Tooltip>
+          ) : undefined
+        }
+        worksiteAction={
+          worksiteEditable ? (
+            <Tooltip title="Set the worksite (account → location). Everee validates the WC code against the worksite's state.">
+              <IconButton size="small" onClick={() => setWorksitePickerOpen(true)} sx={{ p: 0.25 }}>
+                <EditIcon sx={{ fontSize: 13 }} />
               </IconButton>
             </Tooltip>
           ) : undefined
@@ -797,6 +821,19 @@ const ImportRow: React.FC<{
           entryId={row.entry.id}
           csvWorkerName={imp?.csvWorkerName ?? null}
           currentWorkerName={row.assignment.workerDisplayName ?? null}
+        />
+      )}
+      {tenantId && (
+        <ImportRowWorksitePicker
+          open={worksitePickerOpen}
+          onClose={() => setWorksitePickerOpen(false)}
+          onSaved={() => {
+            setWorksitePickerOpen(false);
+            refreshEntry(row.entry.id);
+          }}
+          tenantId={tenantId}
+          entryId={row.entry.id}
+          currentWorksiteName={row.assignment.worksiteDisplayName ?? imp?.csvSite ?? null}
         />
       )}
     </TableRow>
