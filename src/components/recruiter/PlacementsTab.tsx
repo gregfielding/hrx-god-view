@@ -62,6 +62,7 @@ import {
   updateDoc,
   deleteDoc,
   serverTimestamp,
+  arrayUnion,
   limit,
   type QueryDocumentSnapshot,
   documentId,
@@ -2605,19 +2606,26 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   };
 
   /**
-   * Decline an applicant for THIS job order — a silent rejection (Greg,
-   * 2026-06-18). Sets their JO application(s) to `status: 'rejected'`, which
-   * drops them from the applicant pool (`isExcludedFromPlacementsApplicantPool`
-   * excludes 'rejected'). The `statusChangeReason: 'recruiter_silent_decline'`
-   * flag tells the `onApplicationStatusChanged` trigger to skip the rejection
-   * SMS — no message is sent to the worker. Distinct from the per-shift
-   * "Remove" (silent shift-drop, no status change).
+   * Decline an applicant from the SELECTED shift only (Greg, 2026-06-18).
+   * Scope: this shift, nothing else. We drop the selected shift from the
+   * worker's application (`shiftIds` / `selectedShifts` / legacy `shiftId`)
+   * so they leave THIS shift's applicant pool, and stamp a `declinedShiftIds`
+   * marker (audit of the deliberate decline). The application STATUS is left
+   * unchanged, so the worker remains an applicant on the rest of the job
+   * order, and their other shift applications / placements are untouched.
+   * Because no status field changes, `onApplicationStatusChanged` never fires
+   * — no message is sent to the worker. (Distinct from the silent "Remove"
+   * icon, which does the same shift-drop but records no decline marker.)
    */
   const handleDeclineApplicant = async (worker: Worker) => {
     if (!worker.id || !tenantId) return;
+    if (!selectedShiftId) {
+      setError('Select a shift first — Decline removes the applicant from that shift only.');
+      return;
+    }
     const name = [worker.firstName, worker.lastName].filter(Boolean).join(' ') || 'this applicant';
     const ok = window.confirm(
-      `Decline ${name} for this job?\n\nThey'll be removed from the applicant pool. No message is sent to the worker.`,
+      `Decline ${name} from this shift?\n\nThey'll be removed from THIS shift's applicants but remain an applicant for the rest of the job. No message is sent to the worker.`,
     );
     if (!ok) return;
     try {
@@ -2632,24 +2640,34 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           joIds.has(String(data.jobId || '')) ||
           joIds.has(String(data.postId || ''));
         if (!belongsToJO) continue;
-        // Don't re-decline already-terminal applications.
-        if (isExcludedFromPlacementsApplicantPool(data.status)) continue;
-        await updateDoc(doc(db, 'tenants', tenantId, 'applications', d.id), {
-          status: 'rejected',
-          // Honored by onApplicationStatusChanged → skips the rejection SMS.
-          statusChangeReason: 'recruiter_silent_decline',
-          recruiterDeclinedAt: serverTimestamp(),
+        if (!applicationMatchesShift(data, selectedShiftId)) continue;
+        const shiftIds: string[] = Array.isArray(data.shiftIds) ? data.shiftIds.map(String) : [];
+        const newShiftIds = shiftIds.filter((s) => s !== selectedShiftId);
+        const selectedShifts: any[] = Array.isArray(data.selectedShifts) ? data.selectedShifts : [];
+        const newSelectedShifts = selectedShifts.filter(
+          (s) => String(s?.shiftId ?? s) !== selectedShiftId,
+        );
+        const patch: Record<string, unknown> = {
+          shiftIds: newShiftIds,
+          selectedShifts: newSelectedShifts,
+          // Audit marker for the deliberate per-shift decline. Does NOT change
+          // `status`, so the worker stays a JO applicant and no SMS fires.
+          declinedShiftIds: arrayUnion(selectedShiftId),
           updatedAt: serverTimestamp(),
-        });
+        };
+        if (String(data.shiftId || '') === selectedShiftId) {
+          patch.shiftId = newShiftIds[0] || '';
+        }
+        await updateDoc(doc(db, 'tenants', tenantId, 'applications', d.id), patch);
         declined += 1;
       }
       if (declined === 0) {
-        setError(`No active application found for ${name} on this job.`);
+        setError(`No application found for ${name} on this shift.`);
       }
       setPoolRefreshTick((n) => n + 1);
     } catch (err) {
       console.error('handleDeclineApplicant failed:', err);
-      setError((err as Error)?.message ?? 'Failed to decline applicant');
+      setError((err as Error)?.message ?? 'Failed to decline applicant from shift');
     }
   };
 
@@ -4758,8 +4776,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                         />
                                       </span>
                                     </Tooltip>
-                                    {isApplicantPool ? (
-                                      <Tooltip title="Decline this applicant for this job (removes them from the pool — no message is sent to the worker)">
+                                    {isApplicantPool && selectedShift ? (
+                                      <Tooltip title="Decline this applicant from THIS shift only — they stay an applicant on the rest of the job, and no message is sent to the worker">
                                         <Chip
                                           size="small"
                                           label="Decline"

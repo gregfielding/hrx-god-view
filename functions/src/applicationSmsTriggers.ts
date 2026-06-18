@@ -407,10 +407,11 @@ export const onApplicationStatusChanged = onDocumentUpdated(
       const oldStatus = before.status;
       const newStatus = after.status;
 
-      // Recruiter "Decline" from the Placements Worker Pool sets status to
-      // 'rejected' but explicitly wants NO worker notification (silent
-      // rejection — see PlacementsTab.handleDeclineApplicant). Skip all
-      // notifications when that reason is stamped, same as withdrawn/deleted.
+      // General guard: any flow that stamps this reason on a status change
+      // wants it applied silently (no worker notification), same as
+      // withdrawn/deleted. (The Placements "Decline" action is now per-shift
+      // and changes no status, so it never reaches here — but this remains a
+      // reusable silent-status-change escape hatch.)
       if (after.statusChangeReason === 'recruiter_silent_decline') {
         logger.info(`Application ${applicationId} silently declined by recruiter - skipping all notifications`);
         return { success: true };
