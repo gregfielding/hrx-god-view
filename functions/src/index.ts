@@ -327,6 +327,10 @@ export { onJobOrderUpdatedSyncAutoUserGroup } from './jobOrders/onJobOrderUpdate
 // Everee and fail with 422. Idempotent; safe to re-fire.
 export { onJobOrderWriteDenormWorksiteAddress } from './jobOrders/onJobOrderWriteDenormWorksiteAddress';
 export { backfillAutoUserGroupAttachments } from './jobOrders/backfillAutoUserGroupAttachments';
+// Auto-create a standing "open shift" (placement container for ongoing crew)
+// on every new JO, and a one-time/repeatable backfill for existing JOs.
+export { onJobOrderCreatedOpenShift } from './jobOrders/onJobOrderCreatedOpenShift';
+export { backfillOpenShifts } from './jobOrders/backfillOpenShifts';
 export { backfillAutoGigJobOrderCompliance } from './jobOrders/backfillAutoGigJobOrderCompliance';
 export { backfillGigJobOrdersForNationalAccount } from './jobOrders/backfillGigJobOrdersForNationalAccount';
 export { gigJobOrderStatusCron } from './jobOrders/gigJobOrderStatusCron';
