@@ -432,6 +432,18 @@ function HomeRedirect() {
   return <Navigate to={level >= 5 ? '/dashboard' : '/profile'} replace />;
 }
 
+// `/signup` is a memorable public alias for the generic worker
+// application/signup page, which actually lives at `/c1/apply` (the `Apply`
+// page — group optional). Preserve the optional `group/:groupId` segment and
+// the query string so `?groupId=` (QR codes / labor-pool links) survive.
+// Without this, `/signup` matched no route and rendered a blank page.
+function SignupRedirect() {
+  const location = useLocation();
+  const { groupId } = useParams<{ groupId?: string }>();
+  const target = groupId ? `/c1/apply/group/${groupId}` : '/c1/apply';
+  return <Navigate to={`${target}${location.search}`} replace />;
+}
+
 function DashboardAdminRedirect() {
   const { user, securityLevel, loading } = useAuth();
 
@@ -489,6 +501,9 @@ function App() {
       <Route path="/onboarding/complete" element={<OnboardingCompleteScreen />} />
       <Route path="/c1/apply" element={<Apply />} />
       <Route path="/c1/apply/group/:groupId" element={<Apply />} />
+      {/* `/signup` alias → the generic apply/signup page at /c1/apply. */}
+      <Route path="/signup" element={<SignupRedirect />} />
+      <Route path="/signup/group/:groupId" element={<SignupRedirect />} />
       <Route path="/consent" element={<Communications />} />
       <Route path="/terms" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />
