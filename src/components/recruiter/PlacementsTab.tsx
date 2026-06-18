@@ -63,6 +63,7 @@ import {
   deleteDoc,
   serverTimestamp,
   arrayUnion,
+  arrayRemove,
   limit,
   type QueryDocumentSnapshot,
   documentId,
@@ -318,6 +319,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const [searchAllInput, setSearchAllInput] = useState('');
   const [searchAllOptions, setSearchAllOptions] = useState<SearchAllHit[]>([]);
   const [searchAllLoading, setSearchAllLoading] = useState(false);
+  /**
+   * userIds the recruiter has declined for the currently-selected shift
+   * (their application's `declinedShiftIds` includes `selectedShiftId`).
+   * Drives the pool tile's Decline ⇄ Declined toggle. Seeded from Firestore
+   * whenever the shift/pool refreshes, and updated optimistically on click.
+   */
+  const [declinedUserIdsForShift, setDeclinedUserIdsForShift] = useState<Set<string>>(new Set());
   /** Job-order-scoped application job scores (userId → jobScore); shared with assignment column tiles. */
   const [placementJobFitByUserId, setPlacementJobFitByUserId] = useState<Map<string, number>>(() => new Map());
   const [placementAppNoShowRiskByUserId, setPlacementAppNoShowRiskByUserId] = useState<
@@ -1705,6 +1713,42 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     };
   }, [selectedWorkforce, searchAllInput, tenantId]);
 
+  // Seed `declinedUserIdsForShift` for the selected shift — applications whose
+  // `declinedShiftIds` includes this shift (scoped to this JO + connected
+  // posts). Single-field array-contains (auto-indexed); JO filter client-side.
+  useEffect(() => {
+    if (!tenantId || !selectedShiftId) {
+      setDeclinedUserIdsForShift(new Set());
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const appsRef = collection(db, 'tenants', tenantId, 'applications');
+        const snap = await getDocs(
+          query(appsRef, where('declinedShiftIds', 'array-contains', selectedShiftId)),
+        );
+        const joIds = new Set<string>([jobOrderId, ...connectedJobPostIds].filter(Boolean));
+        const ids = new Set<string>();
+        snap.forEach((d) => {
+          const data = d.data() as Record<string, any>;
+          const belongsToJO =
+            joIds.has(String(data.jobOrderId || '')) ||
+            joIds.has(String(data.jobId || '')) ||
+            joIds.has(String(data.postId || ''));
+          if (belongsToJO && data.userId) ids.add(String(data.userId));
+        });
+        if (!cancelled) setDeclinedUserIdsForShift(ids);
+      } catch (err) {
+        console.error('load declinedShiftIds failed:', err);
+        if (!cancelled) setDeclinedUserIdsForShift(new Set());
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, selectedShiftId, jobOrderId, connectedJobPostIds, poolRefreshTick]);
+
   // Real-time assignment status map for the selected shift.
   useEffect(() => {
     if (!tenantId || !selectedShiftId) {
@@ -2606,33 +2650,46 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   };
 
   /**
-   * Decline an applicant from the SELECTED shift only (Greg, 2026-06-18).
-   * Scope: this shift, nothing else. We drop the selected shift from the
-   * worker's application (`shiftIds` / `selectedShifts` / legacy `shiftId`)
-   * so they leave THIS shift's applicant pool, and stamp a `declinedShiftIds`
-   * marker (audit of the deliberate decline). The application STATUS is left
-   * unchanged, so the worker remains an applicant on the rest of the job
-   * order, and their other shift applications / placements are untouched.
-   * Because no status field changes, `onApplicationStatusChanged` never fires
-   * — no message is sent to the worker. (Distinct from the silent "Remove"
-   * icon, which does the same shift-drop but records no decline marker.)
+   * Toggle the per-shift decline marker for an applicant (Greg, 2026-06-18).
+   *
+   * Scope: the SELECTED shift only. We just toggle the selected shift in/out
+   * of the application's `declinedShiftIds[]` — we do NOT touch `shiftIds`,
+   * `selectedShifts`, or `status`. So:
+   *  - the worker STAYS in the shift's applicant pool (the tile remains,
+   *    showing a "Declined" state), and stays an applicant for the rest of
+   *    the job order;
+   *  - no other shift applications or placements are affected;
+   *  - no status change → `onApplicationStatusChanged` never fires → no SMS.
+   * The recruiter can Assign them anyway (change of mind), or click again to
+   * un-decline. The worker's jobs board surfaces declined shifts as
+   * "Not Accepted" (driven by the same `declinedShiftIds`).
    */
-  const handleDeclineApplicant = async (worker: Worker) => {
+  const handleToggleDeclineApplicant = async (worker: Worker, currentlyDeclined: boolean) => {
     if (!worker.id || !tenantId) return;
     if (!selectedShiftId) {
-      setError('Select a shift first — Decline removes the applicant from that shift only.');
+      setError('Select a shift first — Decline applies to that shift only.');
       return;
     }
     const name = [worker.firstName, worker.lastName].filter(Boolean).join(' ') || 'this applicant';
-    const ok = window.confirm(
-      `Decline ${name} from this shift?\n\nThey'll be removed from THIS shift's applicants but remain an applicant for the rest of the job. No message is sent to the worker.`,
-    );
-    if (!ok) return;
+    // Optimistic flip so the chip switches instantly.
+    setDeclinedUserIdsForShift((prev) => {
+      const next = new Set(prev);
+      if (currentlyDeclined) next.delete(worker.id);
+      else next.add(worker.id);
+      return next;
+    });
+    const revert = () =>
+      setDeclinedUserIdsForShift((prev) => {
+        const next = new Set(prev);
+        if (currentlyDeclined) next.add(worker.id);
+        else next.delete(worker.id);
+        return next;
+      });
     try {
       const appsRef = collection(db, 'tenants', tenantId, 'applications');
       const snap = await getDocs(query(appsRef, where('userId', '==', worker.id)));
       const joIds = new Set<string>([jobOrderId, ...connectedJobPostIds].filter(Boolean));
-      let declined = 0;
+      let touched = 0;
       for (const d of snap.docs) {
         const data = d.data() as Record<string, any>;
         const belongsToJO =
@@ -2641,33 +2698,22 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           joIds.has(String(data.postId || ''));
         if (!belongsToJO) continue;
         if (!applicationMatchesShift(data, selectedShiftId)) continue;
-        const shiftIds: string[] = Array.isArray(data.shiftIds) ? data.shiftIds.map(String) : [];
-        const newShiftIds = shiftIds.filter((s) => s !== selectedShiftId);
-        const selectedShifts: any[] = Array.isArray(data.selectedShifts) ? data.selectedShifts : [];
-        const newSelectedShifts = selectedShifts.filter(
-          (s) => String(s?.shiftId ?? s) !== selectedShiftId,
-        );
-        const patch: Record<string, unknown> = {
-          shiftIds: newShiftIds,
-          selectedShifts: newSelectedShifts,
-          // Audit marker for the deliberate per-shift decline. Does NOT change
-          // `status`, so the worker stays a JO applicant and no SMS fires.
-          declinedShiftIds: arrayUnion(selectedShiftId),
+        await updateDoc(doc(db, 'tenants', tenantId, 'applications', d.id), {
+          declinedShiftIds: currentlyDeclined
+            ? arrayRemove(selectedShiftId)
+            : arrayUnion(selectedShiftId),
           updatedAt: serverTimestamp(),
-        };
-        if (String(data.shiftId || '') === selectedShiftId) {
-          patch.shiftId = newShiftIds[0] || '';
-        }
-        await updateDoc(doc(db, 'tenants', tenantId, 'applications', d.id), patch);
-        declined += 1;
+        });
+        touched += 1;
       }
-      if (declined === 0) {
+      if (touched === 0) {
+        revert();
         setError(`No application found for ${name} on this shift.`);
       }
-      setPoolRefreshTick((n) => n + 1);
     } catch (err) {
-      console.error('handleDeclineApplicant failed:', err);
-      setError((err as Error)?.message ?? 'Failed to decline applicant from shift');
+      revert();
+      console.error('handleToggleDeclineApplicant failed:', err);
+      setError((err as Error)?.message ?? 'Failed to update decline for shift');
     }
   };
 
@@ -4683,6 +4729,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         );
 
                         const sameDayConflicts = sameDayConflictByUserId.get(worker.id);
+                        const declinedForShift = declinedUserIdsForShift.has(worker.id);
 
                         return (
                           <Paper
@@ -4777,17 +4824,32 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                       </span>
                                     </Tooltip>
                                     {isApplicantPool && selectedShift ? (
-                                      <Tooltip title="Decline this applicant from THIS shift only — they stay an applicant on the rest of the job, and no message is sent to the worker">
+                                      <Tooltip
+                                        title={
+                                          declinedForShift
+                                            ? 'Declined for this shift — click to undo. They stay in the pool; Assign to accept them anyway.'
+                                            : 'Decline this applicant from THIS shift only — they stay in the pool and remain an applicant on the rest of the job; no message is sent'
+                                        }
+                                      >
                                         <Chip
                                           size="small"
-                                          label="Decline"
+                                          label={declinedForShift ? 'Declined' : 'Decline'}
                                           color="error"
                                           icon={<CancelIcon />}
-                                          onClick={() => handleDeclineApplicant(worker)}
+                                          onClick={() => handleToggleDeclineApplicant(worker, declinedForShift)}
                                           sx={{
                                             ...placementActionChipSx,
                                             cursor: 'pointer',
-                                            '&:hover': { opacity: 0.9 },
+                                            // Declined = solid red + white text/icon. Otherwise the
+                                            // default soft-error (light red) "Decline" affordance.
+                                            ...(declinedForShift
+                                              ? {
+                                                  backgroundColor: 'error.main',
+                                                  color: '#fff',
+                                                  '& .MuiChip-icon': { color: '#fff' },
+                                                  '&:hover': { backgroundColor: 'error.dark' },
+                                                }
+                                              : { '&:hover': { opacity: 0.9 } }),
                                           }}
                                         />
                                       </Tooltip>

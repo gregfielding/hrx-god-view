@@ -230,6 +230,9 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
     // Worker previously pulled out (worker-cancelled assignment / withdrawn
     // application) → offer "Re-apply to Shift" instead of a plain Apply.
     const isReapply = shiftStatus === 'reapply';
+    // Recruiter declined this worker from this shift (per-shift decline) →
+    // terminal "Not Accepted" state. They remain an applicant for other shifts.
+    const isDeclined = shiftStatus === 'declined';
     const isFull = shift.spotsRemaining <= 0;
 
     // Resolve the assignmentId backing this row so the confirmed-state
@@ -475,6 +478,31 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                     {t('jobs.declineShift')}
                   </Button>
                 </>
+              ) : isDeclined ? (
+                // Recruiter declined this worker from this shift → terminal,
+                // non-interactive "Not Accepted" pill. Outlined red: red text +
+                // border with a light-red fill (MUI soft-error tonal style).
+                <Button
+                  variant="outlined"
+                  disabled
+                  sx={{
+                    minWidth: 160,
+                    fontWeight: 600,
+                    color: 'error.main',
+                    borderColor: 'error.main',
+                    backgroundColor: 'rgba(211, 47, 47, 0.08)',
+                    cursor: 'default',
+                    pointerEvents: 'none',
+                    '&.Mui-disabled': {
+                      color: 'error.main',
+                      borderColor: 'error.main',
+                      backgroundColor: 'rgba(211, 47, 47, 0.08)',
+                      opacity: 1,
+                    },
+                  }}
+                >
+                  {t('jobs.applicationStatusNotAccepted')}
+                </Button>
               ) : hasApplied ? (
                 <Stack direction="column" alignItems="flex-start" spacing={0.75} sx={{ minWidth: 160 }}>
                   <Button variant="contained" disabled sx={{ minWidth: 160, backgroundColor: '#FFC700 !important', color: '#000', fontWeight: 600, '&.Mui-disabled': { backgroundColor: '#FFC700 !important', color: '#000', opacity: 1 }, cursor: 'default', pointerEvents: 'none' }}>

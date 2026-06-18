@@ -809,8 +809,12 @@ const JobPostingDetail: React.FC = () => {
         // higher state never gets clobbered by a lower one regardless of
         // doc-iteration order. 'reapply' (worker-cancelled / withdrawn,
         // re-appliable) ranks above "nothing" but below a fresh submit.
+        // 'declined' (recruiter declined the worker from this shift) ranks
+        // above submitted/reapply — a deliberate negative decision outranks a
+        // pending application — but below a real active assignment
+        // (accepted/confirmed), which should never co-occur but wins if it does.
         const statusRank = (s: string | undefined): number =>
-          s === 'confirmed' ? 4 : s === 'accepted' ? 3 : s === 'submitted' ? 2 : s === 'reapply' ? 1 : 0;
+          s === 'confirmed' ? 5 : s === 'accepted' ? 4 : s === 'declined' ? 3 : s === 'submitted' ? 2 : s === 'reapply' ? 1 : 0;
 
         const multiDayShiftIds = new Set(
           dynamicShifts
@@ -870,6 +874,36 @@ const JobPostingDetail: React.FC = () => {
             appliedKeys.forEach((key) => {
               if (statusRank('submitted') > statusRank(statuses[key])) {
                 statuses[key] = 'submitted';
+              }
+            });
+          });
+        });
+
+        // RECRUITER-DECLINED OVERLAY (Greg, 2026-06-18).
+        //
+        // When a recruiter declines an applicant from a specific shift
+        // (PlacementsTab.handleDeclineApplicant), that shiftId is stripped
+        // from the application's shiftIds[] and pushed onto declinedShiftIds[]
+        // — the application status is left unchanged so the worker stays an
+        // applicant for the rest of the JO. Surface those shifts as a terminal
+        // "Not Accepted" state. Read declinedShiftIds directly (the shift is
+        // no longer in shiftIds, so the application phase above won't see it).
+        // Shift-level key → multi-day day-rows inherit it via ShiftSelector's
+        // shift-level fallback.
+        const seenDeclineDocs = new Set<string>();
+        snapshots.forEach((snapshot) => {
+          snapshot.forEach((doc) => {
+            if (seenDeclineDocs.has(doc.id)) return;
+            seenDeclineDocs.add(doc.id);
+            const data = doc.data();
+            const appStatus = (data.status || '').toLowerCase();
+            if (appStatus === 'deleted' || appStatus === 'cancelled') return;
+            const declinedIds = Array.isArray(data.declinedShiftIds)
+              ? data.declinedShiftIds.map((x: unknown) => String(x))
+              : [];
+            declinedIds.forEach((sId: string) => {
+              if (statusRank('declined') > statusRank(statuses[sId])) {
+                statuses[sId] = 'declined';
               }
             });
           });
