@@ -2383,6 +2383,53 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     return options;
   }
 
+  /**
+   * Clear any per-shift decline markers for the given workers on a shift —
+   * called after a successful assign so that accepting a worker fully
+   * undoes a prior Decline (Greg, 2026-06-18). Removes the shiftId from each
+   * worker's application `declinedShiftIds[]` (so the worker's jobs board no
+   * longer shows "Not Accepted") and drops them from the local declined set.
+   * Best-effort: assignment already succeeded, so failures here only leave a
+   * stale marker (harmless — assignment outranks declined everywhere).
+   */
+  const clearDeclineMarkersForShift = async (workerIds: string[], shiftId: string) => {
+    if (!tenantId || !shiftId || workerIds.length === 0) return;
+    const joIds = new Set<string>([jobOrderId, ...connectedJobPostIds].filter(Boolean));
+    await Promise.all(
+      workerIds.map(async (uid) => {
+        try {
+          const snap = await getDocs(
+            query(collection(db, 'tenants', tenantId, 'applications'), where('userId', '==', uid)),
+          );
+          for (const d of snap.docs) {
+            const data = d.data() as Record<string, any>;
+            const belongsToJO =
+              joIds.has(String(data.jobOrderId || '')) ||
+              joIds.has(String(data.jobId || '')) ||
+              joIds.has(String(data.postId || ''));
+            if (!belongsToJO) continue;
+            const declined: string[] = Array.isArray(data.declinedShiftIds)
+              ? data.declinedShiftIds.map((x: unknown) => String(x))
+              : [];
+            if (!declined.includes(shiftId)) continue;
+            await updateDoc(doc(db, 'tenants', tenantId, 'applications', d.id), {
+              declinedShiftIds: arrayRemove(shiftId),
+              updatedAt: serverTimestamp(),
+            });
+          }
+        } catch (e) {
+          console.warn('clearDeclineMarkersForShift failed for', uid, e);
+        }
+      }),
+    );
+    setDeclinedUserIdsForShift((prev) => {
+      if (!workerIds.some((u) => prev.has(u))) return prev;
+      const next = new Set(prev);
+      workerIds.forEach((u) => next.delete(u));
+      return next;
+    });
+  };
+
   const assignWorkersToShift = async (
     workerIds: string[],
     dayOverride?: string,
@@ -2561,6 +2608,16 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           );
         }
       });
+
+      // Assigning a worker fully undoes a prior Decline for this shift —
+      // clear the per-shift decline marker so the worker no longer sees
+      // "Not Accepted" and they don't re-appear as Declined if later unplaced.
+      const createdUserIds = created
+        .map((c: { userId: string }) => c?.userId)
+        .filter(Boolean) as string[];
+      if (createdUserIds.length > 0 && selectedShift?.id) {
+        clearDeclineMarkersForShift(createdUserIds, selectedShift.id).catch(() => {});
+      }
 
       // Return so callers (handleConfirmPlacement, bulk hire) can tell
       // whether their specific worker actually got hired. Without this,
