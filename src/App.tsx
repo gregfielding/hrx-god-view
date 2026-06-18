@@ -1435,6 +1435,14 @@ function App() {
         />
         <Route path="assignments" element={<WorkerAssignments />} />
       </Route>
+
+      {/* Catch-all: any unmatched URL (typos, stale links) previously
+          rendered a blank page since no route matched. Redirect to `/`,
+          which routes by auth — HomeRedirect sends signed-in users to their
+          home (admin → /dashboard, worker → /profile) and unauthenticated
+          users to /login. React Router ranks `*` lowest, so this never
+          shadows a real route. */}
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 
