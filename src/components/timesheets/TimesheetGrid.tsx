@@ -486,30 +486,47 @@ const WorkerSiteCell: React.FC<{
   worksiteAction?: React.ReactNode;
 }> = ({ row, action, worksiteAction }) => (
   <TableCell>
-    <Stack direction="row" spacing={0.25} alignItems="center">
-      <Typography variant="body2" fontWeight={600}>
-        {row.assignment.workerDisplayName ?? row.assignment.candidateId}
-      </Typography>
-      {(() => {
-        const uid = (row.assignment.workerId || row.assignment.candidateId || '').trim();
-        return uid ? (
-          <Tooltip title="Open worker record in a new tab">
-            <IconButton
-              size="small"
-              component="a"
+    {(() => {
+      const uid = (row.assignment.workerId || row.assignment.candidateId || '').trim();
+      const name = row.assignment.workerDisplayName ?? row.assignment.candidateId;
+      return (
+        <Stack direction="row" spacing={0.25} alignItems="center">
+          {uid ? (
+            <Link
               href={`/users/${uid}`}
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              sx={{ p: 0.25 }}
+              underline="hover"
+              variant="body2"
+              sx={{ fontWeight: 600 }}
             >
-              <OpenInNewIcon sx={{ fontSize: 14 }} color="action" />
-            </IconButton>
-          </Tooltip>
-        ) : null;
-      })()}
-      {action}
-    </Stack>
+              {name}
+            </Link>
+          ) : (
+            <Typography variant="body2" fontWeight={600}>
+              {name}
+            </Typography>
+          )}
+          {uid ? (
+            <Tooltip title="Open worker record in a new tab">
+              <IconButton
+                size="small"
+                component="a"
+                href={`/users/${uid}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                sx={{ p: 0.25 }}
+              >
+                <OpenInNewIcon sx={{ fontSize: 14 }} color="action" />
+              </IconButton>
+            </Tooltip>
+          ) : null}
+          {action}
+        </Stack>
+      );
+    })()}
     <Stack direction="row" spacing={0.25} alignItems="center">
       {row.assignment.worksiteDisplayName ? (
         <Typography variant="caption" color="text.secondary">
