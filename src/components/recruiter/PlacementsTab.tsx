@@ -2604,6 +2604,55 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   };
 
+  /**
+   * Decline an applicant for THIS job order — a silent rejection (Greg,
+   * 2026-06-18). Sets their JO application(s) to `status: 'rejected'`, which
+   * drops them from the applicant pool (`isExcludedFromPlacementsApplicantPool`
+   * excludes 'rejected'). The `statusChangeReason: 'recruiter_silent_decline'`
+   * flag tells the `onApplicationStatusChanged` trigger to skip the rejection
+   * SMS — no message is sent to the worker. Distinct from the per-shift
+   * "Remove" (silent shift-drop, no status change).
+   */
+  const handleDeclineApplicant = async (worker: Worker) => {
+    if (!worker.id || !tenantId) return;
+    const name = [worker.firstName, worker.lastName].filter(Boolean).join(' ') || 'this applicant';
+    const ok = window.confirm(
+      `Decline ${name} for this job?\n\nThey'll be removed from the applicant pool. No message is sent to the worker.`,
+    );
+    if (!ok) return;
+    try {
+      const appsRef = collection(db, 'tenants', tenantId, 'applications');
+      const snap = await getDocs(query(appsRef, where('userId', '==', worker.id)));
+      const joIds = new Set<string>([jobOrderId, ...connectedJobPostIds].filter(Boolean));
+      let declined = 0;
+      for (const d of snap.docs) {
+        const data = d.data() as Record<string, any>;
+        const belongsToJO =
+          joIds.has(String(data.jobOrderId || '')) ||
+          joIds.has(String(data.jobId || '')) ||
+          joIds.has(String(data.postId || ''));
+        if (!belongsToJO) continue;
+        // Don't re-decline already-terminal applications.
+        if (isExcludedFromPlacementsApplicantPool(data.status)) continue;
+        await updateDoc(doc(db, 'tenants', tenantId, 'applications', d.id), {
+          status: 'rejected',
+          // Honored by onApplicationStatusChanged → skips the rejection SMS.
+          statusChangeReason: 'recruiter_silent_decline',
+          recruiterDeclinedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        declined += 1;
+      }
+      if (declined === 0) {
+        setError(`No active application found for ${name} on this job.`);
+      }
+      setPoolRefreshTick((n) => n + 1);
+    } catch (err) {
+      console.error('handleDeclineApplicant failed:', err);
+      setError((err as Error)?.message ?? 'Failed to decline applicant');
+    }
+  };
+
   // Handle offering position: create Assignment (sends accept/decline message). Pass selected day so
   // assignment is for that day only when a day is selected; for "All days" we send all dates.
   const handleConfirmPlacement = async (worker: Worker) => {
@@ -2940,6 +2989,16 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     selectedWorkforce === 'shift_applicants' ||
     selectedWorkforce === 'selected_day_applicants' ||
     selectedWorkforce === 'shift_candidates';
+
+  // Any applicant/candidate pool (each card maps to an application for this
+  // JO) — used to gate the "Decline" action, which rejects the application
+  // at the JO level. Group / search_all pools have no application to reject.
+  const isApplicantPool =
+    isShiftApplicantPool ||
+    selectedWorkforce === 'applicants' ||
+    selectedWorkforce === 'candidates' ||
+    selectedWorkforce === 'all_applicants' ||
+    selectedWorkforce === 'all_candidates';
 
   /**
    * Phase 2: shifts that should appear as cards in the Assignments
@@ -4625,6 +4684,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                           >
                             <PlacementWorkerTileMainColumn
                                 worker={worker}
+                                actionsOwnRow
                                 jobOrder={jobOrder}
                                 hiringEntityName={hiringEntityName}
                                 entityEmploymentByUserId={entityEmploymentByUserId}
@@ -4698,6 +4758,22 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                         />
                                       </span>
                                     </Tooltip>
+                                    {isApplicantPool ? (
+                                      <Tooltip title="Decline this applicant for this job (removes them from the pool — no message is sent to the worker)">
+                                        <Chip
+                                          size="small"
+                                          label="Decline"
+                                          color="error"
+                                          icon={<CancelIcon />}
+                                          onClick={() => handleDeclineApplicant(worker)}
+                                          sx={{
+                                            ...placementActionChipSx,
+                                            cursor: 'pointer',
+                                            '&:hover': { opacity: 0.9 },
+                                          }}
+                                        />
+                                      </Tooltip>
+                                    ) : null}
                                     {isShiftApplicantPool && selectedShift ? (
                                       <Tooltip title="Remove this applicant from the selected shift (silent — no message sent). Use after accepting them for another shift the same day.">
                                         <IconButton

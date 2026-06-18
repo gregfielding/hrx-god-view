@@ -456,6 +456,8 @@ export function ShiftAssignmentCard({
             </Box>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flex: '0 0 auto', ml: 'auto' }}>
+            {/* "End open shift" button hidden per Greg (2026-06-18). Kept here
+                (and the handler + dialog in PlacementsTab) for quick re-enable.
             {(selectedShift as any)?.shiftType === 'open' && onEndOpenShift && (
               <Tooltip title="End this open shift — stamps an end date on the shift and every active crew assignment (keeps past timecards)">
                 <Button
@@ -469,6 +471,7 @@ export function ShiftAssignmentCard({
                 </Button>
               </Tooltip>
             )}
+            */}
             <Tooltip title="Export confirmed staff as CSV">
               <span>
                 <IconButton

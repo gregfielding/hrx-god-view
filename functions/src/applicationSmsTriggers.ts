@@ -407,6 +407,15 @@ export const onApplicationStatusChanged = onDocumentUpdated(
       const oldStatus = before.status;
       const newStatus = after.status;
 
+      // Recruiter "Decline" from the Placements Worker Pool sets status to
+      // 'rejected' but explicitly wants NO worker notification (silent
+      // rejection — see PlacementsTab.handleDeclineApplicant). Skip all
+      // notifications when that reason is stamped, same as withdrawn/deleted.
+      if (after.statusChangeReason === 'recruiter_silent_decline') {
+        logger.info(`Application ${applicationId} silently declined by recruiter - skipping all notifications`);
+        return { success: true };
+      }
+
       if (
         isSubmittedApplicationStatus(newStatus) &&
         !isSubmittedApplicationStatus(oldStatus) &&

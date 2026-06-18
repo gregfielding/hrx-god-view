@@ -1011,6 +1011,7 @@ export function PlacementWorkerTileMainColumn({
   onJobReadinessItemClick,
   headerLeading,
   actions,
+  actionsOwnRow,
   actionsSubline,
 }: {
   worker: Worker;
@@ -1048,6 +1049,13 @@ export function PlacementWorkerTileMainColumn({
   headerLeading?: React.ReactNode;
   /** Optional action buttons/chips appended to the bottom chips row (left-to-right). */
   actions?: React.ReactNode;
+  /**
+   * When true, render `actions` on their OWN row below the chips (justified
+   * right) instead of inline on the chips row. Used by the Worker Pool tiles
+   * where the action set (Decline + Assign + remove) is wide enough to crowd
+   * the readiness chips. Default (false) keeps the inline `ml:auto` layout.
+   */
+  actionsOwnRow?: boolean;
   /** Optional sub-line rendered below the bottom chips/actions row (e.g. confirmed-on date). */
   actionsSubline?: React.ReactNode;
 }) {
@@ -1251,10 +1259,23 @@ export function PlacementWorkerTileMainColumn({
           </Tooltip>
         )}
         {row4End}
-        {actions ? (
+        {actions && !actionsOwnRow ? (
           <Box sx={{ ml: 'auto', display: 'flex', alignItems: 'center', gap: 0.5 }}>{actions}</Box>
         ) : null}
       </Box>
+      {actions && actionsOwnRow ? (
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            alignItems: 'center',
+            gap: 0.5,
+            mt: 0.5,
+          }}
+        >
+          {actions}
+        </Box>
+      ) : null}
       {actionsSubline}
     </Box>
   );
