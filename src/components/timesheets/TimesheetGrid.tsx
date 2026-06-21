@@ -96,6 +96,7 @@ import EditWorkersCompDialog from './EditWorkersCompDialog';
 import ImportRowWorkerPicker from './ImportRowWorkerPicker';
 import ImportRowWorksitePicker from './ImportRowWorksitePicker';
 import ImportGridSubmitBar from './ImportGridSubmitBar';
+import ImportRecheckBar from './ImportRecheckBar';
 import TimesheetTotalsHeader from './TimesheetTotalsHeader';
 import {
   type TimesheetGridRow,
@@ -1545,6 +1546,15 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
           tenantId={tenantId}
           hiringEntityId={importHiringEntityId}
           onSubmitted={refresh}
+        />
+
+        {/* Re-check stale "needs onboarding" blocks — shows when matched
+            import rows are blocked on Everee linkage. */}
+        <ImportRecheckBar
+          rows={rows}
+          tenantId={tenantId}
+          hiringEntityId={importHiringEntityId}
+          onRechecked={refresh}
         />
 
         {autoCreating ? (
