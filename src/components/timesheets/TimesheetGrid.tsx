@@ -63,6 +63,7 @@ import {
   DeleteOutline as DeleteIcon,
   Edit as EditIcon,
   OpenInNew as OpenInNewIcon,
+  Refresh as RefreshIcon,
   TableChart as TableChartIcon,
 } from '@mui/icons-material';
 import { FirebaseError } from 'firebase/app';
@@ -773,6 +774,28 @@ const ImportRow: React.FC<{
     },
     [tenantId, row.entry.id, refreshEntry],
   );
+
+  // Re-check this single row's Everee linkage — clears a stale "needs
+  // onboarding" block once the worker has actually onboarded (he may have
+  // finished after the row was imported). Reuses the same callable the bulk
+  // "Re-check blocked" bar uses, scoped to this one entry.
+  const [rechecking, setRechecking] = React.useState(false);
+  const recheckRow = React.useCallback(async () => {
+    if (!tenantId || !hiringEntityId) return;
+    setRechecking(true);
+    try {
+      const fn = httpsCallable<
+        { tenantId: string; hiringEntityId: string; entryIds: string[] },
+        { cleared: number; stillBlocked: number }
+      >(functions, 'recheckImportTimesheetBlocks', { timeout: 120000 });
+      await fn({ tenantId, hiringEntityId, entryIds: [row.entry.id] });
+      await refreshEntry(row.entry.id);
+    } catch (e) {
+      console.error('recheck row failed:', e);
+    } finally {
+      setRechecking(false);
+    }
+  }, [tenantId, hiringEntityId, row.entry.id, refreshEntry]);
   const wcCellSx = {
     fontVariantNumeric: 'tabular-nums' as const,
     cursor: wcEditable ? 'pointer' : 'default',
@@ -784,13 +807,33 @@ const ImportRow: React.FC<{
       <WorkerSiteCell
         row={row}
         action={
-          canReassign ? (
-            <Tooltip title="Change / fix the matched HRX worker">
-              <IconButton size="small" onClick={() => setPickerOpen(true)} sx={{ p: 0.25 }}>
-                <EditIcon sx={{ fontSize: 15 }} />
-              </IconButton>
-            </Tooltip>
-          ) : undefined
+          <>
+            {canReassign ? (
+              <Tooltip title="Change / fix the matched HRX worker">
+                <IconButton size="small" onClick={() => setPickerOpen(true)} sx={{ p: 0.25 }}>
+                  <EditIcon sx={{ fontSize: 15 }} />
+                </IconButton>
+              </Tooltip>
+            ) : null}
+            {blocked && row.entry.workerId && hiringEntityId && !live ? (
+              <Tooltip title="Re-check Everee linkage — use after the worker finishes onboarding to clear the block">
+                <span>
+                  <IconButton
+                    size="small"
+                    onClick={recheckRow}
+                    disabled={rechecking}
+                    sx={{ p: 0.25 }}
+                  >
+                    {rechecking ? (
+                      <CircularProgress size={14} />
+                    ) : (
+                      <RefreshIcon sx={{ fontSize: 15 }} />
+                    )}
+                  </IconButton>
+                </span>
+              </Tooltip>
+            ) : null}
+          </>
         }
         worksiteAction={
           worksiteEditable ? (
