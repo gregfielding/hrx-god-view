@@ -70,9 +70,20 @@ interface SubmitRow {
 }
 
 /** A per-day pay-stub line label. Each imported row is one day, so this keeps
- *  the stub itemized by date rather than a single weekly lump. */
-function dayLabel(base: string, eventLabel: string | null | undefined, workDate: string): string {
-  return [base, String(eventLabel || '').trim() || null, workDate]
+ *  the stub itemized by date rather than a single weekly lump. When `hours` is
+ *  given (contractor payables, whose amount is a lump with no native hours
+ *  breakdown on the Everee stub), it's appended as "… — 6.5 hrs" so the worker
+ *  sees the hours behind each day's pay. */
+function dayLabel(
+  base: string,
+  eventLabel: string | null | undefined,
+  workDate: string,
+  hours?: number | null,
+): string {
+  const hrs = Number(hours);
+  const hrsLabel =
+    Number.isFinite(hrs) && hrs > 0 ? `${Math.round(hrs * 100) / 100} hrs` : null;
+  return [base, String(eventLabel || '').trim() || null, workDate, hrsLabel]
     .filter(Boolean)
     .join(' — ')
     .slice(0, 120);
@@ -291,7 +302,7 @@ async function submit1099(args: PathArgs) {
     payables.push({
       externalId,
       externalWorkerId: userId,
-      label: dayLabel('Contractor pay', row.eventLabel, workDate),
+      label: dayLabel('Contractor pay', row.eventLabel, workDate, hours),
       type: 'contractor',
       payCode: 'CONTRACTOR',
       timestamp: payTimestamp,
