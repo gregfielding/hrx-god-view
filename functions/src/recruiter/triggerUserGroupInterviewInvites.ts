@@ -22,6 +22,7 @@ import {
   workerInterviewInviteLang,
 } from './userGroupInterviewInviteValidation';
 import { userInInterviewReinviteCooldown } from '../workerAiPrescreen/interviewInviteCooldown';
+import { scheduleInterviewChaseFields, newCadenceStartUserFields } from '../workerAiPrescreen/interviewCadence';
 import { scanInterviewsSubcollectionForWorkerAiPrescreen } from '../workerAiPrescreen/hasWorkerAiPrescreenDenormalized';
 
 if (!admin.apps.length) {
@@ -40,18 +41,6 @@ function groupUserDedupeKey(groupId: string, uid: string): string {
   return `interview_invite__group__${groupId}user${uid}`;
 }
 
-const CHASE_1_MS = 4 * 60 * 60 * 1000;
-const CHASE_2_MS = 24 * 60 * 60 * 1000;
-
-function scheduleInterviewChaseFields(sentAt: admin.firestore.Timestamp): Record<string, unknown> {
-  const t = sentAt.toMillis();
-  return {
-    workerAiPrescreenChase1Pending: true,
-    workerAiPrescreenChase1DueAt: admin.firestore.Timestamp.fromMillis(t + CHASE_1_MS),
-    workerAiPrescreenChase2Pending: true,
-    workerAiPrescreenChase2DueAt: admin.firestore.Timestamp.fromMillis(t + CHASE_2_MS),
-  };
-}
 
 function maxTenantSecurityLevel(userData: Record<string, unknown>, tenantId: string): number {
   const top = Number.parseInt(String(userData.securityLevel ?? '0'), 10);
@@ -302,6 +291,8 @@ export const triggerUserGroupInterviewInvites = onCall(
           interviewStatus: 'invited',
           interviewInviteSentAt: sentAt,
           lastInterviewInvitedAt: sentAt,
+          // Anchor the 5-day cadence hard stop (cold invite, cooldown-gated).
+          ...newCadenceStartUserFields(sentAt),
           interviewSource: 'user_group_backfill',
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },

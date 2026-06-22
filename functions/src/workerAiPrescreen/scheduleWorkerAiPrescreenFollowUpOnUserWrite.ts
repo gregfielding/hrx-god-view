@@ -11,6 +11,7 @@ import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { normalizeApplicationStatus } from '../utils/applicationStatusNormalize';
 import { hasAiPrescreenEligibilityFalseToTrueTransition } from './evaluateAiPrescreenEligibility';
 import { resolveHiringInterviewPolicyForApplication } from './aiHiringPolicyResolution';
+import { interviewCadencePastHardStop } from './interviewCadence';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -109,6 +110,13 @@ export const scheduleWorkerAiPrescreenFollowUpOnUserWrite = onDocumentWritten(
     const afterData = afterSnap.data() as Record<string, unknown>;
 
     if (!hasAiPrescreenEligibilityFalseToTrueTransition(beforeData, afterData)) {
+      return;
+    }
+
+    // 5-day cadence hard stop: don't re-arm a follow-up wave for someone whose
+    // interview cadence already started more than 5 days ago. A genuine
+    // nudge→eligible conversion has no cadence anchor yet, so it isn't blocked.
+    if (interviewCadencePastHardStop({ userData: afterData })) {
       return;
     }
 

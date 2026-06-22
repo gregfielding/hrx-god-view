@@ -18,6 +18,12 @@ import { buildWorkerAiPrescreenInviteUrl } from '../utils/workerUrls';
 import { normalizeApplicationStatus } from '../utils/applicationStatusNormalize';
 import { resolveHiringInterviewPolicyForApplication } from './aiHiringPolicyResolution';
 import { touchLastInterviewInvitedAt } from './interviewInviteCooldown';
+import {
+  scheduleInterviewChaseFields,
+  interviewCadencePastHardStop,
+  newCadenceStartUserFields,
+  shouldStampNewCadenceStart,
+} from './interviewCadence';
 import { userHasWorkerAiPrescreenWithFallback } from './hasWorkerAiPrescreenDenormalized';
 
 if (!admin.apps.length) {
@@ -27,20 +33,6 @@ const db = admin.firestore();
 
 const BATCH_LIMIT = 75;
 const DEFERRAL_MS = 30 * 60 * 1000;
-
-/** After an interview-invite SMS (`eligible_invite`), remind if they have not submitted the prescreen. */
-const CHASE_1_MS = 4 * 60 * 60 * 1000;
-const CHASE_2_MS = 24 * 60 * 60 * 1000;
-
-function scheduleInterviewChaseFields(sentAt: admin.firestore.Timestamp): Record<string, unknown> {
-  const t = sentAt.toMillis();
-  return {
-    workerAiPrescreenChase1Pending: true,
-    workerAiPrescreenChase1DueAt: admin.firestore.Timestamp.fromMillis(t + CHASE_1_MS),
-    workerAiPrescreenChase2Pending: true,
-    workerAiPrescreenChase2DueAt: admin.firestore.Timestamp.fromMillis(t + CHASE_2_MS),
-  };
-}
 
 function phoneE164FromUser(data: Record<string, unknown>): string {
   const e = String(data.phoneE164 || '').trim();
@@ -176,6 +168,22 @@ async function processPrescreenChaseSms(args: {
 
   const userSnap = await db.doc(`users/${userId}`).get();
   const ud = (userSnap.data() || {}) as Record<string, unknown>;
+
+  // 5-day cadence hard stop — no chase more than 5 days after this person's
+  // cadence started (per-user anchor, falling back to this application's own
+  // chase-1 due date for legacy rows). Clears BOTH pending chases so the cron
+  // stops re-processing. This is the global guard the many trigger entry
+  // points were missing.
+  if (interviewCadencePastHardStop({ userData: ud, chase1DueAt: data.workerAiPrescreenChase1DueAt })) {
+    await docSnap.ref.update({
+      workerAiPrescreenChase1Pending: false,
+      workerAiPrescreenChase2Pending: false,
+      [outcomeKey]: 'skipped',
+      [errKey]: 'cadence_hard_stop',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return 'skipped';
+  }
 
   if (!userDocHasUsablePhone(ud)) {
     await docSnap.ref.update({
@@ -358,6 +366,26 @@ async function processProfileFirstPrescreenChaseUserSms(args: {
   }
 
   const ud = data;
+
+  // 5-day cadence hard stop — profile-first chases live on the user doc, so
+  // anchor on the per-user field with the profile-first chase-1 due date as
+  // the legacy fallback. Clears both pending chases when past the window.
+  if (
+    interviewCadencePastHardStop({
+      userData: ud,
+      chase1DueAt: ud.workerAiPrescreenProfileFirstChase1DueAt,
+    })
+  ) {
+    await docSnap.ref.update({
+      workerAiPrescreenProfileFirstChase1Pending: false,
+      workerAiPrescreenProfileFirstChase2Pending: false,
+      [outcomeKey]: 'skipped',
+      [errKey]: 'cadence_hard_stop',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return 'skipped';
+  }
+
   if (!userDocHasUsablePhone(ud)) {
     await docSnap.ref.update({
       [pendingKey]: false,
@@ -779,6 +807,18 @@ export const processWorkerAiPrescreenReminders = onSchedule(
 
       await touchLastInterviewInvitedAt(db, userId, sentAt);
 
+      // Anchor the cadence on the first real invite so the 5-day hard stop is
+      // measured from here (and not slid forward by later chases / re-arms).
+      if (outcome === 'eligible_invite' && shouldStampNewCadenceStart(ud)) {
+        await db.doc(`users/${userId}`).set(
+          {
+            ...newCadenceStartUserFields(sentAt),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+
       sent += 1;
     }
 
@@ -851,6 +891,26 @@ export const processWorkerAiPrescreenReminders = onSchedule(
 
       const userSnap = await db.doc(`users/${userId}`).get();
       const ud = (userSnap.data() || {}) as Record<string, unknown>;
+
+      // 5-day cadence hard stop — checked BEFORE re-arming, against the
+      // ORIGINAL cadence start (per-user anchor, or this app's existing
+      // chase-1 due date). Stops a profile-improvement follow-up from re-arming
+      // a fresh invite + chase wave once the cadence is past its window.
+      if (
+        interviewCadencePastHardStop({
+          userData: ud,
+          chase1DueAt: data.workerAiPrescreenChase1DueAt,
+        })
+      ) {
+        await docSnap.ref.update({
+          workerAiPrescreenFollowUpPending: false,
+          workerAiPrescreenFollowUpLastOutcome: 'skipped',
+          workerAiPrescreenFollowUpLastError: 'cadence_hard_stop',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        followUpSkipped += 1;
+        continue;
+      }
 
       if (!userDocHasUsablePhone(ud)) {
         await docSnap.ref.update({
@@ -970,6 +1030,10 @@ export const processWorkerAiPrescreenReminders = onSchedule(
       });
 
       await touchLastInterviewInvitedAt(db, userId, sentAt);
+
+      // No cadence anchor stamped here: a follow-up is a continuation, and the
+      // 5-day hard stop (checked above + in the chase senders, anchored at
+      // first touch / derived from chase-1 due date) already bounds it.
 
       followUpSent += 1;
     }

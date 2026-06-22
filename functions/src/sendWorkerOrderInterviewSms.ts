@@ -19,6 +19,7 @@ import {
   workerInterviewInviteLang,
 } from './recruiter/userGroupInterviewInviteValidation';
 import { recruiterProfileOrderInterviewSmsInCooldown } from './workerAiPrescreen/interviewInviteCooldown';
+import { scheduleInterviewChaseFields, newCadenceStartUserFields } from './workerAiPrescreen/interviewCadence';
 import { scanInterviewsSubcollectionForWorkerAiPrescreen } from './workerAiPrescreen/hasWorkerAiPrescreenDenormalized';
 
 function getMaxSecurityLevel(userData: Record<string, unknown>): number {
@@ -81,19 +82,6 @@ async function resolveApplicationIdForUser(
     }
   }
   return null;
-}
-
-const CHASE_1_MS = 4 * 60 * 60 * 1000;
-const CHASE_2_MS = 24 * 60 * 60 * 1000;
-
-function scheduleInterviewChaseFields(sentAt: admin.firestore.Timestamp): Record<string, unknown> {
-  const t = sentAt.toMillis();
-  return {
-    workerAiPrescreenChase1Pending: true,
-    workerAiPrescreenChase1DueAt: admin.firestore.Timestamp.fromMillis(t + CHASE_1_MS),
-    workerAiPrescreenChase2Pending: true,
-    workerAiPrescreenChase2DueAt: admin.firestore.Timestamp.fromMillis(t + CHASE_2_MS),
-  };
 }
 
 export const sendWorkerOrderInterviewSms = onCall(
@@ -187,6 +175,8 @@ export const sendWorkerOrderInterviewSms = onCall(
         interviewStatus: 'invited',
         interviewInviteSentAt: sentAt,
         lastInterviewInvitedAt: sentAt,
+        // Anchor the 5-day cadence hard stop (recruiter-ordered cold invite).
+        ...newCadenceStartUserFields(sentAt),
         interviewSource: 'recruiter_profile_order',
         recruiterOrderInterviewSmsLastSentAt: sentAt,
         recruiterOrderInterviewSmsLastSentBy: actorUid,

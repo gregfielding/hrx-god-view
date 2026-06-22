@@ -26,6 +26,12 @@ import {
   TWILIO_A2P_CAMPAIGN,
 } from '../messaging/twilioSecrets';
 import { userInInterviewReinviteCooldown } from './interviewInviteCooldown';
+import {
+  CHASE_1_MS,
+  CHASE_2_MS,
+  scheduleInterviewChaseFields,
+  newCadenceStartUserFields,
+} from './interviewCadence';
 import { userHasWorkerAiPrescreenWithFallback } from './hasWorkerAiPrescreenDenormalized';
 import {
   userIsInActiveMigration,
@@ -42,20 +48,6 @@ const REMINDER_DELAY_MS = 15 * 60 * 1000;
 const BATCH_LIMIT = 75;
 const DEFERRAL_MS = 30 * 60 * 1000;
 const MAX_PHONE_DEFERRALS = 48;
-
-/** Align with `processWorkerAiPrescreenReminders` chase scheduling when an application exists. */
-const CHASE_1_MS = 4 * 60 * 60 * 1000;
-const CHASE_2_MS = 24 * 60 * 60 * 1000;
-
-function scheduleInterviewChaseFields(sentAt: admin.firestore.Timestamp): Record<string, unknown> {
-  const t = sentAt.toMillis();
-  return {
-    workerAiPrescreenChase1Pending: true,
-    workerAiPrescreenChase1DueAt: admin.firestore.Timestamp.fromMillis(t + CHASE_1_MS),
-    workerAiPrescreenChase2Pending: true,
-    workerAiPrescreenChase2DueAt: admin.firestore.Timestamp.fromMillis(t + CHASE_2_MS),
-  };
-}
 
 /** Follow-ups for profile-first interview (no application doc) — stored on `users/{uid}`. */
 function scheduleProfileFirstInterviewChaseFields(sentAt: admin.firestore.Timestamp): Record<string, unknown> {
@@ -465,6 +457,8 @@ export const processScheduledInterviewInvites = onSchedule(
           interviewStatus: 'invited',
           interviewInviteSentAt: sentAt,
           lastInterviewInvitedAt: sentAt,
+          // Anchor the 5-day cadence hard stop (cold invite, cooldown-gated).
+          ...newCadenceStartUserFields(sentAt),
           interviewSource: 'auto_new_user',
           interviewInviteLastError: admin.firestore.FieldValue.delete(),
           interviewInviteLastOutcome: 'sent',

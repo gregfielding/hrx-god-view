@@ -17,6 +17,7 @@ import {
   TWILIO_A2P_CAMPAIGN,
 } from '../messaging/twilioSecrets';
 import { userInInterviewReinviteCooldown } from './interviewInviteCooldown';
+import { scheduleInterviewChaseFields, newCadenceStartUserFields } from './interviewCadence';
 import { userHasWorkerAiPrescreenWithFallback } from './hasWorkerAiPrescreenDenormalized';
 import { phoneE164FromUser } from '../recruiter/userGroupInterviewInviteValidation';
 import { DEFAULT_FIRESTORE_TRIGGER_MEMORY } from '../utils/functionRuntimeDefaults';
@@ -92,19 +93,6 @@ function isStaffTenantRole(data: Record<string, unknown>, tenantId: string): boo
   return ['recruiter', 'manager', 'admin'].includes(role);
 }
 
-/** Align with processWorkerAiPrescreenReminders / auto invite when application exists. */
-const CHASE_1_MS = 4 * 60 * 60 * 1000;
-const CHASE_2_MS = 24 * 60 * 60 * 1000;
-
-function scheduleInterviewChaseFields(sentAt: admin.firestore.Timestamp): Record<string, unknown> {
-  const t = sentAt.toMillis();
-  return {
-    workerAiPrescreenChase1Pending: true,
-    workerAiPrescreenChase1DueAt: admin.firestore.Timestamp.fromMillis(t + CHASE_1_MS),
-    workerAiPrescreenChase2Pending: true,
-    workerAiPrescreenChase2DueAt: admin.firestore.Timestamp.fromMillis(t + CHASE_2_MS),
-  };
-}
 
 export type SkippedReason =
   | 'already_backfill_invited'
@@ -250,6 +238,8 @@ async function sendOneRecentBackfillCandidate(args: {
       interviewStatus: 'invited',
       interviewInviteSentAt: sentAt,
       lastInterviewInvitedAt: sentAt,
+      // Anchor the 5-day cadence hard stop (cold invite, cooldown-gated).
+      ...newCadenceStartUserFields(sentAt),
       interviewSource: 'recent_user_backfill',
       interviewInviteLastOutcome: 'sent',
       interviewInviteLastError: admin.firestore.FieldValue.delete(),

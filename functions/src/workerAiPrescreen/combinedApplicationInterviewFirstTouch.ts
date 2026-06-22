@@ -8,6 +8,7 @@ import { sendLegacyApplicationStatusMessage } from '../messaging/legacyMessageHe
 import { resolveTemplateVariables, TemplateVariableContext } from '../utils/templateVariableResolver';
 import { markLifecycleEventIfFirst } from '../messaging/lifecycleDedupe';
 import { touchLastInterviewInvitedAt } from './interviewInviteCooldown';
+import { scheduleInterviewChaseFields } from './interviewCadence';
 import { evaluateAiPrescreenEligibility, userDocHasUsablePhone } from './evaluateAiPrescreenEligibility';
 import { resolveAiPrescreenTenantPolicy } from './aiPrescreenJobSlice';
 import { buildWorkerAiPrescreenInviteUrl } from '../utils/workerUrls';
@@ -15,19 +16,6 @@ import { resolveHiringInterviewPolicyForApplication } from './aiHiringPolicyReso
 import { normalizeApplicationStatus } from '../utils/applicationStatusNormalize';
 
 const db = admin.firestore();
-
-const CHASE_1_MS = 4 * 60 * 60 * 1000;
-const CHASE_2_MS = 24 * 60 * 60 * 1000;
-
-function scheduleInterviewChaseFields(sentAt: admin.firestore.Timestamp): Record<string, unknown> {
-  const t = sentAt.toMillis();
-  return {
-    workerAiPrescreenChase1Pending: true,
-    workerAiPrescreenChase1DueAt: admin.firestore.Timestamp.fromMillis(t + CHASE_1_MS),
-    workerAiPrescreenChase2Pending: true,
-    workerAiPrescreenChase2DueAt: admin.firestore.Timestamp.fromMillis(t + CHASE_2_MS),
-  };
-}
 
 async function tenantOutreachEnabled(tenantId: string): Promise<boolean> {
   try {
@@ -316,7 +304,9 @@ export async function sendCombinedApplicationInterviewFirstTouch(args: {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
-  await touchLastInterviewInvitedAt(db, userId, sentAt);
+  await touchLastInterviewInvitedAt(db, userId, sentAt, {
+    stampCadenceStart: outcome === 'eligible_invite',
+  });
 
   logger.info('combinedApplicationInterviewFirstTouch.sent', {
     tenantId,

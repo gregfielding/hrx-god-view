@@ -38,22 +38,28 @@ export function recruiterProfileOrderInterviewSmsInCooldown(userData: Record<str
 /**
  * Call after any prescreen interview SMS succeeds (invites, reminders, chases) so cooldown reflects
  * the latest outreach.
+ *
+ * Pass `{ stampCadenceStart: true }` ONLY from a cold/first invite (cooldown-gated senders) to also
+ * anchor the 5-day cadence hard stop via `interviewCadenceStartedAt`. Chases / reminders must NOT
+ * pass it — unlike `lastInterviewInvitedAt`, the cadence anchor must not advance on every text, or
+ * the 5-day stop would never trigger. (Field name mirrors
+ * `interviewCadence.INTERVIEW_CADENCE_STARTED_AT_FIELD`; inlined to avoid an import cycle.)
  */
 export async function touchLastInterviewInvitedAt(
   db: Firestore,
   userId: string,
   sentAt: admin.firestore.Timestamp,
+  opts?: { stampCadenceStart?: boolean },
 ): Promise<void> {
   const uid = String(userId || '').trim();
   if (!uid) return;
   try {
-    await db.doc(`users/${uid}`).set(
-      {
-        lastInterviewInvitedAt: sentAt,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
+    const data: Record<string, unknown> = {
+      lastInterviewInvitedAt: sentAt,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    if (opts?.stampCadenceStart) data.interviewCadenceStartedAt = sentAt;
+    await db.doc(`users/${uid}`).set(data, { merge: true });
   } catch {
     /* best-effort */
   }
