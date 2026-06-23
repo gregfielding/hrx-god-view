@@ -196,6 +196,16 @@ export interface ResolvedCascadeValues {
    * so the JO write deterministically clears any stale value.
    */
   attachmentFiles: unknown[];
+  /**
+   * Full cascaded `staffInstructions` object (registry strategy `merge_deep`),
+   * read from `orderDefaults.staffInstructions` on each account and merged
+   * child-over-parent per category (firstDay / parking / checkIn / uniform /
+   * other + attachments). Stamped onto the JO's top-level `staffInstructions`
+   * so an auto-created gig JO inherits the account's instructions exactly like
+   * a manually-activated JO does via the snapshot. `undefined` when neither
+   * account carries any.
+   */
+  staffInstructions?: Record<string, unknown>;
 }
 
 /** Worksite address shape consumed by JO doc + downstream readiness. */
@@ -322,6 +332,26 @@ export function readAccountAttachmentFiles(
   if (!att || typeof att !== 'object' || Array.isArray(att)) return [];
   const files = (att as { files?: unknown }).files;
   return Array.isArray(files) ? files : [];
+}
+
+/**
+ * Read the whole `orderDefaults.staffInstructions` object off an account doc
+ * (all categories: firstDay / parking / checkIn / uniform / other +
+ * attachments, each `{ text?, files? }`). Returns `undefined` when missing or
+ * malformed. Used to cascade the account's staff instructions onto an
+ * auto-created gig JO — the per-category attachments live here too, distinct
+ * from `readAccountAttachmentFiles` (which only pulls the `attachments`
+ * category's files for the JO's separate "Other Attachments" slot).
+ */
+export function readAccountStaffInstructions(
+  account: AccountDoc | undefined,
+): Record<string, unknown> | undefined {
+  if (!account || typeof account !== 'object') return undefined;
+  const od = (account as { orderDefaults?: unknown }).orderDefaults;
+  if (!od || typeof od !== 'object' || Array.isArray(od)) return undefined;
+  const si = (od as { staffInstructions?: unknown }).staffInstructions;
+  if (!si || typeof si !== 'object' || Array.isArray(si)) return undefined;
+  return si as Record<string, unknown>;
 }
 
 /**
@@ -667,6 +697,13 @@ export function buildGigJobOrderFromChildAccount(
     // and flat reads.
     attachments: { files: cascade.attachmentFiles },
 
+    // Staff instructions cascade (Greg, 2026-06-23) — without this the
+    // account's First Day / Parking / Check-In / Uniform / Other instructions
+    // never reached auto-created gig JOs (they showed empty). Stamped on the
+    // JO's top-level `staffInstructions` (the cascade loader's JO-level path),
+    // so the Staff Instructions tab + snapshot resolve them like a manual JO.
+    ...(cascade.staffInstructions ? { staffInstructions: cascade.staffInstructions } : {}),
+
     // Traceability — `autoCreatedFrom` is read by the cron (only
     // auto-manage these JOs) and by the backfill idempotency check.
     autoCreatedFrom: AUTO_CREATED_FROM_MARKER,
@@ -956,6 +993,16 @@ export async function resolveGigJobOrderCascade(args: {
     ? childFiles
     : readAccountAttachmentFiles(parentAccount);
 
+  // Staff instructions — registry strategy `merge_deep`, child overrides parent
+  // per category. Shallow category-level merge is sufficient here (each
+  // category — firstDay/parking/checkIn/uniform/other/attachments — is an
+  // independent block): parent provides the defaults, the child swaps in any
+  // category it overrides. `undefined` when neither side has any.
+  const parentSI = readAccountStaffInstructions(parentAccount);
+  const childSI = readAccountStaffInstructions(childAccount);
+  const staffInstructions =
+    parentSI || childSI ? { ...(parentSI ?? {}), ...(childSI ?? {}) } : undefined;
+
   return {
     hiringEntityId,
     eVerifyRequired,
@@ -968,6 +1015,7 @@ export async function resolveGigJobOrderCascade(args: {
     flatMarkupPercent,
     accountOrderDetails,
     attachmentFiles,
+    staffInstructions,
   };
 }
 
