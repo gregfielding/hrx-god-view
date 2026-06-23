@@ -1427,7 +1427,15 @@ const ACCOUNT_TAB_SLUGS = [
   'reports',
   'activity',
   'notes',
+  // Appended (not inserted) so every existing hardcoded tab index stays
+  // stable. Visual order is controlled by button order in the toolbar, where
+  // this renders right after Cascading Data. National accounts only, gated on
+  // a connected CRM company.
+  'company-locations',
 ] as const;
+
+/** Stable index for the appended Company Locations tab. */
+const COMPANY_LOCATIONS_TAB_INDEX = 18;
 
 const RecruiterAccountDetails: React.FC = () => {
   const { accountId } = useParams<{ accountId: string }>();
@@ -3190,6 +3198,14 @@ const RecruiterAccountDetails: React.FC = () => {
     if (tabValue === 5 && !isNationalAccount && account?.associations?.companyIds?.length) {
       fetchAccountLocations();
     } else if (tabValue === 6 && !isChildAccount && account?.associations?.companyIds?.length) {
+      fetchAccountLocations();
+    } else if (
+      tabValue === COMPANY_LOCATIONS_TAB_INDEX &&
+      isNationalAccount &&
+      account?.associations?.companyIds?.length
+    ) {
+      // National-account Company Locations tab — load the connected company's
+      // locations so the recruiter can view + add them here directly.
       fetchAccountLocations();
     } else if (tabValue === 5 && (isNationalAccount || !account?.associations?.companyIds?.length)) {
       setAccountLocationsList([]);
@@ -6385,6 +6401,20 @@ const RecruiterAccountDetails: React.FC = () => {
               >
                 Cascading Data
               </Button>
+              {/* Company Locations — national accounts only, once a CRM company
+                  is connected. Adding a location here writes to the connected
+                  company (firing the auto-child-account trigger), so recruiters
+                  no longer have to detour to the CRM company page. */}
+              {isNationalAccount && (account?.associations?.companyIds?.length ?? 0) > 0 && (
+                <Button
+                  variant="text"
+                  onClick={() => setAccountTab(COMPANY_LOCATIONS_TAB_INDEX)}
+                  startIcon={<LocationOnIcon fontSize="small" />}
+                  sx={tabPillSx(tabValue === COMPANY_LOCATIONS_TAB_INDEX)}
+                >
+                  Company Locations
+                </Button>
+              )}
               <Button
                 variant="text"
                 onClick={() => setAccountTab(4)}
@@ -6541,14 +6571,44 @@ const RecruiterAccountDetails: React.FC = () => {
                 placeholder={isNationalAccount ? 'Search child accounts…' : 'Search by name, code, city, or state...'}
               />
               {isNationalAccount ? (
-                <Button
-                  variant="contained"
-                  startIcon={<AddIcon />}
-                  onClick={() => setShowAddSubAccountModal(true)}
-                  sx={{ flexShrink: 0, textTransform: 'none' }}
-                >
-                  Add Sub Account
-                </Button>
+                /* Universal icon-only Add button (32×32). When Auto-Create
+                   Child Accounts is ON, the child accounts come FROM company
+                   locations — so the + opens the add-location dialog (adding a
+                   location spawns the child account via the trigger). When
+                   OFF, it opens the manual Add Sub Account modal. */
+                (() => {
+                  const autoCreate = account?.autoCreateChildAccountsForLocations === true;
+                  const hasConnectedCompany =
+                    (account?.associations?.companyIds?.length ?? 0) > 0;
+                  const useLocationFlow = autoCreate && hasConnectedCompany;
+                  return (
+                    <Tooltip
+                      title={
+                        useLocationFlow
+                          ? 'Add a company location — auto-creates a matching child account'
+                          : 'Add sub account'
+                      }
+                    >
+                      <IconButton
+                        onClick={
+                          useLocationFlow
+                            ? openAddLocationDialogForAccount
+                            : () => setShowAddSubAccountModal(true)
+                        }
+                        sx={{
+                          width: 32,
+                          height: 32,
+                          bgcolor: '#0057B8',
+                          color: '#fff',
+                          flexShrink: 0,
+                          '&:hover': { bgcolor: '#004a9f' },
+                        }}
+                      >
+                        <AddIcon sx={{ fontSize: 18 }} />
+                      </IconButton>
+                    </Tooltip>
+                  );
+                })()
               ) : null}
               {!isNationalAccount &&
               (isChildAccount ? parentCompanyIds.length : (account?.associations?.companyIds?.length ?? 0)) ? (
@@ -6571,6 +6631,33 @@ const RecruiterAccountDetails: React.FC = () => {
                   </IconButton>
                 </Tooltip>
               ) : null}
+            </Box>
+          ) : tabValue === COMPANY_LOCATIONS_TAB_INDEX ? (
+            /* Company Locations tab — search the connected company's locations
+               + a universal Add button that adds a location (which the
+               auto-create trigger turns into a child account when enabled). */
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'nowrap', minWidth: 0 }}>
+              <UniversalSearchBar
+                value={locationsSearchQuery}
+                onChange={setLocationsSearchQuery}
+                onSearch={setLocationsSearchQuery}
+                placeholder="Search by name, code, city, or state..."
+              />
+              <Tooltip title="Add company location">
+                <IconButton
+                  onClick={openAddLocationDialogForAccount}
+                  sx={{
+                    width: 32,
+                    height: 32,
+                    bgcolor: '#0057B8',
+                    color: '#fff',
+                    flexShrink: 0,
+                    '&:hover': { bgcolor: '#004a9f' },
+                  }}
+                >
+                  <AddIcon sx={{ fontSize: 18 }} />
+                </IconButton>
+              </Tooltip>
             </Box>
           ) : tabValue === 9 ? (
             /* Universal 32×240 pill with the favorites star rendered
@@ -8055,6 +8142,98 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
               </Paper>
             )}
               </>
+            )}
+          </Box>
+        </TabPanel>
+        <TabPanel value={tabValue} index={COMPANY_LOCATIONS_TAB_INDEX}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0 }}>
+            {/* Helper text reflecting the Auto-Create Child Accounts toggle so
+                the recruiter knows whether adding a location here will spawn a
+                child account. */}
+            <Alert
+              severity={account?.autoCreateChildAccountsForLocations === true ? 'success' : 'info'}
+              variant="outlined"
+              sx={{ borderRadius: 1 }}
+            >
+              {account?.autoCreateChildAccountsForLocations === true
+                ? 'Auto-Create Child Accounts is ON — adding a location here automatically creates a matching child account.'
+                : 'Auto-Create Child Accounts is OFF — locations added here will NOT create child accounts. Turn it on under Cascading Data, or pair them manually on the Child Accounts tab.'}
+            </Alert>
+            {accountLocationsLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                <CircularProgress size={32} />
+              </Box>
+            ) : !account?.associations?.companyIds?.length ? (
+              <Typography variant="body2" color="text.secondary">
+                Connect a CRM company to this account to manage its locations here.
+              </Typography>
+            ) : filteredAccountLocations.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                No locations yet. Use the + button above to add one.
+              </Typography>
+            ) : (
+              <Paper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
+                <TableContainer>
+                  <Table size="small" stickyHeader>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', bgcolor: '#FFFFFF' }}>
+                          Company
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', bgcolor: '#FFFFFF' }}>
+                          Location Name
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', bgcolor: '#FFFFFF' }}>
+                          Code
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', bgcolor: '#FFFFFF' }}>
+                          Address
+                        </TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {filteredAccountLocations.map((location) => (
+                        <TableRow
+                          key={`${location.companyId}-${location.id}`}
+                          hover
+                          onClick={() => navigate(`/accounts/${account.id}/locations/${location.id}?companyId=${location.companyId}`)}
+                          sx={{ cursor: 'pointer' }}
+                        >
+                          <TableCell>
+                            <Typography variant="body2" color="text.secondary">
+                              {location.companyName}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" fontWeight={500}>
+                              {location.name || location.nickname || 'Unnamed Location'}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            {location.code ? (
+                              <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                                {location.code}
+                              </Typography>
+                            ) : (
+                              <Typography variant="body2" color="text.disabled">—</Typography>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2">
+                              {location.address || location.street || '—'}
+                            </Typography>
+                            {(location.city || location.state || location.zipCode) && (
+                              <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                                {[location.city, location.state, location.zipCode].filter(Boolean).join(', ')}
+                              </Typography>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </Paper>
             )}
           </Box>
         </TabPanel>
