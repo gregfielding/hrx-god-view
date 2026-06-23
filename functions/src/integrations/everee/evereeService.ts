@@ -328,19 +328,38 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
           `anti-fraud engine flags the empty-home record and locks the account.`,
       );
     }
-    path = '/api/v2/onboarding/contractor';
+    /**
+     * **Embedded contractor create (2026-06-23, Greg's onboarding-lock
+     * incident — Destinee Williams).** Switched from the non-embedded
+     * `/api/v2/onboarding/contractor` to the EMBEDDED endpoint so 1099
+     * contractors onboard inside HRX with NO Everee login account (paired
+     * with `accountSetupEnabled: false` on the embedded ONBOARDING session).
+     *
+     * The old non-embedded endpoint set workers up for Everee's HOSTED,
+     * login-based onboarding — the source of the "you already have an account
+     * / locked from too many password attempts" wall. The W-2 path already
+     * uses the embedded create (`/api/v2/embedded/workers/employee`); this
+     * brings 1099 in line. Per the embedded-contractor schema the body is
+     * firstName/lastName/phoneNumber/email/startDate/homeAddress (+ optional
+     * payeeType, externalWorkerId); the rest (DOB, SSN, tax) is captured
+     * during the embedded onboarding itself. `startDate` replaces `hireDate`,
+     * and `legalWorkAddress` is dropped (W-2-only / captured in onboarding).
+     */
+    path = '/api/v2/embedded/workers/contractor';
     requestBody = {
       firstName: input.firstName,
       lastName: input.lastName,
       phoneNumber: phoneDigits,
       email: input.email,
-      hireDate: input.hireDate ?? today,
-      legalWorkAddress: { useHomeAddress: true },
+      startDate: input.hireDate ?? today,
+      payeeType: 'INDIVIDUAL',
       externalWorkerId: input.firebaseUid,
     };
     if (input.homeAddress) {
       (requestBody as Record<string, unknown>).homeAddress = input.homeAddress;
     }
+    // DOB is captured during embedded onboarding, but the parallel embedded
+    // employee endpoint accepts it at create, so pass it when we have it.
     if (input.dateOfBirth) {
       (requestBody as Record<string, unknown>).dateOfBirth = input.dateOfBirth;
     }
@@ -872,6 +891,15 @@ export async function createOnboardingSession(input: CreateOnboardingSessionInpu
     experienceVersion,
     eventHandlerName,
   };
+  // `accountSetupEnabled: false` (2026-06-23) — the ONBOARDING component no
+  // longer forces the worker to create / sign into an everee.com login. They
+  // onboard entirely inside HRX (no password, no lockout); all worker-facing
+  // Everee access (pay stubs, deposits, tax docs) already flows through these
+  // embedded sessions, minted by workerId, so no login is needed anywhere.
+  // This is the fix for the "you already have an account / locked" wall.
+  if (experienceType === 'ONBOARDING') {
+    body.experienceOptions = { accountSetupEnabled: false };
+  }
   if (input.returnUrl) body.returnUrl = input.returnUrl;
 
   const logCtx = {
