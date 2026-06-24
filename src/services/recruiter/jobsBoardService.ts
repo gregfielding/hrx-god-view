@@ -234,6 +234,15 @@ export interface JobsBoardPost {
   // Posting Details
   postTitle: string; // Title of the posting (may differ from job title)
   jobType: 'gig' | 'career'; // Type of employment
+  /**
+   * 'express_interest' = an ongoing/pipeline posting (typically backed by an
+   * open-shift job order) that has no bookable dated shifts yet. Applicants
+   * "express interest" via the generic Apply flow and are auto-added to the
+   * posting's user group; when real dated shifts are later added to the linked
+   * job order they get notified. Absent ⇒ the normal flow (gig = shift-by-shift,
+   * career = generic apply). See open-shift → jobs board feature.
+   */
+  applyMode?: 'express_interest';
   jobTitle: string; // Actual job title
   jobDescription: string; // Full job description (public posting body)
   /** Standalone posting only: extra instructions for AI / internal context (not the public body). */
@@ -356,6 +365,8 @@ export interface CreatePostData {
   // Posting Details
   postTitle: string;
   jobType: 'gig' | 'career';
+  /** See JobsBoardPost.applyMode — ongoing express-interest posting marker. */
+  applyMode?: 'express_interest';
   jobTitle?: string;
   jobDescription: string;
   jobDescriptionPrompt?: string;
@@ -799,6 +810,7 @@ export class JobsBoardService {
         // Posting Details
         postTitle: customData?.postTitle || jobOrder.jobOrderName,
         jobType: customData?.jobType || 'gig', // Default to gig if not specified
+        ...(customData?.applyMode ? { applyMode: customData.applyMode } : {}),
         jobTitle: jobTitle,
         jobDescription: customData?.jobDescription || jobOrder.jobOrderDescription || jobOrder.jobDescription || '',
         
@@ -1336,6 +1348,57 @@ export class JobsBoardService {
       console.error('Error getting posts by job order:', error);
       throw error;
     }
+  }
+
+  /**
+   * Open-shift → jobs board: ensure a single ongoing "express interest" posting
+   * exists for this job order and is published (public + active). Reuses an
+   * existing express-interest posting if present (republishes it), otherwise
+   * creates one from the job order. The auto-group seeding in
+   * createPostFromJobOrder attaches the JO's user group, so applicants land in
+   * the pipeline. Returns the posting id.
+   */
+  async ensureExpressInterestPosting(
+    tenantId: string,
+    jobOrderId: string,
+    createdBy: string,
+  ): Promise<string> {
+    const existing = await this.getPostsByJobOrder(tenantId, jobOrderId);
+    const current = existing.find(
+      (p) => (p as { applyMode?: string }).applyMode === 'express_interest',
+    );
+    if (current) {
+      await this.updatePost(tenantId, current.id, {
+        applyMode: 'express_interest',
+        visibility: 'public',
+      } as Partial<CreatePostData>);
+      await this.updatePostStatus(tenantId, current.id, 'active');
+      return current.id;
+    }
+    // createPostFromJobOrder hardcodes status:'draft'; publish after create.
+    const id = await this.createPostFromJobOrder(tenantId, jobOrderId, createdBy, {
+      applyMode: 'express_interest',
+      visibility: 'public',
+    });
+    await this.updatePostStatus(tenantId, id, 'active');
+    return id;
+  }
+
+  /**
+   * Open-shift → jobs board: unpublish (pause) the ongoing express-interest
+   * posting(s) for this job order. Idempotent; leaves other postings alone.
+   */
+  async unpublishExpressInterestPosting(tenantId: string, jobOrderId: string): Promise<void> {
+    const existing = await this.getPostsByJobOrder(tenantId, jobOrderId);
+    await Promise.all(
+      existing
+        .filter(
+          (p) =>
+            (p as { applyMode?: string }).applyMode === 'express_interest' &&
+            p.status === 'active',
+        )
+        .map((p) => this.updatePostStatus(tenantId, p.id, 'paused')),
+    );
   }
 
   /**

@@ -2462,6 +2462,12 @@ const JobPostingDetail: React.FC = () => {
 
   // Mobile sticky Apply footer: show only for non-gig jobs. Gigs are applied shift-by-shift (or day-by-day) via ShiftSelector, not a general Apply bar.
   const isGigWithShifts = posting?.jobType === 'gig' && dynamicShifts.length > 0;
+  // Express-interest (ongoing/open-shift) postings apply generically — no dated
+  // shift to pick — so they take the non-gig Apply path even though jobType is
+  // 'gig'. Applicants land in the posting's user group; real dated shifts (if
+  // added later) start showing via dynamic shifts and flip this off.
+  const isExpressInterest =
+    posting?.applyMode === 'express_interest' && !isGigWithShifts;
   const isNonGigApply = !isGigWithShifts && (statusButtonProps?.label === t('jobs.applyNow') || showApplyAgain) && !(statusButtonProps?.label === 'accepted_special' || statusButtonProps?.label === 'confirmed_special');
   const showStickyApply = Boolean(isMobile && posting && scrolledPastHeader && isNonGigApply);
 
@@ -2832,7 +2838,7 @@ const JobPostingDetail: React.FC = () => {
             the brief window before `dynamicShifts` populated, and stayed
             visible permanently for gigs that had zero shifts attached.)
           */}
-          {posting.jobType !== 'gig' &&
+          {(posting.jobType !== 'gig' || isExpressInterest) &&
             ((statusButtonProps?.label === 'accepted_special' || isAssignmentResponseMode) && statusButtonProps?.label !== 'confirmed_special' ? (
               <Typography variant="body2" sx={{ color: '#2e7d32', fontWeight: 700 }}>
                 You&apos;ve been hired to work this job.
@@ -3339,8 +3345,10 @@ const JobPostingDetail: React.FC = () => {
             </>
           ) : null}
 
-          {/* Available Shifts (Gig jobs) — compact, action-oriented */}
-          {posting.jobType === 'gig' && (
+          {/* Available Shifts (Gig jobs) — compact, action-oriented.
+              Hidden for express-interest postings: they have no bookable dated
+              shifts, so we show the generic Apply/Express-interest CTA instead. */}
+          {posting.jobType === 'gig' && !isExpressInterest && (
             <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
               <CardContent sx={{ p: 0 }}>
                 {loadingShifts ? (
@@ -3466,7 +3474,7 @@ const JobPostingDetail: React.FC = () => {
           generic-apply suppression was hiding the offer-response UI for
           Gig postings entirely. Force the sidebar visible in that mode.
         */}
-        {(posting.jobType !== 'gig' || isAssignmentResponseMode) && (
+        {(posting.jobType !== 'gig' || isExpressInterest || isAssignmentResponseMode) && (
           <Box
             sx={{
               position: 'sticky',
@@ -3687,7 +3695,9 @@ const JobPostingDetail: React.FC = () => {
                     onClick={handleApply}
                     sx={{ mt: 3, py: 1.5 }}
                   >
-                    {t('jobs.applyForJob')}
+                    {isExpressInterest
+                      ? t('jobs.expressInterest', { defaultValue: 'Express Interest' })
+                      : t('jobs.applyForJob')}
                   </Button>
                 )}
 
@@ -3716,8 +3726,9 @@ const JobPostingDetail: React.FC = () => {
           // For a gig with no shifts the sticky button would otherwise fall
           // through to `handleApply` (generic Apply). Gigs apply shift-by-shift
           // only — if there's nothing to apply to, render no sticky at all
-          // rather than offering a misleading generic Apply CTA.
-          if (posting.jobType === 'gig' && !isGigWithShifts) return null;
+          // rather than offering a misleading generic Apply CTA. Exception:
+          // express-interest (ongoing) postings DO use the generic Apply path.
+          if (posting.jobType === 'gig' && !isGigWithShifts && !isExpressInterest) return null;
           const payLabel =
             posting.showPayRate && posting.payRate != null
               ? t('jobs.hourlyRateDisplay', { amount: formatHourlyPayAmountForI18n(posting.payRate) })

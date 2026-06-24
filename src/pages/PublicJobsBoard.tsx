@@ -81,6 +81,8 @@ interface PublicJobPosting {
   postTitle: string;
   jobTitle?: string;
   jobType: 'gig' | 'career';
+  /** 'express_interest' = ongoing/open-shift posting: generic apply, no shifts. */
+  applyMode?: 'express_interest';
   jobDescription: string;
   companyName: string;
   worksiteName: string;
@@ -809,6 +811,7 @@ const PublicJobsBoard: React.FC = () => {
               postTitle: post.postTitle,
               jobTitle: post.jobTitle,
               jobType: post.jobType,
+              applyMode: (post as any).applyMode,
               jobDescription: post.jobDescription,
               companyName: post.companyName,
               worksiteName: post.worksiteName,
@@ -1046,6 +1049,7 @@ const PublicJobsBoard: React.FC = () => {
                 postTitle: post.postTitle,
                 jobTitle: post.jobTitle,
                 jobType: post.jobType,
+                applyMode: (post as any).applyMode,
                 jobDescription: post.jobDescription,
                 companyName: post.companyName,
                 worksiteName: post.worksiteName,
@@ -1986,7 +1990,11 @@ const PublicJobsBoard: React.FC = () => {
                         }}
                         sx={{ mt: 'auto', fontWeight: 700, py: 1.1 }}
                       >
-                        {isGig ? t('jobs.viewShifts') : t('jobs.viewJob')}
+                        {(job as any).applyMode === 'express_interest'
+                          ? t('jobs.expressInterest', { defaultValue: 'Express Interest' })
+                          : isGig
+                            ? t('jobs.viewShifts')
+                            : t('jobs.viewJob')}
                       </Button>
                     );
                   })()}
