@@ -1364,24 +1364,39 @@ export class JobsBoardService {
     createdBy: string,
   ): Promise<string> {
     const existing = await this.getPostsByJobOrder(tenantId, jobOrderId);
-    const current = existing.find(
-      (p) => (p as { applyMode?: string }).applyMode === 'express_interest',
-    );
-    if (current) {
-      await this.updatePost(tenantId, current.id, {
+    // Reuse a posting rather than piling up duplicate cards for one job order:
+    // prefer an existing express-interest posting, then any active posting (the
+    // per-position gig postings the Jobs Board tab auto-creates), else the most
+    // recent. Only create a brand-new posting when the JO has none.
+    const target =
+      existing.find((p) => (p as { applyMode?: string }).applyMode === 'express_interest') ??
+      existing.find((p) => p.status === 'active') ??
+      existing[0];
+    let postId: string;
+    if (target) {
+      await this.updatePost(tenantId, target.id, {
         applyMode: 'express_interest',
         visibility: 'public',
       } as Partial<CreatePostData>);
-      await this.updatePostStatus(tenantId, current.id, 'active');
-      return current.id;
+      await this.updatePostStatus(tenantId, target.id, 'active');
+      postId = target.id;
+    } else {
+      // createPostFromJobOrder hardcodes status:'draft'; publish after create.
+      postId = await this.createPostFromJobOrder(tenantId, jobOrderId, createdBy, {
+        applyMode: 'express_interest',
+        visibility: 'public',
+      });
+      await this.updatePostStatus(tenantId, postId, 'active');
     }
-    // createPostFromJobOrder hardcodes status:'draft'; publish after create.
-    const id = await this.createPostFromJobOrder(tenantId, jobOrderId, createdBy, {
-      applyMode: 'express_interest',
-      visibility: 'public',
-    });
-    await this.updatePostStatus(tenantId, id, 'active');
-    return id;
+    // An open-shift job order should expose a SINGLE public posting — pause any
+    // OTHER active postings (e.g. sibling per-position gig postings) so the
+    // board shows one clean "express interest" card, not competing dead-ends.
+    await Promise.all(
+      existing
+        .filter((p) => p.id !== postId && p.status === 'active')
+        .map((p) => this.updatePostStatus(tenantId, p.id, 'paused')),
+    );
+    return postId;
   }
 
   /**

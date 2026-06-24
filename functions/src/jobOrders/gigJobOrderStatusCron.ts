@@ -132,6 +132,14 @@ export function isShiftActiveUpcoming(
   const shiftMode =
     typeof shift.shiftMode === 'string' ? shift.shiftMode : 'single';
 
+  // Open shift = standing/rolling crew over a date range with no fixed daily
+  // times. It's "active" while ongoing (no end date) or up through its end
+  // date — its START date does NOT gate it (an ongoing open shift that began
+  // yesterday must not flip the JO to on_hold).
+  if (shift.shiftType === 'open') {
+    return !endIso || endIso >= todayIso;
+  }
+
   // Multi-day window: active if window-end >= today.
   // Single-day:       active if startIso >= today.
   // Missing dates:    drop (defensive — a gig JO can't really be

@@ -69,14 +69,36 @@ function getDateRange(startISO: string, endISO: string): string[] {
   return out;
 }
 
-/** Calendar occurrence dates (YYYY-MM-DD) for one shift doc; skips cancelled shifts. */
-export function collectGigShiftOccurrenceDates(shift: Record<string, unknown>): string[] {
+/**
+ * Calendar occurrence dates (YYYY-MM-DD) for one shift doc; skips cancelled shifts.
+ *
+ * `today` (UTC YYYY-MM-DD) is used only for OPEN shifts with no end date — a
+ * standing/rolling crew that runs indefinitely. Those count as live "today" so
+ * they keep the job order `open` instead of being read as a single past
+ * occurrence on their start date (which wrongly flipped ongoing open-shift JOs
+ * to `on_hold` the day after they started, dropping their public posting).
+ */
+export function collectGigShiftOccurrenceDates(
+  shift: Record<string, unknown>,
+  today?: string,
+): string[] {
   const st = shift.status;
   if (st === 'cancelled' || st === 'canceled') return [];
 
   const shiftMode = shift.shiftMode;
   const shiftDate = normalizeYyyyMmDd(shift.shiftDate);
   const endDate = shift.endDate != null ? normalizeYyyyMmDd(shift.endDate) : null;
+
+  // Open shift = standing-crew date range with no fixed daily times. It keeps
+  // the JO live through its close-out boundary:
+  //   - end date set → runs through the end date
+  //   - no end date  → ongoing/rolling: always live "today" (falls back to the
+  //     start date only when no `today` is supplied — best effort)
+  if (shift.shiftType === 'open') {
+    if (endDate) return [endDate];
+    if (today) return [today];
+    return shiftDate ? [shiftDate] : [];
+  }
 
   if (shiftMode === 'multi' && shiftDate && endDate && endDate >= shiftDate) {
     const ds = shift.dateSchedule as Record<string, { startTime?: string; endTime?: string }> | undefined;
@@ -134,7 +156,7 @@ export async function recomputeGigJobOrderStatusFromShifts(
   let maxDate: string | null = null;
   for (const d of shiftsSnap.docs) {
     const shift = d.data() as Record<string, unknown>;
-    for (const iso of collectGigShiftOccurrenceDates(shift)) {
+    for (const iso of collectGigShiftOccurrenceDates(shift, today)) {
       if (!maxDate || iso > maxDate) maxDate = iso;
     }
   }
