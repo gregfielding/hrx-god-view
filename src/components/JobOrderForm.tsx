@@ -1067,10 +1067,18 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         });
 
         const listForNewJobRequiredAccount = list.filter((row) => {
-          if (accountIdsThatAreParents.has(row.id)) return false;
           const raw = byId.get(row.id)?.data() as
             | { childAccountIds?: unknown; accountType?: unknown }
             | undefined;
+          // A standalone account is itself the bookable unit (it carries the
+          // CRM company + worksite locations), so it stays pickable even if it
+          // happens to carry a stray child account. The parent/childAccountIds
+          // checks below are proxies for "national parent" — they must not
+          // exclude an explicitly-standalone account, or New Job Order from
+          // that account's page can't pre-fill it (and falls through to the
+          // child's company, showing the wrong worksites).
+          if (raw?.accountType === 'standalone') return true;
+          if (accountIdsThatAreParents.has(row.id)) return false;
           const childIds = raw?.childAccountIds;
           if (Array.isArray(childIds) && childIds.length > 0) return false;
           if (raw?.accountType === 'national') return false;
