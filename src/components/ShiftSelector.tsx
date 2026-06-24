@@ -251,7 +251,15 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
 
     const dateLabel = item.type === 'day' ? item.dayLabel : null;
     const timeLabel = item.type === 'day' ? formatDateScheduleEntry(item.date, item.startTime, item.endTime) : null;
-    const shiftPayLabel = formatHourlyPayRateForDisplay(shift.payRate);
+    // Only surface a pay chip for a real, positive rate — an unset/0 rate (e.g.
+    // an open shift whose position pricing hasn't been filled in) must not show
+    // "$0.00/hr" on the public posting.
+    const payNum =
+      typeof shift.payRate === 'number' ? shift.payRate : Number(shift.payRate);
+    const shiftPayLabel =
+      Number.isFinite(payNum) && payNum > 0
+        ? formatHourlyPayRateForDisplay(shift.payRate)
+        : null;
 
     return (
       <Card
