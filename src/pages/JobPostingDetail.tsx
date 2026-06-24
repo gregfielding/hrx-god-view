@@ -3695,9 +3695,7 @@ const JobPostingDetail: React.FC = () => {
                     onClick={handleApply}
                     sx={{ mt: 3, py: 1.5 }}
                   >
-                    {isExpressInterest
-                      ? t('jobs.expressInterest', { defaultValue: 'Express Interest' })
-                      : t('jobs.applyForJob')}
+                    {t('jobs.applyForJob')}
                   </Button>
                 )}
 
