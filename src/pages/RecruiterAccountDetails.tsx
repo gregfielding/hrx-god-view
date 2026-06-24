@@ -1992,6 +1992,12 @@ const RecruiterAccountDetails: React.FC = () => {
     kind: 'success' | 'error';
     text: string;
   } | null>(null);
+  /** Cascading Data → Staff Instructions: push resolved instructions down to existing job orders. */
+  const [siToJoSyncBusy, setSiToJoSyncBusy] = useState(false);
+  const [siToJoSyncNotice, setSiToJoSyncNotice] = useState<{
+    kind: 'success' | 'error';
+    text: string;
+  } | null>(null);
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -5931,6 +5937,52 @@ const RecruiterAccountDetails: React.FC = () => {
     }
   };
 
+  /**
+   * Cascading Data → Staff Instructions: push this account's resolved staff
+   * instructions down onto existing job orders. Fills blank sections, refreshes
+   * sections still holding the cascaded value, and never clobbers a recruiter's
+   * hand-edited JO override. On a national account it also reaches every child
+   * account's job orders; on a child account it covers just that account's JOs.
+   */
+  const handleSyncStaffInstructionsToJobOrders = async () => {
+    if (!tenantId || !account?.id) return;
+    setSiToJoSyncNotice(null);
+    setSiToJoSyncBusy(true);
+    try {
+      const fn = httpsCallable(functions, 'syncStaffInstructionsToJobOrdersCallable');
+      const resp = await fn({ tenantId, accountId: account.id });
+      const data = resp.data as {
+        summary?: {
+          jobOrdersScanned?: number;
+          jobOrdersUpdated?: number;
+          jobOrdersSkippedNoCascade?: number;
+          jobOrdersSkippedUnchanged?: number;
+          jobOrdersFailed?: number;
+        };
+      };
+      const scanned = data?.summary?.jobOrdersScanned ?? 0;
+      const updated = data?.summary?.jobOrdersUpdated ?? 0;
+      const unchanged = data?.summary?.jobOrdersSkippedUnchanged ?? 0;
+      const noCascade = data?.summary?.jobOrdersSkippedNoCascade ?? 0;
+      const failed = data?.summary?.jobOrdersFailed ?? 0;
+      const text =
+        scanned === 0
+          ? 'No job orders found under this account.'
+          : `Updated ${updated} of ${scanned} job order(s). ${unchanged} already current${
+              noCascade > 0 ? `, ${noCascade} have no cascaded instructions` : ''
+            }${failed > 0 ? `, ${failed} failed` : ''}.`;
+      setSiToJoSyncNotice({ kind: 'success', text });
+    } catch (e: unknown) {
+      const msg =
+        e && typeof e === 'object' && 'message' in e && typeof (e as Error).message === 'string'
+          ? (e as Error).message
+          : 'Sync failed.';
+      setSiToJoSyncNotice({ kind: 'error', text: msg });
+    } finally {
+      setSiToJoSyncBusy(false);
+    }
+  };
+
   /** Cascading Data tab — mirrors Docs & Settings → Order Defaults → Staff Instructions (child sync uses one button at tab bottom). */
   const renderCascadingStaffInstructionsSection = () => (
     <>
@@ -6037,6 +6089,37 @@ const RecruiterAccountDetails: React.FC = () => {
           />
         </Grid>
       </Grid>
+
+      {canSyncCascadeDefaultsToChildren && tenantId && account?.id ? (
+        <Box sx={{ mt: 3, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+            New auto-created job orders inherit these instructions automatically. Use this to push
+            the latest instructions onto existing job orders
+            {isNationalAccount ? ' under this national account and all of its child accounts' : ' for this account'}.
+            Blank sections are filled and previously-synced sections are refreshed; instructions a
+            recruiter changed directly on a job order are left untouched.
+          </Typography>
+          {siToJoSyncNotice ? (
+            <Alert
+              severity={siToJoSyncNotice.kind === 'success' ? 'success' : 'error'}
+              sx={{ mb: 1.5 }}
+              onClose={() => setSiToJoSyncNotice(null)}
+            >
+              {siToJoSyncNotice.text}
+            </Alert>
+          ) : null}
+          <Button
+            variant="outlined"
+            startIcon={
+              siToJoSyncBusy ? <CircularProgress size={18} color="inherit" /> : <SyncIcon />
+            }
+            disabled={siToJoSyncBusy}
+            onClick={handleSyncStaffInstructionsToJobOrders}
+          >
+            {siToJoSyncBusy ? 'Syncing to job orders…' : 'Sync staff instructions to job orders'}
+          </Button>
+        </Box>
+      ) : null}
     </>
   );
 

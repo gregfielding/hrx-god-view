@@ -56,6 +56,30 @@ function titleCase(w: string): string {
   return w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w;
 }
 
+/** Strip diacritics so Spanish accents are ignored: "Zuñiga" → "Zuniga",
+ *  "José" → "Jose". NFD decomposes accented letters into base + combining
+ *  mark; the regex drops the combining marks. */
+function stripAccents(w: string): string {
+  return w.normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+/** Normalize for case- + accent-insensitive comparison. */
+function normalizeForMatch(w: string): string {
+  return stripAccents(w).toLowerCase();
+}
+
+/** Case + accent variants of a name token for the (case/accent-SENSITIVE)
+ *  Firestore prefix/exact probes — Firestore compares raw bytes, so we fan out
+ *  the probe across as-typed / lower / UPPER / Title forms and their
+ *  accent-stripped versions to catch names stored in any case and with or
+ *  without accents. Deduped (most collapse, e.g. an already-lowercase token). */
+function nameProbeVariants(t: string): string[] {
+  if (!t) return [];
+  const cased = [t, t.toLowerCase(), t.toUpperCase(), titleCase(t)];
+  const stripped = cased.map(stripAccents);
+  return Array.from(new Set([...cased, ...stripped].filter(Boolean)));
+}
+
 function str(v: unknown): string | null {
   return typeof v === 'string' && v.trim() ? v : null;
 }
@@ -136,13 +160,15 @@ export const searchTimesheetWorkers = onCall(
         }
       }
     } else {
-      // Name lookup — prefix-range on last name AND first name, for both the
-      // as-typed and title-cased forms (HRX stores names title-cased). Each
-      // query token is tried so "amy chap" and "chappelle" both work.
+      // Name lookup — prefix-range on last name AND first name, across case +
+      // accent variants of each token (Firestore is byte-exact, so we fan out
+      // lower/UPPER/Title + accent-stripped forms — "diana zuniga" reaches a
+      // stored "Diana Zuñiga"). Each query token is tried so "amy chap" and
+      // "chappelle" both work.
       const tokens = q.split(/\s+/).filter(Boolean);
       const last = tokens[tokens.length - 1];
       const first = tokens[0];
-      const probes = Array.from(new Set([first, last, q].flatMap((t) => [t, titleCase(t)])));
+      const probes = Array.from(new Set([first, last, q].flatMap(nameProbeVariants)));
       for (const field of ['lastName', 'firstName']) {
         for (const v of probes) {
           // eslint-disable-next-line no-await-in-loop
@@ -156,7 +182,7 @@ export const searchTimesheetWorkers = onCall(
       // name part (single-field equality → no composite index, generous limit)
       // so the intersection is captured; the token filter keeps only full hits.
       if (tokens.length >= 2) {
-        const eqProbes = Array.from(new Set([first, last].flatMap((t) => [t, titleCase(t)])));
+        const eqProbes = Array.from(new Set([first, last].flatMap(nameProbeVariants)));
         for (const field of ['firstName', 'lastName']) {
           for (const v of eqProbes) {
             // eslint-disable-next-line no-await-in-loop
@@ -167,15 +193,17 @@ export const searchTimesheetWorkers = onCall(
       }
     }
 
-    const ql = q.toLowerCase();
-    const qTokens = ql.split(/\s+/).filter(Boolean);
+    // Match case- AND accent-insensitively so "diana zuniga" keeps a fetched
+    // "Diana Zuñiga" (the accented record is reached via the un-accented first
+    // token's probe, then this filter doesn't exclude it on the ñ).
+    const qTokens = normalizeForMatch(q).split(/\s+/).filter(Boolean);
     const hits = [...found.entries()]
       .map(([id, data]) => toHit(id, data, tenantId))
       .filter((h) => {
         // For a name query, require every token to appear in the name/email so
         // a broad last-name prefix doesn't flood the list.
         if (q.includes('@') || /^\+?[\d().\-\s]+$/.test(q)) return true;
-        const hay = `${h.displayName || ''} ${h.email || ''}`.toLowerCase();
+        const hay = normalizeForMatch(`${h.displayName || ''} ${h.email || ''}`);
         return qTokens.every((t) => hay.includes(t));
       })
       // Tenant members first, then by name.
