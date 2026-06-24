@@ -1177,9 +1177,15 @@ export async function createGigJobOrderForChildAccount(args: {
         // `autoMessagingUserGroupIds` field that `runJobOrderAutoMessagingForShift`
         // already reads at `jobOrderAutoMessaging.ts:232`. arrayUnion preserves any
         // recruiter-added groups that landed via direct edit.
+        //
+        // Also seed `autoAddToUserGroups` with the same group (Greg, 2026-06-24):
+        // the auto-group was landing in Auto Messaging + the jobs board but NOT
+        // in the JO's "Auto-Add to User Groups" field, so hires from the JO
+        // weren't auto-added to its own group. arrayUnion keeps recruiter picks.
         await jobOrderRef.update({
           autoCreatedUserGroupId: groupId,
           autoMessagingUserGroupIds: FieldValue.arrayUnion(groupId),
+          autoAddToUserGroups: FieldValue.arrayUnion(groupId),
           updatedAt: FieldValue.serverTimestamp(),
           updatedBy: SYSTEM_ACTOR,
         });
