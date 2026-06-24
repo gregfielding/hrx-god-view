@@ -1362,13 +1362,21 @@ export class JobsBoardService {
     tenantId: string,
     jobOrderId: string,
     createdBy: string,
+    positionJobTitle?: string,
   ): Promise<string> {
     const existing = await this.getPostsByJobOrder(tenantId, jobOrderId);
-    // Reuse a posting rather than piling up duplicate cards for one job order:
-    // prefer an existing express-interest posting, then any active posting (the
-    // per-position gig postings the Jobs Board tab auto-creates), else the most
-    // recent. Only create a brand-new posting when the JO has none.
+    const norm = (s: unknown): string => (typeof s === 'string' ? s.trim().toLowerCase() : '');
+    const wantPos = norm(positionJobTitle);
+    // Convert the SAME posting the recruiter manages + shares (the Jobs Board
+    // tab's per-position posting that matches the open shift's default job, and
+    // whose link "Copy Jobs Board Link" copies) — not a separate JO-level doc,
+    // or the shared link points at a dead-end while the express-interest card
+    // lives somewhere the recruiter never sees. Fallbacks keep it working when
+    // there's no positionJobTitle / no matching posting yet.
     const target =
+      (wantPos
+        ? existing.find((p) => norm((p as { positionJobTitle?: string }).positionJobTitle) === wantPos)
+        : undefined) ??
       existing.find((p) => (p as { applyMode?: string }).applyMode === 'express_interest') ??
       existing.find((p) => p.status === 'active') ??
       existing[0];
@@ -1377,6 +1385,7 @@ export class JobsBoardService {
       await this.updatePost(tenantId, target.id, {
         applyMode: 'express_interest',
         visibility: 'public',
+        ...(positionJobTitle ? { positionJobTitle } : {}),
       } as Partial<CreatePostData>);
       await this.updatePostStatus(tenantId, target.id, 'active');
       postId = target.id;
@@ -1385,15 +1394,21 @@ export class JobsBoardService {
       postId = await this.createPostFromJobOrder(tenantId, jobOrderId, createdBy, {
         applyMode: 'express_interest',
         visibility: 'public',
+        ...(positionJobTitle ? { positionJobTitle, jobTitle: positionJobTitle } : {}),
       });
       await this.updatePostStatus(tenantId, postId, 'active');
     }
-    // An open-shift job order should expose a SINGLE public posting — pause any
-    // OTHER active postings (e.g. sibling per-position gig postings) so the
-    // board shows one clean "express interest" card, not competing dead-ends.
+    // Avoid duplicate express-interest cards: pause any OTHER express-interest
+    // posting (e.g. an earlier JO-level one created before this fix). Leave
+    // other positions' normal postings alone — they're managed independently.
     await Promise.all(
       existing
-        .filter((p) => p.id !== postId && p.status === 'active')
+        .filter(
+          (p) =>
+            p.id !== postId &&
+            (p as { applyMode?: string }).applyMode === 'express_interest' &&
+            p.status !== 'paused',
+        )
         .map((p) => this.updatePostStatus(tenantId, p.id, 'paused')),
     );
     return postId;

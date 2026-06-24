@@ -1139,7 +1139,12 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
     try {
       const svc = JobsBoardService.getInstance();
       if (formData.showOnJobsBoard) {
-        await svc.ensureExpressInterestPosting(tenantId, jobOrderId, user?.uid || 'unknown');
+        await svc.ensureExpressInterestPosting(
+          tenantId,
+          jobOrderId,
+          user?.uid || 'unknown',
+          formData.defaultJobTitle || undefined,
+        );
       } else {
         await svc.unpublishExpressInterestPosting(tenantId, jobOrderId);
       }
