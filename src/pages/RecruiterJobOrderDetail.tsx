@@ -2610,6 +2610,24 @@ type GigPosition = {
   requirements?: GigPositionRequirementOverrides | null;
 };
 
+/**
+ * The user-group ids a job order's postings should auto-add applicants to:
+ * the recruiter-picked `autoAddToUserGroups` plus the auto-created gig group
+ * (`autoCreatedUserGroupId`, seeded by AG.0). Deduped. Used to pre-fill the
+ * Jobs Board form's "Auto-Add to User Groups" and to self-heal stale postings
+ * so a new gig JO's auto-group always carries into its posting.
+ */
+function jobOrderAutoAddGroupIds(jo: unknown): string[] {
+  const o = (jo ?? {}) as { autoAddToUserGroups?: unknown; autoCreatedUserGroupId?: unknown };
+  const list = Array.isArray(o.autoAddToUserGroups)
+    ? (o.autoAddToUserGroups as unknown[]).filter(
+        (x): x is string => typeof x === 'string' && x.trim() !== '',
+      )
+    : [];
+  const auto = typeof o.autoCreatedUserGroupId === 'string' ? o.autoCreatedUserGroupId.trim() : '';
+  return Array.from(new Set(auto ? [...list, auto] : list));
+}
+
 // Job Order Jobs Board Tab - uses JobPostForm with job order data pre-populated; Gig jobs get one sub-tab per position
 const JobOrderJobsBoardTab: React.FC<{
   jobOrder: JobOrder;
@@ -2664,34 +2682,29 @@ const JobOrderJobsBoardTab: React.FC<{
         await jobsBoardService.createPostsForGigJobOrderPositions(tenantId, jobOrder.id, userId);
         list = await jobsBoardService.getPostsByJobOrder(tenantId, jobOrder.id);
       }
-      // AG.0 reconciliation — if the JO carries an auto-created user group
-      // (`jobOrder.autoCreatedUserGroupId`) but a linked posting was created
-      // BEFORE that field was stamped on the JO (or before the AG.0/AG.1
-      // cascades existed), the posting won't have the group on
-      // `autoAddToUserGroups` and the recruiter sees an empty "Auto-Add to
-      // User Groups" field — even though Auto Messaging shows the same group
-      // correctly. Self-heal here so opening the tab is enough; idempotent
-      // (no writes if the group is already present).
-      const joAutoGroupId =
-        typeof (jobOrder as { autoCreatedUserGroupId?: string | null }).autoCreatedUserGroupId ===
-        'string'
-          ? ((jobOrder as { autoCreatedUserGroupId?: string | null }).autoCreatedUserGroupId || '')
-              .trim()
-          : '';
-      if (joAutoGroupId && list.length > 0) {
+      // AG.0 reconciliation — if the JO carries an auto group (the auto-created
+      // gig group on `autoCreatedUserGroupId`, and/or the recruiter-picked
+      // `autoAddToUserGroups`) but a linked posting was created BEFORE those
+      // fields were stamped on the JO (or before the AG.0/AG.1 cascades
+      // existed), the posting won't have the group on `autoAddToUserGroups` and
+      // the recruiter sees an empty "Auto-Add to User Groups" field — even
+      // though Auto Messaging shows the same group correctly. Self-heal here so
+      // opening the tab is enough; idempotent (no writes if all ids present).
+      const joAutoGroupIds = jobOrderAutoAddGroupIds(jobOrder);
+      if (joAutoGroupIds.length > 0 && list.length > 0) {
         const stalePosts = list.filter((post) => {
           const groups = Array.isArray(
             (post as { autoAddToUserGroups?: string[] }).autoAddToUserGroups,
           )
             ? ((post as { autoAddToUserGroups?: string[] }).autoAddToUserGroups as string[])
             : [];
-          return !groups.includes(joAutoGroupId);
+          return joAutoGroupIds.some((id) => !groups.includes(id));
         });
         if (stalePosts.length > 0) {
           await Promise.all(
             stalePosts.map((post) =>
               updateDoc(doc(db, 'tenants', tenantId, 'job_postings', post.id), {
-                autoAddToUserGroups: arrayUnion(joAutoGroupId),
+                autoAddToUserGroups: arrayUnion(...joAutoGroupIds),
                 updatedAt: new Date(),
               }),
             ),
@@ -2706,6 +2719,7 @@ const JobOrderJobsBoardTab: React.FC<{
   }, [
     jobOrder?.id,
     (jobOrder as { autoCreatedUserGroupId?: string | null }).autoCreatedUserGroupId,
+    jobOrderAutoAddGroupIds(jobOrder).join(','),
     tenantId,
     userId,
     isGigWithPositions,
@@ -3066,6 +3080,13 @@ const JobOrderJobsBoardTab: React.FC<{
       postTitle: jobOrder.jobOrderName || '',
       jobType: jobOrder.jobType || 'career',
       jobTitle: isGigJob && positionForPrefill ? positionForPrefill.jobTitle : jobOrder.jobTitle || '',
+      // Pre-fill "Auto-Add to User Groups" from the job order so the auto-created
+      // gig group (AG.0's `autoCreatedUserGroupId`, plus any recruiter-picked
+      // `autoAddToUserGroups`) carries into a brand-new posting by default. The
+      // existing-post branch above already spreads the saved post's value, and
+      // `loadPosts` self-heals stale saved postings — this covers the never-saved
+      // case so the field is never blank when the JO carries an auto group.
+      autoAddToUserGroups: jobOrderAutoAddGroupIds(jobOrder),
       // CC.B (2026-05-05): public-facing `jobDescription` stays empty on a
       // never-saved post. Position-level pricing JD seeds the PROMPT below
       // (the AI input), not this field, which is filled by the recruiter
