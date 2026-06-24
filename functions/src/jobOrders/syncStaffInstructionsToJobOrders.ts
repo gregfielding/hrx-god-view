@@ -56,6 +56,7 @@ if (!admin.apps.length) {
 const FieldValue = admin.firestore.FieldValue;
 
 const SYSTEM_ACTOR = 'system_sync_staff_instructions';
+const CREATE_SYSTEM_ACTOR = 'system_cascade_staff_instructions_on_create';
 const MAX_AUDIT = 500;
 const FIRESTORE_IN_CHUNK = 30;
 
@@ -196,6 +197,71 @@ async function resolveAccountChainStaffInstructions(
   if (accountChain.length === 0) return {};
   const { value } = resolveCascadedField('staffInstructions', accountChain);
   return asMap(value);
+}
+
+// ---- Seed-on-create -----------------------------------------------
+
+export interface SeedOnCreateResult {
+  action: 'seeded' | 'skipped_no_cascade' | 'skipped_already_complete';
+  filledKeys: string[];
+}
+
+/**
+ * Stamp inherited staff instructions onto a freshly-created job order.
+ *
+ * A brand-new JO has no recruiter edits yet, so this is a pure seed: every
+ * blank section is filled from the account chain, and the snapshot is recorded
+ * (whether or not anything was filled) so the post-creation sync button can
+ * later tell a still-cascaded section from a hand-edit and refresh it. Sections
+ * already populated at create time (e.g. the auto-gig path stamps them inline,
+ * or the creator typed them in the form) are left exactly as they are.
+ *
+ * Idempotent enough for an onCreate trigger: writes only when there's something
+ * to fill or a snapshot to record. Returns the outcome for logging.
+ */
+export async function seedCascadedStaffInstructionsOnCreate(args: {
+  ctx: LoaderContext;
+  db: admin.firestore.Firestore;
+  tenantId: string;
+  jobOrderId: string;
+  joData: SIMap;
+  cascadedFromAccountId: string;
+}): Promise<SeedOnCreateResult> {
+  const { ctx, db, tenantId, jobOrderId, joData, cascadedFromAccountId } = args;
+
+  const accountResolved = await resolveAccountChainStaffInstructions(
+    ctx,
+    tenantId,
+    jobOrderId,
+    joData,
+  );
+  if (Object.keys(accountResolved).length === 0) {
+    return { action: 'skipped_no_cascade', filledKeys: [] };
+  }
+
+  const current = asMap(joData.staffInstructions);
+  const merged: SIMap = { ...current };
+  const filledKeys: string[] = [];
+  for (const key of Object.keys(accountResolved)) {
+    if (isBlankSection(current[key]) && !isEqual(current[key], accountResolved[key])) {
+      merged[key] = accountResolved[key];
+      filledKeys.push(key);
+    }
+  }
+
+  await db.doc(`tenants/${tenantId}/job_orders/${jobOrderId}`).update({
+    staffInstructions: stripUndefinedDeep(merged),
+    [CASCADE_SI_SNAPSHOT_FIELD]: stripUndefinedDeep(accountResolved),
+    updatedAt: FieldValue.serverTimestamp(),
+    updatedBy: CREATE_SYSTEM_ACTOR,
+    staffInstructionsCascadedFromAccountAt: FieldValue.serverTimestamp(),
+    staffInstructionsCascadedFromAccountId: cascadedFromAccountId,
+  });
+
+  return {
+    action: filledKeys.length > 0 ? 'seeded' : 'skipped_already_complete',
+    filledKeys,
+  };
 }
 
 // ---- Orchestrator -------------------------------------------------

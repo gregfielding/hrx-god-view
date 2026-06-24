@@ -337,6 +337,7 @@ export { gigJobOrderStatusCron } from './jobOrders/gigJobOrderStatusCron';
 export { syncHiringEntityFromNationalAccount } from './jobOrders/syncHiringEntityFromNationalAccount';
 export { syncNationalCascadingDefaultsToChildrenCallable } from './accounts/syncNationalCascadingDefaultsToChildren';
 export { syncStaffInstructionsToJobOrdersCallable } from './jobOrders/syncStaffInstructionsToJobOrders';
+export { onJobOrderCreatedCascadeStaffInstructions } from './jobOrders/onJobOrderCreatedCascadeStaffInstructions';
 // **R.16.1 Phase 4** — Admin backfill for pre-§16.1 active JOs missing
 // `jo.snapshot.*`. Dry-run default, security level 7 gated, --force
 // escape hatch. See docs/CASCADE_PROPAGATION_R16.1_HANDOFF.md §L7.
