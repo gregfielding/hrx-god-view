@@ -198,6 +198,13 @@ export interface JobBoardShift {
   dateSchedule?: Record<string, { startTime: string; endTime: string; workersNeeded?: number; overstaff?: number }>;
   startTime: string; // "08:00" (HH:mm format)
   endTime: string; // "17:30" (HH:mm format)
+  /**
+   * Open shift = standing/rolling crew over a date range with no fixed daily
+   * times. Surfaced on the posting as a single "Ongoing · flexible hours" row
+   * (no start/end time); applicants apply like any gig shift. `endDate` (if any)
+   * is the close-out boundary; absent ⇒ ongoing.
+   */
+  isOpenShift?: boolean;
   staffNeeded: number; // Total positions for this shift
   staffFilled: number; // Currently filled positions (calculated)
   spotsRemaining: number; // staffNeeded - staffFilled (calculated)
@@ -538,9 +545,12 @@ export class JobsBoardService {
         const data: any = d.data();
         const status = (data.status || 'open').toLowerCase();
         if (status !== 'open' && status !== 'filled') return;
-        // shiftType:'open' = a standing-crew shift with no fixed times. Never
-        // posted to the public board — recruiters staff it directly.
-        if (data.shiftType === 'open' || data.hideFromJobsBoard === true) return;
+        // Hidden shifts never post. An open shift (standing crew, no fixed
+        // times) stays hidden by default and posts only when the recruiter
+        // flips "Show on jobs board" (which clears hideFromJobsBoard) — then it
+        // appears as a single "Ongoing · flexible hours" row.
+        if (data.hideFromJobsBoard === true) return;
+        const isOpenShift = data.shiftType === 'open';
 
         const defaultJobTitle = data.defaultJobTitle || jobOrderData?.jobTitle;
         const payRate = getPayRateForJobTitle(defaultJobTitle) || jobOrderData?.payRate;
@@ -551,6 +561,7 @@ export class JobsBoardService {
 
         shifts.push(omitUndefined<JobBoardShift>({
           shiftId: d.id,
+          isOpenShift,
           shiftTitle: data.shiftTitle || 'Unnamed Shift',
           shiftDate: startDate, // ISO date string
           endDate: isMulti ? endDate : undefined,
@@ -643,9 +654,12 @@ export class JobsBoardService {
         const data: any = d.data();
         const status = (data.status || 'open').toLowerCase();
         if (status !== 'open' && status !== 'filled') return;
-        // shiftType:'open' = a standing-crew shift with no fixed times. Never
-        // posted to the public board — recruiters staff it directly.
-        if (data.shiftType === 'open' || data.hideFromJobsBoard === true) return;
+        // Hidden shifts never post. An open shift (standing crew, no fixed
+        // times) stays hidden by default and posts only when the recruiter
+        // flips "Show on jobs board" (which clears hideFromJobsBoard) — then it
+        // appears as a single "Ongoing · flexible hours" row.
+        if (data.hideFromJobsBoard === true) return;
+        const isOpenShift = data.shiftType === 'open';
 
         const defaultJobTitle = data.defaultJobTitle || jobOrderData?.jobTitle;
         const payRate = getPayRateForJobTitle(defaultJobTitle) || jobOrderData?.payRate;
@@ -656,6 +670,7 @@ export class JobsBoardService {
 
         shiftsRaw.push(omitUndefined<JobBoardShift>({
           shiftId: d.id,
+          isOpenShift,
           shiftTitle: data.shiftTitle || 'Unnamed Shift',
           shiftDate: startDate, // ISO date string
           endDate: isMulti ? endDate : undefined,
@@ -684,6 +699,13 @@ export class JobsBoardService {
         .filter((shift) => !positionJobTitle || shift.defaultJobTitle === positionJobTitle)
         // Multi-day aware overlap filter: include if the shift range overlaps [todayISO, cutoffISO]
         .filter((shift) => {
+          // Open shift = ongoing/rolling crew: live while it has no end date or
+          // its end date is today-or-later. Its START date may be in the past
+          // (it began earlier and is still running), so it doesn't gate.
+          if (shift.isOpenShift) {
+            const end = (shift.endDate || '').toString();
+            return !end || end >= todayISO;
+          }
           const start = (shift.shiftDate || '').toString();
           const end = (shift.endDate || shift.shiftDate || '').toString();
           if (!start) return false;
@@ -1351,14 +1373,16 @@ export class JobsBoardService {
   }
 
   /**
-   * Open-shift → jobs board: ensure a single ongoing "express interest" posting
-   * exists for this job order and is published (public + active). Reuses an
-   * existing express-interest posting if present (republishes it), otherwise
-   * creates one from the job order. The auto-group seeding in
-   * createPostFromJobOrder attaches the JO's user group, so applicants land in
-   * the pipeline. Returns the posting id.
+   * Open-shift "Show on jobs board": publish the per-position posting the
+   * recruiter manages + shares (the Jobs Board tab's posting matching the open
+   * shift's default job, whose link "Copy Jobs Board Link" copies) as a NORMAL
+   * gig posting — public + active, NO applyMode — so the open shift surfaces as
+   * a regular "Ongoing · flexible hours" shift row that workers apply to.
+   * Creates the posting from the JO when none exists, clears any stale
+   * express-interest marker, and pauses an orphan JO-level express-interest
+   * posting left by an earlier build. Returns the posting id.
    */
-  async ensureExpressInterestPosting(
+  async ensureOpenShiftPostingPublished(
     tenantId: string,
     jobOrderId: string,
     createdBy: string,
@@ -1367,40 +1391,33 @@ export class JobsBoardService {
     const existing = await this.getPostsByJobOrder(tenantId, jobOrderId);
     const norm = (s: unknown): string => (typeof s === 'string' ? s.trim().toLowerCase() : '');
     const wantPos = norm(positionJobTitle);
-    // Convert the SAME posting the recruiter manages + shares (the Jobs Board
-    // tab's per-position posting that matches the open shift's default job, and
-    // whose link "Copy Jobs Board Link" copies) — not a separate JO-level doc,
-    // or the shared link points at a dead-end while the express-interest card
-    // lives somewhere the recruiter never sees. Fallbacks keep it working when
-    // there's no positionJobTitle / no matching posting yet.
     const target =
       (wantPos
         ? existing.find((p) => norm((p as { positionJobTitle?: string }).positionJobTitle) === wantPos)
         : undefined) ??
-      existing.find((p) => (p as { applyMode?: string }).applyMode === 'express_interest') ??
       existing.find((p) => p.status === 'active') ??
       existing[0];
     let postId: string;
     if (target) {
       await this.updatePost(tenantId, target.id, {
-        applyMode: 'express_interest',
         visibility: 'public',
+        // Clear any express-interest marker so this renders as a normal gig
+        // posting (shift-by-shift), surfacing the open shift in the shift list.
+        applyMode: null,
         ...(positionJobTitle ? { positionJobTitle } : {}),
-      } as Partial<CreatePostData>);
+      } as unknown as Partial<CreatePostData>);
       await this.updatePostStatus(tenantId, target.id, 'active');
       postId = target.id;
     } else {
       // createPostFromJobOrder hardcodes status:'draft'; publish after create.
       postId = await this.createPostFromJobOrder(tenantId, jobOrderId, createdBy, {
-        applyMode: 'express_interest',
         visibility: 'public',
         ...(positionJobTitle ? { positionJobTitle, jobTitle: positionJobTitle } : {}),
       });
       await this.updatePostStatus(tenantId, postId, 'active');
     }
-    // Avoid duplicate express-interest cards: pause any OTHER express-interest
-    // posting (e.g. an earlier JO-level one created before this fix). Leave
-    // other positions' normal postings alone — they're managed independently.
+    // Pause an orphan JO-level express-interest posting from an earlier build so
+    // it doesn't linger as a stray card. Other positions' postings are left alone.
     await Promise.all(
       existing
         .filter(
@@ -1415,17 +1432,24 @@ export class JobsBoardService {
   }
 
   /**
-   * Open-shift → jobs board: unpublish (pause) the ongoing express-interest
-   * posting(s) for this job order. Idempotent; leaves other postings alone.
+   * Open-shift "Show on jobs board" turned OFF: pause the matching per-position
+   * posting (or all active postings when no position is given) so the board
+   * doesn't show a shift-less dead-end. Idempotent.
    */
-  async unpublishExpressInterestPosting(tenantId: string, jobOrderId: string): Promise<void> {
+  async unpublishOpenShiftPosting(
+    tenantId: string,
+    jobOrderId: string,
+    positionJobTitle?: string,
+  ): Promise<void> {
     const existing = await this.getPostsByJobOrder(tenantId, jobOrderId);
+    const norm = (s: unknown): string => (typeof s === 'string' ? s.trim().toLowerCase() : '');
+    const wantPos = norm(positionJobTitle);
     await Promise.all(
       existing
         .filter(
           (p) =>
-            (p as { applyMode?: string }).applyMode === 'express_interest' &&
-            p.status === 'active',
+            p.status === 'active' &&
+            (!wantPos || norm((p as { positionJobTitle?: string }).positionJobTitle) === wantPos),
         )
         .map((p) => this.updatePostStatus(tenantId, p.id, 'paused')),
     );

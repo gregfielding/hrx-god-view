@@ -1130,26 +1130,31 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
   };
 
   /**
-   * Open-shift "Show on jobs board" sync: publish or unpublish the JO's
-   * ongoing express-interest posting. No-op for standard shifts. Best-effort —
-   * a posting failure must not block the shift save.
+   * Open-shift "Show on jobs board" sync: publish (or pause) the matching
+   * per-position posting so the open shift surfaces as a normal shift row.
+   * No-op for standard shifts. Best-effort — a posting failure must not block
+   * the shift save.
    */
   const syncOpenShiftExpressInterestPosting = async (): Promise<void> => {
     if (formData.shiftType !== 'open') return;
     try {
       const svc = JobsBoardService.getInstance();
       if (formData.showOnJobsBoard) {
-        await svc.ensureExpressInterestPosting(
+        await svc.ensureOpenShiftPostingPublished(
           tenantId,
           jobOrderId,
           user?.uid || 'unknown',
           formData.defaultJobTitle || undefined,
         );
       } else {
-        await svc.unpublishExpressInterestPosting(tenantId, jobOrderId);
+        await svc.unpublishOpenShiftPosting(
+          tenantId,
+          jobOrderId,
+          formData.defaultJobTitle || undefined,
+        );
       }
     } catch (e) {
-      console.warn('EditShiftForm: express-interest posting sync failed', e);
+      console.warn('EditShiftForm: open-shift posting sync failed', e);
     }
   };
 
@@ -1495,11 +1500,11 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
       if (formData.shiftType === 'open') {
         shiftData.shiftType = 'open';
         shiftData.noFixedTimes = true;
-        // The open shift itself stays off the public board (it's not bookable);
-        // "Show on jobs board" instead publishes a separate ongoing
-        // express-interest posting on the JO (handled after persist below).
-        shiftData.hideFromJobsBoard = true;
+        // "Show on jobs board" surfaces the open shift on its posting as a
+        // single "Ongoing · flexible hours" row (un-hidden); off keeps it
+        // internal. The matching posting is published/paused after persist below.
         shiftData.showOnJobsBoard = formData.showOnJobsBoard === true;
+        shiftData.hideFromJobsBoard = formData.showOnJobsBoard !== true;
         shiftData.shiftMode = 'single';
         shiftData.defaultStartTime = '';
         shiftData.defaultEndTime = '';
@@ -2139,11 +2144,10 @@ const EditShiftForm: React.FC<EditShiftFormProps> = ({
             />
             {formData.showOnJobsBoard ? (
               <Alert severity="success" sx={{ '& .MuiAlert-message': { width: '100%' } }}>
-                A public <strong>“express interest”</strong> posting for this job will be
-                published. Applicants don&apos;t book a specific shift — they join this job&apos;s
-                user group, so when you post real dated shifts they get notified. The open shift
-                itself stays internal (workers can&apos;t book it directly). Turn this off to
-                unpublish the posting.
+                This job&apos;s public posting will be published and the open shift shows on it as
+                an <strong>“Ongoing · flexible hours”</strong> shift. Workers can apply to it like
+                any shift; you place applicants onto the crew from Applications. Turn this off to
+                take it back off the jobs board.
               </Alert>
             ) : null}
           </Box>

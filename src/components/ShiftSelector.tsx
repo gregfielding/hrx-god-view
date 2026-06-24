@@ -201,6 +201,12 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
     // shifts (e.g. urgent overnight FIFA needs that run past midnight). Falls
     // back to the legacy date compare when we can't parse an end time.
     const isPast = (() => {
+      // Open shift = ongoing/rolling crew: never "past" while live (no end date,
+      // or end date today-or-later). Its start date may be in the past.
+      if ((shift as JobBoardShift).isOpenShift) {
+        const end = ((shift as JobBoardShift).endDate || '').toString();
+        return !!end && end < todayISO;
+      }
       if (!shiftDateISO) return false;
       const startT = item.type === 'day' ? item.startTime : (shift.startTime ?? '');
       const endT = item.type === 'day' ? item.endTime : (shift.endTime ?? '');
@@ -305,6 +311,24 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                         />
                       );
                     })()}
+                  </>
+                ) : (shift as JobBoardShift).isOpenShift ? (
+                  // Open shift = ongoing standing crew, no fixed daily times.
+                  <>
+                    <Stack direction="row" spacing={0.5} alignItems="center">
+                      <CalendarIcon fontSize="small" color="action" />
+                      <Typography variant="body2" color="text.secondary">
+                        {shift.endDate && shift.endDate !== shift.shiftDate
+                          ? formatDateRange(shift.shiftDate, shift.endDate)
+                          : t('jobs.ongoing', { defaultValue: 'Ongoing' })}
+                      </Typography>
+                    </Stack>
+                    <Stack direction="row" spacing={0.5} alignItems="center">
+                      <TimeIcon fontSize="small" color="action" />
+                      <Typography variant="body2" color="text.secondary">
+                        {t('jobs.flexibleHours', { defaultValue: 'Flexible hours' })}
+                      </Typography>
+                    </Stack>
                   </>
                 ) : (
                   <>

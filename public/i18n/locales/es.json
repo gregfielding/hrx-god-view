@@ -1100,6 +1100,8 @@
     "viewShifts": "Ver turnos",
     "applyForJob": "Aplicar",
     "expressInterest": "Mostrar interés",
+    "ongoing": "En curso",
+    "flexibleHours": "Horario flexible",
     "newLabel": "Nuevo",
     "jobDescription": "Descripción del puesto",
     "feed": {
