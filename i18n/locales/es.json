@@ -911,6 +911,7 @@
     "last4Ssn": "Últimos 4 del SSN o ITIN",
     "last4SsnHelper": "Opcional. Ingresa los últimos cuatro dígitos de tu SSN o ITIN.",
     "last4SsnInvalid": "Si ingresas los últimos cuatro de tu SSN o ITIN, deben ser exactamente 4 dígitos.",
+    "homeAddressRequired": "Selecciona tu dirección de casa en el menú desplegable para que podamos verificarla antes de continuar.",
     "confirmWorkAuthBeforeSkipEeo": "Confirma tus respuestas de autorización de trabajo antes de omitir las preguntas opcionales de EEO.",
     "optionalEeoTitle": "Igualdad de empleo (opcional)",
     "optionalEeoHint": "Los empleadores pueden usar esta información para informes de diversidad. Puedes omitir esta sección.",

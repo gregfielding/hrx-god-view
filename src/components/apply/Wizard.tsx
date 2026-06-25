@@ -339,6 +339,42 @@ const PostSubmitRedirect: React.FC<PostSubmitRedirectProps> = ({
   );
 };
 
+/**
+ * Apply-wizard home-address gate. An address counts as valid ONLY when the
+ * worker picked it from the Google Places dropdown (`placeId`) AND it geocoded
+ * to valid coordinates with street/city/state/zip all present. Free-typed text
+ * never passes. Shared by the Next-button gate, `handleNext`, and submit so no
+ * advance path (Enter key, skip handlers, programmatic advance) can slip a
+ * worker past the address step without a verified, geocoded address — the
+ * cause of new users landing without a home address.
+ */
+export function isApplyHomeAddressValid(personal: any): boolean {
+  const str = (v: unknown): string => (typeof v === 'string' ? v : String(v ?? '')).trim();
+  const street = str(personal?.street);
+  const city = str(personal?.city);
+  const state = str(personal?.state);
+  const zip = str(personal?.zip);
+  const placeId = str(personal?.placeId);
+  const homeLat = personal?.homeLat;
+  const homeLng = personal?.homeLng;
+  if (!placeId) return false;
+  if (!street || !city || !state || !zip) return false;
+  if (homeLat === undefined || homeLng === undefined) return false;
+  if (
+    typeof homeLat !== 'number' ||
+    typeof homeLng !== 'number' ||
+    isNaN(homeLat) ||
+    isNaN(homeLng) ||
+    homeLat < -90 ||
+    homeLat > 90 ||
+    homeLng < -180 ||
+    homeLng > 180
+  ) {
+    return false;
+  }
+  return true;
+}
+
 const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId, uid, signupGroupId = null }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -1564,6 +1600,23 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           return;
         }
       }
+      // Address step: hard-block advancing until the home address is selected
+      // from the Google dropdown AND geocoded. The disabled Next button already
+      // guards the click, but this also blocks Enter-key / programmatic advances
+      // so workers can't slip through without a verified address.
+      if (
+        actualStep === 1 &&
+        !isApplyHomeAddressValid(formDataRef.current?.personal || formData?.personal || {})
+      ) {
+        alert(
+          t('apply.homeAddressRequired', {
+            defaultValue:
+              'Please select your home address from the dropdown so we can verify it before continuing.',
+          }),
+        );
+        setSaving(false);
+        return;
+      }
       if (actualStep === 3) {
         const ev = String(
           formDataRef.current?.requirements?.eVerifyComfort ||
@@ -2185,6 +2238,22 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         setSaving(false);
         const personalIdx = visibleStepIndices.indexOf(0);
         setActiveStep(personalIdx >= 0 ? personalIdx : 0);
+        return;
+      }
+
+      // Backstop: never submit without a verified, geocoded home address — even
+      // if a resumed session (localStorage / ?step=) landed past the address
+      // step. Bounce them to the address step to complete it.
+      if (!isApplyHomeAddressValid(formDataRef.current?.personal || formData?.personal || {})) {
+        alert(
+          t('apply.homeAddressRequired', {
+            defaultValue:
+              'Please select your home address from the dropdown so we can verify it before continuing.',
+          }),
+        );
+        setSaving(false);
+        const addrIdx = visibleStepIndices.indexOf(1);
+        setActiveStep(addrIdx >= 0 ? addrIdx : 0);
         return;
       }
 
@@ -3406,43 +3475,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   // We deliberately keep the full structural check (street/city/state/zip +
   // numeric lat/lng) so partial Place results (international Places without
   // postal_code, for example) still fail closed.
-  const addressValid = (() => {
-    const personal = formData?.personal || {};
-    const street = (
-      typeof personal.street === 'string' ? personal.street : String(personal.street ?? '')
-    ).trim();
-    const city = (
-      typeof personal.city === 'string' ? personal.city : String(personal.city ?? '')
-    ).trim();
-    const state = (
-      typeof personal.state === 'string' ? personal.state : String(personal.state ?? '')
-    ).trim();
-    const zip = (
-      typeof personal.zip === 'string' ? personal.zip : String(personal.zip ?? '')
-    ).trim();
-    const homeLat = personal.homeLat;
-    const homeLng = personal.homeLng;
-    const placeId = (
-      typeof personal.placeId === 'string' ? personal.placeId : String(personal.placeId ?? '')
-    ).trim();
-
-    if (!placeId) return false;
-    if (!street || !city || !state || !zip) return false;
-    if (homeLat === undefined || homeLng === undefined) return false;
-    if (
-      typeof homeLat !== 'number' ||
-      typeof homeLng !== 'number' ||
-      isNaN(homeLat) ||
-      isNaN(homeLng) ||
-      homeLat < -90 ||
-      homeLat > 90 ||
-      homeLng < -180 ||
-      homeLng > 180
-    ) {
-      return false;
-    }
-    return true;
-  })();
+  const addressValid = isApplyHomeAddressValid(formData?.personal || {});
 
   const normalizeLanguageList = (languages: any): string[] => {
     if (!Array.isArray(languages)) return [];
