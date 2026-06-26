@@ -228,7 +228,40 @@ async function runAutoCloseGigShifts(): Promise<SubtaskResult> {
               if (status === 'closed' || status === 'cancelled') {
                 continue;
               }
-              
+
+              // Open (standing-crew) shifts are ongoing/rolling: they carry a
+              // start date (shiftDate) but NO fixed end unless a recruiter
+              // explicitly ends them (which stamps endDate). Never auto-close an
+              // open shift just because its START date passed — only when an
+              // explicit endDate has passed. Otherwise these get closed the day
+              // after they start and silently drop off the jobs board.
+              const shiftTypeNorm = String(shiftData.shiftType || '').toLowerCase();
+              if (shiftTypeNorm === 'open') {
+                const endDateStr = shiftData.endDate ? String(shiftData.endDate) : '';
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(endDateStr)) {
+                  // ongoing / no explicit end → leave open
+                  continue;
+                }
+                const [ey, em, ed] = endDateStr.split('-').map(Number);
+                const openEndOfDay = new Date(ey, em - 1, ed, 23, 59);
+                if (isNaN(openEndOfDay.getTime()) || openEndOfDay > twentyFourHoursAgo) {
+                  continue;
+                }
+                await shiftDoc.ref.update({
+                  status: 'closed',
+                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                  autoClosedAt: admin.firestore.FieldValue.serverTimestamp()
+                });
+                closed++;
+                logger.info('Auto-closed ended open shift', {
+                  tenantId,
+                  jobOrderId,
+                  shiftId: shiftDoc.id,
+                  endDate: endDateStr
+                });
+                continue;
+              }
+
               // Calculate shift end time
               let shiftEndTime: Date | null = null;
               

@@ -56,8 +56,15 @@ async function recomputeShiftFill(params: {
   const assignedCount = assignmentsSnap.size;
   const target = computeAssignmentsTarget(shift);
 
-  const shouldBeFilled = assignedCount >= target;
+  // Open (standing-crew) shifts are ongoing and always accepting workers.
+  // Reaching the headcount target must NOT flip them to "filled" — that would
+  // stop them accepting applicants and drop them off the jobs board. Keep the
+  // status "open" no matter the count (we still track the count for display).
+  const shiftIsOpen = norm(shift.shiftType) === 'open';
+
+  const shouldBeFilled = !shiftIsOpen && assignedCount >= target;
   const nextStatus: ShiftStatus = shouldBeFilled ? 'filled' : 'open';
+  const acceptingBackupsNext = shiftIsOpen ? true : nextStatus === 'filled';
 
   // Avoid loops/no-op writes.
   const currentStatus = (shiftStatus === 'filled' || shiftStatus === 'open') ? (shiftStatus as ShiftStatus) : 'open';
@@ -66,7 +73,7 @@ async function recomputeShiftFill(params: {
   const derived: any = {
     assignmentsTarget: target,
     assignmentsCount: assignedCount,
-    acceptingBackups: nextStatus === 'filled',
+    acceptingBackups: acceptingBackupsNext,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
 
@@ -82,7 +89,7 @@ async function recomputeShiftFill(params: {
   const needsDerivedUpdate =
     prevTarget !== target ||
     prevCount !== assignedCount ||
-    prevAccepting !== (nextStatus === 'filled');
+    prevAccepting !== acceptingBackupsNext;
 
   if (!needsStatusUpdate && !needsDerivedUpdate) return;
 
