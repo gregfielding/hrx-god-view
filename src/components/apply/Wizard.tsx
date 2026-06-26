@@ -340,13 +340,15 @@ const PostSubmitRedirect: React.FC<PostSubmitRedirectProps> = ({
 };
 
 /**
- * Apply-wizard home-address gate. An address counts as valid ONLY when the
- * worker picked it from the Google Places dropdown (`placeId`) AND it geocoded
- * to valid coordinates with street/city/state/zip all present. Free-typed text
- * never passes. Shared by the Next-button gate, `handleNext`, and submit so no
- * advance path (Enter key, skip handlers, programmatic advance) can slip a
- * worker past the address step without a verified, geocoded address — the
- * cause of new users landing without a home address.
+ * Apply-wizard home-address gate. An address counts as valid when it is complete
+ * (street/city/state/zip) AND geocoded to valid coordinates (homeLat/homeLng) —
+ * matching the `addressComplete` rule the wizard uses to skip the address step
+ * for returning users. We deliberately do NOT require a Google `placeId`: a
+ * worker whose address is already on file (geocoded, no placeId persisted) must
+ * not be blocked. On the AddressStep itself, free-typed text clears the
+ * coordinates, so a NEW entry still has to be picked from the Google dropdown
+ * (which geocodes it) to pass — the cause of new users landing without an
+ * address. Shared by the Next-button gate, `handleNext`, and the submit backstop.
  */
 export function isApplyHomeAddressValid(personal: any): boolean {
   const str = (v: unknown): string => (typeof v === 'string' ? v : String(v ?? '')).trim();
@@ -354,10 +356,8 @@ export function isApplyHomeAddressValid(personal: any): boolean {
   const city = str(personal?.city);
   const state = str(personal?.state);
   const zip = str(personal?.zip);
-  const placeId = str(personal?.placeId);
   const homeLat = personal?.homeLat;
   const homeLng = personal?.homeLng;
-  if (!placeId) return false;
   if (!street || !city || !state || !zip) return false;
   if (homeLat === undefined || homeLng === undefined) return false;
   if (
@@ -2241,10 +2241,14 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         return;
       }
 
-      // Backstop: never submit without a verified, geocoded home address — even
-      // if a resumed session (localStorage / ?step=) landed past the address
-      // step. Bounce them to the address step to complete it.
-      if (!isApplyHomeAddressValid(formDataRef.current?.personal || formData?.personal || {})) {
+      // Backstop: if the address step is in this flow but somehow reached submit
+      // without a complete + geocoded address (e.g. a resumed session), bounce
+      // back to it. Only when the step is actually shown — a returning user whose
+      // address is already on file has the step skipped and must NOT be blocked.
+      if (
+        visibleStepIndices.includes(1) &&
+        !isApplyHomeAddressValid(formDataRef.current?.personal || formData?.personal || {})
+      ) {
         alert(
           t('apply.homeAddressRequired', {
             defaultValue:
