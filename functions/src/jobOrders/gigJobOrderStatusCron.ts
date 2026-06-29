@@ -137,6 +137,12 @@ export function isShiftActiveUpcoming(
   // date — its START date does NOT gate it (an ongoing open shift that began
   // yesterday must not flip the JO to on_hold).
   if (shift.shiftType === 'open') {
+    // An open shift only keeps the JO board-live if it's actually toggled to
+    // show on the jobs board. A board-hidden open shift (an internal leftover,
+    // or an ended event's stray standing crew) advertises nothing on the public
+    // board, so it must NOT hold the JO 'open' — otherwise the JO's postings
+    // linger on the jobs board with an empty "no upcoming shifts" state.
+    if (shift.hideFromJobsBoard === true) return false;
     return !endIso || endIso >= todayIso;
   }
 

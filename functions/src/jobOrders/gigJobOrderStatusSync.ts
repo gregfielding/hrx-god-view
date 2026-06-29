@@ -95,6 +95,11 @@ export function collectGigShiftOccurrenceDates(
   //   - no end date  → ongoing/rolling: always live "today" (falls back to the
   //     start date only when no `today` is supplied — best effort)
   if (shift.shiftType === 'open') {
+    // Only an open shift toggled to show on the jobs board keeps the JO live; a
+    // board-hidden open shift advertises nothing (mirrors isShiftActiveUpcoming
+    // in gigJobOrderStatusCron). Contributes no occurrence date → does not hold
+    // the JO 'open'.
+    if (shift.hideFromJobsBoard === true) return [];
     if (endDate) return [endDate];
     if (today) return [today];
     return shiftDate ? [shiftDate] : [];
