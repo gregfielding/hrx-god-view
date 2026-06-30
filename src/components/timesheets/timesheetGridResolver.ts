@@ -569,6 +569,17 @@ export async function resolveTimesheetGrid(
     const isOpen =
       (a as unknown as Record<string, unknown>).isOpenShift === true ||
       (a as unknown as Record<string, unknown>).noFixedTimes === true;
+    // An assignment with no weekly pattern can't be expanded by day-of-week.
+    // This covers open/standing-crew shifts AND single-/finite-day gig & event
+    // shifts that are pinned by the assignment's own date window (startDate /
+    // endDate) rather than a recurring schedule. For those, seed a blank "no
+    // fixed times" timecard row for each day in the window ∩ period (capped at
+    // today; the recruiter enters total hours per worked day). Without this they
+    // silently generate no rows and the workers can't be paid.
+    const hasWeeklySchedule =
+      !!a.weeklySchedule &&
+      Object.keys(a.weeklySchedule as Record<string, unknown>).length > 0;
+    const perDay = isOpen || !hasWeeklySchedule;
 
     for (const d of periodDates) {
       // Day must also be inside the assignment's own active window.
@@ -576,7 +587,7 @@ export async function resolveTimesheetGrid(
       // Tuesday would still yield a Wed row.
       if (startStr && !isoDateGte(d, startStr)) continue;
       if (endStr && !isoDateLte(d, endStr)) continue;
-      if (isOpen) {
+      if (perDay) {
         if (d > todayIso) continue; // don't materialize future days
         tuples.push({ assignment: a, workDate: d, scheduled: OPEN_SHIFT_SCHEDULED });
         perAssignmentDayCount += 1;
@@ -586,11 +597,6 @@ export async function resolveTimesheetGrid(
       if (!scheduled) continue;
       tuples.push({ assignment: a, workDate: d, scheduled });
       perAssignmentDayCount += 1;
-    }
-    if (perAssignmentDayCount === 0 && !a.weeklySchedule && !isOpen) {
-      errors.push(
-        `Assignment ${a.id} overlaps the period but has no weeklySchedule — no rows generated.`,
-      );
     }
   }
 
