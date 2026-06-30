@@ -775,6 +775,36 @@ const ImportRow: React.FC<{
     [tenantId, row.entry.id, refreshEntry],
   );
 
+  // Edit Tips / Bonus inline (pay add-ons; don't affect the import lifecycle).
+  // Server callable mirrors hours/payRate — tips/bonusAmount aren't in the rules
+  // client allowlist, and we keep all import-row edits going through callables.
+  const saveTips = React.useCallback(
+    async (value: number | null) => {
+      if (!tenantId) return;
+      const fn = httpsCallable<{ tenantId: string; entryId: string; tips: number }, { ok: true }>(
+        functions,
+        'setImportEntryExtras',
+        { timeout: 60000 },
+      );
+      await fn({ tenantId, entryId: row.entry.id, tips: value ?? 0 });
+      await refreshEntry(row.entry.id);
+    },
+    [tenantId, row.entry.id, refreshEntry],
+  );
+  const saveBonus = React.useCallback(
+    async (value: number | null) => {
+      if (!tenantId) return;
+      const fn = httpsCallable<{ tenantId: string; entryId: string; bonus: number }, { ok: true }>(
+        functions,
+        'setImportEntryExtras',
+        { timeout: 60000 },
+      );
+      await fn({ tenantId, entryId: row.entry.id, bonus: value ?? 0 });
+      await refreshEntry(row.entry.id);
+    },
+    [tenantId, row.entry.id, refreshEntry],
+  );
+
   // Re-check this single row's Everee linkage — clears a stale "needs
   // onboarding" block once the worker has actually onboarded (he may have
   // finished after the row was imported). Reuses the same callable the bulk
@@ -875,8 +905,40 @@ const ImportRow: React.FC<{
           </Typography>
         )}
       </TableCell>
-      <TableCell align="right">—</TableCell>
-      <TableCell align="right">—</TableCell>
+      <TableCell align="right">
+        {hoursEditable ? (
+          <NumberCell
+            value={typeof row.entry.tips === 'number' && row.entry.tips > 0 ? row.entry.tips : null}
+            onSave={saveTips}
+            validate={(raw) => validateTips(raw)}
+            emptyDisplay="+ tip"
+            ariaLabel="Imported tips"
+          />
+        ) : typeof row.entry.tips === 'number' && row.entry.tips > 0 ? (
+          formatMoney(row.entry.tips)
+        ) : (
+          '—'
+        )}
+      </TableCell>
+      <TableCell align="right">
+        {hoursEditable ? (
+          <NumberCell
+            value={
+              typeof row.entry.bonusAmount === 'number' && row.entry.bonusAmount > 0
+                ? row.entry.bonusAmount
+                : null
+            }
+            onSave={saveBonus}
+            validate={(raw) => validateBonusAmount(raw)}
+            emptyDisplay="+ bonus"
+            ariaLabel="Imported bonus"
+          />
+        ) : typeof row.entry.bonusAmount === 'number' && row.entry.bonusAmount > 0 ? (
+          formatMoney(row.entry.bonusAmount)
+        ) : (
+          '—'
+        )}
+      </TableCell>
       <TableCell>{imp?.csvSite || '—'}</TableCell>
       <TableCell align="right">
         {hoursEditable ? (
@@ -904,7 +966,13 @@ const ImportRow: React.FC<{
         {typeof wcRate === 'number' ? wcRate.toFixed(2) : '—'}
       </TableCell>
       <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-        {payRate > 0 && actualHrs > 0 ? formatMoney(actualHrs * payRate) : '—'}
+        {(() => {
+          const base = payRate > 0 && actualHrs > 0 ? actualHrs * payRate : 0;
+          const tips = typeof row.entry.tips === 'number' ? row.entry.tips : 0;
+          const bonus = typeof row.entry.bonusAmount === 'number' ? row.entry.bonusAmount : 0;
+          const total = base + tips + bonus;
+          return total > 0 ? formatMoney(total) : '—';
+        })()}
       </TableCell>
       <TableCell>
         <Stack direction="row" spacing={0.5} alignItems="center">

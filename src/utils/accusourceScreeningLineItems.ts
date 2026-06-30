@@ -67,6 +67,35 @@ function statusLooksComplete(status: string | null | undefined): boolean {
 }
 
 /**
+ * Fallback verdict for a line whose vendor status looks COMPLETE but which has
+ * NO stored adjudication — i.e. the vendor closed it without sending the
+ * `service_status_change` stage that normally computes `autoVerdict`, so
+ * `resolveEffectiveVerdict` returned 'PENDING'. Without this, the row gets
+ * trapped in the non-actionable "Pending / Waiting" band with no way to mark it
+ * passed. Mirrors the server `classifyAutoVerdict` (functions/.../accusourceAdjudication.ts):
+ *   - SSN Locator + drug-lab lines close clean → PASSED
+ *   - everything else (county/national/federal criminal, etc.) → NEEDS_REVIEW
+ *     so a recruiter reads the report and adjudicates.
+ */
+function completedLineFallbackVerdict(
+  name: string,
+  type: string | undefined,
+  entry: ServiceOrderStatusEntry | undefined,
+): AccusourceLineVerdict {
+  const n = `${name} ${type ?? ''}`.toLowerCase();
+  const isSsnLocator =
+    n.includes('social security locator') ||
+    n.includes('ssn locator') ||
+    n.includes('social security number trace') ||
+    n.includes('ssn trace');
+  const isLab =
+    (entry as { labName?: unknown } | undefined)?.labName != null ||
+    n.includes('drug') ||
+    n.includes('lab ');
+  return isSsnLocator || isLab ? 'PASSED' : 'NEEDS_REVIEW';
+}
+
+/**
  * One row per ordered catalog screen: name + webhook status (or Pending until AccuSource reports).
  *
  * Rows are unioned across every available source so any service seen by ANY source renders:
@@ -126,7 +155,14 @@ export function accusourceScreeningLineItems(r: BackgroundCheckRecord): Accusour
     const completedAt = rawCompletedAt ?? derivedCompletedAt;
     const completedAtDerived = rawCompletedAt == null && derivedCompletedAt != null;
     const adjudication = entry?.adjudication ?? null;
-    const verdict = resolveEffectiveVerdict(adjudication);
+    let verdict = resolveEffectiveVerdict(adjudication);
+    // Vendor closed the line but never sent the stage that computes an
+    // autoVerdict → verdict is 'PENDING' and the row would be trapped in the
+    // non-actionable Pending band. Re-derive a fallback so it lands in an
+    // actionable band (Needs review / Passed) and a recruiter can adjudicate.
+    if (verdict === 'PENDING' && statusLooksComplete(status)) {
+      verdict = completedLineFallbackVerdict(name, type, entry);
+    }
     const verdictOverridden = adjudication != null && adjudication.verdict != null;
     return {
       id,

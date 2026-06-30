@@ -388,6 +388,7 @@ export { saveImportTimesheetRows, deleteStaleImportEntries } from './timesheets/
 export { reassignImportEntryWorker } from './timesheets/reassignImportEntryWorker';
 export { setImportEntryHours } from './timesheets/setImportEntryHours';
 export { setImportEntryPayRate } from './timesheets/setImportEntryPayRate';
+export { setImportEntryExtras } from './timesheets/setImportEntryExtras';
 export { setImportEntryWorksite } from './timesheets/setImportEntryWorksite';
 export { deleteImportEntry } from './timesheets/deleteImportEntry';
 export { recheckImportTimesheetBlocks } from './timesheets/recheckImportTimesheetBlocks';
