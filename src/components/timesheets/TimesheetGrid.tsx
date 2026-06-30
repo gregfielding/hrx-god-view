@@ -1089,6 +1089,23 @@ const EntryRow: React.FC<EntryRowProps> = ({
   });
   const { fieldHandlers, readOnly } = editor;
 
+  // Pay rate isn't in the Firestore-rules client allowlist (the editor only
+  // writes actuals/breaks/tips/bonus/notes), so an inline edit goes through a
+  // server callable — same pattern as WC and the import pay rate.
+  const savePayRate = React.useCallback(
+    async (value: number | null) => {
+      if (!tenantId) return;
+      const fn = httpsCallable<{ tenantId: string; entryId: string; payRate: number }, { ok: true }>(
+        functions,
+        'setTimesheetEntryPayRate',
+        { timeout: 60000 },
+      );
+      await fn({ tenantId, entryId: entry.id, payRate: value ?? 0 });
+      await refreshEntry(entry.id);
+    },
+    [tenantId, entry.id, refreshEntry],
+  );
+
   // WC Code / Rate dialog state — opens on click of either WC cell.
   const [wcDialogOpen, setWcDialogOpen] = React.useState(false);
 
@@ -1193,8 +1210,15 @@ const EntryRow: React.FC<EntryRowProps> = ({
       {/* Pay rate + Total. Total uses the same formula as the
           batch submitter's gross-pay aggregation so per-row and
           batch totals stay in lockstep. */}
-      <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-        {formatMoney(Number(entry.payRate ?? 0))}
+      <TableCell align="right">
+        <NumberCell
+          value={typeof entry.payRate === 'number' && entry.payRate > 0 ? entry.payRate : null}
+          onSave={savePayRate}
+          validate={validatePayRate}
+          disabled={readOnly}
+          emptyDisplay="+ rate"
+          ariaLabel="Pay rate"
+        />
       </TableCell>
       {/* WC Code + WC Rate (2026-06-03). Click either cell to open the
           edit dialog. Resolved values come from
