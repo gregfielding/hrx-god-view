@@ -38,6 +38,8 @@ interface SubmitRow {
   workDate: string;
   hours: number;
   payRate: number;
+  tips?: number;
+  bonus?: number;
   workerName?: string;
   eventLabel?: string | null;
   workersCompCode?: string | null;
@@ -91,6 +93,8 @@ function rowToSubmit(r: Extract<TimesheetGridRow, { kind: 'entry' }>): SubmitRow
     workDate: e.workDate,
     hours,
     payRate: Number(e.payRate ?? 0),
+    tips: Number(e.tips ?? 0),
+    bonus: Number(e.bonusAmount ?? 0),
     workerName: imp.csvWorkerName ?? r.assignment.workerDisplayName ?? '',
     eventLabel: imp.csvSite ?? null,
     // resolvedWorkersCompCode already folds in the entry's own override.

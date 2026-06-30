@@ -14,7 +14,7 @@
 
 import { normalizeEmail, normalizeName } from './timesheetWorkerAliases';
 
-export type ImportExternalIdKind = 'CONTRACTOR' | 'WORKED_SHIFT';
+export type ImportExternalIdKind = 'CONTRACTOR' | 'WORKED_SHIFT' | 'TIPS' | 'BONUS';
 
 /** Lowercase + `[^a-z0-9]+ → _`, trimmed. Firestore-safe id segment. */
 function slug(v: string): string {

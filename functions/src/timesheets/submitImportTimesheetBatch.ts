@@ -57,6 +57,10 @@ interface SubmitRow {
   workDate: string;
   hours: number;
   payRate: number;
+  /** Flat pay add-ons for the day (dollar amounts ≥ 0). Submitted as separate
+   *  Everee TIPS / BONUS payables alongside the contractor payable / worked shift. */
+  tips?: number;
+  bonus?: number;
   /** For display/labeling only. */
   workerName?: string;
   /** The event/site this day belongs to (CSV "Type"/site). Used only to make
@@ -87,6 +91,59 @@ function dayLabel(
     .filter(Boolean)
     .join(' — ')
     .slice(0, 120);
+}
+
+interface ExtraPayable {
+  kind: 'TIPS' | 'BONUS';
+  externalId: string;
+  amount: number;
+  input: CreatePayableInput;
+}
+
+/** Build the separate Everee TIPS / BONUS payables for a row's flat pay add-ons.
+ *  Each is its own payable with a deterministic externalId (…::TIPS / ::BONUS),
+ *  keyed to the SAME worker+day as the main row so re-submits are idempotent and
+ *  a void can find them. Returns [] when both are zero. */
+function buildExtraPayables(args: {
+  tenantId: string;
+  customer: string;
+  userId: string;
+  workDate: string;
+  eventLabel: string | null | undefined;
+  tips: number;
+  bonus: number;
+  timestamp: number;
+}): ExtraPayable[] {
+  const out: ExtraPayable[] = [];
+  const add = (kind: 'TIPS' | 'BONUS', base: string, raw: number) => {
+    const amount = Math.round(Number(raw) * 100) / 100;
+    if (!(amount > 0)) return;
+    const externalId = importExternalId({
+      tenantId: args.tenantId,
+      customer: args.customer,
+      userId: args.userId,
+      workDate: args.workDate,
+      kind,
+    });
+    out.push({
+      kind,
+      externalId,
+      amount,
+      input: {
+        externalId,
+        externalWorkerId: args.userId,
+        label: dayLabel(base, args.eventLabel, args.workDate),
+        type: kind.toLowerCase(),
+        payCode: kind,
+        timestamp: args.timestamp,
+        amount: { amount: amount.toFixed(2), currency: 'USD' },
+        payableModel: 'PRE_CALCULATED',
+      },
+    });
+  };
+  add('TIPS', 'Tips', args.tips);
+  add('BONUS', 'Bonus', args.bonus);
+  return out;
 }
 
 interface ComposedPreview {
@@ -288,6 +345,9 @@ async function submit1099(args: PathArgs) {
   // lookup needed. The actual work date stays in the pay-stub label + the HRX
   // record (preview.workDate / the canonical entry).
   const payTimestamp = workDateEpochSeconds(new Date().toISOString().slice(0, 10));
+  // Tips/bonus ride as separate TIPS/BONUS payables keyed to the same worker+day.
+  const extrasByEntry = new Map<string, ExtraPayable[]>();
+  let extrasTotal = 0;
   for (const row of rows) {
     const userId = String(row.userId || '').trim();
     const hours = Number(row.hours);
@@ -318,11 +378,29 @@ async function submit1099(args: PathArgs) {
       payRate,
       amount,
     });
+    const extras = buildExtraPayables({
+      tenantId,
+      customer: cust,
+      userId,
+      workDate,
+      eventLabel: row.eventLabel,
+      tips: Number(row.tips ?? 0),
+      bonus: Number(row.bonus ?? 0),
+      timestamp: payTimestamp,
+    });
+    if (extras.length) {
+      extrasByEntry.set(`${userId}::${workDate}`, extras);
+      for (const ex of extras) {
+        payables.push(ex.input);
+        extrasTotal += ex.amount;
+      }
+    }
   }
 
-  const totalAmount = Math.round(preview.reduce((s, p) => s + p.amount, 0) * 100) / 100;
+  const baseTotal = preview.reduce((s, p) => s + p.amount, 0);
+  const totalAmount = Math.round((baseTotal + extrasTotal) * 100) / 100;
   if (dryRun) {
-    return { dryRun: true, workerType, count: preview.length, skipped, totalAmount, preview };
+    return { dryRun: true, workerType, count: preview.length, skipped, totalAmount, extrasTotal, preview };
   }
   if (payables.length === 0) {
     throw new HttpsError('invalid-argument', 'No payable rows to submit (all skipped).');
@@ -372,25 +450,42 @@ async function submit1099(args: PathArgs) {
       r,
     ]),
   );
+  // Flatten the tips/bonus extras → per-externalId metadata + per-entry list of
+  // submitted extra ids, so the status docs carry real amounts and the entry's
+  // payableExternalIds includes them (for void + the paid-webhook reconciler).
+  type ExtraMeta = ExtraPayable & { userId: string; workDate: string; workerName: string };
+  const extraByExtId = new Map<string, ExtraMeta>();
+  const submittedExtraIdsByEntry = new Map<string, string[]>();
+  for (const p of preview) {
+    const key = `${p.externalWorkerId}::${p.workDate}`;
+    const ids: string[] = [];
+    for (const ex of extrasByEntry.get(key) || []) {
+      extraByExtId.set(ex.externalId, { ...ex, userId: p.externalWorkerId, workDate: p.workDate, workerName: p.workerName });
+      if (submittedSet.has(ex.externalId)) ids.push(ex.externalId);
+    }
+    if (ids.length) submittedExtraIdsByEntry.set(key, ids);
+  }
   let writer = db.batch();
   let pending = 0;
   for (const externalId of submittedSet) {
     const p = byExternalId.get(externalId);
+    const ex = extraByExtId.get(externalId);
     const row = rowByExternalId.get(externalId);
     writer.set(
       db.doc(`tenants/${tenantId}/timesheet_import_payables/${payableStatusDocId(externalId)}`),
       {
         externalId,
         kind: 'payable',
-        externalWorkerId: p?.externalWorkerId ?? null,
-        workerName: p?.workerName ?? null,
+        payCode: ex ? ex.kind : 'CONTRACTOR',
+        externalWorkerId: p?.externalWorkerId ?? ex?.userId ?? null,
+        workerName: p?.workerName ?? ex?.workerName ?? null,
         customer: cust,
         hiringEntityId,
         evereeTenantId: cfg.evereeTenantId,
-        workDate: p?.workDate ?? null,
+        workDate: p?.workDate ?? ex?.workDate ?? null,
         hours: p?.hours ?? null,
         payRate: p?.payRate ?? null,
-        amount: p?.amount ?? null,
+        amount: p?.amount ?? ex?.amount ?? null,
         status: 'submitted',
         batchId: batchRef.id,
         submittedByUid: uid,
@@ -421,7 +516,7 @@ async function submit1099(args: PathArgs) {
           // Nested map (NOT dotted keys) — set(merge:true) deep-merges this,
           // dotted strings would create a literal "everee.x" field.
           everee: {
-            payableExternalIds: [externalId],
+            payableExternalIds: [externalId, ...(submittedExtraIdsByEntry.get(`${p.externalWorkerId}::${p.workDate}`) || [])],
             status: 'SUBMITTED',
             respondedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
@@ -646,6 +741,52 @@ async function submitW2(args: PathArgs) {
     }
   });
 
+  // Tips/bonus → separate TIPS/BONUS payables for the worked-shift rows that
+  // landed. Worked shifts don't carry flat add-ons, so these go as payables
+  // (then a payout request — on the worker's regular W-2 cycle — to materialize,
+  // since a payable alone never surfaces as a payment).
+  const w2ExtrasByPlanExtId = new Map<string, ExtraPayable[]>();
+  const w2ExtraInputs: CreatePayableInput[] = [];
+  for (const { plan } of statusWrites) {
+    const extras = buildExtraPayables({
+      tenantId,
+      customer: cust,
+      userId: plan.userId,
+      workDate: plan.workDate,
+      eventLabel: plan.row.eventLabel,
+      tips: Number(plan.row.tips ?? 0),
+      bonus: Number(plan.row.bonus ?? 0),
+      timestamp: workDateEpochSeconds(plan.workDate),
+    });
+    if (!extras.length) continue;
+    w2ExtrasByPlanExtId.set(plan.externalId, extras);
+    for (const ex of extras) w2ExtraInputs.push(ex.input);
+  }
+  const submittedExtraIds = new Set<string>();
+  if (w2ExtraInputs.length > 0) {
+    const CHUNK = 150;
+    for (let i = 0; i < w2ExtraInputs.length; i += CHUNK) {
+      const chunk = w2ExtraInputs.slice(i, i + CHUNK);
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const res = await bulkCreatePayables(cfg, chunk);
+        res.externalIds.forEach((id) => submittedExtraIds.add(id));
+      } catch (e: unknown) {
+        errors.push(`tips/bonus: ${e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200)}`);
+      }
+    }
+    if (submittedExtraIds.size > 0) {
+      try {
+        await requestPayablePayout(cfg, {
+          externalIds: [...submittedExtraIds],
+          includeWorkersOnRegularPayCycle: true,
+        });
+      } catch (e: unknown) {
+        errors.push(`tips/bonus payout: ${e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200)}`);
+      }
+    }
+  }
+
   const batchRef = db.collection(`tenants/${tenantId}/timesheet_import_batches`).doc();
   await batchRef.set({
     tenantId,
@@ -693,6 +834,34 @@ async function submitW2(args: PathArgs) {
       },
       { merge: true },
     );
+    // Tips/bonus payables that landed for this row → status docs (so void + the
+    // paid webhook can find them).
+    const planExtras = (w2ExtrasByPlanExtId.get(plan.externalId) || []).filter((ex) =>
+      submittedExtraIds.has(ex.externalId),
+    );
+    for (const ex of planExtras) {
+      writer.set(
+        db.doc(`tenants/${tenantId}/timesheet_import_payables/${payableStatusDocId(ex.externalId)}`),
+        {
+          externalId: ex.externalId,
+          kind: 'payable',
+          payCode: ex.kind,
+          externalWorkerId: plan.userId,
+          workerName: p?.workerName ?? null,
+          customer: cust,
+          hiringEntityId,
+          evereeTenantId: cfg.evereeTenantId,
+          workDate: plan.workDate,
+          amount: ex.amount,
+          status: 'submitted',
+          batchId: batchRef.id,
+          submittedByUid: uid,
+          submittedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    }
     // Mirror onto the canonical timesheet entry (Grid = source of truth).
     const entryDocId = importEntryDocId({ customer: cust, userId: plan.userId, workDate: plan.workDate });
     writer.set(
@@ -719,11 +888,14 @@ async function submitW2(args: PathArgs) {
           workedShiftId: String(workedShiftId),
           status: 'SUBMITTED',
           respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+          ...(planExtras.length
+            ? { payableExternalIds: planExtras.map((ex) => ex.externalId) }
+            : {}),
         },
       },
       { merge: true },
     );
-    pending += 2;
+    pending += 2 + planExtras.length;
     if (pending >= 400) {
       // eslint-disable-next-line no-await-in-loop
       await writer.commit();
@@ -832,6 +1004,33 @@ export const voidImportTimesheetPayable = onCall(
         },
         { merge: true },
       );
+
+      // Retract any tips/bonus payables attached to the same row, so voiding the
+      // main earning doesn't leave orphaned TIPS/BONUS payments live in Everee.
+      // Only touch extras that actually have a (non-voided) status doc.
+      for (const kind of ['TIPS', 'BONUS'] as const) {
+        const exId = importExternalId({ tenantId, customer: vCustomer, userId: vUserId, workDate: vWorkDate, kind });
+        const exRef = db.doc(`tenants/${tenantId}/timesheet_import_payables/${payableStatusDocId(exId)}`);
+        // eslint-disable-next-line no-await-in-loop
+        const exSnap = await exRef.get();
+        if (!exSnap.exists || String(exSnap.data()?.status || '') === 'voided') continue;
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await deletePayable(cfg, exId);
+        } catch {
+          /* already gone in Everee — fall through to mark voided locally */
+        }
+        // eslint-disable-next-line no-await-in-loop
+        await exRef.set(
+          {
+            status: 'voided',
+            voidedByUid: request.auth.uid,
+            voidedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      }
     }
     return { ok: true, externalId };
   },
