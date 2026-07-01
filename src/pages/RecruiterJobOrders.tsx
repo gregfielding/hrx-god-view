@@ -1220,7 +1220,14 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                       '&:hover': { backgroundColor: 'action.selected' },
                     }}
                   >
-                    <TableCell onClick={(e) => e.stopPropagation()}>
+                    {/* No cell-level stopPropagation here — FavoriteButton
+                        already stops propagation in its own onClick, so a
+                        blanket handler on the whole <td> would just create a
+                        dead click zone in the cell's padding around the icon
+                        (the row wouldn't open even though the click landed
+                        nowhere near the star). Same reasoning applies to the
+                        Status and Recruiter(s) cells below. */}
+                    <TableCell>
                       <FavoriteButton
                         itemId={jobOrder.id}
                         favoriteType="jobOrders"
@@ -1395,7 +1402,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                         );
                       })()}
                     </TableCell>
-                    <TableCell onClick={(e) => e.stopPropagation()}>
+                    <TableCell>
                       <Chip
                         label={formatJobOrderStatusLabel(jobOrder.status)}
                         color={getStatusColor(jobOrder.status) as any}
@@ -1432,10 +1439,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                         ))}
                       </Menu>
                     </TableCell>
-                    <TableCell
-                      onClick={(e) => e.stopPropagation()}
-                      sx={{ verticalAlign: 'middle' }}
-                    >
+                    <TableCell sx={{ verticalAlign: 'middle' }}>
                       <RecruiterAssignmentCell
                         tenantId={tenantId}
                         jobOrderId={jobOrder.id}
