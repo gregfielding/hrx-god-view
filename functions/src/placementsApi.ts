@@ -1154,6 +1154,33 @@ export const placementsCreateAssignments = onCall(
           blockedReason: onboardingConfig.blockedReason,
         });
       } else {
+        // A recurring multi-day shift (weeklySchedule has 2+ enabled days)
+        // placed via plain "assign now" (no explicit applyDate/applyDates —
+        // i.e. the recruiter didn't pick a single date) represents an
+        // ONGOING placement, not a single calendar day. Defaulting endDate
+        // to the shift's own anchor `shiftDate` collapsed it to one day —
+        // and when that anchor date's day-of-week isn't even one of the
+        // shift's enabled recurring days (shifts don't validate that their
+        // own start date lands on an enabled day), the denorm trigger's
+        // per-day weeklySchedule remap then keyed the assignment to that
+        // WRONG/disabled day, so the worker only ever showed up on that one
+        // bad day of the week instead of the shift's real Mon-Fri (etc.)
+        // pattern. Leave endDate open-ended in that case so the trigger
+        // copies the shift's real weeklySchedule verbatim (see
+        // `resolveWeeklySchedule` / `onAssignmentWriteEnsureDenormFields`).
+        const shiftEnabledDayCount = (() => {
+          const ws = shift.weeklySchedule;
+          if (!ws || typeof ws !== 'object') return 0;
+          return Object.values(ws as Record<string, unknown>).filter(
+            (d) => d && typeof d === 'object' && (d as Record<string, unknown>).enabled === true,
+          ).length;
+        })();
+        const isExplicitSingleDate = !!(applyDate && /^\d{4}-\d{2}-\d{2}$/.test(applyDate));
+        const isOngoingRecurringPlacement =
+          !useBulkDates && !isExplicitSingleDate && shiftEnabledDayCount > 1;
+        const resolvedEndDate = isOngoingRecurringPlacement
+          ? ''
+          : effectiveEndDate || effectiveStartDate || '';
         const assignmentData: any = {
           tenantId,
           jobOrderId,
@@ -1162,7 +1189,7 @@ export const placementsCreateAssignments = onCall(
           userId,
           status: 'pending',
           startDate: effectiveStartDate || '',
-          endDate: effectiveEndDate || effectiveStartDate || '',
+          endDate: resolvedEndDate,
           startTime: shift.startTime || shift.defaultStartTime || '',
           endTime: shift.endTime || shift.defaultEndTime || '',
           payRate: resolvedPayRate,
