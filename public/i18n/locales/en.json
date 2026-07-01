@@ -1050,6 +1050,7 @@
     "hourlyRateDisplay": "${amount}/hr",
     "startDate": "Start Date",
     "shift": "Shift",
+    "availableShifts": "Available Shifts",
     "requirements": "Requirements",
     "location": "Location",
     "jobType": "Job Type",

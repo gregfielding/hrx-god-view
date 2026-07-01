@@ -20,6 +20,12 @@ export type Application = {
   shiftId?: string | null;
   shiftIds?: string[];
   selectedShifts?: unknown[];
+  /** Career-only: which of the JO's 2+ open shifts the applicant said they want,
+   *  when the posting offered a choice (single open shift = no choice needed,
+   *  this stays unset). Informational only — unlike gig `shiftId`/`shiftIds`,
+   *  it carries no day/spot-limit semantics; the recruiter still manually
+   *  assigns the shift in Placements. */
+  preferredShiftId?: string | null;
 
   // Candidate core
   candidate: {
@@ -72,6 +78,8 @@ export type ApplicationFormData = {
   shiftId?: string | null;
   shiftIds?: string[];
   selectedShifts?: unknown[];
+  /** See `Application.preferredShiftId` — same career-only, informational meaning. */
+  preferredShiftId?: string | null;
 
   // Candidate core
   candidate: {

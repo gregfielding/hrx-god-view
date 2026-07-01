@@ -405,6 +405,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     return [];
   }, [searchParams]);
 
+  // Career-only: which of the JO's 2+ open shifts the applicant said they want
+  // (see JobPostingDetail.tsx's careerOpenShifts picker). Informational only —
+  // unlike selectedShifts above, it carries no day/spot-limit semantics.
+  const preferredShiftId = useMemo(() => {
+    return searchParams.get('preferredShift') || null;
+  }, [searchParams]);
+
   // Apply date (YYYY-MM-DD) when worker applied for a specific day of a multi-day gig (from jobs board Apply button)
   const applyDateFromUrl = useMemo(() => {
     const d = searchParams.get('applyDate');
@@ -2985,6 +2992,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               // Store shift information for gig jobs
               ...(selectedShifts.length === 1 ? { shiftId: selectedShifts[0] } : {}),
               ...(selectedShifts.length > 1 ? { shiftIds: selectedShifts } : {}),
+              // Career-only: applicant's stated shift preference (non-binding; see JobPostingDetail.tsx)
+              ...(preferredShiftId ? { preferredShiftId } : {}),
               // Store shift date(s) for one-shift-per-day validation
               ...(shiftDate ? { shiftDate } : {}),
               ...(shiftDates.length > 0 ? { shiftDates: [...new Set(shiftDates)] } : {}),
@@ -3062,6 +3071,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                   shiftAssignments: shiftAssignments,
                 }
               : {}),
+            // Career-only: applicant's stated shift preference (non-binding)
+            ...(preferredShiftId ? { preferredShiftId } : {}),
           };
 
           // Add application ID to user's applicationIds array AND applicationData map

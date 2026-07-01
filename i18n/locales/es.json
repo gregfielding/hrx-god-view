@@ -1050,6 +1050,7 @@
     "hourlyRateDisplay": "${amount}/h",
     "startDate": "Fecha de inicio",
     "shift": "Turno",
+    "availableShifts": "Turnos disponibles",
     "requirements": "Requisitos",
     "location": "Ubicación",
     "jobType": "Tipo de trabajo",

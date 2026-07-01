@@ -27,6 +27,8 @@ import {
   LinearProgress,
   Checkbox,
   FormControlLabel,
+  Radio,
+  RadioGroup,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CheckCircle from '@mui/icons-material/CheckCircle';
@@ -104,6 +106,18 @@ const JobPostingDetail: React.FC = () => {
   const [dynamicShifts, setDynamicShifts] = useState<any[]>([]);
   const [loadingShifts, setLoadingShifts] = useState(false);
   const [careerWeeklyScheduleSummary, setCareerWeeklyScheduleSummary] = useState<string>('');
+  /**
+   * Career JOs with 2+ open shifts (each with its own weekly schedule) — the
+   * applicant picks one. Empty when the JO has 0-1 qualifying shifts, in which
+   * case `careerWeeklyScheduleSummary` (single string) is used instead, exactly
+   * as before. Populated by the same `loadCareerSchedule` effect below.
+   */
+  const [careerOpenShifts, setCareerOpenShifts] = useState<
+    Array<{ id: string; title: string; summary: string }>
+  >([]);
+  /** The applicant's choice among `careerOpenShifts` — written onto the
+   *  application as `preferredShiftId` (informational; see phase2.ts). */
+  const [selectedCareerShiftId, setSelectedCareerShiftId] = useState<string>('');
   const [appliedShifts, setAppliedShifts] = useState<string[]>([]);
   const [shiftStatuses, setShiftStatuses] = useState<Record<string, string>>({}); // Map shiftId -> status
   /**
@@ -655,11 +669,31 @@ const JobPostingDetail: React.FC = () => {
     loadDynamicShifts();
   }, [posting]);
 
-  // Load career weekly schedule (from job order shifts)
+  // Load career weekly schedule (from job order shifts). When the JO has 2+
+  // qualifying (open, schedule-bearing) shifts, surface all of them as
+  // selectable options instead of silently picking the first one found and
+  // hiding the rest (the original bug: a JO with a 1PM and an 8AM shift only
+  // ever showed the 1PM schedule; the 8AM slot was invisible to applicants).
   useEffect(() => {
+    const summarizeShift = (s: any): string => {
+      if (s?.weeklySchedule) return formatWeeklyScheduleSummary(s.weeklySchedule);
+      if (s?.defaultStartTime && s?.defaultEndTime) {
+        const fmt = (t: string) => {
+          if (!t || !/^\d{1,2}:\d{2}$/.test(t)) return t || '';
+          const [hh, mm] = t.split(':').map(Number);
+          const h12 = hh % 12 || 12;
+          const ap = hh >= 12 ? 'PM' : 'AM';
+          return `${h12}:${String(mm).padStart(2, '0')} ${ap}`;
+        };
+        return `${fmt(s.defaultStartTime)} – ${fmt(s.defaultEndTime)}`;
+      }
+      return '';
+    };
+
     const loadCareerSchedule = async () => {
       if (!posting || posting.jobType !== 'career' || !posting.jobOrderId || !posting.tenantId) {
         setCareerWeeklyScheduleSummary('');
+        setCareerOpenShifts([]);
         return;
       }
 
@@ -675,36 +709,50 @@ const JobPostingDetail: React.FC = () => {
         const snap = await getDocs(query(shiftsRef));
         if (snap.empty) {
           setCareerWeeklyScheduleSummary('');
+          setCareerOpenShifts([]);
           return;
         }
 
         const shifts = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as any[];
-        // Prefer the "weekly schedule" shift (career multi-day has no endDate)
+        // Qualifying = open (or unset — legacy shifts predate the status field)
+        // AND has a schedule we can actually summarize.
+        const qualifying = shifts.filter((s) => {
+          const status = String(s.status ?? 'open').toLowerCase();
+          if (status === 'closed' || status === 'cancelled' || status === 'canceled' || status === 'filled') {
+            return false;
+          }
+          return Boolean(summarizeShift(s));
+        });
+
+        if (qualifying.length > 1) {
+          setCareerOpenShifts(
+            qualifying.map((s) => ({
+              id: s.id,
+              title: String(s.shiftTitle || s.defaultJobTitle || posting.jobTitle || t('jobs.shift')),
+              summary: summarizeShift(s),
+            })),
+          );
+          setCareerWeeklyScheduleSummary('');
+          return;
+        }
+
+        setCareerOpenShifts([]);
+        // Single-shift (or none-qualifying) fallback — mirrors the original
+        // "prefer the weekly-schedule shift" rule exactly.
         const weekly =
           shifts.find((s) => s.shiftMode === 'multi' && s.weeklySchedule && !s.endDate) ||
-          shifts.find((s) => s.weeklySchedule);
-        let summary = weekly?.weeklySchedule
-          ? formatWeeklyScheduleSummary(weekly.weeklySchedule)
-          : '';
-        if (!summary && weekly?.defaultStartTime && weekly?.defaultEndTime) {
-          const fmt = (t: string) => {
-            if (!t || !/^\d{1,2}:\d{2}$/.test(t)) return t || '';
-            const [hh, mm] = t.split(':').map(Number);
-            const h12 = hh % 12 || 12;
-            const ap = hh >= 12 ? 'PM' : 'AM';
-            return `${h12}:${String(mm).padStart(2, '0')} ${ap}`;
-          };
-          summary = `${fmt(weekly.defaultStartTime)} – ${fmt(weekly.defaultEndTime)}`;
-        }
-        setCareerWeeklyScheduleSummary(summary || '');
+          shifts.find((s) => s.weeklySchedule) ||
+          qualifying[0];
+        setCareerWeeklyScheduleSummary(weekly ? summarizeShift(weekly) : '');
       } catch (err) {
         console.warn('Error loading career weekly schedule:', err);
         setCareerWeeklyScheduleSummary('');
+        setCareerOpenShifts([]);
       }
     };
 
     void loadCareerSchedule();
-  }, [posting]);
+  }, [posting, t]);
 
   // When worker has an assignment (from URL, accepted state, or application doc), load assignment + shift for start date and accept/decline cards
   useEffect(() => {
@@ -1569,6 +1617,17 @@ const JobPostingDetail: React.FC = () => {
     return map[label] ?? label;
   };
 
+  /** Builds the `?shifts=...&preferredShift=...&step=...` query string shared
+   *  across handleApply's branches, so the gig shift selection and the career
+   *  shift preference both survive a redirect into the Wizard. */
+  const buildApplyQueryParams = (opts?: { step?: number }): string => {
+    const params: string[] = [];
+    if (selectedShifts.length > 0) params.push(`shifts=${selectedShifts.join(',')}`);
+    if (selectedCareerShiftId) params.push(`preferredShift=${selectedCareerShiftId}`);
+    if (opts?.step != null) params.push(`step=${opts.step}`);
+    return params.length > 0 ? `?${params.join('&')}` : '';
+  };
+
   const handleApply = async () => {
     // Gig jobs: require at least one shift selected (apply-to-shift model; see docs/career-vs-gig-placements-assignments.md)
     if (
@@ -1577,6 +1636,17 @@ const JobPostingDetail: React.FC = () => {
       selectedShifts.length === 0
     ) {
       alert('Please select at least one shift to apply to.');
+      return;
+    }
+    // Career jobs with 2+ open shifts: require a preference so the recruiter
+    // knows which one the applicant wants (see careerOpenShifts / OS2-style
+    // shift-choice UI above the Apply button).
+    if (
+      posting?.jobType === 'career' &&
+      careerOpenShifts.length > 1 &&
+      !selectedCareerShiftId
+    ) {
+      alert('Please select a shift to apply to.');
       return;
     }
 
@@ -1602,8 +1672,7 @@ const JobPostingDetail: React.FC = () => {
 
         if (missingCerts.length === 0) {
           // User has all required certs - submit directly
-          const queryParams =
-            selectedShifts.length > 0 ? `?shifts=${selectedShifts.join(',')}` : '';
+          const queryParams = buildApplyQueryParams();
           const returnTo = queryParams
             ? `/c1/jobs-board/${postId}${queryParams}`
             : `/c1/jobs-board/${postId}`;
@@ -1615,6 +1684,7 @@ const JobPostingDetail: React.FC = () => {
             posting,
             selectedShifts,
             returnTo,
+            selectedCareerShiftId || null,
           );
 
           if (result.success) {
@@ -1626,29 +1696,23 @@ const JobPostingDetail: React.FC = () => {
           } else {
             // Error - show alert and navigate to wizard
             alert(result.error || 'Failed to submit application. Please try again.');
-            const queryParams =
-              selectedShifts.length > 0 ? `?shifts=${selectedShifts.join(',')}` : '';
-            navigate(`/apply/${posting.tenantId}/${postId}${queryParams}`);
+            navigate(`/apply/${posting.tenantId}/${postId}${buildApplyQueryParams()}`);
             return;
           }
         } else {
           // Missing certs - navigate to wizard starting at certifications step
-          const queryParams =
-            selectedShifts.length > 0 ? `?shifts=${selectedShifts.join(',')}&step=7` : '?step=7';
-          navigate(`/apply/${posting.tenantId}/${postId}${queryParams}`);
+          navigate(`/apply/${posting.tenantId}/${postId}${buildApplyQueryParams({ step: 7 })}`);
           return;
         }
       } else {
         // First time applicant - navigate to full wizard
-        const queryParams = selectedShifts.length > 0 ? `?shifts=${selectedShifts.join(',')}` : '';
-        navigate(`/apply/${posting.tenantId}/${postId}${queryParams}`);
+        navigate(`/apply/${posting.tenantId}/${postId}${buildApplyQueryParams()}`);
         return;
       }
     } catch (error) {
       console.error('Error in handleApply:', error);
       // Fallback to wizard on error
-      const queryParams = selectedShifts.length > 0 ? `?shifts=${selectedShifts.join(',')}` : '';
-      navigate(`/apply/${posting.tenantId}/${postId}${queryParams}`);
+      navigate(`/apply/${posting.tenantId}/${postId}${buildApplyQueryParams()}`);
     }
   };
 
@@ -3044,8 +3108,41 @@ const JobPostingDetail: React.FC = () => {
             );
           })()}
 
-          {/* Career shift schedule from job order (mirrors sidebar; visible in main column for job board readers) */}
-          {posting.jobType === 'career' && careerWeeklyScheduleSummary ? (
+          {/* Career shift schedule from job order (mirrors sidebar; visible in main column for job board readers).
+              2+ open shifts → let the applicant pick one (see `careerOpenShifts`); otherwise the original
+              single-summary line. */}
+          {posting.jobType === 'career' && careerOpenShifts.length > 1 ? (
+            <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
+              <CardContent sx={{ p: 0 }}>
+                <Typography variant="h6" gutterBottom sx={{ fontWeight: 700 }}>
+                  {t('jobs.availableShifts')}
+                </Typography>
+                <RadioGroup
+                  value={selectedCareerShiftId}
+                  onChange={(e) => setSelectedCareerShiftId(e.target.value)}
+                >
+                  {careerOpenShifts.map((s) => (
+                    <FormControlLabel
+                      key={s.id}
+                      value={s.id}
+                      control={<Radio size="small" />}
+                      label={
+                        <Box>
+                          <Typography variant="body1" fontWeight={600}>
+                            {s.title}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            {s.summary}
+                          </Typography>
+                        </Box>
+                      }
+                      sx={{ alignItems: 'flex-start', mb: 1 }}
+                    />
+                  ))}
+                </RadioGroup>
+              </CardContent>
+            </Card>
+          ) : posting.jobType === 'career' && careerWeeklyScheduleSummary ? (
             <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
               <CardContent sx={{ p: 0 }}>
                 <Typography variant="h6" gutterBottom sx={{ fontWeight: 700 }}>

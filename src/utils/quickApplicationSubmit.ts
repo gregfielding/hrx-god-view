@@ -113,7 +113,11 @@ export async function submitQuickApplication(
   jobId: string,
   jobPosting: any,
   selectedShifts: string[] = [],
-  returnTo?: string
+  returnTo?: string,
+  /** Career-only: which of the JO's 2+ open shifts the applicant picked when the
+   *  posting offered a choice. Stamped as-is with no gig-style conflict-check or
+   *  spot-limit side effects — deliberately NOT routed through `selectedShifts`. */
+  preferredShiftId?: string | null,
 ): Promise<{ success: boolean; error?: string }> {
   try {
     // Gig jobs: applicant must apply to at least one specific shift (see docs/career-vs-gig-placements-assignments.md)
@@ -391,6 +395,7 @@ export async function submitQuickApplication(
       ...(shiftDate ? { shiftDate } : {}),
       ...(shiftDates.length > 0 ? { shiftDates: [...new Set(shiftDates)] } : {}),
       ...(Object.keys(shiftAssignments).length > 0 ? { shiftAssignments } : {}),
+      ...(preferredShiftId ? { preferredShiftId } : {}),
     }, { merge: true });
 
     // Auto-add to user groups if specified in job posting (matches wizard behavior)
