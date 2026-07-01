@@ -1665,7 +1665,7 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
     <TimesheetEditorProvider>
       <Stack spacing={2}>
         <TimesheetTotalsHeader
-          rows={rows}
+          rows={displayedRows}
           loading={loading}
           tenantId={tenantId}
           filter={filter}

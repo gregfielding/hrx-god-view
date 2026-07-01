@@ -888,6 +888,26 @@ export function actualHoursForRow(row: TimesheetGridRow): number {
   return regular + ot + dt;
 }
 
+/** Per-row gross pay ($) — mirrors the grid's Total column + the batch
+ *  submitter: reg*rate + ot*rate*1.5 + dt*rate*2 + tips + bonus for scheduled
+ *  entries; hours*rate + tips + bonus for CSV-import rows. Empty rows = 0. */
+export function dollarAmountForRow(row: TimesheetGridRow): number {
+  if (row.kind !== 'entry') return 0;
+  const e = row.entry;
+  const payRate = typeof e.payRate === 'number' ? e.payRate : 0;
+  const tips = typeof e.tips === 'number' ? e.tips : 0;
+  const bonus = typeof e.bonusAmount === 'number' ? e.bonusAmount : 0;
+  if (row.isImport) {
+    const gross = payRate * actualHoursForRow(row) + tips + bonus;
+    return Number.isFinite(gross) ? gross : 0;
+  }
+  const reg = typeof e.totalRegularHours === 'number' ? e.totalRegularHours : 0;
+  const ot = typeof e.totalOTHours === 'number' ? e.totalOTHours : 0;
+  const dt = typeof e.totalDoubleTimeHours === 'number' ? e.totalDoubleTimeHours : 0;
+  const gross = reg * payRate + ot * payRate * 1.5 + dt * payRate * 2 + tips + bonus;
+  return Number.isFinite(gross) ? gross : 0;
+}
+
 /** Status string used by the row's status pill. Empty rows show the
  *  literal "—" instead of any draft state — they have no entry yet.
  *  Import rows surface their `import.matchStatus` (blocked / needs_rate /

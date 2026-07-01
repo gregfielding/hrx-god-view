@@ -30,6 +30,7 @@ import {
 } from '@mui/material';
 import {
   AccessTime as AccessTimeIcon,
+  AttachMoney as AttachMoneyIcon,
   CheckCircleOutline as CheckCircleOutlineIcon,
   Group as GroupIcon,
 } from '@mui/icons-material';
@@ -39,6 +40,7 @@ import {
   type TimesheetRowDisplayStatus,
   actualHoursForRow,
   displayStatusForRow,
+  dollarAmountForRow,
   entryHasRecruiterData,
   scheduledHoursForRow,
 } from './timesheetGridResolver';
@@ -74,6 +76,7 @@ interface TotalsBreakdown {
   emptyRowCount: number;
   scheduledHours: number;
   actualHours: number;
+  dollarTotal: number;
   byStatus: Map<TimesheetRowDisplayStatus, number>;
 }
 
@@ -82,12 +85,14 @@ function deriveTotals(rows: TimesheetGridRow[]): TotalsBreakdown {
   const byStatus = new Map<TimesheetRowDisplayStatus, number>();
   let scheduledHours = 0;
   let actualHours = 0;
+  let dollarTotal = 0;
   let emptyRowCount = 0;
 
   for (const row of rows) {
     workers.add(row.assignment.workerId);
     scheduledHours += scheduledHoursForRow(row);
     actualHours += actualHoursForRow(row);
+    dollarTotal += dollarAmountForRow(row);
     const status = displayStatusForRow(row);
     byStatus.set(status, (byStatus.get(status) ?? 0) + 1);
     if (row.kind === 'empty') emptyRowCount += 1;
@@ -99,6 +104,7 @@ function deriveTotals(rows: TimesheetGridRow[]): TotalsBreakdown {
     emptyRowCount,
     scheduledHours,
     actualHours,
+    dollarTotal,
     byStatus,
   };
 }
@@ -109,6 +115,12 @@ function formatHours(hours: number): string {
   if (!Number.isFinite(hours) || hours === 0) return '0';
   if (Number.isInteger(hours)) return `${hours}`;
   return hours.toFixed(1);
+}
+
+/** "$1,234.56" — grouped thousands, always two decimals. */
+function formatMoney(n: number): string {
+  const v = Number.isFinite(n) ? n : 0;
+  return `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 /**
@@ -290,6 +302,20 @@ export const TimesheetTotalsHeader: React.FC<TimesheetTotalsHeaderProps> = ({
           </Tooltip>
           <Typography variant="body2" fontWeight={700}>
             {formatHours(totals.actualHours)}
+          </Typography>
+        </Stack>
+
+        <Stack direction="row" alignItems="center" spacing={1}>
+          <Tooltip title="Gross pay across the rows shown (reg + OT×1.5 + DT×2 by pay rate, plus tips + bonus). Adjusts to the current status / search filter.">
+            <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+              <AttachMoneyIcon fontSize="small" color="action" sx={{ mr: 0.5 }} />
+              <Typography variant="body2" color="text.secondary">
+                Total
+              </Typography>
+            </span>
+          </Tooltip>
+          <Typography variant="body2" fontWeight={700}>
+            {formatMoney(totals.dollarTotal)}
           </Typography>
         </Stack>
 
