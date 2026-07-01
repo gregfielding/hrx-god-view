@@ -543,15 +543,6 @@ export async function resolveTimesheetGrid(
   };
   const tuples: Tuple[] = [];
 
-  // Open-shift rows are capped at today — no point materializing a blank
-  // row (and a Firestore read) for a day that hasn't happened yet. Past
-  // and current periods are unaffected; only future days in the current
-  // period (and any future period) are skipped.
-  const _now = new Date();
-  const todayIso = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(
-    _now.getDate(),
-  ).padStart(2, '0')}`;
-
   for (const a of overlapping) {
     let perAssignmentDayCount = 0;
     // We've already validated a.startDate via the overlap check, so
@@ -563,9 +554,10 @@ export async function resolveTimesheetGrid(
     // Open shift = standing-crew assignment with no fixed daily times.
     // It carries no weeklySchedule, so the per-DOW expansion below would
     // yield zero rows. Instead generate a blank row for EVERY calendar
-    // day in the assignment's active window ∩ the period; the recruiter
-    // enters total hours per worked day (actualHoursOverride) and leaves
-    // off-days blank (no entry doc is created for an untouched row).
+    // day in the assignment's active window ∩ the period (including days
+    // ahead of today, so the grid shows the full week going forward) — the
+    // recruiter enters total hours per worked day (actualHoursOverride) and
+    // leaves off-days blank (no entry doc is created for an untouched row).
     const isOpen =
       (a as unknown as Record<string, unknown>).isOpenShift === true ||
       (a as unknown as Record<string, unknown>).noFixedTimes === true;
@@ -573,9 +565,8 @@ export async function resolveTimesheetGrid(
     // This covers open/standing-crew shifts AND single-/finite-day gig & event
     // shifts that are pinned by the assignment's own date window (startDate /
     // endDate) rather than a recurring schedule. For those, seed a blank "no
-    // fixed times" timecard row for each day in the window ∩ period (capped at
-    // today; the recruiter enters total hours per worked day). Without this they
-    // silently generate no rows and the workers can't be paid.
+    // fixed times" timecard row for each day in the window ∩ period. Without
+    // this they silently generate no rows and the workers can't be paid.
     const hasWeeklySchedule =
       !!a.weeklySchedule &&
       Object.keys(a.weeklySchedule as Record<string, unknown>).length > 0;
@@ -588,7 +579,6 @@ export async function resolveTimesheetGrid(
       if (startStr && !isoDateGte(d, startStr)) continue;
       if (endStr && !isoDateLte(d, endStr)) continue;
       if (perDay) {
-        if (d > todayIso) continue; // don't materialize future days
         tuples.push({ assignment: a, workDate: d, scheduled: OPEN_SHIFT_SCHEDULED });
         perAssignmentDayCount += 1;
         continue;

@@ -105,6 +105,11 @@ interface ShiftOption {
   endDate: string | null;
   startTime: string | null;
   endTime: string | null;
+  /** Standing-crew shift with no fixed end date (see `EditShiftForm`'s
+   *  `shiftType: 'open'`). Drives the period-scope fallback below — an
+   *  open shift has no natural single-day range, so it needs a rolling
+   *  multi-day window instead of collapsing to just `date`. */
+  isOpenShift: boolean;
 }
 
 /**
@@ -141,6 +146,19 @@ function toYyyyMmDd(value: unknown): string | null {
   }
   if (!d || Number.isNaN(d.getTime())) return null;
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Today as YYYY-MM-DD (local time). */
+function todayYyyyMmDd(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Add `days` calendar days to a YYYY-MM-DD string. */
+function addDaysYyyyMmDd(iso: string, days: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(y, m - 1, d + days);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
 }
 
 /* -------------------------------------------------------------------------
@@ -442,7 +460,8 @@ const Timesheets: React.FC = () => {
             const endTime =
               (typeof data.endTime === 'string' && data.endTime.trim()) ||
               null;
-            return { id: d.id, date, endDate, startTime, endTime };
+            const isOpenShift = data.shiftType === 'open';
+            return { id: d.id, date, endDate, startTime, endTime, isOpenShift };
           })
           .sort((a, b) => {
             // Sort by date asc, then start time asc — matches the
@@ -683,6 +702,18 @@ const Timesheets: React.FC = () => {
   const periodScope = useMemo<PeriodPickerScope>(() => {
     if (shiftFilter !== 'all') {
       const shift = shifts.find((s) => s.id === shiftFilter);
+      // Open (standing-crew, ongoing) shifts have no natural end date —
+      // collapsing to a single day would hide the rest of the week for
+      // an assignment that's meant to run every day going forward. Seed
+      // a rolling 7-day window anchored on today instead.
+      if (shift?.isOpenShift) {
+        const today = todayYyyyMmDd();
+        return {
+          kind: 'shift',
+          refId: shiftFilter,
+          autoFillPeriod: { start: today, end: addDaysYyyyMmDd(today, 6) },
+        };
+      }
       // Multi-day shifts (festivals etc.) span shiftDate → endDate;
       // single-day shifts collapse to {start, end: start}.
       const start = shift?.date ?? null;
@@ -923,9 +954,9 @@ const Timesheets: React.FC = () => {
                           ? `${s.startTime}–${s.endTime}`
                           : s.startTime ?? '';
                       const label =
-                        datePart && timePart
+                        (datePart && timePart
                           ? `${datePart} · ${timePart}`
-                          : datePart || timePart || s.id;
+                          : datePart || timePart || s.id) + (s.isOpenShift ? ' (Open, ongoing)' : '');
                       return (
                         <MenuItem key={s.id} value={s.id}>
                           {label}

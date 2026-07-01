@@ -64,6 +64,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import { Autocomplete, useLoadScript } from '@react-google-maps/api';
 import CloseIcon from '@mui/icons-material/Close';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import VisibilityIcon from '@mui/icons-material/Visibility';
@@ -103,18 +104,12 @@ const US_STATES: Array<{ code: string; name: string }> = [
 ];
 
 /**
- * Numeric security levels per `src/utils/AccessRoles.ts`. We expose 2-5
- * here because higher levels (Manager/Admin) shouldn't be applied
- * through a "manual create worker" flow — those need explicit role
- * assignment via `setTenantRole`. Default is '5' (Worker) since this
- * surface is for hiring workers.
+ * Numeric security level per `src/utils/AccessRoles.ts`. This flow always
+ * creates an Applicant ('2') — higher levels (Worker, Hired Staff, Flex,
+ * Manager/Admin) require an explicit role change via `setTenantRole` after
+ * the account exists, not a choice made at manual-creation time.
  */
-const WORKER_SECURITY_LEVELS: Array<{ value: AdminCreateWorkerSecurityLevel; label: string }> = [
-  { value: '5', label: '5 — Worker' },
-  { value: '4', label: '4 — Hired Staff' },
-  { value: '3', label: '3 — Flex' },
-  { value: '2', label: '2 — Applicant' },
-];
+const WORKER_SECURITY_LEVEL: AdminCreateWorkerSecurityLevel = '2';
 
 interface EntityOption {
   id: string;
@@ -185,7 +180,7 @@ const AddWorkerManuallyWizard: React.FC<AddWorkerManuallyWizardProps> = ({
   const [hire, setHire] = useState<HireState>({
     entityId: '',
     workerType: 'entity_default',
-    securityLevel: '5',
+    securityLevel: WORKER_SECURITY_LEVEL,
     passwordMode: 'generate',
     password: '',
   });
@@ -210,6 +205,46 @@ const AddWorkerManuallyWizard: React.FC<AddWorkerManuallyWizardProps> = ({
   /** Show/hide eye icon on the password input + result reveal. */
   const [revealPassword, setRevealPassword] = useState(false);
 
+  // Google Places autocomplete for the Address step's street field. Unlike
+  // the public apply wizard's AddressStep, address here is optional and
+  // freely editable (recruiter can type/fix any sub-field by hand) — a
+  // Place selection is just a convenience autofill, not a gate.
+  const { isLoaded: isGoogleMapsLoaded } = useLoadScript({
+    googleMapsApiKey: process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '',
+    libraries: ['places'],
+  });
+  const autocompleteRef = React.useRef<google.maps.places.Autocomplete | null>(null);
+  const handleAutocompleteLoad = useCallback((autocomplete: google.maps.places.Autocomplete) => {
+    autocompleteRef.current = autocomplete;
+  }, []);
+  const handlePlaceChanged = useCallback(() => {
+    const place = autocompleteRef.current?.getPlace();
+    const components = place?.address_components;
+    if (!place || !Array.isArray(components)) return;
+    const getComponent = (types: string[], useShort = false) => {
+      const c = components.find((comp) => types.every((t) => comp.types?.includes(t)));
+      if (!c) return '';
+      return useShort ? c.short_name || '' : c.long_name || '';
+    };
+    const streetNumber = getComponent(['street_number']);
+    const route = getComponent(['route']);
+    const street = `${streetNumber} ${route}`.trim();
+    const city =
+      getComponent(['locality']) ||
+      getComponent(['sublocality']) ||
+      getComponent(['postal_town']) ||
+      getComponent(['administrative_area_level_2']);
+    const state = getComponent(['administrative_area_level_1'], true);
+    const zip = getComponent(['postal_code']);
+    setAddress((prev) => ({
+      ...prev,
+      addressLine1: street || prev.addressLine1,
+      city: city || prev.city,
+      state: state || prev.state,
+      postalCode: zip || prev.postalCode,
+    }));
+  }, []);
+
   // Reset all state when the wizard re-opens. Recruiter is starting fresh.
   useEffect(() => {
     if (!open) return;
@@ -226,7 +261,7 @@ const AddWorkerManuallyWizard: React.FC<AddWorkerManuallyWizardProps> = ({
     setHire({
       entityId: '',
       workerType: 'entity_default',
-      securityLevel: '5',
+      securityLevel: WORKER_SECURITY_LEVEL,
       passwordMode: 'generate',
       password: '',
     });
@@ -447,13 +482,35 @@ const AddWorkerManuallyWizard: React.FC<AddWorkerManuallyWizardProps> = ({
         and tax filing. If you skip here, the worker can enter it inside the Everee embed in the next
         step.
       </Alert>
-      <TextField
-        label="Street address"
-        value={address.addressLine1}
-        onChange={(e) => setAddress({ ...address, addressLine1: e.target.value })}
-        fullWidth
-        autoFocus
-      />
+      {isGoogleMapsLoaded ? (
+        <Autocomplete
+          onLoad={handleAutocompleteLoad}
+          onPlaceChanged={handlePlaceChanged}
+          options={{
+            componentRestrictions: { country: 'us' },
+            fields: ['address_components', 'formatted_address', 'geometry', 'place_id'],
+            types: ['address'],
+          }}
+        >
+          <TextField
+            label="Street address"
+            value={address.addressLine1}
+            onChange={(e) => setAddress({ ...address, addressLine1: e.target.value })}
+            fullWidth
+            autoFocus
+            autoComplete="off"
+            helperText="Start typing and pick a suggestion to auto-fill city/state/ZIP"
+          />
+        </Autocomplete>
+      ) : (
+        <TextField
+          label="Street address"
+          value={address.addressLine1}
+          onChange={(e) => setAddress({ ...address, addressLine1: e.target.value })}
+          fullWidth
+          autoFocus
+        />
+      )}
       <TextField
         label="Apt / unit / suite (optional)"
         value={address.addressLine2}
@@ -543,23 +600,12 @@ const AddWorkerManuallyWizard: React.FC<AddWorkerManuallyWizardProps> = ({
           </FormControl>
         </Stack>
       ) : null}
-      <FormControl sx={{ minWidth: 240 }}>
-        <InputLabel id="security-level-label">Security level</InputLabel>
-        <Select
-          labelId="security-level-label"
-          label="Security level"
-          value={hire.securityLevel}
-          onChange={(e) =>
-            setHire({ ...hire, securityLevel: e.target.value as AdminCreateWorkerSecurityLevel })
-          }
-        >
-          {WORKER_SECURITY_LEVELS.map((sl) => (
-            <MenuItem key={sl.value} value={sl.value}>
-              {sl.label}
-            </MenuItem>
-          ))}
-        </Select>
-      </FormControl>
+      <Box>
+        <Typography variant="caption" color="text.secondary" display="block">
+          Security level
+        </Typography>
+        <Chip size="small" label="2 — Applicant" sx={{ mt: 0.5 }} />
+      </Box>
       <Divider />
       <Box>
         <Typography variant="subtitle2" gutterBottom>
