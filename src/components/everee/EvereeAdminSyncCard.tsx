@@ -47,6 +47,7 @@ import { db } from '../../firebase';
 import { p } from '../../data/firestorePaths';
 import { useAuth } from '../../contexts/AuthContext';
 import {
+  evereeAdminReconcileWorker,
   evereeAdminRecreateWorkerOnboarding,
   evereeEnsureWorker,
   evereeUpdateWorkerAddress,
@@ -257,6 +258,25 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
           throw new Error('Everee did not return a worker id.');
         }
         const created = !!result.data?.created;
+        // `evereeEnsureWorker` only provisions/links the worker — it never
+        // touches `everee_workers/{key}.readinessMirror` (the doc the
+        // Employment summary card's "Direct deposit" / "Employer I-9"
+        // lines read). Without this, that card can silently disagree with
+        // the live Pay Setup section below it until the next webhook or
+        // the 2h cron sweep happens to catch this worker (2026-07-02
+        // Zachary Vick report — direct deposit showed "Not started" on the
+        // summary card while Pay Setup/Bank accounts already showed it
+        // enabled). Manual clicks only — the silent auto-run-on-mount
+        // shouldn't add 4 extra Everee calls to every profile view.
+        if (!silent) {
+          try {
+            await evereeAdminReconcileWorker({ tenantId, entityId, userId, evereeWorkerId: id });
+          } catch (reconcileErr) {
+            // Non-fatal — the worker link itself succeeded; readiness data
+            // just stays stale until the next background sync. Log only.
+            console.warn('[EvereeAdminSyncCard] reconcile-after-sync failed', reconcileErr);
+          }
+        }
         if (!silent) {
           setToast({
             severity: 'success',
