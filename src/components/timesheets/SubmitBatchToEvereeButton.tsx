@@ -114,9 +114,16 @@ function summarizeApproved(rows: TimesheetGridRow[]): ApprovedSummary {
     const reg = Number(row.entry.totalRegularHours ?? 0);
     const ot = Number(row.entry.totalOTHours ?? 0);
     const dt = Number(row.entry.totalDoubleTimeHours ?? 0);
+    // CA meal/rest-break penalty hours — paid at the regular rate as their
+    // own premium payables (see composeTimesheetBatchPayloads.ts). Omitting
+    // these made this preview under-count vs. what's actually submitted to
+    // and paid by Everee (mirrors createTimesheetBatch.ts's server-side total).
+    const meal = Number(row.entry.mealBreakPenaltyHours ?? 0);
+    const rest = Number(row.entry.restBreakPenaltyHours ?? 0);
     const tips = Number(row.entry.tips ?? 0);
     const bonus = Number(row.entry.bonusAmount ?? 0);
-    totalGrossPay += reg * payRate + ot * payRate * 1.5 + dt * payRate * 2 + tips + bonus;
+    totalGrossPay +=
+      reg * payRate + ot * payRate * 1.5 + dt * payRate * 2 + meal * payRate + rest * payRate + tips + bonus;
   }
   return { entryIds, workerIds, totalRegularHours, totalOTHours, totalGrossPay };
 }

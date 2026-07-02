@@ -403,21 +403,26 @@ function formatMoney(n: number): string {
 
 /**
  * Per-row gross pay. Same formula as SubmitBatchToEvereeButton's
- * `summarizeApproved` so the row total and the batch total agree:
- *   reg * payRate + ot * payRate * 1.5 + dt * payRate * 2 + tips + bonus
+ * `summarizeApproved` / createTimesheetBatch.ts's server-side total, so the
+ * row total, the batch preview, and what's actually paid via Everee agree:
+ *   reg * payRate + ot * payRate * 1.5 + dt * payRate * 2
+ *   + meal * payRate + rest * payRate + tips + bonus
  *
- * Penalties (meal/rest break) are NOT included today — they're a CA-only
- * rules-engine output that hasn't been wired into pay totals yet. Adding
- * them would require splitting the formula by entity policy.
+ * Meal/rest break penalty hours ARE wired into real pay today — they're
+ * composed into MEAL_PREMIUM/REST_PREMIUM payables and submitted to Everee
+ * dollar-for-dollar (composeTimesheetBatchPayloads.ts) — so they must be
+ * included here too or this cell under-counts what the worker is paid.
  */
 function computeEntryGrossPay(entry: TimesheetEntryV2): number {
   const payRate = Number(entry.payRate ?? 0);
   const reg = Number(entry.totalRegularHours ?? 0);
   const ot = Number(entry.totalOTHours ?? 0);
   const dt = Number(entry.totalDoubleTimeHours ?? 0);
+  const meal = Number(entry.mealBreakPenaltyHours ?? 0);
+  const rest = Number(entry.restBreakPenaltyHours ?? 0);
   const tips = Number(entry.tips ?? 0);
   const bonus = Number(entry.bonusAmount ?? 0);
-  return reg * payRate + ot * payRate * 1.5 + dt * payRate * 2 + tips + bonus;
+  return reg * payRate + ot * payRate * 1.5 + dt * payRate * 2 + meal * payRate + rest * payRate + tips + bonus;
 }
 
 function formatHours(h: number): string {
