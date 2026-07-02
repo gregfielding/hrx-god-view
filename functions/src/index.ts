@@ -472,6 +472,14 @@ export {
   submitTimesheetAdjustment,
   submitTimesheetAdjustmentWorker,
 } from './payroll/submitTimesheetAdjustments';
+// Pulls a single already-submitted (`sent_to_everee`) entry back out of
+// Everee (deletes its worked-shift/payables) and resets it to `draft` so
+// it can be fixed and resubmitted — the regular-flow equivalent of the
+// CSV importer's `voidImportTimesheetPayable`. Refuses `paid` entries;
+// those need the adjustment path above instead.
+export {
+  revertSentTimesheetEntryToDraftCallable,
+} from './payroll/revertSentTimesheetEntryToDraftCallable';
 // **TS.1 Phase 4 Slice 7** — reconciler cron. Backstop for webhook
 // drops + orchestrator crashes. Every 15 min, walks stuck batches
 // (status in submitting/partial, untouched >30 min), queries Everee

@@ -65,6 +65,7 @@ import {
   OpenInNew as OpenInNewIcon,
   Refresh as RefreshIcon,
   TableChart as TableChartIcon,
+  UndoOutlined as UndoIcon,
 } from '@mui/icons-material';
 import { FirebaseError } from 'firebase/app';
 import { httpsCallable } from 'firebase/functions';
@@ -80,6 +81,7 @@ import type {
 } from '../../types/recruiter/timesheet';
 import { approveTimesheetEntries } from '../../utils/timesheets/approveTimesheetEntries';
 import { revertTimesheetEntriesToDraft } from '../../utils/timesheets/revertTimesheetEntriesToDraft';
+import { revertSentTimesheetEntryToDraft } from '../../services/timesheets/timesheetBatchCallables';
 import { createDraftTimesheetEntry } from '../../utils/timesheets/createDraftTimesheetEntry';
 import { formatPeriodLabel } from '../../utils/timesheets/dateRange';
 import {
@@ -1114,6 +1116,34 @@ const EntryRow: React.FC<EntryRowProps> = ({
   // WC Code / Rate dialog state — opens on click of either WC cell.
   const [wcDialogOpen, setWcDialogOpen] = React.useState(false);
 
+  /* -------------------------------------------------------------------
+   * "Revert sent-to-Everee entry" — pulls an already-submitted row back
+   * to draft by deleting its Everee payable(s)/worked-shift, so a wrong
+   * amount can be fixed and resubmitted without touching the rest of
+   * the batch. Unlike the approved→draft pill (a cheap, instantly-
+   * reversible Firestore flip), this makes real Everee DELETE calls —
+   * confirmation dialog required, no accidental single-click.
+   * ------------------------------------------------------------------- */
+  const [revertSentDialogOpen, setRevertSentDialogOpen] = React.useState(false);
+  const [revertingSent, setRevertingSent] = React.useState(false);
+  const [revertSentError, setRevertSentError] = React.useState<string | null>(null);
+  const doRevertSent = React.useCallback(async () => {
+    if (!tenantId) return;
+    setRevertingSent(true);
+    setRevertSentError(null);
+    try {
+      await revertSentTimesheetEntryToDraft({ tenantId, entryId: entry.id });
+      mergeEntryUpdate(entry.id, { status: 'draft' });
+      setRevertSentDialogOpen(false);
+    } catch (err) {
+      const message =
+        err instanceof FirebaseError ? err.message : err instanceof Error ? err.message : String(err);
+      setRevertSentError(message);
+    } finally {
+      setRevertingSent(false);
+    }
+  }, [tenantId, entry.id, mergeEntryUpdate]);
+
   // Shift window for the breaks-inside-shift validator. Use actuals
   // when set (recruiter-edited), fall back to scheduled otherwise.
   const shiftStart = entry.actualStartTime ?? row.scheduled.startTime;
@@ -1271,16 +1301,81 @@ const EntryRow: React.FC<EntryRowProps> = ({
       </TableCell>
 
       <TableCell>
-        <StatusPill
-          status={status}
-          onApprove={() => void onApproveEntry(entry.id)}
-          approving={approvingThisEntry}
-          onRevert={() => void onRevertEntry(entry.id)}
-          reverting={revertingThisEntry}
-          errorMessage={(entry as any).everee?.errorMessage as string | undefined}
-          errorCode={(entry as any).everee?.errorCode as string | undefined}
-        />
+        <Stack direction="row" alignItems="center" spacing={0.5}>
+          <StatusPill
+            status={status}
+            onApprove={() => void onApproveEntry(entry.id)}
+            approving={approvingThisEntry}
+            onRevert={() => void onRevertEntry(entry.id)}
+            reverting={revertingThisEntry}
+            errorMessage={(entry as any).everee?.errorMessage as string | undefined}
+            errorCode={(entry as any).everee?.errorCode as string | undefined}
+          />
+          {/* Pull an already-submitted row back to draft — deletes its
+              Everee payable(s)/worked-shift, so a wrong amount can be
+              fixed before it's paid. Not available once `paid` (the
+              server refuses; the adjustment path handles that case). */}
+          {status === 'sent_to_everee' && (
+            <Tooltip title="Revert to draft — deletes this entry's Everee submission so you can fix and resubmit it. Only works before Everee pays it out.">
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={() => {
+                    setRevertSentError(null);
+                    setRevertSentDialogOpen(true);
+                  }}
+                  disabled={revertingSent}
+                >
+                  <UndoIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          )}
+        </Stack>
       </TableCell>
+      <Dialog
+        open={revertSentDialogOpen}
+        onClose={() => !revertingSent && setRevertSentDialogOpen(false)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Revert this entry to draft?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            This deletes the Everee submission for{' '}
+            <strong>{row.assignment.workerDisplayName ?? 'this worker'}</strong> on{' '}
+            <strong>{row.workDate}</strong> ({formatMoney(computeEntryGrossPay(entry))}) and resets the
+            row to draft so you can fix and resubmit it.
+          </DialogContentText>
+          <DialogContentText sx={{ mt: 1.5, fontWeight: 600 }}>
+            Only do this if the payment hasn&apos;t been processed/paid in Everee yet — once it&apos;s
+            paid, this will fail (use the adjustment path instead).
+          </DialogContentText>
+          {revertSentError && (
+            <Alert severity="error" sx={{ mt: 2 }}>
+              {revertSentError}
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => setRevertSentDialogOpen(false)}
+            disabled={revertingSent}
+            sx={{ textTransform: 'none' }}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={() => void doRevertSent()}
+            disabled={revertingSent}
+            color="error"
+            variant="contained"
+            sx={{ textTransform: 'none' }}
+          >
+            {revertingSent ? 'Reverting…' : 'Revert to draft'}
+          </Button>
+        </DialogActions>
+      </Dialog>
       {/* Workers' Comp edit dialog — mounted inside the row so dialog
           state lives per-row. Renders nothing when closed. */}
       {tenantId && (

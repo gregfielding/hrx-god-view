@@ -98,3 +98,32 @@ export const submitTimesheetBatch = httpsCallable<
   SubmitTimesheetBatchRequest,
   SubmitTimesheetBatchResult
 >(getFunctions(app, REGION), 'submitTimesheetBatch');
+
+// ─────────────────────────────────────────────────────────────────────
+// revertSentTimesheetEntryToDraft
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Pulls a single already-submitted (`sent_to_everee`) entry back out of
+ * Everee (deletes its worked-shift/payables) and resets it to `draft` so
+ * it can be fixed and resubmitted. Refuses entries already `paid` — those
+ * need the adjustment path instead. See
+ * `functions/src/payroll/revertSentTimesheetEntryToDraftCallable.ts`.
+ */
+export interface RevertSentTimesheetEntryToDraftRequest {
+  tenantId: string;
+  entryId: string;
+}
+
+export interface RevertSentTimesheetEntryToDraftResult {
+  ok: true;
+  entryId: string;
+  deletedWorkedShift: boolean;
+  deletedPayableCount: number;
+  alreadyGoneCount: number;
+}
+
+export const revertSentTimesheetEntryToDraft = httpsCallable<
+  RevertSentTimesheetEntryToDraftRequest,
+  RevertSentTimesheetEntryToDraftResult
+>(getFunctions(app, REGION), 'revertSentTimesheetEntryToDraftCallable');
