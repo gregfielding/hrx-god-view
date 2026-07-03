@@ -1140,6 +1140,9 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
       }
 
       // Otherwise, use the standard message sending API
+      // sendMessageApi requires a Bearer token as of 2026-07-03 (it was an
+      // unauthenticated public endpoint that could send real SMS).
+      const sendIdToken = user ? await user.getIdToken() : null;
       const sendPromises = internalRecipients.map(async (rec) => {
         const context: Record<string, any> = {
           tenantId: effectiveTenantId,
@@ -1173,6 +1176,7 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            ...(sendIdToken ? { Authorization: `Bearer ${sendIdToken}` } : {}),
           },
           body: JSON.stringify(payload),
         });

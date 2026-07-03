@@ -73,6 +73,18 @@ export interface TriggerCatalogItem {
 
 const API_BASE_URL = 'https://us-central1-hrx1-d3beb.cloudfunctions.net';
 
+/** JSON headers + Firebase ID token. `sendMessageApi`/`testRenderApi`
+ *  require a Bearer token as of 2026-07-03 (they were unauthenticated
+ *  public endpoints; sendMessageApi could send real SMS). */
+async function authJsonHeaders(): Promise<Record<string, string>> {
+  const { auth } = await import('../firebase');
+  const token = await auth.currentUser?.getIdToken();
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
 /**
  * List templates with optional filtering
  */
@@ -283,9 +295,7 @@ export async function testRenderTemplate(
 ): Promise<{ success: boolean; renderedBody?: string; templateId?: string; variablesMissing?: string[] }> {
   const response = await fetch(`${API_BASE_URL}/testRenderApi`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: await authJsonHeaders(),
     body: JSON.stringify({
       tenantId,
       messageTypeId,
@@ -332,9 +342,7 @@ export async function sendTestMessage(
 ): Promise<{ success: boolean; dispatchedChannels?: Channel[]; messageLogIds?: string[]; warnings?: string[] }> {
   const response = await fetch(`${API_BASE_URL}/sendMessageApi`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: await authJsonHeaders(),
     body: JSON.stringify({
       userId,
       messageTypeId,

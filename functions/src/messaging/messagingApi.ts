@@ -12,6 +12,7 @@ import { sendMessage, MessageContext } from './routingOrchestrator';
 import { getTemplate, renderTemplate, MessageTemplate } from './templateEngine';
 import { Channel } from './messageTypesRegistry';
 import type { LanguageCode } from './templateEngine';
+import { verifyRequestAuth, verifyRequestAuthAndTenant } from './httpAuth';
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -68,13 +69,6 @@ export const sendMessageApi = onRequest(
         }
       }
 
-      // TODO: Add authentication middleware
-      // const auth = await verifyAuth(request);
-      // if (!auth) {
-      //   response.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication required' } });
-      //   return;
-      // }
-
       const {
         userId,
         messageTypeId,
@@ -111,6 +105,13 @@ export const sendMessageApi = onRequest(
         });
         return;
       }
+
+      // This endpoint sends real SMS/email through the orchestrator — it was
+      // deployed with invoker:'public' and no auth until 2026-07-03 (found in
+      // the Twilio billing-spike audit). Callers must present a Firebase ID
+      // token for a member of the target tenant; see httpAuth.ts.
+      const callerAuth = await verifyRequestAuthAndTenant(request, response, String(tenantId));
+      if (!callerAuth) return;
 
       // Merge metadata from request (includes senderId, senderType, source, sourceId)
       const mergedMetadata = {
@@ -244,7 +245,10 @@ export const testRenderApi = onRequest(
         return;
       }
 
-      // TODO: Add authentication middleware
+      // Render-only (no send), but template bodies are still tenant content —
+      // require a signed-in user (2026-07-03, same audit as sendMessageApi).
+      const callerAuth = await verifyRequestAuth(request, response);
+      if (!callerAuth) return;
 
       const {
         messageTypeId,

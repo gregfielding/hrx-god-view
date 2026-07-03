@@ -10,6 +10,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { sendMessage, MessageContext } from './routingOrchestrator';
+import { verifyRequestAuthHrx } from './httpAuth';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -26,8 +27,6 @@ const db = admin.firestore();
 export const profileIncompleteAutomation = onRequest(
   {
     cors: true,
-    // TODO: Add authentication/authorization for internal routes
-    // invoker: 'private', // or use API key header
   },
   async (request, response) => {
     try {
@@ -35,6 +34,12 @@ export const profileIncompleteAutomation = onRequest(
         response.status(405).json({ success: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'Only POST allowed' } });
         return;
       }
+
+      // Bulk SMS fan-out with a caller-controlled limit and no scheduler or
+      // client wired to it — HRX-admin token required (2026-07-03 audit; was
+      // fully unauthenticated with only a TODO).
+      const callerAuth = await verifyRequestAuthHrx(request, response);
+      if (!callerAuth) return;
 
       const { dryRun = false, limit = 100, tenantId } = request.body;
 
@@ -148,7 +153,6 @@ export const profileIncompleteAutomation = onRequest(
 export const shiftConfirmationsAutomation = onRequest(
   {
     cors: true,
-    // TODO: Add authentication/authorization
   },
   async (request, response) => {
     try {
@@ -156,6 +160,10 @@ export const shiftConfirmationsAutomation = onRequest(
         response.status(405).json({ success: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'Only POST allowed' } });
         return;
       }
+
+      // Same lockdown rationale as profileIncompleteAutomation above.
+      const callerAuth = await verifyRequestAuthHrx(request, response);
+      if (!callerAuth) return;
 
       const { windowHours = 24, dryRun = false, limit = 100, tenantId } = request.body;
 
@@ -273,7 +281,6 @@ export const shiftConfirmationsAutomation = onRequest(
 export const retryFailedMessagesAutomation = onRequest(
   {
     cors: true,
-    // TODO: Add authentication/authorization
   },
   async (request, response) => {
     try {
@@ -281,6 +288,12 @@ export const retryFailedMessagesAutomation = onRequest(
         response.status(405).json({ success: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'Only POST allowed' } });
         return;
       }
+
+      // Same lockdown rationale as profileIncompleteAutomation above. This
+      // one is cross-tenant (queries messageLogs globally), so HRX-only is
+      // doubly required.
+      const callerAuth = await verifyRequestAuthHrx(request, response);
+      if (!callerAuth) return;
 
       const { sinceMinutes = 60, limit = 50 } = request.body;
 
