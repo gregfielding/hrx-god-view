@@ -12354,6 +12354,12 @@ export {
   testRenderApi
 } from './messaging/messagingApi';
 
+// Self-hosted SMS short-link redirect (hrxone.com/l/{slug} via hosting
+// rewrite) — replaces Twilio Link Shortening's per-message Engagement
+// Suite fee. Slugs are written by messaging/linkShortener.ts inside the
+// two low-level SMS senders.
+export { linkRedirect } from './messaging/linkRedirect';
+
 export {
   listTemplatesApi,
   getTemplateApi,

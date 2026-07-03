@@ -20,6 +20,7 @@ import {
   TWILIO_MESSAGING_PHONE_NUMBER,
   TWILIO_A2P_CAMPAIGN,
 } from './twilioSecrets';
+import { shortenUrlsInBody } from './linkShortener';
 
 export class TwilioSmsProvider implements SmsProvider {
   private client: twilio.Twilio | null = null;
@@ -70,18 +71,26 @@ export class TwilioSmsProvider implements SmsProvider {
       const fromNumber = TWILIO_MESSAGING_PHONE_NUMBER.value() || process.env.TWILIO_MESSAGING_PHONE_NUMBER;
       const messagingServiceSid = TWILIO_A2P_CAMPAIGN.value() || process.env.TWILIO_A2P_CAMPAIGN;
 
+      // Self-hosted link shortening (hrxone.com/l/…) — replaces Twilio's
+      // per-message-billed `shortenUrls` feature. Fail-open: on any error
+      // the original body (long links) goes out unchanged.
+      const body = await shortenUrlsInBody(params.body, {
+        tenantId: params.tenantId,
+        userId: params.userId,
+        messageTypeId: params.messageTypeId,
+      });
+
       // Build message parameters
       const messageParams: any = {
         to,
-        body: params.body,
+        body,
       };
 
-      // Prefer Messaging Service when configured so Twilio Link Shortening (go.hrxone.com) is used
+      // Prefer Messaging Service when configured (sticky sender, throughput)
       const usedMessagingService = messagingServiceSid && messagingServiceSid.trim() !== '';
       if (usedMessagingService) {
         messageParams.messagingServiceSid = messagingServiceSid;
-        messageParams.shortenUrls = true; // Twilio Link Shortening (go.hrxone.com)
-        logger.info(`Using A2P messaging service (link shortening): ${messagingServiceSid}`);
+        logger.info(`Using A2P messaging service: ${messagingServiceSid}`);
       } else if (fromNumber && fromNumber.trim() !== '') {
         messageParams.from = fromNumber;
         logger.info(`Using direct phone number: ${fromNumber}`);
@@ -106,7 +115,7 @@ export class TwilioSmsProvider implements SmsProvider {
           );
           message = await this.client.messages.create({
             to,
-            body: params.body,
+            body,
             from: fromNumber,
           });
         } else {

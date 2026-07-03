@@ -19,6 +19,7 @@ import {
   TWILIO_A2P_CAMPAIGN,
 } from './messaging/twilioSecrets';
 import { maybeEmitPhoneVerifiedCategoryScore } from './categoryScoreEvolution/activityCategoryScoreEmit';
+import { shortenUrlsInBody } from './messaging/linkShortener';
 
 // Twilio Verify is only used here (kept local)
 const verifyServiceSid = defineSecret('TWILIO_VERIFY_SERVICE_SID');
@@ -547,17 +548,25 @@ export async function sendWorkerMessageInternal(
       };
     }
     
+    // Self-hosted link shortening (hrxone.com/l/…) — replaces Twilio's
+    // per-message-billed `shortenUrls` feature. Fail-open: on any error the
+    // original body (long links) goes out unchanged.
+    const outboundBody = await shortenUrlsInBody(messageContent, {
+      tenantId: context?.tenantId,
+      userId: context?.userId,
+      messageTypeId: context?.messageTypeId,
+    });
+
     // Send SMS via Twilio
     const messageParams: any = {
       to: to,
-      body: messageContent,
+      body: outboundBody,
     };
-    
-    // Prefer Messaging Service when configured so Twilio Link Shortening (go.hrxone.com) is used
+
+    // Prefer Messaging Service when configured (sticky sender, throughput)
     if (a2pCampaign && a2pCampaign.trim() !== '') {
       messageParams.messagingServiceSid = a2pCampaign;
-      messageParams.shortenUrls = true; // Twilio Link Shortening (go.hrxone.com)
-      logger.info(`Using A2P messaging service (link shortening): ${a2pCampaign}`);
+      logger.info(`Using A2P messaging service: ${a2pCampaign}`);
     } else if (messagingPhoneNumber && messagingPhoneNumber.trim() !== '') {
       messageParams.from = messagingPhoneNumber;
       logger.info(`Using direct phone number: ${messagingPhoneNumber}`);
@@ -570,7 +579,7 @@ export async function sendWorkerMessageInternal(
         error: 'Twilio messaging configuration is missing'
       };
     }
-    
+
     let messageResult;
     try {
       messageResult = await client.messages.create(messageParams);
@@ -581,7 +590,7 @@ export async function sendWorkerMessageInternal(
         try {
           messageResult = await client.messages.create({
             to: to,
-            body: messageContent,
+            body: outboundBody,
             from: messagingPhoneNumber,
           });
         } catch (fallbackError: any) {
@@ -865,19 +874,21 @@ export const sendWorkerMessage = onCall(
       throw new HttpsError('internal', `Twilio configuration error: ${configError.message}. Please ensure all required secrets are set: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER or TWILIO_A2P_CAMPAIGN.`);
     }
     
+    // Self-hosted link shortening — see sendWorkerMessageInternal above.
+    const outboundBody = await shortenUrlsInBody(messageContent);
+
     // Send SMS via Twilio
     // Use direct phone number to avoid A2P 10DLC registration requirements
     // (A2P 10DLC requires brand/campaign registration which can take time)
     const messageParams: any = {
       to: to,
-      body: messageContent,
+      body: outboundBody,
     };
-    
-    // Prefer Messaging Service when configured so Twilio Link Shortening (go.hrxone.com) is used
+
+    // Prefer Messaging Service when configured (sticky sender, throughput)
     if (a2pCampaign && a2pCampaign.trim() !== '') {
       messageParams.messagingServiceSid = a2pCampaign;
-      messageParams.shortenUrls = true; // Twilio Link Shortening (go.hrxone.com)
-      logger.info(`Using A2P messaging service (link shortening): ${a2pCampaign}`);
+      logger.info(`Using A2P messaging service: ${a2pCampaign}`);
     } else if (messagingPhoneNumber && messagingPhoneNumber.trim() !== '') {
       messageParams.from = messagingPhoneNumber;
       logger.info(`Using direct phone number: ${messagingPhoneNumber}`);
@@ -896,7 +907,7 @@ export const sendWorkerMessage = onCall(
         logger.warn(`A2P 10DLC registration required for Messaging Service, falling back to direct phone number ${messagingPhoneNumber}`);
         const fallbackParams: any = {
           to: to,
-          body: messageContent,
+          body: outboundBody,
           from: messagingPhoneNumber,
         };
         try {
@@ -921,7 +932,7 @@ export const sendWorkerMessage = onCall(
         logger.warn(`Messaging Service SID ${messageParams.messagingServiceSid} is invalid, falling back to direct phone number ${messagingPhoneNumber}`);
         const fallbackParams: any = {
           to: to,
-          body: messageContent,
+          body: outboundBody,
           from: messagingPhoneNumber,
         };
         messageResult = await client.messages.create(fallbackParams);
