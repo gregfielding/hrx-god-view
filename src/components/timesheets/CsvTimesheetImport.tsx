@@ -1248,6 +1248,13 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           // The event/site this day belongs to — used for the per-day pay-stub
           // line label (both worker types).
           eventLabel: r.site || ews.worksiteName || null,
+          // Real clock + break detail from the CSV — the W-2 path renders
+          // these on the Everee worked shift (real start time + break line)
+          // instead of a synthetic 8am window. Pay stays anchored to `hours`.
+          clockIn: r.clockIn || r.startTime || null,
+          clockOut: r.clockOut || r.endTime || null,
+          breakMinutes: r.breakMinutes || 0,
+          paidBreak: !!r.paidBreak,
           // W-2 only — omitted/ignored server-side for 1099.
           workersCompCode: is1099Entity ? null : eff.workersCompCode ?? null,
           worksiteId: ews.worksiteId,
@@ -1271,6 +1278,10 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           payRate: number;
           workerName: string;
           eventLabel?: string | null;
+          clockIn?: string | null;
+          clockOut?: string | null;
+          breakMinutes?: number;
+          paidBreak?: boolean;
           workersCompCode?: string | null;
           worksiteId?: string | null;
           worksiteName?: string | null;

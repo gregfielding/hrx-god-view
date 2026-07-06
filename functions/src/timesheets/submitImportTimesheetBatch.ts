@@ -44,6 +44,11 @@ import {
   type CreateWorkedShiftInput,
 } from '../integrations/everee/evereeWorkedShifts';
 import { importEntryDocId, importExternalId, payableStatusDocId } from './importEntryKeys';
+import {
+  classifyWeeklyOt,
+  composeImportWindow,
+  weekKeyFor,
+} from './importWorkedShiftComposer';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -66,6 +71,18 @@ interface SubmitRow {
   /** The event/site this day belongs to (CSV "Type"/site). Used only to make
    *  the per-day pay-stub line legible (e.g. "Contractor pay — Railbird — Jun 7"). */
   eventLabel?: string | null;
+  /** Real clock-in from the CSV ("6:56 AM" / "06:56"). When present (with a
+   *  worksite state for TZ), the W-2 worked-shift window starts here instead
+   *  of the noon-UTC synthetic. Pay stays anchored to `hours` either way. */
+  clockIn?: string | null;
+  /** Kept for audit/labeling — the window END is derived (start + net +
+   *  unpaid break) so Everee's minute-floored validation can't reject it. */
+  clockOut?: string | null;
+  /** Break duration in minutes from the CSV (`Break duration`). Rendered as
+   *  a real break on the Everee worked shift. */
+  breakMinutes?: number;
+  /** CSV `Paid break` — paid breaks count toward worked time. */
+  paidBreak?: boolean;
   // ── W-2 only ──
   workersCompCode?: string | null;
   worksiteId?: string | null;
@@ -153,9 +170,14 @@ interface ComposedPreview {
   workDate: string;
   hours: number;
   payRate: number;
-  /** Straight-time gross (hours × payRate). For W-2 this is an estimate —
-   *  Everee adds OT/DT at the pay run. */
+  /** Day gross. W-2: reg×rate + OT×1.5×rate (HRX classifies weekly OT —
+   *  Everee's endpoint never auto-classified). 1099: hours × rate. */
   amount: number;
+  /** W-2 only — the FLSA weekly-40 split for the day. */
+  regularHours?: number;
+  overtimeHours?: number;
+  /** W-2 only — CSV break duration rendered on the worked shift. */
+  breakMinutes?: number;
   workersCompCode?: string | null;
   worksiteName?: string | null;
 }
@@ -183,6 +205,11 @@ function importEntryStamp(args: {
   worksiteState?: string | null;
   externalId: string;
   uid: string;
+  /** W-2 only — FLSA weekly-40 split (decimal hours). When present, the entry
+   *  mirrors the reg/OT segments actually sent to Everee; absent (1099 path)
+   *  everything stays straight-time as before. */
+  regularHours?: number;
+  overtimeHours?: number;
 }): Record<string, unknown> {
   const importSidecar: Record<string, unknown> = {
     customer: args.customer,
@@ -203,9 +230,9 @@ function importEntryStamp(args: {
     workerId: args.userId,
     workDate: args.workDate,
     actualHoursOverride: args.hours,
-    totalRegularHours: args.hours,
-    totalOTHours: 0,
-    totalFlsaOTHours: 0,
+    totalRegularHours: args.regularHours ?? args.hours,
+    totalOTHours: args.overtimeHours ?? 0,
+    totalFlsaOTHours: args.overtimeHours ?? 0,
     totalNonFlsaOTHours: 0,
     totalDoubleTimeHours: 0,
     mealBreakPenaltyHours: 0,
@@ -578,6 +605,82 @@ interface W2Plan {
   payRate: number;
   wc: string;
   externalId: string;
+  /** FLSA weekly-40 split (minute-aligned seconds), stamped after
+   *  classifyWeeklyOt runs against the batch + prior-week submissions. */
+  regularSeconds: number;
+  overtimeSeconds: number;
+}
+
+/** Round-to-cent day gross under the reg/OT split. */
+function splitGross(regularSeconds: number, overtimeSeconds: number, rate: number): {
+  regularHours: number;
+  overtimeHours: number;
+  gross: number;
+} {
+  const regularHours = regularSeconds / 3600;
+  const overtimeHours = overtimeSeconds / 3600;
+  const gross =
+    Math.round((regularHours * rate + overtimeHours * rate * 1.5) * 100) / 100;
+  return { regularHours, overtimeHours, gross };
+}
+
+/**
+ * Net seconds already submitted to Everee (sent/paid import entries) per
+ * `${userId}__${weekKey}`, EXCLUDING entries the current batch is about to
+ * overwrite — so the weekly-40 threshold accounts for a partial upload
+ * earlier in the same week without double-counting a re-upload.
+ */
+async function priorWeekSecondsForBatch(
+  tenantId: string,
+  hiringEntityId: string,
+  cust: string,
+  plans: W2Plan[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const weeks = new Map<string, { start: string; end: string }>();
+  for (const p of plans) {
+    const wk = weekKeyFor(p.workDate);
+    if (!weeks.has(wk)) {
+      const startDt = new Date(`${wk}T00:00:00Z`);
+      const endDt = new Date(startDt);
+      endDt.setUTCDate(endDt.getUTCDate() + 6);
+      weeks.set(wk, { start: wk, end: endDt.toISOString().slice(0, 10) });
+    }
+  }
+  const workerIds = new Set(plans.map((p) => p.userId));
+  const currentEntryIds = new Set(
+    plans.map((p) =>
+      importEntryDocId({ customer: cust, userId: p.userId, workDate: p.workDate }),
+    ),
+  );
+  for (const [wk, range] of weeks) {
+    // Uses the existing composite index (source ASC, hiringEntityId ASC,
+    // workDate ASC) from the P4 grid-resolver work.
+    // eslint-disable-next-line no-await-in-loop
+    const snap = await db
+      .collection(`tenants/${tenantId}/timesheet_entries`)
+      .where('source', '==', 'csv_import')
+      .where('hiringEntityId', '==', hiringEntityId)
+      .where('workDate', '>=', range.start)
+      .where('workDate', '<=', range.end)
+      .get();
+    for (const doc of snap.docs) {
+      if (currentEntryIds.has(doc.id)) continue;
+      const e = doc.data() as Record<string, unknown>;
+      const workerId = String(e.workerId ?? '');
+      if (!workerIds.has(workerId)) continue;
+      const status = String(e.status ?? '');
+      if (status !== 'sent_to_everee' && status !== 'paid') continue;
+      const hours = Number(
+        e.actualHoursOverride ??
+          Number(e.totalRegularHours ?? 0) + Number(e.totalOTHours ?? 0),
+      );
+      if (!(hours > 0)) continue;
+      const gk = `${workerId}__${wk}`;
+      out.set(gk, (out.get(gk) ?? 0) + Math.round(hours * 60) * 60);
+    }
+  }
+  return out;
 }
 
 async function submitW2(args: PathArgs) {
@@ -610,29 +713,64 @@ async function submitW2(args: PathArgs) {
       payRate,
       wc,
       externalId: importExternalId({ tenantId, customer: cust, userId, workDate, kind: 'WORKED_SHIFT' }),
+      regularSeconds: 0,
+      overtimeSeconds: 0,
     });
   }
 
-  const preview: ComposedPreview[] = plans.map((p) => ({
-    externalId: p.externalId,
-    externalWorkerId: p.userId,
-    workerName: String(p.row.workerName || '').trim(),
-    workDate: p.workDate,
-    hours: p.hours,
-    payRate: p.payRate,
-    // Minute-aligned gross — matches exactly what the worked shift will pay.
-    amount: minuteAlignedDay(p.hours, p.payRate).gross,
-    workersCompCode: p.wc,
-    worksiteName: p.row.worksiteName ?? null,
-  }));
+  // FLSA weekly-40 cascade across the batch (+ anything already submitted
+  // for the same worker-weeks in earlier batches). Everee's endpoint
+  // requires fullyClassifiedHours and does NOT auto-classify — the original
+  // "Everee adds OT at the pay run" assumption was wrong and shipped
+  // straight-time-only weeks (2026-07-06 Zirick Brooks report: 44.6 hrs,
+  // zero OT).
+  const priorSeconds = await priorWeekSecondsForBatch(tenantId, hiringEntityId, cust, plans);
+  const splits = classifyWeeklyOt(
+    plans.map((p) => ({
+      key: p.externalId,
+      userId: p.userId,
+      workDate: p.workDate,
+      netHours: p.hours,
+    })),
+    priorSeconds,
+  );
+  for (const p of plans) {
+    const split = splits.get(p.externalId);
+    if (split) {
+      p.regularSeconds = split.regularSeconds;
+      p.overtimeSeconds = split.overtimeSeconds;
+    } else {
+      p.regularSeconds = minuteAlignedDay(p.hours, p.payRate).seconds;
+      p.overtimeSeconds = 0;
+    }
+  }
+
+  const preview: ComposedPreview[] = plans.map((p) => {
+    const g = splitGross(p.regularSeconds, p.overtimeSeconds, p.payRate);
+    return {
+      externalId: p.externalId,
+      externalWorkerId: p.userId,
+      workerName: String(p.row.workerName || '').trim(),
+      workDate: p.workDate,
+      hours: p.hours,
+      payRate: p.payRate,
+      // Minute-aligned gross incl. the OT premium — matches the worked shift.
+      amount: g.gross,
+      regularHours: Math.round(g.regularHours * 100) / 100,
+      overtimeHours: Math.round(g.overtimeHours * 100) / 100,
+      breakMinutes: Math.max(0, Math.round(Number(p.row.breakMinutes ?? 0))),
+      workersCompCode: p.wc,
+      worksiteName: p.row.worksiteName ?? null,
+    };
+  });
   const totalAmount = Math.round(preview.reduce((s, p) => s + p.amount, 0) * 100) / 100;
 
   if (dryRun) {
     return {
       dryRun: true,
       workerType,
-      // The total is a straight-time estimate; Everee adds OT/DT at the pay run.
-      evereeClassifiesOt: true,
+      // HRX classifies weekly OT now (Everee never did) — the total is exact.
+      evereeClassifiesOt: false,
       count: preview.length,
       skipped,
       skippedNoWc,
@@ -699,36 +837,66 @@ async function submitW2(args: PathArgs) {
   await mapWithConcurrency(toSubmit, 8, async (p) => {
     try {
       const workLocationId = await resolveLocation(p.row);
-      const start = workDateEpochSeconds(p.workDate);
-      // Whole-minute window/segment/gross so Everee's minute-floored shift
-      // window matches the classified hours (see minuteAlignedDay).
-      const aligned = minuteAlignedDay(p.hours, p.payRate);
-      const end = start + aligned.seconds;
-      const gross = aligned.gross;
+      // Real clock-in + break from the CSV when available (falls back to the
+      // legacy noon-UTC synthetic). Window end is DERIVED (start + net +
+      // unpaid break) so window − breaks ≡ classified seconds and Everee's
+      // minute-floored validation can't reject the shift.
+      const window = composeImportWindow({
+        workDate: p.workDate,
+        netHours: p.hours,
+        clockIn: p.row.clockIn,
+        worksiteState: p.row.worksiteAddress?.state ?? null,
+        breakMinutes: p.row.breakMinutes,
+        breakPaid: p.row.paidBreak,
+      });
+      // Fully Classified Shifts is enabled on all C1 Everee instances, so
+      // the endpoint REQUIRES fullyClassifiedHours (it does NOT auto-classify
+      // when omitted — that returns 400). HRX classifies the FLSA weekly-40
+      // cascade (classifyWeeklyOt) and lays REGULAR then OVERTIME segments
+      // sequentially from the window start — same convention as the grid
+      // path's composeTimesheetBatchPayloads.
+      const rateStr = p.payRate.toFixed(2);
+      const segments: CreateWorkedShiftInput['fullyClassifiedHours'] = [];
+      let cursor = window.startEpochSeconds;
+      if (p.regularSeconds > 0) {
+        const regGross = Math.round((p.regularSeconds / 3600) * p.payRate * 100) / 100;
+        segments.push({
+          type: 'REGULAR_TIME',
+          startEpochSeconds: cursor,
+          endEpochSeconds: cursor + p.regularSeconds,
+          hourlyPayRate: { amount: rateStr, currency: 'USD' },
+          grossPayAmount: { amount: regGross.toFixed(2), currency: 'USD' },
+        });
+        cursor += p.regularSeconds;
+      }
+      if (p.overtimeSeconds > 0) {
+        const otRate = Math.round(p.payRate * 1.5 * 100) / 100;
+        const otGross = Math.round((p.overtimeSeconds / 3600) * p.payRate * 1.5 * 100) / 100;
+        segments.push({
+          type: 'OVERTIME',
+          startEpochSeconds: cursor,
+          endEpochSeconds: cursor + p.overtimeSeconds,
+          hourlyPayRate: { amount: otRate.toFixed(2), currency: 'USD' },
+          grossPayAmount: { amount: otGross.toFixed(2), currency: 'USD' },
+        });
+        cursor += p.overtimeSeconds;
+      }
       const input: CreateWorkedShiftInput = {
         externalWorkerId: p.userId,
-        shiftStartEpochSeconds: start,
-        shiftEndEpochSeconds: end,
-        effectiveHourlyPayRate: { amount: p.payRate.toFixed(2), currency: 'USD' },
+        shiftStartEpochSeconds: window.startEpochSeconds,
+        shiftEndEpochSeconds: window.endEpochSeconds,
+        effectiveHourlyPayRate: { amount: rateStr, currency: 'USD' },
         workersCompClassCode: p.wc,
         note: dayLabel(`Imported from ${cust}`, p.row.eventLabel, p.workDate),
-        // Fully Classified Shifts is enabled on all C1 Everee instances, so
-        // the endpoint REQUIRES fullyClassifiedHours (it does NOT auto-classify
-        // when omitted — that returns 400). Imported timesheets carry only a
-        // daily total (no clock detail), and the canonical entry stores them
-        // straight-time (totalRegularHours = hours, OT/DT = 0), so we send a
-        // single REGULAR_TIME segment for the day. Daily/weekly OT is not
-        // auto-applied — it would need an explicit multistate classifier.
-        fullyClassifiedHours: [
-          {
-            type: 'REGULAR_TIME',
-            startEpochSeconds: start,
-            endEpochSeconds: end,
-            hourlyPayRate: { amount: p.payRate.toFixed(2), currency: 'USD' },
-            grossPayAmount: { amount: gross.toFixed(2), currency: 'USD' },
-          },
-        ],
+        fullyClassifiedHours: segments,
       };
+      if (window.breaks.length > 0) {
+        input.createBreaks = window.breaks.map((b) => ({
+          segmentConfigCode: b.paid ? 'DEFAULT_PAID' : 'DEFAULT_UNPAID',
+          breakStartEpochSeconds: b.startEpochSeconds,
+          breakEndEpochSeconds: b.endEpochSeconds,
+        }));
+      }
       if (workLocationId != null) input.overrideWorkLocationId = workLocationId;
       const res = await createWorkedShift(cfg, input);
       submitted += 1;
@@ -883,6 +1051,8 @@ async function submitW2(args: PathArgs) {
           worksiteState: plan.row.worksiteAddress?.state ?? null,
           externalId: plan.externalId,
           uid,
+          regularHours: Math.round((plan.regularSeconds / 3600) * 10000) / 10000,
+          overtimeHours: Math.round((plan.overtimeSeconds / 3600) * 10000) / 10000,
         }),
         everee: {
           workedShiftId: String(workedShiftId),

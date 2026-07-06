@@ -892,7 +892,12 @@ export function dollarAmountForRow(row: TimesheetGridRow): number {
   const tips = typeof e.tips === 'number' ? e.tips : 0;
   const bonus = typeof e.bonusAmount === 'number' ? e.bonusAmount : 0;
   if (row.isImport) {
-    const gross = payRate * actualHoursForRow(row) + tips + bonus;
+    // Import entries now carry a real reg/OT split (FLSA weekly-40 cascade
+    // in submitImportTimesheetBatch, 2026-07-06); legacy rows have
+    // totalRegularHours == all hours so the formula reduces to flat.
+    const iReg = typeof e.totalRegularHours === 'number' ? e.totalRegularHours : actualHoursForRow(row);
+    const iOt = typeof e.totalOTHours === 'number' ? e.totalOTHours : 0;
+    const gross = iReg * payRate + iOt * payRate * 1.5 + tips + bonus;
     return Number.isFinite(gross) ? gross : 0;
   }
   const reg = typeof e.totalRegularHours === 'number' ? e.totalRegularHours : 0;
