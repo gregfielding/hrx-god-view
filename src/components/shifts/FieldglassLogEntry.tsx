@@ -74,6 +74,24 @@ export interface FieldglassRequestRow {
     resolvedAt?: string;
     resolvedBy?: string;
   };
+  /** Stamped by fieldglassEnrichmentIngest (Chrome extension sync). */
+  enrichment?: {
+    positionsRequested?: number;
+    maxSubmissions?: number;
+    payRateSt?: number;
+    payRateOt?: number;
+    payRateDt?: number;
+    billRateSt?: number;
+    billRateOt?: number;
+    billRateDt?: number;
+    scheduleText?: string;
+    hiringManagerName?: string;
+    hiringManagerEmail?: string;
+    uniform?: string;
+    candidateInMind?: boolean;
+    candidateInMindNote?: string;
+    capturedAt?: string;
+  };
 }
 
 interface Props {
@@ -95,6 +113,7 @@ export default function FieldglassLogEntry({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const ev = request.event ?? {};
   const resolved = !!request.siteResolution?.childAccountId;
+  const enr = request.enrichment;
 
   return (
     <Box
@@ -136,6 +155,14 @@ export default function FieldglassLogEntry({
           ) : (
             <Chip label="site not set up" size="small" color="warning" variant="outlined" />
           )}
+          {enr ? (
+            <Chip label="details synced" size="small" color="success" variant="outlined" />
+          ) : (
+            <Chip label="details pending" size="small" variant="outlined" />
+          )}
+          {enr?.candidateInMind && (
+            <Chip label="⚠ candidate in mind" size="small" color="error" />
+          )}
           <Box flex={1} />
           <Typography variant="caption" color="text.secondary">
             {request.createdAt ? new Date(request.createdAt).toLocaleString() : ''}
@@ -170,6 +197,59 @@ export default function FieldglassLogEntry({
                   </Typography>
                 </>
               )}
+            </Typography>
+          )}
+          {enr?.candidateInMind && (
+            <Typography variant="body2" sx={{ color: 'error.main', fontWeight: 600 }}>
+              ⚠ Buyer already has a candidate in mind
+              {enr.candidateInMindNote ? ` — "${enr.candidateInMindNote}"` : ''} (likely wired
+              for another agency — deprioritize)
+            </Typography>
+          )}
+          {enr?.positionsRequested != null && (
+            <Typography variant="body2" color="text.secondary">
+              • positions: <code>{enr.positionsRequested}</code>
+              {enr.maxSubmissions != null && (
+                <>
+                  {' '}
+                  · max submissions <code>{enr.maxSubmissions}</code>
+                </>
+              )}
+            </Typography>
+          )}
+          {enr?.payRateSt != null && (
+            <Typography variant="body2" color="text.secondary">
+              • rates: pay{' '}
+              <code>
+                ${enr.payRateSt.toFixed(2)}
+                {enr.payRateOt != null ? ` / $${enr.payRateOt.toFixed(2)}` : ''}
+                {enr.payRateDt != null ? ` / $${enr.payRateDt.toFixed(2)}` : ''}
+              </code>
+              {enr.billRateSt != null && (
+                <>
+                  {' '}
+                  · bill{' '}
+                  <code>
+                    ${enr.billRateSt.toFixed(2)}
+                    {enr.billRateOt != null ? ` / $${enr.billRateOt.toFixed(2)}` : ''}
+                    {enr.billRateDt != null ? ` / $${enr.billRateDt.toFixed(2)}` : ''}
+                  </code>
+                </>
+              )}{' '}
+              <Typography component="span" variant="caption">
+                (ST/OT/DT)
+              </Typography>
+            </Typography>
+          )}
+          {enr?.scheduleText && (
+            <Typography variant="body2" color="text.secondary">
+              • schedule: {enr.scheduleText}
+            </Typography>
+          )}
+          {enr?.hiringManagerName && (
+            <Typography variant="body2" color="text.secondary">
+              • hiring manager: {enr.hiringManagerName}
+              {enr.hiringManagerEmail ? ` (${enr.hiringManagerEmail})` : ''}
             </Typography>
           )}
           {resolved && (

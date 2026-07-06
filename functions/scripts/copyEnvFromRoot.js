@@ -32,6 +32,10 @@ const PARAM_KEYS = [
   // — functions/src/integrations/fieldglass/serverGeocode.ts). NOT the
   // browser Maps key; that one is API-restricted and rejected server-side.
   'GOOGLE_MAPS_SERVER_KEY',
+  // Shared bearer key for the Fieldglass Chrome extension endpoints
+  // (functions/src/integrations/fieldglass/enrichmentApi.ts). Rotate by
+  // changing here + redeploy + update each recruiter's extension options.
+  'FIELDGLASS_EXTENSION_KEY',
   // defineSecret (secrets) – set in root .env if you use these
   'SENDGRID_API_KEY',
   'SENDGRID_FROM_EMAIL',

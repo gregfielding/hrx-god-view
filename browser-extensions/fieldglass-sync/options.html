@@ -1,0 +1,65 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        max-width: 520px;
+        margin: 24px auto;
+        color: #1f2937;
+      }
+      label {
+        display: block;
+        font-weight: 600;
+        margin: 14px 0 4px;
+      }
+      input {
+        width: 100%;
+        padding: 7px 9px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        font-size: 13px;
+        box-sizing: border-box;
+      }
+      .hint {
+        color: #6b7280;
+        font-size: 12px;
+        margin-top: 3px;
+      }
+      button {
+        margin-top: 18px;
+        padding: 8px 18px;
+        border: none;
+        border-radius: 6px;
+        background: #8b5cf6;
+        color: #fff;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #saved {
+        color: #059669;
+        margin-left: 10px;
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>HRX Fieldglass Sync — settings</h2>
+
+    <label for="extensionKey">HRX extension key</label>
+    <input id="extensionKey" type="password" autocomplete="off" />
+    <div class="hint">Provided by your HRX admin. Stored only in your browser's extension storage.</div>
+
+    <label for="baseUrl">HRX endpoint base URL</label>
+    <input id="baseUrl" type="text" />
+    <div class="hint">Leave the default unless told otherwise.</div>
+
+    <label for="tenantId">Tenant ID</label>
+    <input id="tenantId" type="text" />
+
+    <button id="save">Save</button><span id="saved">Saved ✓</span>
+
+    <script src="options.js"></script>
+  </body>
+</html>
