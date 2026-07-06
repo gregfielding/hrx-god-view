@@ -21,6 +21,7 @@ import PageHeader from '../components/PageHeader';
 import UniversalSearchBar from '../components/UniversalSearchBar';
 import { useAuth } from '../contexts/AuthContext';
 import AddJobOrderModal from '../components/recruiter/AddJobOrderModal';
+import SyncSodexoButton from '../components/shifts/SyncSodexoButton';
 
 export type RecruiterTab =
   | 'job-orders'
@@ -201,6 +202,9 @@ const RecruiterDashboard: React.FC = () => {
             activeTab === 'job-orders' || activeTab === 'my-orders' || activeTab === 'jobs-board'
                 ? (
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                {(activeTab === 'job-orders' || activeTab === 'my-orders') && (
+                  <SyncSodexoButton />
+                )}
                 <UniversalSearchBar
                   value={search}
                   onChange={setSearch}

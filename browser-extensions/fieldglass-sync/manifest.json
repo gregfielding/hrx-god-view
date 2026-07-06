@@ -3,7 +3,7 @@
   "name": "HRX Fieldglass Sync",
   "version": "1.0.0",
   "description": "Syncs SAP Fieldglass (Sodexo) job order details into HRX — automatically on view, or in bulk with one click.",
-  "permissions": ["storage", "activeTab"],
+  "permissions": ["storage", "activeTab", "tabs"],
   "host_permissions": [
     "https://*.fieldglass.cloud.sap/*",
     "https://us-central1-hrx1-d3beb.cloudfunctions.net/*"
@@ -15,6 +15,17 @@
     {
       "matches": ["https://*.fieldglass.cloud.sap/*"],
       "js": ["content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://hrx1-d3beb.web.app/*",
+        "https://hrx1-d3beb.firebaseapp.com/*",
+        "https://app-hrxone-com.web.app/*",
+        "https://app.hrxone.com/*",
+        "http://localhost:3000/*"
+      ],
+      "js": ["hrx-bridge.js"],
       "run_at": "document_idle"
     }
   ],

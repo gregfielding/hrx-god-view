@@ -19,7 +19,14 @@ const DEFAULTS = {
   baseUrl: 'https://us-central1-hrx1-d3beb.cloudfunctions.net',
   tenantId: 'BCiP2bQ9CgVOCTfV6MhD',
   extensionKey: '',
+  worklistUrl: 'https://us.fieldglass.cloud.sap/',
 };
+
+// Let the HRX-page bridge (hrx-bridge.js content script) observe
+// fgSyncProgress via chrome.storage.onChanged.
+if (chrome.storage.session && chrome.storage.session.setAccessLevel) {
+  chrome.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' });
+}
 
 let sessionSynced = 0;
 /** postingId → timestamp of last successful passive capture (dedupe). */
@@ -115,6 +122,98 @@ async function fetchDetailPageText(url) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function postingIdFromUrl(url) {
+  try {
+    return new URL(url).searchParams.get('id') || url;
+  } catch (e) {
+    return url;
+  }
+}
+
+/** Open (or reuse) a Fieldglass tab on the worklist URL and collect all
+ *  job_posting_detail.do links via the content script. Returns
+ *  { links, tabId } — empty links when the page is a login wall. */
+async function openWorklistAndCollectLinks(worklistUrl) {
+  // Reuse an existing Fieldglass tab when there is one (keeps the
+  // recruiter's logged-in navigation intact); otherwise open one.
+  const existing = await chrome.tabs.query({ url: 'https://*.fieldglass.cloud.sap/*' });
+  let tab;
+  if (existing.length > 0) {
+    tab = existing[0];
+    await chrome.tabs.update(tab.id, { active: true });
+  } else {
+    tab = await chrome.tabs.create({ url: worklistUrl, active: true });
+    // Wait for the page to finish loading (up to ~20s).
+    await new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }, 20000);
+      const listener = (tabId, info) => {
+        if (tabId === tab.id && info.status === 'complete') {
+          clearTimeout(timeout);
+          chrome.tabs.onUpdated.removeListener(listener);
+          resolve();
+        }
+      };
+      chrome.tabs.onUpdated.addListener(listener);
+    });
+    await sleep(2000); // settle XHR-rendered lists
+  }
+
+  // Ask the content script for links; retry briefly (script may still be
+  // injecting on a fresh tab).
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const resp = await chrome.tabs.sendMessage(tab.id, { type: 'fg_collect_links' });
+      return { links: (resp && resp.links) || [], tabId: tab.id };
+    } catch (e) {
+      await sleep(1500);
+    }
+  }
+  return { links: [], tabId: tab.id };
+}
+
+/** "Sync Sodexo" — one click from HRX. Merge the HRX pending queue with
+ *  whatever orders are linked on the recruiter's Fieldglass worklist,
+ *  then bulk-sync the lot. */
+async function syncSodexo(sendResponse) {
+  const config = await getConfig();
+  if (!config.extensionKey) {
+    sendResponse({ started: false, reason: 'Extension key not configured (extension options).' });
+    return;
+  }
+
+  let queueItems = [];
+  try {
+    const pending = await fetchQueue(config);
+    queueItems = pending
+      .filter((p) => p.detailUrl)
+      .map((p) => ({ url: p.detailUrl, postingId: p.postingId, label: p.title || p.postingId }));
+  } catch (err) {
+    await appendLog(`✗ HRX queue fetch failed: ${err.message || err}`);
+  }
+
+  const { links } = await openWorklistAndCollectLinks(config.worklistUrl);
+
+  const seen = new Set(queueItems.map((i) => postingIdFromUrl(i.url)));
+  const scanned = links
+    .filter((url) => !seen.has(postingIdFromUrl(url)))
+    .map((url) => ({ url, label: url.slice(-24) }));
+
+  const items = [...queueItems, ...scanned];
+  if (items.length === 0) {
+    const reason =
+      'No orders found — if the Fieldglass tab shows a login page, log in and click Sync Sodexo again.';
+    await appendLog(reason);
+    await setProgress({ running: false, total: 0, done: 0, log: [reason], summary: { ok: 0, failed: 0 } });
+    sendResponse({ started: false, reason });
+    return;
+  }
+  sendResponse({ started: true, count: items.length });
+  await runBulk(items);
+}
 
 /** items: [{url, postingId?, label}] */
 async function runBulk(items) {
@@ -223,6 +322,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
     })();
     return true; // async sendResponse
+  }
+
+  // HRX page bridge (hrx-bridge.js) — the "Sync Sodexo" button.
+  if (msg && msg.type === 'fg_sync_sodexo') {
+    (async () => {
+      try {
+        await syncSodexo(sendResponse);
+      } catch (err) {
+        await appendLog(`✗ Sync Sodexo failed: ${err.message || err}`);
+        sendResponse({ started: false, reason: String(err.message || err) });
+      }
+    })();
+    return true;
   }
 
   // Popup: bulk over links scanned from the active tab.
