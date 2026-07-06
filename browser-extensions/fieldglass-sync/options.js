@@ -4,7 +4,7 @@ const DEFAULTS = {
   baseUrl: 'https://us-central1-hrx1-d3beb.cloudfunctions.net',
   tenantId: 'BCiP2bQ9CgVOCTfV6MhD',
   extensionKey: '',
-  worklistUrl: 'https://us.fieldglass.cloud.sap/',
+  worklistUrl: 'https://us.fieldglass.cloud.sap/job_posting_list.do?cl=1',
 };
 
 async function load() {

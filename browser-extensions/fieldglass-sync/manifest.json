@@ -19,6 +19,8 @@
     },
     {
       "matches": [
+        "https://hrxone.com/*",
+        "https://www.hrxone.com/*",
         "https://hrx1-d3beb.web.app/*",
         "https://hrx1-d3beb.firebaseapp.com/*",
         "https://app-hrxone-com.web.app/*",
