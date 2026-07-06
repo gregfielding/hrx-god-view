@@ -43,7 +43,11 @@ const CAREER_SPAN_DAYS = 7;
 const SMART_RADIUS_MILES = 30;
 const SMART_RADIUS_MAX_RECIPIENTS = 200;
 const SODEXO_BILL_MARKUP = 1.56;
-const SODEXO_BASIC_PACKAGE = 'Sodexo Basic';
+/** AccuSource "Sodexo Basic Package" — verified in integrations_accusource/catalog
+ *  (2026-07-07): id '23923', SS locator + CrimNet + County/Federal Criminal.
+ *  Greg: this exact package on every Fieldglass JO, not a new catalog entry. */
+const SODEXO_BASIC_SCREENING_PACKAGE_ID = '23923';
+const SODEXO_BASIC_SCREENING_PACKAGE_NAME = 'Sodexo Basic Package';
 
 // ─────────────────────────────────────────────────────────────────────
 // Small helpers
@@ -272,10 +276,14 @@ export async function ensureJobOrderForFieldglassRequest(
     showStartDate: true,
     showShiftTimes: false,
 
-    // Compliance
+    // Compliance — the AccuSource screening package drives the
+    // background-check readiness item (assignmentReadinessItemV1 matches
+    // the JO's screeningPackageId against the worker's records).
     hiringEntityId: trim(child.hiringEntityId) || trim(parent.hiringEntityId) || null,
+    screeningPackageId: SODEXO_BASIC_SCREENING_PACKAGE_ID,
+    screeningPackageName: SODEXO_BASIC_SCREENING_PACKAGE_NAME,
     backgroundCheckRequired: true,
-    backgroundCheckPackages: [SODEXO_BASIC_PACKAGE],
+    backgroundCheckPackages: [],
     drugScreenRequired: false,
 
     // Everything the Fieldglass details column carries (Greg, 2026-07-07).
