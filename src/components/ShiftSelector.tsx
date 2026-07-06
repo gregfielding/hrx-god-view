@@ -307,6 +307,12 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                       </Typography>
                     </Stack>
                     {(() => {
+                      // Same post-level `showSpots` gate as the shift-level
+                      // chip below — this per-day variant was missed in the
+                      // May 2026 gating pass, so multi-day gig postings kept
+                      // showing spot counts with the toggle off (2026-07-06,
+                      // Domino's KY Production Associate report).
+                      if (!showSpots) return null;
                       const workers = item.workersNeeded ?? 1;
                       const over = item.overstaff ?? 0;
                       const total = workers + over;
