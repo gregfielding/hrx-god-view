@@ -12555,6 +12555,9 @@ export { onShiftRequestCreatedMatch } from './integrations/indeedFlex/onShiftReq
 // and user-group auto-invites are later slices (2026-07-06 scope).
 export { fieldglassInboundWebhook } from './integrations/fieldglass/fieldglassInboundWebhook';
 export { onFieldglassIngestEventCreatedParse } from './integrations/fieldglass/onFieldglassIngestEventCreatedParse';
+// FG Slice 3 — idempotent site → CRM location → child account chain,
+// invoked from the /shifts/log review UI ("Create site + account").
+export { fieldglassEnsureSite } from './integrations/fieldglass/ensureSiteCallable';
 
 // Recruiter Number Management
 export {

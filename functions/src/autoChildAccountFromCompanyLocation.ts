@@ -87,7 +87,7 @@ type AccountDoc = Record<string, unknown>;
  * Stable id for idempotent creates: derived from parent + company + location (locationId alone is only unique per company).
  * User-facing key concept: parentAccountId + companyLocationId; companyId included to avoid collisions.
  */
-function deterministicAutoChildAccountDocId(
+export function deterministicAutoChildAccountDocId(
   parentAccountId: string,
   companyId: string,
   companyLocationId: string

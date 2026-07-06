@@ -29,11 +29,21 @@ import {
 import { serverTimestamp, updateDoc, doc as fsDoc } from 'firebase/firestore';
 
 import ShiftLogEntry from '../components/shifts/ShiftLogEntry';
+import FieldglassLogEntry, {
+  type FieldglassRequestRow,
+} from '../components/shifts/FieldglassLogEntry';
+import FieldglassEnsureSiteDialog from '../components/shifts/FieldglassEnsureSiteDialog';
 import LinkVenueToAccountDialog from '../components/shifts/LinkVenueToAccountDialog';
 import { useAuth } from '../contexts/AuthContext';
 import { useExternalShiftRequests } from '../hooks/useExternalShiftRequests';
 import { db } from '../firebase';
 import type { ExternalShiftRequest } from '../shared/indeedFlex/types';
+
+/** Fieldglass rows share the collection but have their own shape —
+ *  detect via the provider field the server stamps on every row. */
+function isFieldglassRow(r: ExternalShiftRequest): boolean {
+  return (r as unknown as { provider?: string }).provider === 'fieldglass';
+}
 
 type StatusFilter = 'needs_review' | 'applied' | 'rejected' | 'all';
 type ConfidenceFilter = 'all' | 'exact-or-fuzzy' | 'needs-attention';
@@ -49,6 +59,11 @@ const ShiftsLog: React.FC = () => {
   const [linkVenueRequest, setLinkVenueRequest] = useState<ExternalShiftRequest | null>(
     null,
   );
+  /** Active "Create site + account" target (Fieldglass rows). */
+  const [ensureSiteRequest, setEnsureSiteRequest] = useState<FieldglassRequestRow | null>(
+    null,
+  );
+  const [ensureSiteSuccess, setEnsureSiteSuccess] = useState<string | null>(null);
 
   const { rows, loading, error } = useExternalShiftRequests(tenantId, {
     status: statusFilter,
@@ -155,6 +170,12 @@ const ShiftsLog: React.FC = () => {
         </Alert>
       )}
 
+      {ensureSiteSuccess && (
+        <Alert severity="success" onClose={() => setEnsureSiteSuccess(null)} sx={{ mb: 2 }}>
+          {ensureSiteSuccess}
+        </Alert>
+      )}
+
       {/* Loading / error / empty */}
       {loading && (
         <Typography variant="body2" color="text.secondary">
@@ -195,15 +216,25 @@ const ShiftsLog: React.FC = () => {
               {date === 'unknown' ? 'Date unknown' : date}
             </Typography>
             <Stack spacing={1.5}>
-              {entries.map((req) => (
-                <ShiftLogEntry
-                  key={req.id}
-                  request={req}
-                  pending={pendingId === req.id}
-                  onDecide={(decision) => handleDecide(req, decision)}
-                  onLinkVenue={(r) => setLinkVenueRequest(r)}
-                />
-              ))}
+              {entries.map((req) =>
+                isFieldglassRow(req) ? (
+                  <FieldglassLogEntry
+                    key={req.id}
+                    request={req as unknown as FieldglassRequestRow}
+                    pending={pendingId === req.id}
+                    onDecide={(decision) => handleDecide(req, decision)}
+                    onCreateSite={(r) => setEnsureSiteRequest(r)}
+                  />
+                ) : (
+                  <ShiftLogEntry
+                    key={req.id}
+                    request={req}
+                    pending={pendingId === req.id}
+                    onDecide={(decision) => handleDecide(req, decision)}
+                    onLinkVenue={(r) => setLinkVenueRequest(r)}
+                  />
+                ),
+              )}
             </Stack>
           </Box>
         ))}
@@ -220,6 +251,27 @@ const ShiftsLog: React.FC = () => {
       {/* Link-venue dialog. Mounted at the page level so the listener
           on `external_shift_requests` picks up the re-match update and
           the row re-renders without a manual refresh. */}
+      {/* Create site + account dialog (Fieldglass rows). Page-level so the
+          live listener picks up the siteResolution stamp and the row's
+          "Site ready" chip appears without a refresh. */}
+      {tenantId && ensureSiteRequest && (
+        <FieldglassEnsureSiteDialog
+          open={!!ensureSiteRequest}
+          onClose={() => setEnsureSiteRequest(null)}
+          onSuccess={(result) => {
+            const loc = result.location;
+            const child = result.childAccount;
+            setEnsureSiteSuccess(
+              `Site ready — location ${loc.status === 'created' ? 'created' : 'reused'} (${loc.name}), ` +
+                `account ${child.status === 'created' ? 'created' : child.status === 'linked' ? 'linked' : 'reused'} (${child.name}).`,
+            );
+          }}
+          tenantId={tenantId}
+          initialSiteName={ensureSiteRequest.event?.siteName ?? ''}
+          requestId={ensureSiteRequest.id}
+        />
+      )}
+
       {tenantId && linkVenueRequest && (
         <LinkVenueToAccountDialog
           open={!!linkVenueRequest}
