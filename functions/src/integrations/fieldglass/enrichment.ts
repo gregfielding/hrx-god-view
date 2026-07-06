@@ -49,7 +49,23 @@ export interface FieldglassEnrichment {
   scheduleText?: string;
   hiringManagerName?: string;
   hiringManagerEmail?: string;
+  /** Often buried in the Description prose ("My phone number is …"). */
+  hiringManagerPhone?: string;
   uniform?: string;
+  /** Full Description block, verbatim — duties + site contact prose. */
+  description?: string;
+  /** "Report To Location" — e.g. "4420 Arrowswest Drive Dock #3". */
+  reportToLocation?: string;
+  contractType?: string;
+  sourceType?: string;
+  segment?: string;
+  hoursPerDay?: number;
+  hoursPerWeek?: number;
+  totalHours?: number;
+  /** "Respond by Date" with timezone as printed. */
+  respondByDate?: string;
+  /** Page status: "Submitted" (open) / "Closed" — drives the close cascade. */
+  postingStatus?: string;
   category?: string;
   laborType?: string;
   jobCode?: string;
@@ -104,11 +120,18 @@ const EXTRACTION_SCHEMA = `{
   "billRateSt": number, "billRateOt": number, "billRateDt": number,
   "scheduleText": "string (First Day Schedule Start and End Time, verbatim)",
   "hiringManagerName": "string", "hiringManagerEmail": "string",
+  "hiringManagerPhone": "string (often inside the Description prose, e.g. 'My phone number is …')",
   "uniform": "string",
+  "description": "string (the full Description block, verbatim)",
+  "reportToLocation": "string (Report To Location, verbatim — may include dock/entrance)",
+  "contractType": "string", "sourceType": "string", "segment": "string",
+  "hoursPerDay": number, "hoursPerWeek": number, "totalHours": number,
+  "respondByDate": "string (Respond by Date, verbatim incl. timezone)",
+  "postingStatus": "string (the page's Status value, e.g. Submitted or Closed)",
   "category": "string", "laborType": "string", "jobCode": "string",
   "startDate": "MM/DD/YYYY", "endDate": "MM/DD/YYYY", "closeDate": "MM/DD/YYYY",
   "candidateInMind": boolean,
-  "candidateInMindNote": "string (verbatim answer to the candidate-in-mind question)"
+  "candidateInMindNote": "string (verbatim answer to the candidate-in-mind question, including the name if given)"
 }`;
 
 function buildSystemPrompt(): string {
@@ -198,7 +221,18 @@ export async function extractEnrichmentFromPageText(
     scheduleText: str(parsed.scheduleText),
     hiringManagerName: str(parsed.hiringManagerName),
     hiringManagerEmail: str(parsed.hiringManagerEmail),
+    hiringManagerPhone: str(parsed.hiringManagerPhone),
     uniform: str(parsed.uniform),
+    description: str(parsed.description),
+    reportToLocation: str(parsed.reportToLocation),
+    contractType: str(parsed.contractType),
+    sourceType: str(parsed.sourceType),
+    segment: str(parsed.segment),
+    hoursPerDay: num(parsed.hoursPerDay),
+    hoursPerWeek: num(parsed.hoursPerWeek),
+    totalHours: num(parsed.totalHours),
+    respondByDate: str(parsed.respondByDate),
+    postingStatus: str(parsed.postingStatus),
     category: str(parsed.category),
     laborType: str(parsed.laborType),
     jobCode: str(parsed.jobCode),
@@ -215,6 +249,64 @@ export async function extractEnrichmentFromPageText(
   }
 
   return { enrichment, ...(notes ? { notes } : {}) };
+}
+
+/**
+ * Compose the JO `notes` block from everything the Fieldglass detail page
+ * carries (Greg, 2026-07-07: "make an orderNotes field on the job order
+ * overview tab to include everything in the job details column in
+ * fieldglass"). Deterministic composition — NOT LLM-formatted — so the
+ * block reads the same on every order and diffs cleanly on re-sync.
+ */
+export function composeFieldglassOrderNotes(
+  enrichment: FieldglassEnrichment,
+  postingId: string,
+): string {
+  const lines: string[] = [`— Fieldglass order ${postingId} —`];
+  const add = (label: string, v: unknown): void => {
+    const s = String(v ?? '').trim();
+    if (s) lines.push(`${label}: ${s}`);
+  };
+  if (enrichment.candidateInMind) {
+    lines.push(
+      `⚠ CANDIDATE IN MIND: ${enrichment.candidateInMindNote ?? 'yes'} — buyer already has someone; confirm before investing recruiting effort.`,
+    );
+  }
+  add('Schedule (first day)', enrichment.scheduleText);
+  if (enrichment.hoursPerDay != null || enrichment.hoursPerWeek != null || enrichment.totalHours != null) {
+    lines.push(
+      `Hours: ${enrichment.hoursPerDay ?? '?'} per day · ${enrichment.hoursPerWeek ?? '?'} per week · ${enrichment.totalHours ?? '?'} total`,
+    );
+  }
+  add('Report to', enrichment.reportToLocation);
+  add('Uniform', enrichment.uniform);
+  add(
+    'Hiring manager',
+    [enrichment.hiringManagerName, enrichment.hiringManagerEmail, enrichment.hiringManagerPhone]
+      .filter(Boolean)
+      .join(' · '),
+  );
+  add('Respond by', enrichment.respondByDate);
+  if (enrichment.maxSubmissions != null) add('Max submissions', enrichment.maxSubmissions);
+  add('Category / labor type', [enrichment.category, enrichment.laborType].filter(Boolean).join(' / '));
+  add('Job code', enrichment.jobCode);
+  add('Contract / source', [enrichment.contractType, enrichment.sourceType].filter(Boolean).join(' / '));
+  add('Segment', enrichment.segment);
+  if (
+    enrichment.payRateSt != null ||
+    enrichment.payRateOt != null ||
+    enrichment.payRateDt != null
+  ) {
+    const fmt = (n?: number): string => (n != null ? `$${n.toFixed(2)}` : '—');
+    lines.push(
+      `Rates ST/OT/DT: pay ${fmt(enrichment.payRateSt)} / ${fmt(enrichment.payRateOt)} / ${fmt(enrichment.payRateDt)}` +
+        ` · bill ${fmt(enrichment.billRateSt)} / ${fmt(enrichment.billRateOt)} / ${fmt(enrichment.billRateDt)}`,
+    );
+  }
+  if (enrichment.description) {
+    lines.push('', 'Description (from Fieldglass):', enrichment.description.trim());
+  }
+  return lines.join('\n');
 }
 
 /** Same tolerant parse as indeedFlex/parser/llmFallback.ts. */

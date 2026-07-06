@@ -5301,6 +5301,22 @@ const RecruiterJobOrderDetail: React.FC = () => {
           {/* Right Column - Widgets (30%) */}
           <Grid item xs={12} md={4}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Order notes — auto-populated for Fieldglass orders with
+                  everything the FG detail page carries (schedule, uniform,
+                  hiring manager, report-to, rates, candidate-in-mind).
+                  Hidden when empty; the field predates this card but was
+                  never rendered anywhere. */}
+              {String((jobOrder as any)?.notes ?? '').trim() !== '' && (
+                <SectionCard title="Order Notes">
+                  <Typography
+                    variant="body2"
+                    sx={{ whiteSpace: 'pre-wrap', fontSize: '0.8rem', lineHeight: 1.55 }}
+                  >
+                    {String((jobOrder as any).notes)}
+                  </Typography>
+                </SectionCard>
+              )}
+
               {/* CRM company (client account) summary */}
               <SectionCard title="Account" action={
                 <Button

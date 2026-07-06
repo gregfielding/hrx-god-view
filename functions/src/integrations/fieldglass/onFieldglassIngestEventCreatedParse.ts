@@ -33,6 +33,7 @@ import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions/v2';
 
 import { ensureSiteCore } from './ensureSiteCore';
+import { ensureJobOrderForFieldglassRequest } from './fieldglassJobOrder';
 import { parseFieldglassEmail, type FieldglassParseFailure } from './parseFieldglassEmail';
 import type {
   FieldglassIngestEvent,
@@ -263,6 +264,23 @@ export const onFieldglassIngestEventCreatedParse = onDocumentCreated(
           childStatus: ensure.childAccount.status,
           childAccountId: ensure.childAccount.id ?? null,
         });
+
+        // FG Slice 7 — email-first JO creation: the email alone carries
+        // title + dates + site, which is enough to stand up the JO +
+        // posting + shift and fire the radius blast within seconds of
+        // the order landing. Enrichment (rates/positions/candidate-in-
+        // mind) backfills when the extension syncs the detail page.
+        if (ensure.stampedRequest) {
+          const jo = await ensureJobOrderForFieldglassRequest(db, { tenantId, requestId });
+          logger.info('[onFieldglassIngestEventCreatedParse] job-order auto-create', {
+            tenantId,
+            requestId,
+            status: jo.status,
+            jobOrderId: jo.jobOrderId ?? null,
+            jobType: jo.jobType ?? null,
+            blastConfigured: jo.blastConfigured ?? false,
+          });
+        }
       } catch (err) {
         logger.warn('[onFieldglassIngestEventCreatedParse] site auto-ensure failed (non-fatal)', {
           tenantId,

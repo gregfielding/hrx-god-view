@@ -37,6 +37,10 @@ import type { Response } from 'express';
 
 import { ensureSiteCore } from './ensureSiteCore';
 import {
+  closeFieldglassOrder,
+  ensureJobOrderForFieldglassRequest,
+} from './fieldglassJobOrder';
+import {
   extractEnrichmentFromPageText,
   extractPostingIdFromText,
   type FieldglassEnrichmentStamp,
@@ -315,6 +319,34 @@ export const fieldglassEnrichmentIngest = onRequest(
       }
     }
 
+    // FG Slice 7 — the JO layer. Closed postings cascade shut; open ones
+    // get the full JO + shift + posting (+ radius blast via the shift
+    // trigger, unless candidate-in-mind). Fail-open: an error here never
+    // fails the enrichment itself.
+    let jobOrder: Record<string, unknown> | null = null;
+    try {
+      const isClosed = String(enrichment.postingStatus ?? '')
+        .toLowerCase()
+        .includes('closed');
+      if (isClosed) {
+        const closed = await closeFieldglassOrder(db, {
+          tenantId,
+          requestId,
+          reason: 'detail_page_status_closed',
+        });
+        jobOrder = { action: 'closed', ...closed };
+      } else {
+        const ensured = await ensureJobOrderForFieldglassRequest(db, { tenantId, requestId });
+        jobOrder = { action: 'ensured', ...ensured };
+      }
+    } catch (err) {
+      logger.warn('[fieldglassEnrichmentIngest] job-order step failed (non-fatal)', {
+        tenantId,
+        requestId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+
     logger.info('[fieldglassEnrichmentIngest] enriched', {
       tenantId,
       requestId,
@@ -322,6 +354,7 @@ export const fieldglassEnrichmentIngest = onRequest(
       candidateInMind: enrichment.candidateInMind === true,
       positionsRequested: enrichment.positionsRequested ?? null,
       siteResolution,
+      jobOrder,
     });
 
     res.status(200).json({
@@ -332,6 +365,7 @@ export const fieldglassEnrichmentIngest = onRequest(
       candidateInMind: enrichment.candidateInMind === true,
       fieldsExtracted: Object.keys(enrichment).length,
       siteResolution,
+      jobOrder,
     });
   },
 );

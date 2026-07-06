@@ -74,6 +74,9 @@ export interface FieldglassRequestRow {
     resolvedAt?: string;
     resolvedBy?: string;
   };
+  /** Stamped by the FG7 orchestrator once the JO stack is auto-created. */
+  jobOrderId?: string;
+  jobPostDocId?: string;
   /** Stamped by fieldglassEnrichmentIngest (Chrome extension sync). */
   enrichment?: {
     positionsRequested?: number;
@@ -159,6 +162,16 @@ export default function FieldglassLogEntry({
             <Chip label="details synced" size="small" color="success" variant="outlined" />
           ) : (
             <Chip label="details pending" size="small" variant="outlined" />
+          )}
+          {request.jobOrderId && (
+            <Chip
+              label="JO created"
+              size="small"
+              color="success"
+              component="a"
+              href={`/jobs/job-orders/${request.jobOrderId}`}
+              clickable
+            />
           )}
           {enr?.candidateInMind && (
             <Chip label="⚠ candidate in mind" size="small" color="error" />

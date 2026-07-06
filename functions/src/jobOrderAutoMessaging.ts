@@ -15,6 +15,7 @@ import { sendLegacyGroupMessage } from './messaging/legacyMessageHelpers';
 import { sendNotificationAndPush } from './messaging/unifiedWorkerNotifications';
 import { normalizeUserPhoneToE164 } from './utils/phoneE164Normalize';
 import { buildWorkerJobPostUrl } from './utils/workerUrls';
+import { resolveRadiusRecipientUids } from './jobOrderAutoMessagingRadius';
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -232,7 +233,26 @@ export async function runJobOrderAutoMessagingForShift(
   const groupIds: string[] = Array.isArray(jobOrder.autoMessagingUserGroupIds)
     ? jobOrder.autoMessagingUserGroupIds.filter((x: unknown) => typeof x === 'string' && x.trim())
     : [];
-  if (groupIds.length === 0) {
+
+  // Smart-radius mode (FG Slice 7): JOs can carry
+  // `autoMessagingSmartRadius: { miles, maxRecipients }` +
+  // `worksiteCoordinates: { lat, lng }` — every nearby worker becomes a
+  // recipient, no group membership needed. Groups and radius compose
+  // (union) when both are configured.
+  const radiusCfg = jobOrder.autoMessagingSmartRadius as
+    | { miles?: unknown; maxRecipients?: unknown }
+    | undefined;
+  const radiusCenter = jobOrder.worksiteCoordinates as
+    | { lat?: unknown; lng?: unknown }
+    | undefined;
+  const radiusMiles = Number(radiusCfg?.miles);
+  const radiusActive =
+    Number.isFinite(radiusMiles) &&
+    radiusMiles > 0 &&
+    Number.isFinite(radiusCenter?.lat as number) &&
+    Number.isFinite(radiusCenter?.lng as number);
+
+  if (groupIds.length === 0 && !radiusActive) {
     return { ...empty, status: 'no_groups' };
   }
 
@@ -246,6 +266,33 @@ export async function runJobOrderAutoMessagingForShift(
     if (!gSnap.exists) continue;
     for (const uid of collectMembersFromGroupData(gSnap.data())) {
       uidSet.add(uid);
+    }
+  }
+
+  if (radiusActive) {
+    try {
+      const resolved = await resolveRadiusRecipientUids(db, {
+        tenantId,
+        center: { lat: radiusCenter!.lat as number, lng: radiusCenter!.lng as number },
+        miles: radiusMiles,
+        maxRecipients: Number(radiusCfg?.maxRecipients) > 0 ? Number(radiusCfg?.maxRecipients) : 200,
+      });
+      for (const uid of resolved.uids) uidSet.add(uid);
+      logger.info('jobOrderAutoMessaging: smart radius resolved', {
+        tenantId,
+        jobOrderId,
+        miles: radiusMiles,
+        scanned: resolved.scanned,
+        inRadius: resolved.inRadius,
+        capped: resolved.uids.length,
+      });
+    } catch (err) {
+      // Radius failure must not kill a group-based send.
+      logger.warn('jobOrderAutoMessaging: smart radius failed (continuing with groups)', {
+        tenantId,
+        jobOrderId,
+        err: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
