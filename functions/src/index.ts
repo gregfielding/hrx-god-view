@@ -12543,6 +12543,19 @@ export { onIngestEventCreatedParse } from './integrations/indeedFlex/onIngestEve
 // (gated on `matchConfidence` being unset).
 export { onShiftRequestCreatedMatch } from './integrations/indeedFlex/onShiftRequestCreatedMatch';
 
+// **Fieldglass (Sodexo) inbound-email ingestion — FG Slices 1+2.**
+// Structural sibling of the Indeed Flex pipeline above, sharing the
+// external_ingest_events / external_shift_requests collections with
+// provider='fieldglass'. Webhook persists raw notification emails;
+// the parse trigger extracts the job posting (regex against the SAP
+// template; wage from Comments prose; bill = pay × 1.56 rate card),
+// upserts a needs_review request keyed by SDXO posting id, and texts
+// the recruiters configured at tenants/{tid}/integrations/fieldglass.
+// Deliberately stops there — site/account resolution, JO creation,
+// and user-group auto-invites are later slices (2026-07-06 scope).
+export { fieldglassInboundWebhook } from './integrations/fieldglass/fieldglassInboundWebhook';
+export { onFieldglassIngestEventCreatedParse } from './integrations/fieldglass/onFieldglassIngestEventCreatedParse';
+
 // Recruiter Number Management
 export {
   getAvailableTwilioNumbers,
