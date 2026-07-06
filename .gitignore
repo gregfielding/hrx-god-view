@@ -46,7 +46,13 @@ functions/service-account-key.json
 # Uppercase-only on purpose: the legit tracked .csv files under src/data/,
 # scripts/, and scripts/data/ are app data, NOT PII; matching `*.csv`
 # broadly would hide them. Tempworks ships its exports as `.CSV`.
+# NOTE: on macOS (core.ignorecase=true) this pattern matches lowercase
+# `.csv` too — already-tracked files are unaffected, but NEW .csv files
+# need an explicit exception like the one below.
 *.CSV
+# Business reference-data snapshots (site directories etc.) — NOT PII.
+# Never put worker exports here.
+!docs/reference/*.csv
 
 # Claude/Cursor scratch output (logs, query dumps, etc. — never commit)
 .scratch/
