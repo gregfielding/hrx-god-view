@@ -50,6 +50,13 @@ import {
   weekKeyFor,
 } from './importWorkedShiftComposer';
 
+/** Entities whose CSV imports get the automatic FLSA weekly-40 OT cascade
+ *  (Greg, 2026-07-06: "only C1 Select LLC — NOT C1 Events LLC"). Adding an
+ *  entity here is a deliberate payroll-policy decision, not a config side
+ *  effect. C1 Events is 1099 (contractor payables — no OT concept) and
+ *  never reaches the W-2 path regardless. */
+const AUTO_OT_ENTITY_IDS = new Set(['c1_select_llc']);
+
 if (!admin.apps.length) {
   admin.initializeApp();
 }
@@ -724,22 +731,39 @@ async function submitW2(args: PathArgs) {
   // "Everee adds OT at the pay run" assumption was wrong and shipped
   // straight-time-only weeks (2026-07-06 Zirick Brooks report: 44.6 hrs,
   // zero OT).
-  const priorSeconds = await priorWeekSecondsForBatch(tenantId, hiringEntityId, cust, plans);
-  const splits = classifyWeeklyOt(
-    plans.map((p) => ({
-      key: p.externalId,
-      userId: p.userId,
-      workDate: p.workDate,
-      netHours: p.hours,
-    })),
-    priorSeconds,
-  );
-  for (const p of plans) {
-    const split = splits.get(p.externalId);
-    if (split) {
-      p.regularSeconds = split.regularSeconds;
-      p.overtimeSeconds = split.overtimeSeconds;
-    } else {
+  //
+  // ENTITY GATE (Greg, 2026-07-06): auto-OT applies ONLY to C1 Select LLC.
+  // C1 Events LLC is 1099 and never reaches this W-2 path, but the branch
+  // is selected by the entity doc's workerType — an explicit allowlist
+  // means a misconfigured/absent workerType (or a future W-2 entity) can
+  // never silently start paying OT premiums without a deliberate decision
+  // to add it here. Non-allowlisted W-2 entities keep the real window +
+  // break rendering (display fidelity, no pay impact) but stay
+  // straight-time exactly as before this fix.
+  const otAutoApplies = AUTO_OT_ENTITY_IDS.has(hiringEntityId);
+  if (otAutoApplies) {
+    const priorSeconds = await priorWeekSecondsForBatch(tenantId, hiringEntityId, cust, plans);
+    const splits = classifyWeeklyOt(
+      plans.map((p) => ({
+        key: p.externalId,
+        userId: p.userId,
+        workDate: p.workDate,
+        netHours: p.hours,
+      })),
+      priorSeconds,
+    );
+    for (const p of plans) {
+      const split = splits.get(p.externalId);
+      if (split) {
+        p.regularSeconds = split.regularSeconds;
+        p.overtimeSeconds = split.overtimeSeconds;
+      } else {
+        p.regularSeconds = minuteAlignedDay(p.hours, p.payRate).seconds;
+        p.overtimeSeconds = 0;
+      }
+    }
+  } else {
+    for (const p of plans) {
       p.regularSeconds = minuteAlignedDay(p.hours, p.payRate).seconds;
       p.overtimeSeconds = 0;
     }
