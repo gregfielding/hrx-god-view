@@ -176,17 +176,23 @@ const FieldglassEnsureSiteDialog: React.FC<Props> = ({
     }
   }, [siteName, directoryRow, address.city, address.state, address.zipCode]);
 
-  // Auto-geocode once when the plan says we'll create a location.
+  const willCreateLocation = plan?.location.status === 'would_create';
+  /** Existing location with no street (e.g. auto-created at parse time,
+   *  where no browser was available to geocode) — offer the backfill. */
+  const needsStreetBackfill =
+    plan?.location.status === 'exists' && plan.location.missingStreet === true;
+  const showAddressEditor = willCreateLocation || needsStreetBackfill;
+
+  // Auto-geocode once when the plan wants an address from us.
   useEffect(() => {
-    if (!plan || plan.location.status !== 'would_create') return;
+    if (!plan || !showAddressEditor) return;
     const key = `${siteName}|${directoryRow?.siteCode ?? ''}`;
     if (geocodedForPlan.current === key) return;
     geocodedForPlan.current = key;
     void geocode();
-  }, [plan, siteName, directoryRow, geocode]);
+  }, [plan, showAddressEditor, siteName, directoryRow, geocode]);
 
   const ambiguous = plan?.directory.status === 'ambiguous';
-  const willCreateLocation = plan?.location.status === 'would_create';
   const canExecute =
     !!plan &&
     !planLoading &&
@@ -213,7 +219,7 @@ const FieldglassEnsureSiteDialog: React.FC<Props> = ({
         ...(siteCode ? { siteCode } : {}),
         ...(requestId ? { requestId } : {}),
         execute: true,
-        ...(willCreateLocation
+        ...(showAddressEditor
           ? {
               address: {
                 street: address.street.trim(),
@@ -351,8 +357,14 @@ const FieldglassEnsureSiteDialog: React.FC<Props> = ({
                     </Typography>
                   )}
                 </Typography>
-                {willCreateLocation && (
+                {showAddressEditor && (
                   <Stack spacing={1} sx={{ mt: 1 }}>
+                    {needsStreetBackfill && (
+                      <Typography variant="caption" color="warning.main">
+                        This location has no street address yet (created automatically from the
+                        email) — confirm one below and it will be filled in.
+                      </Typography>
+                    )}
                     <Stack direction="row" spacing={1} alignItems="center">
                       <TextField
                         label="Street address"

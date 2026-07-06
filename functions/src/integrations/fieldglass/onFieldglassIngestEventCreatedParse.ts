@@ -16,8 +16,15 @@
  *      speed race is the whole point: C1 should know about a Sodexo order
  *      minutes after distribution, not when someone checks an inbox.
  *
- * Deliberately NOT here (Greg, 2026-07-06 — "don't go too far"): site→
- * account/worksite resolution, JO/shift creation, jobs-board posting,
+ *   4. **FG Slice 4 (Greg, 2026-07-06: "we want this to happen. Everything
+ *      short of a job order.")** — auto-run `ensureSiteCore` so the CRM
+ *      location + child account are pre-staged before a recruiter even
+ *      opens the queue. Creation only happens on an EXACT site-directory
+ *      match; ambiguous/unknown sites park as needs-review for the
+ *      /shifts/log button. Fail-open: an ensure error never breaks the
+ *      parse or the alert.
+ *
+ * Deliberately NOT here: JO/shift creation, jobs-board posting,
  * user-group auto-invites. Those layers need design discussion first.
  */
 
@@ -25,6 +32,7 @@ import * as admin from 'firebase-admin';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions/v2';
 
+import { ensureSiteCore } from './ensureSiteCore';
 import { parseFieldglassEmail, type FieldglassParseFailure } from './parseFieldglassEmail';
 import type {
   FieldglassIngestEvent,
@@ -224,6 +232,42 @@ export const onFieldglassIngestEventCreatedParse = onDocumentCreated(
         logger.warn('[onFieldglassIngestEventCreatedParse] alert failed', {
           tenantId,
           requestId,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // FG Slice 4 — pre-stage the site chain (CRM location + child account
+    // + linkage; NO job order). Exact directory matches only; everything
+    // else stays parked for the /shifts/log button. Runs on re-parses too
+    // (idempotent), which retries a site that failed transiently. No
+    // street address here — the Maps key is browser-only, so the street
+    // is backfilled on first human touch via the dialog.
+    const siteName = parseResult.event.siteName;
+    if (siteName) {
+      try {
+        const ensure = await ensureSiteCore(db, {
+          tenantId,
+          siteName,
+          requestId,
+          execute: true,
+          actor: 'system_fieldglass_parse',
+          requireDirectoryMatchForCreate: true,
+        });
+        logger.info('[onFieldglassIngestEventCreatedParse] site auto-ensure', {
+          tenantId,
+          requestId,
+          skipped: ensure.skipped ?? null,
+          locationStatus: ensure.location.status,
+          locationId: ensure.location.id ?? null,
+          childStatus: ensure.childAccount.status,
+          childAccountId: ensure.childAccount.id ?? null,
+        });
+      } catch (err) {
+        logger.warn('[onFieldglassIngestEventCreatedParse] site auto-ensure failed (non-fatal)', {
+          tenantId,
+          requestId,
+          siteName,
           err: err instanceof Error ? err.message : String(err),
         });
       }

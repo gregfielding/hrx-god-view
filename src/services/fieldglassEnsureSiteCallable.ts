@@ -46,6 +46,8 @@ export type FieldglassLayerStatus =
 export interface FieldglassEnsureSiteResult {
   ok: true;
   dryRun: boolean;
+  /** Set when auto mode declined to create (ambiguous/unknown site). */
+  skipped?: 'needs_directory_pick' | 'not_in_directory';
   directory: {
     status: 'exact' | 'ambiguous' | 'not_in_directory';
     row?: FieldglassSiteDirectoryRow;
@@ -56,6 +58,10 @@ export interface FieldglassEnsureSiteResult {
     id?: string;
     name: string;
     codeBackfilled?: boolean;
+    /** Existing location has no street address — a backfill is offered. */
+    missingStreet?: boolean;
+    /** Street was patched onto an existing location this run. */
+    streetBackfilled?: boolean;
     address?: { street: string; city: string; state: string; zipCode: string };
   };
   childAccount: {
