@@ -30,6 +30,7 @@ import {
   deterministicAutoChildAccountDocId,
   tryCreateChildAccountForNationalParent,
 } from '../../autoChildAccountFromCompanyLocation';
+import { serverGeocodeSite, type ServerGeocodeHit } from './serverGeocode';
 import {
   lookupSiteByCode,
   lookupSitesByName,
@@ -378,6 +379,31 @@ export async function ensureSiteCore(
     zipCode: String(address?.zipCode ?? directoryRow?.zip ?? '').trim(),
   };
 
+  // Server-side street resolution (FG Slice 4b) — execute mode only (the
+  // dialog geocodes client-side for previews), and only when the caller
+  // supplied no street AND the target location lacks one. Fail-open: a
+  // null hit keeps directory city/state/zip and the street stays
+  // backfillable through the dialog.
+  let serverHit: ServerGeocodeHit | null = null;
+  const targetLacksStreet = existingLocation
+    ? !String(existingLocation.data.address ?? '').trim()
+    : true;
+  if (execute && !newLocationAddress.street && targetLacksStreet) {
+    serverHit = await serverGeocodeSite({
+      siteName: siteName.trim(),
+      city: newLocationAddress.city || undefined,
+      state: newLocationAddress.state || undefined,
+      zip: newLocationAddress.zipCode || undefined,
+      expectedState: directoryRow?.state ?? newLocationAddress.state ?? undefined,
+    });
+    if (serverHit) {
+      newLocationAddress.street = serverHit.street;
+      if (!newLocationAddress.zipCode && serverHit.zipCode) {
+        newLocationAddress.zipCode = serverHit.zipCode;
+      }
+    }
+  }
+
   let location: EnsureSiteResult['location'];
   let locationId: string | null = existingLocation?.id ?? null;
   const locationDisplayNameForChild: string | null = existingLocation
@@ -421,12 +447,14 @@ export async function ensureSiteCore(
       }
       if (canBackfillStreet) {
         patch.address = newLocationAddress.street;
-        if (
-          address?.lat != null &&
-          address?.lng != null &&
-          !(existingLocation.data.coordinates as Record<string, unknown> | null)
-        ) {
-          patch.coordinates = { lat: address.lat, lng: address.lng };
+        const coords =
+          address?.lat != null && address?.lng != null
+            ? { lat: address.lat, lng: address.lng }
+            : serverHit
+              ? { lat: serverHit.lat, lng: serverHit.lng }
+              : null;
+        if (coords && !(existingLocation.data.coordinates as Record<string, unknown> | null)) {
+          patch.coordinates = coords;
         }
         location.streetBackfilled = true;
         location.missingStreet = false;
@@ -454,7 +482,9 @@ export async function ensureSiteCore(
         coordinates:
           address?.lat != null && address?.lng != null
             ? { lat: address.lat, lng: address.lng }
-            : null,
+            : serverHit
+              ? { lat: serverHit.lat, lng: serverHit.lng }
+              : null,
         discoveredBy: 'Fieldglass',
         discoveredAt: new Date().toISOString(),
         createdAt: FieldValue.serverTimestamp(),

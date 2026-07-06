@@ -28,6 +28,10 @@ const PARAM_KEYS = [
   // scheduledGmailMonitoring (functions/src/gmailIntegration.ts) — must be literal "true"
   'ENABLE_GMAIL_MONITORING',
   'SMS_PROVIDER',
+  // Server-side Geocoding API key (fieldglass auto-ensure street resolution
+  // — functions/src/integrations/fieldglass/serverGeocode.ts). NOT the
+  // browser Maps key; that one is API-restricted and rejected server-side.
+  'GOOGLE_MAPS_SERVER_KEY',
   // defineSecret (secrets) – set in root .env if you use these
   'SENDGRID_API_KEY',
   'SENDGRID_FROM_EMAIL',
