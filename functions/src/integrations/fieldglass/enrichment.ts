@@ -175,7 +175,12 @@ export async function extractEnrichmentFromPageText(
     // NO temperature — gpt-5 rejects non-default values (see the
     // 2026-05-23 note in indeedFlex/parser/llmFallback.ts).
     response_format: { type: 'json_object' },
-    max_completion_tokens: 1200,
+    // gpt-5 is a reasoning model: completion tokens are consumed by
+    // internal reasoning BEFORE any visible output. 1200 was fully eaten
+    // by reasoning over a ~20KB page → empty content → "json parse
+    // failed" (first live capture, SDXOJP00186302, 2026-07-07). 6000
+    // leaves generous headroom; the JSON itself is only ~500 tokens.
+    max_completion_tokens: 6000,
   });
 
   const raw = completion.choices?.[0]?.message?.content ?? '';
