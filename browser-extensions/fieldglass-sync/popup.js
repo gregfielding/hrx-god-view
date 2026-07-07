@@ -19,7 +19,10 @@ function renderProgress(p) {
     fill.style.width = `${Math.round(((p.done || 0) / p.total) * 100)}%`;
   }
   if (p.running) {
-    status.textContent = `Syncing ${p.done || 0} / ${p.total}…`;
+    const stale = p.heartbeatAt && Date.now() - p.heartbeatAt > 90000;
+    status.textContent = stale
+      ? 'Run appears stalled — reload the extension and try again.'
+      : `Syncing ${p.done || 0} / ${p.total}…${p.current ? ` ${p.current}` : ''}`;
   } else if (p.summary) {
     const s = p.summary;
     status.textContent =

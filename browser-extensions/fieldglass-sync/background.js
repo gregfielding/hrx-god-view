@@ -139,13 +139,23 @@ async function waitTabComplete(tabId, timeoutMs) {
  * lets SAP's JS render it, reads the text via the content script, and
  * closes the tab. Same proven path as passive capture, just automated.
  */
-async function captureDetailPageViaTab(url) {
+async function setStep(step) {
+  const { fgSyncProgress } = await chrome.storage.session.get('fgSyncProgress');
+  await chrome.storage.session.set({
+    fgSyncProgress: { ...(fgSyncProgress || {}), current: step, heartbeatAt: Date.now() },
+  });
+}
+
+async function captureDetailPageViaTab(url, label) {
+  await setStep(`${label}: opening page…`);
   const tab = await chrome.tabs.create({ url, active: false });
   bulkTabs.add(tab.id);
   try {
+    await setStep(`${label}: waiting for page load…`);
     await waitTabComplete(tab.id, 25000);
     let lastText = '';
     for (let attempt = 0; attempt < 10; attempt += 1) {
+      await setStep(`${label}: reading rendered page (${attempt + 1}/10)…`);
       await sleep(1500);
       try {
         const resp = await chrome.tabs.sendMessage(tab.id, { type: 'fg_get_page_text' });
@@ -269,21 +279,41 @@ async function runBulk(items) {
   bulkRunning = true;
   const config = await getConfig();
   const summary = { ok: 0, failed: 0, competitorFlags: 0 };
-  await setProgress({ running: true, total: items.length, done: 0, log: [] });
+  await setProgress({ running: true, total: items.length, done: 0, log: [], heartbeatAt: Date.now() });
   try {
-    for (let i = 0; i < items.length; i += 1) {
+    await runBulkInner(items, config, summary);
+  } catch (err) {
+    // A crash must never die silently — surface it in the popup log.
+    await appendLog(`✗ run crashed: ${err && err.message ? err.message : err}`);
+    summary.failed += 1;
+  } finally {
+    const { fgSyncProgress } = await chrome.storage.session.get('fgSyncProgress');
+    await setProgress({
+      ...(fgSyncProgress || {}),
+      running: false,
+      current: null,
+      summary,
+      finishedAt: Date.now(),
+    });
+    bulkRunning = false;
+  }
+}
+
+async function runBulkInner(items, config, summary) {
+  for (let i = 0; i < items.length; i += 1) {
       const item = items[i];
       const label = item.label || item.postingId || item.url;
       try {
         // Hard per-item cap — one unresponsive page must never stall the run.
         const text = await Promise.race([
-          captureDetailPageViaTab(item.url),
+          captureDetailPageViaTab(item.url, label),
           sleep(75000).then(() => {
             const err = new Error('ITEM_TIMEOUT');
             err.code = 'ITEM_TIMEOUT';
             throw err;
           }),
         ]);
+        await setStep(`${label}: extracting in HRX (10-30s)…`);
         const result = await ingest(config, {
           text,
           url: item.url,
@@ -308,16 +338,7 @@ async function runBulk(items) {
       await setProgress({ ...(fgSyncProgress || {}), running: true, total: items.length, done: i + 1 });
       if (i < items.length - 1) await sleep(1500);
     }
-  } finally {
-    const { fgSyncProgress } = await chrome.storage.session.get('fgSyncProgress');
-    await setProgress({
-      ...(fgSyncProgress || {}),
-      running: false,
-      summary,
-      finishedAt: Date.now(),
-    });
-    bulkRunning = false;
-  }
+  // Finish/cleanup lives in runBulk's finally — the wrapper owns it.
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
