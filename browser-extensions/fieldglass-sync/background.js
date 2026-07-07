@@ -280,6 +280,21 @@ async function runBulk(items) {
   const config = await getConfig();
   const summary = { ok: 0, failed: 0, competitorFlags: 0 };
   await setProgress({ running: true, total: items.length, done: 0, log: [], heartbeatAt: Date.now() });
+  // MV3 keepalive: Chrome kills the worker after ~30s WITHOUT extension-API
+  // calls, and plain network awaits (the 30-60s HRX extraction fetch) make
+  // none — the second live run died exactly at 'extracting in HRX'. A 15s
+  // interval that touches storage both resets the kill timer and keeps the
+  // popup's heartbeat honest during long steps.
+  const keepalive = setInterval(() => {
+    chrome.storage.session
+      .get('fgSyncProgress')
+      .then((v) =>
+        chrome.storage.session.set({
+          fgSyncProgress: { ...(v.fgSyncProgress || {}), heartbeatAt: Date.now() },
+        }),
+      )
+      .catch(() => {});
+  }, 15000);
   try {
     await runBulkInner(items, config, summary);
   } catch (err) {
@@ -287,6 +302,7 @@ async function runBulk(items) {
     await appendLog(`✗ run crashed: ${err && err.message ? err.message : err}`);
     summary.failed += 1;
   } finally {
+    clearInterval(keepalive);
     const { fgSyncProgress } = await chrome.storage.session.get('fgSyncProgress');
     await setProgress({
       ...(fgSyncProgress || {}),
