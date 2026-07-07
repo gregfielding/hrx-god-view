@@ -751,6 +751,21 @@ export const DEFAULT_MESSAGE_TYPES: MessageTypeConfig[] = [
     enabled: true,
   },
   {
+    id: 'shift_invite',
+    label: 'Shift Invite (auto blast)',
+    category: 'engagement',
+    defaultChannels: ['sms'],
+    critical: false,
+    allowReply: true,
+    requiresExplicitSmsOptIn: false,
+    requiresTemplate: false,
+    aiAllowedToDraft: false,
+    aiAllowedToAutoSend: true,
+    description:
+      'Automated shift invite (job order auto-messaging: user group and/or worksite radius) when a posting goes live. Opt-out semantics — sent unless the worker replied STOP or set smsOptIn false. jobOrderAutoMessaging also enforces a global 1-SMS-per-worker-per-24h cap.',
+    enabled: true,
+  },
+  {
     id: 'direct_message',
     label: 'Direct Message',
     category: 'engagement',

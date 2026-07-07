@@ -390,6 +390,21 @@ async function shouldUseChannel(
       return { allowed: true };
     }
 
+    // Shift invite (job order auto-messaging blast): opt-out semantics like
+    // other recruiting texts — STOP (smsBlockedSystem, checked above) and an
+    // explicit smsOptIn=false both block; unset consent does not. The sender
+    // additionally enforces a global 1-per-worker-per-24h cap.
+    if (context.messageTypeId === 'shift_invite') {
+      const phone = userData.phoneE164 || userData.phone;
+      if (!phone?.trim()) {
+        return { allowed: false, reason: 'Recipient has no phone number' };
+      }
+      if (!smsOptIn) {
+        return { allowed: false, reason: 'SMS consent not given' };
+      }
+      return { allowed: true };
+    }
+
     // Assignment-created: recruiter explicitly offered position - allow SMS if user has phone (relax verification)
     if (context.messageTypeId === 'assignment_created') {
       const phone = userData.phoneE164 || userData.phone;

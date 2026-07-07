@@ -203,12 +203,13 @@ export async function sendLegacyGroupMessage(args: {
   message: string;
   source?: string;
   sourceId?: string;
+  messageTypeId?: string;
 }): Promise<{ success: boolean; messageId: string | null; status: string; error?: string }> {
   try {
     const result = await sendMessage({
       tenantId: args.tenantId,
       userId: args.userId,
-      messageTypeId: 'bulk_message',
+      messageTypeId: args.messageTypeId || 'bulk_message',
       variables: {
         _rawMessage: args.message,
       },

@@ -165,6 +165,43 @@ async function tryClaimCooldownSlot(
       );
       return true;
     });
+  } catch (err) {
+    logger.warn('jobOrderAutoMessaging cooldown claim failed; skipping send to be safe', {
+      tenantId,
+      jobOrderId,
+      userId,
+      error: String(err),
+    });
+    return false;
+  }
+}
+
+const DAILY_SMS_CAP_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Global shift-invite SMS cap: one per worker per 24h across ALL job
+ * orders (the per-JO cooldown above can't stop a burst of new orders
+ * from each texting the same nearby worker). Transactional claim so
+ * concurrent blasts can't double-send.
+ */
+async function tryClaimDailySmsSlot(tenantId: string, userId: string): Promise<boolean> {
+  const ref = db.doc(`tenants/${tenantId}/shiftInviteSmsCooldown/${userId}`);
+  try {
+    return await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const ts = snap.exists
+        ? (snap.data()?.lastSentAt as admin.firestore.Timestamp | undefined)
+        : undefined;
+      if (ts && Date.now() - ts.toMillis() < DAILY_SMS_CAP_MS) {
+        return false;
+      }
+      tx.set(
+        ref,
+        { lastSentAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+        { merge: true },
+      );
+      return true;
+    });
   } catch (e) {
     logger.warn('jobOrderAutoMessaging cooldown transaction failed', { userId, error: String(e) });
     return false;
@@ -177,6 +214,7 @@ export interface RunAutoMessagingResult {
   pushDelivered: number;
   skippedDueToCooldown: number;
   skippedNoReachableChannel: number;
+  skippedSmsDailyCap?: number;
   recipientPoolSize: number;
   city: string;
   boardUrl: string;
@@ -328,6 +366,7 @@ export async function runJobOrderAutoMessagingForShift(
   let pushDelivered = 0;
   let skippedDueToCooldown = 0;
   let skippedNoReachableChannel = 0;
+  let skippedSmsDailyCap = 0;
 
   const BATCH = 15;
   for (let i = 0; i < recipientIds.length; i += BATCH) {
@@ -397,18 +436,30 @@ export async function runJobOrderAutoMessagingForShift(
       }
 
       if (phoneOk) {
-        try {
-          const result = await sendLegacyGroupMessage({
-            tenantId,
-            userId: uid,
-            phoneE164: phoneE164!,
-            message: sms,
-            source: source === 'manual_resend' ? 'auto_messaging_shift_resend' : 'auto_messaging_shift',
-            sourceId: `${jobOrderId}_${shiftId}`,
-          });
-          if (result.success) smsDelivered += 1;
-        } catch (e) {
-          logger.warn('jobOrderAutoMessaging sms failed', { uid, error: String(e) });
+        // Global (cross-job-order) cap: at most one shift-invite SMS per
+        // worker per 24h, so a burst of new orders can't stack texts on the
+        // same person. Push/in-app above are not capped.
+        const smsSlotClaimed = await tryClaimDailySmsSlot(tenantId, uid);
+        if (!smsSlotClaimed) {
+          skippedSmsDailyCap += 1;
+        } else {
+          try {
+            const result = await sendLegacyGroupMessage({
+              tenantId,
+              userId: uid,
+              phoneE164: phoneE164!,
+              message: sms,
+              source: source === 'manual_resend' ? 'auto_messaging_shift_resend' : 'auto_messaging_shift',
+              sourceId: `${jobOrderId}_${shiftId}`,
+              messageTypeId: 'shift_invite',
+            });
+            if (result.success) smsDelivered += 1;
+            else if (result.error) {
+              logger.info('jobOrderAutoMessaging sms not sent', { uid, reason: result.error });
+            }
+          } catch (e) {
+            logger.warn('jobOrderAutoMessaging sms failed', { uid, error: String(e) });
+          }
         }
       }
     }
@@ -426,6 +477,7 @@ export async function runJobOrderAutoMessagingForShift(
       pushDelivered,
       skippedDueToCooldown,
       skippedNoReachableChannel,
+      skippedSmsDailyCap,
       recipientPoolSize: recipientIds.length,
       messageEnSample: buildMessages(city, boardUrl, false).sms,
       messageEsSample: buildMessages(city, boardUrl, true).sms,
@@ -449,6 +501,7 @@ export async function runJobOrderAutoMessagingForShift(
     pushDelivered,
     skippedDueToCooldown,
     skippedNoReachableChannel,
+    skippedSmsDailyCap,
     recipientPoolSize: recipientIds.length,
     city,
     boardUrl,
