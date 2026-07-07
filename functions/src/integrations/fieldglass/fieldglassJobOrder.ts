@@ -383,7 +383,15 @@ export async function ensureJobOrderForFieldglassRequest(
     createdBy: SYSTEM_ACTOR,
   });
 
-  // ── 4. Stamp the review row — auto-created rows leave the queue.
+  // ── 4. Hiring manager → CRM contact + Deal Contacts card (FG Slice 8).
+  await ensureHiringManagerDealContact(db, {
+    tenantId,
+    joRef,
+    jo: jobOrderData,
+    enrichment,
+  });
+
+  // ── 5. Stamp the review row — auto-created rows leave the queue.
   await requestRef.set(
     {
       jobOrderId: joRef.id,
@@ -422,6 +430,131 @@ export async function ensureJobOrderForFieldglassRequest(
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Hiring manager → CRM contact + JO deal contact (FG Slice 8)
+// ─────────────────────────────────────────────────────────────────────
+
+/** Fieldglass hiring-manager names arrive as prose fragments — observed
+ *  live: "to Sarah Plamondon." Strip leading connectives and trailing
+ *  punctuation so the CRM contact reads like a name. */
+export function sanitizeContactName(raw: string | null | undefined): string {
+  return String(raw ?? '')
+    .replace(/^\s*(?:to|attn:?|attention:?|contact:?)\s+/i, '')
+    .replace(/[\s.,;:]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Ensure the order's hiring manager exists as a CRM contact on the
+ * company and appears in the JO's Deal Contacts card
+ * (`deal.associations.contacts` embedded on the JO — the card's read
+ * path; no crm_deals doc needed). Email is the dedupe key (matched
+ * case-insensitively against the company's contacts — no global email
+ * index exists). Fail-open: never blocks JO creation.
+ */
+async function ensureHiringManagerDealContact(
+  db: admin.firestore.Firestore,
+  params: {
+    tenantId: string;
+    joRef: FirebaseFirestore.DocumentReference;
+    jo: Record<string, unknown>;
+    enrichment: FieldglassEnrichmentStamp;
+  },
+): Promise<void> {
+  const { tenantId, joRef, jo, enrichment } = params;
+  const email = String(enrichment.hiringManagerEmail ?? '').trim().toLowerCase();
+  if (!email || !email.includes('@')) return; // email is the identity — no email, no contact
+  const name = sanitizeContactName(enrichment.hiringManagerName) || email.split('@')[0];
+  const companyId = trim(jo.companyId);
+  if (!companyId) return;
+
+  try {
+    // Dedupe against the company's contacts (small set; compare lowercased).
+    const existing = await db
+      .collection(`tenants/${tenantId}/crm_contacts`)
+      .where('companyId', '==', companyId)
+      .get();
+    let contactId: string | null = null;
+    let contact: Record<string, unknown> | null = null;
+    for (const d of existing.docs) {
+      const c = d.data() as Record<string, unknown>;
+      if (String(c.email ?? '').trim().toLowerCase() === email) {
+        contactId = d.id;
+        contact = c;
+        break;
+      }
+    }
+
+    if (!contactId) {
+      const parts = name.split(' ');
+      const lastName = parts.length > 1 ? parts[parts.length - 1] : '';
+      const firstName = parts.length > 1 ? parts.slice(0, -1).join(' ') : name;
+      contact = {
+        fullName: name,
+        firstName,
+        lastName,
+        email,
+        phone: String(enrichment.hiringManagerPhone ?? '').trim(),
+        title: 'Hiring Manager',
+        companyId,
+        role: 'decision_maker',
+        status: 'active',
+        tags: ['fieldglass'],
+        notes: `Auto-created from Fieldglass order ${trim(jo.poNumber)} (hiring manager on the posting).`,
+        ...(trim(jo.locationId) ? { locationId: trim(jo.locationId) } : {}),
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+        createdBy: SYSTEM_ACTOR,
+      };
+      const ref = await db.collection(`tenants/${tenantId}/crm_contacts`).add(contact);
+      contactId = ref.id;
+      logger.info('[fieldglassJobOrder] crm contact created', {
+        tenantId,
+        contactId,
+        email,
+        name,
+        companyId,
+      });
+    }
+
+    // Append to the JO's embedded deal contacts unless already present.
+    const dealAssoc = (jo.deal as Record<string, unknown> | undefined)?.associations as
+      | Record<string, unknown>
+      | undefined;
+    const current = Array.isArray(dealAssoc?.contacts)
+      ? (dealAssoc!.contacts as Array<Record<string, unknown>>)
+      : [];
+    if (current.some((c) => c.id === contactId)) return;
+    const entry = {
+      id: contactId,
+      snapshot: {
+        fullName: String(contact!.fullName ?? name),
+        firstName: String(contact!.firstName ?? ''),
+        lastName: String(contact!.lastName ?? ''),
+        email,
+        phone: String(contact!.phone ?? ''),
+        title: String(contact!.title ?? 'Hiring Manager'),
+      },
+    };
+    await joRef.update({
+      'deal.associations.contacts': [...current, entry],
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    logger.info('[fieldglassJobOrder] deal contact attached', {
+      tenantId,
+      jobOrderId: joRef.id,
+      contactId,
+    });
+  } catch (err) {
+    logger.warn('[fieldglassJobOrder] hiring-manager contact failed (non-fatal)', {
+      tenantId,
+      jobOrderId: joRef.id,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 /**
  * Enrichment backfill for a JO created email-first (before the detail
  * page was synced). Only fills gaps — a recruiter's manual edits to pay
@@ -435,6 +568,11 @@ async function backfillJobOrderFromEnrichment(
   postingId: string,
 ): Promise<void> {
   if (Object.keys(enrichment).length === 0) return;
+
+  // Hiring manager contact — idempotent, so every backfill pass may try.
+  const tenantId = joRef.path.split('/')[1];
+  await ensureHiringManagerDealContact(admin.firestore(), { tenantId, joRef, jo, enrichment });
+
   const patch: Record<string, unknown> = {};
 
   const currentPay = Number(jo.payRate ?? 0);
