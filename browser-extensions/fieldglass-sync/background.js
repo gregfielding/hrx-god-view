@@ -111,21 +111,25 @@ async function fetchQueue(config) {
  *  these so each order isn't ingested twice. */
 const bulkTabs = new Set();
 
-function waitTabComplete(tabId, timeoutMs) {
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(listener);
-      resolve();
-    }, timeoutMs);
-    const listener = (id, info) => {
-      if (id === tabId && info.status === 'complete') {
-        clearTimeout(timeout);
-        chrome.tabs.onUpdated.removeListener(listener);
-        resolve();
-      }
-    };
-    chrome.tabs.onUpdated.addListener(listener);
-  });
+/**
+ * Wait for a tab to finish loading by POLLING chrome.tabs.get — not a
+ * bare onUpdated listener. MV3 service workers are killed after ~30s
+ * without extension-API activity, and the first live 5-order run froze
+ * at 0/5 exactly that way (silent 25s listener wait → worker death →
+ * run gone, progress frozen). Each poll call resets Chrome's idle
+ * timer, keeping the worker alive through the whole bulk run.
+ */
+async function waitTabComplete(tabId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (tab && tab.status === 'complete') return;
+    } catch (e) {
+      return; // tab closed underneath us
+    }
+    await sleep(1000);
+  }
 }
 
 /**
@@ -271,7 +275,15 @@ async function runBulk(items) {
       const item = items[i];
       const label = item.label || item.postingId || item.url;
       try {
-        const text = await captureDetailPageViaTab(item.url);
+        // Hard per-item cap — one unresponsive page must never stall the run.
+        const text = await Promise.race([
+          captureDetailPageViaTab(item.url),
+          sleep(75000).then(() => {
+            const err = new Error('ITEM_TIMEOUT');
+            err.code = 'ITEM_TIMEOUT';
+            throw err;
+          }),
+        ]);
         const result = await ingest(config, {
           text,
           url: item.url,
