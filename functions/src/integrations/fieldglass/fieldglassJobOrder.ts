@@ -83,6 +83,51 @@ export function jobTypeForSpan(days: number | null): 'gig' | 'career' {
 }
 
 /**
+ * Ensure the order's job title exists in the tenant's master job-titles
+ * catalog (`modules/hrx-flex/jobTitles` — feeds every title picker,
+ * including the Workers Comp repo's auto-apply chips). Greg, 2026-07-07:
+ * "if the job title isn't in our job titles list, can you add it?"
+ * Case-insensitive dedupe; Fieldglass's uniform text seeds the catalog's
+ * uniform field on create. Fail-open.
+ */
+async function ensureJobTitleInCatalog(
+  db: admin.firestore.Firestore,
+  params: { tenantId: string; title: string; uniform?: string },
+): Promise<void> {
+  const title = params.title.trim();
+  if (!title) return;
+  try {
+    const col = db.collection(`tenants/${params.tenantId}/modules/hrx-flex/jobTitles`);
+    const snap = await col.select('title').get();
+    const wanted = title.toLowerCase();
+    for (const d of snap.docs) {
+      if (String((d.data() as Record<string, unknown>).title ?? '').trim().toLowerCase() === wanted) {
+        return; // already in the catalog
+      }
+    }
+    await col.add({
+      title,
+      description: '',
+      uniform: String(params.uniform ?? '').trim(),
+      createdBy: SYSTEM_ACTOR,
+      updatedBy: SYSTEM_ACTOR,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    logger.info('[fieldglassJobOrder] job title added to catalog', {
+      tenantId: params.tenantId,
+      title,
+    });
+  } catch (err) {
+    logger.warn('[fieldglassJobOrder] job title catalog ensure failed (non-fatal)', {
+      tenantId: params.tenantId,
+      title,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
  * Workers-comp resolution from the central repo (Greg, 2026-07-07:
  * "will pull from our central repo, if a code exists").
  * `tenants/{tid}/workers_comp_rates` docs: {state, code, rate,
@@ -353,6 +398,14 @@ export async function ensureJobOrderForFieldglassRequest(
       err: err instanceof Error ? err.message : String(err),
     });
   }
+
+  // Master job-titles catalog learns every Fieldglass title — so the WC
+  // repo's chip picker (and every title dropdown) can offer it.
+  await ensureJobTitleInCatalog(db, {
+    tenantId,
+    title,
+    uniform: trim(enrichment.uniform) || undefined,
+  });
 
   // Workers comp from the central repo — matched by worksite state +
   // job title, Sodexo-scoped rules first. Null when no chip matches
@@ -734,6 +787,16 @@ async function backfillJobOrderFromEnrichment(
   await ensureHiringManagerDealContact(admin.firestore(), { tenantId, joRef, jo, enrichment });
 
   const patch: Record<string, unknown> = {};
+
+  // Catalog the title on backfill too — covers JOs created before the
+  // auto-add shipped. Dedupe makes repeat passes free.
+  if (trim(jo.jobTitle)) {
+    await ensureJobTitleInCatalog(admin.firestore(), {
+      tenantId,
+      title: trim(jo.jobTitle),
+      uniform: trim(enrichment.uniform) || undefined,
+    });
+  }
 
   // Auto user group backfill (FG Slice 9) — FG JOs created before the
   // group feature (or where the ensure hiccupped) get theirs here.
