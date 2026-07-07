@@ -379,24 +379,36 @@ export async function ensureSiteCore(
     zipCode: String(address?.zipCode ?? directoryRow?.zip ?? '').trim(),
   };
 
-  // Server-side street resolution (FG Slice 4b) — execute mode only (the
-  // dialog geocodes client-side for previews), and only when the caller
-  // supplied no street AND the target location lacks one. Fail-open: a
-  // null hit keeps directory city/state/zip and the street stays
-  // backfillable through the dialog.
+  // Server-side geocoding (FG Slice 4b) — execute mode only (the dialog
+  // geocodes client-side for previews). Two needs, one call:
+  //   - needStreet: no street from any source → resolve by SITE NAME.
+  //   - needCoords: street known but no lat/lng anywhere (the extension
+  //     path supplies the street from the detail page WITHOUT coords —
+  //     first live run left PSH Lancaster's location coordinate-less,
+  //     which silently killed the radius blast) → geocode the ADDRESS.
+  // Fail-open: a null hit keeps whatever we have.
   let serverHit: ServerGeocodeHit | null = null;
   const targetLacksStreet = existingLocation
     ? !String(existingLocation.data.address ?? '').trim()
     : true;
-  if (execute && !newLocationAddress.street && targetLacksStreet) {
+  const needStreet = !newLocationAddress.street && targetLacksStreet;
+  const haveClientCoords = address?.lat != null && address?.lng != null;
+  const targetLacksCoords = existingLocation
+    ? !(existingLocation.data.coordinates as Record<string, unknown> | null | undefined)
+    : true;
+  const needCoords = !haveClientCoords && targetLacksCoords;
+  if (execute && (needStreet || needCoords)) {
+    const knownStreet =
+      newLocationAddress.street || String(existingLocation?.data.address ?? '').trim();
     serverHit = await serverGeocodeSite({
-      siteName: siteName.trim(),
+      // Street-precise when we have one; site-name lookup otherwise.
+      siteName: needStreet ? siteName.trim() : knownStreet || siteName.trim(),
       city: newLocationAddress.city || undefined,
       state: newLocationAddress.state || undefined,
       zip: newLocationAddress.zipCode || undefined,
       expectedState: directoryRow?.state ?? newLocationAddress.state ?? undefined,
     });
-    if (serverHit) {
+    if (serverHit && needStreet) {
       newLocationAddress.street = serverHit.street;
       if (!newLocationAddress.zipCode && serverHit.zipCode) {
         newLocationAddress.zipCode = serverHit.zipCode;
@@ -447,17 +459,20 @@ export async function ensureSiteCore(
       }
       if (canBackfillStreet) {
         patch.address = newLocationAddress.street;
-        const coords =
-          address?.lat != null && address?.lng != null
-            ? { lat: address.lat, lng: address.lng }
-            : serverHit
-              ? { lat: serverHit.lat, lng: serverHit.lng }
-              : null;
-        if (coords && !(existingLocation.data.coordinates as Record<string, unknown> | null)) {
-          patch.coordinates = coords;
-        }
         location.streetBackfilled = true;
         location.missingStreet = false;
+      }
+      // Coordinates backfill is independent of the street: an existing
+      // location with a street but no lat/lng still gets coords (radius
+      // blast depends on them).
+      const coords =
+        address?.lat != null && address?.lng != null
+          ? { lat: address.lat, lng: address.lng }
+          : serverHit
+            ? { lat: serverHit.lat, lng: serverHit.lng }
+            : null;
+      if (coords && !(existingLocation.data.coordinates as Record<string, unknown> | null)) {
+        patch.coordinates = coords;
       }
       if (Object.keys(patch).length > 0) {
         patch.updatedAt = FieldValue.serverTimestamp();

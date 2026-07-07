@@ -34,6 +34,7 @@ import { logger } from 'firebase-functions/v2';
 
 import { getNextJobOrderSeq } from '../../jobOrders/gigJobOrderFromChildAccount';
 import { composeFieldglassOrderNotes, type FieldglassEnrichmentStamp } from './enrichment';
+import { serverGeocodeSite } from './serverGeocode';
 
 const FieldValue = admin.firestore.FieldValue;
 
@@ -182,10 +183,30 @@ export async function ensureJobOrderForFieldglassRequest(
     country: trim(loc.country) || 'US',
   };
   const locCoords = loc.coordinates as { lat?: unknown; lng?: unknown } | null | undefined;
-  const worksiteCoordinates =
+  let worksiteCoordinates =
     locCoords && Number.isFinite(locCoords.lat as number) && Number.isFinite(locCoords.lng as number)
       ? { lat: locCoords.lat as number, lng: locCoords.lng as number }
       : null;
+  // Coordinate fallback: locations created before geocoding existed (or
+  // through paths that only carried a street) have none — and without
+  // coordinates the radius blast silently never fires. Geocode here and
+  // patch the location so every later JO gets them for free.
+  if (!worksiteCoordinates && (worksiteAddress.street || worksiteName)) {
+    const hit = await serverGeocodeSite({
+      siteName: worksiteAddress.street || worksiteName,
+      city: worksiteAddress.city || undefined,
+      state: worksiteAddress.state || undefined,
+      zip: worksiteAddress.zipCode || undefined,
+      expectedState: worksiteAddress.state || undefined,
+    });
+    if (hit) {
+      worksiteCoordinates = { lat: hit.lat, lng: hit.lng };
+      await locSnap.ref.set(
+        { coordinates: worksiteCoordinates, updatedAt: FieldValue.serverTimestamp() },
+        { merge: true },
+      );
+    }
+  }
 
   // ── Field derivation.
   const title = trim(enrichment.title) || trim(event.title) || 'Fieldglass Order';
