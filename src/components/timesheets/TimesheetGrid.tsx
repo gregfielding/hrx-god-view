@@ -467,6 +467,9 @@ interface EntryRowProps extends RowCommonProps {
   onRevertEntry: (entryId: string) => Promise<void>;
   /** True while a revert callable is in flight for THIS entry. */
   revertingThisEntry: boolean;
+  /** Full grid reload — the worker-swap moves the assignment AND entry
+   *  doc ids, so a single-entry refresh can't find the moved rows. */
+  reloadAll: () => void;
 }
 
 /**
@@ -1087,6 +1090,7 @@ const EntryRow: React.FC<EntryRowProps> = ({
   approvingThisEntry,
   onRevertEntry,
   revertingThisEntry,
+  reloadAll,
 }) => {
   const editor = useTimesheetEntryEditor({
     tenantId,
@@ -1095,6 +1099,15 @@ const EntryRow: React.FC<EntryRowProps> = ({
     refreshEntry,
   });
   const { fieldHandlers, readOnly } = editor;
+
+  /* -------------------------------------------------------------------
+   * Worker swap (scheduled rows) — mirror of the Import tab's re-match
+   * pencil. Moves the whole assignment + its draft entries to the picked
+   * worker via swapScheduledAssignmentWorker. Hidden once money moved.
+   * ------------------------------------------------------------------- */
+  const [swapOpen, setSwapOpen] = React.useState(false);
+  const swapBlocked = entry.status === 'sent_to_everee' || entry.status === 'paid';
+  const canSwapWorker = !readOnly && !swapBlocked && Boolean(entry.assignmentId) && Boolean(tenantId);
 
   // Pay rate isn't in the Firestore-rules client allowlist (the editor only
   // writes actuals/breaks/tips/bonus/notes), so an inline edit goes through a
@@ -1151,7 +1164,32 @@ const EntryRow: React.FC<EntryRowProps> = ({
 
   return (
     <TableRow hover>
-      <WorkerSiteCell row={row} />
+      <WorkerSiteCell
+        row={row}
+        action={
+          canSwapWorker ? (
+            <Tooltip title="Change / fix the assigned worker (moves the whole assignment)">
+              <IconButton size="small" onClick={() => setSwapOpen(true)} sx={{ p: 0.25 }}>
+                <EditIcon sx={{ fontSize: 15 }} />
+              </IconButton>
+            </Tooltip>
+          ) : null
+        }
+      />
+      {swapOpen && (
+        <ImportRowWorkerPicker
+          open={swapOpen}
+          onClose={() => setSwapOpen(false)}
+          mode="scheduled"
+          tenantId={tenantId}
+          assignmentId={entry.assignmentId}
+          currentWorkerName={row.assignment.workerDisplayName ?? undefined}
+          onReassigned={() => {
+            // Assignment + entry doc ids all moved — full reload.
+            reloadAll();
+          }}
+        />
+      )}
       <TableCell>{row.workDate}</TableCell>
       <ScheduledCell row={row} />
       <TableCell align="right">{formatHours(scheduledHrs)}</TableCell>
@@ -2015,6 +2053,7 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                         approvingThisEntry={approvingEntryIds.has(row.entry.id)}
                         onRevertEntry={handleRevertEntry}
                         revertingThisEntry={revertingEntryIds.has(row.entry.id)}
+                        reloadAll={refresh}
                       />
                     );
                   })}

@@ -384,6 +384,9 @@ export { saveTimesheetSiteMapping } from './timesheets/timesheetSiteMappings';
 export { saveTimesheetWorkerAlias } from './timesheets/timesheetWorkerAliases';
 export { submitImportTimesheetBatch, voidImportTimesheetPayable } from './timesheets/submitImportTimesheetBatch';
 export { searchTimesheetWorkers } from './timesheets/searchTimesheetWorkers';
+// Scheduled-row worker swap on the Timesheet Grid — assignment + entries
+// move to the correct worker (mirror of the Import tab's re-match pencil).
+export { swapScheduledAssignmentWorker } from './timesheets/swapScheduledAssignmentWorker';
 export { saveImportTimesheetRows, deleteStaleImportEntries } from './timesheets/saveImportTimesheetRows';
 export { reassignImportEntryWorker } from './timesheets/reassignImportEntryWorker';
 export { setImportEntryHours } from './timesheets/setImportEntryHours';

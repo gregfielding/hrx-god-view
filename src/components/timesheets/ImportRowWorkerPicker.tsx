@@ -53,15 +53,30 @@ export interface ReassignResult {
   displayName: string;
 }
 
+export interface ScheduledSwapResult {
+  ok: boolean;
+  newAssignmentId: string;
+  entriesMoved: number;
+}
+
 export interface ImportRowWorkerPickerProps {
   open: boolean;
   onClose: () => void;
   /** Fires after a successful reassign — the parent should reload the grid
-   *  (the entry's doc id changes, so a single-entry refresh won't find it). */
-  onReassigned: (result: ReassignResult) => void;
+   *  (doc ids change on both paths, so a single-entry refresh won't find
+   *  the moved row). */
+  onReassigned: (result: ReassignResult | ScheduledSwapResult) => void;
   tenantId: string;
-  hiringEntityId: string;
-  entryId: string;
+  /**
+   * 'import' (default): re-points a CSV-import entry via
+   * reassignImportEntryWorker (requires hiringEntityId + entryId).
+   * 'scheduled': moves a whole assignment + its draft entries to the new
+   * worker via swapScheduledAssignmentWorker (requires assignmentId).
+   */
+  mode?: 'import' | 'scheduled';
+  hiringEntityId?: string;
+  entryId?: string;
+  assignmentId?: string;
   /** What the CSV called this person + the currently-bound HRX name, for the
    *  dialog header so the recruiter knows which row they're fixing. */
   csvWorkerName?: string | null;
@@ -73,8 +88,10 @@ const ImportRowWorkerPicker: React.FC<ImportRowWorkerPickerProps> = ({
   onClose,
   onReassigned,
   tenantId,
+  mode = 'import',
   hiringEntityId,
   entryId,
+  assignmentId,
   csvWorkerName,
   currentWorkerName,
 }) => {
@@ -120,16 +137,29 @@ const ImportRowWorkerPicker: React.FC<ImportRowWorkerPickerProps> = ({
     setSaving(true);
     setError(null);
     try {
-      const fn = httpsCallable<
-        { tenantId: string; hiringEntityId: string; entryId: string; newUserId: string },
-        ReassignResult
-      >(functions, 'reassignImportEntryWorker', { timeout: 60000 });
-      const res = await fn({ tenantId, hiringEntityId, entryId, newUserId: pick });
-      onReassigned(res.data);
+      if (mode === 'scheduled') {
+        if (!assignmentId) throw new Error('assignmentId is required for scheduled swaps');
+        const fn = httpsCallable<
+          { tenantId: string; assignmentId: string; newUserId: string },
+          ScheduledSwapResult
+        >(functions, 'swapScheduledAssignmentWorker', { timeout: 60000 });
+        const res = await fn({ tenantId, assignmentId, newUserId: pick });
+        onReassigned(res.data);
+      } else {
+        if (!hiringEntityId || !entryId) {
+          throw new Error('hiringEntityId and entryId are required for import reassigns');
+        }
+        const fn = httpsCallable<
+          { tenantId: string; hiringEntityId: string; entryId: string; newUserId: string },
+          ReassignResult
+        >(functions, 'reassignImportEntryWorker', { timeout: 60000 });
+        const res = await fn({ tenantId, hiringEntityId, entryId, newUserId: pick });
+        onReassigned(res.data);
+      }
       reset();
       onClose();
     } catch (err: any) {
-      console.error('reassignImportEntryWorker failed:', err);
+      console.error('worker reassign failed:', err);
       setError(err?.message || 'Failed to reassign the worker.');
     } finally {
       setSaving(false);
@@ -152,13 +182,27 @@ const ImportRowWorkerPicker: React.FC<ImportRowWorkerPickerProps> = ({
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
           <Box>
-            <Typography variant="body2">
-              CSV name: <strong>{csvWorkerName || '(unknown)'}</strong>
-            </Typography>
-            {currentWorkerName && (
-              <Typography variant="caption" color="text.secondary">
-                Currently linked to: {currentWorkerName}
-              </Typography>
+            {mode === 'scheduled' ? (
+              <>
+                <Typography variant="body2">
+                  Currently assigned to: <strong>{currentWorkerName || '(unknown)'}</strong>
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  The whole assignment (every day and its draft hours) moves to the worker you
+                  pick. Rows already sent to Everee must be recalled first.
+                </Typography>
+              </>
+            ) : (
+              <>
+                <Typography variant="body2">
+                  CSV name: <strong>{csvWorkerName || '(unknown)'}</strong>
+                </Typography>
+                {currentWorkerName && (
+                  <Typography variant="caption" color="text.secondary">
+                    Currently linked to: {currentWorkerName}
+                  </Typography>
+                )}
+              </>
             )}
           </Box>
 
