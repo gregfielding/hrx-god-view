@@ -83,6 +83,57 @@ export function jobTypeForSpan(days: number | null): 'gig' | 'career' {
 }
 
 /**
+ * Workers-comp resolution from the central repo (Greg, 2026-07-07:
+ * "will pull from our central repo, if a code exists").
+ * `tenants/{tid}/workers_comp_rates` docs: {state, code, rate,
+ * jobTitles[], modifierAccountId?}. Account-scoped rules (modifier =
+ * the national parent) beat generic ones — mirrors the client's
+ * pickWorkersCompJobTitleLookup. Title match is normalized-exact
+ * against the auto-apply chips; no match → null (JO stays blank, the
+ * existing WC chain resolves it before payroll).
+ */
+async function resolveWorkersCompForOrder(
+  db: admin.firestore.Firestore,
+  params: {
+    tenantId: string;
+    state: string;
+    jobTitle: string;
+    modifierAccountId: string | null;
+  },
+): Promise<{ code: string; rate: number } | null> {
+  const state = params.state.trim().toUpperCase();
+  const title = params.jobTitle.trim().toLowerCase();
+  if (!state || !title) return null;
+  try {
+    const snap = await db
+      .collection(`tenants/${params.tenantId}/workers_comp_rates`)
+      .where('state', '==', state)
+      .get();
+    let generic: { code: string; rate: number } | null = null;
+    for (const d of snap.docs) {
+      const r = d.data() as Record<string, unknown>;
+      const code = trim(r.code);
+      const rate = Number(r.rate);
+      if (!code || !Number.isFinite(rate)) continue;
+      const titles = Array.isArray(r.jobTitles) ? (r.jobTitles as string[]) : [];
+      if (!titles.some((t) => String(t ?? '').trim().toLowerCase() === title)) continue;
+      const modifier = trim(r.modifierAccountId);
+      if (modifier && params.modifierAccountId && modifier === params.modifierAccountId) {
+        return { code, rate }; // scoped match wins immediately
+      }
+      if (!modifier && !generic) generic = { code, rate };
+    }
+    return generic;
+  } catch (err) {
+    logger.warn('[fieldglassJobOrder] WC lookup failed (non-fatal)', {
+      tenantId: params.tenantId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/**
  * Parse the "First Day Schedule Start and End Time" free text into a
  * clock window (Greg, 2026-07-07: when we have real times, make a
  * STANDARD shift; open shift is the fallback for unparseable text).
@@ -303,6 +354,16 @@ export async function ensureJobOrderForFieldglassRequest(
     });
   }
 
+  // Workers comp from the central repo — matched by worksite state +
+  // job title, Sodexo-scoped rules first. Null when no chip matches
+  // (Greg: "if a code exists").
+  const wc = await resolveWorkersCompForOrder(db, {
+    tenantId,
+    state: worksiteAddress.state,
+    jobTitle: title,
+    modifierAccountId: parentId || childAccountId,
+  });
+
   // AI posting copy (Greg, 2026-07-07) — generated once at creation;
   // fail-open to the raw client description.
   const postingCopy = await generateFieldglassPostingCopy({
@@ -360,6 +421,7 @@ export async function ensureJobOrderForFieldglassRequest(
     assignedRecruiters,
     payRate,
     billRate,
+    ...(wc ? { workersCompCode: wc.code, workersCompRate: wc.rate } : {}),
     workersNeeded: positions,
     headcountRequested: positions,
     headcountFilled: 0,
@@ -470,6 +532,7 @@ export async function ensureJobOrderForFieldglassRequest(
     jobOrderId: joRef.id,
     payRate,
     billRate,
+    ...(wc ? { workersCompCode: wc.code, workersCompRate: wc.rate } : {}),
     ...(window
       ? {}
       : { shiftType: 'open', noFixedTimes: true, autoCreatedOpenShift: true }),
@@ -736,6 +799,21 @@ async function backfillJobOrderFromEnrichment(
     patch.headcountRequested = enrichment.positionsRequested;
     patch.workersNeeded = enrichment.positionsRequested;
   }
+  // WC backfill — repo chips can be added after the JO existed; fill the
+  // gap on any later pass, never overwrite a value already set.
+  if (!trim(jo.workersCompCode)) {
+    const wc = await resolveWorkersCompForOrder(admin.firestore(), {
+      tenantId,
+      state: trim((jo.worksiteAddress as Record<string, unknown> | undefined)?.state),
+      jobTitle: trim(jo.jobTitle),
+      modifierAccountId: trim(jo.parentAccountId) || trim(jo.accountId) || null,
+    });
+    if (wc) {
+      patch.workersCompCode = wc.code;
+      patch.workersCompRate = wc.rate;
+    }
+  }
+
   const notes = composeFieldglassOrderNotes(enrichment, postingId);
   if (notes !== String(jo.notes ?? '')) patch.notes = notes;
   if (enrichment.candidateInMind === true) {
