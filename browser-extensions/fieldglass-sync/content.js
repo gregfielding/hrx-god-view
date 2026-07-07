@@ -22,22 +22,29 @@ function isDetailPage() {
   return window.location.pathname.includes(DETAIL_PATH);
 }
 
-/** Unique job_posting_detail.do links on the current page (absolute). */
+/**
+ * Unique job_posting_detail.do links on the current page (absolute).
+ * Deduped by the `id=` query param with fragments stripped — a detail
+ * page carries several self-anchors (#primary-content etc.) that
+ * previously counted as 5 separate "orders" (live run, 2026-07-07).
+ */
 function collectDetailLinks() {
   const seen = new Set();
   const links = [];
   for (const a of document.querySelectorAll('a[href]')) {
     const href = a.getAttribute('href') || '';
     if (!href.includes(DETAIL_PATH)) continue;
-    let abs;
+    let url;
     try {
-      abs = new URL(href, window.location.href).toString();
+      url = new URL(href, window.location.href);
     } catch (e) {
       continue;
     }
-    if (seen.has(abs)) continue;
-    seen.add(abs);
-    links.push(abs);
+    url.hash = '';
+    const key = url.searchParams.get('id') || url.toString();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    links.push(url.toString());
   }
   return links;
 }
