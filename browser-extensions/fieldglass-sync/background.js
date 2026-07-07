@@ -107,18 +107,62 @@ async function fetchQueue(config) {
   return data.pending || [];
 }
 
-async function fetchDetailPageText(url) {
-  const resp = await fetch(url, { credentials: 'include' });
-  const html = await resp.text();
-  const text = htmlToText(html);
-  if (!/SDXOJP\d{6,}/.test(text)) {
-    // Login wall, expired session, or a JS-only render.
-    const looksLikeLogin = /sign\s*in|log\s*in|password/i.test(text.slice(0, 3000));
+/** Tabs opened by the bulk runner — the passive-capture handler ignores
+ *  these so each order isn't ingested twice. */
+const bulkTabs = new Set();
+
+function waitTabComplete(tabId, timeoutMs) {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve();
+    }, timeoutMs);
+    const listener = (id, info) => {
+      if (id === tabId && info.status === 'complete') {
+        clearTimeout(timeout);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
+
+/**
+ * Fieldglass detail pages are JavaScript-rendered — a plain fetch() gets
+ * an empty shell (first live bulk run failed with NO_ORDER_ON_PAGE,
+ * 2026-07-07). So bulk mode opens each order in a real background tab,
+ * lets SAP's JS render it, reads the text via the content script, and
+ * closes the tab. Same proven path as passive capture, just automated.
+ */
+async function captureDetailPageViaTab(url) {
+  const tab = await chrome.tabs.create({ url, active: false });
+  bulkTabs.add(tab.id);
+  try {
+    await waitTabComplete(tab.id, 25000);
+    let lastText = '';
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await sleep(1500);
+      try {
+        const resp = await chrome.tabs.sendMessage(tab.id, { type: 'fg_get_page_text' });
+        lastText = (resp && resp.text) || '';
+        if (/SDXOJP\d{6,}/.test(lastText)) return lastText;
+      } catch (e) {
+        // content script not injected yet — keep polling
+      }
+    }
+    const looksLikeLogin = /sign\s*in|log\s*in|password/i.test(lastText.slice(0, 3000));
     const err = new Error(looksLikeLogin ? 'LOGIN_REQUIRED' : 'NO_ORDER_ON_PAGE');
     err.code = looksLikeLogin ? 'LOGIN_REQUIRED' : 'NO_ORDER_ON_PAGE';
     throw err;
+  } finally {
+    bulkTabs.delete(tab.id);
+    try {
+      await chrome.tabs.remove(tab.id);
+    } catch (e) {
+      // tab already gone
+    }
   }
-  return text;
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -227,7 +271,7 @@ async function runBulk(items) {
       const item = items[i];
       const label = item.label || item.postingId || item.url;
       try {
-        const text = await fetchDetailPageText(item.url);
+        const text = await captureDetailPageViaTab(item.url);
         const result = await ingest(config, {
           text,
           url: item.url,
@@ -264,9 +308,12 @@ async function runBulk(items) {
   }
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Passive capture from the content script — dedupe per posting per hour.
   if (msg && msg.type === 'fg_page_capture') {
+    // Tabs the bulk runner opened ingest through runBulk directly —
+    // ignore their auto-capture so orders aren't ingested twice.
+    if (sender && sender.tab && bulkTabs.has(sender.tab.id)) return false;
     (async () => {
       const idMatch = /SDXOJP\d{6,}/.exec(msg.text || '');
       const postingId = idMatch ? idMatch[0] : null;
