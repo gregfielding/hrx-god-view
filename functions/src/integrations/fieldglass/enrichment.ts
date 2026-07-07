@@ -56,6 +56,9 @@ export interface FieldglassEnrichment {
   description?: string;
   /** "Report To Location" — e.g. "4420 Arrowswest Drive Dock #3". */
   reportToLocation?: string;
+  /** "Add additional Onboarding items…" — often carries site-specific
+   *  EXTRA screenings (FBI fingerprinting, state clearances, drug panels). */
+  additionalOnboarding?: string;
   contractType?: string;
   sourceType?: string;
   segment?: string;
@@ -124,6 +127,7 @@ const EXTRACTION_SCHEMA = `{
   "uniform": "string",
   "description": "string (the full Description block, verbatim)",
   "reportToLocation": "string (Report To Location, verbatim — may include dock/entrance)",
+  "additionalOnboarding": "string (the 'Add additional Onboarding items for your specific client/site' answer, verbatim — often lists extra background checks/clearances)",
   "contractType": "string", "sourceType": "string", "segment": "string",
   "hoursPerDay": number, "hoursPerWeek": number, "totalHours": number,
   "respondByDate": "string (Respond by Date, verbatim incl. timezone)",
@@ -230,6 +234,7 @@ export async function extractEnrichmentFromPageText(
     uniform: str(parsed.uniform),
     description: str(parsed.description),
     reportToLocation: str(parsed.reportToLocation),
+    additionalOnboarding: str(parsed.additionalOnboarding),
     contractType: str(parsed.contractType),
     sourceType: str(parsed.sourceType),
     segment: str(parsed.segment),
@@ -308,10 +313,85 @@ export function composeFieldglassOrderNotes(
         ` · bill ${fmt(enrichment.billRateSt)} / ${fmt(enrichment.billRateOt)} / ${fmt(enrichment.billRateDt)}`,
     );
   }
+  if (enrichment.additionalOnboarding) {
+    lines.push(
+      '',
+      '⚠ ADDITIONAL ONBOARDING (site-specific — beyond the standard package):',
+      enrichment.additionalOnboarding.trim(),
+    );
+  }
   if (enrichment.description) {
     lines.push('', 'Description (from Fieldglass):', enrichment.description.trim());
   }
   return lines.join('\n');
+}
+
+/**
+ * Public jobs-board posting copy (Greg, 2026-07-07: "using AI to
+ * generate a better jobs board posting"). Follows the house rules from
+ * the `generateJobDescription` callable the recruiters' button uses:
+ * NEVER name the client or worksite — "C1" is hiring; city/state/zip
+ * only. Plain text, Indeed-style. Fail-open: null → caller keeps the
+ * raw client description.
+ */
+export async function generateFieldglassPostingCopy(
+  input: {
+    title: string;
+    city?: string;
+    state?: string;
+    zipCode?: string;
+    payRate?: number;
+    scheduleText?: string;
+    uniform?: string;
+    description?: string;
+    jobType: 'gig' | 'career';
+  },
+  client?: OpenAILike,
+  model = 'gpt-5',
+): Promise<string | null> {
+  try {
+    const openai = client ?? defaultOpenAI();
+    const completion = await openai.chat.completions.create({
+      model,
+      messages: [
+        {
+          role: 'system',
+          content: `You write job-board posting descriptions for C1, a staffing agency.
+HARD RULES:
+- NEVER mention the client company or worksite name. Say "C1 is hiring" — the role is with one of C1's clients.
+- City/state/zip are fine to mention. No street addresses.
+- Professional, engaging, clear — Indeed/Craigslist style. 100-170 words.
+- Plain text only: short paragraphs and simple hyphen bullets. No markdown headers, no bold, no emojis.
+- Include the pay rate when provided. Include schedule/uniform details when provided, phrased naturally.
+- End with one short apply call-to-action sentence.`,
+        },
+        {
+          role: 'user',
+          content: [
+            `Job title: ${input.title}`,
+            input.city || input.state
+              ? `Location: ${[input.city, input.state].filter(Boolean).join(', ')} ${input.zipCode ?? ''}`.trim()
+              : '',
+            input.payRate ? `Pay: $${input.payRate.toFixed(2)}/hour (show it)` : '',
+            input.scheduleText ? `Schedule note: ${input.scheduleText}` : '',
+            input.uniform ? `Uniform: ${input.uniform}` : '',
+            `Engagement type: ${input.jobType === 'gig' ? 'short-term' : 'ongoing / contract-to-hire'}`,
+            input.description ? `Client's role description (do not quote client names):\n${input.description}` : '',
+            '',
+            'Write the posting description now.',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        },
+      ],
+      // NO temperature — gpt-5 rejects non-default values.
+      max_completion_tokens: 4000,
+    });
+    const text = (completion.choices?.[0]?.message?.content ?? '').trim();
+    return text.length >= 60 ? text : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Same tolerant parse as indeedFlex/parser/llmFallback.ts. */

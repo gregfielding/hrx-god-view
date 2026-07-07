@@ -34,7 +34,11 @@ import { logger } from 'firebase-functions/v2';
 
 import { getNextJobOrderSeq } from '../../jobOrders/gigJobOrderFromChildAccount';
 import { ensureAutoUserGroup } from '../../userGroups/ensureAutoUserGroup';
-import { composeFieldglassOrderNotes, type FieldglassEnrichmentStamp } from './enrichment';
+import {
+  composeFieldglassOrderNotes,
+  generateFieldglassPostingCopy,
+  type FieldglassEnrichmentStamp,
+} from './enrichment';
 import { serverGeocodeSite } from './serverGeocode';
 
 const FieldValue = admin.firestore.FieldValue;
@@ -76,6 +80,36 @@ export function spanDays(startIso: string | null, endIso: string | null): number
 export function jobTypeForSpan(days: number | null): 'gig' | 'career' {
   if (days === null) return 'career';
   return days < CAREER_SPAN_DAYS ? 'gig' : 'career';
+}
+
+/**
+ * Parse the "First Day Schedule Start and End Time" free text into a
+ * clock window (Greg, 2026-07-07: when we have real times, make a
+ * STANDARD shift; open shift is the fallback for unparseable text).
+ * Handles "08:00am 2:30pm", "8am-4:30pm", "8:00 AM to 2:30 PM". Text
+ * with fewer than two times ("Friday at 8am for Orientation") returns
+ * null — that's a note, not a schedule.
+ */
+export function parseScheduleWindow(
+  raw: string | null | undefined,
+): { start: string; end: string } | null {
+  const text = String(raw ?? '');
+  const times: string[] = [];
+  const re = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    let h = Number(m[1]);
+    const min = Number(m[2] ?? '0');
+    const ampm = m[3].toLowerCase();
+    if (h < 1 || h > 12 || min > 59) continue;
+    if (ampm === 'pm' && h < 12) h += 12;
+    if (ampm === 'am' && h === 12) h = 0;
+    times.push(`${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`);
+  }
+  if (times.length < 2) return null;
+  const [start, end] = [times[0], times[times.length - 1]];
+  if (start === end) return null;
+  return { start, end };
 }
 
 function trim(v: unknown): string {
@@ -269,6 +303,20 @@ export async function ensureJobOrderForFieldglassRequest(
     });
   }
 
+  // AI posting copy (Greg, 2026-07-07) — generated once at creation;
+  // fail-open to the raw client description.
+  const postingCopy = await generateFieldglassPostingCopy({
+    title,
+    city: worksiteAddress.city || undefined,
+    state: worksiteAddress.state || undefined,
+    zipCode: worksiteAddress.zipCode || undefined,
+    payRate: payRate > 0 ? payRate : undefined,
+    scheduleText: trim(enrichment.scheduleText) || undefined,
+    uniform: trim(enrichment.uniform) || undefined,
+    description: description || undefined,
+    jobType,
+  });
+
   const { seq: jobOrderSeq, formatted: jobOrderNumber } = await getNextJobOrderSeq(db, tenantId);
   const now = FieldValue.serverTimestamp();
 
@@ -303,9 +351,11 @@ export async function ensureJobOrderForFieldglassRequest(
     locationName: worksiteName,
     ...(worksiteCoordinates ? { worksiteCoordinates } : {}),
 
-    // Job details
+    // Job details — jobDescription is the AI-written public copy (house
+    // rule: never name the client/worksite; "C1 is hiring");
+    // jobDescriptionFromClient keeps the raw Fieldglass text.
     jobTitle: title,
-    jobDescription: description,
+    jobDescription: postingCopy ?? description,
     jobDescriptionFromClient: description,
     assignedRecruiters,
     payRate,
@@ -386,7 +436,7 @@ export async function ensureJobOrderForFieldglassRequest(
     jobOrderId: joRef.id,
     title,
     jobType,
-    jobDescription: description || notes,
+    jobDescription: postingCopy ?? (description || notes),
     worksiteName,
     worksiteAddress,
     payRate,
@@ -394,12 +444,15 @@ export async function ensureJobOrderForFieldglassRequest(
     autoUserGroupId,
   });
 
-  // ── 3. Open shift — date-range engagement, no fixed times (FG
-  // schedules are free text). Creating this LAST fires the auto-messaging
-  // trigger, which now finds JO(open) + posting(active) + this shift.
+  // ── 3. Shift — STANDARD with real times when the "First Day Schedule"
+  // text parses to a clock window (Greg, 2026-07-07); open shift
+  // (date-range, no fixed times) otherwise. Creating this LAST fires the
+  // auto-messaging trigger, which now finds JO(open) + posting(active) +
+  // this shift.
+  const window = parseScheduleWindow(enrichment.scheduleText);
   const shiftRef = db.collection(`tenants/${tenantId}/job_orders/${joRef.id}/shifts`).doc();
   await shiftRef.set({
-    shiftTitle: `${title} — Open Shift`,
+    shiftTitle: window ? title : `${title} — Open Shift`,
     status: 'open',
     defaultJobTitle: title,
     totalStaffRequested: positions,
@@ -407,8 +460,8 @@ export async function ensureJobOrderForFieldglassRequest(
     showStaffNeeded: false,
     poNumber: postingId,
     shiftDate: startIso ?? new Date().toISOString().slice(0, 10),
-    defaultStartTime: '',
-    defaultEndTime: '',
+    defaultStartTime: window?.start ?? '',
+    defaultEndTime: window?.end ?? '',
     shiftDescription: trim(enrichment.scheduleText),
     emailIntro: '',
     clockInUrl: '',
@@ -417,11 +470,11 @@ export async function ensureJobOrderForFieldglassRequest(
     jobOrderId: joRef.id,
     payRate,
     billRate,
-    shiftType: 'open',
-    noFixedTimes: true,
+    ...(window
+      ? {}
+      : { shiftType: 'open', noFixedTimes: true, autoCreatedOpenShift: true }),
     hideFromJobsBoard: false,
     shiftMode: 'single',
-    autoCreatedOpenShift: true,
     createdAt: now,
     updatedAt: now,
     createdBy: SYSTEM_ACTOR,
