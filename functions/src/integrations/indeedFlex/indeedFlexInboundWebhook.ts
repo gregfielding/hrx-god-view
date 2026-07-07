@@ -40,6 +40,11 @@ import type { Response } from 'express';
 import Busboy from 'busboy';
 
 import {
+  handleFieldglassInboundFields,
+  looksLikeFieldglassEmail,
+} from '../fieldglass/fieldglassInboundWebhook';
+
+import {
   computeEventHash,
   extractDateHeader,
   extractMessageId,
@@ -311,6 +316,26 @@ export const indeedFlexInboundWebhook = onRequest(
     }
 
     const { fields, attachmentCount } = parsed;
+
+    // Shared-hostname dispatch: SendGrid posts ALL mail on
+    // ingest.hrxone.com to this one URL, so Fieldglass notifications
+    // (fieldglass@ingest.hrxone.com / SAP sender domains) land here too.
+    // Hand them to the Fieldglass pipeline instead of DKIM-rejecting
+    // them against indeedflex.com.
+    if (looksLikeFieldglassEmail(fields)) {
+      try {
+        const outcome = await handleFieldglassInboundFields(fields, attachmentCount);
+        logger.info('indeedFlexInboundWebhook: dispatched to fieldglass', { outcome });
+        res.status(200).send(outcome);
+      } catch (err) {
+        logger.error('indeedFlexInboundWebhook: fieldglass dispatch failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        res.status(200).send('Dispatch failed (logged)');
+      }
+      return;
+    }
+
     const senderDomain = extractSenderDomain(fields.from ?? '');
     const dkim = parseDkimField(fields.dkim ?? '');
     const spf = parseSpfField(fields.SPF ?? '');

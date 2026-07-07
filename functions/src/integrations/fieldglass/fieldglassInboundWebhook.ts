@@ -161,31 +161,27 @@ function truncateUtf8(
   return { value: input.slice(0, lo), truncated: true };
 }
 
-export const fieldglassInboundWebhook = onRequest(
-  {
-    region: 'us-central1',
-    memory: '512MiB',
-    maxInstances: 2,
-    timeoutSeconds: 60,
-  },
-  async (req: Request, res: Response): Promise<void> => {
-    if (req.method !== 'POST') {
-      res.status(405).send('Method Not Allowed');
-      return;
-    }
+/** True when a SendGrid inbound payload is a Fieldglass notification —
+ *  used by the shared-hostname dispatcher in indeedFlexInboundWebhook
+ *  (all mail on ingest.hrxone.com POSTs to that one URL; Fieldglass mail
+ *  is recognized by sender domain or a fieldglass@ recipient). */
+export function looksLikeFieldglassEmail(fields: Record<string, string | undefined>): boolean {
+  const from = String(fields.from ?? '').toLowerCase();
+  const to = String(fields.to ?? '').toLowerCase();
+  if (EXPECTED_SENDER_DOMAINS.some((d) => from.includes(d))) return true;
+  return to.includes('fieldglass@');
+}
 
-    let parsed: ParsedMultipart;
-    try {
-      parsed = await parseMultipart(req);
-    } catch (err) {
-      logger.error('fieldglassInboundWebhook: multipart parse failed', {
-        error: (err as Error).message,
-      });
-      res.status(200).send('Bad payload (logged)');
-      return;
-    }
-
-    const { fields, attachmentCount } = parsed;
+/**
+ * Post-parse core — persist one Fieldglass inbound email (DKIM policy,
+ * dedupe hash, `external_ingest_events` write). Shared by this webhook
+ * and the Indeed Flex webhook's dispatcher. Returns a short status
+ * string for the HTTP response/logs.
+ */
+export async function handleFieldglassInboundFields(
+  fields: Record<string, string | undefined>,
+  attachmentCount: number,
+): Promise<string> {
     const senderDomain = extractSenderDomain(fields.from ?? '');
     const dkim = parseDkimField(fields.dkim ?? '');
     const spf = parseSpfField(fields.SPF ?? '');
@@ -254,8 +250,7 @@ export const fieldglassInboundWebhook = onRequest(
         senderDomain,
         dkimDomains: dkim.domains,
       });
-      res.status(200).send('Rejected (logged)');
-      return;
+      return 'Rejected (logged)';
     }
 
     const existing = await docRef.get();
@@ -264,8 +259,7 @@ export const fieldglassInboundWebhook = onRequest(
         eventHash,
         existingStatus: existing.get('status'),
       });
-      res.status(200).send('Already received');
-      return;
+      return 'Already received';
     }
 
     await docRef.set({
@@ -287,6 +281,36 @@ export const fieldglassInboundWebhook = onRequest(
       attachmentCount,
       truncated,
     });
-    res.status(200).send('OK');
+    return 'OK';
+}
+
+export const fieldglassInboundWebhook = onRequest(
+  {
+    region: 'us-central1',
+    memory: '512MiB',
+    maxInstances: 2,
+    timeoutSeconds: 60,
+  },
+  async (req: Request, res: Response): Promise<void> => {
+    if (req.method !== 'POST') {
+      res.status(405).send('Method Not Allowed');
+      return;
+    }
+
+    let parsed: ParsedMultipart;
+    try {
+      parsed = await parseMultipart(req);
+    } catch (err) {
+      logger.error('fieldglassInboundWebhook: multipart parse failed', {
+        error: (err as Error).message,
+      });
+      res.status(200).send('Bad payload (logged)');
+      return;
+    }
+
+    const outcome = await handleFieldglassInboundFields(parsed.fields, parsed.attachmentCount);
+    // Always 200 — SendGrid must never retry; internal failures are ours
+    // to chase in logs, not hers to re-send.
+    res.status(200).send(outcome);
   },
 );
