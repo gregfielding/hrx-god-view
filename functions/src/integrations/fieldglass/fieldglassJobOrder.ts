@@ -313,8 +313,11 @@ export async function ensureJobOrderForFieldglassRequest(
     workersNeeded: positions,
     headcountRequested: positions,
     headcountFilled: 0,
-    ...(startIso ? { startDate: admin.firestore.Timestamp.fromDate(new Date(`${startIso}T12:00:00Z`)) } : {}),
-    ...(endIso ? { endDate: admin.firestore.Timestamp.fromDate(new Date(`${endIso}T12:00:00Z`)) } : {}),
+    // Plain YYYY-MM-DD strings — the JobOrderForm binds these straight to
+    // <input type="date"> (Timestamps render as empty; found in the first
+    // live JO review, 2026-07-07).
+    ...(startIso ? { startDate: startIso } : {}),
+    ...(endIso ? { endDate: endIso } : {}),
     poNumber: postingId,
     poRequired: false,
     timesheetCollectionMethod: 'app_clock_in_out' as const,
