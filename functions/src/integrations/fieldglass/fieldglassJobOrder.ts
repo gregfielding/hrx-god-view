@@ -33,6 +33,7 @@ import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 
 import { getNextJobOrderSeq } from '../../jobOrders/gigJobOrderFromChildAccount';
+import { ensureAutoUserGroup } from '../../userGroups/ensureAutoUserGroup';
 import { composeFieldglassOrderNotes, type FieldglassEnrichmentStamp } from './enrichment';
 import { serverGeocodeSite } from './serverGeocode';
 
@@ -240,6 +241,34 @@ export async function ensureJobOrderForFieldglassRequest(
     : [];
   const assignedRecruiters = childRecruiters.length > 0 ? childRecruiters : parentRecruiters;
 
+  // ── Auto user group (Greg, 2026-07-07: "automatically create user
+  // groups that applicants would be added to — same logic as the
+  // account-level toggle"). AG.0's ensureAutoUserGroup: deterministic
+  // `auto_{childId}_{titleSlug}` group per (child × title) — repeat
+  // orders for the same site+title share one group. The AG.1 attach
+  // trigger sees autoCreatedUserGroupId already set and stands down.
+  let autoUserGroupId: string | null = null;
+  try {
+    const g = await ensureAutoUserGroup({
+      tenantId,
+      childAccountId,
+      childAccountName: trim(child.name) || childAccountId,
+      jobTitleId: title.toLowerCase(),
+      jobTitleName: title,
+      nationalAccountId: parentId || null,
+      recruiterIds: assignedRecruiters,
+      createdBy: SYSTEM_ACTOR,
+      db,
+    });
+    autoUserGroupId = g.groupId;
+  } catch (err) {
+    logger.warn('[fieldglassJobOrder] auto user group failed (non-fatal)', {
+      tenantId,
+      requestId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+
   const { seq: jobOrderSeq, formatted: jobOrderNumber } = await getNextJobOrderSeq(db, tenantId);
   const now = FieldValue.serverTimestamp();
 
@@ -297,6 +326,17 @@ export async function ensureJobOrderForFieldglassRequest(
     showStartDate: true,
     showShiftTimes: false,
 
+    // Auto user group (AG.0) — applicants/hires from this JO feed the
+    // group; group members are also messaged on future shifts. The AG.1
+    // attach trigger sees autoCreatedUserGroupId set and stands down.
+    ...(autoUserGroupId
+      ? {
+          autoCreatedUserGroupId: autoUserGroupId,
+          autoMessagingUserGroupIds: [autoUserGroupId],
+          autoAddToUserGroups: [autoUserGroupId],
+        }
+      : {}),
+
     // Compliance — the AccuSource screening package drives the
     // background-check readiness item (assignmentReadinessItemV1 matches
     // the JO's screeningPackageId against the worker's records).
@@ -348,6 +388,7 @@ export async function ensureJobOrderForFieldglassRequest(
     worksiteAddress,
     payRate,
     startIso,
+    autoUserGroupId,
   });
 
   // ── 3. Open shift — date-range engagement, no fixed times (FG
@@ -575,6 +616,50 @@ async function backfillJobOrderFromEnrichment(
 
   const patch: Record<string, unknown> = {};
 
+  // Auto user group backfill (FG Slice 9) — FG JOs created before the
+  // group feature (or where the ensure hiccupped) get theirs here.
+  if (!trim(jo.autoCreatedUserGroupId)) {
+    try {
+      const title = trim(jo.jobTitle) || 'Fieldglass Order';
+      const g = await ensureAutoUserGroup({
+        tenantId,
+        childAccountId: trim(jo.accountId),
+        childAccountName: trim(jo.accountName) || trim(jo.accountId),
+        jobTitleId: title.toLowerCase(),
+        jobTitleName: title,
+        nationalAccountId: trim(jo.parentAccountId) || null,
+        recruiterIds: Array.isArray(jo.assignedRecruiters)
+          ? (jo.assignedRecruiters as string[])
+          : [],
+        createdBy: SYSTEM_ACTOR,
+        db: admin.firestore(),
+      });
+      patch.autoCreatedUserGroupId = g.groupId;
+      patch.autoMessagingUserGroupIds = admin.firestore.FieldValue.arrayUnion(g.groupId);
+      patch.autoAddToUserGroups = admin.firestore.FieldValue.arrayUnion(g.groupId);
+      // Feed the linked postings too — the applicant-adder reads the posting.
+      const postings = await admin
+        .firestore()
+        .collection(`tenants/${tenantId}/job_postings`)
+        .where('jobOrderId', '==', joRef.id)
+        .get();
+      for (const p of postings.docs) {
+        await p.ref.set(
+          {
+            autoAddToUserGroups: admin.firestore.FieldValue.arrayUnion(g.groupId),
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+    } catch (err) {
+      logger.warn('[fieldglassJobOrder] auto user group backfill failed (non-fatal)', {
+        jobOrderId: joRef.id,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   const currentPay = Number(jo.payRate ?? 0);
   if (currentPay <= 0 && Number.isFinite(enrichment.payRateSt as number)) {
     patch.payRate = enrichment.payRateSt;
@@ -630,6 +715,7 @@ async function createFieldglassJobPosting(
     worksiteAddress: Record<string, string>;
     payRate: number;
     startIso: string | null;
+    autoUserGroupId?: string | null;
   },
 ): Promise<string> {
   const { tenantId, jobOrderId } = params;
@@ -669,6 +755,9 @@ async function createFieldglassJobPosting(
     ...(params.startIso ? { startDate: params.startIso } : {}),
     applicationCount: 0,
     restrictedGroups: [],
+    // Applicant-feeder field — mirrors createPostFromJobOrder's
+    // union-merge of the JO's auto groups onto the posting.
+    ...(params.autoUserGroupId ? { autoAddToUserGroups: [params.autoUserGroupId] } : {}),
     createdBy: SYSTEM_ACTOR,
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
