@@ -355,6 +355,13 @@ export async function ensureJobOrderForFieldglassRequest(
     ? Math.max(1, Math.round(enrichment.positionsRequested as number))
     : 1;
   const candidateInMind = enrichment.candidateInMind === true;
+  // Stale order guard (bulk-sync lesson, 2026-07-07: SDXOJP00183851 ended
+  // June 23 but Sodexo left the posting open — we blasted 198 workers whose
+  // link then died when the gig status cron instantly held the JO). An
+  // order whose END date is already past still gets its JO/posting for the
+  // record, but no radius blast — same silent treatment as candidate-in-mind.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const endedInPast = Boolean(endIso && endIso < todayIso);
   const notes = composeFieldglassOrderNotes(enrichment, postingId);
   const description =
     trim(enrichment.description) || trim(event.commentsToSupplier) || '';
@@ -519,8 +526,9 @@ export async function ensureJobOrderForFieldglassRequest(
     notes,
 
     // Smart-radius blast config — consumed by jobOrderAutoMessagingOnShiftCreated.
-    // Candidate-in-mind orders get NO radius → nothing sends automatically.
-    ...(worksiteCoordinates && !candidateInMind
+    // Candidate-in-mind and already-ended orders get NO radius → nothing
+    // sends automatically.
+    ...(worksiteCoordinates && !candidateInMind && !endedInPast
       ? {
           autoMessagingSmartRadius: {
             miles: SMART_RADIUS_MILES,
@@ -629,7 +637,7 @@ export async function ensureJobOrderForFieldglassRequest(
     jobPostDocId,
     shiftId: shiftRef.id,
     candidateInMind,
-    blastConfigured: Boolean(worksiteCoordinates && !candidateInMind),
+    blastConfigured: Boolean(worksiteCoordinates && !candidateInMind && !endedInPast),
   });
 
   return {
@@ -638,7 +646,7 @@ export async function ensureJobOrderForFieldglassRequest(
     jobPostDocId,
     shiftId: shiftRef.id,
     jobType,
-    blastConfigured: Boolean(worksiteCoordinates && !candidateInMind),
+    blastConfigured: Boolean(worksiteCoordinates && !candidateInMind && !endedInPast),
     candidateInMind,
   };
 }
