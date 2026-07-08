@@ -5133,7 +5133,9 @@ const RecruiterJobOrderDetail: React.FC = () => {
                     (typeof c.workPhone === 'string' && c.workPhone.trim()) ||
                     '';
                   return (
-                    <Box sx={{ width: '100%' }}>
+                    // Negative mb offsets the parent column's `gap` so the
+                    // contact line sits snug against the Order setup row.
+                    <Box sx={{ width: '100%', mb: -0.75 }}>
                       <Stack
                         direction="row"
                         flexWrap="wrap"
@@ -5141,7 +5143,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
                         alignItems="center"
                         sx={{ gap: 0.5, rowGap: 0.65 }}
                       >
-                        <Box sx={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.5, minHeight: 26 }}>
+                        <Box sx={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.5, minHeight: 20 }}>
                           <PersonIcon sx={{ fontSize: 15, color: 'rgb(74, 144, 226)', flexShrink: 0 }} />
                           <Typography component="span" sx={{ ...recordHeaderBodyTextSx, fontWeight: 700 }}>
                             {name}
