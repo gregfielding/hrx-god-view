@@ -44,6 +44,7 @@ import {
 } from '@mui/material';
 import {
   MoreVert as MoreVertIcon,
+  Edit as EditIcon,
   Business as BusinessIcon,
   LocationOn as LocationIcon,
   Person as PersonIcon,
@@ -5113,6 +5114,81 @@ const RecruiterJobOrderDetail: React.FC = () => {
                   </Stack>
                   )}
                 </Box>
+
+                {/* Deal contact line — primary contact with email/phone and
+                    an edit pencil that opens the same manage-contacts dialog
+                    as the Deal Contacts card (Greg, 2026-07-08: contact
+                    surfaced in the header, above Order setup). */}
+                {associatedContacts.length > 0 && (() => {
+                  const c = associatedContacts[0] as any;
+                  const name =
+                    c.fullName ||
+                    `${c.firstName || ''} ${c.lastName || ''}`.trim() ||
+                    c.name ||
+                    'Contact';
+                  const email = typeof c.email === 'string' ? c.email.trim() : '';
+                  const phone =
+                    (typeof c.phone === 'string' && c.phone.trim()) ||
+                    (typeof c.phoneNumber === 'string' && c.phoneNumber.trim()) ||
+                    (typeof c.workPhone === 'string' && c.workPhone.trim()) ||
+                    '';
+                  return (
+                    <Box sx={{ width: '100%' }}>
+                      <Stack
+                        direction="row"
+                        flexWrap="wrap"
+                        useFlexGap
+                        alignItems="center"
+                        sx={{ gap: 0.5, rowGap: 0.65 }}
+                      >
+                        <Box sx={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.5, minHeight: 26 }}>
+                          <PersonIcon sx={{ fontSize: 15, color: 'rgb(74, 144, 226)', flexShrink: 0 }} />
+                          <Typography component="span" sx={{ ...recordHeaderBodyTextSx, fontWeight: 700 }}>
+                            {name}
+                          </Typography>
+                          {email && (
+                            <>
+                              <Typography component="span" sx={{ color: 'text.disabled', lineHeight: 1, userSelect: 'none' }}>
+                                ·
+                              </Typography>
+                              <Typography
+                                component="a"
+                                href={`mailto:${email}`}
+                                sx={{ ...jobOrderLinkSx, wordBreak: 'break-all' }}
+                              >
+                                {email}
+                              </Typography>
+                            </>
+                          )}
+                          {phone && (
+                            <>
+                              <Typography component="span" sx={{ color: 'text.disabled', lineHeight: 1, userSelect: 'none' }}>
+                                ·
+                              </Typography>
+                              <Typography component="a" href={`tel:${phone}`} sx={{ ...jobOrderLinkSx }}>
+                                {phone}
+                              </Typography>
+                            </>
+                          )}
+                          {associatedContacts.length > 1 && (
+                            <Typography component="span" sx={{ ...recordHeaderBodyTextSx, color: 'text.secondary' }}>
+                              +{associatedContacts.length - 1} more
+                            </Typography>
+                          )}
+                          <Tooltip title="Edit deal contacts" arrow componentsProps={recordHeaderTooltipComponentsProps}>
+                            <IconButton
+                              size="small"
+                              onClick={() => setManageContactsOpen(true)}
+                              sx={{ p: 0.25, ml: 0.25 }}
+                            >
+                              <EditIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
+                      </Stack>
+                    </Box>
+                  );
+                })()}
 
                 <Box sx={{ width: '100%' }}>
                   <Stack
