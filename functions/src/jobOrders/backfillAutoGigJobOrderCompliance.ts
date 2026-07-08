@@ -267,7 +267,11 @@ export async function computeBackfillPatchForJo(args: {
     jobOrderSeq:
       typeof jobOrderData.jobOrderSeq === 'number' ? jobOrderData.jobOrderSeq : 0,
     jobOrderNumber:
-      typeof jobOrderData.jobOrderNumber === 'string' ? jobOrderData.jobOrderNumber : '',
+      typeof jobOrderData.jobOrderNumber === 'string'
+        ? jobOrderData.jobOrderNumber
+        : typeof jobOrderData.jobOrderNumber === 'number'
+          ? String(jobOrderData.jobOrderNumber).padStart(4, '0')
+          : '',
     source: 'backfill',
   });
 

@@ -438,14 +438,16 @@ export async function ensureJobOrderForFieldglassRequest(
     jobType,
   });
 
-  const { seq: jobOrderSeq, formatted: jobOrderNumber } = await getNextJobOrderSeq(db, tenantId);
+  const { seq: jobOrderSeq, formatted: jobOrderNumberFormatted } = await getNextJobOrderSeq(db, tenantId);
   const now = FieldValue.serverTimestamp();
 
   // ── 1. Job order (status 'open' from birth — the posting's liveness
   // rule requires it, and full-auto means no human flips it later).
   const jobOrderData: Record<string, unknown> = {
     jobOrderSeq,
-    jobOrderNumber,
+    // NUMBER on the doc (2026-07-08 normalization; mixed types broke
+    // Firestore orderBy) — the padded string stays in logs/alerts only.
+    jobOrderNumber: jobOrderSeq,
     jobOrderName: `${title} - ${worksiteName}`.replace(/\s+/g, ' ').trim(),
     status: 'open',
     jobType,
@@ -630,7 +632,7 @@ export async function ensureJobOrderForFieldglassRequest(
     requestId,
     postingId,
     jobOrderId: joRef.id,
-    jobOrderNumber,
+    jobOrderNumber: jobOrderNumberFormatted,
     jobType,
     positions,
     payRate,

@@ -2146,7 +2146,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
 
         setFormData({
           // Basic Information
-          jobOrderNumber: data.jobOrderNumber || '',
+          jobOrderNumber: data.jobOrderNumber != null ? String(data.jobOrderNumber) : '',
           jobOrderName: data.jobOrderName || '',
           jobTitle: (data as any).jobTitle || (stageData.discovery?.jobTitles?.[0] || ''),
           description: data.jobOrderDescription || '',

@@ -68,13 +68,16 @@ export class JobOrderService {
   // Create new job order
   async createJobOrder(tenantId: string, formData: JobOrderFormData, createdBy: string, dealId?: string): Promise<string> {
     try {
-      const { jobOrderSeq, jobOrderNumber } = await this.getNextJobOrderNumber(tenantId);
-      
+      const { jobOrderSeq } = await this.getNextJobOrderNumber(tenantId);
+
       // Create job order with unified structure
       const jobOrderData = {
         // Job Order specific fields
         jobOrderSeq,
-        jobOrderNumber,
+        // Stored as a NUMBER (2026-07-08 normalization) — Firestore orders
+        // by type before value, so mixed string/number values broke table
+        // sorting. Display code pads for the "#0123" look.
+        jobOrderNumber: jobOrderSeq,
         jobOrderName: formData.jobOrderName || 'New Job Order',
         jobTitle: formData.jobTitle || '',
         status: formData.status || 'open',

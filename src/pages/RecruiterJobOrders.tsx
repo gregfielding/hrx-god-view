@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { safeToDate } from '../utils/dateUtils';
 import {
+  Avatar,
   Box,
   Typography,
   Button,
@@ -393,6 +394,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
       }
 
       const companyNameById = new Map<string, string>();
+      const companyLogoById = new Map<string, string>();
       const recruiterNameById = new Map<string, string>();
       const locationByKey = new Map<string, any>();
       await Promise.all([
@@ -402,6 +404,9 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
             if (s.exists()) {
               const cd = s.data() as any;
               companyNameById.set(cId, cd.companyName || cd.name || 'Unknown Company');
+              if (typeof cd.logo === 'string' && cd.logo.trim()) {
+                companyLogoById.set(cId, cd.logo.trim());
+              }
             }
           } catch {
             /* ignore — falls back to 'Unknown Company' */
@@ -444,6 +449,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
         const companyName = flatCompanyId
           ? companyNameById.get(flatCompanyId) || 'Unknown Company'
           : 'Unknown Company';
+        const companyLogo = flatCompanyId ? companyLogoById.get(flatCompanyId) || null : null;
 
         // Location display line + city/state line.
         const flatWorksiteId = (data as any).worksiteId || (data as any).deal?.locationId;
@@ -503,6 +509,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
           ...data,
           id,
           companyName,
+          companyLogo,
           locationName,
           worksiteAddress,
           worksiteCity,
@@ -1373,15 +1380,27 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                       <Typography variant="body2">{jobOrder.jobTitle || 'No Job Title'}</Typography>
                     </TableCell>
                     <TableCell>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        <BusinessIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
-                        <Typography variant="body2">
-                          {(jobOrder as any).companyName || 
-                           jobOrder.deal?.companyName || 
-                           jobOrder.deal?.associations?.companies?.[0]?.snapshot?.companyName || 
-                           'Unknown Company'}
-                        </Typography>
-                      </Box>
+                      {/* Company avatar (logo) instead of icon+name — the
+                          name lives in the tooltip (Greg, 2026-07-08). */}
+                      {(() => {
+                        const name =
+                          (jobOrder as any).companyName ||
+                          jobOrder.deal?.companyName ||
+                          jobOrder.deal?.associations?.companies?.[0]?.snapshot?.companyName ||
+                          'Unknown Company';
+                        const logo = (jobOrder as any).companyLogo as string | null;
+                        return (
+                          <Tooltip title={name}>
+                            <Avatar
+                              src={logo || undefined}
+                              alt={name}
+                              sx={{ width: 30, height: 30, fontSize: '0.8rem', bgcolor: logo ? 'transparent' : 'primary.main' }}
+                            >
+                              {name.charAt(0).toUpperCase()}
+                            </Avatar>
+                          </Tooltip>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell>
                       {/* Worksite name on top, then street + city/state/zip

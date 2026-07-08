@@ -588,7 +588,9 @@ export function buildGigJobOrderFromChildAccount(
   const jobOrderData: Record<string, unknown> = {
     // Core
     jobOrderSeq,
-    jobOrderNumber,
+    // NUMBER on the doc (2026-07-08 normalization; mixed types broke
+    // Firestore orderBy) — the formatted string stays in notification copy.
+    jobOrderNumber: jobOrderSeq,
     jobOrderName,
     // Status `'on_hold'` is the auto-managed default. The
     // `gigJobOrderStatusCron` flips it to `'open'` once an active

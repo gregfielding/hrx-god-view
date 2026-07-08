@@ -5,7 +5,11 @@ import type { ApplicationHiringLifecycle } from '../applicationHiringLifecycle';
 export interface JobOrder {
   id: string;
   jobOrderSeq: number; // Raw auto-increment per tenant
-  jobOrderNumber: string; // Formatted number (e.g., "0001")
+  // Stored as a NUMBER since the 2026-07-08 normalization (Firestore
+  // orders by type, so mixed values broke sorting); `string` remains in
+  // the union for any un-migrated cache/snapshot. Display code pads it
+  // ("#0001") via formatJobOrderNumber-style helpers.
+  jobOrderNumber: number | string;
   jobOrderName: string;
   jobOrderDescription?: string;
   status: JobOrderStatus;
