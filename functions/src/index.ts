@@ -398,6 +398,10 @@ export { setTimesheetEntryPayRate } from './timesheets/setTimesheetEntryPayRate'
 // Applicants column) + job_postings.applicationCount, recomputed on every
 // application write.
 export { onApplicationWriteUpdateCounters } from './applications/applicationCountersTrigger';
+
+// 🔥 Hot flag — shared across job order ↔ child account ↔ deal contacts;
+// flipping it anywhere flips the whole trio.
+export { setHotStatus } from './crm/setHotStatus';
 export { setImportEntryWorksite } from './timesheets/setImportEntryWorksite';
 export { deleteImportEntry } from './timesheets/deleteImportEntry';
 export { recheckImportTimesheetBlocks } from './timesheets/recheckImportTimesheetBlocks';

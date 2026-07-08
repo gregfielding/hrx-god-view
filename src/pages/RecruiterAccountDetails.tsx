@@ -126,6 +126,7 @@ import type { AccountPositionPricing } from '../types/recruiter/account';
 import PageHeader from '../components/PageHeader';
 import UniversalBackButton from '../components/common/UniversalBackButton';
 import FavoriteButton from '../components/FavoriteButton';
+import HotToggle from '../components/HotToggle';
 import UniversalSearchBar from '../components/UniversalSearchBar';
 import StandardTablePagination from '../components/StandardTablePagination';
 import { useFavorites } from '../hooks/useFavorites';
@@ -6194,6 +6195,15 @@ const RecruiterAccountDetails: React.FC = () => {
                         p: 0.25,
                         '& .MuiSvgIcon-root': { fontSize: 20 },
                       }}
+                    />
+                  )}
+                  {account?.id && tenantId && (
+                    <HotToggle
+                      tenantId={tenantId}
+                      originType="account"
+                      originId={account.id}
+                      hot={(account as any)?.hot === true}
+                      size={19}
                     />
                   )}
                 </Box>

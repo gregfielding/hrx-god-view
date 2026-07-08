@@ -489,11 +489,16 @@ export async function ensureJobOrderForFieldglassRequest(
 
   // ── 1. Job order (status 'open' from birth — the posting's liveness
   // rule requires it, and full-auto means no human flips it later).
+  // 🔥 Hot inheritance: one returned phone call marks the child account
+  // hot; every future order at that site is born hot and triaged first.
+  const accountIsHot = (child as Record<string, unknown>).hot === true;
+
   const jobOrderData: Record<string, unknown> = {
     jobOrderSeq,
     // NUMBER on the doc (2026-07-08 normalization; mixed types broke
     // Firestore orderBy) — the padded string stays in logs/alerts only.
     jobOrderNumber: jobOrderSeq,
+    ...(accountIsHot ? { hot: true, hotUpdatedBy: SYSTEM_ACTOR } : {}),
     jobOrderName: `${title} - ${worksiteName}`.replace(/\s+/g, ' ').trim(),
     status: 'open',
     jobType,

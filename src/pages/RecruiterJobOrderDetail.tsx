@@ -140,6 +140,7 @@ import LaborPoolSelector from '../components/recruiter/LaborPoolSelector';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useFavorites } from '../hooks/useFavorites';
 import FavoriteButton from '../components/FavoriteButton';
+import HotToggle from '../components/HotToggle';
 import { useCategoryScoresCurrentMap } from '../hooks/useCategoryScoresCurrentMap';
 import { useRecruiterUsersEntityEmploymentChips } from '../hooks/useRecruiterUsersEntityEmploymentChips';
 import { useRecruiterUsersRowExtras } from '../hooks/useRecruiterUsersRowExtras';
@@ -4839,6 +4840,15 @@ const RecruiterJobOrderDetail: React.FC = () => {
                       flexShrink: 0,
                       '& .MuiSvgIcon-root': { fontSize: 20 },
                     }}
+                  />
+                )}
+                {jobOrderId && tenantId && (
+                  <HotToggle
+                    tenantId={tenantId}
+                    originType="job_order"
+                    originId={jobOrderId}
+                    hot={(jobOrder as any)?.hot === true}
+                    size={19}
                   />
                 )}
               </Box>

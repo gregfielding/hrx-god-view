@@ -63,6 +63,7 @@ import { p } from '../data/firestorePaths';
 import { JobOrder } from '../types/Phase1Types';
 import type { JobOrderStatus } from '../types/recruiter/jobOrder';
 import FavoriteButton from '../components/FavoriteButton';
+import HotToggle from '../components/HotToggle';
 import { useFavorites } from '../hooks/useFavorites';
 import type { RecruiterOutletContext } from './RecruiterDashboard';
 import { hasJobBoardSyndicationUrl } from '../utils/jobBoardSyndicationUrls';
@@ -114,6 +115,7 @@ const CACHE_DEFAULTS = {
   sortDirection: 'desc' as const,
   companyFilter: 'all',
   typeFilter: 'all',
+  hotOnly: false,
   page: 0,
   rowsPerPage: 20,
 };
@@ -251,6 +253,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
   const sortDirection = (cacheState.sortDirection ?? CACHE_DEFAULTS.sortDirection) as 'asc' | 'desc';
   const companyFilter = cacheState.companyFilter ?? CACHE_DEFAULTS.companyFilter;
   const typeFilter = cacheState.typeFilter ?? CACHE_DEFAULTS.typeFilter;
+  const hotOnly = (cacheState as any).hotOnly ?? CACHE_DEFAULTS.hotOnly;
   const page = typeof cacheState.page === 'number' ? cacheState.page : CACHE_DEFAULTS.page;
   const rowsPerPage = typeof cacheState.rowsPerPage === 'number' ? cacheState.rowsPerPage : CACHE_DEFAULTS.rowsPerPage;
   
@@ -660,6 +663,10 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
       if (typeFilter === 'gig' && !isGigJob) return false;
       if (typeFilter === 'career' && isGigJob) return false;
     }
+
+    // 🔥 Hot only — engaged client relationships (shared flag across the
+    // order/account/contact trio).
+    if (hotOnly && (jo as any).hot !== true) return false;
 
     return true;
   });
@@ -1141,6 +1148,25 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
             <MenuItem value="worksiteState">State</MenuItem>
           </Select>
         </FormControl>
+
+        <Button
+          variant={hotOnly ? 'contained' : 'outlined'}
+          size="small"
+          onClick={() => updateCache({ hotOnly: !hotOnly } as any)}
+          sx={{
+            height: 36,
+            borderRadius: '6px',
+            textTransform: 'none',
+            fontSize: '0.875rem',
+            minWidth: 'auto',
+            px: 1.5,
+            ...(hotOnly
+              ? { bgcolor: '#ff5722', '&:hover': { bgcolor: '#e64a19' } }
+              : { borderColor: '#E5E7EB', color: 'text.secondary' }),
+          }}
+        >
+          🔥 Hot
+        </Button>
         </Box>
       </Collapse>
 
@@ -1258,6 +1284,13 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                         nowhere near the star). Same reasoning applies to the
                         Status and Recruiter(s) cells below. */}
                     <TableCell>
+                      <HotToggle
+                        tenantId={tenantId!}
+                        originType="job_order"
+                        originId={jobOrder.id}
+                        hot={(jobOrder as any).hot === true}
+                        size={16}
+                      />
                       <FavoriteButton
                         itemId={jobOrder.id}
                         favoriteType="jobOrders"

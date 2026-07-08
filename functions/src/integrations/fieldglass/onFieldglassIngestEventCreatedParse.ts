@@ -106,8 +106,28 @@ async function sendNewOrderAlert(
   request: FieldglassJobPostingRequest,
 ): Promise<boolean> {
   const e = request.event;
+  // 🔥 Hot-account triage (Greg, 2026-07-08): if the child account for
+  // this site is marked hot, the alert leads with it. FG emails carry the
+  // EXACT account name, so a name-equality lookup covers the common case;
+  // a miss only costs the prefix (the JO still inherits hot downstream).
+  let hotPrefix = '';
+  if (e.siteName) {
+    try {
+      const acct = await admin
+        .firestore()
+        .collection(`tenants/${tenantId}/accounts`)
+        .where('name', '==', e.siteName)
+        .limit(1)
+        .get();
+      if (!acct.empty && acct.docs[0].get('hot') === true) {
+        hotPrefix = '🔥 HOT ACCOUNT — ';
+      }
+    } catch {
+      // never block the alert on the lookup
+    }
+  }
   const parts = [
-    `New Sodexo order: ${e.title ?? request.event.jobPostingId}`,
+    `${hotPrefix}New Sodexo order: ${e.title ?? request.event.jobPostingId}`,
     e.siteName ? `@ ${e.siteName}` : null,
     e.payRate !== undefined ? `$${e.payRate.toFixed(2)}/hr` : null,
     e.startDate ? `starts ${e.startDate}` : null,

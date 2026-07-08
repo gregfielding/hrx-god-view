@@ -104,6 +104,7 @@ import { BreadcrumbNav } from '../../components/BreadcrumbNav';
 import MessageDrawer, { MessageRecipient } from '../../components/MessageDrawer';
 import PageHeader from '../../components/PageHeader';
 import FavoriteButton from '../../components/FavoriteButton';
+import HotToggle from '../../components/HotToggle';
 import { Stack } from '@mui/material';
 import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
 import UniversalBackButton from '../../components/common/UniversalBackButton';
@@ -2050,8 +2051,17 @@ const ContactDetails: React.FC = () => {
                     toggleFavorite={toggleFavorite}
                     size="medium"
                   />
+                  {tenantId && (
+                    <HotToggle
+                      tenantId={tenantId}
+                      originType="contact"
+                      originId={contact.id}
+                      hot={(contact as any)?.hot === true}
+                      size={20}
+                    />
+                  )}
                 </Box>
-                
+
                 {/* Line 2: Contact Action Icons */}
                 <Stack 
                   direction="row" 
