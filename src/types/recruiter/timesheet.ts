@@ -121,6 +121,10 @@ export interface TimesheetEntryImportState {
   evereeLinked?: boolean;
   matchedByName?: boolean;
   matchedManual?: boolean;
+  /** HRX display name of the linked worker (stamped on manual reassign) —
+   *  the grid shows this over `csvWorkerName` so a re-pick to a
+   *  differently-named person is visible immediately. */
+  matchedWorkerName?: string | null;
   /** Recruiter's manual worker pick (survives re-match). */
   forcedUserId?: string | null;
   worksiteId?: string | null;

@@ -182,6 +182,10 @@ export const reassignImportEntryWorker = onCall(
       forcedUserId: newUserId,
       matchedManual: true,
       matchedByName: false,
+      // The grid shows this over csvWorkerName — without it a reassign is
+      // invisible (the row keeps rendering the CSV's name for the OLD
+      // person and the swap "doesn't seem to work").
+      matchedWorkerName: displayName,
       ambiguous: false,
       evereeWorkerId: linkage.evereeWorkerId,
       evereeLinked: linkage.evereeLinked,

@@ -346,6 +346,7 @@ function buildAssignmentSnapshot(
 function buildImportSnapshot(entry: TimesheetEntryV2): AssignmentSnapshot {
   const imp = entry.import;
   const displayName =
+    (imp?.matchedWorkerName && imp.matchedWorkerName.trim()) ||
     (imp?.csvWorkerName && imp.csvWorkerName.trim()) ||
     (entry.workerId ? entry.workerId : null);
   return {
