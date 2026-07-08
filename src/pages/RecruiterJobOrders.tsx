@@ -108,7 +108,8 @@ interface RecruiterJobOrdersProps {
 
 const CACHE_DEFAULTS = {
   statusFilter: '',
-  sortField: 'jobOrderNumber',
+  // Fresh page load = Newest First (today → backwards), per Greg 2026-07-08.
+  sortField: 'createdAt',
   sortDirection: 'desc' as const,
   companyFilter: 'all',
   typeFilter: 'all',
@@ -1094,8 +1095,24 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
         <FormControl size="small" sx={{ minWidth: 150, height: 36 }}>
           <InputLabel sx={{ fontSize: '0.875rem' }}>Sort By</InputLabel>
           <Select
-            value={sortField}
-            onChange={(e) => updateCache({ sortField: e.target.value })}
+            value={
+              sortField === 'createdAt'
+                ? sortDirection === 'asc'
+                  ? 'oldestFirst'
+                  : 'newestFirst'
+                : sortField
+            }
+            onChange={(e) => {
+              // Each option pins BOTH field and direction — direction is a
+              // separately persisted setting that header-arrow clicks flip,
+              // and without pinning it "Newest First" could silently render
+              // oldest-first (bug report 2026-07-08).
+              const v = e.target.value;
+              if (v === 'newestFirst') updateCache({ sortField: 'createdAt', sortDirection: 'desc' });
+              else if (v === 'oldestFirst') updateCache({ sortField: 'createdAt', sortDirection: 'asc' });
+              else if (v === 'jobOrderNumber') updateCache({ sortField: v, sortDirection: 'desc' });
+              else updateCache({ sortField: v, sortDirection: 'asc' });
+            }}
             label="Sort By"
             sx={{
               height: 36,
@@ -1111,7 +1128,8 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
             }}
           >
             <MenuItem value="jobOrderNumber">Job Order #</MenuItem>
-            <MenuItem value="createdAt">Newest First</MenuItem>
+            <MenuItem value="newestFirst">Newest First</MenuItem>
+            <MenuItem value="oldestFirst">Oldest First</MenuItem>
             <MenuItem value="status">Status</MenuItem>
             <MenuItem value="worksiteState">State</MenuItem>
           </Select>
