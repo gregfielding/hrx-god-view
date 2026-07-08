@@ -226,9 +226,18 @@ interface RunAutoMessagingOptions {
   /** Bypass the 15-min per-user cooldown. Used by recruiter-triggered manual resends. */
   bypassCooldown?: boolean;
   /** Tagged onto the autoMessagingSendLog row for filtering (e.g. 'manual_resend'). */
-  source?: 'shift_created' | 'manual_resend';
+  source?: 'shift_created' | 'manual_resend' | 'manual_blast';
   /** Recruiter UID for audit on manual resends. */
   triggeredByUid?: string | null;
+  /** Worker Reach card (Greg, 2026-07-08): recruiter-chosen radius for a
+   *  manual blast — overrides the JO's stored radius config, and activates
+   *  radius mode even when the JO never had one (coordinates required). */
+  radiusMilesOverride?: number;
+  /** Worker Reach card: recruiter-written message. `{link}` interpolates
+   *  the jobs-board URL; the URL is appended when the placeholder is
+   *  missing so the link can never be dropped. Used for SMS and push,
+   *  both languages. */
+  customMessage?: string;
 }
 
 /**
@@ -283,14 +292,17 @@ export async function runJobOrderAutoMessagingForShift(
   const radiusCenter = jobOrder.worksiteCoordinates as
     | { lat?: unknown; lng?: unknown }
     | undefined;
-  const radiusMiles = Number(radiusCfg?.miles);
+  const radiusMiles = Number(options.radiusMilesOverride ?? radiusCfg?.miles);
   const radiusActive =
     Number.isFinite(radiusMiles) &&
     radiusMiles > 0 &&
     Number.isFinite(radiusCenter?.lat as number) &&
     Number.isFinite(radiusCenter?.lng as number);
 
-  if (groupIds.length === 0 && !radiusActive) {
+  // Worker Reach blasts are radius-ONLY: the preview the recruiter confirmed
+  // counted radius workers, so group members must not silently join the send.
+  const includeGroups = source !== 'manual_blast';
+  if ((!includeGroups || groupIds.length === 0) && !radiusActive) {
     return { ...empty, status: 'no_groups' };
   }
 
@@ -299,7 +311,7 @@ export async function runJobOrderAutoMessagingForShift(
   const boardUrl = buildWorkerJobPostUrl(jobPostId || undefined);
 
   const uidSet = new Set<string>();
-  for (const gid of groupIds) {
+  for (const gid of includeGroups ? groupIds : []) {
     const gSnap = await db.doc(`tenants/${tenantId}/userGroups/${gid}`).get();
     if (!gSnap.exists) continue;
     for (const uid of collectMembersFromGroupData(gSnap.data())) {
@@ -362,6 +374,14 @@ export async function runJobOrderAutoMessagingForShift(
     };
   }
 
+  // Worker Reach manual blast: one recruiter-written body for everyone
+  // (both languages) — the jobs-board link is guaranteed present.
+  const customBody = options.customMessage?.trim()
+    ? options.customMessage.includes('{link}')
+      ? options.customMessage.trim().split('{link}').join(boardUrl)
+      : `${options.customMessage.trim()} ${boardUrl}`
+    : null;
+
   let smsDelivered = 0;
   let pushDelivered = 0;
   let skippedDueToCooldown = 0;
@@ -414,7 +434,9 @@ export async function runJobOrderAutoMessagingForShift(
       }
 
       const es = preferredLangEs(userData);
-      const { sms, pushTitle, pushBody } = buildMessages(city, boardUrl, es);
+      const { sms, pushTitle, pushBody } = customBody
+        ? { sms: customBody, pushTitle: es ? 'Nuevo turno publicado' : 'New shift posted', pushBody: customBody }
+        : buildMessages(city, boardUrl, es);
 
       try {
         await sendNotificationAndPush({
@@ -449,7 +471,12 @@ export async function runJobOrderAutoMessagingForShift(
               userId: uid,
               phoneE164: phoneE164!,
               message: sms,
-              source: source === 'manual_resend' ? 'auto_messaging_shift_resend' : 'auto_messaging_shift',
+              source:
+              source === 'manual_blast'
+                ? 'auto_messaging_manual_blast'
+                : source === 'manual_resend'
+                  ? 'auto_messaging_shift_resend'
+                  : 'auto_messaging_shift',
               sourceId: `${jobOrderId}_${shiftId}`,
               messageTypeId: 'shift_invite',
             });
@@ -479,8 +506,10 @@ export async function runJobOrderAutoMessagingForShift(
       skippedNoReachableChannel,
       skippedSmsDailyCap,
       recipientPoolSize: recipientIds.length,
-      messageEnSample: buildMessages(city, boardUrl, false).sms,
-      messageEsSample: buildMessages(city, boardUrl, true).sms,
+      messageEnSample: customBody ?? buildMessages(city, boardUrl, false).sms,
+      messageEsSample: customBody ?? buildMessages(city, boardUrl, true).sms,
+      ...(radiusActive ? { radiusMilesUsed: radiusMiles } : {}),
+      ...(customBody ? { customMessage: true } : {}),
       source,
       ...(triggeredByUid ? { triggeredByUid } : {}),
     });
@@ -636,5 +665,182 @@ export const sendJobOrderShiftPostedResendCallable = onCall(
       });
       throw new HttpsError('internal', 'Resend failed.');
     }
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────
+// Worker Reach (Greg, 2026-07-08) — manual radius blast from the JO's
+// Auto Messaging tab: preview who's in range, then send with a chosen
+// radius and an optional custom message. All safety rails stay on
+// (nearest-first 200 cap, STOP/opt-out, global 1-invite-SMS-per-worker
+// -per-24h); only the 15-min per-order cooldown is bypassed, same as
+// the resend button.
+// ─────────────────────────────────────────────────────────────────────
+
+const WORKER_REACH_ALLOWED_MILES = new Set([15, 30, 60]);
+
+async function assertWorkerReachStaff(
+  uid: string,
+  token: Record<string, unknown> | undefined,
+  tenantId: string,
+): Promise<void> {
+  if (token?.hrx === true) return;
+  const snap = await db.collection('users').doc(uid).get();
+  const data = (snap.data() || {}) as Record<string, any>;
+  const nested = data.tenantIds?.[tenantId]?.securityLevel;
+  const level = Number.parseInt(String(nested ?? data.securityLevel ?? '0'), 10) || 0;
+  if (level >= 5 && level <= 7) return;
+  throw new HttpsError('permission-denied', 'Sending blasts requires tenant security level 5–7.');
+}
+
+/** Count how many of `uids` were shift-invite-texted in the last 24h
+ *  (the global cap will skip them). */
+async function countTexted24h(tenantId: string, uids: string[]): Promise<number> {
+  if (uids.length === 0) return 0;
+  const refs = uids.map((uid) => db.doc(`tenants/${tenantId}/shiftInviteSmsCooldown/${uid}`));
+  const snaps = await db.getAll(...refs);
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  let n = 0;
+  for (const s of snaps) {
+    const ts = s.exists ? (s.data()?.lastSentAt as admin.firestore.Timestamp | undefined) : undefined;
+    if (ts && ts.toMillis() > cutoff) n++;
+  }
+  return n;
+}
+
+export const previewJobOrderWorkerReach = onCall(
+  { cors: true, memory: '512MiB', timeoutSeconds: 60 },
+  async (
+    request: CallableRequest<{ tenantId?: string; jobOrderId?: string; radiusMiles?: number }>,
+  ) => {
+    if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
+    const tenantId = String(request.data?.tenantId ?? '').trim();
+    const jobOrderId = String(request.data?.jobOrderId ?? '').trim();
+    const radiusMiles = Number(request.data?.radiusMiles ?? 30);
+    if (!tenantId || !jobOrderId) {
+      throw new HttpsError('invalid-argument', 'tenantId and jobOrderId are required.');
+    }
+    if (!WORKER_REACH_ALLOWED_MILES.has(radiusMiles)) {
+      throw new HttpsError('invalid-argument', 'radiusMiles must be 15, 30, or 60.');
+    }
+    await assertWorkerReachStaff(request.auth.uid, request.auth.token as Record<string, unknown>, tenantId);
+
+    const joSnap = await db.doc(`tenants/${tenantId}/job_orders/${jobOrderId}`).get();
+    if (!joSnap.exists) throw new HttpsError('not-found', 'Job order not found.');
+    const jobOrder = joSnap.data()!;
+    const center = jobOrder.worksiteCoordinates as { lat?: unknown; lng?: unknown } | undefined;
+    if (!Number.isFinite(center?.lat as number) || !Number.isFinite(center?.lng as number)) {
+      return { ok: false, reason: 'no_coordinates' };
+    }
+
+    const resolved = await resolveRadiusRecipientUids(db, {
+      tenantId,
+      center: { lat: center!.lat as number, lng: center!.lng as number },
+      miles: radiusMiles,
+      maxRecipients: 200,
+    });
+
+    // SMS reachability for the capped candidate list (≤200 doc reads).
+    let smsReachable = 0;
+    if (resolved.uids.length > 0) {
+      const snaps = await db.getAll(...resolved.uids.map((uid) => db.doc(`users/${uid}`)));
+      for (const s of snaps) {
+        const u = (s.data() ?? {}) as Record<string, unknown>;
+        const phone = normalizeUserPhoneToE164(u as { phoneE164?: unknown; phone?: unknown });
+        if (phone && u.smsOptIn !== false && u.smsBlockedSystem !== true) smsReachable++;
+      }
+    }
+    const texted24h = await countTexted24h(tenantId, resolved.uids);
+
+    const city = resolveCityName(jobOrder);
+    const jobPostId = await resolveJobPostingIdForCopyLink(tenantId, jobOrderId, jobOrder);
+    const boardUrl = buildWorkerJobPostUrl(jobPostId || undefined);
+
+    return {
+      ok: true,
+      radiusMiles,
+      withinRadius: resolved.inRadius,
+      candidates: resolved.uids.length,
+      smsReachable,
+      texted24h,
+      city,
+      boardUrl,
+      defaultMessage: buildMessages(city, boardUrl, false).sms,
+    };
+  },
+);
+
+export const sendJobOrderWorkerReachBlast = onCall(
+  {
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
+    timeoutSeconds: 540,
+    memory: '512MiB',
+  },
+  async (
+    request: CallableRequest<{
+      tenantId?: string;
+      jobOrderId?: string;
+      radiusMiles?: number;
+      message?: string;
+    }>,
+  ) => {
+    if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
+    const tenantId = String(request.data?.tenantId ?? '').trim();
+    const jobOrderId = String(request.data?.jobOrderId ?? '').trim();
+    const radiusMiles = Number(request.data?.radiusMiles ?? 30);
+    const message = String(request.data?.message ?? '').trim();
+    if (!tenantId || !jobOrderId) {
+      throw new HttpsError('invalid-argument', 'tenantId and jobOrderId are required.');
+    }
+    if (!WORKER_REACH_ALLOWED_MILES.has(radiusMiles)) {
+      throw new HttpsError('invalid-argument', 'radiusMiles must be 15, 30, or 60.');
+    }
+    if (message.length > 480) {
+      throw new HttpsError('invalid-argument', 'Message is too long (480 characters max).');
+    }
+    await assertWorkerReachStaff(request.auth.uid, request.auth.token as Record<string, unknown>, tenantId);
+
+    // Anchor the send-log row to the newest shift (same convention as the
+    // resend callable).
+    const shiftsRef = db.collection(`tenants/${tenantId}/job_orders/${jobOrderId}/shifts`);
+    let shiftSnap;
+    try {
+      shiftSnap = await shiftsRef.orderBy('createdAt', 'desc').limit(1).get();
+    } catch {
+      shiftSnap = await shiftsRef.limit(1).get();
+    }
+    const shiftId = shiftSnap?.docs?.[0]?.id;
+    if (!shiftId) {
+      throw new HttpsError('failed-precondition', 'No shifts on this job order to blast for.');
+    }
+
+    const result = await runJobOrderAutoMessagingForShift(tenantId, jobOrderId, shiftId, {
+      bypassCooldown: true,
+      source: 'manual_blast',
+      triggeredByUid: request.auth.uid,
+      radiusMilesOverride: radiusMiles,
+      ...(message ? { customMessage: message } : {}),
+    });
+
+    if (result.status === 'job_order_missing') throw new HttpsError('not-found', 'Job order not found.');
+    if (result.status === 'unsupported_job_type') {
+      throw new HttpsError('failed-precondition', 'Blasts are only available for gig and career job orders.');
+    }
+    if (result.status === 'no_groups') {
+      throw new HttpsError(
+        'failed-precondition',
+        'This job order has no worksite coordinates — the radius cannot be resolved.',
+      );
+    }
+
+    return {
+      success: true,
+      radiusMiles,
+      smsDelivered: result.smsDelivered,
+      pushDelivered: result.pushDelivered,
+      skippedSmsDailyCap: result.skippedSmsDailyCap ?? 0,
+      recipientPoolSize: result.recipientPoolSize,
+      logId: result.logId,
+    };
   },
 );

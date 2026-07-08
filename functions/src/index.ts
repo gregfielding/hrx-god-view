@@ -61,6 +61,8 @@ export {
 export {
   jobOrderAutoMessagingOnShiftCreated,
   sendJobOrderShiftPostedResendCallable,
+  previewJobOrderWorkerReach,
+  sendJobOrderWorkerReachBlast,
 } from './jobOrderAutoMessaging';
 
 // Dashboard internal notifications (recruiter signals)

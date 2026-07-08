@@ -8,6 +8,10 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Stack,
   Table,
   TableBody,
@@ -15,6 +19,8 @@ import {
   TableHead,
   TableRow,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -62,6 +68,22 @@ export type AutoMessagingSendLogRow = {
   messageEnSample?: string;
   messageEsSample?: string;
   note?: string;
+  source?: string;
+  radiusMilesUsed?: number;
+};
+
+/** previewJobOrderWorkerReach response (ok:true shape). */
+type WorkerReachPreview = {
+  ok: boolean;
+  reason?: string;
+  radiusMiles?: number;
+  withinRadius?: number;
+  candidates?: number;
+  smsReachable?: number;
+  texted24h?: number;
+  city?: string;
+  boardUrl?: string;
+  defaultMessage?: string;
 };
 
 interface JobOrderAutoMessagingTabProps {
@@ -88,6 +110,18 @@ const JobOrderAutoMessagingTab: React.FC<JobOrderAutoMessagingTabProps> = ({
   const [resendLoading, setResendLoading] = useState(false);
   const [resendLastSentAt, setResendLastSentAt] = useState<Date | null>(null);
   const [resendError, setResendError] = useState<string | null>(null);
+
+  // Worker Reach — manual radius blast
+  const [reachRadius, setReachRadius] = useState<number>(30);
+  const [reachPreview, setReachPreview] = useState<WorkerReachPreview | null>(null);
+  const [reachLoading, setReachLoading] = useState(false);
+  const [reachError, setReachError] = useState<string | null>(null);
+  const [reachMessage, setReachMessage] = useState('');
+  const [reachMessageTouched, setReachMessageTouched] = useState(false);
+  const [blastConfirmOpen, setBlastConfirmOpen] = useState(false);
+  const [blastSending, setBlastSending] = useState(false);
+  const [blastResult, setBlastResult] = useState<string | null>(null);
+  const [blastError, setBlastError] = useState<string | null>(null);
 
   const serverGroupIdsKey = useMemo(() => {
     const raw = (jobOrder as any).autoMessagingUserGroupIds as unknown;
@@ -178,6 +212,8 @@ const JobOrderAutoMessagingTab: React.FC<JobOrderAutoMessagingTabProps> = ({
             messageEnSample: typeof data.messageEnSample === 'string' ? data.messageEnSample : undefined,
             messageEsSample: typeof data.messageEsSample === 'string' ? data.messageEsSample : undefined,
             note: typeof data.note === 'string' ? data.note : undefined,
+            source: typeof data.source === 'string' ? data.source : undefined,
+            radiusMilesUsed: typeof data.radiusMilesUsed === 'number' ? data.radiusMilesUsed : undefined,
           };
         });
         setLogRows(rows);
@@ -214,6 +250,73 @@ const JobOrderAutoMessagingTab: React.FC<JobOrderAutoMessagingTabProps> = ({
       setResendLoading(false);
     }
   }, [tenantId, jobOrderId]);
+
+  // Live Worker Reach preview — refetch on radius change. The default message
+  // only seeds the field while the recruiter hasn't edited it.
+  useEffect(() => {
+    if (!tenantId || !jobOrderId) return;
+    let cancelled = false;
+    setReachLoading(true);
+    setReachError(null);
+    const fn = httpsCallable(functions, 'previewJobOrderWorkerReach');
+    fn({ tenantId, jobOrderId, radiusMiles: reachRadius })
+      .then((result) => {
+        if (cancelled) return;
+        const data = (result?.data ?? {}) as WorkerReachPreview;
+        setReachPreview(data);
+        if (data.ok && data.defaultMessage) {
+          setReachMessage((prev) => (reachMessageTouched && prev.trim() ? prev : data.defaultMessage!));
+        }
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setReachError(e instanceof Error ? e.message.replace(/^Firebase:\s*/i, '') : 'Could not load worker reach');
+      })
+      .finally(() => {
+        if (!cancelled) setReachLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // reachMessageTouched intentionally omitted: touching the field must not refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, jobOrderId, reachRadius]);
+
+  const reachMessageIsDefault =
+    !reachMessageTouched ||
+    reachMessage.trim() === (reachPreview?.defaultMessage ?? '').trim();
+
+  const handleSendBlast = useCallback(async () => {
+    if (!tenantId || !jobOrderId) return;
+    setBlastSending(true);
+    setBlastError(null);
+    setBlastResult(null);
+    try {
+      const fn = httpsCallable(functions, 'sendJobOrderWorkerReachBlast');
+      const payload: Record<string, unknown> = { tenantId, jobOrderId, radiusMiles: reachRadius };
+      // Leaving the default untouched lets the server send the Spanish version
+      // to Spanish-preference workers; a custom message goes to everyone as-is.
+      if (!reachMessageIsDefault && reachMessage.trim()) payload.message = reachMessage.trim();
+      const result = await fn(payload);
+      const data = (result?.data ?? {}) as {
+        smsDelivered?: number;
+        pushDelivered?: number;
+        skippedSmsDailyCap?: number;
+      };
+      const parts = [
+        `${data.smsDelivered ?? 0} SMS`,
+        `${data.pushDelivered ?? 0} push`,
+      ];
+      if ((data.skippedSmsDailyCap ?? 0) > 0) parts.push(`${data.skippedSmsDailyCap} skipped by the 24h limit`);
+      setBlastResult(`Blast sent — ${parts.join(' · ')}.`);
+      setBlastConfirmOpen(false);
+    } catch (e: unknown) {
+      const raw = (e as { message?: string })?.message || 'Blast failed';
+      setBlastError(String(raw).replace(/^Firebase:\s*/i, '').replace(/\s*\(functions\/[^)]+\)\s*$/i, '').trim());
+    } finally {
+      setBlastSending(false);
+    }
+  }, [tenantId, jobOrderId, reachRadius, reachMessage, reachMessageIsDefault]);
 
   const handleSave = useCallback(async () => {
     if (!tenantId || !jobOrderId) return;
@@ -313,6 +416,159 @@ const JobOrderAutoMessagingTab: React.FC<JobOrderAutoMessagingTabProps> = ({
 
       <Card variant="outlined">
         <CardContent sx={{ p: 2 }}>
+          <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 0.5 }}>
+            Worker Reach
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Text every eligible worker near this worksite about the posting — nearest first, up to 200 people.
+            Workers who opted out of texts are never included, and anyone already texted a shift invite in the
+            last 24 hours is skipped automatically.
+          </Typography>
+
+          <Stack direction="row" alignItems="center" spacing={2} flexWrap="wrap" useFlexGap sx={{ mb: 1.5 }}>
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              value={reachRadius}
+              onChange={(_e, v) => {
+                if (v != null) setReachRadius(v);
+              }}
+            >
+              <ToggleButton value={15}>15 mi</ToggleButton>
+              <ToggleButton value={30}>30 mi</ToggleButton>
+              <ToggleButton value={60}>60 mi</ToggleButton>
+            </ToggleButtonGroup>
+            {reachLoading ? (
+              <Stack direction="row" alignItems="center" spacing={1}>
+                <CircularProgress size={14} />
+                <Typography variant="body2" color="text.secondary">
+                  Counting workers…
+                </Typography>
+              </Stack>
+            ) : reachPreview?.ok ? (
+              <Typography variant="body2">
+                <strong>{reachPreview.withinRadius ?? 0}</strong> workers within {reachRadius} miles
+                {' · '}
+                <strong>{reachPreview.smsReachable ?? 0}</strong> reachable by SMS
+                {(reachPreview.texted24h ?? 0) > 0 && (
+                  <>
+                    {' · '}
+                    <strong>{reachPreview.texted24h}</strong> texted in the last 24h (will be skipped)
+                  </>
+                )}
+                {(reachPreview.withinRadius ?? 0) > 200 && (
+                  <Typography component="span" variant="body2" color="text.secondary">
+                    {' '}
+                    — nearest 200 receive the blast
+                  </Typography>
+                )}
+              </Typography>
+            ) : reachPreview && !reachPreview.ok ? (
+              <Typography variant="body2" color="text.secondary">
+                This job order has no worksite coordinates, so a radius blast isn&apos;t available.
+              </Typography>
+            ) : reachError ? (
+              <Typography variant="body2" color="error">
+                {reachError}
+              </Typography>
+            ) : null}
+          </Stack>
+
+          <TextField
+            fullWidth
+            multiline
+            minRows={2}
+            label="Message"
+            value={reachMessage}
+            onChange={(e) => {
+              setReachMessage(e.target.value);
+              setReachMessageTouched(true);
+            }}
+            disabled={!reachPreview?.ok}
+            helperText={
+              reachMessageIsDefault
+                ? 'Default message — Spanish-speaking workers automatically get the Spanish version. Edit to customize.'
+                : 'Custom message — sent to everyone as written. The jobs board link is added automatically if you remove it (use {link} to place it).'
+            }
+            inputProps={{ maxLength: 480 }}
+            sx={{ mb: 1.5 }}
+          />
+
+          <Stack direction="row" alignItems="center" spacing={2} flexWrap="wrap" useFlexGap>
+            <Button
+              variant="contained"
+              onClick={() => {
+                setBlastError(null);
+                setBlastConfirmOpen(true);
+              }}
+              disabled={
+                reachLoading || blastSending || !reachPreview?.ok || (reachPreview?.candidates ?? 0) === 0
+              }
+            >
+              Send Blast
+            </Button>
+            {blastResult && (
+              <Typography variant="body2" color="success.main">
+                {blastResult}
+              </Typography>
+            )}
+            {blastError && !blastConfirmOpen && (
+              <Typography variant="body2" color="error">
+                {blastError}
+              </Typography>
+            )}
+          </Stack>
+        </CardContent>
+      </Card>
+
+      <Dialog open={blastConfirmOpen} onClose={() => !blastSending && setBlastConfirmOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Send blast to nearby workers?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ mb: 1.5 }}>
+            This will text up to <strong>{Math.min(reachPreview?.candidates ?? 0, 200)}</strong> workers within{' '}
+            <strong>{reachRadius} miles</strong> of the worksite
+            {reachPreview?.city ? ` (${reachPreview.city})` : ''}. Workers texted a shift invite in the last 24
+            hours are skipped.
+          </Typography>
+          <Box
+            sx={{
+              p: 1.25,
+              bgcolor: 'action.hover',
+              borderRadius: 1,
+              fontSize: '0.85rem',
+              wordBreak: 'break-word',
+            }}
+          >
+            {reachMessage || reachPreview?.defaultMessage || ''}
+          </Box>
+          {reachMessageIsDefault && (
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: 'block' }}>
+              Spanish-speaking workers receive the Spanish version of this message.
+            </Typography>
+          )}
+          {blastError && (
+            <Alert severity="error" sx={{ mt: 1.5 }}>
+              {blastError}
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setBlastConfirmOpen(false)} disabled={blastSending}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => void handleSendBlast()}
+            disabled={blastSending}
+            startIcon={blastSending ? <CircularProgress color="inherit" size={14} /> : undefined}
+          >
+            {blastSending ? 'Sending…' : 'Confirm & Send'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Card variant="outlined">
+        <CardContent sx={{ p: 2 }}>
           <Stack
             direction="row"
             justifyContent="space-between"
@@ -400,6 +656,23 @@ const JobOrderAutoMessagingTab: React.FC<JobOrderAutoMessagingTabProps> = ({
                   <TableRow key={row.id}>
                     <TableCell sx={{ whiteSpace: 'nowrap' }}>
                       {row.sentAt ? format(row.sentAt, 'MMM d, yyyy h:mm a') : '—'}
+                      {row.source === 'manual_blast' && (
+                        <Chip
+                          label={row.radiusMilesUsed ? `Blast · ${row.radiusMilesUsed} mi` : 'Blast'}
+                          size="small"
+                          color="warning"
+                          variant="outlined"
+                          sx={{ ml: 0.75, height: 18, fontSize: '0.62rem' }}
+                        />
+                      )}
+                      {row.source === 'manual_resend' && (
+                        <Chip
+                          label="Resend"
+                          size="small"
+                          variant="outlined"
+                          sx={{ ml: 0.75, height: 18, fontSize: '0.62rem' }}
+                        />
+                      )}
                     </TableCell>
                     <TableCell>{row.city ?? '—'}</TableCell>
                     <TableCell align="right">{row.smsDelivered ?? '—'}</TableCell>
