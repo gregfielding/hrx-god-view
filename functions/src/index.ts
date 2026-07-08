@@ -393,6 +393,11 @@ export { setImportEntryHours } from './timesheets/setImportEntryHours';
 export { setImportEntryPayRate } from './timesheets/setImportEntryPayRate';
 export { setImportEntryExtras } from './timesheets/setImportEntryExtras';
 export { setTimesheetEntryPayRate } from './timesheets/setTimesheetEntryPayRate';
+
+// Denormalized applicant counts — JO.applicantStats (Job Orders table
+// Applicants column) + job_postings.applicationCount, recomputed on every
+// application write.
+export { onApplicationWriteUpdateCounters } from './applications/applicationCountersTrigger';
 export { setImportEntryWorksite } from './timesheets/setImportEntryWorksite';
 export { deleteImportEntry } from './timesheets/deleteImportEntry';
 export { recheckImportTimesheetBlocks } from './timesheets/recheckImportTimesheetBlocks';

@@ -42,11 +42,34 @@ function getJobOrderTitle(jobOrder: any): string {
 }
 
 function buildCandidateName(app: any): string {
-  const c = app?.candidate || {};
-  const first = typeof c.firstName === 'string' ? c.firstName.trim() : '';
-  const last = typeof c.lastName === 'string' ? c.lastName.trim() : '';
-  const full = `${first} ${last}`.trim();
-  return full || (typeof c.email === 'string' ? c.email : 'New applicant');
+  // Jobs-board wizard applications carry the identity under `applicant`;
+  // older/legacy docs used `candidate`. Check both so the feed shows the
+  // person's real name instead of the generic "New applicant".
+  for (const c of [app?.applicant, app?.candidate]) {
+    if (!c || typeof c !== 'object') continue;
+    const first = typeof c.firstName === 'string' ? c.firstName.trim() : '';
+    const last = typeof c.lastName === 'string' ? c.lastName.trim() : '';
+    const full = `${first} ${last}`.trim();
+    if (full) return full;
+    if (typeof c.email === 'string' && c.email.trim()) return c.email.trim();
+  }
+  return 'New applicant';
+}
+
+/** Tenant admins (security level 7) — included in application-event
+ *  audiences per Greg (2026-07-08): "assigned recruiters + admins".
+ *  Level is stored as string or number depending on write path; query
+ *  both. Fail-open to none. */
+async function getTenantAdminIds(tenantId: string): Promise<string[]> {
+  try {
+    const [asString, asNumber] = await Promise.all([
+      db.collection('users').where(`tenantIds.${tenantId}.securityLevel`, '==', '7').get(),
+      db.collection('users').where(`tenantIds.${tenantId}.securityLevel`, '==', 7).get(),
+    ]);
+    return Array.from(new Set([...asString.docs, ...asNumber.docs].map((d) => d.id)));
+  } catch {
+    return [];
+  }
 }
 
 async function writeDashboardNotification(args: {
@@ -322,7 +345,12 @@ export const recruiterNotificationOnTenantApplicationCreated = createSafeFiresto
   const jobOrderSnap = await db.collection('tenants').doc(tenantId).collection('job_orders').doc(jobOrderId).get();
   const jobOrder = jobOrderSnap.exists ? jobOrderSnap.data() : null;
   const assignees = getJobOrderAssignees(jobOrder || {});
-  if (!assignees.length) return;
+  // Feed audience = assigned recruiters + tenant admins (Greg, 2026-07-08).
+  // Interview tasks below stay recruiter-only — admins get visibility, not
+  // a to-do.
+  const admins = await getTenantAdminIds(tenantId);
+  const audience = Array.from(new Set([...assignees, ...admins]));
+  if (!audience.length) return;
 
   const jobTitle = getJobOrderTitle(jobOrder || {});
   const candidateName = buildCandidateName(app);
@@ -332,7 +360,7 @@ export const recruiterNotificationOnTenantApplicationCreated = createSafeFiresto
 
   const batch = db.batch();
   const now = admin.firestore.Timestamp.now();
-  assignees.forEach((uid) => {
+  audience.forEach((uid) => {
     const id = `notif:application:${tenantId}:${jobOrderId}:${applicationId}:${uid}:${eventKey}`;
     const ref = db.collection('dashboardFeed').doc(id);
     batch.set(

@@ -1197,6 +1197,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                     </TableSortLabel>
                   </TableCell>
                   <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Status</TableCell>
+                  <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Applicants</TableCell>
                   <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
                     <TableSortLabel
                       active={sortField === 'recruiterName'}
@@ -1438,6 +1439,46 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                           </MenuItem>
                         ))}
                       </Menu>
+                    </TableCell>
+                    <TableCell>
+                      {/* Denormalized on the JO doc by onApplicationWriteUpdateCounters —
+                          total real applications + how many await review. Click jumps
+                          straight to the Applications tab. */}
+                      {(() => {
+                        const stats = (jobOrder as any).applicantStats as
+                          | { total?: number; new?: number }
+                          | undefined;
+                        const total = Number(stats?.total ?? 0);
+                        const fresh = Number(stats?.new ?? 0);
+                        if (total <= 0) {
+                          return (
+                            <Typography variant="body2" color="text.disabled">
+                              —
+                            </Typography>
+                          );
+                        }
+                        return (
+                          <Box
+                            sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(`/jobs/job-orders/${jobOrder.id}?tab=applications`);
+                            }}
+                          >
+                            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                              {total}
+                            </Typography>
+                            {fresh > 0 && (
+                              <Chip
+                                label={`${fresh} new`}
+                                size="small"
+                                color="primary"
+                                sx={{ height: 20, fontSize: '0.7rem', cursor: 'pointer' }}
+                              />
+                            )}
+                          </Box>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell sx={{ verticalAlign: 'middle' }}>
                       <RecruiterAssignmentCell
