@@ -38,6 +38,8 @@ import type { Response } from 'express';
 import { ensureSiteCore } from './ensureSiteCore';
 import {
   closeFieldglassOrder,
+  haltFieldglassOrder,
+  resumeFieldglassOrderIfHalted,
   ensureJobOrderForFieldglassRequest,
 } from './fieldglassJobOrder';
 import {
@@ -325,9 +327,13 @@ export const fieldglassEnrichmentIngest = onRequest(
     // fails the enrichment itself.
     let jobOrder: Record<string, unknown> | null = null;
     try {
-      const isClosed = String(enrichment.postingStatus ?? '')
-        .toLowerCase()
-        .includes('closed');
+      const postingStatus = String(enrichment.postingStatus ?? '').toLowerCase();
+      const isClosed = postingStatus.includes('closed');
+      // FG "Halted" = temporarily suspended, not terminal — JO goes
+      // on_hold and postings pause (reversible), instead of the close
+      // cascade. A halted order with no JO yet gets NOTHING built (no
+      // posting, no blast) until FG resumes it.
+      const isHalted = postingStatus.includes('halt');
       if (isClosed) {
         const closed = await closeFieldglassOrder(db, {
           tenantId,
@@ -335,9 +341,19 @@ export const fieldglassEnrichmentIngest = onRequest(
           reason: 'detail_page_status_closed',
         });
         jobOrder = { action: 'closed', ...closed };
+      } else if (isHalted) {
+        const halted = await haltFieldglassOrder(db, {
+          tenantId,
+          requestId,
+          reason: 'detail_page_status_halted',
+        });
+        jobOrder = { action: 'halted', ...halted };
       } else {
+        // Un-halt first (no-op unless WE halted it), then the normal
+        // ensure/backfill pass.
+        const resumed = await resumeFieldglassOrderIfHalted(db, { tenantId, requestId });
         const ensured = await ensureJobOrderForFieldglassRequest(db, { tenantId, requestId });
-        jobOrder = { action: 'ensured', ...ensured };
+        jobOrder = { action: 'ensured', resumed, ...ensured };
       }
     } catch (err) {
       logger.warn('[fieldglassEnrichmentIngest] job-order step failed (non-fatal)', {

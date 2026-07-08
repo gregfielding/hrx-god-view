@@ -977,6 +977,131 @@ async function createFieldglassJobPosting(
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Halt / resume (FG "Halted" = temporarily suspended, NOT closed)
+// ─────────────────────────────────────────────────────────────────────
+
+export interface HaltFieldglassOrderResult {
+  status: 'halted' | 'no_job_order' | 'already_terminal';
+  jobOrderId?: string;
+  postingsPaused: number;
+}
+
+/** FG Halted → JO 'on_hold' + postings 'paused'. Reversible — see
+ *  resumeFieldglassOrderIfHalted. `fieldglassHalted` marks the JO so the
+ *  gig status cron won't flip it back open and resume knows the hold was
+ *  ours. Found via the 2026-07-08 audit: SDXOJP00179396 sat Halted in FG
+ *  while its HRX posting stayed live. */
+export async function haltFieldglassOrder(
+  db: admin.firestore.Firestore,
+  params: { tenantId: string; requestId: string; reason: string },
+): Promise<HaltFieldglassOrderResult> {
+  const { tenantId, requestId, reason } = params;
+  const joRef = await locateJobOrderForRequest(db, tenantId, requestId);
+  if (!joRef) return { status: 'no_job_order', postingsPaused: 0 };
+  const joSnap = await joRef.get();
+  const joStatus = trim((joSnap.data() as Record<string, unknown>)?.status).toLowerCase();
+  if (['cancelled', 'canceled', 'completed', 'filled'].includes(joStatus)) {
+    return { status: 'already_terminal', jobOrderId: joRef.id, postingsPaused: 0 };
+  }
+  await joRef.set(
+    {
+      status: 'on_hold',
+      fieldglassHalted: true,
+      fieldglassHaltedReason: reason,
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: SYSTEM_ACTOR,
+    },
+    { merge: true },
+  );
+  const postings = await db
+    .collection(`tenants/${tenantId}/job_postings`)
+    .where('jobOrderId', '==', joRef.id)
+    .get();
+  let postingsPaused = 0;
+  for (const p of postings.docs) {
+    if (trim((p.data() as Record<string, unknown>).status).toLowerCase() !== 'active') continue;
+    await p.ref.set(
+      {
+        status: 'paused',
+        fieldglassPausedByHalt: true,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    postingsPaused++;
+  }
+  logger.info('[fieldglassJobOrder] halted', { tenantId, requestId, jobOrderId: joRef.id, postingsPaused });
+  return { status: 'halted', jobOrderId: joRef.id, postingsPaused };
+}
+
+/** Undo haltFieldglassOrder once FG shows the posting live again. Only
+ *  touches state the halt created (fieldglassHalted / fieldglassPausedByHalt),
+ *  so a recruiter's own hold or pause is never overridden. */
+export async function resumeFieldglassOrderIfHalted(
+  db: admin.firestore.Firestore,
+  params: { tenantId: string; requestId: string },
+): Promise<boolean> {
+  const { tenantId, requestId } = params;
+  const joRef = await locateJobOrderForRequest(db, tenantId, requestId);
+  if (!joRef) return false;
+  const joSnap = await joRef.get();
+  const jo = (joSnap.data() ?? {}) as Record<string, unknown>;
+  if (jo.fieldglassHalted !== true) return false;
+  await joRef.set(
+    {
+      ...(trim(jo.status).toLowerCase() === 'on_hold' ? { status: 'open' } : {}),
+      fieldglassHalted: FieldValue.delete(),
+      fieldglassHaltedReason: FieldValue.delete(),
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: SYSTEM_ACTOR,
+    },
+    { merge: true },
+  );
+  const postings = await db
+    .collection(`tenants/${tenantId}/job_postings`)
+    .where('jobOrderId', '==', joRef.id)
+    .get();
+  for (const p of postings.docs) {
+    const d = p.data() as Record<string, unknown>;
+    if (d.fieldglassPausedByHalt !== true) continue;
+    await p.ref.set(
+      {
+        ...(trim(d.status).toLowerCase() === 'paused' ? { status: 'active' } : {}),
+        fieldglassPausedByHalt: FieldValue.delete(),
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+  }
+  logger.info('[fieldglassJobOrder] resumed from halt', { tenantId, requestId, jobOrderId: joRef.id });
+  return true;
+}
+
+/** Shared JO locator: stamped request.jobOrderId first, poNumber fallback. */
+async function locateJobOrderForRequest(
+  db: admin.firestore.Firestore,
+  tenantId: string,
+  requestId: string,
+): Promise<FirebaseFirestore.DocumentReference | null> {
+  const requestSnap = await db.doc(`tenants/${tenantId}/external_shift_requests/${requestId}`).get();
+  const request = (requestSnap.data() ?? {}) as Record<string, unknown>;
+  const stampedId = trim(request.jobOrderId);
+  if (stampedId) {
+    const snap = await db.doc(`tenants/${tenantId}/job_orders/${stampedId}`).get();
+    if (snap.exists) return snap.ref;
+  }
+  const postingId =
+    trim((request.event as Record<string, unknown> | undefined)?.jobPostingId) ||
+    requestId.replace(/^fieldglass__/, '');
+  const byPo = await db
+    .collection(`tenants/${tenantId}/job_orders`)
+    .where('poNumber', '==', postingId)
+    .limit(1)
+    .get();
+  return byPo.empty ? null : byPo.docs[0].ref;
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Close cascade
 // ─────────────────────────────────────────────────────────────────────
 

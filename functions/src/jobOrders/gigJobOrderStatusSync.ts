@@ -153,6 +153,13 @@ export async function recomputeGigJobOrderStatusFromShifts(
     return { ok: true, updated: false, reason: 'status_not_auto_managed', maxShiftDate: null, today };
   }
 
+  // Fieldglass halted the order (buyer-side suspension) — its on_hold is
+  // deliberate and must not be flipped back to open by shift-date logic.
+  // resumeFieldglassOrderIfHalted clears the flag when FG un-halts.
+  if (jo.fieldglassHalted === true) {
+    return { ok: true, updated: false, reason: 'fieldglass_halted', maxShiftDate: null, today };
+  }
+
   const shiftsSnap = await joRef.collection('shifts').get();
   if (shiftsSnap.empty) {
     return { ok: true, updated: false, reason: 'no_shifts', maxShiftDate: null, today };
