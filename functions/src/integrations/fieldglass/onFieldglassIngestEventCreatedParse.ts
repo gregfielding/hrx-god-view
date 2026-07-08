@@ -33,8 +33,12 @@ import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions/v2';
 
 import { ensureSiteCore } from './ensureSiteCore';
-import { ensureJobOrderForFieldglassRequest } from './fieldglassJobOrder';
-import { parseFieldglassEmail, type FieldglassParseFailure } from './parseFieldglassEmail';
+import { closeFieldglassOrder, ensureJobOrderForFieldglassRequest } from './fieldglassJobOrder';
+import {
+  parseFieldglassEmail,
+  type FieldglassClosureParseSuccess,
+  type FieldglassParseFailure,
+} from './parseFieldglassEmail';
 import type {
   FieldglassIngestEvent,
   FieldglassIntegrationConfig,
@@ -50,9 +54,12 @@ const FieldValue = admin.firestore.FieldValue;
 /** Statuses a recruiter has already acted on — a re-parse must not clobber. */
 const DECIDED_STATUSES = new Set(['approved', 'applied', 'rejected', 'superseded']);
 
-async function sendNewOrderAlert(
+/** Send `body` to the recruiter phones on the integration config doc.
+ *  Shared by new-order, closure, and unrecognized-email alerts. */
+async function sendFieldglassAlertSms(
   tenantId: string,
-  request: FieldglassJobPostingRequest,
+  body: string,
+  opts: { source: string; sourceId: string },
 ): Promise<boolean> {
   const cfgSnap = await admin
     .firestore()
@@ -67,18 +74,9 @@ async function sendNewOrderAlert(
     return false;
   }
 
-  const e = request.event;
-  const parts = [
-    `New Sodexo order: ${e.title ?? request.event.jobPostingId}`,
-    e.siteName ? `@ ${e.siteName}` : null,
-    e.payRate !== undefined ? `$${e.payRate.toFixed(2)}/hr` : null,
-    e.startDate ? `starts ${e.startDate}` : null,
-  ].filter(Boolean);
-  const body = `${parts.join(' · ')}${e.detailUrl ? `\n${e.detailUrl}` : ''}`;
-
   // Lazy import keeps this trigger's cold-start graph small when alerts
   // are unconfigured. sendWorkerMessageInternal handles STOP/opt-out and
-  // runs the self-hosted link shortener on the detail URL.
+  // runs the self-hosted link shortener on any URL in the body.
   const { sendWorkerMessageInternal } = await import('../../twilio');
   let sentAny = false;
   for (const phone of phones) {
@@ -86,10 +84,10 @@ async function sendNewOrderAlert(
       // eslint-disable-next-line no-await-in-loop
       const result = await sendWorkerMessageInternal(phone, body, {
         systemContext: true,
-        source: 'fieldglass_new_order_alert',
-        sourceId: request.event.jobPostingId,
+        source: opts.source,
+        sourceId: opts.sourceId,
         tenantId,
-        messageTypeId: 'fieldglass_new_order_alert',
+        messageTypeId: opts.source,
       });
       sentAny = sentAny || result.success;
     } catch (err) {
@@ -101,6 +99,99 @@ async function sendNewOrderAlert(
     }
   }
   return sentAny;
+}
+
+async function sendNewOrderAlert(
+  tenantId: string,
+  request: FieldglassJobPostingRequest,
+): Promise<boolean> {
+  const e = request.event;
+  const parts = [
+    `New Sodexo order: ${e.title ?? request.event.jobPostingId}`,
+    e.siteName ? `@ ${e.siteName}` : null,
+    e.payRate !== undefined ? `$${e.payRate.toFixed(2)}/hr` : null,
+    e.startDate ? `starts ${e.startDate}` : null,
+  ].filter(Boolean);
+  const body = `${parts.join(' · ')}${e.detailUrl ? `\n${e.detailUrl}` : ''}`;
+  return sendFieldglassAlertSms(tenantId, body, {
+    source: 'fieldglass_new_order_alert',
+    sourceId: request.event.jobPostingId,
+  });
+}
+
+/** Email-driven close (Greg, 2026-07-08: "lets build it") — runs the same
+ *  cascade the extension path uses, but ONLY for orders HRX already
+ *  tracks, and always announces the outcome by SMS so an email-triggered
+ *  close is never invisible. Unknown posting ids are logged and left
+ *  alone (nothing to close; if the order later syncs, the detail page's
+ *  own Closed status handles it). */
+async function handleClosureEmail(
+  db: admin.firestore.Firestore,
+  tenantId: string,
+  eventHash: string,
+  sourceRef: FirebaseFirestore.DocumentReference,
+  closure: FieldglassClosureParseSuccess,
+): Promise<void> {
+  const requestId = `fieldglass__${closure.jobPostingId}`;
+  const requestSnap = await db
+    .doc(`tenants/${tenantId}/external_shift_requests/${requestId}`)
+    .get();
+
+  if (!requestSnap.exists) {
+    await sourceRef.update({
+      status: 'parsed',
+      parsedRequestIds: [],
+      closureNotice: {
+        jobPostingId: closure.jobPostingId,
+        phrase: closure.closurePhrase,
+        knownOrder: false,
+      },
+    });
+    logger.info('[onFieldglassIngestEventCreatedParse] closure for untracked order — no action', {
+      tenantId,
+      eventHash,
+      jobPostingId: closure.jobPostingId,
+    });
+    return;
+  }
+
+  const result = await closeFieldglassOrder(db, {
+    tenantId,
+    requestId,
+    reason: `closure_email:${closure.closurePhrase}`,
+  });
+  await sourceRef.update({
+    status: 'parsed',
+    parsedRequestIds: [requestId],
+    closureNotice: {
+      jobPostingId: closure.jobPostingId,
+      phrase: closure.closurePhrase,
+      knownOrder: true,
+      cascade: result.status,
+      postingsExpired: result.postingsExpired,
+      shiftsClosed: result.shiftsClosed,
+    },
+  });
+  logger.info('[onFieldglassIngestEventCreatedParse] closure email applied', {
+    tenantId,
+    eventHash,
+    requestId,
+    phrase: closure.closurePhrase,
+    cascade: result.status,
+    postingsExpired: result.postingsExpired,
+    shiftsClosed: result.shiftsClosed,
+  });
+
+  const label = closure.title ?? closure.jobPostingId;
+  const outcome =
+    result.status === 'no_job_order'
+      ? 'review row cleared (no job order existed)'
+      : `job order completed, ${result.postingsExpired} posting(s) expired`;
+  await sendFieldglassAlertSms(
+    tenantId,
+    `Sodexo order ${closure.closurePhrase} (via email): ${label} — ${outcome}.`,
+    { source: 'fieldglass_order_closed_alert', sourceId: closure.jobPostingId },
+  );
 }
 
 export const onFieldglassIngestEventCreatedParse = onDocumentCreated(
@@ -152,6 +243,34 @@ export const onFieldglassIngestEventCreatedParse = onDocumentCreated(
         status: 'parse_failed',
         parseFailureReason: failure.reason,
       });
+      // A Fieldglass email we couldn't classify (revision? unknown close
+      // format?) must never be silent — it's both an operational heads-up
+      // ("go look at Fieldglass / run Sync Sodexo") and the sample-
+      // collection mechanism for hardening the parser (raw body is on the
+      // ingest event). Duplicate emails dedupe at the webhook, so this
+      // fires at most once per unique email.
+      if (failure.reason === 'unclassified') {
+        const subject = (data.raw?.subject ?? '(no subject)').slice(0, 120);
+        await sendFieldglassAlertSms(
+          tenantId,
+          `Fieldglass email not recognized (no action taken): "${subject}". Check the order in Fieldglass or run Sync Sodexo.`,
+          { source: 'fieldglass_unclassified_email_alert', sourceId: eventHash },
+        ).catch(() => undefined);
+      }
+      return;
+    }
+
+    // Closure notice — separate lane from new-posting handling: no request
+    // row is created, and the DECIDED_STATUSES guard below must NOT block
+    // it (an applied order is exactly the one that needs closing).
+    if (parseResult.kind === 'closure') {
+      await handleClosureEmail(
+        db,
+        tenantId,
+        eventHash,
+        sourceRef,
+        parseResult as FieldglassClosureParseSuccess,
+      );
       return;
     }
 

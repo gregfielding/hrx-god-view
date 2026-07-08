@@ -27,21 +27,42 @@ export const SODEXO_BILL_MARKUP = 1.56;
 
 export interface FieldglassParseSuccess {
   ok: true;
+  kind: 'new_posting';
   event: FieldglassNewJobPostingEvent;
   confidence: 'high' | 'medium' | 'low';
   notes?: string;
 }
 
+/** A closure/cancellation/withdrawal notice. Patterns are ANTICIPATORY —
+ *  no real closure email observed yet (2026-07-08) — so classification is
+ *  deliberately conservative: an explicit closure phrase adjacent to "job
+ *  posting" AND an extractable posting id are both required. The trigger
+ *  adds a third gate (acts only on orders HRX already tracks) and
+ *  announces every close via the recruiter alert SMS, so a surprise
+ *  format can't close anything silently. Harden against the real sample
+ *  when the first one lands (stored raw on the ingest event either way). */
+export interface FieldglassClosureParseSuccess {
+  ok: true;
+  kind: 'closure';
+  jobPostingId: string;
+  title?: string;
+  /** Matched phrase ("closed" / "cancelled" / "withdrawn") for audit. */
+  closurePhrase: string;
+}
+
 export interface FieldglassParseFailure {
   ok: false;
-  /** `unclassified` = subject isn't a new-posting notification (could be a
-   *  close/update/withdraw notice — extractors for those are future work);
-   *  `no_body` = nothing to parse; `missing_posting_id` = looked like a
-   *  new-posting email but no SDXO id anywhere. */
+  /** `unclassified` = subject isn't a new-posting or closure notification
+   *  (could be an update/revision notice — extractors for those are future
+   *  work); `no_body` = nothing to parse; `missing_posting_id` = looked
+   *  like a new-posting email but no SDXO id anywhere. */
   reason: 'unclassified' | 'no_body' | 'missing_posting_id';
 }
 
-export type FieldglassParseResult = FieldglassParseSuccess | FieldglassParseFailure;
+export type FieldglassParseResult =
+  | FieldglassParseSuccess
+  | FieldglassClosureParseSuccess
+  | FieldglassParseFailure;
 
 /** "New Job Posting submitted [Job Posting ID: SDXOJP00185856, Job Posting
  *  Title: Dishroom - Lead]" — id + title are extractable from the subject
@@ -55,6 +76,16 @@ const POSTING_ID_RE = /\b([A-Z]{2,6}JP\d{6,12})\b/;
 
 const DETAIL_URL_RE =
   /https:\/\/[^\s"'<>]*fieldglass[^\s"'<>]*job_posting_detail\.do[^\s"'<>]*/i;
+
+/** Closure phrasing near "job posting" — subject or body. Kept tight
+ *  (adjacency + passive voice in the body form) so prose like "the cafe
+ *  closed early" in a Comments block can't classify a live order closed. */
+const CLOSURE_SUBJECT_RE =
+  /job\s+posting\b[^\n]{0,120}?\b(?:has\s+been\s+|was\s+|is\s+)?(closed|cancell?ed|withdrawn)\b/i;
+const CLOSURE_BODY_RE =
+  /job\s+posting\b[\s\S]{0,160}?\bhas\s+been\s+(closed|cancell?ed|withdrawn)\b/i;
+/** "Job Posting ID: SDXOJP00186302" — works in subject brackets or body. */
+const POSTING_ID_LABEL_RE = /job\s+posting\s+id\s*:\s*([A-Z0-9]+)/i;
 
 /** "$16.36 as the hourly wage" / "offered $16.36" / "$16.36/hr". */
 const WAGE_RES: RegExp[] = [
@@ -119,7 +150,37 @@ export function parseFieldglassEmail(input: {
   const looksLikeNewPosting =
     Boolean(subjectMatch) ||
     (/new\s+job\s+posting\s+has\s+been\s+submitted/i.test(body) && POSTING_ID_RE.test(body));
-  if (!looksLikeNewPosting) return { ok: false, reason: 'unclassified' };
+  if (!looksLikeNewPosting) {
+    // Closure notice? (checked second — the new-posting subject is far more
+    // specific, and a new-posting email can legitimately mention "closed"
+    // in its Close Details block.)
+    const closureMatch =
+      input.subject.match(CLOSURE_SUBJECT_RE) ?? body.match(CLOSURE_BODY_RE);
+    if (closureMatch) {
+      // Every candidate is re-validated against the strict id shape — the
+      // labeled-value extractor can drag trailing prose along with the id.
+      const idCandidate =
+        input.subject.match(POSTING_ID_LABEL_RE)?.[1]?.trim() ||
+        extractLabeledValue(body, 'Job Posting ID', LABELS) ||
+        input.subject.match(POSTING_ID_RE)?.[1] ||
+        body.match(POSTING_ID_RE)?.[1];
+      const closureId = idCandidate?.match(POSTING_ID_RE)?.[1];
+      if (closureId) {
+        const closureTitle =
+          extractLabeledValue(body, 'Job Posting Title', LABELS) ?? undefined;
+        return {
+          ok: true,
+          kind: 'closure',
+          jobPostingId: closureId,
+          ...(closureTitle ? { title: closureTitle } : {}),
+          closurePhrase: closureMatch[1].toLowerCase(),
+        };
+      }
+      // Closure phrase but no id → fall through to unclassified so the
+      // recruiter alert flags it and the raw sample gets collected.
+    }
+    return { ok: false, reason: 'unclassified' };
+  }
 
   const jobPostingId =
     subjectMatch?.[1]?.trim() ||
@@ -174,6 +235,7 @@ export function parseFieldglassEmail(input: {
 
   return {
     ok: true,
+    kind: 'new_posting',
     event,
     confidence,
     ...(missing.length > 0 ? { notes: `missing: ${missing.join(', ')}` } : {}),
