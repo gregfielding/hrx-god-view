@@ -341,9 +341,23 @@ export async function generateFieldglassPostingCopy(
     state?: string;
     zipCode?: string;
     payRate?: number;
+    /** OT rate when the detail page had one. */
+    payRateOt?: number;
     scheduleText?: string;
+    /** e.g. "40" — hours/week from the detail page. */
+    hoursPerWeek?: string;
     uniform?: string;
+    /** FG's short role-description field. */
     description?: string;
+    /** Comments-To-Supplier prose — usually the richest requirements text
+     *  (screenings, expectations, day-one details). Passed SEPARATELY from
+     *  `description` since real orders often have both. */
+    commentsToSupplier?: string;
+    /** e.g. "Contract to Hire" from the detail page. */
+    contractType?: string;
+    positionsRequested?: number;
+    startDate?: string;
+    endDate?: string;
     jobType: 'gig' | 'career';
   },
   client?: OpenAILike,
@@ -360,9 +374,10 @@ export async function generateFieldglassPostingCopy(
 HARD RULES:
 - NEVER mention the client company or worksite name. Say "C1 is hiring" — the role is with one of C1's clients.
 - City/state/zip are fine to mention. No street addresses.
-- Professional, engaging, clear — Indeed/Craigslist style. 100-170 words.
+- Professional, engaging, clear — Indeed/Craigslist style. 120-200 words.
 - Plain text only: short paragraphs and simple hyphen bullets. No markdown headers, no bold, no emojis.
-- Include the pay rate when provided. Include schedule/uniform details when provided, phrased naturally.
+- Include the pay rate when provided. Weave in schedule, weekly hours, assignment window, openings count, and uniform naturally when provided.
+- Use the client's requirement notes as the backbone of the duties/requirements bullets — keep every concrete requirement (certifications, screenings, physical demands, dress code), rewritten in C1's voice with client-identifying names stripped.
 - End with one short apply call-to-action sentence.`,
         },
         {
@@ -373,10 +388,22 @@ HARD RULES:
               ? `Location: ${[input.city, input.state].filter(Boolean).join(', ')} ${input.zipCode ?? ''}`.trim()
               : '',
             input.payRate ? `Pay: $${input.payRate.toFixed(2)}/hour (show it)` : '',
+            input.payRateOt ? `Overtime rate: $${input.payRateOt.toFixed(2)}/hour` : '',
             input.scheduleText ? `Schedule note: ${input.scheduleText}` : '',
+            input.hoursPerWeek ? `Hours per week: ${input.hoursPerWeek}` : '',
+            input.startDate || input.endDate
+              ? `Assignment window: ${[input.startDate, input.endDate].filter(Boolean).join(' to ')}`
+              : '',
+            input.positionsRequested && input.positionsRequested > 1
+              ? `Openings: ${input.positionsRequested} (mention there are multiple openings)`
+              : '',
+            input.contractType ? `Engagement per client: ${input.contractType}` : '',
             input.uniform ? `Uniform: ${input.uniform}` : '',
             `Engagement type: ${input.jobType === 'gig' ? 'short-term' : 'ongoing / contract-to-hire'}`,
             input.description ? `Client's role description (do not quote client names):\n${input.description}` : '',
+            input.commentsToSupplier
+              ? `Client's requirement notes (do not quote client names; fold concrete requirements into bullets):\n${input.commentsToSupplier}`
+              : '',
             '',
             'Write the posting description now.',
           ]

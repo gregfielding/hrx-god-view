@@ -128,6 +128,46 @@ async function ensureJobTitleInCatalog(
 }
 
 /**
+ * Assemble the full generateFieldglassPostingCopy input from everything
+ * the pipeline knows (2026-07-08: "the AI generated posting is weak" —
+ * previously only 7 of ~15 available fields were passed). Shared by the
+ * create path and the backfill's regeneration.
+ */
+function buildPostingCopyInput(args: {
+  title: string;
+  worksiteAddress: Record<string, string>;
+  payRate: number;
+  jobType: 'gig' | 'career';
+  enrichment: FieldglassEnrichmentStamp;
+  description?: string;
+  commentsToSupplier?: string;
+  startIso: string | null;
+  endIso: string | null;
+}) {
+  const e = args.enrichment;
+  const num = (v: unknown): number | undefined =>
+    Number.isFinite(v as number) && (v as number) > 0 ? (v as number) : undefined;
+  return {
+    title: args.title,
+    city: args.worksiteAddress.city || undefined,
+    state: args.worksiteAddress.state || undefined,
+    zipCode: args.worksiteAddress.zipCode || undefined,
+    payRate: args.payRate > 0 ? args.payRate : undefined,
+    payRateOt: num(e.payRateOt),
+    scheduleText: trim(e.scheduleText) || undefined,
+    hoursPerWeek: num(e.hoursPerWeek) ? String(e.hoursPerWeek) : undefined,
+    uniform: trim(e.uniform) || undefined,
+    description: args.description,
+    commentsToSupplier: args.commentsToSupplier,
+    contractType: trim(e.contractType) || undefined,
+    positionsRequested: num(e.positionsRequested),
+    startDate: args.startIso ?? undefined,
+    endDate: args.endIso ?? undefined,
+    jobType: args.jobType,
+  };
+}
+
+/**
  * Workers-comp resolution from the central repo (Greg, 2026-07-07:
  * "will pull from our central repo, if a code exists").
  * `tenants/{tid}/workers_comp_rates` docs: {state, code, rate,
@@ -424,19 +464,25 @@ export async function ensureJobOrderForFieldglassRequest(
     modifierAccountId: parentId || childAccountId,
   });
 
-  // AI posting copy (Greg, 2026-07-07) — generated once at creation;
-  // fail-open to the raw client description.
-  const postingCopy = await generateFieldglassPostingCopy({
-    title,
-    city: worksiteAddress.city || undefined,
-    state: worksiteAddress.state || undefined,
-    zipCode: worksiteAddress.zipCode || undefined,
-    payRate: payRate > 0 ? payRate : undefined,
-    scheduleText: trim(enrichment.scheduleText) || undefined,
-    uniform: trim(enrichment.uniform) || undefined,
-    description: description || undefined,
-    jobType,
-  });
+  // AI posting copy (Greg, 2026-07-07; widened 2026-07-08 — "the AI
+  // generated posting is weak... fires without all of the fieldglass
+  // data"). Everything the enrichment knows goes in; email-born orders
+  // still generate from email data here, then the enrichment backfill
+  // REGENERATES once the detail page arrives (see
+  // regeneratePostingCopyIfMachineOwned).
+  const postingCopy = await generateFieldglassPostingCopy(
+    buildPostingCopyInput({
+      title,
+      worksiteAddress,
+      payRate,
+      jobType,
+      enrichment,
+      description,
+      commentsToSupplier: trim(event.commentsToSupplier) || undefined,
+      startIso,
+      endIso,
+    }),
+  );
 
   const { seq: jobOrderSeq, formatted: jobOrderNumberFormatted } = await getNextJobOrderSeq(db, tenantId);
   const now = FieldValue.serverTimestamp();
@@ -545,6 +591,13 @@ export async function ensureJobOrderForFieldglassRequest(
       postingId,
       requestId,
       candidateInMind,
+      // AI-copy bookkeeping: `aiJobDescription` is the exact machine copy
+      // (backfill only regenerates when jobDescription still matches it —
+      // human edits are never clobbered); `aiCopyEnriched` marks whether
+      // the copy was written WITH detail-page enrichment, so email-born
+      // orders get exactly one upgrade regeneration when it arrives.
+      ...(postingCopy ? { aiJobDescription: postingCopy } : {}),
+      aiCopyEnriched: Object.keys(enrichment).length > 0,
       ...(enrichment.candidateInMindNote ? { candidateInMindNote: enrichment.candidateInMindNote } : {}),
       ...(enrichment.respondByDate ? { respondByDate: enrichment.respondByDate } : {}),
       ...(enrichment.maxSubmissions != null ? { maxSubmissions: enrichment.maxSubmissions } : {}),
@@ -893,6 +946,71 @@ async function backfillJobOrderFromEnrichment(
     patch['fieldglass.candidateInMind'] = true;
     if (enrichment.candidateInMindNote) {
       patch['fieldglass.candidateInMindNote'] = enrichment.candidateInMindNote;
+    }
+  }
+
+  // ── AI copy upgrade (2026-07-08): email-born orders generated their
+  // posting copy from email data alone; regenerate ONCE with the full
+  // detail-page enrichment. Guards: only when the current description is
+  // still machine-owned (matches the stamped AI copy, the raw client
+  // text, or is empty — a recruiter's hand-edit is never clobbered) and
+  // only when this order hasn't had its enriched regeneration yet.
+  const fg = (jo.fieldglass ?? {}) as Record<string, unknown>;
+  const currentDesc = trim(jo.jobDescription);
+  const stampedAi = trim(fg.aiJobDescription);
+  const machineOwned =
+    !currentDesc || currentDesc === stampedAi || currentDesc === trim(jo.jobDescriptionFromClient);
+  if (machineOwned && fg.aiCopyEnriched !== true && Object.keys(enrichment).length > 0) {
+    try {
+      const regenerated = await generateFieldglassPostingCopy(
+        buildPostingCopyInput({
+          title: trim(jo.jobTitle) || 'Fieldglass Order',
+          worksiteAddress: (jo.worksiteAddress ?? {}) as Record<string, string>,
+          payRate: Number(patch.payRate ?? jo.payRate ?? 0),
+          jobType: jo.jobType === 'gig' ? 'gig' : 'career',
+          enrichment,
+          description: trim(enrichment.description) || undefined,
+          // The raw client text captured at create (email comments or FG
+          // description) — richest requirements source we still hold.
+          commentsToSupplier: trim(jo.jobDescriptionFromClient) || undefined,
+          startIso: trim(jo.startDate) || null,
+          endIso: trim(jo.endDate) || null,
+        }),
+      );
+      if (regenerated && regenerated !== currentDesc) {
+        patch.jobDescription = regenerated;
+        patch['fieldglass.aiJobDescription'] = regenerated;
+        patch['fieldglass.aiCopyEnriched'] = true;
+        // Linked postings get the upgrade too — same machine-owned guard.
+        const posts = await admin
+          .firestore()
+          .collection(`tenants/${tenantId}/job_postings`)
+          .where('jobOrderId', '==', joRef.id)
+          .get();
+        for (const p of posts.docs) {
+          const pDesc = trim((p.data() as Record<string, unknown>).jobDescription);
+          if (!pDesc || pDesc === currentDesc || pDesc === stampedAi) {
+            await p.ref.set(
+              { jobDescription: regenerated, updatedAt: FieldValue.serverTimestamp() },
+              { merge: true },
+            );
+          }
+        }
+        logger.info('[fieldglassJobOrder] AI copy regenerated with enrichment', {
+          jobOrderId: joRef.id,
+          oldLength: currentDesc.length,
+          newLength: regenerated.length,
+        });
+      } else if (fg.aiCopyEnriched !== true) {
+        // Generation failed or produced identical text — don't retry on
+        // every re-sync forever; one attempt per enrichment arrival.
+        patch['fieldglass.aiCopyEnriched'] = true;
+      }
+    } catch (err) {
+      logger.warn('[fieldglassJobOrder] AI copy regeneration failed (non-fatal)', {
+        jobOrderId: joRef.id,
+        err: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
