@@ -949,6 +949,11 @@ async function createFieldglassJobPosting(
     postTitle: params.title,
     jobType: params.jobType,
     jobTitle: params.title,
+    // The JO detail's Jobs Board tab pairs gig postings to positions by
+    // positionJobTitle — without it the tab can't see this posting and
+    // renders a phantom "Draft" form for the position (and saving that
+    // form would duplicate the live posting).
+    positionJobTitle: params.title,
     jobDescription: params.jobDescription,
     companyName: 'Sodexo',
     worksiteName: params.worksiteName,
