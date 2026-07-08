@@ -525,7 +525,11 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
           const cmp = na.localeCompare(nb);
           return sortDirection === 'asc' ? cmp : -cmp;
         });
-      } else if (sortField === 'jobOrderNumber' && effectiveOnlyMyOrders) {
+      } else if (sortField === 'jobOrderNumber') {
+        // Always re-sort numerically client-side: jobOrderNumber is stored
+        // as a NUMBER on some docs and a zero-padded STRING on others, and
+        // Firestore's orderBy groups by type first — producing two separate
+        // descending runs in the table (bug report 2026-07-08).
         newJobOrders.sort((a, b) => {
           const aNum = Number(a.jobOrderNumber) || 0;
           const bNum = Number(b.jobOrderNumber) || 0;
