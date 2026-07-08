@@ -4848,7 +4848,11 @@ const RecruiterJobOrderDetail: React.FC = () => {
                     originType="job_order"
                     originId={jobOrderId}
                     hot={(jobOrder as any)?.hot === true}
-                    size={19}
+                    sx={{
+                      p: 0.25,
+                      flexShrink: 0,
+                      '& .MuiSvgIcon-root': { fontSize: 20 },
+                    }}
                   />
                 )}
               </Box>

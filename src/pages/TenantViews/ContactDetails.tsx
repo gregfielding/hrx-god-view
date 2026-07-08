@@ -2057,7 +2057,6 @@ const ContactDetails: React.FC = () => {
                       originType="contact"
                       originId={contact.id}
                       hot={(contact as any)?.hot === true}
-                      size={20}
                     />
                   )}
                 </Box>

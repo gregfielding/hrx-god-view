@@ -1284,13 +1284,6 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                         nowhere near the star). Same reasoning applies to the
                         Status and Recruiter(s) cells below. */}
                     <TableCell>
-                      <HotToggle
-                        tenantId={tenantId!}
-                        originType="job_order"
-                        originId={jobOrder.id}
-                        hot={(jobOrder as any).hot === true}
-                        size={16}
-                      />
                       <FavoriteButton
                         itemId={jobOrder.id}
                         favoriteType="jobOrders"
@@ -1301,6 +1294,12 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                           favorited: 'Remove from favorites',
                           notFavorited: 'Add to favorites'
                         }}
+                      />
+                      <HotToggle
+                        tenantId={tenantId!}
+                        originType="job_order"
+                        originId={jobOrder.id}
+                        hot={(jobOrder as any).hot === true}
                       />
                     </TableCell>
                     <TableCell>

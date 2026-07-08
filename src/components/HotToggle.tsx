@@ -6,10 +6,15 @@
  * child account, or contact flips all linked records via the
  * `setHotStatus` callable (both directions). Optimistic UI; reverts on
  * failure.
+ *
+ * Sizing/behavior deliberately mirrors FavoriteButton (the star it sits
+ * next to): small IconButton, glyph locked at 1.2rem (override per
+ * surface via `sx`'s `& .MuiSvgIcon-root`), stopPropagation, tinted
+ * hover.
  */
 
 import React, { useEffect, useState } from 'react';
-import { IconButton, Tooltip, Box } from '@mui/material';
+import { IconButton, Tooltip, Box, SxProps, Theme } from '@mui/material';
 import LocalFireDepartmentOutlinedIcon from '@mui/icons-material/LocalFireDepartmentOutlined';
 import { httpsCallable } from 'firebase/functions';
 
@@ -20,8 +25,9 @@ export interface HotToggleProps {
   originType: 'job_order' | 'account' | 'contact';
   originId: string;
   hot: boolean | undefined;
-  /** Icon square size in px (default 18). */
-  size?: number;
+  /** Passed through to the IconButton — use the same sx as the adjacent
+   *  FavoriteButton so the pair reads as one control group. */
+  sx?: SxProps<Theme>;
   onChanged?: (hot: boolean) => void;
 }
 
@@ -30,7 +36,7 @@ const HotToggle: React.FC<HotToggleProps> = ({
   originType,
   originId,
   hot,
-  size = 18,
+  sx,
   onChanged,
 }) => {
   const [isHot, setIsHot] = useState<boolean>(hot === true);
@@ -66,15 +72,40 @@ const HotToggle: React.FC<HotToggleProps> = ({
           ? 'Hot — engaged client relationship. Click to unmark (unmarks the linked order, account, and contact too).'
           : 'Mark hot — flags this and the linked order, account, and contact for priority attention.'
       }
-      arrow
     >
-      <IconButton size="small" onClick={toggle} disabled={saving} sx={{ p: 0.35 }}>
+      <IconButton
+        size="small"
+        onClick={toggle}
+        disabled={saving}
+        sx={{
+          color: 'text.secondary',
+          // Same 1.2rem glyph lock as FavoriteButton so the pair matches
+          // across tables, cards, and headers.
+          '& .MuiSvgIcon-root': {
+            fontSize: '1.2rem',
+          },
+          '&:hover': {
+            color: '#ff5722',
+            backgroundColor: 'rgba(255, 87, 34, 0.08)',
+          },
+          ...sx,
+        }}
+      >
         {isHot ? (
-          <Box component="span" sx={{ fontSize: size - 2, lineHeight: 1 }} aria-label="Hot">
+          <Box
+            component="span"
+            aria-label="Hot"
+            sx={{
+              // The emoji renders visually larger than an SVG at equal
+              // font-size; 0.92em of the icon slot keeps them level.
+              fontSize: '1.05rem',
+              lineHeight: 1,
+            }}
+          >
             🔥
           </Box>
         ) : (
-          <LocalFireDepartmentOutlinedIcon sx={{ fontSize: size, color: 'text.disabled' }} />
+          <LocalFireDepartmentOutlinedIcon />
         )}
       </IconButton>
     </Tooltip>

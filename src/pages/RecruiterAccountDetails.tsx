@@ -6203,7 +6203,10 @@ const RecruiterAccountDetails: React.FC = () => {
                       originType="account"
                       originId={account.id}
                       hot={(account as any)?.hot === true}
-                      size={19}
+                      sx={{
+                        p: 0.25,
+                        '& .MuiSvgIcon-root': { fontSize: 20 },
+                      }}
                     />
                   )}
                 </Box>
