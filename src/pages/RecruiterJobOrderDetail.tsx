@@ -3582,6 +3582,18 @@ const RecruiterJobOrderDetail: React.FC = () => {
   );
 
   const [manageContactsOpen, setManageContactsOpen] = useState(false);
+  /** Header pencil → edit the primary deal contact's own fields
+   *  (name/email/phone), persisted to crm_contacts + the JO's embedded
+   *  snapshot (Greg, 2026-07-08). */
+  const [editContactOpen, setEditContactOpen] = useState(false);
+  const [editContactSaving, setEditContactSaving] = useState(false);
+  const [editContactDraft, setEditContactDraft] = useState<{
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string;
+  } | null>(null);
   const [showManageSalespeopleDialog, setShowManageSalespeopleDialog] = useState(false);
   const [manageRecruitersOpen, setManageRecruitersOpen] = useState(false);
   const [availableRecruiters, setAvailableRecruiters] = useState<Array<{id: string; displayName: string; email?: string}>>([]);
@@ -4372,6 +4384,68 @@ const RecruiterJobOrderDetail: React.FC = () => {
       return number; // Already formatted
     }
     return `#${number.toString().padStart(4, '0')}`;
+  };
+
+  /** Open the header pencil's edit dialog, prefilled from the CRM contact
+   *  doc (authoritative) with the deal snapshot as fallback. */
+  const openEditContact = async (contact: any) => {
+    if (!contact?.id || !tenantId) return;
+    let firstName = '';
+    let lastName = '';
+    let email = typeof contact.email === 'string' ? contact.email : '';
+    let phone = typeof contact.phone === 'string' ? contact.phone : '';
+    try {
+      const snap = await getDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contact.id));
+      if (snap.exists()) {
+        const c = snap.data() as any;
+        firstName = typeof c.firstName === 'string' ? c.firstName : '';
+        lastName = typeof c.lastName === 'string' ? c.lastName : '';
+        email = typeof c.email === 'string' && c.email ? c.email : email;
+        phone = typeof c.phone === 'string' && c.phone ? c.phone : phone;
+      }
+    } catch {
+      // fall through to snapshot-derived values
+    }
+    if (!firstName && !lastName) {
+      const parts = String(contact.fullName || '').trim().split(/\s+/);
+      firstName = parts[0] || '';
+      lastName = parts.slice(1).join(' ');
+    }
+    setEditContactDraft({ id: contact.id, firstName, lastName, email, phone });
+    setEditContactOpen(true);
+  };
+
+  const saveEditContact = async () => {
+    if (!editContactDraft || !tenantId) return;
+    const { id, firstName, lastName, email, phone } = editContactDraft;
+    const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
+    setEditContactSaving(true);
+    try {
+      // Source of truth: the CRM contact doc.
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_contacts', id), {
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        fullName,
+        email: email.trim(),
+        phone: phone.trim(),
+        updatedAt: new Date(),
+      });
+      // Sync the JO-embedded deal snapshot + local state via the existing
+      // persistence path the Manage Contacts dialog uses.
+      const updatedContacts = associatedContacts.map((c) =>
+        c.id === id
+          ? { ...c, firstName: firstName.trim(), lastName: lastName.trim(), fullName, email: email.trim(), phone: phone.trim() }
+          : c,
+      );
+      await handleContactsChange(updatedContacts);
+      setEditContactOpen(false);
+      setEditContactDraft(null);
+    } catch (err) {
+      console.error('Failed to save contact:', err);
+      alert('Failed to save the contact. Please try again.');
+    } finally {
+      setEditContactSaving(false);
+    }
   };
 
   const handleContactsChange = async (updatedContacts: any[]) => {
@@ -5177,10 +5251,10 @@ const RecruiterJobOrderDetail: React.FC = () => {
                               +{associatedContacts.length - 1} more
                             </Typography>
                           )}
-                          <Tooltip title="Edit deal contacts" arrow componentsProps={recordHeaderTooltipComponentsProps}>
+                          <Tooltip title="Edit contact" arrow componentsProps={recordHeaderTooltipComponentsProps}>
                             <IconButton
                               size="small"
-                              onClick={() => setManageContactsOpen(true)}
+                              onClick={() => void openEditContact(associatedContacts[0])}
                               sx={{ p: 0.25, ml: 0.25 }}
                             >
                               <EditIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
@@ -6045,6 +6119,85 @@ const RecruiterJobOrderDetail: React.FC = () => {
         onContactsChange={handleContactsChange}
         dealCompanyId={jobOrder?.companyId || company?.id}
       />
+
+      {/* Edit primary contact (header pencil) — writes crm_contacts +
+          syncs the JO's embedded deal snapshot via handleContactsChange. */}
+      <Dialog
+        open={editContactOpen}
+        onClose={() => {
+          if (!editContactSaving) {
+            setEditContactOpen(false);
+            setEditContactDraft(null);
+          }
+        }}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Edit Contact</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Box sx={{ display: 'flex', gap: 1.5 }}>
+              <TextField
+                label="First name"
+                size="small"
+                fullWidth
+                value={editContactDraft?.firstName ?? ''}
+                onChange={(e) =>
+                  setEditContactDraft((d) => (d ? { ...d, firstName: e.target.value } : d))
+                }
+              />
+              <TextField
+                label="Last name"
+                size="small"
+                fullWidth
+                value={editContactDraft?.lastName ?? ''}
+                onChange={(e) =>
+                  setEditContactDraft((d) => (d ? { ...d, lastName: e.target.value } : d))
+                }
+              />
+            </Box>
+            <TextField
+              label="Email"
+              type="email"
+              size="small"
+              fullWidth
+              value={editContactDraft?.email ?? ''}
+              onChange={(e) =>
+                setEditContactDraft((d) => (d ? { ...d, email: e.target.value } : d))
+              }
+            />
+            <TextField
+              label="Phone"
+              size="small"
+              fullWidth
+              value={editContactDraft?.phone ?? ''}
+              onChange={(e) =>
+                setEditContactDraft((d) => (d ? { ...d, phone: e.target.value } : d))
+              }
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              setEditContactOpen(false);
+              setEditContactDraft(null);
+            }}
+            disabled={editContactSaving}
+            sx={{ textTransform: 'none' }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => void saveEditContact()}
+            disabled={editContactSaving || !editContactDraft?.firstName?.trim()}
+            sx={{ textTransform: 'none' }}
+          >
+            {editContactSaving ? 'Saving…' : 'Save'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <ManageSalespeopleDialog
         open={showManageSalespeopleDialog}
