@@ -72,8 +72,15 @@ export const setHotStatus = onCall(
 
     const absorbJobOrder = (id: string, jo: Record<string, unknown> | undefined) => {
       joIds.add(id);
-      const accountId = typeof (jo as any)?.accountId === 'string' ? (jo as any).accountId.trim() : '';
-      if (accountId) accountIds.add(accountId);
+      // FG/auto JOs put the CHILD ACCOUNT id in `recruiterAccountId`;
+      // `accountId` can hold the CRM COMPANY id (2026-07-08 bug: the
+      // cascade stamped a phantom accounts doc and missed the child).
+      // Collect both — the existence check before the write keeps a
+      // company id from ever creating a stray accounts doc.
+      for (const key of ['recruiterAccountId', 'accountId']) {
+        const v = (jo as any)?.[key];
+        if (typeof v === 'string' && v.trim()) accountIds.add(v.trim());
+      }
       dealContactIds(jo).forEach((c) => contactIds.add(c));
     };
 
@@ -83,8 +90,12 @@ export const setHotStatus = onCall(
       absorbJobOrder(snap.id, snap.data());
     } else if (originType === 'account') {
       accountIds.add(originId);
-      const jos = await joCol.where('accountId', '==', originId).get();
-      for (const d of jos.docs) {
+      // Both linkage generations (see absorbJobOrder).
+      const [byRecruiterAccount, byAccount] = await Promise.all([
+        joCol.where('recruiterAccountId', '==', originId).get(),
+        joCol.where('accountId', '==', originId).get(),
+      ]);
+      for (const d of [...byRecruiterAccount.docs, ...byAccount.docs]) {
         const status = String(d.get('status') ?? '').toLowerCase();
         if (TERMINAL_JO_STATUSES.has(status)) continue;
         absorbJobOrder(d.id, d.data());
@@ -102,6 +113,14 @@ export const setHotStatus = onCall(
       }
     }
 
+    // Only stamp docs that actually exist — merge-set on a wrong id
+    // (e.g. a CRM company id in the accounts collection) would otherwise
+    // conjure a phantom doc.
+    const accountRefs = [...accountIds].map((id) => db.doc(`tenants/${tenantId}/accounts/${id}`));
+    const contactRefs = [...contactIds].map((id) => db.doc(`tenants/${tenantId}/crm_contacts/${id}`));
+    const existing = await db.getAll(...accountRefs, ...contactRefs).catch(() => []);
+    const existingPaths = new Set(existing.filter((s) => s.exists).map((s) => s.ref.path));
+
     const stamp = {
       hot,
       hotUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -109,16 +128,26 @@ export const setHotStatus = onCall(
     };
     const batch = db.batch();
     joIds.forEach((id) => batch.set(joCol.doc(id), stamp, { merge: true }));
-    accountIds.forEach((id) => batch.set(db.doc(`tenants/${tenantId}/accounts/${id}`), stamp, { merge: true }));
-    contactIds.forEach((id) => batch.set(db.doc(`tenants/${tenantId}/crm_contacts/${id}`), stamp, { merge: true }));
+    const stampedAccounts: string[] = [];
+    const stampedContacts: string[] = [];
+    for (const ref of accountRefs) {
+      if (!existingPaths.has(ref.path)) continue;
+      batch.set(ref, stamp, { merge: true });
+      stampedAccounts.push(ref.id);
+    }
+    for (const ref of contactRefs) {
+      if (!existingPaths.has(ref.path)) continue;
+      batch.set(ref, stamp, { merge: true });
+      stampedContacts.push(ref.id);
+    }
     await batch.commit();
 
     return {
       ok: true,
       hot,
       jobOrderIds: [...joIds],
-      accountIds: [...accountIds],
-      contactIds: [...contactIds],
+      accountIds: stampedAccounts,
+      contactIds: stampedContacts,
     };
   },
 );

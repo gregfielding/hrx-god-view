@@ -1295,12 +1295,6 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                           notFavorited: 'Add to favorites'
                         }}
                       />
-                      <HotToggle
-                        tenantId={tenantId!}
-                        originType="job_order"
-                        originId={jobOrder.id}
-                        hot={(jobOrder as any).hot === true}
-                      />
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" sx={{ fontWeight: 600 }}>
@@ -1309,9 +1303,17 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                     </TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, minWidth: 0 }}>
-                        <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                          {jobOrder.jobOrderName}
-                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25, minWidth: 0 }}>
+                          <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                            {jobOrder.jobOrderName}
+                          </Typography>
+                          <HotToggle
+                            tenantId={tenantId!}
+                            originType="job_order"
+                            originId={jobOrder.id}
+                            hot={(jobOrder as any).hot === true}
+                          />
+                        </Box>
                         {(() => {
                           const jobPosts = jobPostsByJobOrderId[jobOrder.id] || [];
                           const indeedFromPosts = (jobPosts as any[])
