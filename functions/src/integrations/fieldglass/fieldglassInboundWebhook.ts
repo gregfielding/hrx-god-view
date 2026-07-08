@@ -49,6 +49,15 @@ const TENANT_ID = 'BCiP2bQ9CgVOCTfV6MhD';
  *  sender observed is `fieldglass@us.fieldglass.cloud.sap`. */
 const EXPECTED_SENDER_DOMAINS = ['fieldglass.cloud.sap', 'fieldglass.net', 'sap.com'];
 
+/** Trusted-forwarder path (verified empirically 2026-07-07): the route is
+ *  Fieldglass → Greg's Gmail → auto-forward → SendGrid, and Gmail re-signs
+ *  the forward, so SendGrid sees `dkim: pass` for google.com — NOT the SAP
+ *  domain. Gmail preserves the original From header and won't let a sender
+ *  forge one, so google.com-signed mail whose From is a Fieldglass domain
+ *  is accepted. Direct SAP mail (dedicated supplier user) still passes the
+ *  strict check above. */
+const TRUSTED_FORWARDER_DKIM_DOMAINS = ['google.com'];
+
 const RAW_BODY_CAP_BYTES = 256 * 1024;
 const RAW_HEADERS_CAP_BYTES = 64 * 1024;
 const MULTIPART_MAX_BYTES = 10 * 1024 * 1024;
@@ -127,17 +136,25 @@ function extractSenderDomain(from: string): string {
   return match ? match[1].toLowerCase().replace(/[>"']/g, '').trim() : '';
 }
 
-function verifyDkim(dkim: ReturnType<typeof parseDkimField>): string | null {
+function verifyDkim(
+  dkim: ReturnType<typeof parseDkimField>,
+  senderDomain: string,
+): string | null {
   if (dkim.result !== 'pass') {
     return `dkim_${dkim.result}`;
   }
   const passing = dkim.domains.some((d) =>
     EXPECTED_SENDER_DOMAINS.some((exp) => d === exp || d.endsWith(`.${exp}`)),
   );
-  if (!passing) {
-    return 'dkim_unexpected_domain';
-  }
-  return null;
+  if (passing) return null;
+  const viaTrustedForwarder = dkim.domains.some((d) =>
+    TRUSTED_FORWARDER_DKIM_DOMAINS.some((fwd) => d === fwd || d.endsWith(`.${fwd}`)),
+  );
+  const fromFieldglass = EXPECTED_SENDER_DOMAINS.some(
+    (exp) => senderDomain === exp || senderDomain.endsWith(`.${exp}`),
+  );
+  if (viaTrustedForwarder && fromFieldglass) return null;
+  return 'dkim_unexpected_domain';
 }
 
 function truncateUtf8(
@@ -229,7 +246,7 @@ export async function handleFieldglassInboundFields(
       .collection('external_ingest_events')
       .doc(eventHash);
 
-    const dkimRejectionReason = verifyDkim(dkim);
+    const dkimRejectionReason = verifyDkim(dkim, senderDomain);
     if (dkimRejectionReason !== null) {
       await docRef.set(
         {
