@@ -49,7 +49,10 @@ export const DEFAULT_TENANT_AI_PRESCREEN: TenantAiPrescreenConfig = {
     requireResumeOrSkill: true,
     requirePhone: true,
     requireLocation: true,
-    requireWorkAuthorization: true,
+    // 2026-07-09 (Greg): sign-up no longer collects work authorization —
+    // must not gate prescreen eligibility by default. I-9 verifies at
+    // onboarding.
+    requireWorkAuthorization: false,
   },
   questions: {
     askShiftConfirmation: true,

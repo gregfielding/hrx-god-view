@@ -395,7 +395,8 @@ export const submitWorkerAiPrescreenInterview = onCall(
       requireResumeOrSkill: pe?.eligibility.requireResumeOrSkill ?? true,
       requirePhone: pe?.eligibility.requirePhone ?? true,
       requireLocation: pe?.eligibility.requireLocation ?? true,
-      requireWorkAuthorization: pe?.eligibility.requireWorkAuthorization ?? true,
+      // 2026-07-09: default false — sign-up no longer collects work auth.
+      requireWorkAuthorization: pe?.eligibility.requireWorkAuthorization ?? false,
     });
     logger.info('submitWorkerAiPrescreenInterview.eligibility', {
       userId: auth.uid,

@@ -98,7 +98,9 @@ export function deriveProfileEligibilityForHiringLifecycle(
     options?.requireResumeOrSkill !== false && options?.requireResumeOrWorkHistory !== false;
   const requirePhone = options?.requirePhone !== false;
   const requireLocation = options?.requireLocation !== false;
-  const requireWorkAuthorization = options?.requireWorkAuthorization !== false;
+  // 2026-07-09 (Greg): default FALSE — sign-up no longer collects work
+  // authorization; only an explicit tenant policy `true` enforces it.
+  const requireWorkAuthorization = options?.requireWorkAuthorization === true;
 
   const profileBlockerCodes: string[] = [];
 

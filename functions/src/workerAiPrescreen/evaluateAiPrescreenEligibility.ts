@@ -147,7 +147,11 @@ export function evaluateAiPrescreenEligibility(
     options?.requireResumeOrSkill !== false && options?.requireResumeOrWorkHistory !== false;
   const requirePhone = options?.requirePhone !== false;
   const requireLocation = options?.requireLocation !== false;
-  const requireWorkAuthorization = options?.requireWorkAuthorization !== false;
+  // 2026-07-09 (Greg): default flipped to FALSE — sign-up no longer asks
+  // work authorization, so an unanswered profile must not be excluded from
+  // the interview/scoring funnel. Tenants that explicitly set the policy
+  // flag to true can still enforce it.
+  const requireWorkAuthorization = options?.requireWorkAuthorization === true;
 
   const missingFields: string[] = [];
 

@@ -241,7 +241,10 @@ export const DEFAULT_AI_PRESCREEN_TENANT_POLICY: ResolvedAiPrescreenTenantPolicy
     requireResumeOrSkill: true,
     requirePhone: true,
     requireLocation: true,
-    requireWorkAuthorization: true,
+    // 2026-07-09 (Greg): sign-up no longer collects work authorization, so
+    // it must not gate interview eligibility by default. I-9 at onboarding
+    // is the real verification.
+    requireWorkAuthorization: false,
   },
   questions: {
     askShiftConfirmation: true,

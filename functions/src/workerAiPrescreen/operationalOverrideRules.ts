@@ -71,15 +71,11 @@ export function evaluateOperationalOverrideRules(ctx: OperationalRuleEvalContext
   };
 
   // --- Hard blocks (policy / eligibility) — evaluated first for explainability order ---
-  if (!ctx.workAuthorized) {
-    hardBlocks.push('work_authorization_not_verified');
-    push({
-      code: 'hard_work_auth',
-      label: 'Work authorization',
-      direction: 'gate_only',
-      reason: 'Work eligibility is not authorized on the worker profile.',
-    });
-  }
+  // Work-authorization hard block REMOVED (Greg, 2026-07-09): sign-up no
+  // longer asks the question, so unanswered profiles must not be gated.
+  // Real work-authorization verification happens at onboarding (I-9).
+  // `ctx.workAuthorized` stays in the context + hash for score-cache
+  // compatibility, but no rule consumes it.
 
   if (hasFlag(ctx.flags, 'physical_mismatch') && dynNo(ctx.dynamicAnswers, 'dyn_physical_job_fit')) {
     hardBlocks.push('physical_requirement_failed');

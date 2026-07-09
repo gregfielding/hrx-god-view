@@ -196,13 +196,16 @@ export function partialProfileFieldsPresent(userData: Record<string, unknown>): 
   if (resumePresent(userData)) return true;
   if (userData.availability) return true;
   if (userData.address && String(userData.address).trim()) return true;
-  if (userData.workAuthStatus === 'Authorized') return true;
   return false;
 }
 
 /**
  * When `scoreSummary.aiScore` is missing: partial credit from profile fields (unknown ≠ failure).
  * Floored at 40, capped at 75.
+ *
+ * Work authorization removed from the signal set (Greg, 2026-07-09) —
+ * sign-up no longer asks the question, so it can neither earn credit nor
+ * count as a profile signal.
  */
 export function computeFallbackProfileScore(userData: Record<string, unknown>): number {
   let score = 40;
@@ -211,7 +214,6 @@ export function computeFallbackProfileScore(userData: Record<string, unknown>): 
   if (Array.isArray(skills) && skills.length > 0) score += 10;
   if (userData.phone && String(userData.phone).trim()) score += 5;
   if (userData.email && String(userData.email).trim()) score += 5;
-  if (userData.workAuthStatus === 'Authorized') score += 10;
   if (resumePresent(userData)) score += 15;
   if (userData.availability) score += 5;
   if (userData.address && String(userData.address).trim()) score += 5;
