@@ -258,6 +258,13 @@ export class JobOrderService {
             return obj.map(removeUndefinedValues).filter(item => item !== undefined);
           }
           if (typeof obj === 'object') {
+            // Only rebuild plain objects: recursing into class instances
+            // (Date, Timestamp, FieldValue sentinels…) collapses them to
+            // {} / plain maps.
+            const proto = Object.getPrototypeOf(obj);
+            if (proto !== Object.prototype && proto !== null) {
+              return obj;
+            }
             const cleaned: any = {};
             for (const [key, value] of Object.entries(obj)) {
               if (value !== undefined) {

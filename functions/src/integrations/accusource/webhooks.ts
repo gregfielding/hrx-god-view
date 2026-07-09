@@ -247,6 +247,10 @@ function stripUndefinedForFirestore(value: unknown): unknown {
   if (value === undefined) return null;
   if (value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map((v) => stripUndefinedForFirestore(v));
+  // Only rebuild plain objects: recursing into class instances (Timestamp,
+  // FieldValue sentinels, Date…) collapses them to {} / plain maps.
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return value;
   const o: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value)) {
     if (v !== undefined) o[k] = stripUndefinedForFirestore(v);

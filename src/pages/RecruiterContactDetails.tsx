@@ -728,6 +728,12 @@ const RecruiterContactDetails: React.FC = () => {
     }
     
     if (typeof obj === 'object') {
+      // Only rebuild plain objects: recursing into class instances (Date,
+      // Timestamp, FieldValue sentinels…) collapses them to {} / plain maps.
+      const proto = Object.getPrototypeOf(obj);
+      if (proto !== Object.prototype && proto !== null) {
+        return obj;
+      }
       const cleaned: any = {};
       for (const [key, value] of Object.entries(obj)) {
         const cleanedValue = removeUndefinedValues(value);
@@ -737,7 +743,7 @@ const RecruiterContactDetails: React.FC = () => {
       }
       return cleaned;
     }
-    
+
     return obj;
   };
 

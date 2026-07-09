@@ -31,7 +31,14 @@ const cleanObjectForFirestore = (obj: any): any => {
   if (Array.isArray(obj)) {
     return obj.map(cleanObjectForFirestore).filter(item => item !== null);
   }
-  
+
+  // Only rebuild plain objects: recursing into class instances (Date,
+  // Timestamp, FieldValue sentinels…) collapses them to {} / plain maps.
+  const proto = Object.getPrototypeOf(obj);
+  if (proto !== Object.prototype && proto !== null) {
+    return obj;
+  }
+
   const cleaned: any = {};
   for (const [key, value] of Object.entries(obj)) {
     const cleanedValue = cleanObjectForFirestore(value);

@@ -1401,6 +1401,15 @@ const ContactDetails: React.FC = () => {
     const t = typeof obj;
     if (t !== 'object') return obj;
     if (obj instanceof Date) return obj;
+    // Only rebuild plain objects and arrays: recursing into other class
+    // instances (Timestamp, FieldValue sentinels…) collapses them to {} /
+    // plain maps.
+    if (!Array.isArray(obj)) {
+      const proto = Object.getPrototypeOf(obj);
+      if (proto !== Object.prototype && proto !== null) {
+        return obj;
+      }
+    }
 
     const seen = _seen ?? new WeakSet<object>();
     if (seen.has(obj)) return null; // break circular reference

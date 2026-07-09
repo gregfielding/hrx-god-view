@@ -16,7 +16,15 @@ function removeUndefinedValues(obj: any): any {
   if (Array.isArray(obj)) {
     return obj.map(item => removeUndefinedValues(item)).filter(item => item !== null);
   }
-  
+
+  // Only rebuild plain objects: recursing into class instances (Timestamp,
+  // FieldValue sentinels, Date…) flattens them into plain maps — this
+  // callable rewrites whole CRM docs, so that would corrupt createdAt.
+  const proto = Object.getPrototypeOf(obj);
+  if (proto !== Object.prototype && proto !== null) {
+    return obj;
+  }
+
   const cleaned: any = {};
   for (const [key, value] of Object.entries(obj)) {
     if (value !== undefined) {
@@ -26,7 +34,7 @@ function removeUndefinedValues(obj: any): any {
       }
     }
   }
-  
+
   return cleaned;
 }
 

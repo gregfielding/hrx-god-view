@@ -17,6 +17,12 @@ function removeUndefinedValues(obj: any): any {
   }
   
   if (typeof obj === 'object') {
+    // Only rebuild plain objects: recursing into class instances (Timestamp,
+    // FieldValue sentinels, Date…) collapses them to {} / plain maps.
+    const proto = Object.getPrototypeOf(obj);
+    if (proto !== Object.prototype && proto !== null) {
+      return obj;
+    }
     const cleaned: any = {};
     for (const [key, value] of Object.entries(obj)) {
       const cleanedValue = removeUndefinedValues(value);
@@ -26,7 +32,7 @@ function removeUndefinedValues(obj: any): any {
     }
     return cleaned;
   }
-  
+
   return obj;
 }
 
