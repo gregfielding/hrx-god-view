@@ -214,10 +214,17 @@ interface IndeedFlexEventBase {
   /** The venue / location name as it appears in the email body. Used
    *  for fallback matching when `jobId` is absent. */
   venueName?: string;
+  /** Street address printed under the venue name in the live email
+   *  format (2026-07-08), e.g. "100 Reformatory Rd., Mansfield 44905, US". */
+  venueAddress?: string;
   /** The role / position description as it appears in the email body. */
   roleName?: string;
-  /** Worksite date (YYYY-MM-DD, venue-local). Used for fallback matching. */
+  /** Worksite date (YYYY-MM-DD, venue-local). Used for fallback matching.
+   *  For multi-day requests this is the FIRST day of the range. */
   workDate?: string;
+  /** Last day of a multi-day request ("Shift dates Jul 12 - Oct 09").
+   *  Absent for single-day requests. Drives the today-forward gate. */
+  endDate?: string;
   /** Start time of the shift in venue-local HH:mm. */
   startTime?: string;
   /** End time of the shift in venue-local HH:mm. */

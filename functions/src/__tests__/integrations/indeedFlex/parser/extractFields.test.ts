@@ -317,3 +317,110 @@ Daily Brief: nothing happened today
     expect(r.missingFields).to.include('expiredJobs');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// Live email format (2026-07-08) — captured from production ingest
+// events. The HTML table renders as label/value on SEPARATE lines
+// after normalizeEmailBody; the original colon-labeled regexes missed
+// every field that matters for matching (venueName in particular).
+// ─────────────────────────────────────────────────────────────────────
+
+const LIVE_NEW_REQUEST_BODY = `
+New job request – Accept now!
+
+Request expires
+
+9 Jul, 11:00 AM EDT
+
+First shift begins in
+
+4 Days
+
+Loader / Crew
+
+ID: 528091
+
+Client
+
+CORT
+
+Shift date
+
+Jul 12, 2026
+
+Shift times
+
+8:00 AM - 2:00 PM EDT
+
+Workers required
+
+3 workers
+
+Venue
+
+CHI (Mansfield, OH) - Ohio State Reformatory - SVC07/43/00
+
+100 Reformatory Rd., Mansfield 44905, US
+
+Job requirements
+
+Heavy Lifting (55 lb max), Background Check (Flex Standard), Flex Standard Drug Test (9-Panel)
+
+Potential earnings
+
+$516.12
+`;
+
+describe('live format (2026-07-08): extractNewRequest', () => {
+  it('extracts every matching-critical field from the line-labeled table', () => {
+    const r = extractNewRequest(LIVE_NEW_REQUEST_BODY);
+    expect(r.event.jobId).to.equal('528091');
+    expect(r.event.venueName).to.equal(
+      'CHI (Mansfield, OH) - Ohio State Reformatory - SVC07/43/00',
+    );
+    expect(r.event.venueAddress).to.equal('100 Reformatory Rd., Mansfield 44905, US');
+    expect(r.event.roleName).to.equal('Loader / Crew');
+    expect(r.event.workDate).to.equal('2026-07-12');
+    expect(r.event.endDate).to.equal(undefined);
+    expect(r.event.headcount).to.equal(3);
+    expect(r.event.startTime).to.equal('08:00');
+    expect(r.event.endTime).to.equal('14:00');
+    expect(r.missingFields).to.have.lengthOf(0);
+  });
+
+  it('captures endDate on a multi-day "Shift dates" range', () => {
+    const body = LIVE_NEW_REQUEST_BODY.replace(
+      'Shift date\n\nJul 12, 2026',
+      'Shift dates\n\nJul 12, 2026 - Oct 09, 2026',
+    );
+    const r = extractNewRequest(body);
+    expect(r.event.workDate).to.equal('2026-07-12');
+    expect(r.event.endDate).to.equal('2026-10-09');
+  });
+
+  it('does not mistake the Client value for the venue', () => {
+    const r = extractNewRequest(LIVE_NEW_REQUEST_BODY);
+    expect(r.event.venueName).to.not.equal('CORT');
+  });
+});
+
+describe('live format (2026-07-08): change_headcount body', () => {
+  it('extracts new + previous headcount from "Workers required now" / "out of"', () => {
+    const body = `
+Hi, C1 Staffing LLC
+
+Domino's, Kentucky, 1638 Dolwick Dr., Erlanger 41018, US have changed the following bookings.
+
+Industrial General Labor
+Jul 07, 2026 - 9am EDT - 7:30pm EDT
+
+Workers required now: 1
+
+(Decreased by 1 out of 2)
+`;
+    const r = extractChangeHeadcount(body);
+    expect(r.event.newHeadcount).to.equal(1);
+    expect(r.event.previousHeadcount).to.equal(2);
+    expect(r.event.workDate).to.equal('2026-07-07');
+  });
+});

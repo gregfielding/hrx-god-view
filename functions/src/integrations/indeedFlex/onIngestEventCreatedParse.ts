@@ -49,6 +49,31 @@ if (!admin.apps.length) {
 
 const FieldValue = admin.firestore.FieldValue;
 
+/** Today as YYYY-MM-DD in Central time (C1 HQ). Venue-local would be
+ *  more precise, but a ±1-day skew only matters for shifts that are
+ *  already ending — acceptable for the gate below. */
+export function todayCentral(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(new Date());
+}
+
+/**
+ * Today-forward gate (Greg, 2026-07-08: "we only need jobs from today
+ * forward"). True when the event is entirely in the past — its last
+ * relevant day (`endDate` for ranges, else `workDate`) is before
+ * today. Dateless events pass the gate (can't prove they're stale;
+ * the recruiter triages).
+ */
+export function isPastDated(event: { workDate?: string; endDate?: string }): boolean {
+  const last = event.endDate ?? event.workDate;
+  return typeof last === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(last) && last < todayCentral();
+}
+
+function combinePastNote(notes: string | undefined, past: boolean): string | undefined {
+  if (!past) return notes;
+  const marker = 'auto-archived: shift date entirely in the past (today-forward gate)';
+  return notes ? `${notes} | ${marker}` : marker;
+}
+
 export const onIngestEventCreatedParse = onDocumentCreated(
   {
     document: 'tenants/{tenantId}/external_ingest_events/{eventHash}',
@@ -131,6 +156,10 @@ export const onIngestEventCreatedParse = onDocumentCreated(
         .collection('external_shift_requests')
         .doc(docId);
       const now = new Date().toISOString();
+      // Today-forward gate: entirely-past events are archived on
+      // arrival ('superseded' skips both the matcher trigger and the
+      // needs-review queue) instead of piling up as recruiter work.
+      const past = isPastDated(parsed.event as { workDate?: string; endDate?: string });
       const reqDoc: Omit<ExternalShiftRequest, 'createdAt' | 'updatedAt'> & {
         createdAt: FirebaseFirestore.FieldValue;
         updatedAt: FirebaseFirestore.FieldValue;
@@ -144,10 +173,12 @@ export const onIngestEventCreatedParse = onDocumentCreated(
         event: parsed.event,
         confidence: parsed.confidence,
         parseSource: parsed.parseSource,
-        status: 'needs_review',
+        status: past ? 'superseded' : 'needs_review',
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
-        ...(parsed.notes ? { parseNotes: parsed.notes } : {}),
+        ...(combinePastNote(parsed.notes, past)
+          ? { parseNotes: combinePastNote(parsed.notes, past) }
+          : {}),
       };
       // Strip the ISO `now` placeholder — Firestore timestamps come from
       // the FieldValue we already set.

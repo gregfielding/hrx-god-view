@@ -162,7 +162,14 @@ export async function llmExtract(input: LlmExtractInput): Promise<LlmExtractResu
     // because `response_format: json_object` already constrains the
     // sampling; we don't actually need 0 for this task).
     response_format: { type: 'json_object' },
-    max_completion_tokens: 800,
+    // **2026-07-08 fix** — 800 starved gpt-5's reasoning budget: the
+    // model spent the whole cap on internal reasoning tokens and
+    // returned EMPTY content ("json parse failed; returned empty
+    // object" on every hybrid parse since the model upgrade). Same
+    // failure mode + same fix as the Fieldglass extractor (44cce8ba,
+    // 1200→6000): reasoning models need the completion cap to cover
+    // reasoning + output combined.
+    max_completion_tokens: 6000,
   });
 
   const raw = completion.choices?.[0]?.message?.content ?? '';

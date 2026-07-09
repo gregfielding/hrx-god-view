@@ -61,3 +61,32 @@ describe('classifyEvent', () => {
     expect(classifyEvent({ subject: '' })).to.be.null;
   });
 });
+
+describe('live format subjects (2026-07-08)', () => {
+  it('classifies "bookings have been removed" as cancel_booking', () => {
+    expect(
+      classifyEvent({ subject: 'Your upcoming bookings have been removed' }),
+    ).to.equal('cancel_booking');
+  });
+
+  it('classifies "bookings have been changed" via body hint', () => {
+    expect(
+      classifyEvent({
+        subject: 'Some of your upcoming bookings have been changed',
+        bodyHint: 'Workers required now: 1 (Decreased by 1 out of 2)',
+      }),
+    ).to.equal('change_headcount');
+    expect(
+      classifyEvent({
+        subject: 'Some of your upcoming bookings have been changed',
+        bodyHint: 'Jul 07, 2026 - 10am EDT - 6:30pm EDT',
+      }),
+    ).to.equal('change_time');
+  });
+
+  it('classifies "details for your Job NNN have changed"', () => {
+    expect(
+      classifyEvent({ subject: 'Some of the details for your Job 528091 have changed.' }),
+    ).to.equal('change_time');
+  });
+});

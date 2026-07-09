@@ -52,14 +52,31 @@ export function classifyEvent(input: ClassifyInput): IndeedFlexEventType | null 
     return 'new_request';
   }
 
-  // `cancel_booking` — "removed the following bookings" / "cancelled"
+  // `cancel_booking` — "removed the following bookings" / "cancelled" /
+  // live-format "Your upcoming bookings have been removed" (2026-07-08).
   if (
     /\bremoved the following\b/.test(subject) ||
+    /\bbookings have been removed\b/.test(subject) ||
     /\bbooking cancel/.test(subject) ||
     /\bcanceled\b/.test(subject) ||
     /\bcancelled\b/.test(subject)
   ) {
     return 'cancel_booking';
+  }
+
+  // Live-format change notices (2026-07-08):
+  //   "Some of your upcoming bookings have been changed"
+  //   "Some of the details for your Job 528091 have changed."
+  // Disambiguate headcount vs time from the body ("Workers required
+  // now: 1" appears only on headcount changes).
+  if (
+    /\bbookings have been changed\b/.test(subject) ||
+    /\bdetails for your job\b/.test(subject)
+  ) {
+    if (/\bworkers required now\b/.test(bodyHint)) {
+      return 'change_headcount';
+    }
+    return 'change_time';
   }
 
   // `no_show` — "did not turn up" / "no show"

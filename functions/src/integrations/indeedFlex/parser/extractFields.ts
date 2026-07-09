@@ -166,29 +166,95 @@ export function extractTimeRange(
 }
 
 /**
- * Extract the venue / location name. Heuristic — Indeed Flex emails
- * label the venue with one of several prefixes:
+ * Extract the venue / location name. Two formats:
  *
- *   "Venue: <name>" / "Location: <name>" / "Site: <name>" / "Client: <name>"
+ *   1. Colon-labeled (the original brief): "Venue: <name>" /
+ *      "Location: <name>" / "Site: <name>"
+ *   2. **Line-labeled (2026-07-08, live-format fix)** — the real HTML
+ *      emails render field tables as label/value on separate lines
+ *      after `normalizeEmailBody` strips the `<td>`s:
  *
- * Returns the trimmed first-line value, or undefined.
+ *        Venue
+ *        CHI (Mansfield, OH) - Ohio State Reformatory - SVC07/43/00
+ *        100 Reformatory Rd., Mansfield 44905, US
+ *
+ * Returns the trimmed venue line, or undefined. (`Client` was dropped
+ * from the label alternation — it's a separate field in the live
+ * format, e.g. "Client\nCORT", and must not shadow the venue.)
  */
 export function extractVenue(body: string): string | undefined {
-  const m = body.match(/\b(?:venue|location|site|client)\s*[:\-]\s*([^\n]+)/i);
-  return m ? m[1].trim().replace(/[.,;]+$/, '') : undefined;
+  const labeled = body.match(/\b(?:venue|location|site)\s*[:\-]\s*([^\n]+)/i);
+  if (labeled) return labeled[1].trim().replace(/[.,;]+$/, '');
+  const lineLabeled = body.match(/^venue\s*\n+([^\n]{2,120})/im);
+  if (lineLabeled) return lineLabeled[1].trim().replace(/[.,;]+$/, '');
+  return undefined;
 }
 
-/** Same heuristic for the role / position name. */
+/**
+ * Extract the street address printed on the line under the venue name
+ * (live format only): "100 Reformatory Rd., Mansfield 44905, US".
+ * Conservative — the candidate line must contain a digit and a comma
+ * or it's discarded.
+ */
+export function extractVenueAddress(body: string): string | undefined {
+  const m = body.match(/^venue\s*\n+[^\n]{2,120}\n+([^\n]{4,160})/im);
+  if (!m) return undefined;
+  const candidate = m[1].trim().replace(/[.;]+$/, '');
+  if (!/\d/.test(candidate) || !candidate.includes(',')) return undefined;
+  // Don't swallow the next field label ("Job requirements", etc.).
+  if (/^(job requirements|potential earnings|shift|workers|accept|decline)/i.test(candidate)) {
+    return undefined;
+  }
+  return candidate;
+}
+
+/** Same heuristic for the role / position name. Live-format addition:
+ *  the role is the standalone line directly above the `ID: NNNNNN`
+ *  line (e.g. "Loader / Crew\nID: 528091"). */
 export function extractRole(body: string): string | undefined {
   const m = body.match(/\b(?:role|position|job\s*title|title)\s*[:\-]\s*([^\n]+)/i);
-  return m ? m[1].trim().replace(/[.,;]+$/, '') : undefined;
+  if (m) return m[1].trim().replace(/[.,;]+$/, '');
+  const aboveId = body.match(/^([^\n]{2,80})\n+ID:\s*\d{4,8}\b/im);
+  if (aboveId) {
+    const candidate = aboveId[1].trim().replace(/[.,;]+$/, '');
+    // Reject obvious non-role lines (countdowns, labels).
+    if (!/^(request|first shift|action needed|\d)/i.test(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+/**
+ * Live-format shift date range: "Shift date\nJul 12, 2026" or
+ * "Shift dates\nJul 12, 2026 - Oct 09, 2026". Returns both ends as
+ * YYYY-MM-DD (end undefined for single-day). Falls back to the
+ * body-wide `extractDate` when the label is absent.
+ */
+export function extractShiftDateRange(body: string): { start?: string; end?: string } {
+  const line = body.match(/^shift dates?\s*\n+([^\n]+)/im);
+  if (line) {
+    const dates = Array.from(
+      line[1].matchAll(
+        /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2}),?\s+(20\d{2})\b/gi,
+      ),
+    ).map((m) => {
+      const parsed = Date.parse(`${m[1]} ${m[2]}, ${m[3]}`);
+      if (!Number.isFinite(parsed)) return undefined;
+      const d = new Date(parsed);
+      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+    }).filter((x): x is string => Boolean(x));
+    if (dates.length > 0) {
+      return { start: dates[0], end: dates.length > 1 ? dates[dates.length - 1] : undefined };
+    }
+  }
+  const single = extractDate(body);
+  return { start: single };
 }
 
 /** Headcount extraction. Looks for "Number of workers: 3" or "Workers
  *  required: 3" or just "3 workers". */
 export function extractHeadcount(body: string): number | undefined {
   const labeled = body.match(
-    /\b(?:number of workers|workers needed|workers required|headcount)\s*[:\-]?\s*(\d{1,3})\b/i,
+    /\b(?:number of workers|workers needed|workers required(?:\s+now)?|headcount)\s*[:\-]?\s*(\d{1,3})\b/i,
   );
   if (labeled) return Number(labeled[1]);
   return undefined;
@@ -210,9 +276,10 @@ export function extractPayRateUsd(body: string): number | undefined {
 export function extractNewRequest(body: string): ExtractionResult<IndeedFlexEventNewRequest> {
   const jobId = extractJobId(body);
   const headcount = extractHeadcount(body);
-  const workDate = extractDate(body);
+  const { start: workDate, end: endDate } = extractShiftDateRange(body);
   const { start: startTime, end: endTime } = extractTimeRange(body);
   const venueName = extractVenue(body);
+  const venueAddress = extractVenueAddress(body);
   const roleName = extractRole(body);
   const payRateUsd = extractPayRateUsd(body);
 
@@ -233,9 +300,11 @@ export function extractNewRequest(body: string): ExtractionResult<IndeedFlexEven
       jobId: jobId ?? '',
       headcount: headcount ?? 0,
       workDate,
+      endDate,
       startTime,
       endTime,
       venueName,
+      venueAddress,
       roleName,
       payRateUsd,
     },
@@ -255,6 +324,16 @@ export function extractChangeHeadcount(
   let previousHeadcount: number | undefined = previous ? Number(previous[1]) : undefined;
   let newHeadcount: number | undefined = next ? Number(next[1]) : undefined;
 
+  // Live format (2026-07-08): "Workers required now: 1" then
+  // "(Decreased by 1 out of 2)" — the labeled extractor gets the new
+  // count; "out of N" carries the previous count.
+  const liveNew = body.match(/\bworkers required now\s*[:\-]?\s*(\d{1,3})\b/i);
+  if (liveNew) newHeadcount = Number(liveNew[1]);
+  if (previousHeadcount === undefined) {
+    const outOf = body.match(/\b(?:in|de)creased by \d{1,3} out of (\d{1,3})\b/i);
+    if (outOf) previousHeadcount = Number(outOf[1]);
+  }
+
   // Fallback to the standalone headcount when only one number was found.
   if (newHeadcount === undefined) {
     const single = extractHeadcount(body);
@@ -264,7 +343,7 @@ export function extractChangeHeadcount(
   const jobId = extractJobId(body);
   const workDate = extractDate(body);
   const { start: startTime, end: endTime } = extractTimeRange(body);
-  const venueName = extractVenue(body);
+  const venueName = extractVenue(body) ?? extractBookingHeaderVenue(body);
   const roleName = extractRole(body);
 
   const missingFields: string[] = [];
@@ -326,6 +405,22 @@ export function extractChangeTime(
   };
 }
 
+/**
+ * Live-format change/removal header (2026-07-08):
+ *
+ *   "Hi, C1 Staffing LLC
+ *    <Client>, <Venue>, <street address> have removed the following bookings."
+ *
+ * Returns the whole client+venue+address segment. Too jumbled to split
+ * reliably by regex (client names contain commas — "Continental
+ * Battery Systems, Inc."), so callers keep it raw and let the LLM
+ * refine `venueName` in production.
+ */
+export function extractBookingHeaderVenue(body: string): string | undefined {
+  const m = body.match(/^(.{4,200}?)\s+have (?:removed|changed) the following bookings/im);
+  return m ? m[1].trim() : undefined;
+}
+
 export function extractCancelBooking(
   body: string,
 ): ExtractionResult<IndeedFlexEventCancelBooking> {
@@ -343,10 +438,17 @@ export function extractCancelBooking(
       .slice(1) // drop the header line itself
       .map((l) => l.trim())
       .filter((l) => l && !/^(?:venue|location|site|client|date|time|role|position)/i.test(l));
-    for (const line of lines) {
+    // Live format (2026-07-08): the removal list is "ROLE\n<date> -
+    // <time> - <time>" pairs with NO worker names — the old name-shape
+    // regex was capturing the role ("Warehouse Operative") ten times.
+    // A line directly followed by a date line is a role header, not a
+    // person.
+    const dateLineRe = /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2},?\s+20\d{2}\b/i;
+    for (let i = 0; i < lines.length; i++) {
       if (workerNames.length >= 10) break;
+      if (lines[i + 1] && dateLineRe.test(lines[i + 1])) continue;
       // Strip leading bullet / dash characters.
-      const name = line.replace(/^[-•*\d.\s]+/, '').trim();
+      const name = lines[i].replace(/^[-•*\d.\s]+/, '').trim();
       if (!name || name.length > 80) continue;
       // Look like a person name? at least two words, mostly letters.
       if (/^[A-Z][a-z']+(?:\s+[A-Z][a-z'.-]+){1,4}$/.test(name)) {
@@ -355,9 +457,21 @@ export function extractCancelBooking(
     }
   }
 
-  const workDate = extractDate(body);
+  // Live format: the removal list spans many dates ("Jul 09 … Jul 31").
+  // First date = workDate, last = endDate so the today-forward gate
+  // treats a still-running range as current.
+  const allDates = Array.from(
+    body.matchAll(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2}),?\s+(20\d{2})\b/gi),
+  ).map((m) => {
+    const parsed = Date.parse(`${m[1]} ${m[2]}, ${m[3]}`);
+    if (!Number.isFinite(parsed)) return undefined;
+    const d = new Date(parsed);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  }).filter((x): x is string => Boolean(x)).sort();
+  const workDate = allDates[0] ?? extractDate(body);
+  const endDate = allDates.length > 1 ? allDates[allDates.length - 1] : undefined;
   const { start: startTime, end: endTime } = extractTimeRange(body);
-  const venueName = extractVenue(body);
+  const venueName = extractVenue(body) ?? extractBookingHeaderVenue(body);
   const roleName = extractRole(body);
   const reasonMatch = body.match(/\breason\s*[:\-]\s*([^\n]+)/i);
   const reason = reasonMatch ? reasonMatch[1].trim().replace(/[.,;]+$/, '') : undefined;
@@ -373,6 +487,7 @@ export function extractCancelBooking(
       workerNames,
       reason,
       workDate,
+      endDate,
       startTime,
       endTime,
       venueName,
