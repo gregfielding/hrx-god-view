@@ -16,6 +16,7 @@ import { sendNotificationAndPush } from './messaging/unifiedWorkerNotifications'
 import { normalizeUserPhoneToE164 } from './utils/phoneE164Normalize';
 import { buildWorkerJobPostUrl } from './utils/workerUrls';
 import { resolveRadiusRecipientUids } from './jobOrderAutoMessagingRadius';
+import { serverGeocodeSite } from './integrations/fieldglass/serverGeocode';
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -51,6 +52,110 @@ function buildMessages(city: string, url: string, es: boolean): { sms: string; p
     pushTitle: 'New shift posted',
     pushBody: sms,
   };
+}
+
+function validCoords(c: unknown): c is { lat: number; lng: number } {
+  const o = c as { lat?: unknown; lng?: unknown } | null | undefined;
+  return Number.isFinite(o?.lat as number) && Number.isFinite(o?.lng as number);
+}
+
+/**
+ * Worksite coordinates for a job order, with fallback + write-through
+ * stamp (2026-07-09, Greg's ORS Nasco JO #297: manually-created JOs
+ * never get `worksiteCoordinates` — only the Fieldglass orchestrator
+ * stamps them — so Worker Reach reported "no coordinates" even though
+ * the linked CRM location had them).
+ *
+ * Chain: JO doc → linked CRM location (via the JO's own
+ * companyId+locationId/worksiteId, then the child account's
+ * companyId+companyLocationId) → server geocode of worksiteAddress.
+ * Any hit is stamped onto the JO (and a coord-less location doc) so
+ * the next read is direct.
+ */
+export async function resolveWorksiteCoordinates(
+  tenantId: string,
+  jobOrderId: string,
+  jobOrder: admin.firestore.DocumentData,
+): Promise<{ lat: number; lng: number } | null> {
+  if (validCoords(jobOrder.worksiteCoordinates)) {
+    return jobOrder.worksiteCoordinates as { lat: number; lng: number };
+  }
+
+  const stampJo = async (coords: { lat: number; lng: number }) => {
+    await db.doc(`tenants/${tenantId}/job_orders/${jobOrderId}`).set(
+      { worksiteCoordinates: coords, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+      { merge: true },
+    );
+    logger.info('jobOrderAutoMessaging: worksiteCoordinates backfilled on JO', {
+      tenantId,
+      jobOrderId,
+      coords,
+    });
+  };
+
+  // Candidate (companyId, locationId) pairs — the JO's own linkage first,
+  // then the child account's.
+  const pairs: Array<{ companyId?: unknown; locationId?: unknown }> = [
+    { companyId: jobOrder.companyId, locationId: jobOrder.locationId ?? jobOrder.worksiteId },
+  ];
+  const childId = jobOrder.recruiterAccountId ?? jobOrder.accountId;
+  if (typeof childId === 'string' && childId.trim()) {
+    const acc = await db.doc(`tenants/${tenantId}/accounts/${childId}`).get();
+    if (acc.exists) {
+      pairs.push({ companyId: acc.get('companyId'), locationId: acc.get('companyLocationId') });
+    }
+  }
+  for (const { companyId, locationId } of pairs) {
+    if (typeof companyId !== 'string' || !companyId || typeof locationId !== 'string' || !locationId) continue;
+    const loc = await db.doc(`tenants/${tenantId}/crm_companies/${companyId}/locations/${locationId}`).get();
+    if (!loc.exists) continue;
+    const coords = loc.get('coordinates');
+    if (validCoords(coords)) {
+      await stampJo(coords);
+      return coords;
+    }
+    // Location exists but has no coords — geocode its address and heal both.
+    const street = String(loc.get('address') ?? '').trim();
+    const city = String(loc.get('city') ?? '').trim();
+    if (street || city) {
+      const hit = await serverGeocodeSite({
+        siteName: street || String(loc.get('name') ?? ''),
+        city: city || undefined,
+        state: String(loc.get('state') ?? '').trim() || undefined,
+        zip: String(loc.get('zipCode') ?? '').trim() || undefined,
+      }).catch(() => null);
+      if (hit) {
+        const coords = { lat: hit.lat, lng: hit.lng };
+        await loc.ref.set(
+          { coordinates: coords, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+          { merge: true },
+        );
+        await stampJo(coords);
+        return coords;
+      }
+    }
+  }
+
+  // Last resort: geocode the JO's own worksiteAddress.
+  const wa = jobOrder.worksiteAddress as
+    | { street?: unknown; city?: unknown; state?: unknown; zip?: unknown; zipCode?: unknown }
+    | undefined;
+  const street = String(wa?.street ?? '').trim();
+  const waCity = String(wa?.city ?? '').trim();
+  if (street && waCity) {
+    const hit = await serverGeocodeSite({
+      siteName: street,
+      city: waCity,
+      state: String(wa?.state ?? '').trim() || undefined,
+      zip: String(wa?.zip ?? wa?.zipCode ?? '').trim() || undefined,
+    }).catch(() => null);
+    if (hit) {
+      const coords = { lat: hit.lat, lng: hit.lng };
+      await stampJo(coords);
+      return coords;
+    }
+  }
+  return null;
 }
 
 function resolveCityName(jobOrder: admin.firestore.DocumentData): string {
@@ -289,15 +394,16 @@ export async function runJobOrderAutoMessagingForShift(
   const radiusCfg = jobOrder.autoMessagingSmartRadius as
     | { miles?: unknown; maxRecipients?: unknown }
     | undefined;
-  const radiusCenter = jobOrder.worksiteCoordinates as
-    | { lat?: unknown; lng?: unknown }
-    | undefined;
   const radiusMiles = Number(options.radiusMilesOverride ?? radiusCfg?.miles);
-  const radiusActive =
-    Number.isFinite(radiusMiles) &&
-    radiusMiles > 0 &&
-    Number.isFinite(radiusCenter?.lat as number) &&
-    Number.isFinite(radiusCenter?.lng as number);
+  // Coordinate fallback (2026-07-09): manual JOs lack worksiteCoordinates;
+  // resolve from the linked CRM location / geocode and stamp for next time.
+  let radiusCenter: { lat: number; lng: number } | null = validCoords(jobOrder.worksiteCoordinates)
+    ? (jobOrder.worksiteCoordinates as { lat: number; lng: number })
+    : null;
+  if (!radiusCenter && Number.isFinite(radiusMiles) && radiusMiles > 0) {
+    radiusCenter = await resolveWorksiteCoordinates(tenantId, jobOrderId, jobOrder).catch(() => null);
+  }
+  const radiusActive = Number.isFinite(radiusMiles) && radiusMiles > 0 && radiusCenter != null;
 
   // Worker Reach blasts are radius-ONLY: the preview the recruiter confirmed
   // counted radius workers, so group members must not silently join the send.
@@ -728,14 +834,16 @@ export const previewJobOrderWorkerReach = onCall(
     const joSnap = await db.doc(`tenants/${tenantId}/job_orders/${jobOrderId}`).get();
     if (!joSnap.exists) throw new HttpsError('not-found', 'Job order not found.');
     const jobOrder = joSnap.data()!;
-    const center = jobOrder.worksiteCoordinates as { lat?: unknown; lng?: unknown } | undefined;
-    if (!Number.isFinite(center?.lat as number) || !Number.isFinite(center?.lng as number)) {
+    // Fallback chain + write-through stamp — manual JOs don't carry
+    // worksiteCoordinates (2026-07-09, ORS Nasco #297).
+    const center = await resolveWorksiteCoordinates(tenantId, jobOrderId, jobOrder).catch(() => null);
+    if (!center) {
       return { ok: false, reason: 'no_coordinates' };
     }
 
     const resolved = await resolveRadiusRecipientUids(db, {
       tenantId,
-      center: { lat: center!.lat as number, lng: center!.lng as number },
+      center,
       miles: radiusMiles,
       maxRecipients: 200,
     });
