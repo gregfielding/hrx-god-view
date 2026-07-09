@@ -33,7 +33,7 @@ import { DirectMessengerProvider } from './contexts/DirectMessengerContext';
 import { ChatGPTProvider } from './contexts/ChatGPTContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import SlackProtectedRoute from './components/SlackProtectedRoute';
-import { Box, Typography } from '@mui/material';
+import { Box, CircularProgress, Typography } from '@mui/material';
 import TenantsTable from './pages/Admin/TenantsTable';
 import AgencyProfile from './pages/AgencyProfile';
 import TenantWorkforce from './pages/TenantViews/TenantWorkforce';
@@ -205,6 +205,42 @@ const WorkerSupport = C1WorkerSupport;
 // Shared constant — see src/utils/googleMapsLoader.ts (all loaders must
 // build the identical script URL or the Maps API gets torn down/reloaded).
 const googleMapsLibraries = GOOGLE_MAPS_LIBRARIES;
+
+/**
+ * Two-phase mount for heavy route components (2026-07-09, Greg: "clicked
+ * the table row and the address bar changed, but navigation stayed on
+ * the job orders layout").
+ *
+ * React Router v7 performs client-side navigations inside
+ * React.startTransition. A transition render is RESTARTED whenever an
+ * urgent update interrupts it — and pages with live Firestore
+ * subscriptions (job orders list, notification badges, messenger) fire
+ * urgent updates constantly. When the destination component's first
+ * render is expensive (RecruiterJobOrderDetail is the biggest page in
+ * the app), the transition can starve indefinitely: the URL updates but
+ * the old screen never swaps. Direct URL loads were unaffected (full
+ * page load = no transition), which is why this bug kept reading as "a
+ * stale tab".
+ *
+ * This wrapper makes the transition commit a trivial skeleton (cannot
+ * be outrun), then mounts the real page in a post-commit urgent pass.
+ */
+function DeferredMount({ children }: { children: React.ReactNode }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  if (!mounted) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', pt: 8 }}>
+        <CircularProgress size={28} />
+      </Box>
+    );
+  }
+  return <>{children}</>;
+}
+
+
 
 function UserGroupDetailsWrapper() {
   const { groupId } = useParams();
@@ -1317,7 +1353,7 @@ function App() {
           <Route path="my-queue" element={<Navigate to="/readiness/employee-readiness" replace />} />
           <Route path="onboarding" element={<Navigate to="/jobs/job-orders" replace />} />
           <Route path="job-orders/new" element={<NewJobOrder />} />
-          <Route path="job-orders/:jobOrderId" element={<RecruiterJobOrderDetail />} />
+          <Route path="job-orders/:jobOrderId" element={<DeferredMount><RecruiterJobOrderDetail /></DeferredMount>} />
           <Route path="jobs-board" element={
             <JobsBoardAccessGuard>
               <JobsBoard />
