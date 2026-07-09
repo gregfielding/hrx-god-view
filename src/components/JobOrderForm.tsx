@@ -2712,6 +2712,29 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         safetyContactId: dataToUse.safetyContactId || '',
         invoiceContactId: dataToUse.invoiceContactId || '',
         customUniformRequirements: dataToUse.customUniformRequirements || undefined,
+        // Default Requirements fields — mirror to TOP-LEVEL exactly like
+        // the create path (2026-07-09, Greg's "added skills not saving"):
+        // the auto-save wrote these only under stageData.scoping.compliance,
+        // but the loader prefers the top-level arrays stamped at creation,
+        // so every edit on the Default Requirements tab was silently
+        // shadowed by the stale (usually empty) top-level value on reload.
+        // Empty array/string is a valid CLEAR — do not strip to undefined.
+        additionalScreenings: (dataToUse as any).additionalScreenings || [],
+        licensesCerts: (dataToUse as any).licensesCerts || [],
+        languagesRequired: (dataToUse as any).languagesRequired || [],
+        skillsRequired: (dataToUse as any).skillsRequired || [],
+        physicalRequirements: (dataToUse as any).physicalRequirements || [],
+        ppeRequirements: (dataToUse as any).ppeRequirements || [],
+        ppeProvidedBy: (() => {
+          const list = Array.isArray((dataToUse as any).ppeRequirements)
+            ? (dataToUse as any).ppeRequirements
+            : [];
+          if (list.length === 0) return '';
+          return (dataToUse as any).ppeProvidedBy || 'company';
+        })(),
+        dressCode: Array.isArray((dataToUse as any).dressCode) ? (dataToUse as any).dressCode : [],
+        experienceRequired: (dataToUse as any).experienceRequired || '',
+        educationRequired: (dataToUse as any).educationRequired || '',
         screeningPackageId: String((dataToUse as any).screeningPackageId ?? '').trim() || null,
         screeningPackageName: String((dataToUse as any).screeningPackageName ?? '').trim() || null,
         // Career-only top-level SUTA / FUTA. Gig orders persist these
