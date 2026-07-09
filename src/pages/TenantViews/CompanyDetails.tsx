@@ -5437,6 +5437,43 @@ const LocationsTab: React.FC<{ company: any; currentTab: number; contacts?: any[
   });
   const autocompleteRef = useRef<any>(null);
 
+  // STABLE handler (2026-07-09) — inline onPlaceChanged props churn the
+  // place_changed listener on every re-render and drop suggestion clicks.
+  // Same fix as RecruiterAccountDetails' Add New Location dialog.
+  const handleAddLocationPlaceChanged = useCallback(() => {
+    const place = autocompleteRef.current?.getPlace();
+    if (!place) return;
+    const addressComponents = place.address_components || [];
+    let streetNumber = '';
+    let route = '';
+    let city = '';
+    let state = '';
+    let zipCode = '';
+    let country = 'USA';
+    addressComponents.forEach((component: any) => {
+      const types = component.types || [];
+      if (types.includes('street_number')) streetNumber = component.long_name;
+      else if (types.includes('route')) route = component.long_name;
+      else if (types.includes('locality')) city = component.long_name;
+      else if (types.includes('administrative_area_level_1')) state = component.short_name;
+      else if (types.includes('postal_code')) zipCode = component.long_name;
+      else if (types.includes('country')) country = component.short_name;
+    });
+    const fullAddress =
+      streetNumber && route ? `${streetNumber} ${route}` : place.formatted_address || '';
+    if (!fullAddress && !city) return;
+    const loc = place.geometry?.location;
+    setNewLocation((prev: any) => ({
+      ...prev,
+      address: fullAddress || prev.address,
+      city: city || prev.city,
+      state: state || prev.state,
+      zipCode: zipCode || prev.zipCode,
+      country,
+      coordinates: loc ? { lat: loc.lat(), lng: loc.lng() } : prev.coordinates,
+    }));
+  }, []);
+
   // Enrich locations with contact and deal counts from company contacts/deals
   const enrichedLocations = React.useMemo(() => {
     return locations.map((loc) => {
@@ -5768,53 +5805,11 @@ const LocationsTab: React.FC<{ company: any; currentTab: number; contacts?: any[
                       console.log('GoogleAutocomplete onLoad called, ref:', ref);
                       autocompleteRef.current = ref;
                     }}
-                    onPlaceChanged={() => {
-                      const place = autocompleteRef.current.getPlace();
-                      if (place.geometry && place.geometry.location) {
-                        const lat = place.geometry.location.lat();
-                        const lng = place.geometry.location.lng();
-                        
-                        // Extract address components
-                        const addressComponents = place.address_components || [];
-                        let streetNumber = '';
-                        let route = '';
-                        let city = '';
-                        let state = '';
-                        let zipCode = '';
-                        let country = 'USA';
-
-                        addressComponents.forEach((component) => {
-                          const types = component.types;
-                          if (types.includes('street_number')) {
-                            streetNumber = component.long_name;
-                          } else if (types.includes('route')) {
-                            route = component.long_name;
-                          } else if (types.includes('locality')) {
-                            city = component.long_name;
-                          } else if (types.includes('administrative_area_level_1')) {
-                            state = component.short_name;
-                          } else if (types.includes('postal_code')) {
-                            zipCode = component.long_name;
-                          } else if (types.includes('country')) {
-                            country = component.short_name;
-                          }
-                        });
-
-                        const fullAddress = streetNumber && route ? `${streetNumber} ${route}` : place.formatted_address || '';
-
-                        setNewLocation(prev => ({
-                          ...prev,
-                          address: fullAddress,
-                          city,
-                          state,
-                          zipCode,
-                          country,
-                          coordinates: {
-                            lat,
-                            lng
-                          }
-                        }));
-                      }
+                    onPlaceChanged={handleAddLocationPlaceChanged}
+                    options={{
+                      componentRestrictions: { country: 'us' },
+                      fields: ['address_components', 'formatted_address', 'geometry', 'place_id'],
+                      types: ['address'],
                     }}
                   >
                     <TextField

@@ -1702,6 +1702,47 @@ const RecruiterAccountDetails: React.FC = () => {
   const [addLocationSubmitting, setAddLocationSubmitting] = useState(false);
   const addLocationAutocompleteRef = useRef<any>(null);
 
+  // STABLE handler (2026-07-09, Greg: "can't click and select the google
+  // address"). @react-google-maps/api re-binds the place_changed listener
+  // whenever the prop identity changes — an inline arrow on this page
+  // (which re-renders constantly from its live Firestore subscriptions)
+  // churned the listener and dropped suggestion clicks. Mirrors the
+  // proven AddWorkerManuallyWizard pattern, plus a formatted_address
+  // fallback so a geometry-less Place doesn't get silently eaten.
+  const handleAddLocationPlaceChanged = useCallback(() => {
+    const place = addLocationAutocompleteRef.current?.getPlace();
+    if (!place) return;
+    const addressComponents = place.address_components || [];
+    let streetNumber = '';
+    let route = '';
+    let city = '';
+    let state = '';
+    let zipCode = '';
+    let country = 'USA';
+    addressComponents.forEach((component: any) => {
+      const types = component.types || [];
+      if (types.includes('street_number')) streetNumber = component.long_name;
+      else if (types.includes('route')) route = component.long_name;
+      else if (types.includes('locality')) city = component.long_name;
+      else if (types.includes('administrative_area_level_1')) state = component.short_name;
+      else if (types.includes('postal_code')) zipCode = component.long_name;
+      else if (types.includes('country')) country = component.short_name;
+    });
+    const fullAddress =
+      streetNumber && route ? `${streetNumber} ${route}` : place.formatted_address || '';
+    if (!fullAddress && !city) return;
+    const loc = place.geometry?.location;
+    setAddLocationForm((prev) => ({
+      ...prev,
+      address: fullAddress || prev.address,
+      city: city || prev.city,
+      state: state || prev.state,
+      zipCode: zipCode || prev.zipCode,
+      country,
+      coordinates: loc ? { lat: loc.lat(), lng: loc.lng() } : prev.coordinates,
+    }));
+  }, []);
+
   // Contacts tab: contacts from all account-linked companies
   type AccountContactRow = {
     id: string;
@@ -6956,38 +6997,11 @@ const RecruiterAccountDetails: React.FC = () => {
                   onLoad={(ref: any) => {
                     addLocationAutocompleteRef.current = ref;
                   }}
-                  onPlaceChanged={() => {
-                    const place = addLocationAutocompleteRef.current?.getPlace();
-                    if (place?.geometry?.location) {
-                      const lat = place.geometry.location.lat();
-                      const lng = place.geometry.location.lng();
-                      const addressComponents = place.address_components || [];
-                      let streetNumber = '';
-                      let route = '';
-                      let city = '';
-                      let state = '';
-                      let zipCode = '';
-                      let country = 'USA';
-                      addressComponents.forEach((component: any) => {
-                        const types = component.types;
-                        if (types.includes('street_number')) streetNumber = component.long_name;
-                        else if (types.includes('route')) route = component.long_name;
-                        else if (types.includes('locality')) city = component.long_name;
-                        else if (types.includes('administrative_area_level_1')) state = component.short_name;
-                        else if (types.includes('postal_code')) zipCode = component.long_name;
-                        else if (types.includes('country')) country = component.short_name;
-                      });
-                      const fullAddress = streetNumber && route ? `${streetNumber} ${route}` : place.formatted_address || '';
-                      setAddLocationForm((prev) => ({
-                        ...prev,
-                        address: fullAddress,
-                        city,
-                        state,
-                        zipCode,
-                        country,
-                        coordinates: { lat, lng },
-                      }));
-                    }
+                  onPlaceChanged={handleAddLocationPlaceChanged}
+                  options={{
+                    componentRestrictions: { country: 'us' },
+                    fields: ['address_components', 'formatted_address', 'geometry', 'place_id'],
+                    types: ['address'],
                   }}
                 >
                   <TextField
