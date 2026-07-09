@@ -45,6 +45,7 @@ import {
   where,
   orderBy,
   deleteField,
+  serverTimestamp,
 } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
@@ -381,12 +382,20 @@ const removeUndefinedValues = (obj: any): any => {
   if (obj === null || obj === undefined) {
     return obj;
   }
-  
+
   if (Array.isArray(obj)) {
     return obj.map(removeUndefinedValues).filter(item => item !== undefined);
   }
-  
+
   if (typeof obj === 'object') {
+    // Only rebuild plain objects. Class instances (Date, Timestamp,
+    // FieldValue sentinels, DocumentReference…) have no enumerable own
+    // props, so rebuilding them via Object.entries collapses them to {} —
+    // which is how job_orders ended up with `createdAt: {}` in prod.
+    const proto = Object.getPrototypeOf(obj);
+    if (proto !== Object.prototype && proto !== null) {
+      return obj;
+    }
     const cleaned: any = {};
     for (const [key, value] of Object.entries(obj)) {
       if (value !== undefined) {
@@ -395,7 +404,7 @@ const removeUndefinedValues = (obj: any): any => {
     }
     return cleaned;
   }
-  
+
   return obj;
 };
 
@@ -2763,7 +2772,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           ? { gigPositions: normalizeGigPositionsForPersist(gigPositions as any) }
           : {}),
         stageData: stageDataUpdate,
-        updatedAt: new Date(),
+        updatedAt: serverTimestamp(),
         updatedBy: user.uid,
       } as any;
 
@@ -3287,7 +3296,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         msaSigned: formData.msaSigned || false,
         
         // Metadata
-        updatedAt: new Date(),
+        updatedAt: serverTimestamp(),
         updatedBy: user.uid,
         ...(effectiveRecruiterAccountId ? { recruiterAccountId: effectiveRecruiterAccountId } : {}),
       };
@@ -3331,7 +3340,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           ...jobOrderData,
           jobOrderNumber: nextJobOrderNumber,
           createdBy: user.uid,
-          createdAt: new Date(),
+          createdAt: serverTimestamp(),
           headcountFilled: 0,
         };
 
@@ -3588,7 +3597,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                         try {
                           const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
                           await updateDoc(jobOrderRef, {
-                            updatedAt: new Date(),
+                            updatedAt: serverTimestamp(),
                             updatedBy: user.uid,
                             recruiterAccountId: nextId ? nextId : deleteField(),
                           } as any);
@@ -3710,7 +3719,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                       try {
                         const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
                         const patch: Record<string, unknown> = {
-                          updatedAt: new Date(),
+                          updatedAt: serverTimestamp(),
                           updatedBy: user.uid,
                           recruiterAccountId: nextId ? nextId : deleteField(),
                         };
