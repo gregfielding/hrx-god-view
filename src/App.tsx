@@ -1,6 +1,7 @@
 import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, useParams, useNavigate, useLocation, useSearchParams, Navigate, Outlet } from 'react-router-dom';
-import { LoadScript, Libraries } from '@react-google-maps/api';
+import { LoadScript } from '@react-google-maps/api';
+import { GOOGLE_MAPS_LIBRARIES } from './utils/googleMapsLoader';
 import { logger } from './utils/logger';
 import { getUsersIndexRedirectPath } from './utils/usersLayoutPersistence';
 
@@ -201,7 +202,9 @@ const WorkerProfile = C1WorkerProfile;
 const WorkerSupport = C1WorkerSupport;
 
 // Static libraries array to prevent performance warnings (shared across app)
-const googleMapsLibraries: Libraries = ['places', 'maps'];
+// Shared constant — see src/utils/googleMapsLoader.ts (all loaders must
+// build the identical script URL or the Maps API gets torn down/reloaded).
+const googleMapsLibraries = GOOGLE_MAPS_LIBRARIES;
 
 function UserGroupDetailsWrapper() {
   const { groupId } = useParams();

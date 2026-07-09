@@ -3,6 +3,7 @@ import { Box, Grid, TextField, Typography, Card, CardHeader, CardContent, useThe
 import { Autocomplete } from '@react-google-maps/api';
 import ResumeSuggestionField from '../../common/ResumeSuggestionField';
 import { useLoadScript } from '@react-google-maps/api';
+import { GOOGLE_MAPS_LIBRARIES } from '../../../utils/googleMapsLoader';
 
 type Props = {
   value: any;
@@ -21,7 +22,10 @@ const AddressStep: React.FC<Props> = ({ value, onChange }) => {
   // Load Google Maps script
   const { isLoaded: isGoogleMapsLoaded } = useLoadScript({
     googleMapsApiKey: process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '',
-    libraries: ['places'],
+    // MUST match every other loader (App.tsx LoadScript) — a differing
+    // libraries list builds a different script URL and the lib removes +
+    // re-injects the Maps script, killing live Places widgets app-wide.
+    libraries: GOOGLE_MAPS_LIBRARIES,
   });
 
   /**

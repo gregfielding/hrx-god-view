@@ -65,6 +65,7 @@ import {
   Typography,
 } from '@mui/material';
 import { Autocomplete, useLoadScript } from '@react-google-maps/api';
+import { GOOGLE_MAPS_LIBRARIES } from '../../utils/googleMapsLoader';
 import CloseIcon from '@mui/icons-material/Close';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import VisibilityIcon from '@mui/icons-material/Visibility';
@@ -220,7 +221,10 @@ const AddWorkerManuallyWizard: React.FC<AddWorkerManuallyWizardProps> = ({
   // Place selection is just a convenience autofill, not a gate.
   const { isLoaded: isGoogleMapsLoaded } = useLoadScript({
     googleMapsApiKey: process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '',
-    libraries: ['places'],
+    // MUST match every other loader (App.tsx LoadScript) — a differing
+    // libraries list builds a different script URL and the lib removes +
+    // re-injects the Maps script, killing live Places widgets app-wide.
+    libraries: GOOGLE_MAPS_LIBRARIES,
   });
   const autocompleteRef = React.useRef<google.maps.places.Autocomplete | null>(null);
   const handleAutocompleteLoad = useCallback((autocomplete: google.maps.places.Autocomplete) => {
