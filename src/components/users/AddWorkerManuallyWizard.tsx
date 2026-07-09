@@ -111,6 +111,15 @@ const US_STATES: Array<{ code: string; name: string }> = [
  */
 const WORKER_SECURITY_LEVEL: AdminCreateWorkerSecurityLevel = '2';
 
+/** Identity-stable Places options — an inline object makes the maps
+ *  wrapper call setOptions() on every re-render, resetting the
+ *  prediction session (see 2026-07-09 Add New Location fix). */
+const PLACES_AUTOCOMPLETE_OPTIONS = {
+  componentRestrictions: { country: 'us' },
+  fields: ['address_components', 'formatted_address', 'geometry', 'place_id'],
+  types: ['address'],
+};
+
 interface EntityOption {
   id: string;
   name: string;
@@ -486,11 +495,7 @@ const AddWorkerManuallyWizard: React.FC<AddWorkerManuallyWizardProps> = ({
         <Autocomplete
           onLoad={handleAutocompleteLoad}
           onPlaceChanged={handlePlaceChanged}
-          options={{
-            componentRestrictions: { country: 'us' },
-            fields: ['address_components', 'formatted_address', 'geometry', 'place_id'],
-            types: ['address'],
-          }}
+          options={PLACES_AUTOCOMPLETE_OPTIONS}
         >
           <TextField
             label="Street address"

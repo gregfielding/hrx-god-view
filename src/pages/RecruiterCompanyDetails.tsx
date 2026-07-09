@@ -205,6 +205,21 @@ const CrunchbaseIcon = ({ hasUrl }: { hasUrl: boolean }) => (
   </Box>
 );
 
+/**
+ * Identity-stable Places options (2026-07-09). @react-google-maps/api's
+ * Autocomplete is a PureComponent whose componentDidUpdate re-registers
+ * listeners AND calls autocomplete.setOptions() whenever any prop
+ * identity changes. An inline options object churns setOptions on every
+ * re-render, which resets the prediction session and closes/deadens the
+ * suggestion dropdown — clicks selected nothing. Module-level constant +
+ * useCallback handlers keep the widget untouched across re-renders.
+ */
+const PLACES_AUTOCOMPLETE_OPTIONS = {
+  componentRestrictions: { country: 'us' },
+  fields: ['address_components', 'formatted_address', 'geometry', 'place_id'],
+  types: ['address'],
+};
+
 const RecruiterCompanyDetails: React.FC = () => {
   const { companyId } = useParams<{ companyId: string }>();
   const { tenantId, currentUser } = useAuth();
@@ -2545,6 +2560,10 @@ const LocationsTab: React.FC<{ company: any; currentTab: number; locations: any[
   // STABLE handler (2026-07-09) — inline onPlaceChanged props churn the
   // place_changed listener on every re-render and drop suggestion clicks.
   // Same fix as RecruiterAccountDetails' Add New Location dialog.
+  const handleAddLocationAutocompleteLoad = useCallback((ref: any) => {
+    autocompleteRef.current = ref;
+  }, []);
+
   const handleAddLocationPlaceChanged = useCallback(() => {
     const place = autocompleteRef.current?.getPlace();
     if (!place) return;
@@ -2874,15 +2893,9 @@ const LocationsTab: React.FC<{ company: any; currentTab: number; locations: any[
                 )}
                 <Grid item xs={12}>
                   <GoogleAutocomplete
-                    onLoad={(ref) => {
-                      autocompleteRef.current = ref;
-                    }}
+                    onLoad={handleAddLocationAutocompleteLoad}
                     onPlaceChanged={handleAddLocationPlaceChanged}
-                    options={{
-                      componentRestrictions: { country: 'us' },
-                      fields: ['address_components', 'formatted_address', 'geometry', 'place_id'],
-                      types: ['address'],
-                    }}
+                    options={PLACES_AUTOCOMPLETE_OPTIONS}
                   >
                     <TextField
                       fullWidth
