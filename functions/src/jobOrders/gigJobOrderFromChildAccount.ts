@@ -368,6 +368,14 @@ export function stripUndefined<T>(value: T): T {
       .filter((item) => item !== undefined) as unknown as T;
   }
   if (typeof value === 'object') {
+    // Only rebuild plain objects. FieldValue sentinels (serverTimestamp),
+    // Timestamps, Dates, and DocumentReferences carry no enumerable own
+    // props, so rebuilding them via Object.entries collapses them to {} —
+    // this is what wrote `createdAt: {}` on every auto-gig job order.
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) {
+      return value;
+    }
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       if (v === undefined) continue;

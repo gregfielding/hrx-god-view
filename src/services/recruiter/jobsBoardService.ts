@@ -155,6 +155,13 @@ const removeUndefinedValues = (obj: any): any => {
     return obj.map((item) => removeUndefinedValues(item)).filter((item) => item !== undefined);
   }
   if (typeof obj === 'object') {
+    // Only rebuild plain objects: recursing into class instances (Timestamp,
+    // FieldValue sentinels, DocumentReference…) flattens them into plain maps
+    // — this wrote `createdAt: {seconds, nanoseconds}` on duplicated posts.
+    const proto = Object.getPrototypeOf(obj);
+    if (proto !== Object.prototype && proto !== null) {
+      return obj;
+    }
     const cleaned: any = {};
     for (const [key, value] of Object.entries(obj)) {
       if (value !== undefined) {
