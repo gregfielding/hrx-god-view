@@ -2046,8 +2046,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           const e =
             (formDataRef.current && formDataRef.current.eligibility) || formData.eligibility || {};
           const update: any = { updatedAt: serverTimestamp() };
-          const authorizedToWorkUS = typeof e.workAuthorized === 'boolean' ? !!e.workAuthorized : false;
-          update.workEligibility = authorizedToWorkUS;
+          // 2026-07-09 (Greg): the question is no longer asked at sign-up.
+          // Only persist workEligibility + the attestation when the worker
+          // actually ANSWERED — the old `: false` default stamped a fake
+          // "not authorized" attestation on every unanswered profile.
+          const workAuthAnswered = typeof e.workAuthorized === 'boolean';
           // W.3 — preserve existing EEO on the nested attestation (and the
           // top-level mirror fields). When the EEO inputs aren't rendered
           // (default) `e.gender`/`e.veteranStatus`/`e.disabilityStatus` are
@@ -2055,15 +2058,19 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           // with `null`. Spread `prevAtt` first so missing form fields keep
           // whatever was there before. W.6 owns the eventual full removal.
           const prevAtt = (userProfile?.workEligibilityAttestation || {}) as Record<string, unknown>;
-          update.workEligibilityAttestation = {
-            ...prevAtt,
-            authorizedToWorkUS,
-            requireSponsorship: typeof e.requireSponsorship === 'boolean' ? !!e.requireSponsorship : (prevAtt.requireSponsorship ?? null),
-            attestedAt: serverTimestamp(),
-            ...(e.gender !== undefined ? { gender: e.gender ? String(e.gender) : null } : {}),
-            ...(e.veteranStatus !== undefined ? { veteranStatus: e.veteranStatus ? String(e.veteranStatus) : null } : {}),
-            ...(e.disabilityStatus !== undefined ? { disabilityStatus: e.disabilityStatus ? String(e.disabilityStatus) : null } : {}),
-          };
+          if (workAuthAnswered) {
+            const authorizedToWorkUS = !!e.workAuthorized;
+            update.workEligibility = authorizedToWorkUS;
+            update.workEligibilityAttestation = {
+              ...prevAtt,
+              authorizedToWorkUS,
+              requireSponsorship: typeof e.requireSponsorship === 'boolean' ? !!e.requireSponsorship : (prevAtt.requireSponsorship ?? null),
+              attestedAt: serverTimestamp(),
+              ...(e.gender !== undefined ? { gender: e.gender ? String(e.gender) : null } : {}),
+              ...(e.veteranStatus !== undefined ? { veteranStatus: e.veteranStatus ? String(e.veteranStatus) : null } : {}),
+              ...(e.disabilityStatus !== undefined ? { disabilityStatus: e.disabilityStatus ? String(e.disabilityStatus) : null } : {}),
+            };
+          }
           if (typeof e.requireSponsorship === 'boolean') update.requireSponsorship = !!e.requireSponsorship;
           if (e.gender !== undefined) update.gender = String(e.gender || '');
           if (e.veteranStatus !== undefined) update.veteranStatus = String(e.veteranStatus || '');
@@ -2629,24 +2636,33 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         profileUpdate.workExperience = quals.workHistory;
       }
       const isC1EventsContractor = hiringEntityName != null && /C1 Events LLC/i.test(hiringEntityName);
-      const authorizedToWorkUS =
-        isC1EventsContractor || (typeof eligibility.workAuthorized === 'boolean' ? !!eligibility.workAuthorized : false);
-      profileUpdate.workEligibility = authorizedToWorkUS;
+      // 2026-07-09 (Greg): the eligibility question is no longer asked at
+      // sign-up. Only persist workEligibility + the attestation when the
+      // worker actually answered (or the C1 Events contractor-terms path
+      // attests for them) — the old `: false` default was stamping a fake
+      // "not authorized" attestation on every unanswered profile (83 of
+      // the last 300 workers).
+      const workAuthAnsweredApply =
+        isC1EventsContractor || typeof eligibility.workAuthorized === 'boolean';
       // W.3 — same preservation pattern as the per-step persist above.
       // Spread `prevAtt` so EEO collected before the W.3 hide isn't
       // clobbered with `null` on a wizard run that no longer renders the
       // EEO inputs. W.6 owns the eventual full removal.
       const prevAttApply = (userProfile?.workEligibilityAttestation || {}) as Record<string, unknown>;
-      profileUpdate.workEligibilityAttestation = {
-        ...prevAttApply,
-        authorizedToWorkUS,
-        requireSponsorship: eligibility.requireSponsorship ?? prevAttApply.requireSponsorship ?? null,
-        attestedAt: serverTimestamp(),
-        sourceApplicationId: tenantId && effectiveUid && jobId ? `${effectiveUid}_${jobId}` : null,
-        ...(eligibility.gender !== undefined ? { gender: eligibility.gender ? String(eligibility.gender) : null } : {}),
-        ...(eligibility.veteranStatus !== undefined ? { veteranStatus: eligibility.veteranStatus ? String(eligibility.veteranStatus) : null } : {}),
-        ...(eligibility.disabilityStatus !== undefined ? { disabilityStatus: eligibility.disabilityStatus ? String(eligibility.disabilityStatus) : null } : {}),
-      };
+      if (workAuthAnsweredApply) {
+        const authorizedToWorkUS = isC1EventsContractor || !!eligibility.workAuthorized;
+        profileUpdate.workEligibility = authorizedToWorkUS;
+        profileUpdate.workEligibilityAttestation = {
+          ...prevAttApply,
+          authorizedToWorkUS,
+          requireSponsorship: eligibility.requireSponsorship ?? prevAttApply.requireSponsorship ?? null,
+          attestedAt: serverTimestamp(),
+          sourceApplicationId: tenantId && effectiveUid && jobId ? `${effectiveUid}_${jobId}` : null,
+          ...(eligibility.gender !== undefined ? { gender: eligibility.gender ? String(eligibility.gender) : null } : {}),
+          ...(eligibility.veteranStatus !== undefined ? { veteranStatus: eligibility.veteranStatus ? String(eligibility.veteranStatus) : null } : {}),
+          ...(eligibility.disabilityStatus !== undefined ? { disabilityStatus: eligibility.disabilityStatus ? String(eligibility.disabilityStatus) : null } : {}),
+        };
+      }
       if (eligibility.gender) profileUpdate.gender = String(eligibility.gender);
       if (eligibility.veteranStatus)
         profileUpdate.veteranStatus = String(eligibility.veteranStatus);
@@ -2884,7 +2900,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             requireResumeOrSkill: te.requireResumeOrSkill !== false && te.requireResumeOrWorkHistory !== false,
             requirePhone: te.requirePhone !== false,
             requireLocation: te.requireLocation !== false,
-            requireWorkAuthorization: te.requireWorkAuthorization !== false,
+            // 2026-07-09: opt-in only — matches the flipped server default.
+            requireWorkAuthorization: te.requireWorkAuthorization === true,
           };
           const eligForm = eligibility;
           const isC1EventsContractor = hiringEntityName != null && /C1 Events LLC/i.test(hiringEntityName);

@@ -8,14 +8,23 @@ export type WorkAuthorizedStatus = 'yes' | 'no' | 'skipped';
 
 export interface WorkAuthorizedSource {
   workEligibility?: boolean;
-  workEligibilityAttestation?: { authorizedToWorkUS?: boolean } | null;
+  workEligibilityAttestation?: {
+    authorizedToWorkUS?: boolean;
+    requireSponsorship?: boolean | null;
+  } | null;
 }
 
 /**
  * Derive display status from user data.
- * - yes: user completed attestation and authorizedToWorkUS === true
- * - no: user completed attestation and authorizedToWorkUS === false
- * - skipped: not completed (no attestation or authorizedToWorkUS not set)
+ * - yes: attestation has authorizedToWorkUS === true (real answer or the
+ *   C1 Events contractor-terms attestation)
+ * - no: attestation has an EXPLICIT false AND requireSponsorship is a
+ *   boolean — i.e. the worker really completed the eligibility step.
+ * - skipped: everything else. 2026-07-09 (Greg): sign-up stopped asking
+ *   the question, but the apply flow kept auto-writing
+ *   `authorizedToWorkUS: false` with `requireSponsorship: null` for
+ *   workers who were never shown it — that shape must read as
+ *   never-answered, not as a red "No".
  * We do not use legacy workEligibility so that workers who haven't completed the step show Skipped.
  */
 export function getWorkAuthorizedStatus(user: unknown): WorkAuthorizedStatus {
@@ -23,7 +32,8 @@ export function getWorkAuthorizedStatus(user: unknown): WorkAuthorizedStatus {
   const u = user as WorkAuthorizedSource;
   const attestation = u.workEligibilityAttestation;
   if (attestation != null && typeof attestation === 'object' && typeof attestation.authorizedToWorkUS === 'boolean') {
-    return attestation.authorizedToWorkUS ? 'yes' : 'no';
+    if (attestation.authorizedToWorkUS) return 'yes';
+    if (typeof attestation.requireSponsorship === 'boolean') return 'no';
   }
   return 'skipped';
 }

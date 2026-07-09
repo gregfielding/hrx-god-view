@@ -384,13 +384,22 @@ export function OverviewQualificationsCard({
             </Box>
           </Box>
 
-          <Box>
-            <Typography {...overviewSubsectionHeadingTypographyProps}>Work authorization</Typography>
-            <Box sx={{ mt: 0.5 }}>
-              <WorkAuthorizedChip status={q.workAuthorizedStatus} />
+          {/* 2026-07-09 (Greg): sign-up no longer asks work authorization —
+              hide the whole block for workers who never answered it (and
+              have no EEO data), instead of a misleading chip + dashes. */}
+          {(q.workAuthorizedStatus !== 'skipped' ||
+            q.gender.trim().length > 0 ||
+            q.veteranStatus.trim().length > 0 ||
+            q.disabilityStatus.trim().length > 0 ||
+            q.requireSponsorship !== null) && (
+            <Box>
+              <Typography {...overviewSubsectionHeadingTypographyProps}>Work authorization</Typography>
+              <Box sx={{ mt: 0.5 }}>
+                <WorkAuthorizedChip status={q.workAuthorizedStatus} />
+              </Box>
+              <Box sx={{ mt: 1 }}>{eeocInlineLine}</Box>
             </Box>
-            <Box sx={{ mt: 1 }}>{eeocInlineLine}</Box>
-          </Box>
+          )}
 
           <Box>
             <Typography {...overviewSubsectionHeadingTypographyProps}>Education</Typography>
