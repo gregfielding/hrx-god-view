@@ -625,8 +625,14 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
     }
   }, [effectiveSearch, effectiveShowFavoritesOnly, statusFilter, companyFilter, typeFilter, updateCache]);
 
-  // Client-side filtering for real-time search and other filters
-  const filteredJobOrders = jobOrders.filter(jo => {
+  // Client-side filtering for real-time search and other filters.
+  // MUST stay memoized: the per-page effects below depend on the paginated
+  // slice, and an identity-unstable array re-armed them on every render.
+  // Combined with their unconditional setStates this produced a
+  // self-sustaining re-render loop that permanently restarted React Router's
+  // navigation transition — the "row click changes the URL but the page never
+  // opens until the search is cleared" freeze (2026-07-09).
+  const filteredJobOrders = useMemo(() => jobOrders.filter(jo => {
     // Search filter
     if (effectiveSearch) {
       const searchLower = effectiveSearch.toLowerCase();
@@ -669,7 +675,8 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
     if (hotOnly && (jo as any).hot !== true) return false;
 
     return true;
-  });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [jobOrders, effectiveSearch, effectiveShowFavoritesOnly, isFavorite, statusFilter, companyFilter, typeFilter, hotOnly]);
 
   // Paginate filtered job orders
   const paginatedJobOrders = useMemo(() => {
@@ -677,6 +684,19 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
     const endIndex = startIndex + rowsPerPage;
     return filteredJobOrders.slice(startIndex, endIndex);
   }, [filteredJobOrders, page, rowsPerPage]);
+
+  // Stable key for the visible page. The per-page fan-out effects (next
+  // shift, jobs-board posts, applicant counts) re-run only when the actual
+  // set of visible rows changes — NOT when row objects are re-created (the
+  // applicant-count merge below replaces row identities, which previously
+  // re-armed those effects into an endless refetch loop).
+  const paginatedIdsKey = useMemo(
+    () =>
+      paginatedJobOrders
+        .map((jo) => `${jo.id}:${(jo as any).jobType === 'gig' ? 'g' : 'c'}`)
+        .join(','),
+    [paginatedJobOrders],
+  );
 
   const [jobPostsByJobOrderId, setJobPostsByJobOrderId] = useState<Record<string, any[]>>({});
 
@@ -701,7 +721,10 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
       .map((jo) => jo.id)
       .filter((id): id is string => typeof id === 'string' && id.length > 0);
     if (gigJobOrderIds.length === 0) {
-      setNextShiftByJobOrderId({});
+      // No-op when already empty — an unconditional fresh `{}` here was the
+      // hard-freeze variant of the render loop (zero-gig pages, e.g. a
+      // search matching only Career orders, re-rendered at CPU speed).
+      setNextShiftByJobOrderId((prev) => (Object.keys(prev).length === 0 ? prev : {}));
       return;
     }
     let cancelled = false;
@@ -734,13 +757,22 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
           }),
         );
       }
-      if (!cancelled) setNextShiftByJobOrderId(result);
+      if (!cancelled) {
+        setNextShiftByJobOrderId((prev) => {
+          const prevKeys = Object.keys(prev);
+          const nextKeys = Object.keys(result);
+          const unchanged =
+            prevKeys.length === nextKeys.length &&
+            nextKeys.every((k) => prev[k]?.getTime() === result[k].getTime());
+          return unchanged ? prev : result;
+        });
+      }
     })();
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId, paginatedJobOrders]);
+  }, [tenantId, paginatedIdsKey]);
 
   // Load jobs board posts for currently visible job orders (chunked to respect Firestore 'in' limits)
   useEffect(() => {
@@ -798,7 +830,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId, paginatedJobOrders]);
+  }, [tenantId, paginatedIdsKey]);
 
   // Compute unique applicant count for each visible job order. Mirrors
   // `RecruiterJobOrderDetail.fetchApplicants()` so the table number matches the
@@ -883,13 +915,20 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
         }
 
         if (cancelled) return;
-        setJobOrders((prev) =>
-          prev.map((jo) =>
-            visibleIds.includes(jo.id)
-              ? { ...jo, applicantCount: setsByJo.get(jo.id)?.size ?? 0 }
-              : jo,
-          ),
-        );
+        // Preserve row identities (and bail out entirely) when no count
+        // changed — unconditionally re-creating every row re-armed the
+        // per-page effects and looped this fetch forever.
+        setJobOrders((prev) => {
+          let changed = false;
+          const next = prev.map((jo) => {
+            if (!visibleIds.includes(jo.id)) return jo;
+            const count = setsByJo.get(jo.id)?.size ?? 0;
+            if ((jo as any).applicantCount === count) return jo;
+            changed = true;
+            return { ...jo, applicantCount: count };
+          });
+          return changed ? next : prev;
+        });
       } catch (err) {
         if (cancelled) return;
         console.warn('RecruiterJobOrders: applicant count fetch failed', err);
@@ -900,7 +939,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId, paginatedJobOrders, jobPostsByJobOrderId]);
+  }, [tenantId, paginatedIdsKey, jobPostsByJobOrderId]);
 
   const handleSort = (field: string) => {
     // Applicants is computed client-side after the main fetch (not a Firestore field) — not sortable.
