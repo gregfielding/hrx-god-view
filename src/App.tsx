@@ -14,6 +14,7 @@ import Layout from './components/Layout';
 import ConditionalJobsBoardLayout from './components/ConditionalJobsBoardLayout';
 import ConditionalWorkerLayout from './components/ConditionalWorkerLayout';
 import PageViewTracker from './components/PageViewTracker';
+import NavigationWatchdog from './components/NavigationWatchdog';
 import Dashboard from './pages/Dashboard';
 import CalendarPage from './pages/CalendarPage';
 import TasksPage from './pages/TasksPage';
@@ -1489,6 +1490,7 @@ function App() {
     <Box sx={{ backgroundColor: 'rgb(247, 248, 251)', minHeight: '100vh' }}>
       <Router>
         <PageViewTracker />
+        <NavigationWatchdog />
         <AuthProvider>
           <DirectMessengerProvider>
             <ChatGPTProvider>
