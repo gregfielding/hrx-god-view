@@ -193,7 +193,9 @@ describe('buildGigJobOrderFromChildAccount — happy path', () => {
     // Lookups / denorm
     expect(jobOrderData.tenantId).to.equal('t1');
     expect(jobOrderData.jobOrderSeq).to.equal(42);
-    expect(jobOrderData.jobOrderNumber).to.equal('0042');
+    // NUMBER on the doc since the 2026-07-08 normalization (f5168ce1);
+    // the zero-padded string survives only in notification copy.
+    expect(jobOrderData.jobOrderNumber).to.equal(42);
     expect(jobOrderData.recruiterAccountId).to.equal('acc_child');
     expect(jobOrderData.accountId).to.equal('acc_child');
     expect(jobOrderData.accountName).to.equal('CORT Baltimore Warehouse');
