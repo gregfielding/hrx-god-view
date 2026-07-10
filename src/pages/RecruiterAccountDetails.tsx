@@ -133,6 +133,7 @@ import { useFavorites } from '../hooks/useFavorites';
 import { useSetTopBarTitle } from '../contexts/TopBarTitleContext';
 import { useEntity } from '../hooks/useEntity';
 import { getJobOrderAge } from '../utils/dateUtils';
+import { resolvePlaceAddress } from '../utils/placesAddress';
 import { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderChecklist';
 import RecruiterAssignmentCell from '../components/recruiter/RecruiterAssignmentCell';
 import {
@@ -1730,36 +1731,26 @@ const RecruiterAccountDetails: React.FC = () => {
 
   const handleAddLocationPlaceChanged = useCallback(() => {
     const place = addLocationAutocompleteRef.current?.getPlace();
-    if (!place) return;
-    const addressComponents = place.address_components || [];
-    let streetNumber = '';
-    let route = '';
-    let city = '';
-    let state = '';
-    let zipCode = '';
-    let country = 'USA';
-    addressComponents.forEach((component: any) => {
-      const types = component.types || [];
-      if (types.includes('street_number')) streetNumber = component.long_name;
-      else if (types.includes('route')) route = component.long_name;
-      else if (types.includes('locality')) city = component.long_name;
-      else if (types.includes('administrative_area_level_1')) state = component.short_name;
-      else if (types.includes('postal_code')) zipCode = component.long_name;
-      else if (types.includes('country')) country = component.short_name;
-    });
-    const fullAddress =
-      streetNumber && route ? `${streetNumber} ${route}` : place.formatted_address || '';
-    if (!fullAddress && !city) return;
-    const loc = place.geometry?.location;
-    setAddLocationForm((prev) => ({
-      ...prev,
-      address: fullAddress || prev.address,
-      city: city || prev.city,
-      state: state || prev.state,
-      zipCode: zipCode || prev.zipCode,
-      country,
-      coordinates: loc ? { lat: loc.lat(), lng: loc.lng() } : prev.coordinates,
-    }));
+    // resolvePlaceAddress geocodes when the place arrives without
+    // address_components (seen in prod: input rewritten to the canonical
+    // address but getPlace() carrying only the formatted string, leaving
+    // city/state/zip empty here).
+    void (async () => {
+      const resolved = await resolvePlaceAddress(place, 'account-add-location');
+      if (!resolved) return;
+      setAddLocationForm((prev) => ({
+        ...prev,
+        address: resolved.street || resolved.formattedAddress || prev.address,
+        city: resolved.city || prev.city,
+        state: resolved.state || prev.state,
+        zipCode: resolved.zipCode || prev.zipCode,
+        country: resolved.country || prev.country,
+        coordinates:
+          resolved.lat !== null && resolved.lng !== null
+            ? { lat: resolved.lat, lng: resolved.lng }
+            : prev.coordinates,
+      }));
+    })();
   }, []);
 
   // Contacts tab: contacts from all account-linked companies

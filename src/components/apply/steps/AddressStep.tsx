@@ -4,6 +4,7 @@ import { Autocomplete } from '@react-google-maps/api';
 import ResumeSuggestionField from '../../common/ResumeSuggestionField';
 import { useLoadScript } from '@react-google-maps/api';
 import { GOOGLE_MAPS_LIBRARIES } from '../../../utils/googleMapsLoader';
+import { resolvePlaceAddress } from '../../../utils/placesAddress';
 
 type Props = {
   value: any;
@@ -74,119 +75,71 @@ const AddressStep: React.FC<Props> = ({ value, onChange }) => {
   };
 
   const handlePlaceChanged = useCallback(() => {
-    try {
-      const place = autocompleteRef.current?.getPlace();
-      if (!place || !place.place_id) {
-        // Place id is the wire we hang verification on; no id ⇒ no Place.
-        setAddressError(SELECT_FROM_DROPDOWN_MSG);
-        return;
-      }
-
-      const components = Array.isArray(place.address_components)
-        ? place.address_components
-        : [];
-      if (components.length === 0) {
-        setAddressError('Selected address is missing components. Please try another selection.');
-        return;
-      }
-
-      const getComponent = (types: string[], useShort = false) => {
-        const c = components.find((comp: any) =>
-          types.every((t) => comp?.types?.includes(t))
-        );
-        if (!c) return '';
-        return useShort ? c.short_name || '' : c.long_name || '';
-      };
-
-      // Coordinates: Google sometimes returns LatLng functions, sometimes plain numbers.
-      let homeLat: number | undefined;
-      let homeLng: number | undefined;
-      const location = place.geometry?.location;
-      if (location) {
-        if (typeof location.lat === 'function') {
-          homeLat = location.lat();
-          homeLng = location.lng();
-        } else {
-          homeLat = (location as any).lat;
-          homeLng = (location as any).lng;
+    const place = autocompleteRef.current?.getPlace();
+    // resolvePlaceAddress falls back to geocoding when the place arrives
+    // without address_components (seen in prod) — an applicant losing this
+    // step means losing the signup entirely, so be maximally forgiving.
+    void (async () => {
+      try {
+        const resolved = await resolvePlaceAddress(place, 'apply-address-step');
+        if (!resolved) {
+          setAddressError(SELECT_FROM_DROPDOWN_MSG);
+          return;
         }
+
+        const { street, city, state, zipCode: zip, country } = resolved;
+        const homeLat = resolved.lat;
+        const homeLng = resolved.lng;
+        if (
+          homeLat === null ||
+          homeLng === null ||
+          homeLat < -90 ||
+          homeLat > 90 ||
+          homeLng < -180 ||
+          homeLng > 180
+        ) {
+          setAddressError('Selected address has invalid coordinates. Please try another selection.');
+          return;
+        }
+
+        if (!street || !city || !state || !zip) {
+          const missing: string[] = [];
+          if (!street) missing.push('street');
+          if (!city) missing.push('city');
+          if (!state) missing.push('state');
+          if (!zip) missing.push('zip');
+          setAddressError(
+            `Selected address is missing: ${missing.join(', ')}. Please try another selection.`,
+          );
+          return;
+        }
+
+        // Single setState — mirror the canonical `homeAddress` shape to the
+        // flat wizard `value` so existing readers (`addressValid`, profile
+        // writes) keep working without a fork.
+        const updatedData = {
+          ...value,
+          street,
+          city,
+          state,
+          zip,
+          homeLat,
+          homeLng,
+          placeId: resolved.placeId,
+          formattedAddress: resolved.formattedAddress,
+          country,
+          // ISO timestamp for the user-visible "verified at" marker. Stored
+          // alongside the structured `homeAddress` write at submit.
+          addressGeocodedAt: new Date().toISOString(),
+        };
+
+        setAddressError(null);
+        onChange(updatedData);
+      } catch (error: any) {
+        console.error('Error processing place selection:', error);
+        setAddressError(SELECT_FROM_DROPDOWN_MSG);
       }
-      if (
-        typeof homeLat !== 'number' ||
-        typeof homeLng !== 'number' ||
-        isNaN(homeLat) ||
-        isNaN(homeLng) ||
-        homeLat < -90 ||
-        homeLat > 90 ||
-        homeLng < -180 ||
-        homeLng > 180
-      ) {
-        setAddressError('Selected address has invalid coordinates. Please try another selection.');
-        return;
-      }
-
-      const streetNumber = getComponent(['street_number']);
-      const route = getComponent(['route']);
-      const street = `${streetNumber} ${route}`.trim();
-
-      const city =
-        getComponent(['locality']) ||
-        getComponent(['sublocality']) ||
-        getComponent(['sublocality_level_1']) ||
-        getComponent(['postal_town']) ||
-        getComponent(['administrative_area_level_2']);
-
-      // State: short name ("CA", not "California") matches the wizard /
-      // Firestore `state` convention used elsewhere.
-      const state = getComponent(['administrative_area_level_1'], true);
-      const zip = getComponent(['postal_code']);
-      // Country short ISO ("US", "CA"). Falls back to long name only when
-      // Google didn't return short_name.
-      const country =
-        getComponent(['country'], true) || getComponent(['country']) || '';
-
-      if (!street || !city || !state || !zip) {
-        const missing: string[] = [];
-        if (!street) missing.push('street');
-        if (!city) missing.push('city');
-        if (!state) missing.push('state');
-        if (!zip) missing.push('zip');
-        setAddressError(
-          `Selected address is missing: ${missing.join(', ')}. Please try another selection.`,
-        );
-        return;
-      }
-
-      const formattedAddress: string =
-        typeof place.formatted_address === 'string' && place.formatted_address.trim()
-          ? place.formatted_address.trim()
-          : [street, [city, state].filter(Boolean).join(', '), zip].filter(Boolean).join(', ');
-
-      // Single setState — mirror the canonical `homeAddress` shape to the
-      // flat wizard `value` so existing readers (`addressValid`, profile
-      // writes) keep working without a fork.
-      const updatedData = {
-        ...value,
-        street,
-        city,
-        state,
-        zip,
-        homeLat,
-        homeLng,
-        placeId: place.place_id,
-        formattedAddress,
-        country,
-        // ISO timestamp for the user-visible "verified at" marker. Stored
-        // alongside the structured `homeAddress` write at submit.
-        addressGeocodedAt: new Date().toISOString(),
-      };
-
-      setAddressError(null);
-      onChange(updatedData);
-    } catch (error: any) {
-      console.error('Error processing place selection:', error);
-      setAddressError(SELECT_FROM_DROPDOWN_MSG);
-    }
+    })();
   }, [value, onChange]);
 
   const handleAutocompleteLoad = useCallback((autocomplete: any) => {
