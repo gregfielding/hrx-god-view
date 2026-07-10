@@ -854,6 +854,9 @@ export class JobsBoardService {
         ...((jobOrder as any).parentAccountId
           ? { parentAccountId: (jobOrder as any).parentAccountId }
           : {}),
+        ...((jobOrder as any).hiringEntityId
+          ? { hiringEntityId: (jobOrder as any).hiringEntityId }
+          : {}),
         worksiteId: jobOrder.worksiteId,
         worksiteName: customData?.worksiteName || jobOrder.worksiteName,
         worksiteAddress: worksiteAddress, // Use the fetched/resolved address
@@ -1635,6 +1638,7 @@ export class JobsBoardService {
         (jobOrderData as any).accountId || (jobOrderData as any).recruiterAccountId || '',
       );
       const joParentAccountId = String((jobOrderData as any).parentAccountId || '');
+      const joHiringEntityId = String((jobOrderData as any).hiringEntityId || '');
 
       for (const post of posts) {
         const postRef = doc(db, 'tenants', tenantId, 'job_postings', post.id);
@@ -1644,6 +1648,7 @@ export class JobsBoardService {
           ...(endDate != null && { endDate }),
           ...(joAccountId && { accountId: joAccountId }),
           ...(joParentAccountId && { parentAccountId: joParentAccountId }),
+          ...(joHiringEntityId && { hiringEntityId: joHiringEntityId }),
           ...(joWorksiteId && { worksiteId: joWorksiteId }),
           ...(joWorksiteName && { worksiteName: joWorksiteName }),
           ...(Object.keys(joWorksiteAddress).length > 0 && { worksiteAddress: joWorksiteAddress }),

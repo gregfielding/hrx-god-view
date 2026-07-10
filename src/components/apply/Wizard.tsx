@@ -1016,7 +1016,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     const accountIds = [posting?.accountId, posting?.parentAccountId]
       .map((v: unknown) => String(v || ''))
       .filter(Boolean);
-    if (accountIds.length === 0) {
+    const entityId = String(posting?.hiringEntityId || '');
+    if (accountIds.length === 0 && !entityId) {
       setDnrBlocked(false);
       return;
     }
@@ -1027,8 +1028,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       }
       try {
         const snap = await getDoc(doc(db, 'users', u.uid));
-        const dnrIds = (snap.data()?.dnrAccountIds ?? []) as string[];
-        setDnrBlocked(Array.isArray(dnrIds) && accountIds.some((id) => dnrIds.includes(id)));
+        const data = snap.data() || {};
+        const dnrIds = (data.dnrAccountIds ?? []) as string[];
+        const sepIds = (data.separatedEntityIds ?? []) as string[];
+        const dnrHit = Array.isArray(dnrIds) && accountIds.some((id) => dnrIds.includes(id));
+        const sepHit = !!entityId && Array.isArray(sepIds) && sepIds.includes(entityId);
+        setDnrBlocked(dnrHit || sepHit);
       } catch {
         setDnrBlocked(false);
       }
@@ -1037,7 +1042,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     const unsub = auth.onAuthStateChanged((u) => void check(u));
     return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [posting?.accountId, posting?.parentAccountId]);
+  }, [posting?.accountId, posting?.parentAccountId, posting?.hiringEntityId]);
 
   // Resolve hiring entity name (for skipping Work Eligibility when C1 Events LLC / independent contractors)
   useEffect(() => {

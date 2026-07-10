@@ -81,6 +81,8 @@ interface PublicJobPosting {
   /** CRM account lineage — read by the per-worker DNR filter. */
   accountId?: string;
   parentAccountId?: string;
+  /** Hiring entity — read by the per-worker separation filter. */
+  hiringEntityId?: string;
   postTitle: string;
   jobTitle?: string;
   jobType: 'gig' | 'career';
@@ -240,6 +242,7 @@ const PublicJobsBoard: React.FC = () => {
   const [userAssignmentIdByJobOrderId, setUserAssignmentIdByJobOrderId] = useState<Record<string, string>>({});
   const [userGroupIds, setUserGroupIds] = useState<string[]>([]);
   const [userDnrAccountIds, setUserDnrAccountIds] = useState<string[]>([]);
+  const [userSeparatedEntityIds, setUserSeparatedEntityIds] = useState<string[]>([]);
   const [userCertifications, setUserCertifications] = useState<Array<{ name?: string }>>([]);
   /** Gap list for requirements tab — engine-backed when `REACT_APP_CERT_ENGINE_READINESS` is set. */
   const [profileMissingCertList, setProfileMissingCertList] = useState<string[]>([]);
@@ -266,6 +269,7 @@ const PublicJobsBoard: React.FC = () => {
         setUserApplicationStatuses({});
         setUserGroupIds([]);
         setUserDnrAccountIds([]);
+        setUserSeparatedEntityIds([]);
         setUserCertifications([]);
         return;
       }
@@ -279,6 +283,9 @@ const PublicJobsBoard: React.FC = () => {
           setUserGroupIds(Array.isArray(userData?.userGroupIds) ? userData.userGroupIds : []);
           setUserDnrAccountIds(
             Array.isArray(userData?.dnrAccountIds) ? userData.dnrAccountIds : [],
+          );
+          setUserSeparatedEntityIds(
+            Array.isArray(userData?.separatedEntityIds) ? userData.separatedEntityIds : [],
           );
           
           // Load user certifications
@@ -1193,10 +1200,13 @@ const PublicJobsBoard: React.FC = () => {
     // DNR (Do Not Return) — hide postings for accounts the signed-in worker
     // is marked DNR for (child account match OR national parent match).
     // Postings carry denormalized accountId/parentAccountId for this check.
-    if (user?.uid && userDnrAccountIds.length > 0) {
+    if (user?.uid && (userDnrAccountIds.length > 0 || userSeparatedEntityIds.length > 0)) {
       filtered = filtered.filter((job) => {
         const jobAccountIds = [job.accountId, job.parentAccountId].filter(Boolean) as string[];
-        return !jobAccountIds.some((id) => userDnrAccountIds.includes(id));
+        if (jobAccountIds.some((id) => userDnrAccountIds.includes(id))) return false;
+        // Separated workers stop seeing their separated entity's postings.
+        if (job.hiringEntityId && userSeparatedEntityIds.includes(job.hiringEntityId)) return false;
+        return true;
       });
     }
 
@@ -1255,7 +1265,7 @@ const PublicJobsBoard: React.FC = () => {
     }
 
     setFilteredJobs(filtered);
-  }, [jobs, searchTerm, jobTypeFilter, showFavoritesOnly, favorites, sortBy, userLocation, userGroupIds, userDnrAccountIds, user?.uid]);
+  }, [jobs, searchTerm, jobTypeFilter, showFavoritesOnly, favorites, sortBy, userLocation, userGroupIds, userDnrAccountIds, userSeparatedEntityIds, user?.uid]);
 
 
   const handleApply = async (job: PublicJobPosting) => {
