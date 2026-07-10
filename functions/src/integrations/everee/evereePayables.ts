@@ -79,7 +79,7 @@ export type EvereeStandardEarningType =
  * 2026-05-07 confirmation: taxable wage codes, not bonus codes, so
  * tax treatment matches the underlying hourly wages they supplement.
  */
-export type EvereeCustomEarningType = 'MEAL_PREMIUM' | 'REST_PREMIUM';
+export type EvereeCustomEarningType = 'MEAL_PREMIUM' | 'REST_PREMIUM' | 'RETRO_WAGES';
 
 export type EvereeEarningType = EvereeStandardEarningType | EvereeCustomEarningType;
 

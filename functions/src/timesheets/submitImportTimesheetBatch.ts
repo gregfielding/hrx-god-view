@@ -856,6 +856,10 @@ async function submitW2(args: PathArgs) {
   let submitted = 0;
   const errors: string[] = [];
   const statusWrites: Array<{ plan: W2Plan; workedShiftId: number }> = [];
+  // Rows Everee rejected because their pay period's payroll is already
+  // approved (the period is locked forever) — diverted to the RETRO_WAGES
+  // payable fallback below instead of surfacing as terminal errors.
+  const periodLocked: W2Plan[] = [];
 
   // Bounded concurrency — Everee rate-limits, and evereeRequest retries 429s.
   await mapWithConcurrency(toSubmit, 8, async (p) => {
@@ -926,12 +930,69 @@ async function submitW2(args: PathArgs) {
       submitted += 1;
       statusWrites.push({ plan: p, workedShiftId: res.workedShiftId });
     } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/included in a payment that is already approved/i.test(msg)) {
+        periodLocked.push(p);
+        return;
+      }
       const who = String(p.row.workerName || p.userId);
-      errors.push(
-        `${who} ${p.workDate}: ${e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200)}`,
-      );
+      errors.push(`${who} ${p.workDate}: ${msg.slice(0, 200)}`);
     }
   });
+
+  // ── Period-locked fallback: RETRO_WAGES payable ──────────────────────
+  // Everee permanently locks a pay period once its payroll is approved, so
+  // a shift for a missed day can never be created there. Same money goes
+  // out as a RETRO_WAGES payable instead (custom taxable wage code — taxed
+  // like the hourly wages it corrects): pay-stub line item dated to the
+  // actual work date, paid via the payout request below. Wage amount is
+  // HRX-classified REG + 1.5×OT; tips/bonus ride the shared extras flow.
+  const retroWrites: Array<{ plan: W2Plan; retroExternalId: string; amount: number }> = [];
+  if (periodLocked.length > 0) {
+    const retroInputs: CreatePayableInput[] = [];
+    for (const p of periodLocked) {
+      const regGross = Math.round((p.regularSeconds / 3600) * p.payRate * 100) / 100;
+      const otGross = Math.round((p.overtimeSeconds / 3600) * p.payRate * 1.5 * 100) / 100;
+      const amount = Math.round((regGross + otGross) * 100) / 100;
+      if (!(amount > 0)) continue;
+      const retroExternalId = importExternalId({
+        tenantId,
+        customer: cust,
+        userId: p.userId,
+        workDate: p.workDate,
+        kind: 'RETRO',
+      });
+      retroWrites.push({ plan: p, retroExternalId, amount });
+      retroInputs.push({
+        externalId: retroExternalId,
+        externalWorkerId: p.userId,
+        label: dayLabel(
+          `Retro wages — period already paid (${p.hours} hrs @ $${p.payRate.toFixed(2)})`,
+          p.row.eventLabel,
+          p.workDate,
+        ),
+        type: 'retro',
+        payCode: 'RETRO_WAGES',
+        timestamp: workDateEpochSeconds(p.workDate),
+        amount: { amount: amount.toFixed(2), currency: 'USD' },
+        payableModel: 'PRE_CALCULATED',
+      });
+    }
+    if (retroInputs.length > 0) {
+      try {
+        await bulkCreatePayables(cfg, retroInputs);
+        submitted += retroWrites.length;
+      } catch (e: unknown) {
+        const emsg = e instanceof Error ? e.message.slice(0, 160) : String(e).slice(0, 160);
+        for (const r of retroWrites) {
+          errors.push(
+            `${String(r.plan.row.workerName || r.plan.userId)} ${r.plan.workDate}: retro payable failed: ${emsg}`,
+          );
+        }
+        retroWrites.length = 0;
+      }
+    }
+  }
 
   // Tips/bonus → separate TIPS/BONUS payables for the worked-shift rows that
   // landed. Worked shifts don't carry flat add-ons, so these go as payables
@@ -939,7 +1000,11 @@ async function submitW2(args: PathArgs) {
   // since a payable alone never surfaces as a payment).
   const w2ExtrasByPlanExtId = new Map<string, ExtraPayable[]>();
   const w2ExtraInputs: CreatePayableInput[] = [];
-  for (const { plan } of statusWrites) {
+  const landedPlans = [
+    ...statusWrites.map((s) => s.plan),
+    ...retroWrites.map((r) => r.plan),
+  ];
+  for (const plan of landedPlans) {
     const extras = buildExtraPayables({
       tenantId,
       customer: cust,
@@ -967,15 +1032,19 @@ async function submitW2(args: PathArgs) {
         errors.push(`tips/bonus: ${e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200)}`);
       }
     }
-    if (submittedExtraIds.size > 0) {
-      try {
-        await requestPayablePayout(cfg, {
-          externalIds: [...submittedExtraIds],
-          includeWorkersOnRegularPayCycle: true,
-        });
-      } catch (e: unknown) {
-        errors.push(`tips/bonus payout: ${e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200)}`);
-      }
+  }
+  // One payout request materializes everything that went out as payables
+  // this batch — tips/bonus extras AND retro wages ("a payable alone never
+  // surfaces as a payment").
+  const payoutIds = [...submittedExtraIds, ...retroWrites.map((r) => r.retroExternalId)];
+  if (payoutIds.length > 0) {
+    try {
+      await requestPayablePayout(cfg, {
+        externalIds: payoutIds,
+        includeWorkersOnRegularPayCycle: true,
+      });
+    } catch (e: unknown) {
+      errors.push(`payable payout: ${e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200)}`);
     }
   }
 
@@ -1097,6 +1166,100 @@ async function submitW2(args: PathArgs) {
       pending = 0;
     }
   }
+  // Retro-payable rows: status doc under the plan's WORKED_SHIFT externalId
+  // (row status + alreadyLive idempotency key on re-submit), a second doc
+  // under the RETRO externalId (the paid webhook matches payables by their
+  // own externalId), and the canonical entry stamp.
+  for (const r of retroWrites) {
+    const p = previewByExtId.get(r.plan.externalId);
+    const planExtras = (w2ExtrasByPlanExtId.get(r.plan.externalId) || []).filter((ex) =>
+      submittedExtraIds.has(ex.externalId),
+    );
+    writer.set(
+      db.doc(`tenants/${tenantId}/timesheet_import_payables/${payableStatusDocId(r.plan.externalId)}`),
+      {
+        externalId: r.plan.externalId,
+        kind: 'retro_payable',
+        retroPayableExternalId: r.retroExternalId,
+        externalWorkerId: r.plan.userId,
+        workerName: p?.workerName ?? null,
+        customer: cust,
+        hiringEntityId,
+        evereeTenantId: cfg.evereeTenantId,
+        workDate: r.plan.workDate,
+        hours: r.plan.hours,
+        payRate: r.plan.payRate,
+        workersCompCode: r.plan.wc,
+        amount: r.amount,
+        status: 'submitted',
+        batchId: batchRef.id,
+        submittedByUid: uid,
+        submittedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    writer.set(
+      db.doc(`tenants/${tenantId}/timesheet_import_payables/${payableStatusDocId(r.retroExternalId)}`),
+      {
+        externalId: r.retroExternalId,
+        kind: 'payable',
+        payCode: 'RETRO_WAGES',
+        externalWorkerId: r.plan.userId,
+        workerName: p?.workerName ?? null,
+        customer: cust,
+        hiringEntityId,
+        evereeTenantId: cfg.evereeTenantId,
+        workDate: r.plan.workDate,
+        amount: r.amount,
+        status: 'submitted',
+        batchId: batchRef.id,
+        submittedByUid: uid,
+        submittedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    const entryDocId = importEntryDocId({ customer: cust, userId: r.plan.userId, workDate: r.plan.workDate });
+    writer.set(
+      db.doc(`tenants/${tenantId}/timesheet_entries/${entryDocId}`),
+      {
+        ...importEntryStamp({
+          tenantId,
+          hiringEntityId,
+          customer: cust,
+          userId: r.plan.userId,
+          workDate: r.plan.workDate,
+          hours: r.plan.hours,
+          payRate: r.plan.payRate,
+          workerName: p?.workerName,
+          eventLabel: r.plan.row.eventLabel ?? null,
+          workersCompCode: r.plan.wc,
+          worksiteId: r.plan.row.worksiteId ?? null,
+          worksiteName: r.plan.row.worksiteName ?? null,
+          worksiteState: r.plan.row.worksiteAddress?.state ?? null,
+          externalId: r.plan.externalId,
+          uid,
+          regularHours: Math.round((r.plan.regularSeconds / 3600) * 10000) / 10000,
+          overtimeHours: Math.round((r.plan.overtimeSeconds / 3600) * 10000) / 10000,
+        }),
+        everee: {
+          status: 'SUBMITTED',
+          retro: true,
+          respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+          payableExternalIds: [r.retroExternalId, ...planExtras.map((ex) => ex.externalId)],
+        },
+      },
+      { merge: true },
+    );
+    pending += 3 + planExtras.length;
+    if (pending >= 400) {
+      // eslint-disable-next-line no-await-in-loop
+      await writer.commit();
+      writer = db.batch();
+      pending = 0;
+    }
+  }
   if (pending > 0) await writer.commit();
 
   return {
@@ -1105,6 +1268,7 @@ async function submitW2(args: PathArgs) {
     evereeClassifiesOt: true,
     batchId: batchRef.id,
     submitted,
+    retroSubmitted: retroWrites.length,
     failed: toSubmit.length - submitted,
     skippedNoWc,
     alreadyLive: alreadyLive.size,

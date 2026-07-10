@@ -86,6 +86,18 @@ const CUSTOM_PAY_CODES: CreatePayCodeBody[] = [
     active: true,
     externalId: 'REST_PREMIUM',
   },
+  // Wages for a shift discovered AFTER its pay period's payroll was approved
+  // (Everee locks the period — the worked-shifts endpoint 400s). The import
+  // submit path falls back to a payable under this code so the worker is
+  // paid on their next check with a line item dated to the actual work date.
+  {
+    code: 'RETRO_WAGES',
+    label: 'Retro Wages (missed shift correction)',
+    earningType: 'REGULAR_HOURLY',
+    category: 'TAXABLE_WAGE',
+    active: true,
+    externalId: 'RETRO_WAGES',
+  },
 ];
 
 interface CliArgs {
