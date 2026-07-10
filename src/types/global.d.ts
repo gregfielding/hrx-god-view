@@ -25,6 +25,7 @@ declare module 'jspdf-autotable' {
 declare module 'xlsx' {
   export const utils: {
     book_new(): any;
+    book_append_sheet(workbook: any, worksheet: any, name?: string): void;
     aoa_to_sheet(data: any[][]): any;
     json_to_sheet(data: any[]): any;
     table_to_sheet(table: HTMLElement): any;

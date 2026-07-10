@@ -44,6 +44,7 @@ import {
   IconButton,
   InputLabel,
   Link,
+  Menu as MuiMenu,
   MenuItem,
   Paper,
   Select,
@@ -59,6 +60,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import * as XLSX from 'xlsx';
 import {
   DeleteOutline as DeleteIcon,
   Edit as EditIcon,
@@ -1594,6 +1596,75 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
         matchesSearch(r),
     );
   }, [sortedRows, statusFilter, gridSearch, deletedIds]);
+
+  // Export EXACTLY what the table shows — displayedRows already reflects
+  // every active filter (entity/account/JO/shift/week upstream, status +
+  // search here), and each column mirrors its cell's value logic.
+  const [exportAnchor, setExportAnchor] = useState<HTMLElement | null>(null);
+  const handleExport = (kind: 'csv' | 'xlsx') => {
+    const sheetRows = displayedRows.map((row) => {
+      const status = displayStatusForRow(row);
+      const entry = row.kind === 'entry' ? row.entry : undefined;
+      const payRate =
+        row.assignment.payRate || (entry ? Number((entry as any).payRate) || 0 : 0);
+      const actualHrs = actualHoursForRow(row) ?? 0;
+      const tips = typeof entry?.tips === 'number' ? entry.tips : 0;
+      const bonus = typeof entry?.bonusAmount === 'number' ? entry.bonusAmount : 0;
+      const total = entry
+        ? row.kind === 'entry' && row.isImport
+          ? (payRate > 0 && actualHrs > 0 ? actualHrs * payRate : 0) + tips + bonus
+          : computeEntryGrossPay(entry)
+        : 0;
+      const breakMins = Array.isArray(entry?.breaks)
+        ? (entry!.breaks as unknown as Array<Record<string, unknown>>).reduce(
+            (s, b) => s + (Number.isFinite(Number(b?.durationMins)) ? Number(b.durationMins) : 0),
+            0,
+          )
+        : 0;
+      return {
+        Worker: row.assignment.workerDisplayName ?? entry?.import?.csvWorkerName ?? '',
+        Worksite: row.assignment.worksiteDisplayName ?? entry?.import?.csvSite ?? '',
+        'Work date': row.workDate,
+        Scheduled:
+          row.kind === 'entry' && row.isImport
+            ? 'Imported'
+            : row.scheduled.startTime && row.scheduled.endTime
+              ? `${row.scheduled.startTime}–${row.scheduled.endTime}`
+              : '',
+        'Sched hrs': scheduledHoursForRow(row) ?? '',
+        Actual:
+          entry?.actualStartTime && entry?.actualEndTime
+            ? `${entry.actualStartTime}–${entry.actualEndTime}`
+            : '',
+        'Break mins': breakMins || '',
+        'Actual hrs': actualHrs || '',
+        Tips: tips || '',
+        Bonus: bonus || '',
+        Notes: entry?.notes ?? '',
+        'Pay rate': payRate || '',
+        'WC Code': row.resolvedWorkersCompCode ?? '',
+        'WC Rate': row.resolvedWorkersCompRate ?? '',
+        Total: total ? Math.round(total * 100) / 100 : '',
+        Status: STATUS_LABELS[status] ?? status,
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(sheetRows);
+    const stamp = new Date().toISOString().slice(0, 10);
+    if (kind === 'csv') {
+      const csv = XLSX.utils.sheet_to_csv(ws);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `timesheets-${stamp}.csv`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } else {
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Timesheets');
+      XLSX.writeFile(wb, `timesheets-${stamp}.xlsx`);
+    }
+    setExportAnchor(null);
+  };
   // Options offered: the import lifecycle (the managed surface) + the common
   // scheduled statuses. Built from STATUS_LABELS so labels stay in sync.
   const STATUS_FILTER_OPTIONS: TimesheetRowDisplayStatus[] = [
@@ -1919,6 +1990,25 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                 </Button>
               </>
             )}
+            <Box sx={{ ml: 'auto' }}>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={(e) => setExportAnchor(e.currentTarget)}
+                disabled={displayedRows.length === 0}
+                sx={{ textTransform: 'none' }}
+              >
+                Export
+              </Button>
+              <MuiMenu
+                anchorEl={exportAnchor}
+                open={Boolean(exportAnchor)}
+                onClose={() => setExportAnchor(null)}
+              >
+                <MenuItem onClick={() => handleExport('xlsx')}>Excel (.xlsx)</MenuItem>
+                <MenuItem onClick={() => handleExport('csv')}>CSV</MenuItem>
+              </MuiMenu>
+            </Box>
           </Stack>
         ) : null}
 
