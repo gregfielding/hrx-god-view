@@ -12572,6 +12572,9 @@ export { onFieldglassIngestEventCreatedParse } from './integrations/fieldglass/o
 // FG Slice 3 — idempotent site → CRM location → child account chain,
 // invoked from the /shifts/log review UI ("Create site + account").
 export { fieldglassEnsureSite } from './integrations/fieldglass/ensureSiteCallable';
+// Places selection rescue — geocodes with the server key when the browser
+// widget returns a place without address_components (interpolated addresses).
+export { placesGeocodeAddress } from './placesGeocodeAddress';
 // FG Slice 5 — detail-page enrichment endpoints for the Chrome extension
 // (browser-extensions/fieldglass-sync/): queue of orders needing sync +
 // page-text ingest (gpt-5 extraction → enrichment stamp + site chain).

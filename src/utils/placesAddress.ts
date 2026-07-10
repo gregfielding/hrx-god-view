@@ -9,12 +9,17 @@
  * city/state/zip empty, or hard-errored on the applicant signup step.
  *
  * `resolvePlaceAddress` first tries the components on the place itself; when
- * they're absent it geocodes `formatted_address || name` with the already
- * loaded Maps JS Geocoder and parses the top result instead. Every call
- * writes a one-line diagnostic to localStorage (`hrx_places_diag`) — shared
- * across same-origin tabs, so a session debugging in one tab can read what a
- * user's tab actually received.
+ * they're absent it geocodes `formatted_address || name` via the
+ * `placesGeocodeAddress` callable (the BROWSER key is API-restricted —
+ * `google.maps.Geocoder` returns REQUEST_DENIED, verified live — so the
+ * server key does the lookup), falling back to parsing the formatted string
+ * itself ("street, city, ST, USA" — no zip) if the callable fails. Every
+ * call writes a one-line diagnostic to localStorage (`hrx_places_diag`) —
+ * shared across same-origin tabs, so a session debugging in one tab can
+ * read what a user's tab actually received.
  */
+
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 export interface ResolvedPlaceAddress {
   street: string;
@@ -102,38 +107,78 @@ export async function resolvePlaceAddress(
 
   if (!components || components.length === 0) {
     const query = (formatted || place.name || '').trim();
-    const geocoderAvailable = !!(window as any).google?.maps?.Geocoder;
-    if (!query || !geocoderAvailable) {
-      writeDiag(surface, {
-        path: 'unresolvable',
-        placeKeys: Object.keys(place),
-        query,
-        geocoderAvailable,
-      });
+    if (!query) {
+      writeDiag(surface, { path: 'unresolvable', placeKeys: Object.keys(place) });
       return null;
     }
     try {
-      const geocoder = new (window as any).google.maps.Geocoder();
-      const response = await geocoder.geocode({ address: query });
-      const top = response?.results?.[0];
-      if (!top || !Array.isArray(top.address_components)) {
-        writeDiag(surface, { path: 'geocode-empty', placeKeys: Object.keys(place), query });
-        return null;
+      const call = httpsCallable(getFunctions(), 'placesGeocodeAddress');
+      const resp: any = await call({ address: query });
+      const d = resp?.data;
+      if (d?.ok) {
+        const { lat, lng } = { lat: d.lat ?? null, lng: d.lng ?? null };
+        const result: ResolvedPlaceAddress = {
+          street: d.street || '',
+          city: d.city || '',
+          state: d.state || '',
+          zipCode: d.zipCode || '',
+          country: d.country || '',
+          formattedAddress: d.formattedAddress || query,
+          placeId: d.placeId || placeId,
+          lat,
+          lng,
+        };
+        writeDiag(surface, {
+          path: 'server-geocoded',
+          placeKeys: Object.keys(place),
+          filled: {
+            street: !!result.street,
+            city: !!result.city,
+            state: !!result.state,
+            zip: !!result.zipCode,
+            coords: lat !== null,
+          },
+        });
+        return result;
       }
-      components = top.address_components;
-      geometry = top.geometry;
-      formatted = top.formatted_address || formatted || query;
-      placeId = top.place_id || placeId;
-      path = 'geocoded';
+      writeDiag(surface, {
+        path: 'server-geocode-miss',
+        placeKeys: Object.keys(place),
+        query,
+        status: d?.status,
+      });
     } catch (err: any) {
       writeDiag(surface, {
-        path: 'geocode-error',
+        path: 'server-geocode-error',
         placeKeys: Object.keys(place),
         query,
         error: String(err?.message || err).slice(0, 120),
       });
-      return null;
     }
+    // Last resort: parse the canonical description "street, city, ST, USA".
+    // No zip and no coordinates — surfaces that require them will still show
+    // their validation message, but forms like Add Location get street +
+    // city + state filled for manual completion.
+    const parts = query.split(',').map((s) => s.trim()).filter(Boolean);
+    if (parts.length >= 3) {
+      const stateToken = (parts[parts.length - 2] || '').split(/\s+/)[0] || '';
+      const zipToken = (parts[parts.length - 2] || '').split(/\s+/)[1] || '';
+      const result: ResolvedPlaceAddress = {
+        street: parts[0],
+        city: parts[1],
+        state: stateToken,
+        zipCode: zipToken,
+        country: /^(usa|us|united states)$/i.test(parts[parts.length - 1]) ? 'US' : '',
+        formattedAddress: query,
+        placeId,
+        lat: null,
+        lng: null,
+      };
+      writeDiag(surface, { path: 'string-parsed', placeKeys: Object.keys(place) });
+      return result;
+    }
+    writeDiag(surface, { path: 'string-parse-failed', placeKeys: Object.keys(place), query });
+    return null;
   }
 
   const parsed = parseComponents(components!);
