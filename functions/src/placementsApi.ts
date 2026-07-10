@@ -44,7 +44,7 @@ const db = admin.firestore();
 //                   can offer "Re-apply to Shift".
 type AssignmentDecision = 'accept' | 'decline' | 'worker_cancel';
 
-function toDateOnly(value: any): string {
+export function toDateOnly(value: any): string {
   if (!value) return '';
   if (typeof value === 'string') return value.split('T')[0];
   if (value?.toDate && typeof value.toDate === 'function') {
@@ -172,7 +172,7 @@ function isIsoDayToken(value: unknown): value is string {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
-function getApplicationApplyDays(applicationData: Record<string, any>): string[] {
+export function getApplicationApplyDays(applicationData: Record<string, any>): string[] {
   const days = new Set<string>();
   if (Array.isArray(applicationData.applyDates)) {
     applicationData.applyDates.forEach((entry: unknown) => {

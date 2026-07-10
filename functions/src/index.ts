@@ -12579,6 +12579,9 @@ export { placesGeocodeAddress } from './placesGeocodeAddress';
 // blocks; enforcement lives in placementsApi + jobOrderAutoMessaging + the
 // client jobs board / apply flow.
 export { setWorkerDnr } from './dnr/setWorkerDnr';
+// Termination/separation (item 2) — per-entity employment end with
+// final-pay gating, auto-cancel of live assignments, and rehire flags.
+export { separateWorker } from './separation/separateWorker';
 // FG Slice 5 — detail-page enrichment endpoints for the Chrome extension
 // (browser-extensions/fieldglass-sync/): queue of orders needing sync +
 // page-text ingest (gpt-5 extraction → enrichment stamp + site chain).

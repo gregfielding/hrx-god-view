@@ -15,7 +15,10 @@ export async function filterDnrRecipients(
   userIds: string[],
 ): Promise<{ allowed: string[]; blockedUserIds: string[] }> {
   const candidates = joAccountIdCandidates(jobOrder);
-  if (candidates.length === 0 || userIds.length === 0) {
+  // Separated workers are blocked for their separated ENTITY's jobs the
+  // same way DNR'd workers are blocked for an account's jobs.
+  const joEntityId = String(jobOrder?.hiringEntityId || '');
+  if ((candidates.length === 0 && !joEntityId) || userIds.length === 0) {
     return { allowed: userIds, blockedUserIds: [] };
   }
   const allowed: string[] = [];
@@ -28,9 +31,19 @@ export async function filterDnrRecipients(
       .collection('users')
       .where(admin.firestore.FieldPath.documentId(), 'in', chunk)
       .get();
-    const byId = new Map(snap.docs.map((d) => [d.id, (d.data() || {}).dnrAccountIds]));
+    const byId = new Map(
+      snap.docs.map((d) => {
+        const u = d.data() || {};
+        return [d.id, { dnr: u.dnrAccountIds, separated: u.separatedEntityIds }] as const;
+      }),
+    );
     for (const uid of chunk) {
-      if (isDnrMatch(byId.get(uid), candidates)) blockedUserIds.push(uid);
+      const u = byId.get(uid);
+      const separatedHit =
+        !!joEntityId &&
+        Array.isArray(u?.separated) &&
+        (u!.separated as unknown[]).includes(joEntityId);
+      if (isDnrMatch(u?.dnr, candidates) || separatedHit) blockedUserIds.push(uid);
       else allowed.push(uid);
     }
   }
