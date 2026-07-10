@@ -64,6 +64,7 @@ import type { RecordHeaderAssignmentLine } from '../../../utils/recordHeaderAssi
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import DnrSection from '../../../components/dnr/DnrSection';
+import SeparationSection from '../../../components/separation/SeparationSection';
 
 type TenantUserGroupOption = { id: string; title: string };
 
@@ -802,6 +803,10 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
               {/* DNR chips + add action — per-account Do Not Return marks. */}
               {tenantIdForUserGroups ? (
                 <DnrSection tenantId={tenantIdForUserGroups} userId={uid} />
+              ) : null}
+              {/* Separation chips + action — per-entity employment end. */}
+              {tenantIdForUserGroups ? (
+                <SeparationSection tenantId={tenantIdForUserGroups} userId={uid} />
               ) : null}
 
               {/* Readiness status rows — moved under the Employment chips. */}
