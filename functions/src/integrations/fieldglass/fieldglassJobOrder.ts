@@ -579,9 +579,11 @@ export async function ensureJobOrderForFieldglassRequest(
     notes,
 
     // Smart-radius blast config — consumed by jobOrderAutoMessagingOnShiftCreated.
-    // Candidate-in-mind and already-ended orders get NO radius → nothing
-    // sends automatically.
-    ...(worksiteCoordinates && !candidateInMind && !endedInPast
+    // Candidate-in-mind, already-ended, and UNPRICED orders get NO radius →
+    // nothing sends automatically (never SMS-blast a job whose posting is a
+    // $0 draft; once the rate arrives the recruiter can blast via Worker
+    // Reach).
+    ...(worksiteCoordinates && !candidateInMind && !endedInPast && payRate > 0
       ? {
           autoMessagingSmartRadius: {
             miles: SMART_RADIUS_MILES,
@@ -921,6 +923,27 @@ async function backfillJobOrderFromEnrichment(
       patch.billRate = Math.round((patch.payRate as number) * SODEXO_BILL_MARKUP * 100) / 100;
     }
   }
+  // Pay rate reached the JO → push it to the linked postings too, and flip
+  // any awaiting-pay DRAFT posting live (postings born unpriced stay drafts
+  // until this moment — a public $0.00/hr card is worse than no card).
+  if (patch.payRate != null && Number(patch.payRate) > 0) {
+    const posts = await admin
+      .firestore()
+      .collection(`tenants/${tenantId}/job_postings`)
+      .where('jobOrderId', '==', joRef.id)
+      .get();
+    for (const p of posts.docs) {
+      const cur = p.data() as Record<string, unknown>;
+      const postPatch: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
+      if (Number(cur.payRate ?? 0) <= 0) postPatch.payRate = patch.payRate;
+      if (cur.awaitingPayRate === true && String(cur.status) === 'draft') {
+        postPatch.status = 'active';
+        postPatch.awaitingPayRate = FieldValue.delete();
+        postPatch.postedAt = FieldValue.serverTimestamp();
+      }
+      if (Object.keys(postPatch).length > 1) await p.ref.set(postPatch, { merge: true });
+    }
+  }
   const currentHeadcount = Number(jo.headcountRequested ?? 0);
   if (
     currentHeadcount <= 1 &&
@@ -1084,7 +1107,12 @@ async function createFieldglassJobPosting(
     worksiteName: params.worksiteName,
     worksiteAddress: params.worksiteAddress,
     visibility: 'public',
-    status: 'active',
+    // A public posting at $0.00/hr is worse than no posting (Greg,
+    // 2026-07-10 — FG wages often live in comments prose and miss the
+    // parse). No rate → draft, flipped to active automatically by the
+    // enrichment pass when the rate arrives.
+    status: params.payRate > 0 ? 'active' : 'draft',
+    ...(params.payRate > 0 ? {} : { awaitingPayRate: true }),
     payRate: params.payRate,
     showPayRate: true,
     ...(params.startIso ? { startDate: params.startIso } : {}),
