@@ -16,6 +16,7 @@ import { sendNotificationAndPush } from './messaging/unifiedWorkerNotifications'
 import { normalizeUserPhoneToE164 } from './utils/phoneE164Normalize';
 import { buildWorkerJobPostUrl } from './utils/workerUrls';
 import { resolveRadiusRecipientUids } from './jobOrderAutoMessagingRadius';
+import { filterDnrRecipients } from './dnr/filterDnrRecipients';
 import { serverGeocodeSite } from './integrations/fieldglass/serverGeocode';
 import {
   TWILIO_ACCOUNT_SID,
@@ -452,7 +453,22 @@ export async function runJobOrderAutoMessagingForShift(
     }
   }
 
-  const recipientIds = Array.from(uidSet);
+  // DNR (Do Not Return) — silently drop workers whose active DNR covers any
+  // account this JO belongs to (child or national). They never receive
+  // SMS/email/push promoting this account's jobs; other accounts unaffected.
+  const { allowed: dnrAllowed, blockedUserIds: dnrBlocked } = await filterDnrRecipients(
+    db,
+    jobOrder,
+    Array.from(uidSet),
+  );
+  if (dnrBlocked.length > 0) {
+    logger.info('jobOrderAutoMessaging: DNR filter removed recipients', {
+      tenantId,
+      jobOrderId,
+      blocked: dnrBlocked.length,
+    });
+  }
+  const recipientIds = dnrAllowed;
   if (recipientIds.length === 0) {
     const noMembersLog = await db
       .collection(`tenants/${tenantId}/job_orders/${jobOrderId}/autoMessagingSendLog`)

@@ -12575,6 +12575,10 @@ export { fieldglassEnsureSite } from './integrations/fieldglass/ensureSiteCallab
 // Places selection rescue — geocodes with the server key when the browser
 // widget returns a place without address_components (interpolated addresses).
 export { placesGeocodeAddress } from './placesGeocodeAddress';
+// DNR (Do Not Return) — recruiter-gated add/remove of per-account worker
+// blocks; enforcement lives in placementsApi + jobOrderAutoMessaging + the
+// client jobs board / apply flow.
+export { setWorkerDnr } from './dnr/setWorkerDnr';
 // FG Slice 5 — detail-page enrichment endpoints for the Chrome extension
 // (browser-extensions/fieldglass-sync/): queue of orders needing sync +
 // page-text ingest (gpt-5 extraction → enrichment stamp + site chain).

@@ -627,6 +627,8 @@ export async function ensureJobOrderForFieldglassRequest(
     payRate,
     startIso,
     autoUserGroupId,
+    accountId: childAccountId,
+    parentAccountId: parentId || null,
   });
 
   // ── 3. Shift — STANDARD with real times when the "First Day Schedule"
@@ -1069,6 +1071,8 @@ async function createFieldglassJobPosting(
     payRate: number;
     startIso: string | null;
     autoUserGroupId?: string | null;
+    accountId?: string | null;
+    parentAccountId?: string | null;
   },
 ): Promise<string> {
   const { tenantId, jobOrderId } = params;
@@ -1104,6 +1108,9 @@ async function createFieldglassJobPosting(
     positionJobTitle: params.title,
     jobDescription: params.jobDescription,
     companyName: 'Sodexo',
+    // CRM account lineage — read by per-worker filters (DNR) on the board.
+    ...(params.accountId ? { accountId: params.accountId } : {}),
+    ...(params.parentAccountId ? { parentAccountId: params.parentAccountId } : {}),
     worksiteName: params.worksiteName,
     worksiteAddress: params.worksiteAddress,
     visibility: 'public',

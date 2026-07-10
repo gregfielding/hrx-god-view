@@ -21,6 +21,7 @@ const PLACEMENT_SMS_SECRETS = [
   TWILIO_A2P_CAMPAIGN,
 ];
 import { ensureWorkerOnboardingPipeline } from './onboarding/workerOnboardingPipeline';
+import { filterDnrRecipients } from './dnr/filterDnrRecipients';
 import { ASSIGNMENT_STATUS_QUERY_LIVE, isAssignmentTerminalNormalized } from './utils/assignmentStatusNormalize';
 import {
   buildWorkerAssignmentResponseUrl,
@@ -488,6 +489,25 @@ export const placementsCreateAssignments = onCall(
   const skipPlacementWorkerNotifications = Boolean(jobOrder.muted);
   const shift = shiftSnap.data() || {};
   const isGigJob = String(jobOrder.jobType || '').toLowerCase() === 'gig';
+
+  // DNR (Do Not Return) — a worker marked DNR for this JO's account (child
+  // or national) can never be assigned here. Hard reject with names so the
+  // recruiter knows exactly who and why; nothing is created for anyone.
+  {
+    const { blockedUserIds } = await filterDnrRecipients(db, jobOrder, uniqueUserIds);
+    if (blockedUserIds.length > 0) {
+      const names = await Promise.all(
+        blockedUserIds.map(async (bid) => {
+          const u = (await db.doc(`users/${bid}`).get()).data() || {};
+          return [u.firstName, u.lastName].filter(Boolean).join(' ') || bid;
+        }),
+      );
+      throw new HttpsError(
+        'failed-precondition',
+        `DNR: ${names.join(', ')} cannot be assigned to this account (Do Not Return). Remove them and retry.`,
+      );
+    }
+  }
 
   // Position-aware rate resolution (Greg, 2026-04-30 cascade audit).
   // Priority order for assignment payRate / billRate:

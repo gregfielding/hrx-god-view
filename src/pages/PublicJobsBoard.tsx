@@ -78,6 +78,9 @@ import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
 interface PublicJobPosting {
   id: string;
   tenantId: string;
+  /** CRM account lineage — read by the per-worker DNR filter. */
+  accountId?: string;
+  parentAccountId?: string;
   postTitle: string;
   jobTitle?: string;
   jobType: 'gig' | 'career';
@@ -236,6 +239,7 @@ const PublicJobsBoard: React.FC = () => {
   /** Map jobOrderId -> assignmentId for jobs where user has an assignment (proposed/confirmed/active) */
   const [userAssignmentIdByJobOrderId, setUserAssignmentIdByJobOrderId] = useState<Record<string, string>>({});
   const [userGroupIds, setUserGroupIds] = useState<string[]>([]);
+  const [userDnrAccountIds, setUserDnrAccountIds] = useState<string[]>([]);
   const [userCertifications, setUserCertifications] = useState<Array<{ name?: string }>>([]);
   /** Gap list for requirements tab — engine-backed when `REACT_APP_CERT_ENGINE_READINESS` is set. */
   const [profileMissingCertList, setProfileMissingCertList] = useState<string[]>([]);
@@ -261,6 +265,7 @@ const PublicJobsBoard: React.FC = () => {
         setUserApplicationIds([]);
         setUserApplicationStatuses({});
         setUserGroupIds([]);
+        setUserDnrAccountIds([]);
         setUserCertifications([]);
         return;
       }
@@ -272,6 +277,9 @@ const PublicJobsBoard: React.FC = () => {
           const applicationIds = Array.isArray(userData?.applicationIds) ? userData.applicationIds : [];
           setUserApplicationIds(applicationIds);
           setUserGroupIds(Array.isArray(userData?.userGroupIds) ? userData.userGroupIds : []);
+          setUserDnrAccountIds(
+            Array.isArray(userData?.dnrAccountIds) ? userData.dnrAccountIds : [],
+          );
           
           // Load user certifications
           const certs = Array.isArray(userData?.certifications) 
@@ -1182,6 +1190,16 @@ const PublicJobsBoard: React.FC = () => {
       return true;
     });
 
+    // DNR (Do Not Return) — hide postings for accounts the signed-in worker
+    // is marked DNR for (child account match OR national parent match).
+    // Postings carry denormalized accountId/parentAccountId for this check.
+    if (user?.uid && userDnrAccountIds.length > 0) {
+      filtered = filtered.filter((job) => {
+        const jobAccountIds = [job.accountId, job.parentAccountId].filter(Boolean) as string[];
+        return !jobAccountIds.some((id) => userDnrAccountIds.includes(id));
+      });
+    }
+
     // Apply sorting
     if (sortBy === 'closest' && userLocation) {
       console.log('🔍 Closest sorting - User location:', userLocation);
@@ -1237,7 +1255,7 @@ const PublicJobsBoard: React.FC = () => {
     }
 
     setFilteredJobs(filtered);
-  }, [jobs, searchTerm, jobTypeFilter, showFavoritesOnly, favorites, sortBy, userLocation, userGroupIds, user?.uid]);
+  }, [jobs, searchTerm, jobTypeFilter, showFavoritesOnly, favorites, sortBy, userLocation, userGroupIds, userDnrAccountIds, user?.uid]);
 
 
   const handleApply = async (job: PublicJobPosting) => {

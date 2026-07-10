@@ -846,6 +846,14 @@ export class JobsBoardService {
         // Company & Location
         companyId: jobOrder.companyId,
         companyName: customData?.companyName || jobOrder.companyName,
+        // CRM account lineage — denormalized so per-worker filters (DNR)
+        // can hide this posting without joining back to the job order.
+        ...((jobOrder as any).accountId || (jobOrder as any).recruiterAccountId
+          ? { accountId: (jobOrder as any).accountId || (jobOrder as any).recruiterAccountId }
+          : {}),
+        ...((jobOrder as any).parentAccountId
+          ? { parentAccountId: (jobOrder as any).parentAccountId }
+          : {}),
         worksiteId: jobOrder.worksiteId,
         worksiteName: customData?.worksiteName || jobOrder.worksiteName,
         worksiteAddress: worksiteAddress, // Use the fetched/resolved address
@@ -1072,6 +1080,8 @@ export class JobsBoardService {
 
         // Company & Location
         ...(postData.companyId && { companyId: postData.companyId }),
+        ...((postData as any).accountId && { accountId: (postData as any).accountId }),
+        ...((postData as any).parentAccountId && { parentAccountId: (postData as any).parentAccountId }),
         companyName: postData.companyName,
         ...(postData.worksiteId && { worksiteId: postData.worksiteId }),
         worksiteName: postData.worksiteName,
@@ -1619,6 +1629,12 @@ export class JobsBoardService {
         typeof jobOrderData.companyId === 'string' ? jobOrderData.companyId : '';
       const joCompanyName =
         typeof jobOrderData.companyName === 'string' ? jobOrderData.companyName : '';
+      // CRM account lineage for per-worker filters (DNR) — refreshed on every
+      // JO→posting sync so older postings heal without a dedicated migration.
+      const joAccountId = String(
+        (jobOrderData as any).accountId || (jobOrderData as any).recruiterAccountId || '',
+      );
+      const joParentAccountId = String((jobOrderData as any).parentAccountId || '');
 
       for (const post of posts) {
         const postRef = doc(db, 'tenants', tenantId, 'job_postings', post.id);
@@ -1626,6 +1642,8 @@ export class JobsBoardService {
           updatedAt: new Date(),
           ...(startDate != null && { startDate }),
           ...(endDate != null && { endDate }),
+          ...(joAccountId && { accountId: joAccountId }),
+          ...(joParentAccountId && { parentAccountId: joParentAccountId }),
           ...(joWorksiteId && { worksiteId: joWorksiteId }),
           ...(joWorksiteName && { worksiteName: joWorksiteName }),
           ...(Object.keys(joWorksiteAddress).length > 0 && { worksiteAddress: joWorksiteAddress }),

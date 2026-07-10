@@ -1007,6 +1007,38 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     loadPosting();
   }, [tenantId, jobId]);
 
+  // DNR (Do Not Return) gate — a signed-in worker marked DNR for this
+  // posting's account (child or national) can't apply, even via a direct
+  // link. Generic message; the worker is never told they're DNR. Re-checks
+  // on auth changes so mid-wizard sign-in is covered too.
+  const [dnrBlocked, setDnrBlocked] = useState(false);
+  useEffect(() => {
+    const accountIds = [posting?.accountId, posting?.parentAccountId]
+      .map((v: unknown) => String(v || ''))
+      .filter(Boolean);
+    if (accountIds.length === 0) {
+      setDnrBlocked(false);
+      return;
+    }
+    const check = async (u: { uid: string } | null) => {
+      if (!u?.uid) {
+        setDnrBlocked(false);
+        return;
+      }
+      try {
+        const snap = await getDoc(doc(db, 'users', u.uid));
+        const dnrIds = (snap.data()?.dnrAccountIds ?? []) as string[];
+        setDnrBlocked(Array.isArray(dnrIds) && accountIds.some((id) => dnrIds.includes(id)));
+      } catch {
+        setDnrBlocked(false);
+      }
+    };
+    void check(auth.currentUser);
+    const unsub = auth.onAuthStateChanged((u) => void check(u));
+    return unsub;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [posting?.accountId, posting?.parentAccountId]);
+
   // Resolve hiring entity name (for skipping Work Eligibility when C1 Events LLC / independent contractors)
   useEffect(() => {
     let cancelled = false;
@@ -3588,6 +3620,20 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             {t('apply.payrollLaterHint')}
           </Typography>
         </Paper>
+      </Box>
+    );
+  }
+
+  // DNR gate — generic unavailability screen (never reveals the DNR).
+  if (dnrBlocked) {
+    return (
+      <Box sx={{ maxWidth: 560, mx: 'auto', mt: 8, px: 2, textAlign: 'center' }}>
+        <Typography variant="h6" sx={{ mb: 1 }}>
+          This position is no longer available
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Please browse our jobs board for other open positions.
+        </Typography>
       </Box>
     );
   }

@@ -63,6 +63,7 @@ import type { EmergencyContact } from '../../../types/UserProfile';
 import type { RecordHeaderAssignmentLine } from '../../../utils/recordHeaderAssignments';
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { db } from '../../../firebase';
+import DnrSection from '../../../components/dnr/DnrSection';
 
 type TenantUserGroupOption = { id: string; title: string };
 
@@ -797,6 +798,11 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                   —
                 </Typography>
               )}
+
+              {/* DNR chips + add action — per-account Do Not Return marks. */}
+              {tenantIdForUserGroups ? (
+                <DnrSection tenantId={tenantIdForUserGroups} userId={uid} />
+              ) : null}
 
               {/* Readiness status rows — moved under the Employment chips. */}
               {!canViewAdminContent && interviewSummaryLine ? (
