@@ -4,6 +4,7 @@ import { HelmetProvider } from 'react-helmet-async';
 
 import './index.css';
 import './setupConsoleFilters';
+import { installPacClickFallback } from './utils/pacClickFallback';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 import { ThemeModeProvider } from './theme/theme';
@@ -160,6 +161,9 @@ if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
     } catch {}
   }, true);
 }
+
+// Google Places dropdown click fallback — see src/utils/pacClickFallback.ts.
+installPacClickFallback();
 
 const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
 
