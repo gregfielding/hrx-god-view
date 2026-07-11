@@ -190,7 +190,7 @@ const DnrSection: React.FC<{ tenantId: string; userId: string }> = ({ tenantId, 
   );
 
   return (
-    <Box sx={{ mt: 0.6 }}>
+    <Box sx={{ mt: 0.25 }}>
       <Stack direction="row" flexWrap="wrap" gap={0.5} alignItems="center">
         {entries.map((e) => (
           <Chip
@@ -209,10 +209,20 @@ const DnrSection: React.FC<{ tenantId: string; userId: string }> = ({ tenantId, 
             sx={{ height: 24, '& .MuiChip-label': { px: 0.75, fontSize: '0.74rem' } }}
           />
         ))}
+        {/* Text-height action: kill the small-Button min-height/padding so the
+            row sits flush in the header column (Greg 2026-07-11). */}
         <Button
           size="small"
           onClick={() => setDialogOpen(true)}
-          sx={{ minWidth: 0, px: 0.75, fontSize: '0.72rem', color: 'text.secondary' }}
+          sx={{
+            minWidth: 0,
+            minHeight: 0,
+            px: 0.75,
+            py: 0,
+            lineHeight: 1.5,
+            fontSize: '0.72rem',
+            color: 'text.secondary',
+          }}
         >
           + DNR
         </Button>

@@ -34,7 +34,6 @@ import NoteIcon from '@mui/icons-material/Note';
 import LinkedInIcon from '@mui/icons-material/LinkedIn';
 import AddTaskIcon from '@mui/icons-material/AddTask';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import BugReportIcon from '@mui/icons-material/BugReport';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
 import { evereeAdminGetWorker } from '../../services/everee/evereeCallables';
 import { assertEvereeWorkerIdMatch } from '../../utils/everee/assertEvereeWorkerIdMatch';
@@ -2670,11 +2669,6 @@ const UserProfilePage = () => {
                         </RecordHeaderActionIcon>
                       )}
                       {isAdminView && (
-                        <RecordHeaderActionIcon tooltip="Log Everee data to console" onClick={() => void handleDumpEvereeData()}>
-                          <BugReportIcon />
-                        </RecordHeaderActionIcon>
-                      )}
-                      {isAdminView && (
                         <RecordHeaderActionIcon
                           tooltip="Fetch full record from Everee API"
                           onClick={() => void handleFetchEvereeApiData()}
@@ -2908,11 +2902,6 @@ const UserProfilePage = () => {
                   {isAdminView && (
                     <RecordHeaderActionIcon tooltip="Log Activity" onClick={() => setShowLogActivityDialog(true)}>
                       <CheckCircleIcon />
-                    </RecordHeaderActionIcon>
-                  )}
-                  {isAdminView && (
-                    <RecordHeaderActionIcon tooltip="Log Everee data to console" onClick={() => void handleDumpEvereeData()}>
-                      <BugReportIcon />
                     </RecordHeaderActionIcon>
                   )}
                   {isAdminView && (
