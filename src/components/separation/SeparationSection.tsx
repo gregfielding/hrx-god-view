@@ -97,7 +97,9 @@ const SeparationSection: React.FC<{ tenantId: string; userId: string }> = ({
 
   // Load the worker's entity employments + entity names on dialog open.
   useEffect(() => {
-    if (!open || employments !== null) return;
+    // Loaded on MOUNT (not dialog-open): the "Separate…" action itself only
+    // renders when the worker has a live (onboarding/active) employment.
+    if (employments !== null) return;
     (async () => {
       try {
         const [emSnap, entSnap] = await Promise.all([
@@ -123,7 +125,10 @@ const SeparationSection: React.FC<{ tenantId: string; userId: string }> = ({
               status: String(e.status || ''),
             };
           })
-          .filter((o) => o.entityId && o.status !== 'terminated');
+          // Separation only makes sense for a live employment — Greg's rule
+          // (2026-07-11): currently onboarding or active. Inactive/terminated
+          // rows never surface here.
+          .filter((o) => o.entityId && ['onboarding', 'active'].includes(o.status));
         setEmployments(opts);
         if (opts.length === 1) setEntityId(opts[0].entityId);
       } catch {
@@ -131,7 +136,9 @@ const SeparationSection: React.FC<{ tenantId: string; userId: string }> = ({
         setError('Could not load employment records.');
       }
     })();
-  }, [open, employments, tenantId, userId]);
+  }, [employments, tenantId, userId]);
+
+  const hasLiveEmployment = (employments ?? []).length > 0;
 
   // Count live assignments at the chosen entity — they will be auto-cancelled.
   useEffect(() => {
@@ -224,13 +231,15 @@ const SeparationSection: React.FC<{ tenantId: string; userId: string }> = ({
             sx={{ height: 24, '& .MuiChip-label': { px: 0.75, fontSize: '0.74rem' } }}
           />
         )}
-        <Button
-          size="small"
-          onClick={() => setOpen(true)}
-          sx={{ minWidth: 0, px: 0.75, fontSize: '0.72rem', color: 'text.secondary' }}
-        >
-          Separate…
-        </Button>
+        {hasLiveEmployment && (
+          <Button
+            size="small"
+            onClick={() => setOpen(true)}
+            sx={{ minWidth: 0, px: 0.75, fontSize: '0.72rem', color: 'text.secondary' }}
+          >
+            Separate…
+          </Button>
+        )}
       </Stack>
 
       <Dialog open={open} onClose={close} maxWidth="sm" fullWidth>
