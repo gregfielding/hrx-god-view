@@ -329,6 +329,14 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
    * change produces a different key and fetches normally.
    */
   const backNavRestoredKeyRef = useRef<string | null>(null);
+  /** Monotonic id for search-scan runs — a run's writes are discarded only
+   *  when a NEWER run has started (filter key changed), not when the effect
+   *  merely re-fires with the same key. See the dedup note in the effect. */
+  const searchScanRunIdRef = useRef(0);
+  /** Filter key of the last slow-path (server scan) run started; identical
+   *  re-fires skip instead of cancel-and-restart. Cleared on scan error so
+   *  the next re-fire retries. */
+  const lastSlowScanKeyRef = useRef<string | null>(null);
   /** Live snapshot for the unmount save — refs so the cleanup sees current values. */
   const backNavSnapshotRef = useRef<{ key: string; users: RecruiterUser[]; lastVisibleDoc: QueryDocumentSnapshot<DocumentData> | null; hasMore: boolean }>({
     key: backNavCacheKey,
@@ -481,8 +489,6 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
       return;
     }
 
-    let cancelled = false;
-
     /**
      * Fast path — text-only commit AND the directory is loaded. Filter
      * the in-memory directory locally to get matching ids, then hydrate
@@ -498,8 +504,21 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
       !hasStatus &&
       workerDirectory.workers.length > 0;
 
+    // Slow-path dedup (2026-07-11): this effect re-fires whenever the
+    // worker directory revalidates (`workerDirectory.workers` identity),
+    // which used to cancel the in-flight scan and start an identical one —
+    // 3–5 concurrent full scans per page view, enough to time out the
+    // callable. Same filter key → let the original run finish; its writes
+    // stay valid because staleness is a monotonic run id (bumped only when
+    // a NEW run starts), not a per-effect cancel flag.
+    if (!canUseDirectory && lastSlowScanKeyRef.current === backNavCacheKey) return;
+    searchScanRunIdRef.current += 1;
+    const runId = searchScanRunIdRef.current;
+    const isStale = () => searchScanRunIdRef.current !== runId;
+    if (!canUseDirectory) lastSlowScanKeyRef.current = backNavCacheKey;
+
     const hydrateAndSet = async (ids: string[]): Promise<void> => {
-      if (cancelled) return;
+      if (isStale()) return;
       if (ids.length === 0) {
         setUsers([]);
         return;
@@ -513,14 +532,14 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
       const IN_LIMIT = 30;
       const byId = new Map<string, RecruiterUser>();
       for (const idChunk of chunk(ids, IN_LIMIT)) {
-        if (cancelled) return;
+        if (isStale()) return;
         const snap = await getDocs(query(usersRef, where(documentId(), 'in', idChunk)));
         snap.docs.forEach((d) => {
           const u = mapUserDocToRecruiterUser(d, tenantId);
           if (u) byId.set(d.id, u);
         });
       }
-      if (cancelled) return;
+      if (isStale()) return;
       const ordered = ids.map((id) => byId.get(id)).filter((u): u is RecruiterUser => !!u);
       setUsers(ordered);
     };
@@ -550,13 +569,13 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
         }
         await hydrateAndSet(ids);
       } catch (e: unknown) {
-        if (!cancelled) {
+        if (!isStale()) {
           console.warn('RecruiterUsers: local directory hydrate failed', e);
           setError(formatFirebaseHttpsError(e));
           setUsers([]);
         }
       } finally {
-        if (!cancelled) setSearchFirestoreLoading(false);
+        if (!isStale()) setSearchFirestoreLoading(false);
       }
     };
 
@@ -572,24 +591,23 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
           ...(hasEntity ? { entityKey: entityFilter } : {}),
           ...(hasStatus ? { employmentStatus: statusFilter } : {}),
         });
-        if (cancelled) return;
+        if (isStale()) return;
         await hydrateAndSet(data.userIds);
       } catch (e: unknown) {
-        if (!cancelled) {
+        // Clear the dedup marker so a later re-fire (directory revalidation
+        // or filter round-trip) can retry instead of skipping forever.
+        lastSlowScanKeyRef.current = null;
+        if (!isStale()) {
           console.warn('RecruiterUsers: searchRecruiterTableUsers failed', e);
           setError(formatFirebaseHttpsError(e));
           setUsers([]);
         }
       } finally {
-        if (!cancelled) setSearchFirestoreLoading(false);
+        if (!isStale()) setSearchFirestoreLoading(false);
       }
     };
 
     void (canUseDirectory ? runFast() : runSlow());
-
-    return () => {
-      cancelled = true;
-    };
   }, [
     submittedSearchTerm,
     groupFilter,
