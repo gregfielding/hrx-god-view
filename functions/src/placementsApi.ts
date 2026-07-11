@@ -23,6 +23,7 @@ const PLACEMENT_SMS_SECRETS = [
 import { ensureWorkerOnboardingPipeline } from './onboarding/workerOnboardingPipeline';
 import { filterDnrRecipients } from './dnr/filterDnrRecipients';
 import { ASSIGNMENT_STATUS_QUERY_LIVE, isAssignmentTerminalNormalized } from './utils/assignmentStatusNormalize';
+import { sendNotificationAndPush } from './messaging/unifiedWorkerNotifications';
 import {
   buildWorkerAssignmentResponseUrl,
   buildWorkerAssignmentAcceptUrl,
@@ -183,6 +184,156 @@ export function getApplicationApplyDays(applicationData: Record<string, any>): s
   const applyDate = String(applicationData.applyDate || '').trim();
   if (isIsoDayToken(applyDate)) days.add(applyDate);
   return Array.from(days).sort();
+}
+
+/**
+ * Auto-release a worker's other OPEN applications that overlap a shift they
+ * were just assigned to (2026-07-11 — the Qwick "confirm-lock" adapted to
+ * our recruiter-assigns model). Overlapping applications stay allowed at
+ * apply time (they signal "I'd take either"); the moment one wins, the
+ * losers for the SAME hours are released so other recruiters stop pursuing
+ * a worker who is no longer available. The assignment-time overlap guard
+ * remains the last line for anything this can't compute.
+ *
+ * Conservative by design: releases only when the other application's shift
+ * TIMES are resolvable (preferredShiftId, else the JO's single shift) and a
+ * specific applyDate's window overlaps a new-assignment window. Career
+ * apps, day-less express-interest apps, ambiguous multi-shift apps, and
+ * no-fixed-times open shifts are left untouched. Never throws — a release
+ * failure must not affect the assignment that triggered it.
+ */
+async function releaseOverlappingApplications(args: {
+  tenantId: string;
+  userId: string;
+  assignedJobOrderId: string;
+  assignedJobOrderTitle: string;
+  assignedShiftId: string;
+  assignedAssignmentId: string;
+  /** Absolute windows of the newly created assignment(s). */
+  windows: ShiftWindow[];
+}): Promise<void> {
+  const { tenantId, userId } = args;
+  if (args.windows.length === 0) return;
+  try {
+    const appsSnap = await db
+      .collection(`tenants/${tenantId}/applications`)
+      .where('userId', '==', userId)
+      .get();
+    const TERMINAL = new Set([
+      'hired',
+      'confirmed',
+      'rejected',
+      'withdrawn',
+      'declined',
+      'released_overlap',
+      'archived',
+      'cancelled',
+      'canceled',
+    ]);
+    const joCache = new Map<string, Record<string, any> | null>();
+    const postCache = new Map<string, Record<string, any> | null>();
+    for (const appDoc of appsSnap.docs) {
+      const app = appDoc.data() as Record<string, any>;
+      if (TERMINAL.has(String(app.status || '').toLowerCase())) continue;
+
+      let joId = String(app.jobOrderId || '');
+      if (!joId) {
+        const postRef = String(app.jobId || app.postId || '');
+        if (!postRef) continue;
+        let post = postCache.get(postRef);
+        if (post === undefined) {
+          const snap = await db.doc(`tenants/${tenantId}/job_postings/${postRef}`).get();
+          post = snap.exists ? (snap.data() as Record<string, any>) : null;
+          postCache.set(postRef, post);
+        }
+        joId = String(post?.jobOrderId || '');
+      }
+      if (!joId || joId === args.assignedJobOrderId) continue;
+
+      const days = getApplicationApplyDays(app);
+      if (days.length === 0) continue;
+
+      let joData = joCache.get(joId);
+      if (joData === undefined) {
+        const snap = await db.doc(`tenants/${tenantId}/job_orders/${joId}`).get();
+        joData = snap.exists ? (snap.data() as Record<string, any>) : null;
+        joCache.set(joId, joData);
+      }
+      if (!joData) continue;
+
+      let shiftData: Record<string, any> | null = null;
+      const preferredShiftId = String(app.preferredShiftId || '');
+      if (preferredShiftId) {
+        const s = await db
+          .doc(`tenants/${tenantId}/job_orders/${joId}/shifts/${preferredShiftId}`)
+          .get();
+        shiftData = s.exists ? (s.data() as Record<string, any>) : null;
+      } else {
+        const shifts = await db
+          .collection(`tenants/${tenantId}/job_orders/${joId}/shifts`)
+          .limit(2)
+          .get();
+        if (shifts.size === 1) shiftData = shifts.docs[0].data() as Record<string, any>;
+      }
+      if (!shiftData) continue;
+      const st = String(shiftData.startTime || shiftData.defaultStartTime || '');
+      const et = String(shiftData.endTime || shiftData.defaultEndTime || '');
+      if (!st || !et) continue;
+
+      const overlappingDays = days.filter((day) => {
+        const w = computeShiftWindow(day, st, et);
+        return !!w && args.windows.some((nw) => shiftWindowsOverlap(nw, w));
+      });
+      if (overlappingDays.length === 0) continue;
+
+      const remaining = days.filter((d) => !overlappingDays.includes(d));
+      const patch: Record<string, unknown> = {
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        overlapReleasedDays: admin.firestore.FieldValue.arrayUnion(...overlappingDays),
+        overlapReleasedFrom: {
+          assignmentId: args.assignedAssignmentId,
+          jobOrderId: args.assignedJobOrderId,
+          shiftId: args.assignedShiftId,
+        },
+      };
+      if (remaining.length === 0) {
+        patch.status = 'released_overlap';
+        patch.statusChangeReason = 'overlaps_confirmed_assignment';
+        patch.releasedAt = admin.firestore.FieldValue.serverTimestamp();
+      } else {
+        patch.applyDates = remaining;
+        patch.applyDate = remaining[0];
+      }
+      await appDoc.ref.set(patch, { merge: true });
+
+      try {
+        const otherTitle = String(joData.jobOrderName || joData.jobTitle || 'another shift');
+        await sendNotificationAndPush({
+          uid: userId,
+          tenantId,
+          title: "You're booked!",
+          body: `You're confirmed for ${args.assignedJobOrderTitle}. Your request for ${otherTitle} on ${overlappingDays.join(', ')} was released because it overlaps your booked shift.`,
+          severity: 'info',
+          source: 'automation',
+        });
+      } catch {
+        /* notification is best-effort */
+      }
+      logger.info('placements: released overlapping application', {
+        tenantId,
+        userId,
+        applicationId: appDoc.id,
+        overlappingDays,
+        remainingDays: remaining.length,
+      });
+    }
+  } catch (err) {
+    logger.warn('placements: overlap auto-release failed (non-fatal)', {
+      tenantId,
+      userId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 function canManageAssignmentsFromClaims(auth: any, tenantId: string): boolean {
@@ -878,6 +1029,24 @@ export const placementsCreateAssignments = onCall(
         }
         if (userCreated.length > 0) {
           createdByUserId.set(userId, userCreated);
+          // These day(s) are now booked — release the worker's overlapping
+          // OPEN applications elsewhere (see releaseOverlappingApplications).
+          const relSt = String(shift.startTime || shift.defaultStartTime || '');
+          const relEt = String(shift.endTime || shift.defaultEndTime || '');
+          const relWindows = userCreated
+            .map((c) => computeShiftWindow(c.date, relSt, relEt))
+            .filter((w): w is ShiftWindow => !!w);
+          await releaseOverlappingApplications({
+            tenantId,
+            userId,
+            assignedJobOrderId: jobOrderId,
+            assignedJobOrderTitle: String(
+              jobOrder.jobOrderName || jobOrder.jobTitle || 'your shift',
+            ),
+            assignedShiftId: shiftId,
+            assignedAssignmentId: userCreated[0].assignmentId,
+            windows: relWindows,
+          });
         }
       } catch (error: any) {
         failed.push({ userId, error: error?.message || 'unknown_error' });
@@ -1285,6 +1454,19 @@ export const placementsCreateAssignments = onCall(
       }
 
       created.push({ userId, assignmentId: assignmentRef.id, warnings });
+      // This shift is now booked — release the worker's overlapping OPEN
+      // applications elsewhere (see releaseOverlappingApplications).
+      if (newWindow) {
+        await releaseOverlappingApplications({
+          tenantId,
+          userId,
+          assignedJobOrderId: jobOrderId,
+          assignedJobOrderTitle: String(jobOrder.jobOrderName || jobOrder.jobTitle || 'your shift'),
+          assignedShiftId: shiftId,
+          assignedAssignmentId: assignmentRef.id,
+          windows: [newWindow],
+        });
+      }
     } catch (error: any) {
       failed.push({ userId, error: error?.message || 'unknown_error' });
     }

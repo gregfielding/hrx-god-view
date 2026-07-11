@@ -48,6 +48,10 @@ const LEGACY_TO_CANONICAL: Record<string, ApplicationStatus> = {
   rejected: 'rejected',
   withdrawn: 'withdrawn',
   waitlisted: 'waitlisted',
+  // Auto-released because it overlapped a shift the worker was assigned to
+  // (placementsApi releaseOverlappingApplications, 2026-07-11). Withdrawn
+  // semantics: terminal + excluded from applicant pools.
+  released_overlap: 'withdrawn',
   // NewDataModel-style
   pending: 'submitted',
 };
