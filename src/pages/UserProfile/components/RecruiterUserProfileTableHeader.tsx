@@ -928,35 +928,80 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
               <Typography component="span" sx={recordHeaderColumnTitleSx}>
                 Screening
               </Typography>
-              {screeningPackageHint ? (
-                <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, mb: 0.5 }}>
-                  {screeningPackageHint}
-                </Typography>
-              ) : null}
-              {screeningLines.length > 0 ? (
-                <Stack spacing={0.35}>
-                  {screeningLines.map((line) => {
-                    const verdictIcon = renderVerdictIconForHeader(line.verdict);
-                    return (
+              {(() => {
+                // 2026-07-11 (Greg): the package leads, its service items
+                // nest beneath. Hidden from the header: canceled items and
+                // bare "Order <id>" rows (order_status_change webhook echoes
+                // that duplicate the package status and, for older orders on
+                // the same AccuSource profile, aren't part of this package at
+                // all — the Backgrounds tab stays the detailed view). Once
+                // every remaining item is adjudicated PASSED/FAILED the list
+                // collapses into one aggregate icon on the package line: red
+                // X if anything failed, green check if all passed.
+                // NEEDS_REVIEW / PENDING items keep the list expanded — a
+                // recruiter still has work to do there.
+                const visibleLines = screeningLines.filter(
+                  (line) =>
+                    !/cancel/i.test(line.status) && !/^order\s+\S+$/i.test(line.name.trim()),
+                );
+                const adjudicated =
+                  visibleLines.length > 0 &&
+                  visibleLines.every((l) => l.verdict === 'PASSED' || l.verdict === 'FAILED');
+                const anyFailed = visibleLines.some((l) => l.verdict === 'FAILED');
+                const collapsed = adjudicated && !!screeningPackageHint;
+                return (
+                  <>
+                    {screeningPackageHint ? (
                       <Typography
-                        key={line.id}
                         variant="body2"
-                        sx={{ ...recordHeaderBodyTextSx, display: 'flex', alignItems: 'flex-start', gap: 0.5 }}
+                        sx={{
+                          ...recordHeaderBodyTextSx,
+                          mb: 0.5,
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: 0.5,
+                        }}
                       >
-                        {verdictIcon}
+                        {collapsed
+                          ? renderVerdictIconForHeader(anyFailed ? 'FAILED' : 'PASSED')
+                          : null}
                         <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
-                          {line.name}
-                          {line.type ? ` (${line.type})` : ''}: {line.status}
+                          {screeningPackageHint}
                         </Box>
                       </Typography>
-                    );
-                  })}
-                </Stack>
-              ) : (
-                <Typography variant="body2" sx={recordHeaderBodyTextSx}>
-                  {screeningPackageHint ? '—' : 'No active screening package on file'}
-                </Typography>
-              )}
+                    ) : null}
+                    {visibleLines.length > 0 && !collapsed ? (
+                      <Stack spacing={0.35} sx={{ pl: screeningPackageHint ? 1 : 0 }}>
+                        {visibleLines.map((line) => {
+                          const verdictIcon = renderVerdictIconForHeader(line.verdict);
+                          return (
+                            <Typography
+                              key={line.id}
+                              variant="body2"
+                              sx={{
+                                ...recordHeaderBodyTextSx,
+                                display: 'flex',
+                                alignItems: 'flex-start',
+                                gap: 0.5,
+                              }}
+                            >
+                              {verdictIcon}
+                              <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
+                                {line.name}
+                                {line.type ? ` (${line.type})` : ''}: {line.status}
+                              </Box>
+                            </Typography>
+                          );
+                        })}
+                      </Stack>
+                    ) : !screeningPackageHint ? (
+                      <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                        No active screening package on file
+                      </Typography>
+                    ) : null}
+                  </>
+                );
+              })()}
               <Typography component="span" sx={{ ...recordHeaderColumnTitleSx, mt: 1.25 }}>
                 Certifications
               </Typography>
