@@ -200,6 +200,12 @@ export type TopConcernContext = {
   hasSelectEntity?: boolean;
   hasWorkforceEntity?: boolean;
   hasEventsEntity?: boolean;
+  /** Live W-2 setup state from the employment breakdown (direct deposit +
+   *  employer I-9 rows all done). When provided it REPLACES the legacy
+   *  `users.employeeOnboardStatus` check — that field is never set by the
+   *  Everee-era flow, so it flagged fully-complete workers (Ricardo
+   *  Colbert, 2026-07-11). `null`/undefined = unknown → legacy fallback. */
+  w2SetupComplete?: boolean | null;
 };
 
 /** More specific top risk / blocker copy for the Risk / Concern column. */
@@ -230,10 +236,11 @@ export function getRecruiterUserTopConcernDetailed(
   const hasSelect = ctx?.hasSelectEntity ?? (entityItems ?? []).some((i) => inferCanonicalEntityKey(i) === 'select');
   const hasWorkforce =
     ctx?.hasWorkforceEntity ?? (entityItems ?? []).some((i) => inferCanonicalEntityKey(i) === 'workforce');
-  if (hasSelect && !w2EmployeeOnboardingComplete(user)) {
+  const w2Complete = ctx?.w2SetupComplete ?? w2EmployeeOnboardingComplete(user);
+  if (hasSelect && !w2Complete) {
     return 'I-9 or payroll setup incomplete (Select)';
   }
-  if (hasWorkforce && !w2EmployeeOnboardingComplete(user)) {
+  if (hasWorkforce && !w2Complete) {
     return 'I-9 or payroll setup incomplete (Workforce)';
   }
 

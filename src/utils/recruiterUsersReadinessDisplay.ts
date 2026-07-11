@@ -21,6 +21,7 @@
 import { hasRecruiterInterviewCompletionEvidence, type ScoreSummary } from './scoreSummary';
 import { getEVerifyComfortStatusFromUserData } from './eVerifyComfortDisplay';
 import type { UserListEntityOnboardingItem } from './userListEntityEmploymentStatus';
+import { computePackageRollup, isSyntheticOrderRow } from './accusourceVerdictBands';
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
 import type { RecruiterUserEmploymentBreakdownContext } from '../types/recruiterEmploymentBreakdownContext';
 import type { EmploymentEntityOverview } from '../pages/UserProfile/components/employment-v2/employmentV2Types';
@@ -265,10 +266,25 @@ function buildBackgroundReadinessRow(
 ): ReadinessBreakdownRow {
   const isAccusourceDoc = latestBg && (!latestBg.provider || latestBg.provider === 'accusource');
   if (isAccusourceDoc && latestBg) {
-    const lines = accusourceScreeningLineItems(latestBg);
+    // 2026-07-11 (Greg): same cleanup as the profile header's Screening
+    // column — hide canceled items and bare "Order <id>" webhook echo rows,
+    // and once every remaining line is adjudicated PASSED/FAILED collapse
+    // the whole package to a single verdict suffix instead of listing items.
+    const lines = accusourceScreeningLineItems(latestBg).filter(
+      (l) => !isSyntheticOrderRow(l) && !/cancel/i.test(l.status),
+    );
+    const pkg = [latestBg.requestedPackageName, latestBg.requestedPackageId].filter(Boolean).join(' · ');
+    const text = pkg ? `Background · ${pkg}` : 'Background screening';
+    let rollup = computePackageRollup(lines);
+    if (
+      (latestBg as { markedCompleteOutsideHrx?: boolean }).markedCompleteOutsideHrx === true &&
+      rollup !== 'FAILED'
+    ) {
+      rollup = 'CLEARED';
+    }
+    if (rollup === 'CLEARED') return { key: 'background', text: `${text} — Cleared ✓` };
+    if (rollup === 'FAILED') return { key: 'background', text: `${text} — Failed ✕` };
     if (lines.length > 0) {
-      const pkg = [latestBg.requestedPackageName, latestBg.requestedPackageId].filter(Boolean).join(' · ');
-      const text = pkg ? `Background · ${pkg}` : 'Background screening';
       const sublines = lines.map((l) => `· ${l.name}${l.type ? ` (${l.type})` : ''}: ${l.status}`);
       return { key: 'background', text, sublines };
     }
@@ -542,15 +558,23 @@ function getReadinessBreakdownRowsLegacy(
 }
 
 /** Employment checklist mirror for the primary entity (same signals as the Employment tab). No background rows. */
+/** 2026-07-11 (Greg): list surfaces only show items still needing attention —
+ *  "…: Complete" and "…: N/A" rows are noise once done. Applied inside
+ *  `getReadinessBreakdownRows` so every consumer (users-table Onboarding
+ *  cell, user-group tables, profile header) gets the same behavior. */
+export function isReadinessRowPending(row: ReadinessBreakdownRow): boolean {
+  return !/:\s*(complete|n\/a)\s*$/i.test(row.text);
+}
+
 export function getReadinessBreakdownRows(
   user: RecruiterUserReadinessLike & RecruiterUserBreakdownExtras,
   entityItems?: UserListEntityOnboardingItem[],
   opts?: ReadinessBreakdownOpts,
 ): ReadinessBreakdownRow[] {
-  if (opts?.employmentBreakdown) {
-    return getReadinessBreakdownRowsFromEmployment(user, opts.employmentBreakdown);
-  }
-  return getReadinessBreakdownRowsLegacy(user, entityItems);
+  const rows = opts?.employmentBreakdown
+    ? getReadinessBreakdownRowsFromEmployment(user, opts.employmentBreakdown)
+    : getReadinessBreakdownRowsLegacy(user, entityItems);
+  return rows.filter(isReadinessRowPending);
 }
 
 /** Letter grade for displayed (0–100) score — matches prescreen banding for recruiter consistency. */

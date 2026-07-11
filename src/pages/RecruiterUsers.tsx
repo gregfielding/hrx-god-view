@@ -1962,11 +1962,23 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                       const entityItems = entityEmploymentChipsByUser.get(user.id);
                       const rp = normalizeRiskProfileFromUserDoc(user.riskProfile);
                       const fromRisk = workerRiskPrimaryLine(rp);
+                      // Live W-2 setup state from the same breakdown the
+                      // Onboarding cell renders (rows are pending-only, so
+                      // "no payroll/I-9 rows left" = complete). Replaces the
+                      // stale legacy employeeOnboardStatus check inside the
+                      // concern fn when the breakdown is loaded.
+                      const breakdown = employmentBreakdownByUserId.get(user.id) ?? null;
+                      const w2SetupComplete = breakdown
+                        ? getReadinessBreakdownRows(user, entityItems, {
+                            employmentBreakdown: breakdown,
+                          }).every((r) => r.key !== 'direct_deposit' && r.key !== 'employer_i9')
+                        : null;
                       const concern =
                         fromRisk ??
                         getRecruiterUserTopConcernDetailed(user, entityItems, {
                           latestAccusourceBackground: latestBackgroundByUserId.get(user.id) ?? null,
                           categoryScores: categoryScoresByUserId[user.id] ?? null,
+                          w2SetupComplete,
                         });
                       const muted = concern === 'None';
                       const tip = rp?.topRisks?.length ? workerRiskTooltipContent(rp) : '';
