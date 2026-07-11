@@ -13,6 +13,8 @@ export type SearchRecruiterTableUsersInput = {
   stateCode?: string;
   /** C1 entity: `select` | `workforce` | `events` */
   entityKey?: string;
+  /** Employment lifecycle: `active` | `onboarding` | `terminated`; omit when "all". */
+  employmentStatus?: string;
 };
 
 export type SearchRecruiterTableUsersResult = {

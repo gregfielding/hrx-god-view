@@ -86,6 +86,42 @@ import CertificationIntelligencePanel from '../components/recruiter/Certificatio
 /** C1 tenant entities — keys match `entity_employments.entityKey` and the recruiter callable. */
 type RecruiterUsersEntityFilterKey = 'all' | 'select' | 'workforce' | 'events';
 
+/** Employment lifecycle filter — matches `entity_employments` status server-side.
+ *  'terminated' is only offered for C1 Select (the W-2 entity where separation happens). */
+type RecruiterUsersStatusFilterKey = 'all' | 'active' | 'onboarding' | 'terminated';
+
+/**
+ * Back-navigation results cache: open a user from the table, click back →
+ * the same filtered/searched rows render instantly instead of re-running
+ * the fetch. Module-level in-memory singleton (NOT sessionStorage): row
+ * sets can be thousands of objects and `lastVisibleDoc` is a live
+ * Firestore cursor that doesn't serialize. Keyed on the full filter tuple;
+ * a stale or mismatched key falls through to the normal fetch.
+ */
+interface UsersBackNavCache {
+  key: string;
+  users: RecruiterUser[];
+  lastVisibleDoc: QueryDocumentSnapshot<DocumentData> | null;
+  hasMore: boolean;
+  scrollTop: number;
+  at: number;
+}
+let usersBackNavCache: UsersBackNavCache | null = null;
+const USERS_BACK_NAV_CACHE_TTL_MS = 5 * 60 * 1000;
+
+/** Nearest scrollable ancestor — the Users list scrolls inside `UsersLayout`'s outlet Box, not the window. */
+function findScrollParent(el: HTMLElement | null): HTMLElement | null {
+  let node = el?.parentElement ?? null;
+  while (node) {
+    const style = window.getComputedStyle(node);
+    if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+  return null;
+}
+
 type RecruiterUsersSortKey =
   | 'recentlyUpdated'
   | 'lastLogin'
@@ -141,6 +177,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     defaultState: {
       usersScope: 'all',
       entityFilter: 'all',
+      statusFilter: 'all',
       groupFilter: 'all',
       stateFilter: 'all',
       sortBy: 'accountCreated',
@@ -210,6 +247,11 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     if (raw === 'select' || raw === 'workforce' || raw === 'events') return raw;
     return 'all';
   });
+  const [statusFilter, setStatusFilter] = useState<RecruiterUsersStatusFilterKey>(() => {
+    const raw = (cacheState as { statusFilter?: string }).statusFilter;
+    if (raw === 'active' || raw === 'onboarding' || raw === 'terminated') return raw;
+    return 'all';
+  });
   // `setGroupFilter` was used by the inline User Group Autocomplete that
   // we removed from the All Users / My Users filter row. The state itself
   // still flows through load/filter logic (and the persisted cache), so we
@@ -247,9 +289,46 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
       (submittedSearchTerm.trim() !== '' ||
         groupFilter !== 'all' ||
         stateFilter !== 'all' ||
-        entityFilter !== 'all'),
-    [effectiveScope, submittedSearchTerm, groupFilter, stateFilter, entityFilter],
+        entityFilter !== 'all' ||
+        statusFilter !== 'all'),
+    [effectiveScope, submittedSearchTerm, groupFilter, stateFilter, entityFilter, statusFilter],
   );
+
+  /**
+   * Identity of the current result set for the back-navigation cache. Every
+   * input that changes WHICH rows get fetched is in here; anything not in
+   * the key (favorites toggle, table page, sort direction) only re-slices
+   * rows client-side and is safe to restore across.
+   */
+  const backNavCacheKey = useMemo(
+    () =>
+      JSON.stringify({
+        t: activeTenant?.id ?? '',
+        scope: effectiveScope,
+        entity: entityFilter,
+        status: statusFilter,
+        group: groupFilter,
+        state: stateFilter,
+        sort: sortBy,
+        q: submittedSearchTerm.trim(),
+      }),
+    [activeTenant?.id, effectiveScope, entityFilter, statusFilter, groupFilter, stateFilter, sortBy, submittedSearchTerm],
+  );
+  /**
+   * Set when this mount restored rows from `usersBackNavCache`. Both fetch
+   * effects skip while the current key still matches, so directory
+   * revalidation (`workerDirectory.workers` identity changes) can't clobber
+   * the restored rows with a redundant refetch. Any real filter/search
+   * change produces a different key and fetches normally.
+   */
+  const backNavRestoredKeyRef = useRef<string | null>(null);
+  /** Live snapshot for the unmount save — refs so the cleanup sees current values. */
+  const backNavSnapshotRef = useRef<{ key: string; users: RecruiterUser[]; lastVisibleDoc: QueryDocumentSnapshot<DocumentData> | null; hasMore: boolean }>({
+    key: backNavCacheKey,
+    users: [],
+    lastVisibleDoc: null,
+    hasMore: true,
+  });
 
   const groupLookup = useMemo(() => {
     const map = new Map<string, TenantUserGroup>();
@@ -275,7 +354,35 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     if (!activeTenant?.id) return;
 
     loadGroups(activeTenant.id);
-    // All Users + search and/or group/state/entity: list is filled by `searchRecruiterTableUsers` + hydrate (not paginated `loadUsers`).
+
+    // Back-navigation restore: same filter/search key + fresh → rehydrate the
+    // previous rows (and pagination cursor) instantly instead of refetching.
+    // Covers both fetch paths — the rows were whatever the last visit showed.
+    const cached = usersBackNavCache;
+    if (
+      cached &&
+      cached.key === backNavCacheKey &&
+      Date.now() - cached.at < USERS_BACK_NAV_CACHE_TTL_MS &&
+      cached.users.length > 0
+    ) {
+      backNavRestoredKeyRef.current = backNavCacheKey;
+      setUsers(cached.users);
+      setLastVisibleDoc(cached.lastVisibleDoc);
+      setHasMore(cached.hasMore);
+      setLoading(false);
+      setSearchFirestoreLoading(false);
+      const { scrollTop } = cached;
+      if (scrollTop > 0) {
+        requestAnimationFrame(() => {
+          const scroller = findScrollParent(contentRef.current);
+          if (scroller) scroller.scrollTop = scrollTop;
+        });
+      }
+      return;
+    }
+    backNavRestoredKeyRef.current = null;
+
+    // All Users + search and/or group/state/entity/status: list is filled by `searchRecruiterTableUsers` + hydrate (not paginated `loadUsers`).
     if (fullCollectionQueryActive) {
       // Invalidate any paginated `loadUsers` in flight from a prior empty-search
       // render. Without this, its setUsers(500 newest by createdAt) lands AFTER
@@ -297,6 +404,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     activeTenant?.id,
     effectiveScope,
     entityFilter,
+    statusFilter,
     groupFilter,
     stateFilter,
     sortBy,
@@ -306,6 +414,32 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     submittedSearchTerm,
     fullCollectionQueryActive,
   ]);
+
+  // Keep the back-nav snapshot current every render; write it to the module
+  // cache on unmount (row click → user detail). Empty result sets aren't
+  // worth caching — the refetch is what would fill them. Scroll position is
+  // tracked live into a ref because the DOM is already detached by the time
+  // a passive effect cleanup runs.
+  backNavSnapshotRef.current = { key: backNavCacheKey, users, lastVisibleDoc, hasMore };
+  const backNavScrollTopRef = useRef(0);
+  useEffect(() => {
+    const scroller = findScrollParent(contentRef.current);
+    backNavScrollTopRef.current = scroller?.scrollTop ?? 0;
+    const onScroll = () => {
+      backNavScrollTopRef.current = scroller?.scrollTop ?? 0;
+    };
+    scroller?.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      scroller?.removeEventListener('scroll', onScroll);
+      const snap = backNavSnapshotRef.current;
+      if (snap.users.length === 0) return;
+      usersBackNavCache = {
+        ...snap,
+        scrollTop: backNavScrollTopRef.current,
+        at: Date.now(),
+      };
+    };
+  }, []);
 
   /**
    * Tenant worker directory — stale-while-revalidate IndexedDB cache.
@@ -322,11 +456,17 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   useEffect(() => {
     if (!activeTenant?.id || !tenantId) return;
     if (effectiveScope !== 'all') return;
+    // This mount restored these exact results from the back-nav cache — don't
+    // refetch them (directory revalidation re-runs this effect via the
+    // `workerDirectory.workers` dep; the key check keeps the skip scoped to
+    // the restored filter set only).
+    if (backNavRestoredKeyRef.current === backNavCacheKey) return;
     const q = submittedSearchTerm.trim();
     const hasGroup = groupFilter !== 'all';
     const hasState = stateFilter !== 'all';
     const hasEntity = entityFilter !== 'all';
-    if (!q && !hasGroup && !hasState && !hasEntity) {
+    const hasStatus = statusFilter !== 'all';
+    if (!q && !hasGroup && !hasState && !hasEntity && !hasStatus) {
       setSearchFirestoreLoading(false);
       return;
     }
@@ -341,7 +481,12 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
      * cache).
      */
     const canUseDirectory =
-      q.length > 0 && !hasGroup && !hasState && !hasEntity && workerDirectory.workers.length > 0;
+      q.length > 0 &&
+      !hasGroup &&
+      !hasState &&
+      !hasEntity &&
+      !hasStatus &&
+      workerDirectory.workers.length > 0;
 
     const hydrateAndSet = async (ids: string[]): Promise<void> => {
       if (cancelled) return;
@@ -415,6 +560,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
           ...(hasGroup ? { groupId: groupFilter } : {}),
           ...(hasState ? { stateCode: stateFilter } : {}),
           ...(hasEntity ? { entityKey: entityFilter } : {}),
+          ...(hasStatus ? { employmentStatus: statusFilter } : {}),
         });
         if (cancelled) return;
         await hydrateAndSet(data.userIds);
@@ -439,10 +585,12 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     groupFilter,
     stateFilter,
     entityFilter,
+    statusFilter,
     effectiveScope,
     tenantId,
     activeTenant?.id,
     workerDirectory.workers,
+    backNavCacheKey,
   ]);
 
   // Update cache when filters change
@@ -450,12 +598,13 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     updateCache({
       usersScope: effectiveScope,
       entityFilter,
+      statusFilter,
       groupFilter,
       stateFilter,
       sortBy,
       sortDirection,
     });
-  }, [effectiveScope, entityFilter, groupFilter, stateFilter, sortBy, sortDirection, updateCache]);
+  }, [effectiveScope, entityFilter, statusFilter, groupFilter, stateFilter, sortBy, sortDirection, updateCache]);
 
   /** Persist table page / rows so browser back from /users/:id returns to the same slice (sessionStorage). */
   useEffect(() => {
@@ -465,9 +614,18 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   // Reset client pagination when filters / committed search change.
   // (Live `searchTerm` is intentionally NOT a dep — typing doesn't
   // affect the rendered list; only commit does.)
+  // Skip the mount run: on first render every dep "changes" from nothing,
+  // which would zero out the persisted `usersTablePage` and break returning
+  // to the same table slice from /users/:id. Only genuine in-page filter /
+  // search changes should snap back to page 0.
+  const pageResetSkipMountRef = useRef(true);
   useEffect(() => {
+    if (pageResetSkipMountRef.current) {
+      pageResetSkipMountRef.current = false;
+      return;
+    }
     setPage(0);
-  }, [submittedSearchTerm, effectiveScope, entityFilter, groupFilter, stateFilter, sortBy, showFavoritesOnly]);
+  }, [submittedSearchTerm, effectiveScope, entityFilter, statusFilter, groupFilter, stateFilter, sortBy, showFavoritesOnly]);
 
   /** Work readiness sort only applies when a single entity is selected; reset if user clears entity. */
   useEffect(() => {
@@ -476,6 +634,15 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
       updateCache({ sortBy: 'accountCreated' });
     }
   }, [entityFilter, sortBy, updateCache]);
+
+  /** 'Terminated' is only offered for C1 Select (separation is per-entity and
+   *  happens there); leaving that entity clears the stale status filter. */
+  useEffect(() => {
+    if (statusFilter === 'terminated' && entityFilter !== 'select') {
+      setStatusFilter('all');
+      updateCache({ statusFilter: 'all' });
+    }
+  }, [entityFilter, statusFilter, updateCache]);
 
   // When "show favorites only" is on, ensure favorited user ids are loaded so they appear in the table
   // (e.g. users starred as applicants on a job order are stored as user favorites and must show here)
@@ -1072,7 +1239,8 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                         setUsersScope(t.value);
                         if (t.value === 'my') {
                           setEntityFilter('all');
-                          updateCache({ usersScope: t.value, entityFilter: 'all' });
+                          setStatusFilter('all');
+                          updateCache({ usersScope: t.value, entityFilter: 'all', statusFilter: 'all' });
                         } else {
                           updateCache({ usersScope: t.value });
                         }
@@ -1127,6 +1295,37 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                 <MenuItem value="events">C1 Events</MenuItem>
               </Select>
             </FormControl>
+
+            {/* Status filter — employment lifecycle on `entity_employments`,
+                matched server-side by `searchRecruiterTableUsers` (scoped to
+                the selected entity when one is chosen). Terminated is only
+                offered for C1 Select, where separation happens. Inert on My
+                Users, so only rendered for the All Users scope. */}
+            {effectiveScope === 'all' && (
+              <FormControl size="small" sx={{ minWidth: 160, height: 36 }}>
+                <InputLabel sx={{ fontSize: '0.875rem' }}>Status</InputLabel>
+                <Select
+                  label="Status"
+                  value={statusFilter}
+                  onChange={(e) => {
+                    const newFilter = e.target.value as RecruiterUsersStatusFilterKey;
+                    setStatusFilter(newFilter);
+                    updateCache({ statusFilter: newFilter });
+                  }}
+                  sx={{
+                    height: 36,
+                    borderRadius: '6px',
+                    backgroundColor: 'white',
+                    fontSize: '0.875rem',
+                  }}
+                >
+                  <MenuItem value="all">All statuses</MenuItem>
+                  <MenuItem value="active">Active</MenuItem>
+                  <MenuItem value="onboarding">Onboarding</MenuItem>
+                  {entityFilter === 'select' && <MenuItem value="terminated">Terminated</MenuItem>}
+                </Select>
+              </FormControl>
+            )}
 
             {/* State Filter */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>

@@ -9,6 +9,8 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import {
   entityEmploymentDocHasQualifyingStatus,
+  entityEmploymentDocMatchesStatus,
+  normalizeRecruiterEmploymentStatus,
   normalizeRecruiterEntityKey,
 } from './entityEmploymentRecruiterFilter';
 import {
@@ -86,6 +88,9 @@ export type SearchRecruiterTableUsersRequest = {
   stateCode?: string;
   /** C1 entity key: select | workforce | events */
   entityKey?: string;
+  /** Employment lifecycle filter: active | onboarding | terminated. Matches
+   *  `entity_employments` rows (scoped to `entityKey` when both are set). */
+  employmentStatus?: string;
 };
 
 export type SearchRecruiterTableUsersResponse = {
@@ -96,12 +101,15 @@ export type SearchRecruiterTableUsersResponse = {
 };
 
 /**
- * Scans `entity_employments` for the tenant + entity key; returns user ids with at least one
- * qualifying employment row (meaningful status), deduped.
+ * Scans `entity_employments` for the tenant; returns user ids with at least one
+ * qualifying employment row, deduped. `entityKey` scopes the scan to one entity
+ * (null = all entities); `employmentStatus` requires the row's lifecycle to
+ * match (null = any meaningful status per `entityEmploymentDocHasQualifyingStatus`).
  */
 async function loadEntityUserIdSet(
   tenantId: string,
-  entityKey: string,
+  entityKey: string | null,
+  employmentStatus: string | null,
 ): Promise<{ entityUserIds: Set<string>; scannedDocuments: number; batches: number }> {
   const entityUserIds = new Set<string>();
   let lastDoc: QueryDocumentSnapshot | null = null;
@@ -110,8 +118,9 @@ async function loadEntityUserIdSet(
   const coll = db.collection(`tenants/${tenantId}/entity_employments`);
 
   while (batches < MAX_BATCHES) {
-    const base = coll.where('entityKey', '==', entityKey).orderBy(FieldPath.documentId()).limit(BATCH_SIZE);
-    const snap = await (lastDoc ? base.startAfter(lastDoc) : base).get();
+    const base = entityKey ? coll.where('entityKey', '==', entityKey) : coll;
+    const q = base.orderBy(FieldPath.documentId()).limit(BATCH_SIZE);
+    const snap = await (lastDoc ? q.startAfter(lastDoc) : q).get();
     if (snap.empty) {
       break;
     }
@@ -120,7 +129,11 @@ async function loadEntityUserIdSet(
 
     for (const doc of snap.docs) {
       const d = doc.data() as Record<string, unknown>;
-      if (!entityEmploymentDocHasQualifyingStatus(d)) continue;
+      if (employmentStatus) {
+        if (!entityEmploymentDocMatchesStatus(d, employmentStatus)) continue;
+      } else if (!entityEmploymentDocHasQualifyingStatus(d)) {
+        continue;
+      }
       const uid = String(d.userId || '').trim();
       if (uid) entityUserIds.add(uid);
     }
@@ -157,19 +170,23 @@ export const searchRecruiterTableUsers = onCall(
     const groupIdRaw = typeof raw.groupId === 'string' ? raw.groupId.trim() : '';
     const stateCodeRaw = typeof raw.stateCode === 'string' ? raw.stateCode.trim() : '';
     const entityKeyNorm = normalizeRecruiterEntityKey(typeof raw.entityKey === 'string' ? raw.entityKey : '');
+    const employmentStatusNorm = normalizeRecruiterEmploymentStatus(
+      typeof raw.employmentStatus === 'string' ? raw.employmentStatus : '',
+    );
 
     const hasGroup = groupIdRaw.length > 0 && groupIdRaw !== 'all';
     const hasState = stateCodeRaw.length > 0 && stateCodeRaw !== 'all';
     const hasSearch = searchQuery.length > 0;
     const hasEntity = entityKeyNorm != null;
+    const hasStatus = employmentStatusNorm != null;
 
     if (!tenantId) {
       throw new HttpsError('invalid-argument', 'tenantId is required');
     }
-    if (!hasSearch && !hasGroup && !hasState && !hasEntity) {
+    if (!hasSearch && !hasGroup && !hasState && !hasEntity && !hasStatus) {
       throw new HttpsError(
         'invalid-argument',
-        'Provide searchQuery and/or groupId and/or stateCode and/or entityKey (at least one filter)',
+        'Provide searchQuery and/or groupId and/or stateCode and/or entityKey and/or employmentStatus (at least one filter)',
       );
     }
     if (searchQuery.length > 200) {
@@ -183,8 +200,8 @@ export const searchRecruiterTableUsers = onCall(
       let entityScanned = 0;
       let entityBatches = 0;
 
-      if (hasEntity && entityKeyNorm) {
-        const loaded = await loadEntityUserIdSet(tenantId, entityKeyNorm);
+      if (hasEntity || hasStatus) {
+        const loaded = await loadEntityUserIdSet(tenantId, entityKeyNorm, employmentStatusNorm);
         entityUserIds = loaded.entityUserIds;
         entityScanned = loaded.scannedDocuments;
         entityBatches = loaded.batches;
@@ -196,7 +213,9 @@ export const searchRecruiterTableUsers = onCall(
             hasGroup,
             hasState,
             hasEntity,
+            hasStatus,
             entityKey: entityKeyNorm,
+            employmentStatus: employmentStatusNorm,
             matchCount: 0,
             scannedDocuments: entityScanned,
             batches: entityBatches,
@@ -240,7 +259,7 @@ export const searchRecruiterTableUsers = onCall(
         for (const doc of snap.docs) {
           const data = doc.data() as Record<string, unknown>;
           if (!userInTenantOrOrphan(data, tenantId)) continue;
-          if (hasEntity && entityUserIds && !entityUserIds.has(doc.id)) continue;
+          if (entityUserIds && !entityUserIds.has(doc.id)) continue;
           if (!firestoreUserDocMatchesRecruiterSearch(data, tenantId, searchQuery)) continue;
           if (hasGroup && !firestoreUserDocMatchesRecruiterGroup(data, tenantId, groupIdRaw)) continue;
           if (hasState && !firestoreUserDocMatchesRecruiterState(data, stateCodeRaw)) continue;
@@ -268,12 +287,14 @@ export const searchRecruiterTableUsers = onCall(
         hasGroup,
         hasState,
         hasEntity,
+        hasStatus,
         entityKey: entityKeyNorm,
+        employmentStatus: employmentStatusNorm,
         matchCount: userIds.length,
         scannedDocuments: scanned + entityScanned,
         batches: batches + entityBatches,
         capped,
-        entityEmploymentScan: hasEntity,
+        entityEmploymentScan: hasEntity || hasStatus,
       });
 
       return {

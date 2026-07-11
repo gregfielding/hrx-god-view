@@ -32,3 +32,26 @@ export function normalizeRecruiterEntityKey(raw: string): string | null {
   if (!k || k === 'all') return null;
   return ALLOWED.has(k) ? k : null;
 }
+
+/** Employment lifecycle statuses the recruiter Users table can filter on. */
+const ALLOWED_STATUSES = new Set(['active', 'onboarding', 'terminated']);
+
+export function normalizeRecruiterEmploymentStatus(raw: string): string | null {
+  const s = raw.trim().toLowerCase();
+  if (!s || s === 'all') return null;
+  return ALLOWED_STATUSES.has(s) ? s : null;
+}
+
+/**
+ * True when this entity employment row's lifecycle matches the requested
+ * status filter. Reads `employmentState` with legacy `status` fallback,
+ * mirroring `entityEmploymentDocHasQualifyingStatus`.
+ */
+export function entityEmploymentDocMatchesStatus(
+  d: Record<string, unknown>,
+  status: string,
+): boolean {
+  const es = String(d.employmentState || '').trim().toLowerCase();
+  const leg = String(d.status || '').trim().toLowerCase();
+  return (es || leg) === status;
+}
