@@ -1975,6 +1975,15 @@ const UserProfilePage = () => {
     return normalizeEntityKeyForPayroll(String(ctx.entityEmployment.entityKey || ''));
   }, [uid, recruiterEmploymentBreakdownByUserId]);
 
+  /** entityId behind the header's "Mark signed" employer-I-9 action (the
+   *  E.7 `csaMarkI9Section2Complete` callable locates the employment row
+   *  by tenantId + entityId + userId). */
+  const employerI9EntityId = useMemo(() => {
+    if (!uid) return null;
+    const ctx = recruiterEmploymentBreakdownByUserId.get(uid);
+    return ctx?.entityEmployment?.entityId ?? null;
+  }, [uid, recruiterEmploymentBreakdownByUserId]);
+
   const recruiterReadinessBreakdownRows = useMemo(() => {
     if (!showRecordHeaderEntityStatus || !uid) return [];
     const eb =
@@ -2585,6 +2594,7 @@ const UserProfilePage = () => {
                   entitySlots={recordHeaderEntitySlots}
                   evereeLinkByEntityKey={evereeLinkByEntityKey}
                   readinessRowsEntityKey={readinessRowsEntityKey}
+                  employerI9EntityId={employerI9EntityId}
                   interviewSummaryLine={recordHeaderInterviewLine}
                   screeningLines={recordHeaderScreeningLines}
                   screeningPackageHint={recordHeaderScreeningPackageHint}

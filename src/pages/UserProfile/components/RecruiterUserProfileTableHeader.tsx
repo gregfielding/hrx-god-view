@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Link as RouterLink, useLocation } from 'react-router-dom';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import {
   Autocomplete,
   Avatar,
@@ -124,6 +125,9 @@ export type RecruiterUserProfileTableHeaderProps = {
   /** entityKey the readinessRows were computed from (the primary
    *  employment); pending rows nest under that entity's chip. */
   readinessRowsEntityKey?: string | null;
+  /** entityId for the "Mark signed" employer-I-9 action (E.7 callable
+   *  locator). Null hides the action. */
+  employerI9EntityId?: string | null;
   interviewSummaryLine: string | null;
   readinessRows: ReadinessBreakdownRow[];
   /** When the worker's Employer I-9 row is "Action needed", this link
@@ -207,6 +211,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
   entitySlots,
   evereeLinkByEntityKey = {},
   readinessRowsEntityKey = null,
+  employerI9EntityId = null,
   interviewSummaryLine,
   readinessRows,
   employerI9SignatureUrl = null,
@@ -797,6 +802,36 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                     : entitySlots.some((s) => s.entityKey === readinessRowsEntityKey)
                       ? readinessRowsEntityKey
                       : entitySlots[0]?.entityKey;
+                // One-click record of the employer I-9 signature (Greg
+                // 2026-07-11): Everee's API never reports the Section 2
+                // e-signature (documentsVerifiedByCompany doesn't track it),
+                // so after signing in Everee the recruiter confirms here.
+                // Reuses the E.7 `csaMarkI9Section2Complete` callable — same
+                // audit fields + readiness cascade as the CSA attestation
+                // dialog; documentTypes records the Everee-e-sign provenance.
+                const handleMarkI9Signed = async () => {
+                  if (!tenantIdForUserGroups || !employerI9EntityId) return;
+                  const ok = window.confirm(
+                    'Confirm the employer I-9 (Section 2) is SIGNED in Everee for this worker?\n\n' +
+                      'This records the completion in HRX under your name — Everee does not report the signature to us.',
+                  );
+                  if (!ok) return;
+                  try {
+                    await httpsCallable(getFunctions(), 'csaMarkI9Section2Complete')({
+                      tenantId: tenantIdForUserGroups,
+                      entityId: employerI9EntityId,
+                      userId: uid,
+                      documentTypes: ['completed_in_everee_esignature'],
+                      notes:
+                        'Employer signature completed in Everee (Documents tab); confirmed from the User Details header.',
+                    });
+                    window.location.reload();
+                  } catch (e) {
+                    window.alert(
+                      `Could not mark the I-9 signed: ${e instanceof Error ? e.message : String(e)}`,
+                    );
+                  }
+                };
                 const renderReadinessRow = (row: ReadinessBreakdownRow) => {
                   // Employer I-9 needing the employer signature: relabel
                   // "Action needed" → "Signature needed" and (when an
@@ -808,6 +843,11 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                     ? row.text.replace(/Action needed/i, 'Signature needed')
                     : row.text;
                   const renderAsLink = isI9SignatureNeeded && !!employerI9SignatureUrl;
+                  const showMarkSigned =
+                    row.key === 'employer_i9' &&
+                    viewerSecurityLevel >= 4 &&
+                    !!tenantIdForUserGroups &&
+                    !!employerI9EntityId;
                   return (
                     <Box key={row.key} component="span">
                       {renderAsLink ? (
@@ -839,6 +879,25 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                           {line}
                         </Typography>
                       ))}
+                      {showMarkSigned && (
+                        <Link
+                          component="button"
+                          type="button"
+                          variant="body2"
+                          underline="hover"
+                          onClick={() => void handleMarkI9Signed()}
+                          sx={{
+                            ...recordHeaderBodyTextSx,
+                            display: 'block',
+                            pl: 0.5,
+                            color: 'primary.main',
+                            fontWeight: 400,
+                            textAlign: 'left',
+                          }}
+                        >
+                          Mark signed (done in Everee)
+                        </Link>
+                      )}
                     </Box>
                   );
                 };
