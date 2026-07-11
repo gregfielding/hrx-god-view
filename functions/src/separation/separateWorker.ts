@@ -23,6 +23,7 @@ import * as admin from 'firebase-admin';
 import { canManageAssignments, toDateOnly, getApplicationApplyDays } from '../placementsApi';
 import { buildAdminEntityEmploymentLifecyclePatch } from '../onboarding/entityEmploymentLifecycle';
 import { ASSIGNMENT_STATUS_QUERY_LIVE } from '../utils/assignmentStatusNormalize';
+import { sendSeparationNotices } from './separationNotices';
 
 const db = admin.firestore();
 
@@ -247,6 +248,16 @@ export const separateWorker = onCall({ memory: '512MiB', timeoutSeconds: 120 }, 
   }
   await db.doc(`users/${userId}`).set(userPatch, { merge: true });
 
+  // Worker notice (email + SMS + in-app, professional tone) — best-effort;
+  // the separation stands regardless of delivery.
+  const notices = await sendSeparationNotices({
+    tenantId,
+    userId,
+    entityName: String(entityName || entityId),
+    lastDay,
+    requestedByUid: uid,
+  });
+
   logger.info('[separateWorker] completed', {
     tenantId,
     userId,
@@ -254,12 +265,14 @@ export const separateWorker = onCall({ memory: '512MiB', timeoutSeconds: 120 }, 
     separationType,
     cancelled: cancelledAssignmentIds.length,
     rehireEligible: record.rehireEligible,
+    notices,
   });
 
   return {
     ok: true,
     employmentId: emDoc.id,
     cancelledAssignments: cancelledAssignmentIds.length,
+    notices,
     record,
   };
 });

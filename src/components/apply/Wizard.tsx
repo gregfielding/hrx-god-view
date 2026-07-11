@@ -36,6 +36,7 @@ import {
 } from 'firebase/firestore';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { auth } from '../../firebase';
 import { updateEmail } from 'firebase/auth';
 import { db } from '../../firebase';
@@ -1690,6 +1691,25 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           alert(t('apply.passwordsDontMatch'));
           setSaving(false);
           return;
+        }
+        // Rehire-ineligibility gate — a separated worker flagged not eligible
+        // for rehire can't mint a fresh account with the same email/phone.
+        // Server-side exact match; generic message (never reveals the flag).
+        try {
+          const phoneForCheck = String(formData?.personal?.phone || '').trim();
+          const check: any = await httpsCallable(getFunctions(), 'checkRehireEligibility')({
+            email,
+            ...(phoneForCheck ? { phone: phoneForCheck } : {}),
+          });
+          if (check?.data?.eligible === false) {
+            alert(
+              'We are unable to create an account with this information. Please contact C1 Staffing for assistance.',
+            );
+            setSaving(false);
+            return;
+          }
+        } catch {
+          /* gate is best-effort — never block signups on a check outage */
         }
         try {
           const cred = await createUserWithEmailAndPassword(auth, email, password);
