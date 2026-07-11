@@ -16,10 +16,110 @@ import {
   type AccusourceOrderInvocation,
 } from './accusourceAdminGate';
 import {
+  DEFAULT_SCREENING_VALIDITY_DAYS,
   evaluateScreeningSatisfiedServer,
   requestedEquivalencyKey,
   type BgLike,
 } from '../../compliance/screeningAutomationShared';
+
+/** Normalized match key for a screening service — NAME-based, because the
+ *  same test (4 Panel Quick Test, Social Security Locator, …) appears in
+ *  multiple AccuSource packages and its id can differ per package. */
+function serviceNameKey(name: unknown): string {
+  return String(name ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function statusLooksCompleteLoose(status: unknown): boolean {
+  const s = String(status ?? '').toLowerCase();
+  return s.includes('complete') || s.includes('closed') || s === 'pass' || s.includes('clear');
+}
+
+function toMillisLoose(v: unknown): number | null {
+  if (v && typeof v === 'object') {
+    const t = v as { toMillis?: () => number; _seconds?: number; seconds?: number };
+    if (typeof t.toMillis === 'function') {
+      try {
+        return t.toMillis();
+      } catch {
+        /* fall through */
+      }
+    }
+    const s = t._seconds ?? t.seconds;
+    if (typeof s === 'number') return s * 1000;
+  }
+  return null;
+}
+
+/**
+ * PASSED service-line display names on a prior order doc, keyed by
+ * `serviceNameKey`. Light server-side mirror of the client adjudication
+ * rules (`accusourceScreeningLineItems` + `resolveEffectiveVerdict`):
+ *   - adjudication verdict (manual override, else autoVerdict) === PASSED
+ *   - no adjudication but the vendor closed the line clean AND it's an
+ *     SSN-locator / drug-lab line (the classes the server auto-passes)
+ *   - `markedCompleteOutsideHrx` docs: every requested service counts as
+ *     passed unless a line explicitly FAILED
+ * Generic `order:*` echo rows are ignored.
+ */
+function passedServiceLineNames(row: Record<string, unknown>): Map<string, string> {
+  const out = new Map<string, string>();
+  const catalog = Array.isArray(row.requestedServicesCatalog)
+    ? (row.requestedServicesCatalog as Array<{ id?: unknown; name?: unknown }>)
+    : [];
+  const nameById = new Map<string, string>();
+  for (const c of catalog) {
+    const id = String(c.id ?? '').trim();
+    const name = String(c.name ?? '').trim();
+    if (id && name) nameById.set(id, name);
+  }
+  const statusMap = (row.providerServiceOrderStatus ?? {}) as Record<
+    string,
+    {
+      status?: unknown;
+      serviceName?: unknown;
+      labName?: unknown;
+      labCode?: unknown;
+      adjudication?: { verdict?: unknown; autoVerdict?: unknown } | null;
+    }
+  >;
+
+  const push = (name: string) => {
+    const key = serviceNameKey(name);
+    if (!key || /^order\s+\S+$/i.test(name.trim())) return;
+    if (!out.has(key)) out.set(key, name.trim());
+  };
+
+  for (const [id, entry] of Object.entries(statusMap)) {
+    if (id.startsWith('order:')) continue;
+    const name = nameById.get(id) || String(entry?.serviceName ?? '').trim();
+    if (!name) continue;
+    const adj = entry?.adjudication ?? null;
+    const verdict = adj ? String(adj.verdict ?? adj.autoVerdict ?? '') : '';
+    const nameLc = name.toLowerCase();
+    const autoPassClass =
+      nameLc.includes('social security') ||
+      nameLc.includes('ssn') ||
+      nameLc.includes('drug') ||
+      entry?.labName != null ||
+      entry?.labCode != null;
+    const passed =
+      verdict === 'PASSED' || (!adj && statusLooksCompleteLoose(entry?.status) && autoPassClass);
+    if (passed) push(name);
+  }
+
+  if (row.markedCompleteOutsideHrx === true) {
+    for (const c of catalog) {
+      const id = String(c.id ?? '').trim();
+      const adj = statusMap[id]?.adjudication ?? null;
+      const failed = adj != null && String(adj.verdict ?? adj.autoVerdict ?? '') === 'FAILED';
+      if (!failed) push(String(c.name ?? ''));
+    }
+  }
+  return out;
+}
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -133,7 +233,6 @@ export async function createBackgroundCheckInternal(
   if (
     invocation.type === 'callable' &&
     input.allowDuplicateOfSatisfied !== true &&
-    requestedKey !== 'unknown' &&
     input.candidateId
   ) {
     let priorQuery = db
@@ -143,34 +242,99 @@ export async function createBackgroundCheckInternal(
       priorQuery = priorQuery.where('tenantId', '==', String(input.tenantId));
     }
     const priorSnap = await priorQuery.limit(25).get();
-    for (const doc of priorSnap.docs) {
-      const ev = evaluateScreeningSatisfiedServer(doc.data() as BgLike, {
-        requestedEquivalencyKey: requestedKey,
-        enforceEquivalency: true,
-        enforceValidityWindow: true,
-      });
-      if (!ev.satisfied) continue;
-      const row = doc.data() as Record<string, unknown>;
-      const packageLabel =
-        [row.requestedPackageName, row.requestedPackageId].filter(Boolean).join(' · ') || null;
-      accusourceLog('info', 'create', 'duplicate guard paused order — requirement already satisfied', {
-        callerUid: uid,
-        candidateId: input.candidateId,
-        existingBackgroundCheckId: doc.id,
-        requestedKey,
-      });
-      throw new HttpsError(
-        'failed-precondition',
-        `This worker already has a completed screening that satisfies ${
-          packageLabel || 'this package'
-        } (order ${doc.id}, still within its validity window). No new order was placed — use "Order anyway" if a duplicate is really needed.`,
-        {
-          code: 'screening_already_satisfied',
-          backgroundCheckId: doc.id,
-          packageLabel,
-          decisionDetail: ev.decisionDetail,
-        },
-      );
+
+    // Guard 1 — the WHOLE selected package is already satisfied by a
+    // completed prior order (same equivalency key, within validity).
+    if (requestedKey !== 'unknown') {
+      for (const doc of priorSnap.docs) {
+        const ev = evaluateScreeningSatisfiedServer(doc.data() as BgLike, {
+          requestedEquivalencyKey: requestedKey,
+          enforceEquivalency: true,
+          enforceValidityWindow: true,
+        });
+        if (!ev.satisfied) continue;
+        const row = doc.data() as Record<string, unknown>;
+        const packageLabel =
+          [row.requestedPackageName, row.requestedPackageId].filter(Boolean).join(' · ') || null;
+        accusourceLog('info', 'create', 'duplicate guard paused order — package already satisfied', {
+          callerUid: uid,
+          candidateId: input.candidateId,
+          existingBackgroundCheckId: doc.id,
+          requestedKey,
+        });
+        throw new HttpsError(
+          'failed-precondition',
+          `This worker already has a completed screening that satisfies ${
+            packageLabel || 'this package'
+          } (order ${doc.id}, still within its validity window). No new order was placed — use "Order anyway" if a duplicate is really needed.`,
+          {
+            code: 'screening_already_satisfied',
+            backgroundCheckId: doc.id,
+            packageLabel,
+            decisionDetail: ev.decisionDetail,
+          },
+        );
+      }
+    }
+
+    // Guard 2 — ITEM overlap across packages (Greg 2026-07-11): the same
+    // test (4 Panel Quick Test, SSN Locator, …) ships inside multiple
+    // packages, so a different package can still duplicate screens the
+    // worker already PASSED. Match by normalized service NAME across every
+    // still-valid prior order; pause listing what's already covered vs
+    // newly needed, so the recruiter can order just the new items
+    // à-la-carte (or override with "Order anyway").
+    const requestedItems = (
+      Array.isArray(input.requestedServicesCatalog) ? input.requestedServicesCatalog : []
+    )
+      .map((s) => String((s as { name?: unknown }).name ?? '').trim())
+      .filter(Boolean);
+    if (requestedItems.length > 0) {
+      const validityMs = DEFAULT_SCREENING_VALIDITY_DAYS * 86_400_000;
+      const passedByKey = new Map<string, { label: string; docId: string }>();
+      for (const doc of priorSnap.docs) {
+        const row = doc.data() as Record<string, unknown>;
+        const completedMs = toMillisLoose(row.updatedAt) ?? toMillisLoose(row.createdAt);
+        if (completedMs != null && Date.now() - completedMs > validityMs) continue;
+        for (const [key, label] of passedServiceLineNames(row)) {
+          if (!passedByKey.has(key)) passedByKey.set(key, { label, docId: doc.id });
+        }
+      }
+      const alreadyPassed: string[] = [];
+      const newlyNeeded: string[] = [];
+      const matchedDocIds = new Set<string>();
+      for (const name of requestedItems) {
+        const hit = passedByKey.get(serviceNameKey(name));
+        if (hit) {
+          alreadyPassed.push(name);
+          matchedDocIds.add(hit.docId);
+        } else {
+          newlyNeeded.push(name);
+        }
+      }
+      if (alreadyPassed.length > 0) {
+        accusourceLog('info', 'create', 'duplicate guard paused order — items already passed', {
+          callerUid: uid,
+          candidateId: input.candidateId,
+          alreadyPassedCount: alreadyPassed.length,
+          newlyNeededCount: newlyNeeded.length,
+          matchedBackgroundCheckIds: Array.from(matchedDocIds),
+        });
+        throw new HttpsError(
+          'failed-precondition',
+          `This worker already passed ${alreadyPassed.length} of the selected items within the last ${DEFAULT_SCREENING_VALIDITY_DAYS} days: ${alreadyPassed.join(', ')}.${
+            newlyNeeded.length > 0
+              ? ` Newly needed: ${newlyNeeded.join(', ')} — consider ordering just those à-la-carte.`
+              : ' Every selected item is already covered.'
+          } No new order was placed — use "Order anyway" to order the full package with duplicates.`,
+          {
+            code: 'screening_items_already_passed',
+            alreadyPassed,
+            newlyNeeded,
+            matchedBackgroundCheckIds: Array.from(matchedDocIds),
+          },
+        );
+      }
     }
   }
 

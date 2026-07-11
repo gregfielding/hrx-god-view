@@ -178,13 +178,17 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
   const [bgMessage, setBgMessage] = useState<string | null>(null);
   /** Refresh can surface warnings (0 packages); submit errors stay error. */
   const [bgMessageSeverity, setBgMessageSeverity] = useState<'error' | 'warning'>('error');
-  /** Duplicate guard pause: the server refused because a completed screening
-   *  already satisfies the selected package. Holds the existing order id so
-   *  the recruiter can knowingly "Order anyway". */
-  const [duplicateSatisfied, setDuplicateSatisfied] = useState<{
-    backgroundCheckId: string;
-    packageLabel: string | null;
-  } | null>(null);
+  /** Duplicate guard pause: the server refused because the worker's prior
+   *  screenings already cover the request — either the WHOLE package
+   *  ('package') or individual items shared across packages ('items', e.g.
+   *  a 4 Panel Quick Test passed inside a different package). Holds what
+   *  the recruiter needs to decide: order just the newly needed items
+   *  à-la-carte, or knowingly "Order anyway". */
+  const [duplicateSatisfied, setDuplicateSatisfied] = useState<
+    | { kind: 'package'; backgroundCheckId: string; packageLabel: string | null }
+    | { kind: 'items'; alreadyPassed: string[]; newlyNeeded: string[] }
+    | null
+  >(null);
 
   const [pdfLoading, setPdfLoading] = useState<string | null>(null);
   const [adjudicationLoadingKey, setAdjudicationLoadingKey] = useState<string | null>(null);
@@ -567,15 +571,31 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
     } catch (e: unknown) {
       const err = e as {
         message?: string;
-        details?: { code?: string; backgroundCheckId?: string; packageLabel?: string | null };
+        details?: {
+          code?: string;
+          backgroundCheckId?: string;
+          packageLabel?: string | null;
+          alreadyPassed?: string[];
+          newlyNeeded?: string[];
+        };
       };
-      // Duplicate guard pause — the worker already has a completed screening
-      // satisfying this package. Surface it as a warning with an explicit
-      // "Order anyway" path instead of a generic failure.
+      // Duplicate guard pause — the worker's prior screenings already cover
+      // this request (whole package, or overlapping items shared across
+      // packages). Surface it as a warning with an explicit "Order anyway"
+      // path instead of a generic failure.
       if (err.details?.code === 'screening_already_satisfied') {
         setDuplicateSatisfied({
+          kind: 'package',
           backgroundCheckId: String(err.details.backgroundCheckId || ''),
           packageLabel: err.details.packageLabel ?? null,
+        });
+        return;
+      }
+      if (err.details?.code === 'screening_items_already_passed') {
+        setDuplicateSatisfied({
+          kind: 'items',
+          alreadyPassed: Array.isArray(err.details.alreadyPassed) ? err.details.alreadyPassed : [],
+          newlyNeeded: Array.isArray(err.details.newlyNeeded) ? err.details.newlyNeeded : [],
         });
         return;
       }
@@ -625,7 +645,10 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
         accountName: String(recAny.accountName || '') || defaultAccountName || undefined,
         jobOrderId: String(recAny.jobOrderId || '') || defaultJobOrderId || undefined,
         worksiteId: String(recAny.worksiteId || '') || defaultWorksiteId || undefined,
-        // À-la-carte: single service, no package.
+        // À-la-carte: single service, no package. The recruiter already
+        // confirmed this is a deliberate RE-order of this exact line, so the
+        // duplicate guard is bypassed.
+        allowDuplicateOfSatisfied: true,
         requestedServices: [serviceId],
         requestedServicesCatalog: [
           { id: serviceId, name: String(line.name || serviceId), type: line.type != null ? String(line.type) : undefined },
@@ -1334,10 +1357,32 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
                   </Button>
                 }
               >
-                {pkgName || 'This package'} is already satisfied by a completed screening on this
-                worker{duplicateSatisfied.packageLabel ? ` (${duplicateSatisfied.packageLabel})` : ''}
-                {' '}— order {duplicateSatisfied.backgroundCheckId}. No new order was placed. Only
-                order again if the account explicitly requires a fresh screening.
+                {duplicateSatisfied.kind === 'package' ? (
+                  <>
+                    {pkgName || 'This package'} is already satisfied by a completed screening on
+                    this worker
+                    {duplicateSatisfied.packageLabel
+                      ? ` (${duplicateSatisfied.packageLabel})`
+                      : ''}{' '}
+                    — order {duplicateSatisfied.backgroundCheckId}. No new order was placed. Only
+                    order again if the account explicitly requires a fresh screening.
+                  </>
+                ) : (
+                  <>
+                    Already passed on this worker: {duplicateSatisfied.alreadyPassed.join(', ')}.
+                    {duplicateSatisfied.newlyNeeded.length > 0 ? (
+                      <>
+                        {' '}
+                        Newly needed from this package:{' '}
+                        <strong>{duplicateSatisfied.newlyNeeded.join(', ')}</strong> — consider
+                        ordering just those à-la-carte instead of the full package.
+                      </>
+                    ) : (
+                      <> Every item in this package is already covered.</>
+                    )}{' '}
+                    No new order was placed.
+                  </>
+                )}
               </Alert>
             )}
             <AccusourcePackageSelector
