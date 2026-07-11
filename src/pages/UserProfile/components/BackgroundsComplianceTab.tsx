@@ -178,6 +178,13 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
   const [bgMessage, setBgMessage] = useState<string | null>(null);
   /** Refresh can surface warnings (0 packages); submit errors stay error. */
   const [bgMessageSeverity, setBgMessageSeverity] = useState<'error' | 'warning'>('error');
+  /** Duplicate guard pause: the server refused because a completed screening
+   *  already satisfies the selected package. Holds the existing order id so
+   *  the recruiter can knowingly "Order anyway". */
+  const [duplicateSatisfied, setDuplicateSatisfied] = useState<{
+    backgroundCheckId: string;
+    packageLabel: string | null;
+  } | null>(null);
 
   const [pdfLoading, setPdfLoading] = useState<string | null>(null);
   const [adjudicationLoadingKey, setAdjudicationLoadingKey] = useState<string | null>(null);
@@ -457,6 +464,7 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
     setBgMessageSeverity('error');
     setBgNotes('');
     setSelectedServiceIds([]);
+    setDuplicateSatisfied(null);
     setScreeningMode('order');
     setBgModalOpen(true);
     await loadProfileForScreening();
@@ -479,7 +487,7 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
     await loadProfileForScreening();
   };
 
-  const submitScreening = async () => {
+  const submitScreening = async (allowDuplicateOfSatisfied = false) => {
     if (!canAccusourceAdmin) {
       setBgMessageSeverity('error');
       setBgMessage(ACCUSOURCE_PERM_HINT);
@@ -493,6 +501,7 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
     setBgSubmitting(true);
     setBgMessage(null);
     setBgMessageSeverity('error');
+    if (allowDuplicateOfSatisfied) setDuplicateSatisfied(null);
     try {
       if (!accusourceCatalog?.packages?.length) {
         setBgMessage('Package catalog is empty — an admin must run Refresh packages to sync from AccuSource.');
@@ -547,14 +556,29 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
           phone: String(profileUser.phone || profileUser.phoneE164 || ''),
           dateOfBirth: dobForOrder,
         },
+        ...(allowDuplicateOfSatisfied ? { allowDuplicateOfSatisfied: true } : {}),
       });
+      setDuplicateSatisfied(null);
       if (bgNotes.trim()) {
         await logCustomActivity(uid, 'screening_order_requested', bgNotes.trim(), 'medium');
       }
       setBgModalOpen(false);
       await loadAll();
     } catch (e: unknown) {
-      const err = e as { message?: string };
+      const err = e as {
+        message?: string;
+        details?: { code?: string; backgroundCheckId?: string; packageLabel?: string | null };
+      };
+      // Duplicate guard pause — the worker already has a completed screening
+      // satisfying this package. Surface it as a warning with an explicit
+      // "Order anyway" path instead of a generic failure.
+      if (err.details?.code === 'screening_already_satisfied') {
+        setDuplicateSatisfied({
+          backgroundCheckId: String(err.details.backgroundCheckId || ''),
+          packageLabel: err.details.packageLabel ?? null,
+        });
+        return;
+      }
       setBgMessageSeverity('error');
       setBgMessage(err.message || 'Failed to order screening');
     } finally {
@@ -1292,6 +1316,30 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
                 {bgMessage}
               </Alert>
             )}
+            {/* Duplicate guard pause — server refused the order because a
+                completed screening already satisfies this package. Requires
+                an explicit "Order anyway" to place a duplicate. */}
+            {duplicateSatisfied && (
+              <Alert
+                severity="warning"
+                onClose={() => setDuplicateSatisfied(null)}
+                action={
+                  <Button
+                    color="inherit"
+                    size="small"
+                    disabled={bgSubmitting}
+                    onClick={() => void submitScreening(true)}
+                  >
+                    Order anyway
+                  </Button>
+                }
+              >
+                {pkgName || 'This package'} is already satisfied by a completed screening on this
+                worker{duplicateSatisfied.packageLabel ? ` (${duplicateSatisfied.packageLabel})` : ''}
+                {' '}— order {duplicateSatisfied.backgroundCheckId}. No new order was placed. Only
+                order again if the account explicitly requires a fresh screening.
+              </Alert>
+            )}
             <AccusourcePackageSelector
               catalog={accusourceCatalog}
               catalogLoading={catalogLoading || catalogSyncing}
@@ -1318,7 +1366,8 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
             />
             <Divider />
             <Typography variant="caption" color="text.secondary">
-              Already satisfied (completed / report-ready; validity window + package match are policy hooks for future deduping)
+              Already satisfied — ordering the same package again pauses with an "Order anyway"
+              override (completed / report-ready, package match, within the validity window)
             </Typography>
             <Stack spacing={0.5}>
               {screeningRows
@@ -1351,8 +1400,10 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
           <Button onClick={() => setBgModalOpen(false)}>Cancel</Button>
           <Button
             variant="contained"
-            onClick={
-              screeningMode === 'mark-complete' ? submitMarkAsComplete : submitScreening
+            onClick={() =>
+              // NOTE: submitScreening takes an optional override flag — never
+              // pass it the click event or the duplicate guard gets bypassed.
+              screeningMode === 'mark-complete' ? submitMarkAsComplete() : submitScreening()
             }
             disabled={bgSubmitting || !canAccusourceAdmin}
           >

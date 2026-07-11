@@ -15,6 +15,11 @@ import {
   ensureAccusourceAdmin,
   type AccusourceOrderInvocation,
 } from './accusourceAdminGate';
+import {
+  evaluateScreeningSatisfiedServer,
+  requestedEquivalencyKey,
+  type BgLike,
+} from '../../compliance/screeningAutomationShared';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -70,6 +75,10 @@ function buildDraftDocument(
 
 type CallablePayload = CreateBackgroundCheckInput & {
   backgroundCheckId?: string;
+  /** Recruiter explicitly confirmed ordering DESPITE an existing satisfied
+   *  equivalent package (duplicate-guard override, e.g. an account demands
+   *  a fresh run). */
+  allowDuplicateOfSatisfied?: boolean;
 };
 
 /**
@@ -107,6 +116,63 @@ export async function createBackgroundCheckInternal(
   });
 
   await assertAccusourceProductionOrderPolicy(invocation, uid, input.tenantId);
+
+  // Duplicate guard (Greg 2026-07-11): if this worker already has a
+  // completed order satisfying the SAME package (equivalency-key match,
+  // within the validity window), PAUSE instead of ordering — the same rule
+  // the assignment automation applies before it ever calls this function
+  // (`skipped_already_satisfied`). Manual/callable orders only: the
+  // automation runs its own evaluation with its own audit trail. The client
+  // surfaces the structured details and may override with
+  // `allowDuplicateOfSatisfied: true`. À-la-carte single-service re-orders
+  // carry no package → key 'unknown' → guard doesn't apply.
+  const requestedKey = requestedEquivalencyKey(
+    String(input.requestedPackageId || ''),
+    String(input.requestedPackageName || ''),
+  );
+  if (
+    invocation.type === 'callable' &&
+    input.allowDuplicateOfSatisfied !== true &&
+    requestedKey !== 'unknown' &&
+    input.candidateId
+  ) {
+    let priorQuery = db
+      .collection('backgroundChecks')
+      .where('candidateId', '==', String(input.candidateId));
+    if (input.tenantId) {
+      priorQuery = priorQuery.where('tenantId', '==', String(input.tenantId));
+    }
+    const priorSnap = await priorQuery.limit(25).get();
+    for (const doc of priorSnap.docs) {
+      const ev = evaluateScreeningSatisfiedServer(doc.data() as BgLike, {
+        requestedEquivalencyKey: requestedKey,
+        enforceEquivalency: true,
+        enforceValidityWindow: true,
+      });
+      if (!ev.satisfied) continue;
+      const row = doc.data() as Record<string, unknown>;
+      const packageLabel =
+        [row.requestedPackageName, row.requestedPackageId].filter(Boolean).join(' · ') || null;
+      accusourceLog('info', 'create', 'duplicate guard paused order — requirement already satisfied', {
+        callerUid: uid,
+        candidateId: input.candidateId,
+        existingBackgroundCheckId: doc.id,
+        requestedKey,
+      });
+      throw new HttpsError(
+        'failed-precondition',
+        `This worker already has a completed screening that satisfies ${
+          packageLabel || 'this package'
+        } (order ${doc.id}, still within its validity window). No new order was placed — use "Order anyway" if a duplicate is really needed.`,
+        {
+          code: 'screening_already_satisfied',
+          backgroundCheckId: doc.id,
+          packageLabel,
+          decisionDetail: ev.decisionDetail,
+        },
+      );
+    }
+  }
 
   const docRef = input.backgroundCheckId
     ? db.collection('backgroundChecks').doc(String(input.backgroundCheckId))
