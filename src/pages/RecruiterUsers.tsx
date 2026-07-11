@@ -366,6 +366,9 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
       cached.users.length > 0
     ) {
       backNavRestoredKeyRef.current = backNavCacheKey;
+      // Invalidate any in-flight paginated load from a prior filter set so a
+      // late result can't overwrite the restored rows.
+      loadUsersGenerationRef.current += 1;
       setUsers(cached.users);
       setLastVisibleDoc(cached.lastVisibleDoc);
       setHasMore(cached.hasMore);

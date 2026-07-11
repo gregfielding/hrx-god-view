@@ -197,10 +197,15 @@ export function getApplicationApplyDays(applicationData: Record<string, any>): s
  *
  * Conservative by design: releases only when the other application's shift
  * TIMES are resolvable (preferredShiftId, else the JO's single shift) and a
- * specific applyDate's window overlaps a new-assignment window. Career
- * apps, day-less express-interest apps, ambiguous multi-shift apps, and
- * no-fixed-times open shifts are left untouched. Never throws — a release
- * failure must not affect the assignment that triggered it.
+ * specific applyDate's window overlaps a new-assignment window. Career and
+ * open-shift applications are excluded outright (Greg 2026-07-11: careers
+ * because the client can change actual hours/daily schedule without us
+ * knowing; open shifts because they're by design ongoing with no fixed
+ * daily times) — and neither kind of assignment triggers a release either
+ * (both call sites are gig-gated; the open-shift fast path never reaches
+ * them). Day-less express-interest apps and ambiguous multi-shift apps are
+ * likewise left untouched. Never throws — a release failure must not
+ * affect the assignment that triggered it.
  */
 async function releaseOverlappingApplications(args: {
   tenantId: string;
@@ -260,6 +265,11 @@ async function releaseOverlappingApplications(args: {
         joCache.set(joId, joData);
       }
       if (!joData) continue;
+      // Careers are excluded from the overlap math — the client can change
+      // actual hours / daily schedule on their side without HRX knowing, so
+      // a computed career window isn't trustworthy. Missing jobType defaults
+      // to 'gig', matching the codebase-wide `jobOrder.jobType || 'gig'` norm.
+      if (String(joData.jobType || 'gig').toLowerCase() !== 'gig') continue;
 
       let shiftData: Record<string, any> | null = null;
       const preferredShiftId = String(app.preferredShiftId || '');
@@ -276,6 +286,10 @@ async function releaseOverlappingApplications(args: {
         if (shifts.size === 1) shiftData = shifts.docs[0].data() as Record<string, any>;
       }
       if (!shiftData) continue;
+      // Open shifts are by design ongoing (essentially 24/7) with no real
+      // daily times — never release one for a computed time overlap, even
+      // if the doc happens to carry default times.
+      if (String(shiftData.shiftType || '').toLowerCase() === 'open') continue;
       const st = String(shiftData.startTime || shiftData.defaultStartTime || '');
       const et = String(shiftData.endTime || shiftData.defaultEndTime || '');
       if (!st || !et) continue;
@@ -1031,22 +1045,26 @@ export const placementsCreateAssignments = onCall(
           createdByUserId.set(userId, userCreated);
           // These day(s) are now booked — release the worker's overlapping
           // OPEN applications elsewhere (see releaseOverlappingApplications).
-          const relSt = String(shift.startTime || shift.defaultStartTime || '');
-          const relEt = String(shift.endTime || shift.defaultEndTime || '');
-          const relWindows = userCreated
-            .map((c) => computeShiftWindow(c.date, relSt, relEt))
-            .filter((w): w is ShiftWindow => !!w);
-          await releaseOverlappingApplications({
-            tenantId,
-            userId,
-            assignedJobOrderId: jobOrderId,
-            assignedJobOrderTitle: String(
-              jobOrder.jobOrderName || jobOrder.jobTitle || 'your shift',
-            ),
-            assignedShiftId: shiftId,
-            assignedAssignmentId: userCreated[0].assignmentId,
-            windows: relWindows,
-          });
+          // Gig assignments only: career schedules can shift client-side, so
+          // a career booking never triggers releases.
+          if (isGigJob) {
+            const relSt = String(shift.startTime || shift.defaultStartTime || '');
+            const relEt = String(shift.endTime || shift.defaultEndTime || '');
+            const relWindows = userCreated
+              .map((c) => computeShiftWindow(c.date, relSt, relEt))
+              .filter((w): w is ShiftWindow => !!w);
+            await releaseOverlappingApplications({
+              tenantId,
+              userId,
+              assignedJobOrderId: jobOrderId,
+              assignedJobOrderTitle: String(
+                jobOrder.jobOrderName || jobOrder.jobTitle || 'your shift',
+              ),
+              assignedShiftId: shiftId,
+              assignedAssignmentId: userCreated[0].assignmentId,
+              windows: relWindows,
+            });
+          }
         }
       } catch (error: any) {
         failed.push({ userId, error: error?.message || 'unknown_error' });
@@ -1455,8 +1473,11 @@ export const placementsCreateAssignments = onCall(
 
       created.push({ userId, assignmentId: assignmentRef.id, warnings });
       // This shift is now booked — release the worker's overlapping OPEN
-      // applications elsewhere (see releaseOverlappingApplications).
-      if (newWindow) {
+      // applications elsewhere (see releaseOverlappingApplications). Gig
+      // assignments only: career schedules can shift client-side, so a
+      // career booking never triggers releases. (Open shifts never reach
+      // here — they return from the fast path above.)
+      if (newWindow && isGigJob) {
         await releaseOverlappingApplications({
           tenantId,
           userId,
