@@ -767,9 +767,9 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                 Employment moved here above the former Readiness column.
                 The Readiness status rows (Direct deposit, Employer I-9, …)
                 now render below the entity chips; the Indeed Flex /
-                Fieldglass checkboxes become an "Applications" section;
-                Groups + Recruiter stack below. The standalone Employment
-                column further right has been removed. */}
+                Fieldglass checkboxes live in column 4 as "Integrations"
+                (2026-07-11). The standalone Employment column further
+                right has been removed. */}
             <Grid item xs={12} md={gridColMd}>
               <Typography component="span" sx={recordHeaderColumnTitleSx}>
                 Employment
@@ -865,10 +865,55 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                 </Stack>
               )}
 
-              {/* Applications — the Indeed Flex / Fieldglass enrollment
-                  checkboxes, formerly under the Readiness column. */}
+            </Grid>
+
+            <Grid item xs={12} md={gridColMd}>
+              <Typography component="span" sx={recordHeaderColumnTitleSx}>
+                Screening
+              </Typography>
+              {screeningPackageHint ? (
+                <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, mb: 0.5 }}>
+                  {screeningPackageHint}
+                </Typography>
+              ) : null}
+              {screeningLines.length > 0 ? (
+                <Stack spacing={0.35}>
+                  {screeningLines.map((line) => {
+                    const verdictIcon = renderVerdictIconForHeader(line.verdict);
+                    return (
+                      <Typography
+                        key={line.id}
+                        variant="body2"
+                        sx={{ ...recordHeaderBodyTextSx, display: 'flex', alignItems: 'flex-start', gap: 0.5 }}
+                      >
+                        {verdictIcon}
+                        <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
+                          {line.name}
+                          {line.type ? ` (${line.type})` : ''}: {line.status}
+                        </Box>
+                      </Typography>
+                    );
+                  })}
+                </Stack>
+              ) : (
+                <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                  {screeningPackageHint ? '—' : 'No active screening package on file'}
+                </Typography>
+              )}
               <Typography component="span" sx={{ ...recordHeaderColumnTitleSx, mt: 1.25 }}>
-                Applications
+                Certifications
+              </Typography>
+              <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                —
+              </Typography>
+            </Grid>
+
+            {/* Column 4 — Integrations (2026-07-11: replaced the Assignments
+                lines; the Indeed Flex / Fieldglass enrollment checkboxes
+                moved here from the Employment column). */}
+            <Grid item xs={12} md={gridColMd}>
+              <Typography component="span" sx={recordHeaderColumnTitleSx}>
+                Integrations
               </Typography>
               <FormControlLabel
                 sx={{
@@ -934,78 +979,8 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                 }
                 label="Fieldglass"
               />
-            </Grid>
 
-            <Grid item xs={12} md={gridColMd}>
-              <Typography component="span" sx={recordHeaderColumnTitleSx}>
-                Screening
-              </Typography>
-              {screeningPackageHint ? (
-                <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, mb: 0.5 }}>
-                  {screeningPackageHint}
-                </Typography>
-              ) : null}
-              {screeningLines.length > 0 ? (
-                <Stack spacing={0.35}>
-                  {screeningLines.map((line) => {
-                    const verdictIcon = renderVerdictIconForHeader(line.verdict);
-                    return (
-                      <Typography
-                        key={line.id}
-                        variant="body2"
-                        sx={{ ...recordHeaderBodyTextSx, display: 'flex', alignItems: 'flex-start', gap: 0.5 }}
-                      >
-                        {verdictIcon}
-                        <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
-                          {line.name}
-                          {line.type ? ` (${line.type})` : ''}: {line.status}
-                        </Box>
-                      </Typography>
-                    );
-                  })}
-                </Stack>
-              ) : (
-                <Typography variant="body2" sx={recordHeaderBodyTextSx}>
-                  {screeningPackageHint ? '—' : 'No active screening package on file'}
-                </Typography>
-              )}
-              <Typography component="span" sx={{ ...recordHeaderColumnTitleSx, mt: 1.25 }}>
-                Certifications
-              </Typography>
-              <Typography variant="body2" sx={recordHeaderBodyTextSx}>
-                —
-              </Typography>
-            </Grid>
-
-            {/* Column 4 — Assignments (its own column, per 2026-06-03
-                request to keep 5 columns). */}
-            <Grid item xs={12} md={gridColMd}>
-              <Typography component="span" sx={recordHeaderColumnTitleSx}>
-                Assignments
-              </Typography>
-              {assignmentLines.length > 0 ? (
-                <Stack spacing={0.4} sx={{ mt: 0.35 }}>
-                  {assignmentLines.map((line) => (
-                    <Box key={line.id || line.primary}>
-                      <Typography variant="body2" sx={recordHeaderBodyTextSx}>
-                        {line.primary}
-                      </Typography>
-                      {line.secondary ? (
-                        <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, display: 'block', mt: 0.1 }}>
-                          {line.secondary}
-                        </Typography>
-                      ) : null}
-                    </Box>
-                  ))}
-                </Stack>
-              ) : (
-                <Typography variant="body2" sx={recordHeaderBodyTextSx}>
-                  —
-                </Typography>
-              )}
-
-              {/* Groups — moved below Assignments in column 4
-                  (2026-06-03 request). */}
+              {/* Groups — below Integrations in column 4. */}
               {canManageGroupsSection && (headerUserGroups.length > 0 || showAddGroupControl) && (
                 <Box sx={{ mt: 1.25 }}>
                   <Box
