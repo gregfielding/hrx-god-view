@@ -26,6 +26,9 @@ import {
 } from '@mui/material';
 import EmailIcon from '@mui/icons-material/Email';
 import SmsIcon from '@mui/icons-material/Sms';
+import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined';
+import MuiMenu from '@mui/material/Menu';
+import * as XLSX from 'xlsx';
 import MessageDrawer, { type MessageRecipient } from '../components/MessageDrawer';
 import ClearIcon from '@mui/icons-material/Clear';
 import IconButton from '@mui/material/IconButton';
@@ -87,8 +90,10 @@ import CertificationIntelligencePanel from '../components/recruiter/Certificatio
 type RecruiterUsersEntityFilterKey = 'all' | 'select' | 'workforce' | 'events';
 
 /** Employment lifecycle filter — matches `entity_employments` status server-side.
- *  'terminated' is only offered for C1 Select (the W-2 entity where separation happens). */
-type RecruiterUsersStatusFilterKey = 'all' | 'active' | 'onboarding' | 'terminated';
+ *  'terminated' and 'on_assignment' are only offered for C1 Select;
+ *  'on_assignment' matches live assignments overlapping today (at search
+ *  time) rather than an employment lifecycle. */
+type RecruiterUsersStatusFilterKey = 'all' | 'active' | 'onboarding' | 'terminated' | 'on_assignment';
 
 /**
  * Back-navigation results cache: open a user from the table, click back →
@@ -249,7 +254,9 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   });
   const [statusFilter, setStatusFilter] = useState<RecruiterUsersStatusFilterKey>(() => {
     const raw = (cacheState as { statusFilter?: string }).statusFilter;
-    if (raw === 'active' || raw === 'onboarding' || raw === 'terminated') return raw;
+    if (raw === 'active' || raw === 'onboarding' || raw === 'terminated' || raw === 'on_assignment') {
+      return raw;
+    }
     return 'all';
   });
   // `setGroupFilter` was used by the inline User Group Autocomplete that
@@ -638,10 +645,13 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     }
   }, [entityFilter, sortBy, updateCache]);
 
-  /** 'Terminated' is only offered for C1 Select (separation is per-entity and
-   *  happens there); leaving that entity clears the stale status filter. */
+  /** 'Terminated' and 'On Assignment' are only offered for C1 Select;
+   *  leaving that entity clears the stale status filter. */
   useEffect(() => {
-    if (statusFilter === 'terminated' && entityFilter !== 'select') {
+    if (
+      (statusFilter === 'terminated' || statusFilter === 'on_assignment') &&
+      entityFilter !== 'select'
+    ) {
       setStatusFilter('all');
       updateCache({ statusFilter: 'all' });
     }
@@ -1041,6 +1051,64 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     return filteredUsers.slice(start, end);
   }, [filteredUsers, page, rowsPerPage]);
 
+  /** Export the table as shown — ALL filtered+sorted rows, not just the
+   *  current page. Employment chips are only loaded for every row when an
+   *  entity filter is active (otherwise just the visible page), so that
+   *  column may be blank for off-page rows in unfiltered exports. */
+  const [exportAnchor, setExportAnchor] = useState<null | HTMLElement>(null);
+  const handleExportUsers = (kind: 'csv' | 'xlsx') => {
+    const sheetRows = filteredUsers.map((u) => {
+      const chips = entityEmploymentChipsByUser.get(u.id) || [];
+      const master = getRecruiterMasterDisplayForAdminUi({
+        recruiterMasterScoreRaw: u.recruiterMasterScore,
+        recruiterScoreSnapshotRaw: u.recruiterScoreSnapshot,
+        userData: { scoreSummary: u.scoreSummary, riskProfile: u.riskProfile },
+        latestPrescreenInterviewAi: null,
+      });
+      const dateOrBlank = (v: unknown) => {
+        const s = formatDate(v);
+        return s === 'N/A' ? '' : s;
+      };
+      return {
+        Name: `${u.firstName} ${u.lastName}`.trim() || u.displayName || '',
+        City: u.city || '',
+        State: u.state || '',
+        Phone: u.phone ? formatPhoneNumber(u.phone) : '',
+        Email: u.email || '',
+        Employment: chips.map((c) => `${c.entityLabel}: ${c.statusLabel}`).join('; '),
+        Score: master.score100 ?? '',
+        'Work history': (u.workHistoryJobTitles || []).join('; '),
+        Joined: dateOrBlank(u.createdAt),
+        'Last activity': dateOrBlank(u.updatedAt),
+        'Last login': dateOrBlank(u.lastLoginAt),
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(sheetRows);
+    const stamp = new Date().toISOString().slice(0, 10);
+    const base = [
+      'users',
+      entityFilter !== 'all' ? entityFilter : '',
+      statusFilter !== 'all' ? statusFilter : '',
+      stamp,
+    ]
+      .filter(Boolean)
+      .join('-');
+    if (kind === 'csv') {
+      const csv = XLSX.utils.sheet_to_csv(ws);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${base}.csv`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } else {
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Users');
+      XLSX.writeFile(wb, `${base}.xlsx`);
+    }
+    setExportAnchor(null);
+  };
+
   /** Stable reference for Phase 5.5 certification intelligence (bounded in hook). */
   const workforceCertIntelligenceIds = useMemo(() => filteredUsers.map((u) => u.id), [filteredUsers]);
 
@@ -1325,6 +1393,9 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                   <MenuItem value="all">All statuses</MenuItem>
                   <MenuItem value="active">Active</MenuItem>
                   <MenuItem value="onboarding">Onboarding</MenuItem>
+                  {entityFilter === 'select' && (
+                    <MenuItem value="on_assignment">On Assignment</MenuItem>
+                  )}
                   {entityFilter === 'select' && <MenuItem value="terminated">Terminated</MenuItem>}
                 </Select>
               </FormControl>
@@ -1400,6 +1471,27 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                 )}
               </Select>
             </FormControl>
+
+            {/* Export — the filtered/sorted rows, as CSV or Excel. */}
+            <Box sx={{ ml: 'auto' }}>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<FileDownloadOutlinedIcon />}
+                onClick={(e) => setExportAnchor(e.currentTarget)}
+                sx={{ height: 36, textTransform: 'none', whiteSpace: 'nowrap' }}
+              >
+                Export
+              </Button>
+              <MuiMenu
+                anchorEl={exportAnchor}
+                open={!!exportAnchor}
+                onClose={() => setExportAnchor(null)}
+              >
+                <MenuItem onClick={() => handleExportUsers('xlsx')}>Excel (.xlsx)</MenuItem>
+                <MenuItem onClick={() => handleExportUsers('csv')}>CSV</MenuItem>
+              </MuiMenu>
+            </Box>
           </Box>
           </Box>
         </Collapse>

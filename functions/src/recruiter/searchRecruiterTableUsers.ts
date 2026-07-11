@@ -148,6 +148,149 @@ async function loadEntityUserIdSet(
   return { entityUserIds, scannedDocuments: scanned, batches };
 }
 
+/** Assignment statuses that mean the worker is NOT on that assignment anymore. */
+const ASSIGNMENT_TERMINAL_STATUSES = new Set([
+  'canceled',
+  'cancelled',
+  'completed',
+  'ended',
+  'declined',
+  'rejected',
+  'withdrawn',
+]);
+
+/** YYYY-MM-DD "today" in the tenant's operating timezone (Pacific). */
+function todayDateOnlyPacific(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date());
+}
+
+/** Best-effort YYYY-MM-DD from the mixed date shapes on assignment docs. */
+function toDateOnlyLoose(v: unknown): string {
+  if (typeof v === 'string') {
+    const m = v.match(/^(\d{4}-\d{2}-\d{2})/);
+    return m ? m[1] : '';
+  }
+  if (v instanceof Date && !Number.isNaN(v.getTime())) {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(v);
+  }
+  if (v && typeof v === 'object') {
+    const ts = v as { toDate?: () => Date; _seconds?: number; seconds?: number };
+    const secs = ts._seconds ?? ts.seconds;
+    const d =
+      typeof ts.toDate === 'function' ? ts.toDate() : typeof secs === 'number' ? new Date(secs * 1000) : null;
+    if (d && !Number.isNaN(d.getTime())) {
+      return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(d);
+    }
+  }
+  return '';
+}
+
+/**
+ * "On Assignment" (Greg 2026-07-11): user ids with at least one live
+ * assignment whose date range overlaps TODAY, scoped to the entity (via
+ * assignment `hiringEntityId`/`entityId`, falling back to the job order's —
+ * assignments often don't carry the field directly, mirroring the
+ * separateWorker cascade). Deliberately NOT intersected with an
+ * `entity_employments` lifecycle scan: workers on assignment with a missing
+ * or wrong employment row should SURFACE here — this filter's first job is
+ * exposing data to clean up. Coverage notes: day-scoped gig assignments
+ * match by `startDate == today`; ranged (career / multi-day) by
+ * `endDate >= today` + `startDate <= today`; ongoing open shifts by
+ * `endDate == ''`. Rows whose dates aren't stored as YYYY-MM-DD strings are
+ * missed by the range queries — accepted imprecision.
+ */
+async function loadOnAssignmentUserIdSet(
+  tenantId: string,
+  entityKey: string | null,
+): Promise<{ entityUserIds: Set<string>; scannedDocuments: number; batches: number }> {
+  const userIds = new Set<string>();
+  let scanned = 0;
+  let batches = 0;
+  const today = todayDateOnlyPacific();
+
+  // Resolve the entity id for the requested key from any employment row.
+  let targetEntityId = '';
+  if (entityKey) {
+    const snap = await db
+      .collection(`tenants/${tenantId}/entity_employments`)
+      .where('entityKey', '==', entityKey)
+      .limit(1)
+      .get();
+    const d = snap.docs[0]?.data() as Record<string, unknown> | undefined;
+    targetEntityId = String(d?.entityId || d?.hiringEntityId || '');
+    if (!targetEntityId) {
+      return { entityUserIds: userIds, scannedDocuments: 0, batches: 0 };
+    }
+  }
+
+  const coll = db.collection(`tenants/${tenantId}/assignments`);
+  const seenDocIds = new Set<string>();
+  const joEntityCache = new Map<string, string>();
+
+  const matchesEntity = async (a: Record<string, unknown>): Promise<boolean> => {
+    if (!targetEntityId) return true;
+    const direct = [String(a.hiringEntityId || ''), String(a.entityId || '')];
+    if (direct.includes(targetEntityId)) return true;
+    const joId = String(a.jobOrderId || '');
+    if (!joId) return false;
+    if (!joEntityCache.has(joId)) {
+      try {
+        const jo = await db.doc(`tenants/${tenantId}/job_orders/${joId}`).get();
+        const j = (jo.data() || {}) as Record<string, unknown>;
+        joEntityCache.set(joId, `${String(j.hiringEntityId || '')} ${String(j.entityId || '')}`);
+      } catch {
+        joEntityCache.set(joId, '');
+      }
+    }
+    return (joEntityCache.get(joId) || '').split(' ').includes(targetEntityId);
+  };
+
+  const consider = async (docId: string, a: Record<string, unknown>): Promise<void> => {
+    if (seenDocIds.has(docId)) return;
+    seenDocIds.add(docId);
+    const status = String(a.status || '').trim().toLowerCase();
+    if (ASSIGNMENT_TERMINAL_STATUSES.has(status)) return;
+    const start = toDateOnlyLoose(a.startDate);
+    if (!start || start > today) return;
+    const end = toDateOnlyLoose(a.endDate);
+    if (end && end < today) return;
+    const uid = String(a.userId || '').trim();
+    if (!uid || userIds.has(uid)) return;
+    if (await matchesEntity(a)) userIds.add(uid);
+  };
+
+  // `orderField` must be the inequality field when one is used (Firestore
+  // requires the first orderBy to match it); doc-id tiebreak keeps the
+  // startAfter cursor stable either way.
+  const runQuery = async (
+    build: (c: FirebaseFirestore.Query) => FirebaseFirestore.Query,
+    orderField?: string,
+  ): Promise<void> => {
+    let lastDoc: QueryDocumentSnapshot | null = null;
+    while (batches < MAX_BATCHES) {
+      const ordered = orderField
+        ? build(coll).orderBy(orderField).orderBy(FieldPath.documentId())
+        : build(coll).orderBy(FieldPath.documentId());
+      const base = ordered.limit(BATCH_SIZE);
+      const snap = await (lastDoc ? base.startAfter(lastDoc) : base).get();
+      if (snap.empty) break;
+      batches += 1;
+      scanned += snap.docs.length;
+      for (const doc of snap.docs) {
+        await consider(doc.id, doc.data() as Record<string, unknown>);
+      }
+      lastDoc = snap.docs[snap.docs.length - 1] ?? null;
+      if (snap.docs.length < BATCH_SIZE) break;
+    }
+  };
+
+  await runQuery((c) => c.where('startDate', '==', today)); // day-scoped gigs today
+  await runQuery((c) => c.where('endDate', '>=', today), 'endDate'); // ranged assignments still running
+  await runQuery((c) => c.where('endDate', '==', '')); // ongoing / rolling (open shifts)
+
+  return { entityUserIds: userIds, scannedDocuments: scanned, batches };
+}
+
 export const searchRecruiterTableUsers = onCall(
   {
     enforceAppCheck: false,
@@ -201,7 +344,13 @@ export const searchRecruiterTableUsers = onCall(
       let entityBatches = 0;
 
       if (hasEntity || hasStatus) {
-        const loaded = await loadEntityUserIdSet(tenantId, entityKeyNorm, employmentStatusNorm);
+        // 'on_assignment' derives the user set from live assignments
+        // overlapping today (NOT from entity_employments — see
+        // loadOnAssignmentUserIdSet for why there's no intersection).
+        const loaded =
+          employmentStatusNorm === 'on_assignment'
+            ? await loadOnAssignmentUserIdSet(tenantId, entityKeyNorm)
+            : await loadEntityUserIdSet(tenantId, entityKeyNorm, employmentStatusNorm);
         entityUserIds = loaded.entityUserIds;
         entityScanned = loaded.scannedDocuments;
         entityBatches = loaded.batches;

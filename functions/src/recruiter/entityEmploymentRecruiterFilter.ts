@@ -33,8 +33,10 @@ export function normalizeRecruiterEntityKey(raw: string): string | null {
   return ALLOWED.has(k) ? k : null;
 }
 
-/** Employment lifecycle statuses the recruiter Users table can filter on. */
-const ALLOWED_STATUSES = new Set(['active', 'onboarding', 'terminated']);
+/** Employment lifecycle statuses the recruiter Users table can filter on.
+ *  'on_assignment' is special-cased: it matches live `assignments` rows
+ *  overlapping today, not an `entity_employments` lifecycle. */
+const ALLOWED_STATUSES = new Set(['active', 'onboarding', 'terminated', 'on_assignment']);
 
 export function normalizeRecruiterEmploymentStatus(raw: string): string | null {
   const s = raw.trim().toLowerCase();
