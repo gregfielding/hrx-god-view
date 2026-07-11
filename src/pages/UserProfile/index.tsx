@@ -146,6 +146,8 @@ import { sendBulkSmsToWorkerUsers, sendNewEmailFromRecruiter } from '../../utils
 import { I9_MESSAGE_REQUEST_UPLOAD_EMAIL_SUBJECT } from '../../constants/i9SupportingDocumentsEmploymentStrings';
 import type { EmergencyContact } from '../../types/UserProfile';
 import { p } from '../../data/firestorePaths';
+import { deriveC1EntityKeyFromEntityName } from '../../utils/c1EntityWorkAuthorizationUi';
+import { normalizeEntityKeyForPayroll } from '../../utils/recruiterEmploymentBreakdownPick';
 import { enrichUserAssignmentRow } from '../../utils/enrichAssignmentRowForDisplay';
 import { pickRecordHeaderAssignments, type RecordHeaderAssignmentLine } from '../../utils/recordHeaderAssignments';
 
@@ -1924,6 +1926,55 @@ const UserProfilePage = () => {
     return `https://app.everee.com/workers/details/${encodeURIComponent(workerId)}?tab=DOCUMENTS`;
   }, [skillsData]);
 
+  /**
+   * entityKey → Everee deep link for the header's Employment chips (Greg
+   * 2026-07-11: each chip doubles as "open this worker in Everee"). Mirrors
+   * the Employment & Payroll tab's lookup: entity doc `evereeTenantId` →
+   * `users/{uid}.evereeWorkerIds[evereeTenantId]`. Entities without linkage
+   * (not Everee-connected, worker not provisioned) just render plain chips.
+   */
+  const [evereeLinkByEntityKey, setEvereeLinkByEntityKey] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const ids = (skillsData as { evereeWorkerIds?: Record<string, unknown> } | undefined)
+      ?.evereeWorkerIds;
+    if (!effectiveTenantId || !ids || typeof ids !== 'object') {
+      setEvereeLinkByEntityKey({});
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const entSnap = await getDocs(collection(db, p.entities(effectiveTenantId)));
+        const out: Record<string, string> = {};
+        entSnap.docs.forEach((d) => {
+          const x = d.data() as { name?: string; evereeTenantId?: unknown };
+          const evTid = x.evereeTenantId != null ? String(x.evereeTenantId).trim() : '';
+          if (!evTid) return;
+          const raw = ids[evTid];
+          const workerId = typeof raw === 'string' ? raw.trim() : '';
+          if (!workerId) return;
+          const key = deriveC1EntityKeyFromEntityName(String(x.name || d.id));
+          out[key] = `https://app.everee.com/workers/details/${encodeURIComponent(workerId)}`;
+        });
+        if (!cancelled) setEvereeLinkByEntityKey(out);
+      } catch {
+        if (!cancelled) setEvereeLinkByEntityKey({});
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveTenantId, skillsData]);
+
+  /** Entity the readiness rows were computed from (the primary employment)
+   *  — the header nests the pending rows under that entity's chip. */
+  const readinessRowsEntityKey = useMemo(() => {
+    if (!uid) return null;
+    const ctx = recruiterEmploymentBreakdownByUserId.get(uid);
+    if (!ctx?.entityEmployment) return null;
+    return normalizeEntityKeyForPayroll(String(ctx.entityEmployment.entityKey || ''));
+  }, [uid, recruiterEmploymentBreakdownByUserId]);
+
   const recruiterReadinessBreakdownRows = useMemo(() => {
     if (!showRecordHeaderEntityStatus || !uid) return [];
     const eb =
@@ -2532,6 +2583,8 @@ const UserProfilePage = () => {
                   viewerSecurityLevel={viewerSecurityLevel}
                   userDocForTableIcons={userDocForRecruiterTableIcons}
                   entitySlots={recordHeaderEntitySlots}
+                  evereeLinkByEntityKey={evereeLinkByEntityKey}
+                  readinessRowsEntityKey={readinessRowsEntityKey}
                   interviewSummaryLine={recordHeaderInterviewLine}
                   screeningLines={recordHeaderScreeningLines}
                   screeningPackageHint={recordHeaderScreeningPackageHint}

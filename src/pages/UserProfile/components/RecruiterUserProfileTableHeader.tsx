@@ -118,6 +118,12 @@ export type RecruiterUserProfileTableHeaderProps = {
   screeningLines: AccusourceScreeningLineItem[];
   screeningPackageHint: string | null;
   entitySlots: RecordHeaderEntitySlot[];
+  /** entityKey → Everee deep link — when present the entity chip renders as
+   *  a link that opens the worker's Everee record in a new tab. */
+  evereeLinkByEntityKey?: Record<string, string>;
+  /** entityKey the readinessRows were computed from (the primary
+   *  employment); pending rows nest under that entity's chip. */
+  readinessRowsEntityKey?: string | null;
   interviewSummaryLine: string | null;
   readinessRows: ReadinessBreakdownRow[];
   /** When the worker's Employer I-9 row is "Action needed", this link
@@ -199,6 +205,8 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
   screeningLines,
   screeningPackageHint,
   entitySlots,
+  evereeLinkByEntityKey = {},
+  readinessRowsEntityKey = null,
   interviewSummaryLine,
   readinessRows,
   employerI9SignatureUrl = null,
@@ -774,31 +782,131 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
               <Typography component="span" sx={recordHeaderColumnTitleSx}>
                 Employment
               </Typography>
-              {entitySlots.length > 0 ? (
-                <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mt: 0.35 }}>
-                  {entitySlots.map((slot) => {
-                    const v = entityChipVisuals(slot);
-                    return (
-                      <Chip
-                        key={slot.entityKey}
-                        size="small"
-                        label={`${slot.title}: ${slot.statusLabel}`}
-                        color={v.color}
-                        variant={v.variant}
-                        sx={{
-                          height: 24,
-                          maxWidth: '100%',
-                          '& .MuiChip-label': { px: 0.75, fontSize: '0.74rem', fontWeight: 400 },
-                        }}
-                      />
-                    );
-                  })}
-                </Stack>
-              ) : (
-                <Typography variant="body2" sx={recordHeaderBodyTextSx}>
-                  —
-                </Typography>
-              )}
+              {(() => {
+                // 2026-07-11 (Greg): only surface readiness items that still
+                // need attention — done ("… Complete") and non-applicable
+                // ("… N/A") rows are dropped. What's left nests under the
+                // chip of the entity the rows were computed from (the
+                // primary employment); DNR + Separate sit below the chips.
+                const pendingRows = readinessRows.filter(
+                  (row) => !/:\s*(complete|n\/a)\s*$/i.test(row.text),
+                );
+                const nestKey =
+                  pendingRows.length === 0
+                    ? undefined
+                    : entitySlots.some((s) => s.entityKey === readinessRowsEntityKey)
+                      ? readinessRowsEntityKey
+                      : entitySlots[0]?.entityKey;
+                const renderReadinessRow = (row: ReadinessBreakdownRow) => {
+                  // Employer I-9 needing the employer signature: relabel
+                  // "Action needed" → "Signature needed" and (when an
+                  // Everee worker id resolved) link straight to the
+                  // worker's Everee Documents tab in a new tab.
+                  const isI9SignatureNeeded =
+                    row.key === 'employer_i9' && /Action needed/i.test(row.text);
+                  const displayText = isI9SignatureNeeded
+                    ? row.text.replace(/Action needed/i, 'Signature needed')
+                    : row.text;
+                  const renderAsLink = isI9SignatureNeeded && !!employerI9SignatureUrl;
+                  return (
+                    <Box key={row.key} component="span">
+                      {renderAsLink ? (
+                        <Link
+                          href={employerI9SignatureUrl!}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          underline="hover"
+                          variant="body2"
+                          sx={{
+                            ...recordHeaderBodyTextSx,
+                            color: 'primary.main',
+                            fontWeight: 400,
+                          }}
+                        >
+                          {displayText}
+                        </Link>
+                      ) : (
+                        <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                          {displayText}
+                        </Typography>
+                      )}
+                      {row.sublines?.map((line, i) => (
+                        <Typography
+                          key={i}
+                          variant="body2"
+                          sx={{ ...recordHeaderBodyTextSx, display: 'block', pl: 0.5 }}
+                        >
+                          {line}
+                        </Typography>
+                      ))}
+                    </Box>
+                  );
+                };
+                return (
+                  <>
+                    {entitySlots.length > 0 ? (
+                      <Stack spacing={0.5} sx={{ mt: 0.35 }}>
+                        {entitySlots.map((slot) => {
+                          const v = entityChipVisuals(slot);
+                          const evereeUrl = evereeLinkByEntityKey[slot.entityKey];
+                          const chipSx = {
+                            height: 24,
+                            maxWidth: '100%',
+                            alignSelf: 'flex-start',
+                            '& .MuiChip-label': { px: 0.75, fontSize: '0.74rem', fontWeight: 400 },
+                          } as const;
+                          return (
+                            <Box key={slot.entityKey}>
+                              {evereeUrl ? (
+                                // Chip doubles as a deep link to the worker's
+                                // Everee record for this entity (new tab) —
+                                // same destination as the Employment &
+                                // Payroll tab's "Open in Everee".
+                                <Chip
+                                  component="a"
+                                  clickable
+                                  href={evereeUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title={`Open in Everee (new tab) — ${slot.title}`}
+                                  size="small"
+                                  label={`${slot.title}: ${slot.statusLabel}`}
+                                  color={v.color}
+                                  variant={v.variant}
+                                  sx={chipSx}
+                                />
+                              ) : (
+                                <Chip
+                                  size="small"
+                                  label={`${slot.title}: ${slot.statusLabel}`}
+                                  color={v.color}
+                                  variant={v.variant}
+                                  sx={chipSx}
+                                />
+                              )}
+                              {slot.entityKey === nestKey && (
+                                <Stack spacing={0.2} sx={{ mt: 0.35, pl: 1 }}>
+                                  {pendingRows.map(renderReadinessRow)}
+                                </Stack>
+                              )}
+                            </Box>
+                          );
+                        })}
+                      </Stack>
+                    ) : (
+                      <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                        —
+                      </Typography>
+                    )}
+                    {/* No chip to nest under (defensive) — still surface pending items. */}
+                    {entitySlots.length === 0 && pendingRows.length > 0 && (
+                      <Stack spacing={0.2} sx={{ mt: 0.5 }}>
+                        {pendingRows.map(renderReadinessRow)}
+                      </Stack>
+                    )}
+                  </>
+                );
+              })()}
 
               {/* DNR chips + add action — per-account Do Not Return marks. */}
               {tenantIdForUserGroups ? (
@@ -809,62 +917,11 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                 <SeparationSection tenantId={tenantIdForUserGroups} userId={uid} />
               ) : null}
 
-              {/* Readiness status rows — moved under the Employment chips. */}
               {!canViewAdminContent && interviewSummaryLine ? (
                 <Typography variant="body2" sx={{ ...recordHeaderBodyTextSx, mt: 0.5 }}>
                   {interviewSummaryLine}
                 </Typography>
               ) : null}
-              {readinessRows.length > 0 && (
-                <Stack spacing={0.2} sx={{ mt: 0.5 }}>
-                  {readinessRows.map((row) => {
-                    // Employer I-9 needing the employer signature: relabel
-                    // "Action needed" → "Signature needed" and (when an
-                    // Everee worker id resolved) link straight to the
-                    // worker's Everee Documents tab in a new tab.
-                    const isI9SignatureNeeded =
-                      row.key === 'employer_i9' && /Action needed/i.test(row.text);
-                    const displayText = isI9SignatureNeeded
-                      ? row.text.replace(/Action needed/i, 'Signature needed')
-                      : row.text;
-                    const renderAsLink = isI9SignatureNeeded && !!employerI9SignatureUrl;
-                    return (
-                      <Box key={row.key} component="span">
-                        {renderAsLink ? (
-                          <Link
-                            href={employerI9SignatureUrl!}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            underline="hover"
-                            variant="body2"
-                            sx={{
-                              ...recordHeaderBodyTextSx,
-                              color: 'primary.main',
-                              fontWeight: 400,
-                            }}
-                          >
-                            {displayText}
-                          </Link>
-                        ) : (
-                          <Typography variant="body2" sx={recordHeaderBodyTextSx}>
-                            {displayText}
-                          </Typography>
-                        )}
-                        {row.sublines?.map((line, i) => (
-                          <Typography
-                            key={i}
-                            variant="body2"
-                            sx={{ ...recordHeaderBodyTextSx, display: 'block', pl: 0.5 }}
-                          >
-                            {line}
-                          </Typography>
-                        ))}
-                      </Box>
-                    );
-                  })}
-                </Stack>
-              )}
-
             </Grid>
 
             <Grid item xs={12} md={gridColMd}>
