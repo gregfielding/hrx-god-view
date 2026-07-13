@@ -81,6 +81,16 @@ export interface EvereeReadinessMirror {
    */
   employerI9SignedAt: Timestamp | null;
 
+  /**
+   * True when Everee reports this worker's documents live in the embedded
+   * WorkBright I-9 pipeline (`hasWorkbrightDocs` on `/onboarding-status`).
+   * C1 is cutting over to WorkBright (Greg, 2026-07-11) — this is the
+   * per-worker rollout signal: pre-cutover workers stay `false` (Everee's
+   * native Documents-tab flow), WorkBright-onboarded workers flip `true`
+   * and their Section 2 auto-resolves via `documentsVerifiedByCompany`.
+   */
+  hasWorkbrightDocs: boolean;
+
   // ── W-4 (W-2 only) ──
   w4SignedAt: Timestamp | null;
   w4Applicable: boolean;
@@ -216,8 +226,13 @@ export interface EvereeOnboardingStatusApiResponse {
    *  treat this as the best available "this is when the state changed". */
   updatedAt?: string;
   /** I-9 Section 2 employer-countersign signal. False until the
-   *  employer marks documents verified in Everee. */
+   *  employer marks documents verified in Everee. Belongs to the embedded
+   *  WorkBright I-9 pipeline — stays false forever for workers on Everee's
+   *  native Documents-tab flow (confirmed 2026-07-11: Gizelle, Ricardo). */
   documentsVerifiedByCompany?: boolean;
+  /** True when the worker's I-9 documents live in the embedded WorkBright
+   *  pipeline (C1 cutover in progress, 2026-07-11). */
+  hasWorkbrightDocs?: boolean;
   [k: string]: unknown;
 }
 
@@ -496,6 +511,7 @@ export function computeEvereeReadinessMirror(
     i9SignedAt,
     i9Applicable: isEmployee,
     employerI9SignedAt,
+    hasWorkbrightDocs: onboardingStatusData?.hasWorkbrightDocs === true,
 
     w4SignedAt,
     w4Applicable: isEmployee,
