@@ -83,7 +83,7 @@ function buildMessages(d: InviteMessageDetails, es: boolean): { sms: string; pus
   const date = formatInviteDate(d.dateIso, es);
   const pay = formatInvitePay(d.payRate);
   if (es) {
-    const role = title ? `un turno de ${title}` : 'un turno';
+    const role = title ? `como ${title}` : 'un turno';
     const tail = [date, pay].filter(Boolean).map((p) => `, ${p}`).join('');
     const sms = `${name ? `Hola ${name}: te` : 'Te'} invitamos a trabajar ${role} en ${d.city}${tail}. Cupos limitados: ${d.url}`;
     return {
@@ -92,7 +92,10 @@ function buildMessages(d: InviteMessageDetails, es: boolean): { sms: string; pus
       pushBody: sms,
     };
   }
-  const role = title ? `a ${title} shift` : 'a shift';
+  // "work as a Cook" reads like a job; "work a Cook shift" read like
+  // inventory (Greg, 2026-07-13). a/an picked by leading vowel.
+  const article = /^[aeiou]/i.test(title) ? 'an' : 'a';
+  const role = title ? `as ${article} ${title}` : 'a shift';
   const tail = [date, pay].filter(Boolean).map((p) => `, ${p}`).join('');
   const sms = `${name ? `Hi ${name} — you're` : "You're"} invited to work ${role} in ${d.city}${tail}. Spots are limited: ${d.url}`;
   return {
