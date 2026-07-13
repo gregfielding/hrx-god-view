@@ -1015,6 +1015,22 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
     handleMenuClose();
   };
 
+  // Title-cell contact line: which row's email was just copied (drives the
+  // transient "Copied!" tooltip on the copy icon).
+  const [copiedContactJoId, setCopiedContactJoId] = useState<string | null>(null);
+  const copyContactEmail = async (joId: string, email: string) => {
+    try {
+      await navigator.clipboard.writeText(email);
+      setCopiedContactJoId(joId);
+      window.setTimeout(
+        () => setCopiedContactJoId((cur) => (cur === joId ? null : cur)),
+        1500,
+      );
+    } catch (error) {
+      console.error('Failed to copy contact email:', error);
+    }
+  };
+
   const getStatusColor = (status: string) => {
     const normalizedStatus = status?.toLowerCase();
     switch (normalizedStatus) {
@@ -1353,6 +1369,62 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                             hot={(jobOrder as any).hot === true}
                           />
                         </Box>
+                        {/* Primary deal contact (hiring manager on FG orders) —
+                            rendered from the JO's embedded snapshot only; plain
+                            contact-id entries without a snapshot are skipped
+                            (same policy as the detail header). */}
+                        {(() => {
+                          const entries = (jobOrder as any)?.deal?.associations?.contacts;
+                          const first = Array.isArray(entries)
+                            ? entries.find((c: any) => c && typeof c === 'object' && c.snapshot)
+                            : null;
+                          if (!first) return null;
+                          const snap = first.snapshot as Record<string, unknown>;
+                          const name = (
+                            String(snap.fullName || '') ||
+                            `${String(snap.firstName || '')} ${String(snap.lastName || '')}`.trim() ||
+                            String((snap as any).name || '')
+                          ).trim();
+                          const email = typeof snap.email === 'string' ? snap.email.trim() : '';
+                          const phone = typeof snap.phone === 'string' ? snap.phone.trim() : '';
+                          if (!name && !email && !phone) return null;
+                          return (
+                            <Box
+                              sx={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                flexWrap: 'wrap',
+                                gap: 0.25,
+                                lineHeight: 1.2,
+                              }}
+                            >
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                                component="span"
+                                sx={{ lineHeight: 1.2 }}
+                              >
+                                {[name, phone, email].filter(Boolean).join(' · ')}
+                              </Typography>
+                              {email ? (
+                                <Tooltip
+                                  title={copiedContactJoId === jobOrder.id ? 'Copied!' : 'Copy email'}
+                                >
+                                  <IconButton
+                                    size="small"
+                                    sx={{ p: 0.25 }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void copyContactEmail(jobOrder.id, email);
+                                    }}
+                                  >
+                                    <CopyIcon sx={{ fontSize: '0.8rem' }} />
+                                  </IconButton>
+                                </Tooltip>
+                              ) : null}
+                            </Box>
+                          );
+                        })()}
                         {(() => {
                           const jobPosts = jobPostsByJobOrderId[jobOrder.id] || [];
                           const indeedFromPosts = (jobPosts as any[])
