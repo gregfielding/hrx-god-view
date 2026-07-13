@@ -38,19 +38,66 @@ function preferredLangEs(userData: admin.firestore.DocumentData | undefined): bo
   return raw === 'es' || raw.startsWith('es');
 }
 
-function buildMessages(city: string, url: string, es: boolean): { sms: string; pushTitle: string; pushBody: string } {
+/** Inputs for the invitation-framed blast copy (Tier 1, Greg 2026-07-11).
+ *  Everything except city/url is optional — the copy degrades gracefully
+ *  when a JO is missing title/pay or the shift has no date. */
+interface InviteMessageDetails {
+  city: string;
+  url: string;
+  firstName?: string | null;
+  jobTitle?: string | null;
+  /** Shift start date, YYYY-MM-DD. */
+  dateIso?: string | null;
+  payRate?: number | null;
+}
+
+function formatInviteDate(iso: string | null | undefined, es: boolean): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso ?? '').trim());
+  if (!m) return null;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12));
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString(es ? 'es-US' : 'en-US', {
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
+function formatInvitePay(payRate: number | null | undefined): string | null {
+  const n = Number(payRate);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Number.isInteger(n) ? `$${n}/hr` : `$${n.toFixed(2)}/hr`;
+}
+
+/**
+ * Invitation framing (Tier 1 of the Qwick-style messaging upgrade,
+ * 2026-07-11): the blast IS selective (radius-targeted, capped), so say
+ * so — "you're invited" with role/date/pay beats the old passive "a new
+ * shift has just been posted" for click-through, without promising a job
+ * the worker doesn't have yet. The landing page pairs this with the
+ * "I Can Work This Shift" CTA and an invited-state banner (?invite=1).
+ */
+function buildMessages(d: InviteMessageDetails, es: boolean): { sms: string; pushTitle: string; pushBody: string } {
+  const title = String(d.jobTitle ?? '').trim();
+  const name = String(d.firstName ?? '').trim();
+  const date = formatInviteDate(d.dateIso, es);
+  const pay = formatInvitePay(d.payRate);
   if (es) {
-    const sms = `Se acaba de publicar un nuevo turno en ${city}: ${url}`;
+    const role = title ? `un turno de ${title}` : 'un turno';
+    const tail = [date, pay].filter(Boolean).map((p) => `, ${p}`).join('');
+    const sms = `${name ? `Hola ${name}: te` : 'Te'} invitamos a trabajar ${role} en ${d.city}${tail}. Cupos limitados: ${d.url}`;
     return {
       sms,
-      pushTitle: 'Nuevo turno publicado',
+      pushTitle: title ? `Te invitamos: ${title}` : 'Te invitamos a un turno',
       pushBody: sms,
     };
   }
-  const sms = `A new shift has just been posted in ${city}: ${url}`;
+  const role = title ? `a ${title} shift` : 'a shift';
+  const tail = [date, pay].filter(Boolean).map((p) => `, ${p}`).join('');
+  const sms = `${name ? `Hi ${name} — you're` : "You're"} invited to work ${role} in ${d.city}${tail}. Spots are limited: ${d.url}`;
   return {
     sms,
-    pushTitle: 'New shift posted',
+    pushTitle: title ? `You're invited: ${title}` : "You're invited to a shift",
     pushBody: sms,
   };
 }
@@ -416,6 +463,37 @@ export async function runJobOrderAutoMessagingForShift(
   const city = resolveCityName(jobOrder);
   const jobPostId = await resolveJobPostingIdForCopyLink(tenantId, jobOrderId, jobOrder);
   const boardUrl = buildWorkerJobPostUrl(jobPostId || undefined);
+  // ?invite=1 flips the landing page into its invited state (banner +
+  // expectation copy) — part of the Tier 1 invitation framing.
+  const inviteUrl = boardUrl
+    ? `${boardUrl}${boardUrl.includes('?') ? '&' : '?'}invite=1`
+    : boardUrl;
+
+  // Invitation copy details (best-effort; copy degrades gracefully).
+  const gigTitles = Array.isArray(jobOrder.gigPositions)
+    ? (jobOrder.gigPositions as Array<{ jobTitle?: unknown }>)
+    : [];
+  const inviteJobTitle =
+    String(jobOrder.jobTitle || '').trim() || String(gigTitles[0]?.jobTitle || '').trim() || null;
+  const invitePayRate = Number(jobOrder.payRate);
+  let inviteDateIso: string | null = null;
+  try {
+    const shiftSnap = await db
+      .doc(`tenants/${tenantId}/job_orders/${jobOrderId}/shifts/${shiftId}`)
+      .get();
+    const rawStart = shiftSnap.data()?.startDate;
+    const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(rawStart ?? '').trim());
+    inviteDateIso = m ? m[1] : null;
+  } catch {
+    /* date is optional in the copy */
+  }
+  const inviteBase: Omit<InviteMessageDetails, 'firstName'> = {
+    city,
+    url: inviteUrl,
+    jobTitle: inviteJobTitle,
+    dateIso: inviteDateIso,
+    payRate: Number.isFinite(invitePayRate) ? invitePayRate : null,
+  };
 
   const uidSet = new Set<string>();
   for (const gid of includeGroups ? groupIds : []) {
@@ -500,8 +578,8 @@ export async function runJobOrderAutoMessagingForShift(
   // (both languages) — the jobs-board link is guaranteed present.
   const customBody = options.customMessage?.trim()
     ? options.customMessage.includes('{link}')
-      ? options.customMessage.trim().split('{link}').join(boardUrl)
-      : `${options.customMessage.trim()} ${boardUrl}`
+      ? options.customMessage.trim().split('{link}').join(inviteUrl)
+      : `${options.customMessage.trim()} ${inviteUrl}`
     : null;
 
   let smsDelivered = 0;
@@ -557,8 +635,15 @@ export async function runJobOrderAutoMessagingForShift(
 
       const es = preferredLangEs(userData);
       const { sms, pushTitle, pushBody } = customBody
-        ? { sms: customBody, pushTitle: es ? 'Nuevo turno publicado' : 'New shift posted', pushBody: customBody }
-        : buildMessages(city, boardUrl, es);
+        ? {
+            sms: customBody,
+            pushTitle: es ? 'Te invitamos a un turno' : "You're invited to a shift",
+            pushBody: customBody,
+          }
+        : buildMessages(
+            { ...inviteBase, firstName: String(userData.firstName || '').trim() || null },
+            es,
+          );
 
       try {
         await sendNotificationAndPush({
@@ -628,8 +713,8 @@ export async function runJobOrderAutoMessagingForShift(
       skippedNoReachableChannel,
       skippedSmsDailyCap,
       recipientPoolSize: recipientIds.length,
-      messageEnSample: customBody ?? buildMessages(city, boardUrl, false).sms,
-      messageEsSample: customBody ?? buildMessages(city, boardUrl, true).sms,
+      messageEnSample: customBody ?? buildMessages(inviteBase, false).sms,
+      messageEsSample: customBody ?? buildMessages(inviteBase, true).sms,
       ...(radiusActive ? { radiusMilesUsed: radiusMiles } : {}),
       ...(customBody ? { customMessage: true } : {}),
       source,
@@ -889,7 +974,22 @@ export const previewJobOrderWorkerReach = onCall(
       texted24h,
       city,
       boardUrl,
-      defaultMessage: buildMessages(city, boardUrl, false).sms,
+      defaultMessage: buildMessages(
+        {
+          city,
+          url: boardUrl,
+          jobTitle:
+            String(jobOrder.jobTitle || '').trim() ||
+            String(
+              (Array.isArray(jobOrder.gigPositions)
+                ? (jobOrder.gigPositions as Array<{ jobTitle?: unknown }>)[0]?.jobTitle
+                : '') || '',
+            ).trim() ||
+            null,
+          payRate: Number.isFinite(Number(jobOrder.payRate)) ? Number(jobOrder.payRate) : null,
+        },
+        false,
+      ).sms,
     };
   },
 );

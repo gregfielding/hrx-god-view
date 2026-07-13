@@ -87,6 +87,10 @@ const JobPostingDetail: React.FC = () => {
   const { postId, tenantSlug } = useParams<{ postId: string; tenantSlug?: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  // Invitation framing (Tier 1, 2026-07-11): blast SMS links carry
+  // ?invite=1 so this page can greet the worker as an invitee (banner +
+  // expectation-setting copy) instead of a cold job listing.
+  const arrivedViaInvite = new URLSearchParams(location.search).get('invite') === '1';
   const { tenantId: authTenantId, user } = useAuth();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -3441,6 +3445,15 @@ const JobPostingDetail: React.FC = () => {
               </Card>
             </>
           ) : null}
+
+          {/* Invited-state banner — pairs the "you're invited" SMS with
+              matching on-page framing so the CTA reads as accepting an
+              invitation, not cold-applying. */}
+          {arrivedViaInvite && posting.jobType === 'gig' && !isExpressInterest && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              {t('jobs.invitedBanner')}
+            </Alert>
+          )}
 
           {/* Available Shifts (Gig jobs) — compact, action-oriented.
               Hidden for express-interest postings: they have no bookable dated
