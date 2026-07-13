@@ -8,7 +8,7 @@
  */
 
 import * as admin from 'firebase-admin';
-import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { onDocumentCreated, onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import { onCall, HttpsError, type CallableRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { sendLegacyGroupMessage } from './messaging/legacyMessageHelpers';
@@ -217,6 +217,28 @@ function resolveCityName(jobOrder: admin.firestore.DocumentData): string {
   return 'your area';
 }
 
+/**
+ * Data gaps that must close before an AUTOMATIC blast may fire. A real
+ * pay rate and a real city — the two things a worker must be able to see
+ * on the board card before "I Can Work This Shift" means anything.
+ * Fieldglass email-born orders are created before Sync Sodexo delivers
+ * both (the wage often hides in comments prose), so their blasts hold
+ * here and release via jobOrderAutoMessagingOnJobOrderUpdated. Note this
+ * is stricter than resolveCityName: the worksiteName/'your area'
+ * fallbacks don't count as a location a worker can evaluate.
+ */
+function jobOrderBlastDataGaps(jobOrder: admin.firestore.DocumentData): string[] {
+  const gaps: string[] = [];
+  if (!(Number(jobOrder?.payRate) > 0)) gaps.push('pay_rate');
+  const w = jobOrder?.worksiteAddress;
+  const city =
+    (w && typeof w.city === 'string' && w.city.trim()) ||
+    (typeof jobOrder?.city === 'string' && jobOrder.city.trim()) ||
+    String(jobOrder?.deal?.locations?.[0]?.city ?? '').trim();
+  if (!city) gaps.push('worksite_city');
+  return gaps;
+}
+
 function collectMembersFromGroupData(data: admin.firestore.DocumentData | undefined): string[] {
   const members = data?.members;
   if (Array.isArray(members)) {
@@ -362,7 +384,13 @@ async function tryClaimDailySmsSlot(tenantId: string, userId: string): Promise<b
 }
 
 export interface RunAutoMessagingResult {
-  status: 'sent' | 'no_groups' | 'no_recipients' | 'job_order_missing' | 'unsupported_job_type';
+  status:
+    | 'sent'
+    | 'no_groups'
+    | 'no_recipients'
+    | 'job_order_missing'
+    | 'unsupported_job_type'
+    | 'deferred_awaiting_data';
   smsDelivered: number;
   pushDelivered: number;
   skippedDueToCooldown: number;
@@ -379,7 +407,7 @@ interface RunAutoMessagingOptions {
   /** Bypass the 15-min per-user cooldown. Used by recruiter-triggered manual resends. */
   bypassCooldown?: boolean;
   /** Tagged onto the autoMessagingSendLog row for filtering (e.g. 'manual_resend'). */
-  source?: 'shift_created' | 'manual_resend' | 'manual_blast';
+  source?: 'shift_created' | 'manual_resend' | 'manual_blast' | 'deferred_release';
   /** Recruiter UID for audit on manual resends. */
   triggeredByUid?: string | null;
   /** Worker Reach card (Greg, 2026-07-08): recruiter-chosen radius for a
@@ -428,6 +456,39 @@ export async function runJobOrderAutoMessagingForShift(
   const jt = String(jobOrder.jobType || '').toLowerCase();
   if (jt !== 'gig' && jt !== 'career') {
     return { ...empty, status: 'unsupported_job_type' };
+  }
+
+  // ── Data-readiness gate (Greg, 2026-07-13): Fieldglass email-born
+  // orders exist before Sync Sodexo fills pay + worksite, and a blast at
+  // that moment sends workers to a $0.00 card with no location. Automatic
+  // sends hold until the JO carries a real pay rate AND a real city; the
+  // deferred stamp lets jobOrderAutoMessagingOnJobOrderUpdated fire the
+  // held blast the moment enrichment (or a recruiter) supplies them.
+  // Manual resends / Worker Reach bypass — a recruiter clicked with the
+  // job order in front of them.
+  if (source === 'shift_created' || source === 'deferred_release') {
+    const gaps = jobOrderBlastDataGaps(jobOrder);
+    if (gaps.length > 0) {
+      await jobOrderSnap.ref.set(
+        {
+          autoMessagingDeferred: {
+            shiftId,
+            reasons: gaps,
+            at: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      logger.info('jobOrderAutoMessaging: deferred until job order data is complete', {
+        tenantId,
+        jobOrderId,
+        shiftId,
+        gaps,
+        source,
+      });
+      return { ...empty, status: 'deferred_awaiting_data' };
+    }
   }
 
   const groupIds: string[] = Array.isArray(jobOrder.autoMessagingUserGroupIds)
@@ -764,6 +825,86 @@ export const jobOrderAutoMessagingOnShiftCreated = onDocumentCreated(
       });
     } catch (err) {
       logger.error('jobOrderAutoMessaging fatal', {
+        err: String(err),
+        tenantId,
+        jobOrderId,
+        shiftId,
+      });
+    }
+  },
+);
+
+/**
+ * Deferred-blast release (Greg, 2026-07-13): a job order holding an
+ * `autoMessagingDeferred` stamp had its automatic blast skipped because
+ * pay rate / city were missing at shift creation. When a later update
+ * closes those gaps — the Sync Sodexo enrichment backfill patching the
+ * JO is the designed path; a recruiter typing the rate works too — fire
+ * the held blast. The stamp is claimed transactionally (deleted before
+ * sending) so concurrent JO updates can't double-send.
+ */
+export const jobOrderAutoMessagingOnJobOrderUpdated = onDocumentUpdated(
+  {
+    document: 'tenants/{tenantId}/job_orders/{jobOrderId}',
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
+    timeoutSeconds: 300,
+    memory: '512MiB',
+  },
+  async (event) => {
+    const tenantId = event.params.tenantId as string;
+    const jobOrderId = event.params.jobOrderId as string;
+    const after = event.data?.after?.data();
+    if (!after) return;
+
+    const deferred = after.autoMessagingDeferred as { shiftId?: unknown } | undefined;
+    if (!deferred || typeof deferred.shiftId !== 'string' || !deferred.shiftId.trim()) return;
+    if (jobOrderBlastDataGaps(after).length > 0) return; // still incomplete — keep holding
+    const jt = String(after.jobType || '').toLowerCase();
+    if (jt !== 'gig' && jt !== 'career') return;
+    // Terminal/held orders never release; a halted FG order that resumes
+    // open (fieldglassHalted cleanup) re-qualifies on that later update.
+    const status = String(after.status || '').toLowerCase();
+    if (['cancelled', 'canceled', 'completed', 'filled', 'on_hold', 'terminated'].includes(status)) {
+      return;
+    }
+
+    const joRef = db.doc(`tenants/${tenantId}/job_orders/${jobOrderId}`);
+    let shiftId: string | null = null;
+    try {
+      shiftId = await db.runTransaction(async (tx) => {
+        const snap = await tx.get(joRef);
+        const cur = snap.data()?.autoMessagingDeferred as { shiftId?: unknown } | undefined;
+        if (!cur || typeof cur.shiftId !== 'string' || !cur.shiftId.trim()) return null;
+        tx.update(joRef, {
+          autoMessagingDeferred: admin.firestore.FieldValue.delete(),
+          autoMessagingDeferredReleasedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        return cur.shiftId.trim();
+      });
+    } catch (err) {
+      logger.warn('jobOrderAutoMessaging: deferred release claim failed', {
+        tenantId,
+        jobOrderId,
+        err: String(err),
+      });
+      return;
+    }
+    if (!shiftId) return; // another invocation claimed it
+
+    try {
+      const result = await runJobOrderAutoMessagingForShift(tenantId, jobOrderId, shiftId, {
+        source: 'deferred_release',
+      });
+      logger.info('jobOrderAutoMessaging: deferred blast released', {
+        tenantId,
+        jobOrderId,
+        shiftId,
+        status: result.status,
+        smsDelivered: result.smsDelivered,
+        pushDelivered: result.pushDelivered,
+      });
+    } catch (err) {
+      logger.error('jobOrderAutoMessaging deferred release fatal', {
         err: String(err),
         tenantId,
         jobOrderId,

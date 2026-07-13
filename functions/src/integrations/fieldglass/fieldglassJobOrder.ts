@@ -579,11 +579,12 @@ export async function ensureJobOrderForFieldglassRequest(
     notes,
 
     // Smart-radius blast config — consumed by jobOrderAutoMessagingOnShiftCreated.
-    // Candidate-in-mind, already-ended, and UNPRICED orders get NO radius →
-    // nothing sends automatically (never SMS-blast a job whose posting is a
-    // $0 draft; once the rate arrives the recruiter can blast via Worker
-    // Reach).
-    ...(worksiteCoordinates && !candidateInMind && !endedInPast && payRate > 0
+    // Candidate-in-mind and already-ended orders get NO radius → nothing
+    // sends automatically. UNPRICED orders keep the config: the runner's
+    // data-readiness gate holds the whole blast (never SMS-blast a $0
+    // draft) and jobOrderAutoMessagingOnJobOrderUpdated fires it — radius
+    // recipients included — once Sync Sodexo delivers the rate.
+    ...(worksiteCoordinates && !candidateInMind && !endedInPast
       ? {
           autoMessagingSmartRadius: {
             miles: SMART_RADIUS_MILES,

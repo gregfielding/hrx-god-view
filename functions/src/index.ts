@@ -60,6 +60,7 @@ export {
 
 export {
   jobOrderAutoMessagingOnShiftCreated,
+  jobOrderAutoMessagingOnJobOrderUpdated,
   sendJobOrderShiftPostedResendCallable,
   previewJobOrderWorkerReach,
   sendJobOrderWorkerReachBlast,
