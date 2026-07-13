@@ -1,9 +1,11 @@
 # C1 Staffing — Background Check Review Process & Approval Matrix
 
-**Version:** 1.0 (Draft for counsel review)
+**Version:** 1.1 (Draft for counsel review)
 **Effective date:** TBD upon adoption
-**Owner:** Compliance (currently: Donna Waltermyer) · **Executive sponsor:** Greg Fielding
+**Owner:** Compliance (currently: Donna Persson) · **Executive sponsor:** Greg Fielding
 **Applies to:** All C1 Staffing entities (C1 Select, C1 Events, C1 Workforce) and all candidates/workers screened for any client assignment or internal role.
+
+**Revision history:** v1.0 initial draft · v1.1 (2026-07-13, G. Fielding review) — lookback presumption windows aligned to the 7-year reporting scope clients require; retention extended to 7 years; pending charges excluded from consideration entirely; Lancaster corrected to Pennsylvania (CHRIA row added); owner name corrected. *(Note: the "≥ 5 business days" candidate response window is unchanged — that is the statutory FCRA/California minimum, measured in business days, unrelated to the 7-year reporting scope.)*
 
 > ⚠️ **Legal review required.** This document was drafted from the EEOC's 2012 Enforcement
 > Guidance on Arrest and Conviction Records, EEOC/FTC joint guidance ("Background Checks:
@@ -36,7 +38,7 @@ weighed, who decided, and why.
 
 1. **Same standards for everyone.** The matrix and process apply identically regardless of race, national origin, color, sex, religion, disability, genetic information, or age.
 2. **No blanket bans.** No offense category results in denial without the individualized-assessment procedure being *offered*. Tier controls presumption and approval level — never whether the process runs.
-3. **Convictions, not arrests.** Arrests that did not lead to conviction are not considered (prohibited outright in California). Pending charges are reviewed only where state law permits, and only via individualized assessment.
+3. **Convictions, not arrests.** Arrests that did not lead to conviction are not considered (prohibited outright in California). **Pending charges are not considered** — innocent until proven guilty is C1 policy, stricter than some states allow. If a pending charge later becomes a conviction, it is evaluated then, under this matrix, like any other conviction.
 4. **Sealed, expunged, juvenile, and diversion records are never considered.**
 5. **Job-relatedness.** Every exclusion must articulate the nexus between the specific offense and the specific position's duties.
 6. **Candidate voice.** Every candidate facing exclusion gets notice, the report, and a real opportunity to correct, dispute, or contextualize it before the decision is final.
@@ -66,13 +68,12 @@ assessment for a candidate facing denial.**
 ### 🟡 YELLOW — Hold: compliance review + individualized assessment
 
 - Any conviction in the matrix marked "Individualized Assessment," including:
-  - Violent crimes older than 5 years
-  - Finance-related crimes older than 5 years, or any age where the role has no financial responsibility
-  - Drug manufacturing/distribution older than 5 years
+  - Violent crimes older than 7 years
+  - Finance-related crimes older than 7 years, or any age where the role has no financial responsibility
+  - Drug manufacturing/distribution older than 7 years
   - Drug possession (any age)
   - Non-violent offenses (disorderly conduct, trespassing, etc., any age)
 - Multiple misdemeanor convictions or a pattern of similar offenses
-- Pending charges (only where state law permits consideration)
 - Any client-specific criterion requiring review
 - DUI/MVR findings for driving positions (apply client MVR standards)
 
@@ -83,9 +84,9 @@ Compliance Reviewer. §5 procedure applies before any denial.
 
 - Registered sex offender status; murder/manslaughter; rape/sexual assault; child abuse or
   child pornography; kidnapping; arson
-- Violent felony within 5 years
-- Drug trafficking/manufacturing conviction within 5 years
-- Finance-related conviction within 5 years **for roles involving cash, payroll, client
+- Violent felony within 7 years
+- Drug trafficking/manufacturing conviction within 7 years
+- Finance-related conviction within 7 years **for roles involving cash, payroll, client
   funds, or financial authority**
 
 **Action:** Presumption of disqualification. The candidate is still offered the §5
@@ -100,12 +101,12 @@ worksheet — that citation is the defense, not the matrix itself.
 | Offense category | Examples | Time since conviction / sentence completion | Presumption |
 |---|---|---|---|
 | Extreme violent / sexual crimes | Murder, manslaughter, rape, sexual assault, child abuse, child pornography, kidnapping, arson, registered sex offender | Any | 🔴 Presumptive DQ (automatic only where a specific law/client mandate requires — cite it) |
-| Violent crimes | Assault, battery, robbery, burglary, domestic violence, stalking | ≤ 5 years | 🔴 Presumptive DQ — compliance review required |
-| | Same | > 5 years | 🟡 Individualized assessment |
-| Finance-related crimes | Fraud, identity theft, embezzlement, forgery, bribery, money laundering, theft, tax evasion | ≤ 5 years **and** role involves cash/payroll/accounting/financial authority/client funds | 🔴 Presumptive DQ |
-| | Same | > 5 years, or role has no financial responsibility | 🟡 Individualized assessment |
-| Drug manufacturing / distribution | Manufacture, sale, distribution, possession with intent | ≤ 5 years | 🔴 Presumptive DQ |
-| | Same | > 5 years | 🟡 Individualized assessment |
+| Violent crimes | Assault, battery, robbery, burglary, domestic violence, stalking | ≤ 7 years | 🔴 Presumptive DQ — compliance review required |
+| | Same | > 7 years | 🟡 Individualized assessment |
+| Finance-related crimes | Fraud, identity theft, embezzlement, forgery, bribery, money laundering, theft, tax evasion | ≤ 7 years **and** role involves cash/payroll/accounting/financial authority/client funds | 🔴 Presumptive DQ |
+| | Same | > 7 years, or role has no financial responsibility | 🟡 Individualized assessment |
+| Drug manufacturing / distribution | Manufacture, sale, distribution, possession with intent | ≤ 7 years | 🔴 Presumptive DQ |
+| | Same | > 7 years | 🟡 Individualized assessment |
 | Drug possession | Controlled substance possession, paraphernalia | Any | 🟡 Individualized assessment |
 | Non-violent crimes | Disorderly conduct, trespassing, public intoxication, minor in possession, false information to police, concealed weapon, indecent exposure | Any | 🟡 Individualized assessment |
 | Driving offenses | DUI/DWI, reckless driving, excessive moving violations | Driving positions only | 🟡 Review MVR; client driving standards apply |
@@ -160,7 +161,6 @@ candidate's file must still be completed and closed with a documented outcome.
 | 🟡 YELLOW | Compliance Reviewer | Compliance Reviewer sign-off | Compliance Reviewer **+ Operations Manager** sign-off |
 | 🔴 RED | Compliance Reviewer | Compliance Reviewer **+ Executive (CEO/COO)** sign-off — written rationale required | Compliance Reviewer sign-off (after §5 procedure) |
 | Statutory / client-mandated bar | Compliance Reviewer | Not available — cite the legal/client authority on the worksheet | Compliance Reviewer sign-off, citing the authority |
-| Pending charges | Compliance Reviewer | Compliance + Operations Manager | Compliance + Operations Manager (verify state law permits consideration first) |
 | Report disputed by candidate | Compliance Reviewer | Decision deferred until reinvestigation completes | Decision deferred until reinvestigation completes |
 
 **Rules:**
@@ -193,7 +193,7 @@ completed Appendix B worksheet (for YELLOW/RED), all candidate correspondence, a
 candidate submitted, the signed approvals per §6, and the final letters.
 
 - **System of record:** HRX Backgrounds & Compliance tab — order, line-item statuses, PASSED/FAILED verdicts, and adjudication notes. Worksheets and letters are attached to the worker's file.
-- **Retention:** **5 years** from the decision (exceeds EEOC 1-year minimum, the 2-year best-practice floor, and California's 4-year FEHA record period). Applies equally to hired and denied candidates.
+- **Retention:** **7 years** from the decision — aligned with the 7-year reporting scope our clients require, and exceeding the EEOC 1-year minimum, the 2-year best-practice floor, and California's 4-year FEHA record period. Applies equally to hired and denied candidates.
 - **Disposal:** secure destruction per FCRA (shred / certified electronic deletion). No report content in email threads, texts, or chat.
 
 ## 9. Consistency, audit & training
@@ -220,7 +220,7 @@ candidate submitted, the signed approvals per §6, and the final letters.
 1. Report back? Tier it: 🟢 proceed · 🟡/🔴 hold + route to Compliance same day.
 2. Never tell a candidate "you failed the background check." Say the report is in review and they will receive written notice with a chance to respond.
 3. Never email/text report contents. Never share offense details with clients.
-4. Arrests without conviction, sealed/expunged/juvenile records: not considered, ever.
+4. Arrests without conviction, pending charges, sealed/expunged/juvenile records: not considered, ever.
 5. When in doubt → Compliance.
 
 ## Appendix B — Individualized Assessment Worksheet (form fields)
@@ -241,7 +241,8 @@ Final decision + date · Letters sent (dates) · Reviewer signature.
 
 | Where we operate | Key rules |
 |---|---|
-| **California** (NorCal, Lancaster, Hayward…) | Fair Chance Act: post-offer inquiry only; written individualized assessment REQUIRED for every denial; ≥ 5 business-day response window; specific notice content; no arrests-without-conviction; cannabis convictions generally off-limits; 7-year reporting limit; CRD complaint rights. |
+| **California** (NorCal, Hayward…) | Fair Chance Act: post-offer inquiry only; written individualized assessment REQUIRED for every denial; ≥ 5 business-day response window; specific notice content; no arrests-without-conviction; cannabis convictions generally off-limits; 7-year reporting limit; CRD complaint rights. |
+| **Pennsylvania** (Lancaster) | CHRIA (18 Pa. C.S. § 9125): felony/misdemeanor convictions may be considered only to the extent they relate to suitability for the specific position; **written notice required** if criminal history contributed in any part to an adverse decision. Philadelphia's stricter fair-chance ordinance applies only if we place inside the city. |
 | **Minnesota** (St. Paul) | Statewide ban-the-box: no inquiry until interview or conditional offer. |
 | **Illinois** (if/when active) | IL Human Rights Act amendments: interactive assessment + notice requirements similar to CA. |
 | **Texas, North Carolina, Kentucky, Arizona, Florida** | No general private-employer fair-chance statute at state level, but municipal ordinances exist — check the worksite city before finalizing a denial. FCRA + Title VII baseline always applies. |
@@ -252,4 +253,4 @@ Final decision + date · Letters sent (dates) · Reviewer signature.
 Employers Need to Know"; Green v. Missouri Pacific Railroad, 523 F.2d 1290 (8th Cir. 1975);
 FCRA 15 U.S.C. § 1681; Jackson Lewis, "Criminal Background Checks in the Manufacturing
 Industry"; AccuSource compliance guidance; C1 internal draft "Background Check Decision
-Matrix" (D. Waltermyer).*
+Matrix" (D. Persson).*
