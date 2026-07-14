@@ -141,7 +141,16 @@ export default function AdjudicationCaseSection({ record, canAccusourceAdmin, ro
       <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap" sx={{ py: 0.5 }}>
         <GavelIcon fontSize="small" color="action" />
         <Typography variant="body2" color="text.secondary">
-          This report needs compliance review (policy §4).
+          This report needs compliance review (
+          <a
+            href="/compliance/background-check-policy"
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+          >
+            policy §4
+          </a>
+          ).
         </Typography>
         <TextField
           select

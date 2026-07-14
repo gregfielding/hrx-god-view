@@ -165,6 +165,7 @@ import RecruiterMain from './pages/RecruiterMain';
 // thin wrapper for any code that imports the component directly. See
 // src/pages/RecruiterMyQueue.tsx for the cleanup timeline.
 import RecruiterJobOrders from './pages/RecruiterJobOrders';
+import BackgroundCheckPolicyPage from './pages/compliance/BackgroundCheckPolicyPage';
 import RecruiterAccounts from './pages/RecruiterAccounts';
 import RecruiterJobOrderDetail from './pages/RecruiterJobOrderDetail';
 import RecruiterApplicants from './pages/RecruiterApplicants';
@@ -858,6 +859,16 @@ function App() {
           <Route path=":uid/readiness" element={<UserReadinessPage />} />
           <Route path=":uid" element={<UserProfile />} />
         </Route>
+
+        {/* Compliance policy reference (v1.1) — staff-only, opened in a new
+            tab from the Backgrounds tab and the adjudication case panel. */}
+        <Route path="compliance/background-check-policy" element={
+          <ProtectedRoute requiredSecurityLevel="5">
+            <RecruiterAccessGuard>
+              <BackgroundCheckPolicyPage />
+            </RecruiterAccessGuard>
+          </ProtectedRoute>
+        } />
 
         {/* Legacy CRM companies URLs → canonical /companies/... */}
         <Route path="crm/companies/*" element={<CrmCompaniesRedirect />} />

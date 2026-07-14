@@ -963,6 +963,18 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
               </Button>
             </span>
           </Tooltip>
+          <Tooltip title="Background Check Review Process & Approval Matrix (policy v1.1) — opens in a new tab">
+            <Button
+              variant="text"
+              size="small"
+              sx={{ textTransform: 'none' }}
+              href="/compliance/background-check-policy"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Policy &amp; matrix
+            </Button>
+          </Tooltip>
           <Tooltip
             title={
               !canAccusourceAdmin
