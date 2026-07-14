@@ -7,12 +7,14 @@
 
 **Revision history:** v1.0 initial draft · v1.1 (2026-07-13, G. Fielding review) — lookback presumption windows aligned to the 7-year reporting scope clients require; retention extended to 7 years; pending charges excluded from consideration entirely; Lancaster corrected to Pennsylvania (CHRIA row added); owner name corrected. *(Note: the "≥ 5 business days" candidate response window is unchanged — that is the statutory FCRA/California minimum, measured in business days, unrelated to the 7-year reporting scope.)*
 
-> ⚠️ **Legal review required.** This document was drafted from the EEOC's 2012 Enforcement
+> ⚠️ **Legal note (review recommended, not required to adopt).** This document was drafted from the EEOC's 2012 Enforcement
 > Guidance on Arrest and Conviction Records, EEOC/FTC joint guidance ("Background Checks:
 > What Employers Need to Know"), the *Green v. Missouri Pacific Railroad* factors, FCRA
 > adverse-action requirements, and published employment-law commentary. It is internal
-> policy, **not legal advice**. Have employment counsel review before adoption and after
-> any material change, and re-verify state/local fair-chance requirements annually.
+> policy, **not legal advice**. Before the first adverse-action letter is sent, reconcile
+> the Appendix C letters with AccuSource's (our CRA's) recommended templates; a short
+> attorney review is recommended before the first California denial. Re-verify state/local
+> fair-chance requirements annually.
 
 ---
 
@@ -184,7 +186,7 @@ candidate's file must still be completed and closed with a documented outcome.
 3. Right to dispute report accuracy with the CRA and to a free additional report within 60 days.
 4. California add-ons: notice of the right to file a complaint with the Civil Rights Department (CRD), and any internal reconsideration procedure.
 
-Letter templates live with Compliance (Appendix C skeletons); counsel reviews templates annually.
+Letter templates live with Compliance (Appendix C skeletons); templates are re-verified annually against the CRA's current recommended versions, with attorney review as needed.
 
 ## 8. Documentation & retention
 

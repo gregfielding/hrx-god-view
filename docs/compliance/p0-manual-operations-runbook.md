@@ -12,7 +12,8 @@ same record the software will keep.
 1. **C1 Background Check Review Process v1.1.pdf** — the policy (print one for the desk).
 2. **C1 Adverse Action Letter Templates — DRAFT for Counsel v1.docx** — pre-adverse,
    final adverse, and dispute-acknowledgment letters, EN + ES, with CA/PA variant blocks.
-   **Do not send until counsel signs off.**
+   **Do not send until reconciled with AccuSource's recommended templates** (setup item 1).
+   Attorney review is optional — recommended before the first California denial letter.
 3. **C1 Individualized Assessment Worksheet (fillable).pdf** — 3 pages, 45 fields; one per
    candidate per assignment decision.
 
@@ -20,14 +21,14 @@ same record the software will keep.
 
 | # | Task | Owner | Done |
 |---|---|---|---|
-| 1 | Send policy v1.1 + letter templates to employment counsel; log sign-off date | Greg | ☐ |
+| 1 | Ask AccuSource for: (a) their recommended pre-adverse / adverse-action letter templates, (b) the current CFPB Summary of Rights they distribute, (c) their consumer-dispute intake path + reinvestigation SLA. Reconcile our letters against theirs; log the comparison in the compliance drive | Donna | ☐ |
 | 2 | Create `compliance@c1staffing.com` (Google Workspace → Groups → collaborative inbox; members: Donna, Greg; posting: anyone) | Greg | ☐ |
 | 3 | Download the CFPB "Summary of Consumer Rights" **English AND Spanish** from consumerfinance.gov → Compliance resources → FCRA → **Model forms and disclosures**; save both to the compliance drive | Donna | ☐ |
 | 4 | Fill the `{craBlock}` in the letter templates with AccuSource's current legal name, address, and phone (from the AccuSource portal / latest invoice) | Donna | ☐ |
 | 5 | Create the drive folder structure: `Compliance/Background Checks/{year}/{Last, First — HRX id}/` | Donna | ☐ |
 | 6 | Confirm the compliance phone number for `{compliancePhone}` | Greg | ☐ |
 | 7 | Hold the 30-minute recruiter training (agenda below); collect signatures on the attendance log | Donna | ☐ |
-| 8 | Ask AccuSource: their consumer-dispute intake path + reinvestigation SLA (needed for Step 6 below and Phase P4) | Donna | ☐ |
+| 8 | Optional: 1–2 hour attorney review of the letters + policy Appendix D — recommended before the first real adverse-action letter, strongly before the first California denial | Greg | ☐ |
 
 ## The paper workflow (one case, start to finish)
 
