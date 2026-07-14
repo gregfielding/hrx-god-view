@@ -29,13 +29,37 @@ const qboClientId = defineString('QBO_CLIENT_ID');
 const qboClientSecret = defineString('QBO_CLIENT_SECRET');
 const qboRedirectUri = defineString('QBO_REDIRECT_URI');
 
-const AUTH_URL = 'https://appcenter.intuit.com/connect/oauth2';
-const TOKEN_URL = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
+const DISCOVERY_URL = 'https://developer.api.intuit.com/.well-known/openid_configuration';
+const FALLBACK_AUTH_URL = 'https://appcenter.intuit.com/connect/oauth2';
+const FALLBACK_TOKEN_URL = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
 const API_BASE = 'https://quickbooks.api.intuit.com/v3/company';
 const SCOPE = 'com.intuit.quickbooks.accounting';
 const MINOR_VERSION = '75';
 /** Refresh the access token when it has less than this long to live. */
 const ACCESS_TOKEN_SLACK_MS = 5 * 60 * 1000;
+/** OAuth state nonces are single-use and expire quickly (CSRF protection). */
+const NONCE_TTL_MS = 15 * 60 * 1000;
+
+/** Intuit discovery document (endpoints), cached per instance for a day. */
+let discoveryCache: { authUrl: string; tokenUrl: string; fetchedAt: number } | null = null;
+async function getEndpoints(): Promise<{ authUrl: string; tokenUrl: string }> {
+  if (discoveryCache && Date.now() - discoveryCache.fetchedAt < 24 * 60 * 60 * 1000) {
+    return discoveryCache;
+  }
+  try {
+    const res = await fetch(DISCOVERY_URL, { headers: { Accept: 'application/json' } });
+    const doc = (await res.json()) as Record<string, unknown>;
+    const authUrl = trim(doc.authorization_endpoint) || FALLBACK_AUTH_URL;
+    const tokenUrl = trim(doc.token_endpoint) || FALLBACK_TOKEN_URL;
+    discoveryCache = { authUrl, tokenUrl, fetchedAt: Date.now() };
+    return discoveryCache;
+  } catch (err) {
+    logger.warn('[qbo] discovery document fetch failed — using documented fallbacks', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return { authUrl: FALLBACK_AUTH_URL, tokenUrl: FALLBACK_TOKEN_URL };
+  }
+}
 
 function trim(v: unknown): string {
   return String(v ?? '').trim();
@@ -60,7 +84,8 @@ async function ensureQboAdmin(uid: string, token: Record<string, unknown> | unde
 }
 
 async function exchangeToken(body: Record<string, string>): Promise<Record<string, unknown>> {
-  const res = await fetch(TOKEN_URL, {
+  const { tokenUrl } = await getEndpoints();
+  const res = await fetch(tokenUrl, {
     method: 'POST',
     headers: {
       Authorization: basicAuthHeader(),
@@ -98,15 +123,45 @@ export const getQboAuthUrl = onCall({ cors: true }, async (request) => {
   if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
   await ensureQboAdmin(uid, request.auth?.token as never);
 
+  // Single-use CSRF nonce: the callback only accepts states it issued.
+  const nonceRef = db.collection('qbo_oauth_nonces').doc();
+  await nonceRef.set({
+    tenantId,
+    connectedBy: uid,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    used: false,
+  });
+
+  const { authUrl } = await getEndpoints();
   const params = new URLSearchParams({
     client_id: qboClientId.value(),
     response_type: 'code',
     scope: SCOPE,
     redirect_uri: qboRedirectUri.value(),
-    state: JSON.stringify({ purpose: 'qbo', tenantId, connectedBy: uid }),
+    state: JSON.stringify({ purpose: 'qbo', tenantId, connectedBy: uid, nonce: nonceRef.id }),
   });
-  return { authUrl: `${AUTH_URL}?${params.toString()}` };
+  return { authUrl: `${authUrl}?${params.toString()}` };
 });
+
+/** CSRF check: state must carry a nonce we issued, unexpired and unused —
+ *  consumed transactionally so a replayed callback cannot reuse it. */
+async function consumeOauthNonce(nonce: string, tenantId: string): Promise<boolean> {
+  if (!nonce) return false;
+  const ref = db.collection('qbo_oauth_nonces').doc(nonce);
+  try {
+    return await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const d = snap.data();
+      if (!snap.exists || d?.used === true || trim(d?.tenantId) !== tenantId) return false;
+      const createdAt = d?.createdAt as admin.firestore.Timestamp | undefined;
+      if (!createdAt || Date.now() - createdAt.toMillis() > NONCE_TTL_MS) return false;
+      tx.update(ref, { used: true, usedAt: admin.firestore.FieldValue.serverTimestamp() });
+      return true;
+    });
+  } catch {
+    return false;
+  }
+}
 
 export const qboOAuthCallback = onRequest(async (req, res) => {
   const page = (title: string, body: string, notify: boolean) => `<!doctype html>
@@ -128,6 +183,11 @@ ${notify ? `<script>if (window.opener && typeof window.opener.postMessage === 'f
     const tenantId = trim(state.tenantId);
     if (!code || !realmId || !tenantId) {
       res.status(400).send(page('Connection failed', 'Missing code, realmId, or tenant in the Intuit callback.', false));
+      return;
+    }
+    if (!(await consumeOauthNonce(trim(state.nonce), tenantId))) {
+      logger.warn('[qbo] OAuth callback rejected — invalid, expired, or reused state nonce', { tenantId });
+      res.status(400).send(page('Connection failed', 'This authorization link is invalid or expired — start the connect again from HRX.', false));
       return;
     }
 
