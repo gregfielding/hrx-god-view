@@ -998,6 +998,19 @@ service cloud.firestore {
       allow create: if isHRX() && validateTenantSlug();
       allow update: if isHRX() && (resource.data.slug == request.resource.data.slug || validateTenantSlug());
 
+      // --- ADJUDICATION CASES (background-check compliance, policy v1.1) ---
+      // Conviction-history content: reads restricted to staff (L5+/admin),
+      // NEVER general tenant members (workers are assigned to the tenant).
+      // All writes go through the adjudicationCases callables (Admin SDK).
+      match /adjudication_cases/{caseId} {
+        allow read: if isHRX() || isTenantAdmin(tenantId) || hasSecurityLevel(tenantId, 5);
+        allow write: if false;
+        match /events/{eventId} {
+          allow read: if isHRX() || isTenantAdmin(tenantId) || hasSecurityLevel(tenantId, 5);
+          allow write: if false;
+        }
+      }
+
       // --- DIVISIONS (Tenants) ---
       match /divisions/{divisionId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);

@@ -77,6 +77,7 @@ import ProfileTabPointerAlert from '../../../components/profile/ProfileTabPointe
 import AccusourceApplicantSetupPanel from '../../../components/recruiter/AccusourceApplicantSetupPanel';
 import { resolveApplicantPortalUrl } from '../../../utils/backgroundCheckApplicantPortal';
 import AccusourceOrderServiceLinesTable from './AccusourceOrderServiceLinesTable';
+import AdjudicationCaseSection from '../../../components/compliance/AdjudicationCaseSection';
 
 const PAGE_LIMIT = 100;
 
@@ -1244,6 +1245,34 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
                         </TableCell>
                       </TableRow>
                     ) : null}
+                    {/* Adjudication case (P2, policy §5-§7): entry point +
+                        case panel for reports needing compliance review. */}
+                    {(() => {
+                      const lines = row.screeningServiceLines ?? [];
+                      let caseRollup = computePackageRollup(lines);
+                      if (r.markedCompleteOutsideHrx === true && caseRollup !== 'FAILED') {
+                        caseRollup = 'CLEARED';
+                      }
+                      const show =
+                        caseRollup === 'ACTION_NEEDED' ||
+                        caseRollup === 'FAILED' ||
+                        Boolean((r as any).adjudicationCaseId);
+                      if (!show) return null;
+                      return (
+                        <TableRow>
+                          <TableCell
+                            colSpan={8}
+                            sx={{ py: 1, px: 2, bgcolor: 'grey.50', borderBottom: 1, borderColor: 'divider' }}
+                          >
+                            <AdjudicationCaseSection
+                              record={r as any}
+                              canAccusourceAdmin={canAccusourceAdmin}
+                              rollup={caseRollup}
+                            />
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })()}
                     <TableRow>
                       <TableCell
                         colSpan={8}

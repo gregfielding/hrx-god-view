@@ -21,6 +21,7 @@ import {
   requestedEquivalencyKey,
   type BgLike,
 } from '../../compliance/screeningAutomationShared';
+import { writeWorkerActivityLog } from '../../compliance/workerActivityLog';
 
 /** Normalized match key for a screening service — NAME-based, because the
  *  same test (4 Panel Quick Test, Social Security Locator, …) appears in
@@ -408,6 +409,23 @@ export async function createBackgroundCheckInternal(
       receivedAt: admin.firestore.FieldValue.serverTimestamp(),
       processedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+
+    // Server-side worker activity log (P2, policy §8) — the client-side
+    // logCustomActivity call is bypassable; this one is not.
+    if (input.candidateId) {
+      await writeWorkerActivityLog({
+        userId: input.candidateId,
+        action: 'screening_order_submitted',
+        description: `Background screening ordered (${input.requestedPackageName || input.requestedPackageId || 'package'})`,
+        severity: 'medium',
+        metadata: {
+          backgroundCheckId,
+          orderedBy: uid,
+          invocationType: invocation.type,
+          requestedPackageId: input.requestedPackageId ?? null,
+        },
+      }).catch(() => undefined);
+    }
 
     accusourceLog('info', 'create', 'createPartialProfile succeeded', {
       callerUid: uid,

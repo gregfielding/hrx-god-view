@@ -211,6 +211,14 @@ export { onApplicationWithdrawnOrDeletedCascadeAssignments } from './shiftAssign
 export { onAssignmentCompletedStampCompletedAt } from './assignmentAutoClose';
 export { onAssignmentConfirmedScreeningAutomation } from './compliance/screeningAutomationTrigger';
 export {
+  openAdjudicationCase,
+  updateAdjudicationWorksheet,
+  recordAdjudicationNotice,
+  setAdjudicationCaseStatus,
+  recordAdjudicationApproval,
+  closeAdjudicationCase,
+} from './compliance/adjudicationCases';
+export {
   onAssignmentWriteRecomputeShiftFill,
   onAssignmentUpdateRecomputeShiftFill,
   onAssignmentDeleteRecomputeShiftFill,

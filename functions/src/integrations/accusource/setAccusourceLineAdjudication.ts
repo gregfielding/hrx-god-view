@@ -21,6 +21,7 @@ import {
   ensureAccusourceComplianceReviewer,
 } from './accusourceAdminGate';
 import { accusourceLog } from './accusourceLogger';
+import { writeWorkerActivityLog } from '../../compliance/workerActivityLog';
 import type {
   AccusourceAdjudicationHistoryEntry,
   AccusourceLineAdjudication,
@@ -213,6 +214,22 @@ export const setAccusourceLineAdjudication = onCall(
         reason,
       },
     );
+
+    // Server-side worker activity log (P2, policy §8) — the per-line
+    // history[] persists the detail; this makes it visible on the trail.
+    const workerId = String(root.candidateId ?? '').trim();
+    if (workerId) {
+      await writeWorkerActivityLog({
+        userId: workerId,
+        action: 'screening_verdict_set',
+        description:
+          nextVerdict === null
+            ? 'Screening line verdict override cleared'
+            : `Screening line verdict set to ${nextVerdict}`,
+        severity: 'medium',
+        metadata: { backgroundCheckId, serviceKey, verdict: nextVerdict, by: request.auth.uid },
+      }).catch(() => undefined);
+    }
 
     return {
       ok: true,

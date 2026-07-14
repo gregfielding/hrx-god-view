@@ -28,6 +28,7 @@ import * as admin from 'firebase-admin';
 
 import type { CreateBackgroundCheckInput } from './mapper';
 import { ensureAccusourceAdmin, assertCallerBelongsToTenant } from './accusourceAdminGate';
+import { writeWorkerActivityLog } from '../../compliance/workerActivityLog';
 import { accusourceLog } from './accusourceLogger';
 
 if (!admin.apps.length) {
@@ -196,6 +197,15 @@ export const markAccusourceBackgroundCheckCompleteOutside = onCall(
       requestedPackageId,
       servicesCount: requestedServices.length,
     });
+
+    // Server-side worker activity log (P2, policy §8).
+    await writeWorkerActivityLog({
+      userId: candidateId,
+      action: 'screening_marked_complete_outside_hrx',
+      description: `Background screening marked complete outside HRX (${verdict})`,
+      severity: 'medium',
+      metadata: { backgroundCheckId: ref.id, markedBy: uid, verdict },
+    }).catch(() => undefined);
 
     return {
       ok: true as const,
