@@ -208,6 +208,19 @@ export default function AdjudicationCaseSection({ record, canAccusourceAdmin, ro
       <AccordionDetails sx={{ px: 0, pt: 0 }}>
         {error ? <Alert severity="error" sx={{ mb: 1 }} onClose={() => setError(null)}>{error}</Alert> : null}
 
+        {caseDoc.driveFolderUrl ? (
+          <Button
+            size="small"
+            variant="text"
+            href={String(caseDoc.driveFolderUrl)}
+            target="_blank"
+            rel="noopener noreferrer"
+            sx={{ mb: 1 }}
+          >
+            📁 Open case folder (Drive)
+          </Button>
+        ) : null}
+
         {/* ── Process actions */}
         {!closed && (
           <Stack direction="row" gap={1} flexWrap="wrap" sx={{ mb: 1.5 }}>
@@ -333,13 +346,55 @@ export default function AdjudicationCaseSection({ record, canAccusourceAdmin, ro
           Approvals (§6)
         </Typography>
         {approvals.length > 0 && (
-          <Stack gap={0.25} sx={{ mb: 1 }}>
-            {approvals.map((a: any, i: number) => (
-              <Typography key={i} variant="caption" color="text.secondary">
-                ✓ {a.role} — {a.decision} — {a.name} ({a.at?.toDate ? a.at.toDate().toLocaleDateString() : ''})
-                {a.rationale ? ` — ${a.rationale}` : ''}
-              </Typography>
-            ))}
+          <Stack direction="row" gap={1} flexWrap="wrap" sx={{ mb: 1.25 }}>
+            {/* Digital signature stamps (Greg, 2026-07-13): the one-click
+                sign renders as a stamp — script name, role, decision,
+                server timestamp, and the signer's uid prefix as the
+                verification mark. Data comes from the immutable approvals
+                entries; the stamp is presentation, the record is proof. */}
+            {approvals.map((a: any, i: number) => {
+              const deny = String(a.decision) === 'deny';
+              return (
+                <Box
+                  key={i}
+                  sx={{
+                    border: '1.5px solid',
+                    borderColor: deny ? 'error.main' : 'success.main',
+                    borderRadius: 1,
+                    px: 1.5,
+                    py: 0.75,
+                    minWidth: 230,
+                    bgcolor: 'background.paper',
+                  }}
+                >
+                  <Typography
+                    sx={{
+                      fontFamily: '"Snell Roundhand", "Brush Script MT", "Segoe Script", cursive',
+                      fontSize: '1.45rem',
+                      lineHeight: 1.15,
+                    }}
+                  >
+                    {a.name || a.uid}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6 }}
+                    color={deny ? 'error.main' : 'success.main'}
+                  >
+                    {String(a.role || '').replace('_', ' ')} — {a.decision}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" display="block">
+                    {a.at?.toDate ? a.at.toDate().toLocaleString() : ''} · ✓ signed{' '}
+                    {String(a.uid || '').slice(0, 8)}
+                  </Typography>
+                  {a.rationale ? (
+                    <Typography variant="caption" display="block" sx={{ fontStyle: 'italic' }}>
+                      "{a.rationale}"
+                    </Typography>
+                  ) : null}
+                </Box>
+              );
+            })}
           </Stack>
         )}
         {!closed && (

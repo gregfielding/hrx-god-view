@@ -28,6 +28,7 @@ import {
 } from '../integrations/accusource/accusourceAdminGate';
 import { accusourceLog } from '../integrations/accusource/accusourceLogger';
 import { writeWorkerActivityLog } from './workerActivityLog';
+import { ensureCaseDriveFolder } from './driveCaseFolders';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -230,6 +231,18 @@ export const openAdjudicationCase = onCall({ cors: true }, async (request) => {
     { merge: true },
   );
   await appendCaseEvent(caseRef, uid, 'case_opened', { tier, backgroundCheckId });
+
+  // P2.5: Drive case folder ({Shared Drive}/Background Checks/{year}/
+  // {Last, First — uid}) — best-effort; the case never fails on Drive.
+  const folder = await ensureCaseDriveFolder({
+    tenantId,
+    candidateId: trim(bgc.candidateId) || 'unknown',
+    candidateName: trim(bgc.candidateName) || 'Unknown',
+  });
+  if (folder) {
+    await caseRef.update({ driveFolderId: folder.folderId, driveFolderUrl: folder.folderUrl });
+    await appendCaseEvent(caseRef, uid, 'drive_folder_ready', { folderId: folder.folderId });
+  }
 
   const workerId = trim(bgc.candidateId);
   if (workerId) {
