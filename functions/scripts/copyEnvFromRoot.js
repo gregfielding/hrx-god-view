@@ -41,6 +41,10 @@ const PARAM_KEYS = [
   'QBO_CLIENT_ID',
   'QBO_CLIENT_SECRET',
   'QBO_REDIRECT_URI',
+  // Expensify Integration Server credentials (expensifyPush.ts) — plain
+  // process.env; values in functions/.env.hrx1-d3beb.
+  'EXPENSIFY_PARTNER_USER_ID',
+  'EXPENSIFY_PARTNER_USER_SECRET',
   // defineSecret (secrets) – set in root .env if you use these
   'SENDGRID_API_KEY',
   'SENDGRID_FROM_EMAIL',

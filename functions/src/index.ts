@@ -225,6 +225,7 @@ export {
   complianceMailboxIntakeCron,
 } from './compliance/complianceMailbox';
 export { getQboAuthUrl, qboOAuthCallback, getQboStatus } from './integrations/quickbooks/qboAuth';
+export { expensifyCardPushCron } from './integrations/expensify/expensifyPush';
 export {
   onAssignmentWriteRecomputeShiftFill,
   onAssignmentUpdateRecomputeShiftFill,
