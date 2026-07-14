@@ -84,7 +84,11 @@ interface Props {
 
 export default function AdjudicationCaseSection({ record, canAccusourceAdmin, rollup }: Props) {
   const tenantId: string = String(record.tenantId || '');
-  const caseId: string = String(record.adjudicationCaseId || '');
+  // The tab's check list is a one-shot query, so record.adjudicationCaseId
+  // stays stale after opening a case — keep the callable's returned id
+  // locally so the panel appears without a reload.
+  const [localCaseId, setLocalCaseId] = useState('');
+  const caseId: string = String(record.adjudicationCaseId || localCaseId || '');
   const [caseDoc, setCaseDoc] = useState<Record<string, any> | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -155,11 +159,12 @@ export default function AdjudicationCaseSection({ record, canAccusourceAdmin, ro
           disabled={busy !== null}
           onClick={() =>
             void call('open', async () => {
-              await openAdjudicationCase({
+              const res: any = await openAdjudicationCase({
                 tenantId,
                 backgroundCheckId: record.id,
                 tier: openTier,
               });
+              setLocalCaseId(String(res?.data?.caseId || ''));
             })
           }
         >
