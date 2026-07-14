@@ -27,7 +27,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 
 import type { CreateBackgroundCheckInput } from './mapper';
-import { ensureAccusourceAdmin } from './accusourceAdminGate';
+import { ensureAccusourceAdmin, assertCallerBelongsToTenant } from './accusourceAdminGate';
 import { accusourceLog } from './accusourceLogger';
 
 if (!admin.apps.length) {
@@ -71,6 +71,14 @@ export const markAccusourceBackgroundCheckCompleteOutside = onCall(
     }
 
     await ensureAccusourceAdmin(uid, tenantId);
+    // P1 security (2026-07-13): tenantId is client-supplied — the caller must
+    // actually belong to it (an admin of tenant A must not write into tenant B).
+    await assertCallerBelongsToTenant(
+      uid,
+      request.auth.token as Record<string, unknown> | undefined,
+      tenantId,
+      'mark_complete_outside',
+    );
 
     const completedAt = data.completedAtIso
       ? admin.firestore.Timestamp.fromDate(new Date(data.completedAtIso))

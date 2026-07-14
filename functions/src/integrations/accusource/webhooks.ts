@@ -1,8 +1,12 @@
-import { createHash } from 'crypto';
+import { createHash, timingSafeEqual } from 'crypto';
 import type { Request } from 'express';
 import { onRequest } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
-import { buildAccusourceApplicantPortalLink, getAccusourceConfig } from './config';
+import {
+  buildAccusourceApplicantPortalLink,
+  getAccusourceConfig,
+  isAccusourceWebhookSecretEnforced,
+} from './config';
 import { accusourceLog, serializeErrorForLog } from './accusourceLogger';
 import type { BackgroundCheckDocument, BackgroundCheckEventDocument, HrxBackgroundCheckStatus } from './types';
 import {
@@ -658,6 +662,35 @@ async function processWebhookPayload(payloadInput: unknown): Promise<{ id: strin
 
 type WebhookHttpRequestKind = 'validation_get' | 'webhook_post' | 'cors_preflight' | 'unsupported_method';
 
+/**
+ * Webhook provenance (P1 security fix, 2026-07-13). The endpoint must stay
+ * `invoker: 'public'` (AccuSource can't mint OIDC tokens), so a shared
+ * secret is the authentication. Accepted carriers — several header names
+ * plus `?secret=` — because the AccuSource portal may only allow a URL.
+ * Values are hashed before comparison (constant-time) and never logged.
+ */
+function extractProvidedWebhookSecret(request: Request): { value: string; via: string } {
+  const headerNames = ['x-accusource-webhook-secret', 'x-webhook-secret', 'x-api-key'];
+  for (const name of headerNames) {
+    const v = request.headers[name];
+    if (typeof v === 'string' && v.trim() !== '') return { value: v.trim(), via: `header:${name}` };
+  }
+  const auth = request.headers.authorization;
+  if (typeof auth === 'string' && auth.toLowerCase().startsWith('bearer ')) {
+    const v = auth.slice(7).trim();
+    if (v) return { value: v, via: 'header:authorization-bearer' };
+  }
+  const q = request.query?.secret;
+  if (typeof q === 'string' && q.trim() !== '') return { value: q.trim(), via: 'query:secret' };
+  return { value: '', via: 'none' };
+}
+
+function webhookSecretMatches(provided: string, expected: string): boolean {
+  const a = createHash('sha256').update(provided).digest();
+  const b = createHash('sha256').update(expected).digest();
+  return timingSafeEqual(a, b);
+}
+
 function logWebhookHttpRequest(request: Request, requestKind: WebhookHttpRequestKind): void {
   accusourceLog('info', 'webhook', 'HTTP request', {
     requestKind,
@@ -709,6 +742,32 @@ export const apiIntegrationsAccusourceWebhooks = onRequest(
     if (!config.enabled) {
       response.status(503).json({ error: 'AccuSource integration disabled' });
       return;
+    }
+
+    // ── Shared-secret check (P1). Rollout: with ACCUSOURCE_WEBHOOK_SECRET set
+    // but ACCUSOURCE_WEBHOOK_SECRET_ENFORCE unset/false, mismatches are logged
+    // and ACCEPTED so live webhooks keep flowing while the AccuSource portal
+    // URL gains `?secret=...`; flip enforce once logs show `via` ≠ 'none'.
+    const expectedSecret = (config.webhookSecret ?? '').trim();
+    const provided = extractProvidedWebhookSecret(request);
+    const secretOk =
+      expectedSecret !== '' &&
+      provided.value !== '' &&
+      webhookSecretMatches(provided.value, expectedSecret);
+    if (!secretOk) {
+      const enforce = isAccusourceWebhookSecretEnforced();
+      accusourceLog('warn', 'webhook', enforce
+        ? 'Webhook rejected: shared secret missing or mismatched'
+        : 'Webhook shared secret missing/mismatched (warn-only mode — accepted)', {
+        haveExpectedSecret: expectedSecret !== '',
+        providedVia: provided.via,
+        providedMatches: false,
+        enforce,
+      });
+      if (enforce) {
+        response.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
     }
 
     try {

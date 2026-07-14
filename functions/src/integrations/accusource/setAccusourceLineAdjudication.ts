@@ -4,6 +4,9 @@
  *
  *   - Admin-gated via `ensureAccusourceAdmin` (role admin/super_admin/manager or
  *     security level >= 5 for the active tenant — matches the rest of AccuSource).
+ *   - P1 security (2026-07-13): caller must belong to the doc's tenant, and
+ *     FAILED verdicts (or any move off an effective FAILED) additionally
+ *     require the compliance-reviewer role — policy §6 verdict authority.
  *   - Writes the override on the nested line and appends an immutable history entry.
  *   - Pass `verdict: null` to clear the override (revert to system autoVerdict).
  *
@@ -12,7 +15,11 @@
  */
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
-import { ensureAccusourceAdmin } from './accusourceAdminGate';
+import {
+  ensureAccusourceAdmin,
+  assertCallerBelongsToTenant,
+  ensureAccusourceComplianceReviewer,
+} from './accusourceAdminGate';
 import { accusourceLog } from './accusourceLogger';
 import type {
   AccusourceAdjudicationHistoryEntry,
@@ -98,6 +105,15 @@ export const setAccusourceLineAdjudication = onCall(
 
     const docRef = snap.ref;
     const root = snap.data() as Record<string, unknown>;
+
+    // P1 security (2026-07-13): the id-only lookup must not cross tenants.
+    await assertCallerBelongsToTenant(
+      request.auth.uid,
+      request.auth.token as Record<string, unknown> | undefined,
+      root.tenantId,
+      'set_line_adjudication',
+    );
+
     const lines =
       (root.providerServiceOrderStatus as Record<string, Record<string, unknown>> | undefined) ?? {};
     const line = lines[serviceKey];
@@ -110,6 +126,20 @@ export const setAccusourceLineAdjudication = onCall(
 
     const existing = (line.adjudication as AccusourceLineAdjudication | undefined) ?? null;
     const prev = existing?.verdict ?? null;
+
+    // Policy §6 verdict authority (P1): routine clears (NEEDS_REVIEW/PENDING
+    // → PASSED) stay at the admin/L5 gate; setting FAILED, or moving a line
+    // whose effective verdict is FAILED, requires the compliance-reviewer
+    // role — recruiters must not un-fail a worker or fail one on their own.
+    const effectiveBefore = existing?.verdict ?? existing?.autoVerdict ?? 'PENDING';
+    if (nextVerdict === 'FAILED' || effectiveBefore === 'FAILED') {
+      await ensureAccusourceComplianceReviewer(
+        request.auth.uid,
+        request.auth.token as Record<string, unknown> | undefined,
+        root.tenantId,
+        `set_line_adjudication:${String(effectiveBefore)}->${String(nextVerdict)}`,
+      );
+    }
 
     // Idempotency: same verdict + same reason → no-op, no history noise.
     if (prev === nextVerdict && reason === (existing?.overrideReason ?? null)) {

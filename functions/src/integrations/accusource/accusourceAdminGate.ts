@@ -59,6 +59,81 @@ export async function ensureAccusourceAdmin(uid: string, tenantIdHint?: string |
   }
 }
 
+/**
+ * Cross-tenant guard for id-only `backgroundChecks` reads (P1 security fix,
+ * 2026-07-13): the caller must belong to the doc's tenant — `activeTenantId`
+ * match or a `tenantIds[tid]` entry. `hrx: true` staff operate across
+ * tenants. Docs without a `tenantId` are allowed with a warning: every
+ * writer stamps it, so a missing value means pre-integration data, and
+ * failing closed would orphan those records.
+ */
+export async function assertCallerBelongsToTenant(
+  uid: string,
+  token: Record<string, unknown> | undefined,
+  docTenantId: unknown,
+  context: string,
+): Promise<void> {
+  if (token?.hrx === true) return;
+  const tid = String(docTenantId ?? '').trim();
+  if (!tid) {
+    accusourceLog('warn', 'policy', 'backgroundChecks doc missing tenantId — tenant check skipped', {
+      uid,
+      context,
+    });
+    return;
+  }
+  const snap = await db.collection('users').doc(uid).get();
+  const data = (snap.data() ?? {}) as Record<string, unknown>;
+  const active = typeof data.activeTenantId === 'string' ? data.activeTenantId.trim() : '';
+  const tenantIds = (data.tenantIds ?? {}) as Record<string, unknown>;
+  if (active === tid || Object.prototype.hasOwnProperty.call(tenantIds, tid)) return;
+  accusourceLog('warn', 'policy', 'Cross-tenant AccuSource access blocked', {
+    uid,
+    docTenantId: tid,
+    context,
+  });
+  throw new HttpsError('permission-denied', 'This record belongs to a different tenant.');
+}
+
+/**
+ * Compliance-reviewer gate (policy §6, P1 fix): setting FAILED — and any
+ * override away from an effective FAILED — is reserved for `hrx: true`
+ * staff or uids listed in `tenants/{tid}/integrations/accusource`
+ * `.complianceReviewerUids`. Until that list is populated the standard
+ * admin gate (already enforced by callers) applies, with a logged warning,
+ * so deploying this cannot lock Compliance out before setup.
+ */
+export async function ensureAccusourceComplianceReviewer(
+  uid: string,
+  token: Record<string, unknown> | undefined,
+  tenantId: unknown,
+  action: string,
+): Promise<void> {
+  if (token?.hrx === true) return;
+  const tid = String(tenantId ?? '').trim();
+  if (tid) {
+    const cfgSnap = await db.doc(`tenants/${tid}/integrations/accusource`).get();
+    const uids = cfgSnap.exists ? (cfgSnap.data()?.complianceReviewerUids as unknown) : undefined;
+    if (Array.isArray(uids) && uids.length > 0) {
+      if (uids.map(String).includes(uid)) return;
+      accusourceLog('warn', 'policy', 'Compliance-reviewer action blocked', {
+        uid,
+        tenantId: tid,
+        action,
+      });
+      throw new HttpsError(
+        'permission-denied',
+        'This adjudication requires a Compliance Reviewer. Ask an administrator to add you to complianceReviewerUids on the AccuSource integration settings.',
+      );
+    }
+  }
+  accusourceLog('warn', 'policy', 'complianceReviewerUids not configured — falling back to admin gate', {
+    uid,
+    tenantId: tid || null,
+    action,
+  });
+}
+
 /** How `createBackgroundCheckInternal` was invoked — drives production validation guardrails. */
 export type AccusourceOrderInvocation =
   | { type: 'callable'; auth: { token?: Record<string, unknown> } }

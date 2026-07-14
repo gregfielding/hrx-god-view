@@ -5,8 +5,9 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { getAccusourceBearerToken, hasAccusourceOutboundAuth } from './accusourceAccessToken';
 import { getAccusourceConfig } from './config';
-import { ensureAccusourceAdmin } from './accusourceAdminGate';
+import { ensureAccusourceAdmin, assertCallerBelongsToTenant } from './accusourceAdminGate';
 import { accusourceLog } from './accusourceLogger';
+import { writeWorkerActivityLog } from '../../compliance/workerActivityLog';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -61,6 +62,15 @@ export const getAccusourceBackgroundCheckPdf = onCall(
       throw new HttpsError('not-found', 'Background check not found.');
     }
     const row = snap.data() || {};
+
+    // P1 security (2026-07-13): report PDFs carry PII + criminal history —
+    // the id-only lookup must not cross tenants.
+    await assertCallerBelongsToTenant(
+      request.auth.uid,
+      request.auth.token as Record<string, unknown> | undefined,
+      row.tenantId,
+      'get_background_check_pdf',
+    );
     const providerProfileId = row.providerProfileId;
     const pid = providerProfileId != null && String(providerProfileId).trim() !== '' ? String(providerProfileId).trim() : null;
     if (!pid) {
@@ -95,6 +105,29 @@ export const getAccusourceBackgroundCheckPdf = onCall(
     if (buf.length > MAX_PDF_BYTES) {
       throw new HttpsError('resource-exhausted', 'PDF is too large to return via callable.');
     }
+
+    // Access audit (P1, policy §8): every report view lands on the worker's
+    // activity trail. Best-effort — a logging failure must not block the fetch.
+    const workerId = String(row.candidateId ?? '').trim();
+    if (workerId) {
+      await writeWorkerActivityLog({
+        userId: workerId,
+        action: 'background_check_report_viewed',
+        description: `Background check report PDF (${kind}) viewed by staff`,
+        severity: 'medium',
+        metadata: { backgroundCheckId, viewedBy: request.auth.uid, kind },
+      }).catch((err) =>
+        accusourceLog('warn', 'pdf', 'report-view activity log failed', {
+          backgroundCheckId,
+          err: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    }
+    accusourceLog('info', 'pdf', 'Report PDF served', {
+      backgroundCheckId,
+      kind,
+      by: request.auth.uid,
+    });
 
     return {
       pdfBase64: buf.toString('base64'),

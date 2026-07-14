@@ -24,6 +24,12 @@ const P_ACCUSOURCE_ENABLED = defineString('ACCUSOURCE_ENABLED', { default: 'true
 const P_ACCUSOURCE_PRODUCTION_VALIDATION_HRX_ONLY = defineString('ACCUSOURCE_PRODUCTION_VALIDATION_HRX_ONLY', {
   default: 'true',
 });
+/** Webhook shared-secret enforcement (P1 security, 2026-07-13). Default warn-only:
+ *  mismatches are logged but accepted, so the AccuSource portal URL can be updated
+ *  without dropping live webhooks. Flip to 'true' once logs show the secret arriving. */
+const P_ACCUSOURCE_WEBHOOK_SECRET_ENFORCE = defineString('ACCUSOURCE_WEBHOOK_SECRET_ENFORCE', {
+  default: 'false',
+});
 
 function trimStr(v: string | undefined): string {
   return (v ?? '').trim();
@@ -84,6 +90,15 @@ export function getAccusourceConfig(): AccusourceProviderConfig {
     webhookSecret,
     enabled,
   };
+}
+
+/** True once ACCUSOURCE_WEBHOOK_SECRET_ENFORCE=true — webhook POSTs without a matching secret are rejected 401. */
+export function isAccusourceWebhookSecretEnforced(): boolean {
+  const v =
+    trimStr(P_ACCUSOURCE_WEBHOOK_SECRET_ENFORCE.value()) ||
+    trimStr(process.env.ACCUSOURCE_WEBHOOK_SECRET_ENFORCE) ||
+    'false';
+  return v.toLowerCase() === 'true' || v === '1';
 }
 
 /**
