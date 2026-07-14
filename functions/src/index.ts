@@ -220,6 +220,11 @@ export {
 } from './compliance/adjudicationCases';
 export { sendAdjudicationNotice, adjudicationDeadlineCron } from './compliance/adjudicationNotices';
 export {
+  getComplianceGmailAuthUrl,
+  getComplianceMailboxStatus,
+  complianceMailboxIntakeCron,
+} from './compliance/complianceMailbox';
+export {
   onAssignmentWriteRecomputeShiftFill,
   onAssignmentUpdateRecomputeShiftFill,
   onAssignmentDeleteRecomputeShiftFill,

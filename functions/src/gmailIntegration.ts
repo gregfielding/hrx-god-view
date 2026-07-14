@@ -327,7 +327,17 @@ export const gmailOAuthCallback = onRequest(async (req, res) => {
       return;
     }
 
-    const { userId } = JSON.parse(state);
+    const parsedState = JSON.parse(state);
+
+    // Tenant-level compliance mailbox connect (P4): tokens go to
+    // tenants/{tid}/integrations/complianceMailbox, never users/{uid}.
+    if (parsedState?.purpose === 'complianceMailbox') {
+      const { handleComplianceMailboxOAuth } = await import('./compliance/complianceMailbox');
+      await handleComplianceMailboxOAuth(code, parsedState, res);
+      return;
+    }
+
+    const { userId } = parsedState;
 
     // DIAGNOSTIC: log the exact values being sent to Google's /token endpoint so we can
     // cross-check against the OAuth 2.0 client config in GCP Console (client ID + authorized

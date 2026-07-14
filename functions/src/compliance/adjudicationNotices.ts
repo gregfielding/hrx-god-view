@@ -354,7 +354,7 @@ export const sendAdjudicationNotice = onCall(
 // adjudicationDeadlineCron — reminders + window expiry (policy §5.2)
 // ─────────────────────────────────────────────────────────────────────
 
-async function notifyComplianceReviewers(
+export async function notifyComplianceReviewers(
   tenantId: string,
   title: string,
   body: string,
@@ -373,7 +373,7 @@ async function notifyComplianceReviewers(
       body,
       type: 'system',
       category: 'system',
-      deepLink: `/users/${candidateId}`,
+      deepLink: candidateId ? `/users/${candidateId}` : '/compliance/background-check-policy',
       source: 'automation',
       metadata: { caseId, kind: 'adjudication_deadline' },
     }).catch(() => undefined);

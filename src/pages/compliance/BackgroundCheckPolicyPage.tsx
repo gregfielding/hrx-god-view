@@ -11,10 +11,12 @@ import { Box, Paper, Typography } from '@mui/material';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { BACKGROUND_CHECK_POLICY_MD } from './backgroundCheckPolicyContent';
+import ComplianceMailboxCard from '../../components/compliance/ComplianceMailboxCard';
 
 export default function BackgroundCheckPolicyPage() {
   return (
     <Box sx={{ maxWidth: 900, mx: 'auto', px: 2, py: 3 }}>
+      <ComplianceMailboxCard />
       <Paper variant="outlined" sx={{ px: { xs: 2, md: 5 }, py: 4 }}>
         <Typography
           variant="overline"
