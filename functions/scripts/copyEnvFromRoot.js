@@ -36,6 +36,11 @@ const PARAM_KEYS = [
   // (functions/src/integrations/fieldglass/enrichmentApi.ts). Rotate by
   // changing here + redeploy + update each recruiter's extension options.
   'FIELDGLASS_EXTENSION_KEY',
+  // QuickBooks Online OAuth (functions/src/integrations/quickbooks/qboAuth.ts).
+  // Values live in functions/.env.hrx1-d3beb (Intuit app keys are per-project).
+  'QBO_CLIENT_ID',
+  'QBO_CLIENT_SECRET',
+  'QBO_REDIRECT_URI',
   // defineSecret (secrets) – set in root .env if you use these
   'SENDGRID_API_KEY',
   'SENDGRID_FROM_EMAIL',

@@ -8,6 +8,7 @@ import React from 'react';
 import { Box, Card, CardContent, Typography } from '@mui/material';
 import ReceiptIcon from '@mui/icons-material/Receipt';
 import PageHeader from '../components/PageHeader';
+import ConnectQuickBooksCard from '../components/settings/ConnectQuickBooksCard';
 
 const GlobalInvoicingPage: React.FC = () => {
   return (
@@ -20,6 +21,7 @@ const GlobalInvoicingPage: React.FC = () => {
           </Box>
         }
       />
+      <ConnectQuickBooksCard />
       <Card sx={{ maxWidth: 640, mt: 2 }}>
         <CardContent>
           <Typography variant="body1" color="text.secondary">

@@ -224,6 +224,7 @@ export {
   getComplianceMailboxStatus,
   complianceMailboxIntakeCron,
 } from './compliance/complianceMailbox';
+export { getQboAuthUrl, qboOAuthCallback, getQboStatus } from './integrations/quickbooks/qboAuth';
 export {
   onAssignmentWriteRecomputeShiftFill,
   onAssignmentUpdateRecomputeShiftFill,
