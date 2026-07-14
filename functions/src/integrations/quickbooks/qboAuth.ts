@@ -96,7 +96,11 @@ async function exchangeToken(body: Record<string, string>): Promise<Record<strin
   });
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
-    throw new Error(`Intuit token endpoint ${res.status}: ${JSON.stringify(json)}`);
+    // intuit_tid is Intuit's per-request trace id — logged so their support
+    // can locate the request when troubleshooting (App assessment Q).
+    throw new Error(
+      `Intuit token endpoint ${res.status} (intuit_tid=${res.headers.get('intuit_tid') ?? 'n/a'}): ${JSON.stringify(json)}`,
+    );
   }
   return json;
 }
@@ -293,9 +297,11 @@ export async function qboQuery(tenantId: string, query: string): Promise<Record<
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
   });
+  const intuitTid = res.headers.get('intuit_tid') ?? 'n/a';
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
-    throw new Error(`QBO query ${res.status}: ${JSON.stringify(json).slice(0, 500)}`);
+    logger.error('[qbo] query failed', { status: res.status, intuitTid, query: query.slice(0, 120) });
+    throw new Error(`QBO query ${res.status} (intuit_tid=${intuitTid}): ${JSON.stringify(json).slice(0, 500)}`);
   }
   return (json.QueryResponse ?? {}) as Record<string, unknown>;
 }
