@@ -224,6 +224,11 @@ export const sendAdjudicationNotice = onCall(
       subject,
       htmlBody,
       textBody,
+      // Notices send from the compliance mailbox (Greg, 2026-07-14) so
+      // candidate replies land where Compliance manages them. The mailbox
+      // must exist before the first real send (P0 checklist item 2).
+      fromEmail: 'compliance@c1staffing.com',
+      fromName: 'C1 Staffing Compliance',
       messageTypeId: `adjudication_${kind}`,
       userId: candidateId,
       attachments,
