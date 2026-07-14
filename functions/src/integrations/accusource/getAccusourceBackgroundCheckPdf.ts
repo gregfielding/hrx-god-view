@@ -30,6 +30,32 @@ export type GetAccusourceBackgroundCheckPdfInput = {
   kind: 'final' | 'drug';
 };
 
+/**
+ * Server-side report fetch (shared with adjudication notices — the FCRA
+ * pre-adverse email must enclose the consumer report). Throws HttpsError
+ * on config/availability problems; callers decide whether that's fatal.
+ */
+export async function fetchAccusourceReportPdfBuffer(
+  backgroundCheck: Record<string, unknown>,
+  kind: 'final' | 'drug',
+): Promise<Buffer> {
+  const cfg = getAccusourceConfig();
+  if (!cfg.enabled) throw new HttpsError('failed-precondition', 'AccuSource integration is disabled.');
+  const pid = String(backgroundCheck.providerProfileId ?? '').trim();
+  if (!pid) throw new HttpsError('failed-precondition', 'No provider profile ID on this check.');
+  const bearer = await getAccusourceBearerToken();
+  if (!bearer) throw new HttpsError('failed-precondition', 'AccuSource Bearer token could not be resolved.');
+  const url = buildReportUrl(cfg.baseUrl, pid, kind);
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { authorization: `Bearer ${bearer}`, accept: 'application/pdf' },
+  });
+  if (!res.ok) throw new HttpsError('failed-precondition', `SourceDirect returned ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length > MAX_PDF_BYTES) throw new HttpsError('resource-exhausted', 'PDF too large.');
+  return buf;
+}
+
 export const getAccusourceBackgroundCheckPdf = onCall(
   { cors: true },
   async (request) => {

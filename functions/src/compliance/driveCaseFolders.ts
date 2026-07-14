@@ -108,6 +108,31 @@ export interface CaseDriveFolder {
   folderUrl: string;
 }
 
+/** Best-effort: file a document (e.g. a sent notice) into a case folder. */
+export async function uploadToCaseFolder(params: {
+  folderId: string;
+  name: string;
+  content: string | Buffer;
+  mimeType: string;
+}): Promise<string | null> {
+  try {
+    const drive = await getDrive();
+    const created = await drive.files.create({
+      supportsAllDrives: true,
+      fields: 'id',
+      requestBody: { name: params.name, parents: [params.folderId] },
+      media: { mimeType: params.mimeType, body: params.content as never },
+    });
+    return (created.data.id as string) ?? null;
+  } catch (err) {
+    accusourceLog('warn', 'drive', 'uploadToCaseFolder failed (send proceeds)', {
+      name: params.name,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
 /** Best-effort: returns null when the Shared Drive isn't configured/reachable. */
 export async function ensureCaseDriveFolder(params: {
   tenantId: string;

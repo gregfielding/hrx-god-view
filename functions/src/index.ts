@@ -218,6 +218,7 @@ export {
   recordAdjudicationApproval,
   closeAdjudicationCase,
 } from './compliance/adjudicationCases';
+export { sendAdjudicationNotice, adjudicationDeadlineCron } from './compliance/adjudicationNotices';
 export {
   onAssignmentWriteRecomputeShiftFill,
   onAssignmentUpdateRecomputeShiftFill,

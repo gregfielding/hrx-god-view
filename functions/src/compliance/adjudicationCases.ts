@@ -83,7 +83,7 @@ export function computeBusinessDayDeadlineMs(fromMs: number, businessDays: numbe
   return d.getTime();
 }
 
-interface CaseCtx {
+export interface CaseCtx {
   tenantId: string;
   caseId: string;
   ref: FirebaseFirestore.DocumentReference;
@@ -92,7 +92,7 @@ interface CaseCtx {
   token: Record<string, unknown> | undefined;
 }
 
-async function loadCase(request: CallableRequest, needCompliance: boolean): Promise<CaseCtx> {
+export async function loadCase(request: CallableRequest, needCompliance: boolean): Promise<CaseCtx> {
   if (!request.auth?.uid) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -117,7 +117,7 @@ async function loadCase(request: CallableRequest, needCompliance: boolean): Prom
 }
 
 /** Append-only audit event — every mutation calls this inside its flow. */
-async function appendCaseEvent(
+export async function appendCaseEvent(
   ref: FirebaseFirestore.DocumentReference,
   by: string,
   kind: string,

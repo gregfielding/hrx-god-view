@@ -32,6 +32,7 @@ import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../../firebase';
 
 const openAdjudicationCase = httpsCallable(functions, 'openAdjudicationCase');
+const sendAdjudicationNotice = httpsCallable(functions, 'sendAdjudicationNotice');
 const updateAdjudicationWorksheet = httpsCallable(functions, 'updateAdjudicationWorksheet');
 const recordAdjudicationNotice = httpsCallable(functions, 'recordAdjudicationNotice');
 const setAdjudicationCaseStatus = httpsCallable(functions, 'setAdjudicationCaseStatus');
@@ -234,10 +235,16 @@ export default function AdjudicationCaseSection({ record, canAccusourceAdmin, ro
         {!closed && (
           <Stack direction="row" gap={1} flexWrap="wrap" sx={{ mb: 1.5 }}>
             {!hasPreAdverse && (
-              <Button size="small" variant="outlined" disabled={busy !== null}
-                onClick={() => void call('pre_adverse', () => recordAdjudicationNotice({ tenantId, caseId, kind: 'pre_adverse', channel: 'email', stateVariant: String(caseDoc.worksiteState || 'default') }))}>
-                Record pre-adverse sent
-              </Button>
+              <>
+                <Button size="small" variant="contained" disabled={busy !== null}
+                  onClick={() => void call('send_pre_adverse', () => sendAdjudicationNotice({ tenantId, caseId, kind: 'pre_adverse' }))}>
+                  {busy === 'send_pre_adverse' ? <CircularProgress size={16} /> : 'Email pre-adverse notice'}
+                </Button>
+                <Button size="small" variant="outlined" disabled={busy !== null}
+                  onClick={() => void call('pre_adverse', () => recordAdjudicationNotice({ tenantId, caseId, kind: 'pre_adverse', channel: 'email', stateVariant: String(caseDoc.worksiteState || 'default') }))}>
+                  Record sent manually
+                </Button>
+              </>
             )}
             {status === 'awaiting_candidate' && (
               <>
@@ -263,9 +270,13 @@ export default function AdjudicationCaseSection({ record, canAccusourceAdmin, ro
             )}
             {status === 'disputed' && (
               <>
+                <Button size="small" variant="contained" disabled={busy !== null}
+                  onClick={() => void call('send_dispute_ack', () => sendAdjudicationNotice({ tenantId, caseId, kind: 'dispute_ack' }))}>
+                  Email dispute acknowledgment
+                </Button>
                 <Button size="small" disabled={busy !== null}
                   onClick={() => void call('dispute_ack', () => recordAdjudicationNotice({ tenantId, caseId, kind: 'dispute_ack', channel: 'email' }))}>
-                  Record dispute-ack sent
+                  Record sent manually
                 </Button>
                 <Button size="small" disabled={busy !== null}
                   onClick={() => void call('resolved_corrected', () => setAdjudicationCaseStatus({ tenantId, caseId, action: 'dispute_resolved', reportCorrected: true }))}>
@@ -280,10 +291,30 @@ export default function AdjudicationCaseSection({ record, canAccusourceAdmin, ro
           </Stack>
         )}
         {closed && decision === 'deny' && !notices.some((n: any) => n.kind === 'final_adverse') && (
-          <Button size="small" variant="outlined" color="error" sx={{ mb: 1.5 }} disabled={busy !== null}
-            onClick={() => void call('final_adverse', () => recordAdjudicationNotice({ tenantId, caseId, kind: 'final_adverse', channel: 'email', stateVariant: String(caseDoc.worksiteState || 'default') }))}>
-            Record final adverse notice sent
-          </Button>
+          <Stack direction="row" gap={1} sx={{ mb: 1.5 }}>
+            <Button size="small" variant="contained" color="error" disabled={busy !== null}
+              onClick={() => void call('send_final_adverse', () => sendAdjudicationNotice({ tenantId, caseId, kind: 'final_adverse' }))}>
+              {busy === 'send_final_adverse' ? <CircularProgress size={16} /> : 'Email final adverse notice'}
+            </Button>
+            <Button size="small" variant="outlined" color="error" disabled={busy !== null}
+              onClick={() => void call('final_adverse', () => recordAdjudicationNotice({ tenantId, caseId, kind: 'final_adverse', channel: 'email', stateVariant: String(caseDoc.worksiteState || 'default') }))}>
+              Record sent manually
+            </Button>
+          </Stack>
+        )}
+        {notices.length > 0 && (
+          <Stack gap={0.25} sx={{ mb: 1.5 }}>
+            {notices.map((n: any, i: number) => (
+              <Typography key={i} variant="caption" color="text.secondary">
+                ✉ {String(n.kind).replace('_', '-')} · {n.channel}
+                {n.emailTo ? ` → ${n.emailTo}` : ''} ·{' '}
+                {n.sentAt?.toDate ? n.sentAt.toDate().toLocaleString() : ''} · {n.templateVersion}
+                {Array.isArray(n.attachments) && n.attachments.length
+                  ? ` · 📎 ${n.attachments.length}`
+                  : ''}
+              </Typography>
+            ))}
+          </Stack>
         )}
 
         {/* ── Candidate response quick-record */}
