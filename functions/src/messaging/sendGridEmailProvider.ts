@@ -294,6 +294,10 @@ export class SendGridEmailProvider implements EmailProvider {
         }));
       }
 
+      if (options.replyTo?.email) {
+        msg.replyTo = { email: options.replyTo.email, name: options.replyTo.name };
+      }
+
       // Add attachments if provided
       if (options.attachments && options.attachments.length > 0) {
         msg.attachments = [];

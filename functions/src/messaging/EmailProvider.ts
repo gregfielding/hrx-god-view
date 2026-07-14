@@ -25,6 +25,8 @@ export interface SendEmailOptions {
   to: EmailRecipient | EmailRecipient[];
   cc?: EmailRecipient | EmailRecipient[];
   bcc?: EmailRecipient | EmailRecipient[];
+  /** Reply-To — lets replies route to a mailbox other than the verified sender. */
+  replyTo?: EmailRecipient;
   subject: string;
   htmlBody: string;
   textBody?: string;

@@ -235,11 +235,15 @@ export const sendAdjudicationNotice = onCall(
       subject,
       htmlBody,
       textBody,
-      // Notices send from the compliance mailbox (Greg, 2026-07-14) so
-      // candidate replies land where Compliance manages them. The mailbox
-      // must exist before the first real send (P0 checklist item 2).
-      fromEmail: 'compliance@c1staffing.com',
-      fromName: 'C1 Staffing Compliance',
+      // Replies route to the compliance mailbox. The true from-address is
+      // config-driven: until compliance@ is a VERIFIED SendGrid sender
+      // (noticeFromEmail on the integration config), sends use the
+      // tenant's default verified sender with Reply-To compliance@ —
+      // SendGrid rejects unverified from-addresses outright.
+      ...(trim(cfg.noticeFromEmail)
+        ? { fromEmail: trim(cfg.noticeFromEmail), fromName: 'C1 Staffing Compliance' }
+        : {}),
+      replyTo: { email: 'compliance@c1staffing.com', name: 'C1 Staffing Compliance' },
       messageTypeId: `adjudication_${kind}`,
       userId: candidateId,
       attachments,
