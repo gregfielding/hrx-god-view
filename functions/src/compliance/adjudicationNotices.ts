@@ -25,11 +25,7 @@ import * as admin from 'firebase-admin';
 import { getStorage } from 'firebase-admin/storage';
 import { getStorageBucketName } from '../utils/storageBucket';
 import { getEmailProvider } from '../messaging/emailService';
-import {
-  sendGridApiKey,
-  sendGridFromEmail,
-  sendGridFromName,
-} from '../messaging/emailProviderFactory';
+import { sendGridFromEmail, sendGridFromName } from '../messaging/emailProviderFactory';
 import type { EmailAttachment } from '../messaging/EmailProvider';
 import { createOutboundRequest } from '../messaging/smsOutboundQueue';
 import { sendNotificationAndPush } from '../messaging/unifiedWorkerNotifications';
@@ -132,8 +128,11 @@ export const sendAdjudicationNotice = onCall(
     timeoutSeconds: 120,
     memory: '512MiB',
     // getEmailProvider reads these Secret Manager params — a function only
-    // sees a secret it declares (found the hard way on first live send).
-    secrets: [sendGridApiKey, sendGridFromEmail, sendGridFromName],
+    // sees a secret it declares. SENDGRID_API_KEY is NOT bound here: it
+    // already exists as a plain env var from .env, and Cloud Run rejects a
+    // secret binding that overlaps a non-secret env name; the provider's
+    // process.env fallback picks it up.
+    secrets: [sendGridFromEmail, sendGridFromName],
   },
   async (request) => {
     const ctx = await loadCase(request, true);
