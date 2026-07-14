@@ -25,6 +25,11 @@ import * as admin from 'firebase-admin';
 import { getStorage } from 'firebase-admin/storage';
 import { getStorageBucketName } from '../utils/storageBucket';
 import { getEmailProvider } from '../messaging/emailService';
+import {
+  sendGridApiKey,
+  sendGridFromEmail,
+  sendGridFromName,
+} from '../messaging/emailProviderFactory';
 import type { EmailAttachment } from '../messaging/EmailProvider';
 import { createOutboundRequest } from '../messaging/smsOutboundQueue';
 import { sendNotificationAndPush } from '../messaging/unifiedWorkerNotifications';
@@ -122,7 +127,14 @@ function deadlineText(ms: number): string {
 // ─────────────────────────────────────────────────────────────────────
 
 export const sendAdjudicationNotice = onCall(
-  { cors: true, timeoutSeconds: 120, memory: '512MiB' },
+  {
+    cors: true,
+    timeoutSeconds: 120,
+    memory: '512MiB',
+    // getEmailProvider reads these Secret Manager params — a function only
+    // sees a secret it declares (found the hard way on first live send).
+    secrets: [sendGridApiKey, sendGridFromEmail, sendGridFromName],
+  },
   async (request) => {
     const ctx = await loadCase(request, true);
     const kind = trim((request.data as Record<string, unknown>)?.kind) as NoticeKind;
