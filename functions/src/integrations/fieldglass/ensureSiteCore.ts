@@ -173,16 +173,23 @@ function findExistingLocation(
   );
   if (!byName) return null;
 
-  // Only trust the name when geography doesn't contradict it. Compare on
-  // whatever the candidate actually has — a location with no city/state
-  // recorded can't contradict, so it stays reusable (the pre-code case this
-  // fallback was written for).
+  // Only trust the name when geography doesn't contradict it. STATE is the
+  // discriminator; city is deliberately NOT checked.
+  //
+  // A city difference is routinely legitimate: Sodexo's site record is an
+  // org/billing unit whose city can differ from the order's actual Work
+  // Location. Real example — site 0059008001 is "ADP - SAN DIMAS" in the
+  // directory, but posting SDXOJP00184639 sends its workers to ADP's campus
+  // at 5355 Orangethorpe Dr, La Palma (40 mi away). Blocking on city there
+  // would reject a correct location and duplicate it. A STATE mismatch has
+  // no such innocent reading — that's the Grifols hijack (an NC job matched
+  // to a CA office).
+  //
+  // A location with no state recorded can't contradict, so it stays reusable
+  // (the pre-code case this fallback was written for).
   const expState = String(expected?.state ?? '').trim().toUpperCase();
-  const expCity = String(expected?.city ?? '').trim().toUpperCase();
   const gotState = String(byName.data.state ?? '').trim().toUpperCase();
-  const gotCity = String(byName.data.city ?? '').trim().toUpperCase();
   if (expState && gotState && expState !== gotState) return null;
-  if (expCity && gotCity && expCity !== gotCity) return null;
   return byName;
 }
 
