@@ -8,6 +8,7 @@ import {
   isAccusourceWebhookSecretEnforced,
 } from './config';
 import { accusourceLog, serializeErrorForLog } from './accusourceLogger';
+import { resolveOrderServiceNames } from './resolveOrderServiceNames';
 import type { BackgroundCheckDocument, BackgroundCheckEventDocument, HrxBackgroundCheckStatus } from './types';
 import {
   computeServiceLineKey,
@@ -622,6 +623,21 @@ async function processWebhookPayload(payloadInput: unknown): Promise<{ id: strin
   if (clientId) parentUpdate.providerClientId = clientId;
 
   await matchedBackgroundCheck.ref.set(parentUpdate, { merge: true });
+
+  // Order-level webhooks carry no service_id, so the line above was keyed
+  // `order:{id}` and named "Order 9356691" — useless to a reviewer. Ask the
+  // vendor what that order actually is (GET /api/v2/order/{id} → serviceId →
+  // catalog name). Best-effort: a failure leaves the placeholder name, which
+  // still renders and is still adjudicable.
+  if (parentUpdate.providerServiceOrderStatus) {
+    await resolveOrderServiceNames(matchedBackgroundCheck.ref.id).catch((err) => {
+      accusourceLog('warn', 'webhook', 'resolveOrderServiceNames failed (non-fatal)', {
+        backgroundCheckId: matchedBackgroundCheck.ref.id,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
+
   await matchedBackgroundCheck.ref.collection('events').doc(eventId).set({
     ...intakeBase,
     processingStatus: 'processed',
