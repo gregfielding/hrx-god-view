@@ -227,6 +227,10 @@ export {
 export { getQboAuthUrl, qboOAuthCallback, getQboStatus } from './integrations/quickbooks/qboAuth';
 export { expensifyCardPushCron } from './integrations/expensify/expensifyPush';
 export {
+  previewExpensifyCardExport,
+  confirmExpensifyCardExport,
+} from './integrations/expensify/expensifyCardExport';
+export {
   onAssignmentWriteRecomputeShiftFill,
   onAssignmentUpdateRecomputeShiftFill,
   onAssignmentDeleteRecomputeShiftFill,
