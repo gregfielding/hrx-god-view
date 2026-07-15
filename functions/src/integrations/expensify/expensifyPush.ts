@@ -111,6 +111,9 @@ async function pushExpensesToExpensify(
         merchant: e.merchant,
         // Expensify amounts are integer cents.
         amount: Math.round(e.amount * 100),
+        // The company already paid this on the Relay card — the worker
+        // categorizes it, they are never owed it back.
+        reimbursable: false,
         comment: `Relay card •${e.last4} — imported by HRX (QBO #${e.purchaseId})`,
         ...(policyID ? { policyID } : {}),
       })),
