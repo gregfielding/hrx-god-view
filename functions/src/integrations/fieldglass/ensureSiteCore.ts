@@ -136,10 +136,29 @@ function locationDisplay(loc: Record<string, unknown>): string {
   return String(loc.name ?? '').trim();
 }
 
+/**
+ * Find the location this Fieldglass site already maps to.
+ *
+ * Site CODE is the only globally-unique key, so a code hit is authoritative.
+ * The name fallback exists because a location may predate its first FG order
+ * and therefore carry no code yet — but a name alone is NOT identifying:
+ * Sodexo reuses site names across the country, and HRX also holds
+ * manually-created locations (CRM prospects) that share a client's name.
+ *
+ * **Guard (2026-07-15)**: a name match must AGREE with the directory's
+ * city/state for the code before we reuse it. Without this, FG order
+ * SDXOJP00188954 for GRIFOLS (0037445001 = CLAYTON, NC) matched a
+ * hand-created "Grifols" location at Grifols' corporate HQ in Emeryville CA,
+ * then stamped the NC site code onto it — cementing the wrong mapping for
+ * every future GRIFOLS order and publishing an NC job as a Bay Area job.
+ * A conflicting name match now returns null, so the caller creates the
+ * correct location instead of hijacking an unrelated one.
+ */
 function findExistingLocation(
   locations: LocationDocLite[],
   siteCode: string | null,
   siteName: string,
+  expected?: { city?: string | null; state?: string | null } | null,
 ): LocationDocLite | null {
   if (siteCode) {
     const byCode = locations.find((l) => locationCode(l.data) === siteCode);
@@ -147,13 +166,24 @@ function findExistingLocation(
   }
   const wanted = normalizeSiteName(siteName);
   if (!wanted) return null;
-  return (
-    locations.find(
-      (l) =>
-        normalizeSiteName(String(l.data.name ?? '')) === wanted ||
-        normalizeSiteName(String(l.data.nickname ?? '')) === wanted,
-    ) ?? null
+  const byName = locations.find(
+    (l) =>
+      normalizeSiteName(String(l.data.name ?? '')) === wanted ||
+      normalizeSiteName(String(l.data.nickname ?? '')) === wanted,
   );
+  if (!byName) return null;
+
+  // Only trust the name when geography doesn't contradict it. Compare on
+  // whatever the candidate actually has — a location with no city/state
+  // recorded can't contradict, so it stays reusable (the pre-code case this
+  // fallback was written for).
+  const expState = String(expected?.state ?? '').trim().toUpperCase();
+  const expCity = String(expected?.city ?? '').trim().toUpperCase();
+  const gotState = String(byName.data.state ?? '').trim().toUpperCase();
+  const gotCity = String(byName.data.city ?? '').trim().toUpperCase();
+  if (expState && gotState && expState !== gotState) return null;
+  if (expCity && gotCity && expCity !== gotCity) return null;
+  return byName;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -355,7 +385,13 @@ export async function ensureSiteCore(
     data: d.data() as Record<string, unknown>,
   }));
 
-  const existingLocation = findExistingLocation(locations, resolvedSiteCode, siteName);
+  // Pass the directory's authoritative city/state (falling back to the
+  // order's own work-location address) so a name-only match in the wrong
+  // geography is rejected rather than hijacked — see findExistingLocation.
+  const existingLocation = findExistingLocation(locations, resolvedSiteCode, siteName, {
+    city: directoryRow?.city ?? address?.city ?? null,
+    state: directoryRow?.state ?? address?.state ?? null,
+  });
 
   // Auto mode guard: creating a NEW location demands an exact directory
   // match. Reusing an existing one (already human-vetted) is fine.
