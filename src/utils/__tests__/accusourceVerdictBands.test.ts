@@ -81,15 +81,10 @@ describe('BAND_ORDER + display constants', () => {
 });
 
 describe('isSyntheticOrderRow', () => {
-  test('detects rows whose id starts with "order:" (the AccuSource webhook key prefix)', () => {
-    expect(isSyntheticOrderRow(makeLine('order:8534895', 'PENDING'))).toBe(true);
-    expect(isSyntheticOrderRow(makeLine('order:1', 'PENDING'))).toBe(true);
-  });
-
-  test('detects rows whose name still matches /^order N$/i after the line builder ran', () => {
+  test('detects contentless placeholders: "Order N" name with nothing actionable', () => {
     // The line builder ALREADY rewrites these to "County Criminal · {jurisdiction}"
-    // when jurisdiction info exists, so by the time we see one here it has no
-    // useful info — safe to filter as a presentation guard.
+    // when jurisdiction info exists, so a still-"Order N" row that is also
+    // PENDING has no information to surface — safe to filter.
     expect(
       isSyntheticOrderRow(makeLine('68208', 'PENDING', { name: 'Order 8534895' })),
     ).toBe(true);
@@ -100,6 +95,40 @@ describe('isSyntheticOrderRow', () => {
     expect(
       isSyntheticOrderRow(makeLine('68208', 'PENDING', { name: '  Order 99 ' })),
     ).toBe(true);
+    // The order-prefixed webhook key alone doesn't make it real.
+    expect(
+      isSyntheticOrderRow(makeLine('order:8534895', 'PENDING', { name: 'Order 8534895' })),
+    ).toBe(true);
+  });
+
+  test('an order:* row with a REAL service name is not synthetic (regression: Payton Harris)', () => {
+    // AccuSource sends the drug screen as a lab payload carrying order_id but
+    // no service_id, so it lands keyed `order:9357174` while naming itself
+    // properly. The old id-prefix rule hid this genuine result and the panel
+    // rendered "(0)".
+    expect(
+      isSyntheticOrderRow(
+        makeLine('order:9357174', 'PASSED', { name: 'Quest Drug Screen', status: 'Collection is complete' }),
+      ),
+    ).toBe(false);
+  });
+
+  test('a placeholder-named row still shows once it carries a verdict (hiding it would hide review work)', () => {
+    // When the named webhook never arrives the row keeps its "Order N" name,
+    // but the vendor still reports status and auto-verdict can land it in
+    // NEEDS_REVIEW — real adjudication work per policy §4/§6. Showing a
+    // plainly-named row beats silently dropping a case from the reviewer.
+    expect(
+      isSyntheticOrderRow(
+        makeLine('order:9357172', 'NEEDS_REVIEW', { name: 'Order 9357172', status: 'Completed' }),
+      ),
+    ).toBe(false);
+    expect(
+      isSyntheticOrderRow(makeLine('order:1', 'FAILED', { name: 'Order 1' })),
+    ).toBe(false);
+    expect(
+      isSyntheticOrderRow(makeLine('order:2', 'PASSED', { name: 'Order 2' })),
+    ).toBe(false);
   });
 
   test('does NOT filter real service lines', () => {
@@ -150,8 +179,10 @@ describe('groupLinesByBand', () => {
   });
 
   test('filters synthetic order:* rows by default', () => {
+    // A real synthetic carries the placeholder "Order N" name the vendor's
+    // order-level webhook produces (see accusourceWebhookServiceLine).
     const lines = [
-      makeLine('order:8534895', 'PENDING'),
+      makeLine('order:8534895', 'PENDING', { name: 'Order 8534895' }),
       makeLine('68208', 'PASSED', { name: 'County Criminal' }),
       makeLine('68209', 'PENDING', { name: 'Order 12345' }),
     ];
@@ -163,7 +194,7 @@ describe('groupLinesByBand', () => {
 
   test('opts.keepSynthetic preserves order:* rows for callers that need them (none today)', () => {
     const lines = [
-      makeLine('order:8534895', 'PENDING'),
+      makeLine('order:8534895', 'PENDING', { name: 'Order 8534895' }),
       makeLine('68208', 'PASSED', { name: 'County Criminal' }),
     ];
     const grouped = groupLinesByBand(lines, { keepSynthetic: true });
@@ -176,7 +207,7 @@ describe('totalVisibleLineCount', () => {
   test('sums non-synthetic lines so the card header matches what the user can scroll through', () => {
     const lines = [
       makeLine('a', 'PASSED'),
-      makeLine('order:1', 'PENDING'),
+      makeLine('order:1', 'PENDING', { name: 'Order 1' }),
       makeLine('b', 'NEEDS_REVIEW'),
       makeLine('c', 'PENDING', { name: 'Order 5' }),
     ];
@@ -186,10 +217,22 @@ describe('totalVisibleLineCount', () => {
   test('returns zero when every line is synthetic', () => {
     expect(
       totalVisibleLineCount([
-        makeLine('order:1', 'PENDING'),
-        makeLine('order:2', 'PENDING'),
+        makeLine('order:1', 'PENDING', { name: 'Order 1' }),
+        makeLine('order:2', 'PENDING', { name: 'Order 2' }),
       ]),
     ).toBe(0);
+  });
+
+  test('counts a completed placeholder awaiting review — hiding it would hide the case', () => {
+    // Payton Harris (2026-07-15): two lines whose named webhook never arrived
+    // still carried Completed + NEEDS_REVIEW. The panel must not read "(0)".
+    expect(
+      totalVisibleLineCount([
+        makeLine('order:9357172', 'NEEDS_REVIEW', { name: 'Order 9357172', status: 'Completed' }),
+        makeLine('order:9357174', 'PASSED', { name: 'Quest Drug Screen' }),
+        makeLine('order:9357179', 'NEEDS_REVIEW', { name: 'Order 9357179', status: 'Completed' }),
+      ]),
+    ).toBe(3);
   });
 });
 

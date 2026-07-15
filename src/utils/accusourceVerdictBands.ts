@@ -130,28 +130,42 @@ export function verdictBand(verdict: AccusourceLineVerdict | string): Accusource
 }
 
 /**
- * True when a line should be hidden from the AC.0a UI as a "synthetic"
- * vendor-order entry rather than an actual service line. Per the spec:
+ * True when a line is a contentless "synthetic" vendor-order placeholder
+ * that should be hidden from the AC.0a UI rather than an actual service
+ * line.
  *
- *   "Detection rule: filter rows where serviceId.startsWith('order:') OR
- *   serviceName === 'Order ' + providerOrderId (or similar pattern —
- *   adjust based on observed data)."
+ * The line builder (`accusourceScreeningLineItems.ts`) rewrites generic
+ * `Order N` names to `County Criminal · {jurisdiction}` when jurisdiction
+ * info is present, and its 90-second time-correlated dedup merges
+ * order-level pings into their named counterparts. This is the
+ * presentation catch-all for what survives — it does NOT delete rows from
+ * Firestore.
  *
- * The line builder (`accusourceScreeningLineItems.ts`) ALREADY rewrites
- * generic `Order N` names to `County Criminal · {jurisdiction}` when
- * jurisdiction info is present, so by the time we see a row whose name
- * still matches `/^order\s+\S+$/i`, it has no useful info to surface.
- * Filtering it is safe — and aligns with the spec's "either pattern" rule.
+ * Two rules, both learned from live data (Payton Harris, 2026-07-15 —
+ * profile 1907135, where the panel rendered "(0)" while three real lines
+ * sat in Firestore):
  *
- * NOTE: this is a presentation guard — it does NOT delete rows from
- * Firestore. The line builder's 90-second time-correlated dedup is the
- * primary mechanism; this filter is the catch-all for synthetics that
- * survive that dedup (rare, e.g. when the named webhook never arrived).
+ *  1. **A row with a real service name is never synthetic.** AccuSource
+ *     keys some genuinely-named lines `order:*` — e.g. the drug screen
+ *     arrives as a lab payload carrying `order_id` but no `service_id`,
+ *     so it lands as `order:9357174` / "Quest Drug Screen · Collection is
+ *     complete". The old id-prefix test hid it. Only the NAME can tell us
+ *     a row is contentless, which is what the spec's rule actually meant.
+ *
+ *  2. **A placeholder-named row still shows once it carries a verdict.**
+ *     When the named webhook never arrives, the row keeps its "Order N"
+ *     name — but the vendor still reports its status, and auto-verdict
+ *     can land it in NEEDS_REVIEW / FAILED / PASSED. That is real
+ *     adjudication work (policy §4/§6), and silently dropping it hides a
+ *     case from the reviewer. Showing a plainly-named row beats hiding a
+ *     NEEDS_REVIEW. Only placeholders with nothing actionable (PENDING)
+ *     are noise worth suppressing.
  */
 export function isSyntheticOrderRow(line: AccusourceScreeningLineItem): boolean {
-  if (typeof line.id === 'string' && line.id.startsWith('order:')) return true;
-  if (typeof line.name === 'string' && /^order\s+\S+$/i.test(line.name.trim())) return true;
-  return false;
+  const placeholderName =
+    typeof line.name === 'string' && /^order\s+\S+$/i.test(line.name.trim());
+  if (!placeholderName) return false;
+  return verdictBand(line.verdict) === 'PENDING';
 }
 
 /**
