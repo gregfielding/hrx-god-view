@@ -226,6 +226,7 @@ export {
 } from './compliance/complianceMailbox';
 export { getQboAuthUrl, qboOAuthCallback, getQboStatus } from './integrations/quickbooks/qboAuth';
 export { expensifyCardPushCron } from './integrations/expensify/expensifyPush';
+export { syncWorkersCompToEveree } from './integrations/everee/syncWorkersCompRates';
 export {
   previewExpensifyCardExport,
   confirmExpensifyCardExport,
