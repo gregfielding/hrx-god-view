@@ -435,6 +435,31 @@ function formatHours(h: number): string {
   return h.toFixed(1);
 }
 
+/** Compact reg/OT/DT subline under the Actual-hrs cell. Renders only when a
+ *  classified split exists on the entry (stamped at submit — CA daily rules
+ *  or the weekly-40 cascade). Without it a CA 12.5-hour day reads as one
+ *  opaque number and the Total looks wrong next to hours × rate. */
+const HoursSplitHint: React.FC<{ entry: TimesheetEntryV2 }> = ({ entry }) => {
+  const ot = Number(entry.totalOTHours ?? 0);
+  const dt = Number(entry.totalDoubleTimeHours ?? 0);
+  if (ot <= 0 && dt <= 0) return null;
+  const reg = Number(entry.totalRegularHours ?? 0);
+  const parts = [`${formatHours(reg)} reg`];
+  if (ot > 0) parts.push(`${formatHours(ot)} OT`);
+  if (dt > 0) parts.push(`${formatHours(dt)} DT`);
+  return (
+    <Tooltip title="Pay classification sent to Everee: regular + overtime (1.5×) + double time (2×)">
+      <Typography
+        variant="caption"
+        color="warning.main"
+        sx={{ display: 'block', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}
+      >
+        {parts.join(' + ')}
+      </Typography>
+    </Tooltip>
+  );
+};
+
 interface RowCommonProps {
   row: TimesheetGridRow;
   status: TimesheetRowDisplayStatus;
@@ -906,15 +931,21 @@ const ImportRow: React.FC<{
       <TableCell>—</TableCell>
       <TableCell align="right">
         {hoursEditable ? (
-          <HoursOverrideCell
-            value={actualHrs}
-            onSave={saveHours}
-            ariaLabel="Imported actual hours"
-          />
+          <>
+            <HoursOverrideCell
+              value={actualHrs}
+              onSave={saveHours}
+              ariaLabel="Imported actual hours"
+            />
+            <HoursSplitHint entry={row.entry} />
+          </>
         ) : (
-          <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-            {actualHrs > 0 ? formatHours(actualHrs) : '—'}
-          </Typography>
+          <>
+            <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+              {actualHrs > 0 ? formatHours(actualHrs) : '—'}
+            </Typography>
+            <HoursSplitHint entry={row.entry} />
+          </>
         )}
       </TableCell>
       <TableCell align="right">
@@ -979,7 +1010,18 @@ const ImportRow: React.FC<{
       </TableCell>
       <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
         {(() => {
-          const base = payRate > 0 && actualHrs > 0 ? actualHrs * payRate : 0;
+          // Premium-aware once a classified split is stamped (at submit):
+          // reg + 1.5×OT + 2×DT matches the worked shift actually sent to
+          // Everee. Pre-submit rows have no split → straight hours × rate.
+          const ot = Number(row.entry.totalOTHours ?? 0);
+          const dt = Number(row.entry.totalDoubleTimeHours ?? 0);
+          const reg = Number(row.entry.totalRegularHours ?? 0);
+          const base =
+            ot > 0 || dt > 0
+              ? reg * payRate + ot * payRate * 1.5 + dt * payRate * 2
+              : payRate > 0 && actualHrs > 0
+                ? actualHrs * payRate
+                : 0;
           const tips = typeof row.entry.tips === 'number' ? row.entry.tips : 0;
           const bonus = typeof row.entry.bonusAmount === 'number' ? row.entry.bonusAmount : 0;
           const total = base + tips + bonus;
@@ -1251,6 +1293,7 @@ const EntryRow: React.FC<EntryRowProps> = ({
               : undefined
           }
         />
+        <HoursSplitHint entry={entry} />
       </TableCell>
 
       <TableCell align="right">
