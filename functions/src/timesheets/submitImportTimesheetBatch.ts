@@ -973,7 +973,11 @@ async function submitW2(args: PathArgs) {
         shiftEndEpochSeconds: window.endEpochSeconds,
         effectiveHourlyPayRate: { amount: rateStr, currency: 'USD' },
         workersCompClassCode: p.wc,
-        note: dayLabel(`Imported from ${cust}`, p.row.eventLabel, p.workDate),
+        note:
+          dayLabel(`Imported from ${cust}`, p.row.eventLabel, p.workDate) +
+          (window.clampedToPayWeek
+            ? ' — overnight shift; times compressed to stay in this pay week'
+            : ''),
         fullyClassifiedHours: segments,
       };
       if (window.breaks.length > 0) {

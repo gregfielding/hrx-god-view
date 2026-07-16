@@ -132,6 +132,14 @@ export interface ComposedImportWindow {
   breaks: Array<{ startEpochSeconds: number; endEpochSeconds: number; paid: boolean }>;
   /** True when the start came from a real CSV clock-in (vs noon-UTC synthetic). */
   usedRealClock: boolean;
+  /** True when the real window would have crossed the Sat→Sun pay-week
+   *  boundary and was pulled back to end inside the work date's week.
+   *  Aaron Ortiz 2026-07-16: his 7/11 6pm→7/12 5:25am shift straddled the
+   *  boundary — Everee's payroll EXCLUDED it from the 7/5-11 run while its
+   *  UI displayed it in NEITHER week, leaving $205.50 invisibly unpaid.
+   *  Pay is unaffected by the clamp (hours drive pay); only the stub's
+   *  displayed punch times compress. */
+  clampedToPayWeek: boolean;
 }
 
 /** Noon-UTC synthetic start (legacy behavior) — avoids TZ off-by-one on the
@@ -166,12 +174,38 @@ export function composeImportWindow(input: {
   // Paid breaks count toward worked time (net already includes them per the
   // CSV), so they sit inside a net-sized window. Unpaid breaks extend it.
   const windowSeconds = breakPaid ? netSeconds : netSeconds + breakSeconds;
-  const end = start + windowSeconds;
+  let clampedStart = start;
+  let end = start + windowSeconds;
+
+  // ── Pay-week boundary clamp ──────────────────────────────────────────
+  // A shift whose window crosses Sat→Sun lands in payroll no-man's-land:
+  // Everee's payroll bucketed Aaron Ortiz's 7/11 overnight by its 7/12 END
+  // (excluded from the 7/5-11 run) while the Timesheet UI bucketed by
+  // START (displayed in neither week) — an unpaid shift no screen shows.
+  // Overnights WITHIN a week are fine; only the week-crossing case moves.
+  // We keep the work date's week: end at Saturday 23:59 worksite-local and
+  // pull the start earlier so the duration (and pay) is unchanged.
+  let clampedToPayWeek = false;
+  const weekStart = weekKeyFor(input.workDate);
+  if (weekStart) {
+    const sat = new Date(`${weekStart}T00:00:00Z`);
+    sat.setUTCDate(sat.getUTCDate() + 6);
+    const satDate = sat.toISOString().slice(0, 10);
+    const boundary =
+      zone !== null
+        ? zonedEpochSeconds(satDate, 23 * 60 + 59, zone)
+        : Math.floor(Date.UTC(sat.getUTCFullYear(), sat.getUTCMonth(), sat.getUTCDate(), 23, 59, 0) / 1000);
+    if (boundary !== null && end > boundary && windowSeconds < 6 * 86400) {
+      end = boundary;
+      clampedStart = boundary - windowSeconds;
+      clampedToPayWeek = true;
+    }
+  }
 
   const breaks: ComposedImportWindow['breaks'] = [];
   if (breakSeconds > 0 && windowSeconds > breakSeconds + 120) {
     // Mid-window placement, minute-aligned — the CSV has duration only.
-    const mid = start + Math.round((windowSeconds - breakSeconds) / 2 / 60) * 60;
+    const mid = clampedStart + Math.round((windowSeconds - breakSeconds) / 2 / 60) * 60;
     breaks.push({
       startEpochSeconds: mid,
       endEpochSeconds: mid + breakSeconds,
@@ -180,11 +214,12 @@ export function composeImportWindow(input: {
   }
 
   return {
-    startEpochSeconds: start,
+    startEpochSeconds: clampedStart,
     endEpochSeconds: end,
     netSeconds,
     breaks,
     usedRealClock: realStart !== null,
+    clampedToPayWeek,
   };
 }
 
