@@ -208,22 +208,47 @@ export interface WeeklyOtDayInput {
   userId: string;
   workDate: string;
   netHours: number;
+  /** Worksite state (e.g. 'CA') — selects the daily OT/DT thresholds.
+   *  Absent/unknown states get federal weekly-40 only (prior behavior). */
+  stateCode?: string | null;
 }
 
 export interface WeeklyOtDaySplit {
   key: string;
   regularSeconds: number;
   overtimeSeconds: number;
+  doubleTimeSeconds: number;
 }
 
 const WEEKLY_THRESHOLD_SECONDS = 40 * 3600;
 
+/** Daily reg/OT caps in seconds by state. CA: over 8h/day = OT, over
+ *  12h/day = DT (Labor Code §510). States absent here have no daily OT —
+ *  federal weekly-40 only. Mirrors the payRules registry (rules/): the
+ *  import path can't run the full engine (no punch-level breaks for the
+ *  meal/rest premium rules, no 7th-consecutive-day context across
+ *  partial uploads), so it applies the hour-classification subset.
+ *  §226.7 premiums for import weeks remain a manual review item. */
+const DAILY_CAPS_BY_STATE: Record<string, { regCapSeconds: number; otCapSeconds: number }> = {
+  CA: { regCapSeconds: 8 * 3600, otCapSeconds: 12 * 3600 },
+};
+
 /**
- * FLSA weekly cascade: within each worker's workweek, hours past 40 are
- * overtime. `priorSecondsByWorkerWeek` (key `${userId}__${weekKey}`) carries
- * net seconds already submitted to Everee in earlier batches for the same
- * week — those consume the 40-hour threshold first (chronology caveat: prior
- * hours are assumed earlier in the week, the normal partial-upload case).
+ * State-aware hour classification for imported (daily-total) rows:
+ * a per-day split against the state's daily thresholds, then the weekly
+ * cascade — hours past 40 cumulative REGULAR hours demote to overtime.
+ * Counting only regular hours toward the 40 is CA's no-pyramiding rule
+ * and is identity for states without daily OT (all hours are regular).
+ *
+ * `priorSecondsByWorkerWeek` (key `${userId}__${weekKey}`) carries net
+ * seconds already submitted to Everee in earlier batches for the same
+ * week — those consume the 40-hour threshold first (chronology caveat:
+ * prior hours are assumed earlier in the week, the normal partial-upload
+ * case).
+ *
+ * Was FLSA-weekly-only until 2026-07-16: Brian Battles' 47.33-hour CA
+ * week (four 11.5–12.5h days) shipped as 40 reg + 7.33 OT instead of
+ * 32 reg + 14.83 OT + 0.5 DT — a $106.55 underpayment.
  */
 export function classifyWeeklyOt(
   days: WeeklyOtDayInput[],
@@ -237,18 +262,26 @@ export function classifyWeeklyOt(
   }
   for (const [gk, group] of groups) {
     group.sort((a, b) => a.workDate.localeCompare(b.workDate));
-    let cumulative = Math.max(0, Math.round(priorSecondsByWorkerWeek.get(gk) ?? 0));
+    let cumulativeRegular = Math.max(0, Math.round(priorSecondsByWorkerWeek.get(gk) ?? 0));
     for (const d of group) {
       const netSeconds = Math.max(60, Math.round(Number(d.netHours) * 60) * 60);
-      const remainingRegular = Math.max(0, WEEKLY_THRESHOLD_SECONDS - cumulative);
-      // Minute-align the split so both segments survive Everee's flooring.
-      const regularSeconds = Math.min(netSeconds, Math.floor(remainingRegular / 60) * 60);
-      out.set(d.key, {
-        key: d.key,
-        regularSeconds,
-        overtimeSeconds: netSeconds - regularSeconds,
-      });
-      cumulative += netSeconds;
+      const caps = DAILY_CAPS_BY_STATE[String(d.stateCode ?? '').trim().toUpperCase()];
+
+      // 1. Daily split (minute-aligned; caps are whole hours already).
+      let regularSeconds = caps ? Math.min(netSeconds, caps.regCapSeconds) : netSeconds;
+      let overtimeSeconds = caps
+        ? Math.min(netSeconds - regularSeconds, caps.otCapSeconds - caps.regCapSeconds)
+        : 0;
+      const doubleTimeSeconds = netSeconds - regularSeconds - overtimeSeconds;
+
+      // 2. Weekly cascade over the regular portion.
+      const remainingRegular = Math.max(0, WEEKLY_THRESHOLD_SECONDS - cumulativeRegular);
+      const keepRegular = Math.min(regularSeconds, Math.floor(remainingRegular / 60) * 60);
+      overtimeSeconds += regularSeconds - keepRegular;
+      regularSeconds = keepRegular;
+
+      out.set(d.key, { key: d.key, regularSeconds, overtimeSeconds, doubleTimeSeconds });
+      cumulativeRegular += regularSeconds;
     }
   }
   return out;

@@ -11,14 +11,17 @@
  *     double-paying.
  *
  *   - W-2 (C1 Select, employees): each row becomes a worked shift on the
- *     Timesheets API. We send a synthetic shift window sized to the day's
- *     hours but DO NOT pre-classify regular/OT/DT — Everee's payroll engine
- *     computes daily + weekly overtime per state rules (an imported timesheet
- *     carries no clock detail, and Everee is the system of record). WC class
- *     code is required; worksite resolves to an Everee `workLocationId` via
- *     the cache. Idempotency is server-assigned: the returned `workedShiftId`
- *     is stored on the per-row status doc, and an already-submitted row is
- *     skipped to avoid duplicate shifts.
+ *     Timesheets API. HRX classifies the hours ITSELF (classifyWeeklyOt:
+ *     state daily thresholds — CA 8h/12h — then the weekly-40 cascade) and
+ *     sends fullyClassifiedHours segments. Everee does NOT apply state
+ *     rules to unclassified shifts: the original "Everee computes daily +
+ *     weekly OT" assumption shipped straight-time weeks (Zirick Brooks,
+ *     2026-07-06) and then weekly-only CA weeks (Brian Battles,
+ *     2026-07-16 — $106.55 under). WC class code is required; worksite
+ *     resolves to an Everee `workLocationId` via the cache. Idempotency is
+ *     server-assigned: the returned `workedShiftId` is stored on the
+ *     per-row status doc, and an already-submitted row is skipped to avoid
+ *     duplicate shifts.
  *
  * Two modes for both paths:
  *   - dryRun: compose + return the exact preview WITHOUT calling Everee.
@@ -180,9 +183,10 @@ interface ComposedPreview {
   /** Day gross. W-2: reg×rate + OT×1.5×rate (HRX classifies weekly OT —
    *  Everee's endpoint never auto-classified). 1099: hours × rate. */
   amount: number;
-  /** W-2 only — the FLSA weekly-40 split for the day. */
+  /** W-2 only — the state-aware reg/OT/DT split for the day. */
   regularHours?: number;
   overtimeHours?: number;
+  doubleTimeHours?: number;
   /** W-2 only — CSV break duration rendered on the worked shift. */
   breakMinutes?: number;
   workersCompCode?: string | null;
@@ -212,11 +216,12 @@ function importEntryStamp(args: {
   worksiteState?: string | null;
   externalId: string;
   uid: string;
-  /** W-2 only — FLSA weekly-40 split (decimal hours). When present, the entry
-   *  mirrors the reg/OT segments actually sent to Everee; absent (1099 path)
-   *  everything stays straight-time as before. */
+  /** W-2 only — state-aware reg/OT/DT split (decimal hours). When present,
+   *  the entry mirrors the segments actually sent to Everee; absent (1099
+   *  path) everything stays straight-time as before. */
   regularHours?: number;
   overtimeHours?: number;
+  doubleTimeHours?: number;
 }): Record<string, unknown> {
   const importSidecar: Record<string, unknown> = {
     customer: args.customer,
@@ -241,7 +246,7 @@ function importEntryStamp(args: {
     totalOTHours: args.overtimeHours ?? 0,
     totalFlsaOTHours: args.overtimeHours ?? 0,
     totalNonFlsaOTHours: 0,
-    totalDoubleTimeHours: 0,
+    totalDoubleTimeHours: args.doubleTimeHours ?? 0,
     mealBreakPenaltyHours: 0,
     restBreakPenaltyHours: 0,
     payRate: args.payRate,
@@ -612,23 +617,34 @@ interface W2Plan {
   payRate: number;
   wc: string;
   externalId: string;
-  /** FLSA weekly-40 split (minute-aligned seconds), stamped after
-   *  classifyWeeklyOt runs against the batch + prior-week submissions. */
+  /** State-aware reg/OT/DT split (minute-aligned seconds), stamped after
+   *  classifyWeeklyOt runs against the batch + prior-week submissions.
+   *  CA gets daily 8h/12h thresholds; other states weekly-40 only. */
   regularSeconds: number;
   overtimeSeconds: number;
+  doubleTimeSeconds: number;
 }
 
-/** Round-to-cent day gross under the reg/OT split. */
-function splitGross(regularSeconds: number, overtimeSeconds: number, rate: number): {
+/** Round-to-cent day gross under the reg/OT/DT split (1.5× / 2×). */
+function splitGross(
+  regularSeconds: number,
+  overtimeSeconds: number,
+  doubleTimeSeconds: number,
+  rate: number,
+): {
   regularHours: number;
   overtimeHours: number;
+  doubleTimeHours: number;
   gross: number;
 } {
   const regularHours = regularSeconds / 3600;
   const overtimeHours = overtimeSeconds / 3600;
+  const doubleTimeHours = doubleTimeSeconds / 3600;
   const gross =
-    Math.round((regularHours * rate + overtimeHours * rate * 1.5) * 100) / 100;
-  return { regularHours, overtimeHours, gross };
+    Math.round(
+      (regularHours * rate + overtimeHours * rate * 1.5 + doubleTimeHours * rate * 2.0) * 100,
+    ) / 100;
+  return { regularHours, overtimeHours, doubleTimeHours, gross };
 }
 
 /**
@@ -722,6 +738,7 @@ async function submitW2(args: PathArgs) {
       externalId: importExternalId({ tenantId, customer: cust, userId, workDate, kind: 'WORKED_SHIFT' }),
       regularSeconds: 0,
       overtimeSeconds: 0,
+      doubleTimeSeconds: 0,
     });
   }
 
@@ -749,6 +766,10 @@ async function submitW2(args: PathArgs) {
         userId: p.userId,
         workDate: p.workDate,
         netHours: p.hours,
+        // Daily thresholds follow the WORKSITE state (CA §510 daily 8h/12h).
+        // Brian Battles 2026-07-16: four 11.5-12.5h CA days shipped as
+        // weekly-40-only — 32 reg + 14.83 OT + 0.5 DT owed, 40 + 7.33 paid.
+        stateCode: p.row.worksiteAddress?.state ?? null,
       })),
       priorSeconds,
     );
@@ -757,20 +778,23 @@ async function submitW2(args: PathArgs) {
       if (split) {
         p.regularSeconds = split.regularSeconds;
         p.overtimeSeconds = split.overtimeSeconds;
+        p.doubleTimeSeconds = split.doubleTimeSeconds;
       } else {
         p.regularSeconds = minuteAlignedDay(p.hours, p.payRate).seconds;
         p.overtimeSeconds = 0;
+        p.doubleTimeSeconds = 0;
       }
     }
   } else {
     for (const p of plans) {
       p.regularSeconds = minuteAlignedDay(p.hours, p.payRate).seconds;
       p.overtimeSeconds = 0;
+      p.doubleTimeSeconds = 0;
     }
   }
 
   const preview: ComposedPreview[] = plans.map((p) => {
-    const g = splitGross(p.regularSeconds, p.overtimeSeconds, p.payRate);
+    const g = splitGross(p.regularSeconds, p.overtimeSeconds, p.doubleTimeSeconds, p.payRate);
     return {
       externalId: p.externalId,
       externalWorkerId: p.userId,
@@ -778,10 +802,11 @@ async function submitW2(args: PathArgs) {
       workDate: p.workDate,
       hours: p.hours,
       payRate: p.payRate,
-      // Minute-aligned gross incl. the OT premium — matches the worked shift.
+      // Minute-aligned gross incl. the OT/DT premiums — matches the worked shift.
       amount: g.gross,
       regularHours: Math.round(g.regularHours * 100) / 100,
       overtimeHours: Math.round(g.overtimeHours * 100) / 100,
+      doubleTimeHours: Math.round(g.doubleTimeHours * 100) / 100,
       breakMinutes: Math.max(0, Math.round(Number(p.row.breakMinutes ?? 0))),
       workersCompCode: p.wc,
       worksiteName: p.row.worksiteName ?? null,
@@ -929,6 +954,19 @@ async function submitW2(args: PathArgs) {
         });
         cursor += p.overtimeSeconds;
       }
+      if (p.doubleTimeSeconds > 0) {
+        // CA §510: hours past 12 in a day pay 2×.
+        const dtRate = Math.round(p.payRate * 2.0 * 100) / 100;
+        const dtGross = Math.round((p.doubleTimeSeconds / 3600) * p.payRate * 2.0 * 100) / 100;
+        segments.push({
+          type: 'DOUBLE_TIME',
+          startEpochSeconds: cursor,
+          endEpochSeconds: cursor + p.doubleTimeSeconds,
+          hourlyPayRate: { amount: dtRate.toFixed(2), currency: 'USD' },
+          grossPayAmount: { amount: dtGross.toFixed(2), currency: 'USD' },
+        });
+        cursor += p.doubleTimeSeconds;
+      }
       const input: CreateWorkedShiftInput = {
         externalWorkerId: p.userId,
         shiftStartEpochSeconds: window.startEpochSeconds,
@@ -973,7 +1011,8 @@ async function submitW2(args: PathArgs) {
     for (const p of periodLocked) {
       const regGross = Math.round((p.regularSeconds / 3600) * p.payRate * 100) / 100;
       const otGross = Math.round((p.overtimeSeconds / 3600) * p.payRate * 1.5 * 100) / 100;
-      const amount = Math.round((regGross + otGross) * 100) / 100;
+      const dtGross = Math.round((p.doubleTimeSeconds / 3600) * p.payRate * 2.0 * 100) / 100;
+      const amount = Math.round((regGross + otGross + dtGross) * 100) / 100;
       if (!(amount > 0)) continue;
       const retroExternalId = importExternalId({
         tenantId,
@@ -1166,6 +1205,7 @@ async function submitW2(args: PathArgs) {
           uid,
           regularHours: Math.round((plan.regularSeconds / 3600) * 10000) / 10000,
           overtimeHours: Math.round((plan.overtimeSeconds / 3600) * 10000) / 10000,
+          doubleTimeHours: Math.round((plan.doubleTimeSeconds / 3600) * 10000) / 10000,
         }),
         everee: {
           workedShiftId: String(workedShiftId),
@@ -1262,6 +1302,7 @@ async function submitW2(args: PathArgs) {
           uid,
           regularHours: Math.round((r.plan.regularSeconds / 3600) * 10000) / 10000,
           overtimeHours: Math.round((r.plan.overtimeSeconds / 3600) * 10000) / 10000,
+          doubleTimeHours: Math.round((r.plan.doubleTimeSeconds / 3600) * 10000) / 10000,
         }),
         everee: {
           status: 'SUBMITTED',
