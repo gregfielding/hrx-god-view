@@ -661,7 +661,16 @@ export async function ensureJobOrderForFieldglassRequest(
     ...(wc ? { workersCompCode: wc.code, workersCompRate: wc.rate } : {}),
     ...(window
       ? {}
-      : { shiftType: 'open', noFixedTimes: true, autoCreatedOpenShift: true }),
+      : {
+          shiftType: 'open',
+          noFixedTimes: true,
+          autoCreatedOpenShift: true,
+          // The whole FG pipeline exists to market the order — the posting
+          // is live and the radius blast fires, so the open shift must
+          // collect interest on it. Without this the posting showed no
+          // applyable shift (UNC Rockingham SDXOJP00189230, 2026-07-16).
+          showOnJobsBoard: true,
+        }),
     hideFromJobsBoard: false,
     shiftMode: 'single',
     createdAt: now,
@@ -1043,6 +1052,28 @@ async function backfillJobOrderFromEnrichment(
         err: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  // Auto-created open shifts predating the showOnJobsBoard default (or
+  // created before this pass) must collect interest on the live posting —
+  // the backfill is the one hook that reliably revisits email-born orders.
+  // Recruiter-touched shifts are left alone (only the SYSTEM-authored,
+  // auto-created open shift is patched, and only when the flag is unset).
+  try {
+    const shifts = await joRef.collection('shifts').where('autoCreatedOpenShift', '==', true).get();
+    for (const s of shifts.docs) {
+      if (s.get('showOnJobsBoard') === true) continue;
+      await s.ref.update({ showOnJobsBoard: true, updatedAt: FieldValue.serverTimestamp(), updatedBy: SYSTEM_ACTOR });
+      logger.info('[fieldglassJobOrder] open shift set to collect interest', {
+        jobOrderId: joRef.id,
+        shiftId: s.id,
+      });
+    }
+  } catch (err) {
+    logger.warn('[fieldglassJobOrder] open-shift jobs-board patch failed (non-fatal)', {
+      jobOrderId: joRef.id,
+      err: err instanceof Error ? err.message : String(err),
+    });
   }
 
   if (Object.keys(patch).length === 0) return;
