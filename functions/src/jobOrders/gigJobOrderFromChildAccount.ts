@@ -848,8 +848,17 @@ export async function loadWorksiteFromChildLocation(
   const name = trim(loc.name);
   const worksiteName = nickname || name || 'Location';
 
-  const addr = (loc.address as Record<string, unknown>) ?? {};
-  const street = trim(addr.street ?? loc.street);
+  // CRM location docs usually keep the street as a STRING in `address`
+  // ("1638 Dolwick Drive"); the object shape is the exception. Reading
+  // `.street` off the string yielded "" and every downstream consumer —
+  // gig JO stamping, the timesheet import worksite, the Everee work
+  // location — silently lost the street (2026-07-16, "8044 for OH").
+  const addr = (typeof loc.address === 'object' && loc.address !== null
+    ? loc.address
+    : {}) as Record<string, unknown>;
+  const street = trim(
+    addr.street ?? (typeof loc.address === 'string' ? loc.address : loc.street),
+  );
   const city = trim(addr.city ?? loc.city);
   const state = trim(addr.state ?? loc.state);
   const zipCode = trim(addr.zipCode ?? addr.zip ?? loc.zipCode ?? loc.zip);

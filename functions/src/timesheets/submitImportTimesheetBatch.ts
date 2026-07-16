@@ -832,11 +832,17 @@ async function submitW2(args: PathArgs) {
   }
 
   // Resolve each unique worksite to an Everee numeric workLocationId once.
+  // A row with NO worksite keeps the legacy fallback (Everee uses the
+  // worker's default location); a row that CLAIMS a worksite which can't be
+  // attached is rejected loudly — see the catch below.
   const locationCache = new Map<string, number>();
+  const locationErrors = new Map<string, string>();
   const resolveLocation = async (row: SubmitRow): Promise<number | undefined> => {
     const wsId = String(row.worksiteId || '').trim();
     if (!wsId) return undefined;
     if (locationCache.has(wsId)) return locationCache.get(wsId);
+    const priorError = locationErrors.get(wsId);
+    if (priorError) throw new Error(priorError);
     try {
       const a = row.worksiteAddress || {};
       const id = await ensureEvereeWorkLocation(tenantId, cfg, {
@@ -846,9 +852,23 @@ async function submitW2(args: PathArgs) {
       });
       locationCache.set(wsId, id);
       return id;
-    } catch {
-      // Non-fatal: Everee falls back to the worker's default work location.
-      return undefined;
+    } catch (e: unknown) {
+      // FATAL for this row. Everee's fallback is the worker's DEFAULT work
+      // location — their home (or the company address), so the WC class
+      // code gets validated against the wrong state ("Invalid workers comp
+      // code 8044 for OH" for a KY warehouse shift, 2026-07-16). Better to
+      // reject the row with the real reason than submit a doomed or
+      // wrongly-billed shift.
+      const raw = e instanceof Error ? e.message : String(e);
+      const reason = /line1|street|address/i.test(raw)
+        ? 'its address has no street on file'
+        : `Everee rejected the work location (${raw.slice(0, 120)})`;
+      const friendly =
+        `worksite "${row.worksiteName || wsId}" could not be attached — ${reason}. ` +
+        'Without it, workers’ comp would bill against the worker’s default state. ' +
+        'Fix the worksite address and resubmit.';
+      locationErrors.set(wsId, friendly);
+      throw new Error(friendly);
     }
   };
 
