@@ -120,6 +120,18 @@ const CACHE_DEFAULTS = {
   rowsPerPage: 20,
 };
 
+/**
+ * Module-level stale-while-revalidate cache for the fetched (pre-client-
+ * filter) row set. Kept in memory, NOT sessionStorage: rows carry Firestore
+ * Timestamps that don't survive JSON round-trips, and the pain point is
+ * in-app back-navigation (component remount), which this covers. Keyed by
+ * the server-side query signature only — search/company/type/hot are
+ * client-side filters over the same rows, so they share one entry.
+ * Filters/sort/page themselves already persist via usePageCache.
+ */
+const jobOrdersResultCache = new Map<string, { rows: JobOrderWithDetails[]; at: number }>();
+const JOB_ORDERS_RESULT_TTL_MS = 10 * 60 * 1000;
+
 const JOB_ORDER_STATUS_OPTIONS: { value: JobOrderStatus; label: string }[] = [
   { value: 'draft', label: 'Draft' },
   { value: 'open', label: 'Open' },
@@ -269,6 +281,10 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
   const [loadingRecruiterOptions, setLoadingRecruiterOptions] = useState(false);
   const firstLoadRef = useRef(true);
   const prevFiltersRef = useRef<{ search: string; statusFilter: string; companyFilter: string; typeFilter: string; showFavoritesOnly: boolean } | null>(null);
+  /** Query key of the fetch currently on the wire — the mount path calls
+   *  fetchJobOrders twice (immediate + debounced effect); the second call
+   *  with the same key must not restart the expensive enrichment fetch. */
+  const inFlightKeyRef = useRef<string | null>(null);
 
   const { favorites, toggleFavorite, isFavorite } = useFavorites('jobOrders');
 
@@ -321,14 +337,46 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
             : jo,
         ),
       );
+      // Keep the SWR cache honest so back-navigation doesn't flash the old
+      // recruiter. Assignment doesn't change query membership, so patch in
+      // place (unlike status changes, which clear).
+      jobOrdersResultCache.forEach((entry) => {
+        entry.rows = entry.rows.map((jo) =>
+          jo.id === jobOrderId ? { ...jo, assignedRecruiters: ids, recruiterName: summary } : jo,
+        );
+      });
     },
     [],
   );
 
   const fetchJobOrders = useCallback(async () => {
     if (!tenantId) return;
-    
-    setLoading(true);
+
+    // Stale-while-revalidate. The reset effects blank `jobOrders` right
+    // before calling us; serving the cached rows in the same tick means one
+    // React commit WITH rows (instant back-navigation) instead of a 5–10s
+    // spinner, and the fetch below silently refreshes them. Key = the
+    // server-side query signature only — search/company/type/hot filter
+    // client-side over this same row set.
+    const resultKey = [
+      tenantId,
+      effectiveOnlyMyOrders ? 'mine' : 'all',
+      user?.uid ?? '',
+      statusFilter,
+      sortField,
+      sortDirection,
+    ].join('|');
+    const cached = jobOrdersResultCache.get(resultKey);
+    if (cached && Date.now() - cached.at < JOB_ORDERS_RESULT_TTL_MS) {
+      setJobOrders((prev) => (prev === cached.rows ? prev : cached.rows));
+      setLoading(false);
+      firstLoadRef.current = false;
+    } else {
+      setLoading(true);
+    }
+    if (inFlightKeyRef.current === resultKey) return; // same fetch already on the wire
+    inFlightKeyRef.current = resultKey;
+
     setLoadError(null);
     try {
       // Use the tenant-scoped job_orders collection
@@ -550,6 +598,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
 
       setJobOrders(newJobOrders);
       firstLoadRef.current = false;
+      jobOrdersResultCache.set(resultKey, { rows: newJobOrders, at: Date.now() });
       // Applicant counts are computed in a separate effect below — once the
       // visible page + its connected jobs-board posts are loaded — so we can
       // count apps linked via `jobOrderId`, `jobId`, AND `postId` the same way
@@ -564,6 +613,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
           : err?.message || 'Failed to load job orders.';
       setLoadError(msg);
     } finally {
+      inFlightKeyRef.current = null;
       setLoading(false);
     }
   }, [tenantId, statusFilter, sortField, sortDirection, effectiveOnlyMyOrders, user?.uid]);
@@ -976,6 +1026,9 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
       setJobOrders((prev) =>
         prev.map((jo) => (jo.id === jobOrderId ? { ...jo, status: newStatus } : jo))
       );
+      // A status change alters which status-filtered queries this row belongs
+      // to — drop all cached result sets rather than patch them wrongly.
+      jobOrdersResultCache.clear();
       try {
         await JobsBoardService.getInstance().syncLinkedJobPostingsToJobOrderStatus(
           tenantId,
