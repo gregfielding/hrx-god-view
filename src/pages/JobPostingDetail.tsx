@@ -297,6 +297,12 @@ const JobPostingDetail: React.FC = () => {
         setLoading(true);
         console.log('🔄 Loading job posting:', { resolvedTenantId, postId });
 
+        // Where to send visitors when a posting is no longer live (paused,
+        // cancelled, expired, or its job order is cancelled/closed). Hiding a
+        // dead post from the listing isn't enough — the direct URL must not
+        // render it either, so bounce to the live board.
+        const boardPath = tenantSlug ? `/${tenantSlug}/jobs-board` : '/c1/jobs-board';
+
         // Check if this is a job order ID (prefixed with "job-order-")
         if (postId.startsWith('job-order-')) {
           const jobOrderId = postId.replace('job-order-', '');
@@ -307,6 +313,16 @@ const JobPostingDetail: React.FC = () => {
           if (jobOrderSnap.exists()) {
             console.log('✅ Job order found');
             const jobOrderData = jobOrderSnap.data();
+
+            // Only 'open'/'filled' gig job orders are publicly viewable. A
+            // cancelled/completed/closed/draft/on_hold order must not render
+            // its public detail page — redirect to the board instead.
+            const joStatus = String(jobOrderData.status ?? '').toLowerCase();
+            if (joStatus !== 'open' && joStatus !== 'filled') {
+              console.log('↩️ Job order not publicly viewable, redirecting to board:', joStatus);
+              navigate(boardPath, { replace: true });
+              return;
+            }
 
             // Convert job order to posting format
             const payRate =
@@ -449,6 +465,15 @@ const JobPostingDetail: React.FC = () => {
               status: postData.status,
               postTitle: postData.postTitle,
             });
+            // Only 'active' postings are publicly viewable (matches the
+            // public listing filter). A paused/cancelled/expired/draft post —
+            // e.g. one whose job order was just cancelled — must not render;
+            // redirect to the live board instead of a dead post.
+            if (String(postData.status ?? '').toLowerCase() !== 'active') {
+              console.log('↩️ Posting not active, redirecting to board:', postData.status);
+              navigate(boardPath, { replace: true });
+              return;
+            }
             setPosting({
               id: postSnap.id,
               ...postData,
