@@ -27,6 +27,7 @@ import {
   Typography,
 } from '@mui/material';
 import { serverTimestamp, updateDoc, doc as fsDoc } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 
 import ShiftLogEntry from '../components/shifts/ShiftLogEntry';
 import FieldglassLogEntry, {
@@ -36,7 +37,7 @@ import FieldglassEnsureSiteDialog from '../components/shifts/FieldglassEnsureSit
 import LinkVenueToAccountDialog from '../components/shifts/LinkVenueToAccountDialog';
 import { useAuth } from '../contexts/AuthContext';
 import { useExternalShiftRequests } from '../hooks/useExternalShiftRequests';
-import { db } from '../firebase';
+import { db, functions } from '../firebase';
 import type { ExternalShiftRequest } from '../shared/indeedFlex/types';
 
 /** Fieldglass rows share the collection but have their own shape —
@@ -94,6 +95,35 @@ const ShiftsLog: React.FC = () => {
     }
     return [...byDate.entries()].sort((a, b) => b[0].localeCompare(a[0]));
   }, [filtered]);
+
+  /** Server-side apply for cancel_booking rows: the callable cancels the
+   *  matched assignments in HRX (notify → hard-delete) and stamps the row
+   *  'applied' itself, so no client-side status write is needed. */
+  const handleApplyInHrx = async (req: ExternalShiftRequest): Promise<void> => {
+    if (!tenantId) return;
+    setPendingId(req.id);
+    setActionError(null);
+    try {
+      const fn = httpsCallable(functions, 'indeedFlexApplyShiftRequest');
+      const res = await fn({ tenantId, requestId: req.id });
+      const data = (res.data ?? {}) as {
+        cancelled?: number;
+        skipped?: Array<{ id: string; reason: string }>;
+      };
+      const skippedCount = data.skipped?.length ?? 0;
+      if (skippedCount > 0) {
+        setActionError(
+          `Applied — ${data.cancelled ?? 0} cancelled, ${skippedCount} skipped: ${data.skipped!
+            .map((s) => s.reason)
+            .join('; ')}`,
+        );
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPendingId(null);
+    }
+  };
 
   const handleDecide = async (
     req: ExternalShiftRequest,
@@ -232,6 +262,7 @@ const ShiftsLog: React.FC = () => {
                     pending={pendingId === req.id}
                     onDecide={(decision) => handleDecide(req, decision)}
                     onLinkVenue={(r) => setLinkVenueRequest(r)}
+                    onApplyInHrx={handleApplyInHrx}
                   />
                 ),
               )}

@@ -53,6 +53,11 @@ interface Props {
    *  "Link to account" button. Click opens the parent's alias dialog
    *  with the venueName + the matcher's top candidates pre-filled. */
   onLinkVenue?: (request: ExternalShiftRequest) => void;
+  /** Server-side apply: cancels the matched assignments in HRX (the
+   *  indeedFlexApplyShiftRequest callable) instead of just marking the
+   *  row applied. Rendered only for cancel_booking rows with matched
+   *  assignments. The callable stamps the row status itself. */
+  onApplyInHrx?: (request: ExternalShiftRequest) => Promise<void>;
 }
 
 interface KindMeta {
@@ -328,11 +333,18 @@ export default function ShiftLogEntry({
   onDecide,
   pending,
   onLinkVenue,
+  onApplyInHrx,
 }: Props): React.ReactElement {
   const kind = classify(request);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
   const needsAck = kind.destructive && request.status === 'needs_review';
+  // One-click server-side apply exists only for cancel_booking rows whose
+  // workers the matcher already resolved to live assignments.
+  const canApplyInHrx =
+    request.eventType === 'cancel_booking' &&
+    (request.matchedAssignmentIds?.length ?? 0) > 0 &&
+    request.status === 'needs_review';
 
   const handleApply = async (): Promise<void> => {
     if (!onDecide) return;
@@ -471,6 +483,18 @@ export default function ShiftLogEntry({
         {/* Action buttons */}
         {request.status === 'needs_review' && onDecide && (
           <Stack direction="row" spacing={1} mt={1.5}>
+            {canApplyInHrx && onApplyInHrx && (
+              <Button
+                variant="contained"
+                color="error"
+                size="small"
+                disabled={pending || (needsAck && !acknowledged)}
+                onClick={() => onApplyInHrx(request)}
+              >
+                Apply in HRX — cancel {request.matchedAssignmentIds!.length} assignment
+                {request.matchedAssignmentIds!.length === 1 ? '' : 's'}
+              </Button>
+            )}
             <Button
               variant="contained"
               size="small"
