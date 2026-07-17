@@ -100,6 +100,13 @@ interface GapRow {
   gap: number;
   worksiteName: string;
 }
+interface OrphanPostingRow {
+  postingId: string;
+  postTitle: string;
+  jobOrderId: string;
+  joStatus: string;
+  reason: string;
+}
 export interface TenantDivergence {
   tenantId: string;
   generatedAt: FirebaseFirestore.FieldValue;
@@ -112,9 +119,13 @@ export interface TenantDivergence {
     totalGapSeats: number;
     liveAssignmentsScanned: number;
     staffableShiftsScanned: number;
+    orphanedLivePostings: number;
   };
   staleLiveAssignments: StaleRow[];
   coverageGaps: GapRow[];
+  /** Public postings still 'active' whose job order is cancelled/completed/
+   *  closed or missing — the "cancelled JO but post still live" bug class. */
+  orphanedLivePostings: OrphanPostingRow[];
   truncated: { stale: boolean; gaps: boolean };
 }
 
@@ -270,6 +281,48 @@ export async function computeTenantDivergence(tenantId: string): Promise<TenantD
     }
   }
 
+  // ---- orphaned live postings: active job_postings on killed/missing JOs ----
+  // The JO-cancel cascade is supposed to pause/expire the posting; when a
+  // path misses it, the post stays publicly reachable. Detect daily.
+  const orphanedLivePostings: OrphanPostingRow[] = [];
+  try {
+    const postingsSnap = await tRef.collection('job_postings').where('status', '==', 'active').get();
+    const postingJoCache = new Map<string, string>(); // joId -> status ('' = missing)
+    for (const post of postingsSnap.docs) {
+      const p = post.data() || {};
+      const joId = String(p.jobOrderId ?? '').trim();
+      if (!joId) continue; // standalone posts (no JO) are legitimately independent
+      let joStatus = postingJoCache.get(joId) ?? joStatusCache.get(joId);
+      if (joStatus === undefined) {
+        const joSnap = await tRef.collection('job_orders').doc(joId).get();
+        joStatus = joSnap.exists ? String((joSnap.data() || {}).status ?? '').toLowerCase() : '';
+        postingJoCache.set(joId, joStatus);
+      }
+      if (joStatus === '') {
+        orphanedLivePostings.push({
+          postingId: post.id,
+          postTitle: String(p.postTitle ?? p.jobTitle ?? ''),
+          jobOrderId: joId,
+          joStatus: 'missing',
+          reason: 'posting is active but its job order no longer exists',
+        });
+      } else if (KILLED_JO_STATUSES.has(joStatus)) {
+        orphanedLivePostings.push({
+          postingId: post.id,
+          postTitle: String(p.postTitle ?? p.jobTitle ?? ''),
+          jobOrderId: joId,
+          joStatus,
+          reason: `posting is active but its job order is ${joStatus}`,
+        });
+      }
+    }
+  } catch (err) {
+    logger.warn('orphaned-posting scan failed', {
+      tenantId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
   // sort: coverage gaps soonest-first (act on this week before next);
   // stale list most-recent-first so the capped array shows actionable
   // recent drift, not a months-old backlog nobody will work through.
@@ -291,9 +344,11 @@ export async function computeTenantDivergence(tenantId: string): Promise<TenantD
       totalGapSeats,
       liveAssignmentsScanned: liveScanned,
       staffableShiftsScanned,
+      orphanedLivePostings: orphanedLivePostings.length,
     },
     staleLiveAssignments: staleLive.slice(0, MAX_ROWS_PER_LIST),
     coverageGaps: coverageGaps.slice(0, MAX_ROWS_PER_LIST),
+    orphanedLivePostings: orphanedLivePostings.slice(0, MAX_ROWS_PER_LIST),
     truncated,
   };
 }
