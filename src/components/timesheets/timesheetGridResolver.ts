@@ -186,6 +186,46 @@ function isYyyyMmDdString(value: unknown): value is string {
 }
 
 /**
+ * "Removed" assignment statuses — the worker was cancelled off the shift
+ * or declined the offer, so the engagement never happened. These must
+ * NOT generate payable grid rows.
+ *
+ * Why this lives here: the grid query has no status predicate, so
+ * correctness historically relied on cancelling paths *hard-deleting* the
+ * assignment (placementsCancelAssignment / separateWorker /
+ * swapScheduledAssignmentWorker all delete). But two server cascades —
+ * a shift being cancelled and an application being withdrawn
+ * (shiftAssignmentCascades.ts) — only flip `status: 'cancelled'` and
+ * leave the doc in place, so a cancelled-but-not-deleted assignment that
+ * still date-overlaps the period produces phantom payable rows. This
+ * filter is the durable fix: any removed-status assignment is skipped
+ * regardless of how it got cancelled.
+ *
+ * `completed`/`ended` are deliberately NOT removed — they are real worked
+ * history (an open shift closed out, a finished gig) and must still show.
+ * Unknown/blank status is kept too — legacy docs predate the status
+ * field and dropping them would hide real work.
+ *
+ * Safety net: even for a removed assignment, a row that has a
+ * materialized `timesheet_entries` doc is preserved (see the row filter
+ * in resolveTimesheetGrid) so nothing already entered or paid can vanish.
+ */
+const REMOVED_ASSIGNMENT_STATUSES = new Set([
+  'cancelled',
+  'canceled',
+  'worker-cancelled',
+  'workercancelled',
+  'declined',
+  'rejected',
+]);
+function isRemovedAssignmentStatus(status: unknown): boolean {
+  return (
+    typeof status === 'string' &&
+    REMOVED_ASSIGNMENT_STATUSES.has(status.trim().toLowerCase())
+  );
+}
+
+/**
  * Result of the assignment-level overlap check. `overlaps: true` means
  * the assignment lifecycle touches the period and should proceed to
  * the per-day expansion. `warning` is non-null when the assignment
@@ -518,11 +558,19 @@ export async function resolveTimesheetGrid(
   // check.
   const errors: string[] = [];
   const overlapping: (Assignment & { id: string })[] = [];
+  // Assignment ids whose status marks the worker as removed (cancelled /
+  // declined). They still flow through overlap + expansion so any row
+  // with a real timesheet entry survives, but their *empty* rows are
+  // dropped after hydration — killing phantom payable rows.
+  const removedAssignmentIds = new Set<string>();
 
   for (const a of rawAssignments) {
     const check = assignmentOverlapsPeriod(a.id, a, period);
     if (check.overlaps) {
       overlapping.push(a);
+      if (isRemovedAssignmentStatus((a as { status?: unknown }).status)) {
+        removedAssignmentIds.add(a.id);
+      }
     } else if (check.warning) {
       errors.push(check.warning);
     }
@@ -637,6 +685,20 @@ export async function resolveTimesheetGrid(
     const chunk = tuples.slice(i, i + concurrency);
     const results = await Promise.all(chunk.map(fetchEntry));
     rows.push(...results);
+  }
+
+  // Drop phantom rows from removed (cancelled/declined) assignments. An
+  // *empty* row from such an assignment is a worker who was taken off the
+  // shift but never hard-deleted — it must not appear as payable. A row
+  // that resolved to a real entry is kept: if hours were already entered
+  // (or paid) before the cancel, hiding it would lose payroll data.
+  if (removedAssignmentIds.size > 0) {
+    for (let i = rows.length - 1; i >= 0; i -= 1) {
+      const r = rows[i];
+      if (r.kind === 'empty' && removedAssignmentIds.has(r.assignment.id)) {
+        rows.splice(i, 1);
+      }
+    }
   }
 
   // Step 3b: CSV-import entries. These are worker-anchored and usually have
@@ -769,8 +831,28 @@ export async function resolveTimesheetGrid(
   return {
     rows,
     errors,
-    consideredAssignmentCount: overlapping.length,
+    // Exclude removed assignments that contributed no surviving row, so the
+    // "no scheduled work in this period" empty-state copy reflects real
+    // engagements rather than counting cancelled phantoms.
+    consideredAssignmentCount: overlapping.length - removedWithNoRows(rows, removedAssignmentIds),
   };
+}
+
+/** Count removed assignments that left zero rows behind (all their rows
+ *  were empty and got filtered). Used only to keep the considered-count
+ *  honest for the empty-state copy. */
+function removedWithNoRows(
+  rows: TimesheetGridRow[],
+  removedAssignmentIds: Set<string>,
+): number {
+  if (removedAssignmentIds.size === 0) return 0;
+  const survivors = new Set<string>();
+  for (const r of rows) survivors.add(r.assignment.id);
+  let count = 0;
+  for (const id of removedAssignmentIds) {
+    if (!survivors.has(id)) count += 1;
+  }
+  return count;
 }
 
 /** Pick the first non-empty string from a list; coerce numbers to strings.
