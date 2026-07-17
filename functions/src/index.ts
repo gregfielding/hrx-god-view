@@ -12579,6 +12579,7 @@ export { onIngestEventCreatedParse } from './integrations/indeedFlex/onIngestEve
 // cancel_booking + no_show. Idempotent — only runs once per request
 // (gated on `matchConfidence` being unset).
 export { onShiftRequestCreatedMatch } from './integrations/indeedFlex/onShiftRequestCreatedMatch';
+export { indeedFlexApplyShiftRequest } from './integrations/indeedFlex/applyShiftRequest';
 
 // **Fieldglass (Sodexo) inbound-email ingestion — FG Slices 1+2.**
 // Structural sibling of the Indeed Flex pipeline above, sharing the
