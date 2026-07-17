@@ -314,11 +314,16 @@ const JobPostingDetail: React.FC = () => {
             console.log('✅ Job order found');
             const jobOrderData = jobOrderSnap.data();
 
-            // Only 'open'/'filled' gig job orders are publicly viewable. A
-            // cancelled/completed/closed/draft/on_hold order must not render
-            // its public detail page — redirect to the board instead.
+            // A dead job order must not render its public detail page —
+            // redirect to the board. Blocklist (not allow-list) on purpose:
+            // the 2026-07-17 review caught an open|filled allow-list bouncing
+            // legitimately-active recruiting states (partially_filled,
+            // interviewing, offer, on_hold — see ACTIVE_STATUSES in
+            // functions/src/jobOrders/openShiftFromJobOrder.ts), which broke
+            // workers' application links to still-live roles.
             const joStatus = String(jobOrderData.status ?? '').toLowerCase();
-            if (joStatus !== 'open' && joStatus !== 'filled') {
+            const DEAD_JO_STATUSES = ['cancelled', 'canceled', 'completed', 'closed', 'draft'];
+            if (DEAD_JO_STATUSES.includes(joStatus)) {
               console.log('↩️ Job order not publicly viewable, redirecting to board:', joStatus);
               navigate(boardPath, { replace: true });
               return;

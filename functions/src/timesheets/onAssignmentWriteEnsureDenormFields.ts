@@ -247,13 +247,16 @@ export const onAssignmentWriteEnsureDenormFields = onDocumentWritten(
     }
 
     try {
-      await event.data.after.ref.set(
-        {
-          ...resolved.updates,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        {merge: true},
-      );
+      // update(), not set({merge}) — cancel paths flip status then hard-
+      // DELETE the assignment, and this trigger's write can land after the
+      // delete. A merge-set would re-CREATE the doc as a status-less shell
+      // (which the grid resolver then renders as a phantom payable row);
+      // update() on the deleted doc fails NOT_FOUND into the catch below,
+      // which is the correct outcome (review fix 2026-07-17).
+      await event.data.after.ref.update({
+        ...resolved.updates,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
       logger.info(
         "[TS.1.P1.B.2][onAssignmentWriteEnsureDenormFields] stamped",
         {

@@ -54,6 +54,7 @@ import {
 } from 'firebase/firestore';
 
 import type { Assignment } from '../../types/phase2';
+import { normalizeAssignmentStatus } from '../../utils/assignmentStatusNormalize';
 import type {
   TimesheetEntryStatus,
   TimesheetEntryV2,
@@ -186,9 +187,9 @@ function isYyyyMmDdString(value: unknown): value is string {
 }
 
 /**
- * "Removed" assignment statuses — the worker was cancelled off the shift
- * or declined the offer, so the engagement never happened. These must
- * NOT generate payable grid rows.
+ * "Removed" assignment check — the worker was cancelled off the shift or
+ * declined the offer, so the engagement never happened. These must NOT
+ * generate payable grid rows.
  *
  * Why this lives here: the grid query has no status predicate, so
  * correctness historically relied on cancelling paths *hard-deleting* the
@@ -201,27 +202,22 @@ function isYyyyMmDdString(value: unknown): value is string {
  * filter is the durable fix: any removed-status assignment is skipped
  * regardless of how it got cancelled.
  *
- * `completed`/`ended` are deliberately NOT removed — they are real worked
- * history (an open shift closed out, a finished gig) and must still show.
- * Unknown/blank status is kept too — legacy docs predate the status
- * field and dropping them would hide real work.
+ * Delegates to the canonical alias map (assignmentStatusNormalize) rather
+ * than a local status list — the 2026-07-17 review caught the local list
+ * missing the underscore form `worker_cancelled`, which the normalizer
+ * covers. `completed`/`ended` normalize to 'completed' and are kept —
+ * real worked history must still show. Unknown/blank status normalizes to
+ * 'pending' and is kept too — legacy docs predate the status field.
  *
  * Safety net: even for a removed assignment, a row that has a
  * materialized `timesheet_entries` doc is preserved (see the row filter
  * in resolveTimesheetGrid) so nothing already entered or paid can vanish.
  */
-const REMOVED_ASSIGNMENT_STATUSES = new Set([
-  'cancelled',
-  'canceled',
-  'worker-cancelled',
-  'workercancelled',
-  'declined',
-  'rejected',
-]);
 function isRemovedAssignmentStatus(status: unknown): boolean {
   return (
     typeof status === 'string' &&
-    REMOVED_ASSIGNMENT_STATUSES.has(status.trim().toLowerCase())
+    status.trim() !== '' &&
+    normalizeAssignmentStatus(status) === 'cancelled'
   );
 }
 

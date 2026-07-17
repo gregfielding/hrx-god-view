@@ -931,30 +931,38 @@ async function backfillJobOrderFromEnrichment(
   // sync stamped (`fieldglass.lastSyncedPayRate`). A recruiter hand-edit
   // (value ≠ last stamp) is never clobbered. Every sync re-stamps, so the
   // ownership chain survives repeated passes.
+  // Stamp discipline (review fix 2026-07-17): `lastSynced*` is written ONLY
+  // when the machine owns the value — i.e. alongside a machine write, or as
+  // a refresh when the current value already equals the portal AND was
+  // machine-owned. Stamping on a NOT-owned pass converted a recruiter
+  // hand-edit that coincided with the portal value into "machine-owned",
+  // letting the next portal change clobber it.
   const fgStamp = (jo.fieldglass ?? {}) as Record<string, unknown>;
   const currentPay = Number(jo.payRate ?? 0);
   const portalPay = Number(enrichment.payRateSt);
   const payMachineOwned =
     currentPay <= 0 || currentPay === Number(fgStamp.lastSyncedPayRate ?? NaN);
-  if (Number.isFinite(portalPay) && portalPay > 0) {
-    if (payMachineOwned && currentPay !== portalPay) patch.payRate = portalPay;
+  if (Number.isFinite(portalPay) && portalPay > 0 && payMachineOwned) {
+    if (currentPay !== portalPay) patch.payRate = portalPay;
     if (Number(fgStamp.lastSyncedPayRate ?? NaN) !== portalPay) {
       patch['fieldglass.lastSyncedPayRate'] = portalPay;
     }
   }
+  // Bill: a real portal bill participates in machine-owned update; the
+  // markup-DERIVED estimate is FILL-ONLY (review fix — a portal that stops
+  // sending billRateSt must not overwrite its own last real bill with a
+  // guess). The derived value is never stamped, so it can't claim ownership.
   const currentBill = Number(jo.billRate ?? 0);
-  const portalBill = Number.isFinite(Number(enrichment.billRateSt))
-    ? Number(enrichment.billRateSt)
-    : patch.payRate != null
-      ? Math.round((patch.payRate as number) * SODEXO_BILL_MARKUP * 100) / 100
-      : NaN;
+  const portalBillReal = Number(enrichment.billRateSt);
   const billMachineOwned =
     currentBill <= 0 || currentBill === Number(fgStamp.lastSyncedBillRate ?? NaN);
-  if (Number.isFinite(portalBill) && portalBill > 0) {
-    if (billMachineOwned && currentBill !== portalBill) patch.billRate = portalBill;
-    if (Number(fgStamp.lastSyncedBillRate ?? NaN) !== portalBill) {
-      patch['fieldglass.lastSyncedBillRate'] = portalBill;
+  if (Number.isFinite(portalBillReal) && portalBillReal > 0 && billMachineOwned) {
+    if (currentBill !== portalBillReal) patch.billRate = portalBillReal;
+    if (Number(fgStamp.lastSyncedBillRate ?? NaN) !== portalBillReal) {
+      patch['fieldglass.lastSyncedBillRate'] = portalBillReal;
     }
+  } else if (currentBill <= 0 && patch.billRate == null && patch.payRate != null) {
+    patch.billRate = Math.round((patch.payRate as number) * SODEXO_BILL_MARKUP * 100) / 100;
   }
   // Pay rate reached the JO → push it to the linked postings too, and flip
   // any awaiting-pay DRAFT posting live (postings born unpriced stay drafts
@@ -981,17 +989,41 @@ async function backfillJobOrderFromEnrichment(
   // only ever grew from the ≤1 default, so a portal headcount REDUCTION
   // (or any change after the first set) never landed. Machine-owned =
   // still at the created default (≤1) or exactly the last synced value.
+  // Shrink clamp (review fix 2026-07-17): a reduction never drops below
+  // the number of workers already live on the order — the portal cutting
+  // 5→3 with 5 placed would otherwise make the JO read over-filled and
+  // orphan real placements. The stamp records what we actually wrote so
+  // the ownership chain stays intact; if the portal later rises above the
+  // clamp, the next pass updates normally.
   const currentHeadcount = Number(jo.headcountRequested ?? 0);
   const portalHeadcount = Number(enrichment.positionsRequested);
   const headcountMachineOwned =
     currentHeadcount <= 1 || currentHeadcount === Number(fgStamp.lastSyncedHeadcount ?? NaN);
-  if (Number.isFinite(portalHeadcount) && portalHeadcount > 0) {
-    if (headcountMachineOwned && currentHeadcount !== portalHeadcount) {
-      patch.headcountRequested = portalHeadcount;
-      patch.workersNeeded = portalHeadcount;
+  if (Number.isFinite(portalHeadcount) && portalHeadcount > 0 && headcountMachineOwned) {
+    let effectiveHeadcount = portalHeadcount;
+    if (portalHeadcount < currentHeadcount) {
+      const liveSnap = await admin
+        .firestore()
+        .collection(`tenants/${tenantId}/assignments`)
+        .where('jobOrderId', '==', joRef.id)
+        .get();
+      const liveCount = liveSnap.docs.filter((d) => {
+        const s = String(d.data().status ?? '').toLowerCase();
+        return !/cancel|declined|completed|ended|rejected/.test(s);
+      }).length;
+      effectiveHeadcount = Math.max(portalHeadcount, liveCount);
+      if (effectiveHeadcount !== portalHeadcount) {
+        logger.warn('[fieldglassJobOrder] headcount shrink clamped at placed count', {
+          jobOrderId: joRef.id, portalHeadcount, liveCount,
+        });
+      }
     }
-    if (Number(fgStamp.lastSyncedHeadcount ?? NaN) !== portalHeadcount) {
-      patch['fieldglass.lastSyncedHeadcount'] = portalHeadcount;
+    if (currentHeadcount !== effectiveHeadcount) {
+      patch.headcountRequested = effectiveHeadcount;
+      patch.workersNeeded = effectiveHeadcount;
+    }
+    if (Number(fgStamp.lastSyncedHeadcount ?? NaN) !== effectiveHeadcount) {
+      patch['fieldglass.lastSyncedHeadcount'] = effectiveHeadcount;
     }
   }
   // WC backfill — repo chips can be added after the JO existed; fill the

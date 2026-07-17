@@ -25,28 +25,12 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
+import { canManageAssignments } from '../../placementsApi';
 
 if (!admin.apps.length) {
   admin.initializeApp();
 }
 const db = admin.firestore();
-
-/** Recruiter/admin band (5+) or HRX super-admin — same gate as the
- *  divergence sweep; the feed UI is already staff-only. */
-async function assertRecruiterOrAdmin(
-  uid: string,
-  token: Record<string, unknown> | undefined,
-  tenantId: string,
-): Promise<void> {
-  if (token?.hrx === true) return;
-  const snap = await db.collection('users').doc(uid).get();
-  const data = (snap.data() || {}) as Record<string, unknown>;
-  const nested = (data.tenantIds as Record<string, { securityLevel?: unknown }> | undefined)?.[tenantId]
-    ?.securityLevel;
-  const level = Number.parseInt(String(nested ?? data.securityLevel ?? '0'), 10) || 0;
-  if (level >= 5) return;
-  throw new HttpsError('permission-denied', 'Applying shift requests requires tenant security level 5+.');
-}
 
 export const indeedFlexApplyShiftRequest = onCall(
   { region: 'us-central1', memory: '512MiB', timeoutSeconds: 120 },
@@ -57,7 +41,12 @@ export const indeedFlexApplyShiftRequest = onCall(
     if (!tenantId || !requestId) {
       throw new HttpsError('invalid-argument', 'tenantId and requestId are required');
     }
-    await assertRecruiterOrAdmin(request.auth.uid, request.auth.token as Record<string, unknown>, tenantId);
+    // Canonical recruiter gate — same one placementsCancelAssignment uses,
+    // so the two cancel paths can never disagree on who is allowed
+    // (review fix 2026-07-17; the hand-rolled copy ignored roles/isHRX).
+    if (!(await canManageAssignments(request.auth, tenantId, request.auth.uid))) {
+      throw new HttpsError('permission-denied', 'Applying shift requests requires assignment-management access.');
+    }
 
     const rowRef = db.doc(`tenants/${tenantId}/external_shift_requests/${requestId}`);
     const rowSnap = await rowRef.get();
@@ -68,6 +57,14 @@ export const indeedFlexApplyShiftRequest = onCall(
     const rowStatus = String(row.status ?? '');
     if (rowStatus === 'applied') {
       return { ok: true, alreadyApplied: true, cancelled: 0, skipped: [] };
+    }
+    // Only rows still awaiting a decision may be applied — a recruiter's
+    // 'rejected' verdict must stand (review fix 2026-07-17).
+    if (rowStatus !== 'needs_review') {
+      throw new HttpsError(
+        'failed-precondition',
+        `Request is '${rowStatus}' — only needs_review rows can be applied.`,
+      );
     }
 
     if (eventType !== 'cancel_booking') {

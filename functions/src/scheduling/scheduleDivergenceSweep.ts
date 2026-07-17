@@ -31,6 +31,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
+import { canManageAssignments } from '../placementsApi';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -142,10 +143,11 @@ export async function computeTenantDivergence(tenantId: string): Promise<TenantD
 
   // ---- one pass over assignments: build live-coverage index + stale list ----
   const assignmentsSnap = await tRef.collection('assignments').get();
-  // shiftId -> Set(userId) of live coverers (dedupes multi-day day-scoped docs)
-  const liveByShift = new Map<string, Set<string>>();
-  // shiftId|date -> Set(userId) for day-scoped gig coverage
-  const liveByShiftDate = new Map<string, Set<string>>();
+  // shiftId -> live coverers with their date windows. Coverage for a given
+  // date = distinct users whose [start, end] window contains it (end null =
+  // open-ended). Review fix 2026-07-17: the previous start-date-keyed index
+  // dropped multi-day range workers on every day after their start.
+  const liveByShift = new Map<string, Array<{ u: string; s: string | null; e: string | null }>>();
   const staleCandidates: Array<{ id: string; a: FirebaseFirestore.DocumentData; effEnd: string | null }> = [];
   const liveJobOrderIds = new Set<string>();
   let liveScanned = 0;
@@ -163,13 +165,8 @@ export async function computeTenantDivergence(tenantId: string): Promise<TenantD
     const effEnd = end && start && end >= start ? end : start;
 
     if (shiftId && userId) {
-      if (!liveByShift.has(shiftId)) liveByShift.set(shiftId, new Set());
-      liveByShift.get(shiftId)!.add(userId);
-      if (start) {
-        const k = `${shiftId}|${start}`;
-        if (!liveByShiftDate.has(k)) liveByShiftDate.set(k, new Set());
-        liveByShiftDate.get(k)!.add(userId);
-      }
+      if (!liveByShift.has(shiftId)) liveByShift.set(shiftId, []);
+      liveByShift.get(shiftId)!.push({ u: userId, s: start, e: end ?? null });
     }
     if (a.jobOrderId) liveJobOrderIds.add(String(a.jobOrderId));
     // stale candidate: past its end date beyond the grace window (open/ongoing
@@ -245,19 +242,22 @@ export async function computeTenantDivergence(tenantId: string): Promise<TenantD
         ? (s.dateSchedule as Record<string, { workersNeeded?: unknown }>)
         : null;
 
-      // Enumerate (date, needed) pairs to check.
+      // Enumerate (date, needed) pairs to check. Explicit-null fallbacks:
+      // a day deliberately configured `workersNeeded: 0` means "nobody
+      // needed" and must NOT fall through to the JO headcount (review fix
+      // 2026-07-17 — `|| fallback` was manufacturing phantom gaps).
       const perDay: Array<{ date: string; needed: number }> = [];
       if (dateSchedule) {
         for (const [date, cfg] of Object.entries(dateSchedule)) {
           const d = asIso(date);
           if (!d) continue;
-          perDay.push({ date: d, needed: num(cfg?.workersNeeded) || joFallbackNeed });
+          perDay.push({ date: d, needed: cfg?.workersNeeded != null ? num(cfg.workersNeeded) : joFallbackNeed });
         }
       } else {
         const d = asIso(s.shiftDate) ?? asIso(s.startDate);
         if (d) {
-          const needed = num(s.totalStaffRequested ?? s.assignmentsTarget) || joFallbackNeed;
-          perDay.push({ date: d, needed });
+          const explicit = s.totalStaffRequested ?? s.assignmentsTarget;
+          perDay.push({ date: d, needed: explicit != null ? num(explicit) : joFallbackNeed });
         }
       }
 
@@ -265,11 +265,16 @@ export async function computeTenantDivergence(tenantId: string): Promise<TenantD
         if (date < today || date > windowEnd) continue; // upcoming window only
         if (needed <= 0) continue;
         staffableShiftsScanned += 1;
-        // filled = distinct live coverers on this shift for this date, or on
-        // the shift overall for range/open shifts with no per-date breakdown.
-        const dayCover = liveByShiftDate.get(`${sh.id}|${date}`);
-        const shiftCover = liveByShift.get(sh.id);
-        const filled = (dayCover?.size ?? 0) || (shiftCover?.size ?? 0);
+        // filled = distinct live coverers whose assignment window contains
+        // this date (no start = treat as covering; no end = open-ended).
+        const covers = liveByShift.get(sh.id) ?? [];
+        const filledUsers = new Set<string>();
+        for (const c of covers) {
+          const startsOk = !c.s || c.s <= date;
+          const endsOk = !c.e || c.e >= date;
+          if (startsOk && endsOk) filledUsers.add(c.u);
+        }
+        const filled = filledUsers.size;
         const gap = needed - filled;
         if (gap > 0) {
           coverageGaps.push({
@@ -402,32 +407,19 @@ export const scheduleDivergenceSweep = onSchedule(
   },
 );
 
-/** Tenant security level ≥ 5 (recruiter/admin band) or HRX super-admin.
- *  The sweep is read-mostly operational reporting, so the recruiter band
- *  that already sees the timesheet grid can run it on demand. */
-async function assertRecruiterOrAdmin(
-  uid: string,
-  token: Record<string, unknown> | undefined,
-  tenantId: string,
-): Promise<void> {
-  if (token?.hrx === true) return;
-  const snap = await db.collection('users').doc(uid).get();
-  const data = (snap.data() || {}) as Record<string, unknown>;
-  const nested = (data.tenantIds as Record<string, { securityLevel?: unknown }> | undefined)?.[tenantId]
-    ?.securityLevel;
-  const level = Number.parseInt(String(nested ?? data.securityLevel ?? '0'), 10) || 0;
-  if (level >= 5) return;
-  throw new HttpsError('permission-denied', 'Schedule divergence sweep requires tenant security level 5+.');
-}
-
-/** On-demand run for a single tenant — same computation as the cron. */
+/** On-demand run for a single tenant — same computation as the cron.
+ *  Gated by the canonical recruiter check (canManageAssignments) so this
+ *  agrees with every other staff surface on who is allowed (review fix
+ *  2026-07-17 — the previous hand-rolled level check ignored roles/isHRX). */
 export const runScheduleDivergenceSweep = onCall(
   { region: 'us-central1', memory: '512MiB', timeoutSeconds: 300 },
   async (request) => {
     if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in required');
     const tenantId = String(request.data?.tenantId ?? '').trim();
     if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required');
-    await assertRecruiterOrAdmin(request.auth.uid, request.auth.token as Record<string, unknown>, tenantId);
+    if (!(await canManageAssignments(request.auth, tenantId, request.auth.uid))) {
+      throw new HttpsError('permission-denied', 'Divergence sweep requires assignment-management access.');
+    }
     const result = await computeTenantDivergence(tenantId);
     await persistDivergence(result);
     return {
