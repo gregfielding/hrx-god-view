@@ -2,18 +2,29 @@
  * completeExpiredOpenShiftAssignments — daily cron.
  *
  * Open-shift (standing-crew) assignments are created `status: 'active'`
- * with no completion event. When a worker is removed from the crew (or
- * the whole shift is ended), `openShiftSetEndDate` stamps an `endDate`
- * but leaves the status `active` — so the assignment keeps appearing in
- * "live assignment" queries past its end date. This cron flips those to
- * `completed` once their `endDate` is in the past, so they drop out of
- * live queries / overlap checks. It does NOT generate any new timecard
- * rows (the resolver already stops at endDate) and sends no notifications
- * — `completed` is the natural terminal state for a finished assignment.
+ * with no completion event. Two ways they end:
  *
- * Scoped per tenant via the auto-indexed `isOpenShift == true` filter, so
- * it only ever reads the handful of open-shift assignments, not the whole
- * assignments collection.
+ *  1. `openShiftSetEndDate` stamps an `endDate` on the assignment but
+ *     leaves the status `active` — flip to `completed` once that date is
+ *     in the past.
+ *  2. Single-date open shifts (`shiftMode: 'single'`, e.g. Fieldglass
+ *     auto-created event gigs) keep their date in the shift doc's
+ *     `shiftDate` and have NO `endDate` field — so their assignments are
+ *     born `endDate: ''` ("ongoing") and nothing ever ends them. For
+ *     empty-endDate assignments, resolve the real end from the parent
+ *     shift doc (`shiftDate` for single mode, `endDate` for multi) and
+ *     flip once it has passed, stamping the derived `endDate` on the
+ *     assignment so downstream queries see a closed range. Shifts that
+ *     are genuinely ongoing/rolling (no resolvable end) stay active.
+ *
+ * This cron does NOT generate any new timecard rows (the resolver already
+ * stops at endDate) and sends no notifications — `completed` is the
+ * natural terminal state for a finished assignment.
+ *
+ * Scoped per tenant via the auto-indexed `isOpenShift == true` +
+ * `noFixedTimes == true` filters (unioned by doc id — same definition of
+ * "open assignment" as `openShiftSetEndDate`), so it only ever reads the
+ * handful of open-shift assignments, not the whole assignments collection.
  */
 
 import { onSchedule } from 'firebase-functions/v2/scheduler';
@@ -38,6 +49,18 @@ function todayUtcIso(): string {
   ).padStart(2, '0')}`;
 }
 
+/** YYYY-MM-DD from a date-only string, datetime string, or Timestamp. */
+function toDateOnly(v: unknown): string {
+  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v.trim())) return v.trim().slice(0, 10);
+  if (v && typeof (v as { toDate?: () => Date }).toDate === 'function') {
+    const d = (v as { toDate: () => Date }).toDate();
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(
+      d.getUTCDate(),
+    ).padStart(2, '0')}`;
+  }
+  return '';
+}
+
 export const completeExpiredOpenShiftAssignments = onSchedule(
   {
     schedule: '0 13 * * *', // 13:00 UTC daily
@@ -50,35 +73,83 @@ export const completeExpiredOpenShiftAssignments = onSchedule(
 
     let scanned = 0;
     let flipped = 0;
+    let flippedViaShift = 0;
+    let shiftLookups = 0;
 
     for (const tenant of tenantsSnap.docs) {
-      const snap = await tenant.ref
-        .collection('assignments')
-        .where('isOpenShift', '==', true)
-        .get();
+      // Union of both open-assignment markers; some writers set only one.
+      const [byFlag, byNoTimes] = await Promise.all([
+        tenant.ref.collection('assignments').where('isOpenShift', '==', true).get(),
+        tenant.ref.collection('assignments').where('noFixedTimes', '==', true).get(),
+      ]);
+      const docs = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+      for (const d of [...byFlag.docs, ...byNoTimes.docs]) docs.set(d.id, d);
+
+      // Parent-shift end date per `${jobOrderId}/${shiftId}` ('' = no
+      // resolvable end → ongoing; cached so a crew of N costs one read).
+      const shiftEndCache = new Map<string, Promise<string>>();
+      const resolveShiftEnd = (jobOrderId: string, shiftId: string): Promise<string> => {
+        const key = `${jobOrderId}/${shiftId}`;
+        let p = shiftEndCache.get(key);
+        if (!p) {
+          shiftLookups += 1;
+          p = tenant.ref
+            .collection('job_orders')
+            .doc(jobOrderId)
+            .collection('shifts')
+            .doc(shiftId)
+            .get()
+            .then((snap) => {
+              if (!snap.exists) return '';
+              const s = snap.data() || {};
+              const mode = String(s.shiftMode || 'single').toLowerCase();
+              if (mode === 'single') return toDateOnly(s.shiftDate);
+              return toDateOnly(s.endDate);
+            })
+            .catch(() => '');
+          shiftEndCache.set(key, p);
+        }
+        return p;
+      };
 
       let batch = db.batch();
       let inBatch = 0;
 
-      for (const docSnap of snap.docs) {
+      for (const docSnap of docs.values()) {
         scanned += 1;
         const a = docSnap.data() || {};
         const status = String(a.status || '').toLowerCase();
         if (status !== 'active' && status !== 'in_progress') continue;
-        const end = typeof a.endDate === 'string' ? a.endDate.trim() : '';
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(end)) continue; // ongoing / no end → leave active
-        if (end >= todayIso) continue; // end date hasn't passed yet
 
-        batch.set(
-          docSnap.ref,
-          {
-            status: 'completed',
-            completedAt: admin.firestore.FieldValue.serverTimestamp(),
-            completedReason: 'open_shift_ended',
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true },
-        );
+        const stampedEnd = toDateOnly(a.endDate);
+        let effectiveEnd = stampedEnd;
+        let reason = 'open_shift_ended';
+
+        if (!stampedEnd) {
+          // No endDate on the assignment — ask the parent shift.
+          const jobOrderId = String(a.jobOrderId || '');
+          const shiftId = String(a.shiftId || '');
+          if (!jobOrderId || !shiftId) continue;
+          const shiftEnd = await resolveShiftEnd(jobOrderId, shiftId);
+          if (!shiftEnd) continue; // genuinely ongoing / rolling → leave active
+          const start = toDateOnly(a.startDate);
+          effectiveEnd = start && shiftEnd < start ? start : shiftEnd;
+          reason = 'open_shift_date_passed';
+        }
+
+        if (!effectiveEnd || effectiveEnd >= todayIso) continue; // not past yet
+
+        const update: Record<string, unknown> = {
+          status: 'completed',
+          completedAt: admin.firestore.FieldValue.serverTimestamp(),
+          completedReason: reason,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+        if (!stampedEnd) {
+          update.endDate = effectiveEnd; // make the closed range visible to downstream queries
+          flippedViaShift += 1;
+        }
+        batch.set(docSnap.ref, update, { merge: true });
         inBatch += 1;
         flipped += 1;
 
@@ -96,6 +167,8 @@ export const completeExpiredOpenShiftAssignments = onSchedule(
       tenants: tenantsSnap.size,
       openShiftAssignmentsScanned: scanned,
       flippedToCompleted: flipped,
+      flippedViaShiftDate: flippedViaShift,
+      shiftLookups,
       todayIso,
     });
   },
