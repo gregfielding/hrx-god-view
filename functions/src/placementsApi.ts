@@ -767,7 +767,18 @@ export const placementsCreateAssignments = onCall(
   const isOpenShift = String(shift.shiftType || '').toLowerCase() === 'open';
   if (isOpenShift) {
     const openStartDate = effectiveStartDate || shiftDate || '';
-    const openEndDate = toDateOnly(shift.endDate) || ''; // '' = ongoing / rolling
+    // Single-date open shifts (shiftMode 'single', e.g. Fieldglass
+    // auto-created event gigs) keep their one date in `shiftDate` and have
+    // no endDate field — stamp it so the assignment is a closed range from
+    // birth instead of endDate:'' ("ongoing") that nothing ever completes.
+    // '' remains the ongoing/rolling case (multi mode with no endDate).
+    const openShiftMode = String(shift.shiftMode || 'single').toLowerCase();
+    const openResolvedEnd =
+      toDateOnly(shift.endDate) || (openShiftMode === 'single' ? shiftDate : '');
+    const openEndDate =
+      openResolvedEnd && openStartDate && openResolvedEnd < openStartDate
+        ? openStartDate
+        : openResolvedEnd;
     for (const userId of uniqueUserIds) {
       try {
         const userSnap = await db.doc(`users/${userId}`).get();
