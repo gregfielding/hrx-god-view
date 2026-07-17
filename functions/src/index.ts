@@ -266,6 +266,7 @@ export { scheduleWorkerAiPrescreenFollowUpOnUserWrite } from './workerAiPrescree
 export { placementsCreateAssignments, placementsCancelAssignment, openShiftSetEndDate, respondToAssignment, confirmAssignmentForWorker, resendAssignmentOffer, previewAssignmentDetailsEmail, revertAssignmentDecline, revertAssignmentCancel, resendShiftConfirmationsToConfirmedStaff, resendAssignmentConfirmation } from './placementsApi';
 export { completeExpiredOpenShiftAssignments } from './completeExpiredOpenShiftAssignments';
 export { scheduleDivergenceSweep, runScheduleDivergenceSweep } from './scheduling/scheduleDivergenceSweep';
+export { getScheduleDivergence, completeStaleAssignments } from './scheduling/schedulingHealthApi';
 export { syncJobOrderWorksiteToPostings } from './syncJobOrderWorksiteToPostings';
 export { updateExternalOnboardingStepVerification } from './onboardingGate';
 export {

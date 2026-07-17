@@ -180,6 +180,7 @@ import RecruiterAccountDetails from './pages/RecruiterAccountDetails';
 import AccountLocationDetail from './pages/AccountLocationDetail';
 import GlobalInvoicingPage from './pages/GlobalInvoicingPage';
 import FinancesBudgetingPage from './pages/FinancesBudgetingPage';
+import SchedulingHealthPage from './pages/SchedulingHealthPage';
 import StaffOnboardingCenter from './pages/StaffOnboardingCenter';
 import RecruiterContacts from './pages/RecruiterContacts';
 import RecruiterContactDetails from './pages/RecruiterContactDetails';
@@ -772,6 +773,16 @@ function App() {
             <ProtectedRoute requiredSecurityLevel="5">
               <RecruiterAccessGuard>
                 <FinancesBudgetingPage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="scheduling-health"
+          element={
+            <ProtectedRoute requiredSecurityLevel="5">
+              <RecruiterAccessGuard>
+                <SchedulingHealthPage />
               </RecruiterAccessGuard>
             </ProtectedRoute>
           }

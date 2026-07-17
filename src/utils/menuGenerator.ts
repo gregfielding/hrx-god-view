@@ -278,6 +278,13 @@ export async function generateMenuItems(
         icon: 'speed',
         requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
       }] : []),
+      // Scheduling Health: the recruiter daily checklist (levels 5, 6, 7)
+      ...([{
+        text: 'Scheduling Health',
+        to: '/scheduling-health',
+        icon: 'fact_check',
+        accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
+      }]),
       // Finances & Budgeting: internal team (security levels 5, 6, 7)
       ...([{
         text: 'Finances and Budgeting',
