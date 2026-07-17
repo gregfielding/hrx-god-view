@@ -924,15 +924,36 @@ async function backfillJobOrderFromEnrichment(
     }
   }
 
+  // Rate sync (P1d, 2026-07-17): portals change rates mid-flight, and the
+  // old fill-only rule (`currentPay <= 0`) meant a changed portal rate
+  // never reached an already-priced JO. New rule: update when the JO's
+  // current value is MACHINE-OWNED — empty, or exactly what a previous
+  // sync stamped (`fieldglass.lastSyncedPayRate`). A recruiter hand-edit
+  // (value ≠ last stamp) is never clobbered. Every sync re-stamps, so the
+  // ownership chain survives repeated passes.
+  const fgStamp = (jo.fieldglass ?? {}) as Record<string, unknown>;
   const currentPay = Number(jo.payRate ?? 0);
-  if (currentPay <= 0 && Number.isFinite(enrichment.payRateSt as number)) {
-    patch.payRate = enrichment.payRateSt;
+  const portalPay = Number(enrichment.payRateSt);
+  const payMachineOwned =
+    currentPay <= 0 || currentPay === Number(fgStamp.lastSyncedPayRate ?? NaN);
+  if (Number.isFinite(portalPay) && portalPay > 0) {
+    if (payMachineOwned && currentPay !== portalPay) patch.payRate = portalPay;
+    if (Number(fgStamp.lastSyncedPayRate ?? NaN) !== portalPay) {
+      patch['fieldglass.lastSyncedPayRate'] = portalPay;
+    }
   }
   const currentBill = Number(jo.billRate ?? 0);
-  if (currentBill <= 0) {
-    if (Number.isFinite(enrichment.billRateSt as number)) patch.billRate = enrichment.billRateSt;
-    else if (patch.payRate != null) {
-      patch.billRate = Math.round((patch.payRate as number) * SODEXO_BILL_MARKUP * 100) / 100;
+  const portalBill = Number.isFinite(Number(enrichment.billRateSt))
+    ? Number(enrichment.billRateSt)
+    : patch.payRate != null
+      ? Math.round((patch.payRate as number) * SODEXO_BILL_MARKUP * 100) / 100
+      : NaN;
+  const billMachineOwned =
+    currentBill <= 0 || currentBill === Number(fgStamp.lastSyncedBillRate ?? NaN);
+  if (Number.isFinite(portalBill) && portalBill > 0) {
+    if (billMachineOwned && currentBill !== portalBill) patch.billRate = portalBill;
+    if (Number(fgStamp.lastSyncedBillRate ?? NaN) !== portalBill) {
+      patch['fieldglass.lastSyncedBillRate'] = portalBill;
     }
   }
   // Pay rate reached the JO → push it to the linked postings too, and flip
@@ -956,14 +977,22 @@ async function backfillJobOrderFromEnrichment(
       if (Object.keys(postPatch).length > 1) await p.ref.set(postPatch, { merge: true });
     }
   }
+  // Headcount sync (P1d): same machine-owned rule as rates. The old rule
+  // only ever grew from the ≤1 default, so a portal headcount REDUCTION
+  // (or any change after the first set) never landed. Machine-owned =
+  // still at the created default (≤1) or exactly the last synced value.
   const currentHeadcount = Number(jo.headcountRequested ?? 0);
-  if (
-    currentHeadcount <= 1 &&
-    Number.isFinite(enrichment.positionsRequested as number) &&
-    (enrichment.positionsRequested as number) > currentHeadcount
-  ) {
-    patch.headcountRequested = enrichment.positionsRequested;
-    patch.workersNeeded = enrichment.positionsRequested;
+  const portalHeadcount = Number(enrichment.positionsRequested);
+  const headcountMachineOwned =
+    currentHeadcount <= 1 || currentHeadcount === Number(fgStamp.lastSyncedHeadcount ?? NaN);
+  if (Number.isFinite(portalHeadcount) && portalHeadcount > 0) {
+    if (headcountMachineOwned && currentHeadcount !== portalHeadcount) {
+      patch.headcountRequested = portalHeadcount;
+      patch.workersNeeded = portalHeadcount;
+    }
+    if (Number(fgStamp.lastSyncedHeadcount ?? NaN) !== portalHeadcount) {
+      patch['fieldglass.lastSyncedHeadcount'] = portalHeadcount;
+    }
   }
   // WC backfill — repo chips can be added after the JO existed; fill the
   // gap on any later pass, never overwrite a value already set.
