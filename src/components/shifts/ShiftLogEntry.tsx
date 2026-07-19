@@ -539,19 +539,22 @@ export default function ShiftLogEntry({
                 couldn't pick an account (matchConfidence none / multiple)
                 AND the entry has a venueName to alias on. One click
                 locks in the mapping for every future email with the
-                same normalized venue. */}
+                same normalized venue. When no Apply action is possible,
+                linking IS the fix — render it as the primary (contained)
+                button so non-technical recruiters see the one obvious
+                next step instead of an outlined afterthought. */}
             {onLinkVenue &&
               (request.matchConfidence === 'none' ||
                 request.matchConfidence === 'multiple') &&
               !!request.event?.venueName && (
                 <Button
-                  variant="outlined"
+                  variant={applyAction ? 'outlined' : 'contained'}
                   size="small"
                   disabled={pending}
                   onClick={() => onLinkVenue(request)}
-                  sx={{ ml: 'auto' }}
+                  sx={applyAction ? { ml: 'auto' } : { order: -1 }}
                 >
-                  Link to account
+                  Link to account — teach HRX this venue
                 </Button>
               )}
           </Stack>

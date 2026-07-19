@@ -1041,6 +1041,16 @@ async function backfillJobOrderFromEnrichment(
     }
   }
 
+  // Client job description (review fix 2026-07-19): the portal's
+  // Description lives on the DETAIL page, so email-born JOs are created
+  // with an empty jobDescriptionFromClient and nothing ever filled it —
+  // the Positions tab showed blank and the Jobs Board AI had no client
+  // text to work from. Fill-only: a recruiter-entered description is
+  // never overwritten.
+  if (!trim(jo.jobDescriptionFromClient) && trim(enrichment.description)) {
+    patch.jobDescriptionFromClient = trim(enrichment.description);
+  }
+
   const notes = composeFieldglassOrderNotes(enrichment, postingId);
   if (notes !== String(jo.notes ?? '')) patch.notes = notes;
   if (enrichment.candidateInMind === true) {
