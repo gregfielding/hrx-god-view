@@ -58,6 +58,7 @@ const ShiftsLog: React.FC = () => {
   const [confidenceFilter, setConfidenceFilter] = useState<ConfidenceFilter>('all');
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [applySuccess, setApplySuccess] = useState<string | null>(null);
   /** Active "Link to account" target — when set, the alias dialog is open
    *  for this log entry's venueName. */
   const [linkVenueRequest, setLinkVenueRequest] = useState<ExternalShiftRequest | null>(
@@ -110,16 +111,18 @@ const ShiftsLog: React.FC = () => {
       const fn = httpsCallable(functions, 'indeedFlexApplyShiftRequest');
       const res = await fn({ tenantId, requestId: req.id });
       const data = (res.data ?? {}) as {
-        cancelled?: number;
+        summary?: string;
         skipped?: Array<{ id: string; reason: string }>;
       };
       const skippedCount = data.skipped?.length ?? 0;
       if (skippedCount > 0) {
         setActionError(
-          `Applied — ${data.cancelled ?? 0} cancelled, ${skippedCount} skipped: ${data.skipped!
+          `${data.summary ?? 'Applied'} — ${skippedCount} skipped: ${data.skipped!
             .map((s) => s.reason)
             .join('; ')}`,
         );
+      } else {
+        setApplySuccess(data.summary ?? 'Applied to HRX.');
       }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
@@ -203,6 +206,12 @@ const ShiftsLog: React.FC = () => {
       {actionError && (
         <Alert severity="error" onClose={() => setActionError(null)} sx={{ mb: 2 }}>
           {actionError}
+        </Alert>
+      )}
+
+      {applySuccess && (
+        <Alert severity="success" onClose={() => setApplySuccess(null)} sx={{ mb: 2 }}>
+          {applySuccess}
         </Alert>
       )}
 

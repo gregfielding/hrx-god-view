@@ -457,7 +457,15 @@ const AccountShiftsTab: React.FC<AccountShiftsTabProps> = ({
             showFavoritesOnly={showFavoritesOnly}
             statusFilter={statusFilter}
             jobTypeFilter={jobTypeFilter}
-            dateFilterStartIso={dateFilterStartIso}
+            /* The month grid shows its whole month — past/completed shifts
+               included — so the List view's default "from today" start
+               filter is dropped here unless the user explicitly set a
+               range (start moved off today, or any end date). */
+            dateFilterStartIso={
+              dateFilterStartIso === todayIsoLocal() && !dateFilterEndIso
+                ? null
+                : dateFilterStartIso
+            }
             dateFilterEndIso={dateFilterEndIso}
           />
         )}

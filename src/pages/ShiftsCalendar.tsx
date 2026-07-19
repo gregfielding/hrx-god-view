@@ -22,8 +22,14 @@ const ShiftsCalendar: React.FC = () => {
   const accountFilter = ctx?.accountFilter ?? 'all';
   const statusFilter = ctx?.statusFilter ?? 'all';
   const jobTypeFilter = ctx?.jobTypeFilter ?? 'all';
-  const dateFilterStartIso = ctx?.dateFilterStartIso ?? null;
+  // The month grid shows its whole month — past/completed shifts included —
+  // so the toolbar's default "from today" start filter is dropped here
+  // unless the user explicitly set a range (start moved off today, or any
+  // end date). The List view keeps its upcoming-focus default.
+  const rawStartIso = ctx?.dateFilterStartIso ?? null;
   const dateFilterEndIso = ctx?.dateFilterEndIso ?? null;
+  const dateFilterStartIso =
+    rawStartIso === todayIsoLocal() && !dateFilterEndIso ? null : rawStartIso;
   const allRows = ctx?.rows ?? [];
 
   const { isFavorite } = useFavorites('shifts');

@@ -339,12 +339,36 @@ export default function ShiftLogEntry({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
   const needsAck = kind.destructive && request.status === 'needs_review';
-  // One-click server-side apply exists only for cancel_booking rows whose
-  // workers the matcher already resolved to live assignments.
-  const canApplyInHrx =
-    request.eventType === 'cancel_booking' &&
-    (request.matchedAssignmentIds?.length ?? 0) > 0 &&
-    request.status === 'needs_review';
+  // One-click server-side apply — available when the matcher resolved
+  // enough context for the callable to act safely. Label spells out
+  // exactly what the click will do (non-technical recruiters must never
+  // have to guess).
+  const applyAction = ((): { label: string; color: 'error' | 'primary' } | null => {
+    if (request.status !== 'needs_review') return null;
+    const ev = (request.event ?? {}) as Record<string, unknown>;
+    switch (request.eventType) {
+      case 'cancel_booking': {
+        const n = request.matchedAssignmentIds?.length ?? 0;
+        if (n === 0) return null;
+        return { label: `Apply in HRX — cancel ${n} assignment${n === 1 ? '' : 's'}`, color: 'error' };
+      }
+      case 'change_headcount': {
+        if (!request.matchedShiftId || ev.newHeadcount == null) return null;
+        return { label: `Apply in HRX — set headcount to ${String(ev.newHeadcount)}`, color: 'primary' };
+      }
+      case 'change_time': {
+        if (!request.matchedShiftId || (!ev.newStartTime && !ev.newEndTime)) return null;
+        const t = [ev.newStartTime, ev.newEndTime].filter(Boolean).join('–');
+        return { label: `Apply in HRX — change time to ${t}`, color: 'primary' };
+      }
+      case 'new_request': {
+        if (!request.matchedJobOrderId || !ev.workDate) return null;
+        return { label: 'Apply in HRX — create this shift', color: 'primary' };
+      }
+      default:
+        return null;
+    }
+  })();
 
   const handleApply = async (): Promise<void> => {
     if (!onDecide) return;
@@ -483,16 +507,15 @@ export default function ShiftLogEntry({
         {/* Action buttons */}
         {request.status === 'needs_review' && onDecide && (
           <Stack direction="row" spacing={1} mt={1.5}>
-            {canApplyInHrx && onApplyInHrx && (
+            {applyAction && onApplyInHrx && (
               <Button
                 variant="contained"
-                color="error"
+                color={applyAction.color}
                 size="small"
                 disabled={pending || (needsAck && !acknowledged)}
                 onClick={() => onApplyInHrx(request)}
               >
-                Apply in HRX — cancel {request.matchedAssignmentIds!.length} assignment
-                {request.matchedAssignmentIds!.length === 1 ? '' : 's'}
+                {applyAction.label}
               </Button>
             )}
             <Button

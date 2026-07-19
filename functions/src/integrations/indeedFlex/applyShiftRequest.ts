@@ -67,10 +67,16 @@ export const indeedFlexApplyShiftRequest = onCall(
       );
     }
 
+    if (eventType === 'change_headcount' || eventType === 'change_time') {
+      return applyShiftUpdate({ tenantId, rowRef, row, eventType, uid: request.auth.uid });
+    }
+    if (eventType === 'new_request') {
+      return applyNewRequest({ tenantId, rowRef, row, uid: request.auth.uid });
+    }
     if (eventType !== 'cancel_booking') {
       throw new HttpsError(
         'failed-precondition',
-        `Apply is not yet supported for "${eventType}" — v1 handles cancel_booking only.`,
+        `"${eventType}" can't be applied automatically — handle it manually and use Mark applied.`,
       );
     }
 
@@ -128,6 +134,218 @@ export const indeedFlexApplyShiftRequest = onCall(
     logger.info('indeedFlexApplyShiftRequest applied', {
       tenantId, requestId, cancelled: cancelled.length, skipped: skipped.length,
     });
-    return { ok: true, alreadyApplied: false, cancelled: cancelled.length, skipped };
+    return {
+      ok: true,
+      alreadyApplied: false,
+      cancelled: cancelled.length,
+      skipped,
+      summary: `Cancelled ${cancelled.length} assignment${cancelled.length === 1 ? '' : 's'}`,
+    };
   },
 );
+
+// ─────────────────────────────────────────────────────────────────────
+// change_headcount / change_time — update the matched shift in place
+// ─────────────────────────────────────────────────────────────────────
+
+interface ApplyCtx {
+  tenantId: string;
+  rowRef: FirebaseFirestore.DocumentReference;
+  row: FirebaseFirestore.DocumentData;
+  uid: string;
+}
+
+function eachDateInclusive(start: string, end: string, cap = 62): string[] {
+  const out: string[] = [];
+  const d = new Date(`${start}T00:00:00Z`);
+  const e = new Date(`${end}T00:00:00Z`);
+  while (d <= e && out.length < cap) {
+    out.push(d.toISOString().slice(0, 10));
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return out;
+}
+
+async function stampApplied(
+  ctx: ApplyCtx,
+  appliedResult: Record<string, unknown>,
+): Promise<void> {
+  await ctx.rowRef.update({
+    status: 'applied',
+    appliedAt: admin.firestore.FieldValue.serverTimestamp(),
+    appliedBy: ctx.uid,
+    appliedResult,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+}
+
+async function applyShiftUpdate(
+  ctx: ApplyCtx & { eventType: 'change_headcount' | 'change_time' },
+): Promise<Record<string, unknown>> {
+  const { tenantId, row, eventType } = ctx;
+  const joId = String(row.matchedJobOrderId ?? '').trim();
+  const shiftId = String(row.matchedShiftId ?? '').trim();
+  if (!joId || !shiftId) {
+    throw new HttpsError(
+      'failed-precondition',
+      'No matched shift on this request — match it first (or handle manually).',
+    );
+  }
+  const shiftRef = db.doc(`tenants/${tenantId}/job_orders/${joId}/shifts/${shiftId}`);
+  const shiftSnap = await shiftRef.get();
+  if (!shiftSnap.exists) throw new HttpsError('not-found', 'The matched shift no longer exists.');
+  const shift = shiftSnap.data() || {};
+  const event = (row.event ?? {}) as Record<string, unknown>;
+
+  const patch: Record<string, unknown> = {
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedBy: ctx.uid,
+    lastIndeedFlexApplyAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+  // Dates the change applies to: the event's window when present,
+  // otherwise every scheduled day on the shift.
+  const dateSchedule =
+    shift.dateSchedule && typeof shift.dateSchedule === 'object'
+      ? { ...(shift.dateSchedule as Record<string, Record<string, unknown>>) }
+      : null;
+  const evStart = typeof event.workDate === 'string' ? event.workDate : null;
+  const evEnd = typeof event.endDate === 'string' ? event.endDate : evStart;
+  const targetDates =
+    dateSchedule == null
+      ? []
+      : evStart
+        ? eachDateInclusive(evStart, evEnd ?? evStart).filter((d) => dateSchedule[d])
+        : Object.keys(dateSchedule);
+
+  let summary: string;
+  if (eventType === 'change_headcount') {
+    const newHeadcount = Number(event.newHeadcount);
+    if (!Number.isFinite(newHeadcount) || newHeadcount < 0) {
+      throw new HttpsError('failed-precondition', 'The email did not carry a usable new headcount.');
+    }
+    patch.totalStaffRequested = newHeadcount;
+    if (dateSchedule) {
+      for (const d of targetDates) {
+        dateSchedule[d] = { ...dateSchedule[d], workersNeeded: newHeadcount };
+      }
+      patch.dateSchedule = dateSchedule;
+    }
+    summary = `Headcount set to ${newHeadcount}`;
+  } else {
+    const newStart = typeof event.newStartTime === 'string' ? event.newStartTime : null;
+    const newEnd = typeof event.newEndTime === 'string' ? event.newEndTime : null;
+    if (!newStart && !newEnd) {
+      throw new HttpsError('failed-precondition', 'The email did not carry a usable new time.');
+    }
+    if (newStart) patch.defaultStartTime = newStart;
+    if (newEnd) patch.defaultEndTime = newEnd;
+    if (dateSchedule) {
+      for (const d of targetDates) {
+        dateSchedule[d] = {
+          ...dateSchedule[d],
+          ...(newStart ? { startTime: newStart } : {}),
+          ...(newEnd ? { endTime: newEnd } : {}),
+        };
+      }
+      patch.dateSchedule = dateSchedule;
+    }
+    summary = `Time changed to ${newStart ?? shift.defaultStartTime ?? '?'}–${newEnd ?? shift.defaultEndTime ?? '?'}`;
+  }
+
+  await shiftRef.update(patch);
+  await stampApplied(ctx, {
+    action: eventType,
+    jobOrderId: joId,
+    shiftId,
+    datesTouched: targetDates,
+    summary,
+  });
+  logger.info('indeedFlexApplyShiftRequest shift update', { tenantId, shiftId, eventType, summary });
+  return { ok: true, alreadyApplied: false, summary };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// new_request — create the shift on the matched (inbox gig) job order
+// ─────────────────────────────────────────────────────────────────────
+
+async function applyNewRequest(ctx: ApplyCtx): Promise<Record<string, unknown>> {
+  const { tenantId, row } = ctx;
+  const joId = String(row.matchedJobOrderId ?? '').trim();
+  if (!joId) {
+    throw new HttpsError(
+      'failed-precondition',
+      'No matched job order for this venue yet — use "Link to account" first.',
+    );
+  }
+  const event = (row.event ?? {}) as Record<string, unknown>;
+  const workDate = typeof event.workDate === 'string' ? event.workDate : null;
+  if (!workDate) {
+    throw new HttpsError('failed-precondition', 'The email did not carry a usable shift date.');
+  }
+  const endDate = typeof event.endDate === 'string' ? event.endDate : workDate;
+  const jobId = typeof event.jobId === 'string' ? event.jobId.trim() : '';
+  const joRef = db.doc(`tenants/${tenantId}/job_orders/${joId}`);
+  const joSnap = await joRef.get();
+  if (!joSnap.exists) throw new HttpsError('not-found', 'The matched job order no longer exists.');
+
+  // Idempotency on the Indeed Job ID: re-applying (or a second email for
+  // the same order) must not mint a duplicate shift.
+  if (jobId) {
+    const dupes = await joRef.collection('shifts').where('poNumber', '==', jobId).limit(1).get();
+    if (!dupes.empty) {
+      await stampApplied(ctx, {
+        action: 'new_request',
+        jobOrderId: joId,
+        shiftId: dupes.docs[0].id,
+        summary: `Shift already exists for Indeed job ${jobId}`,
+      });
+      return { ok: true, alreadyApplied: true, summary: 'Shift already existed — nothing created' };
+    }
+  }
+
+  const headcount = Number(event.headcount);
+  const need = Number.isFinite(headcount) && headcount > 0 ? headcount : 1;
+  const startTime = typeof event.startTime === 'string' ? event.startTime : '';
+  const endTime = typeof event.endTime === 'string' ? event.endTime : '';
+  const roleName = typeof event.roleName === 'string' ? event.roleName : '';
+  const venueName = typeof event.venueName === 'string' ? event.venueName : '';
+  const payRate = Number(event.payRateUsd);
+
+  const dateSchedule: Record<string, Record<string, unknown>> = {};
+  for (const d of eachDateInclusive(workDate, endDate)) {
+    dateSchedule[d] = { startTime, endTime, workersNeeded: need, overstaff: 0 };
+  }
+
+  const shiftDoc: Record<string, unknown> = {
+    tenantId,
+    jobOrderId: joId,
+    status: 'open',
+    shiftTitle: roleName ? `${roleName}${venueName ? ` — ${venueName}` : ''}` : venueName || 'Indeed Flex shift',
+    defaultJobTitle: roleName,
+    shiftDate: workDate,
+    ...(endDate !== workDate ? { endDate } : {}),
+    defaultStartTime: startTime,
+    defaultEndTime: endTime,
+    dateSchedule,
+    totalStaffRequested: need,
+    ...(Number.isFinite(payRate) && payRate > 0 ? { payRate } : {}),
+    ...(jobId ? { poNumber: jobId } : {}),
+    sendNotification: false,
+    showStaffNeeded: false,
+    overstaffCount: 0,
+    source: 'indeed_flex_apply',
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdBy: ctx.uid,
+  };
+  const created = await joRef.collection('shifts').add(shiftDoc);
+  const summary = `Shift created for ${workDate}${endDate !== workDate ? `–${endDate}` : ''} (${need} needed)`;
+  await stampApplied(ctx, {
+    action: 'new_request',
+    jobOrderId: joId,
+    shiftId: created.id,
+    summary,
+  });
+  logger.info('indeedFlexApplyShiftRequest new shift', { tenantId, jobOrderId: joId, shiftId: created.id });
+  return { ok: true, alreadyApplied: false, summary };
+}
