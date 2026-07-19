@@ -32,6 +32,7 @@ import {
 import { getEvereeConfigForEntity, evereePaths } from '../integrations/everee/evereeConfig';
 import { extractEvereeHomeAddressFromUserDoc } from '../integrations/everee/evereeUserAddress';
 import { normalizeSite, siteMappingDocId } from './timesheetSiteMappings';
+import { aliasKeyFor } from '../integrations/indeedFlex/matcher/venueAliases';
 import {
   normalizeEmail,
   workerAliasDocId,
@@ -615,6 +616,121 @@ export const importTimesheetMatchWorkers = onCall(
         workersCompSource: f.workersCompCode ? (filledWc ? 'account' : 'site_mapping') : 'none',
         worksiteSource: f.worksiteAddress ? (filledWorksite ? 'account' : 'site_mapping') : 'none',
       };
+    };
+
+    // Venue-alias fallback (2026-07-19 unification): when no manual site
+    // mapping exists, consult the Indeed Flex `venue_aliases` store — the
+    // "Link to account" teachings from the Shifts Log. An alias resolves the
+    // CSV site to an ACCOUNT; the account's rolling Indeed Flex inbox gig JO
+    // (same convention as the intake matcher) then supplies pay/WC/worksite.
+    // On success we self-write the timesheet_site_mapping so the next import
+    // takes the fast path — teach once anywhere, known everywhere.
+    let venueAliasList: Array<{ key: string; accountId: string; accountName: string }> | null = null;
+    const loadVenueAliases = async () => {
+      if (venueAliasList) return venueAliasList;
+      const snap = await db.collection(`tenants/${tenantId}/venue_aliases`).limit(500).get();
+      venueAliasList = snap.docs
+        .map((d) => {
+          const a = d.data() as Record<string, any>;
+          return {
+            key: String(a.aliasKey || '').trim(),
+            accountId: String(a.accountId || '').trim(),
+            accountName: String(a.accountName || '').trim(),
+          };
+        })
+        .filter((a) => a.key.length >= 8 && a.accountId);
+      return venueAliasList;
+    };
+    const findInboxGigJo = async (
+      accountId: string,
+    ): Promise<{ id: string; jo: Record<string, any> } | null> => {
+      for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
+        try {
+          const snap = await db
+            .collection(`tenants/${tenantId}/${coll}`)
+            .where('recruiterAccountId', '==', accountId)
+            .where('jobType', '==', 'gig')
+            .where('status', '==', 'open')
+            .limit(5)
+            .get();
+          if (!snap.empty) {
+            const docs = [...snap.docs].sort((a, b) => {
+              const ua = (a.data().updatedAt?.toMillis?.() as number) ?? 0;
+              const ub = (b.data().updatedAt?.toMillis?.() as number) ?? 0;
+              return ub - ua;
+            });
+            return { id: docs[0].id, jo: docs[0].data() as Record<string, any> };
+          }
+        } catch {
+          /* collection may not exist — walk next */
+        }
+      }
+      return null;
+    };
+    const venueAliasResultCache = new Map<string, Partial<MatchRowResult> | null>();
+    const resolveViaVenueAlias = async (
+      site: string,
+      role: string,
+    ): Promise<Partial<MatchRowResult> | null> => {
+      const siteKey = aliasKeyFor(site);
+      if (siteKey.length < 8) return null; // too short to trust containment
+      if (venueAliasResultCache.has(siteKey)) return venueAliasResultCache.get(siteKey) ?? null;
+      const aliases = await loadVenueAliases();
+      // Exact key first, then containment either way — the email venue
+      // string usually carries prefixes/suffixes the CSV site omits.
+      const hit =
+        aliases.find((a) => a.key === siteKey) ??
+        aliases.find((a) => a.key.includes(siteKey) || siteKey.includes(a.key)) ??
+        null;
+      let result: Partial<MatchRowResult> | null = null;
+      if (hit) {
+        const inbox = await findInboxGigJo(hit.accountId);
+        if (inbox) {
+          const { fields: f, filledWorksite, filledWc } = await backfillFromAccount(
+            hit.accountId,
+            resolveJobOrderFields(inbox.jo, role),
+          );
+          result = {
+            assignmentId: null,
+            jobOrderId: inbox.id,
+            shiftId: null,
+            jobTitle: f.jobTitle,
+            worksiteId: f.worksiteId,
+            worksiteName: f.worksiteName,
+            worksiteAddress: f.worksiteAddress,
+            workersCompCode: f.workersCompCode,
+            workersCompRate: f.workersCompRate,
+            payRate: f.payRate || null,
+            workersCompSource: f.workersCompCode ? (filledWc ? 'account' : 'site_mapping') : 'none',
+            worksiteSource: f.worksiteAddress ? (filledWorksite ? 'account' : 'site_mapping') : 'none',
+          };
+          // Self-write the site mapping (fire-and-forget) so future imports
+          // resolve without the alias scan.
+          const c = String(customer || '').trim();
+          if (c) {
+            db.doc(`tenants/${tenantId}/timesheet_site_mappings/${siteMappingDocId(c, site)}`)
+              .set(
+                {
+                  tenantId,
+                  customer: c,
+                  site,
+                  normalizedSite: normalizeSite(site),
+                  jobOrderId: inbox.id,
+                  positionJobTitle: '',
+                  accountId: hit.accountId,
+                  accountName: hit.accountName || null,
+                  source: 'venue_alias_auto',
+                  createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                },
+                { merge: true },
+              )
+              .catch(() => undefined);
+          }
+        }
+      }
+      venueAliasResultCache.set(siteKey, result);
+      return result;
     };
 
     // Auto JO-name match (for rows with no manual mapping): partial-match the
@@ -1241,6 +1357,7 @@ export const importTimesheetMatchWorkers = onCall(
         // the row's "Type" against the customer account's job orders.
         const mapped =
           (await resolveSiteMapping(String(row.site || ''), String(row.role || ''))) ||
+          (await resolveViaVenueAlias(String(row.site || ''), String(row.role || ''))) ||
           (await resolveByJobOrderName(String(row.site || ''), String(row.role || '')));
         return mapped
           ? {

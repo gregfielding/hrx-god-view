@@ -13,6 +13,7 @@
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import { aliasDocIdFor, aliasKeyFor } from '../integrations/indeedFlex/matcher/venueAliases';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -124,6 +125,34 @@ export const saveTimesheetSiteMapping = onCall(
       },
       { merge: true },
     );
+
+    // Cross-write the Indeed Flex venue alias (2026-07-19 unification):
+    // teaching the importer a site also teaches the email-intake matcher,
+    // so order/cancellation emails from this venue auto-match too. Teach
+    // once anywhere, known everywhere. Non-fatal — the mapping above is
+    // the primary write.
+    if (accountId) {
+      try {
+        const aliasKey = aliasKeyFor(site);
+        if (aliasKey) {
+          await db.doc(`tenants/${tenantId}/venue_aliases/${aliasDocIdFor(site)}`).set(
+            {
+              tenantId,
+              aliasKey,
+              venueNameRaw: site.trim(),
+              accountId,
+              accountName,
+              createdBy: request.auth.uid,
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              source: 'timesheet_site_mapping',
+            },
+            { merge: true },
+          );
+        }
+      } catch {
+        /* alias write is best-effort */
+      }
+    }
 
     return { ok: true, docId, accountName };
   },
