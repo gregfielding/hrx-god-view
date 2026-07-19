@@ -1,12 +1,15 @@
 /**
  * ShiftsLog — log-view tab body for /shifts/log.
  *
- * Shows the live feed of Indeed Flex `external_shift_requests` — what
- * the system WOULD do if the apply path (Slice 5) were active. The
- * tab is read-mostly: the only Firestore writes from this view are
- * status flips on the `external_shift_requests` doc itself
- * (`needs_review` → `applied | rejected`). It NEVER mutates
- * shifts / job orders / assignments.
+ * Shows the live feed of Indeed Flex `external_shift_requests`. Two
+ * kinds of action per row:
+ *   - "Apply in HRX" (cancel_booking rows with matcher-resolved
+ *     assignments): calls the indeedFlexApplyShiftRequest callable,
+ *     which DOES mutate HRX — cancels + hard-deletes the matched
+ *     assignments and stamps the row applied. Shipped 2026-07-17;
+ *     before that this feed was dry-run-only.
+ *   - "Mark applied" / "Reject": record-keeping only — status flips on
+ *     the `external_shift_requests` doc itself, no schedule changes.
  *
  * The feed groups by date desc, with filters for status, confidence,
  * and date range. Each row renders via `<ShiftLogEntry />` which
@@ -185,12 +188,15 @@ const ShiftsLog: React.FC = () => {
         </FormControl>
       </Stack>
 
-      {/* Info banner — this is dry-run */}
+      {/* Info banner — plain-language explanation of what the buttons do.
+          (Historical note: this feed was dry-run-only until 2026-07-17,
+          when the Apply path shipped for cancellations.) */}
       <Alert severity="info" sx={{ mb: 2 }}>
         <Typography variant="body2">
-          <strong>Dry-run feed</strong>. Each entry shows what the system WOULD do if the apply
-          path were live. &quot;Mark applied&quot; / &quot;Reject&quot; only updates this entry&apos;s
-          status — it does NOT mutate shifts, job orders, or assignments.
+          Updates from the portals land here. A red <strong>Apply in HRX</strong> button means
+          HRX can make the change for you — one click and it&apos;s done.
+          &quot;Mark applied&quot; means you already handled it yourself; &quot;Reject&quot; means
+          ignore this update. Neither of those changes any schedules.
         </Typography>
       </Alert>
 
