@@ -79,6 +79,9 @@ interface JobOrderGroup {
   workers: Map<string, WorkerLine>;
   scheduledHours: number;
   actualHours: number;
+  payDollars: number;
+  billDollars: number;
+  rowsMissingRates: number;
 }
 
 interface AccountGroup {
@@ -88,6 +91,27 @@ interface AccountGroup {
   workerIds: Set<string>;
   scheduledHours: number;
   actualHours: number;
+  payDollars: number;
+  billDollars: number;
+  rowsMissingRates: number;
+}
+
+/** Per-worker tenant-wide day hours, for the OT estimate (a worker can
+ *  cross accounts in a week; OT thresholds apply to the worker, not the
+ *  account). */
+interface OtEstimate {
+  workersOver40: number;
+  estimatedOtHours: number;
+}
+
+/** Full-time tracker (Phase 3c): one worker's hours across the 4 weeks
+ *  ending with the selected week — newest last. */
+interface FullTimeRow {
+  workerId: string;
+  workerName: string;
+  weekHours: number[];
+  latestHours: number;
+  trendingUp: boolean;
 }
 
 interface JoNames {
@@ -99,8 +123,10 @@ interface JoNames {
 function buildGroups(
   rows: TimesheetGridRow[],
   joNames: Map<string, JoNames>,
-): AccountGroup[] {
+): { groups: AccountGroup[]; ot: OtEstimate } {
   const accounts = new Map<string, AccountGroup>();
+  // workerId → workDate → hours, tenant-wide, for the OT estimate.
+  const workerDayHours = new Map<string, Map<string, number>>();
   for (const row of rows) {
     if (row.kind !== 'entry' && row.kind !== 'empty') continue;
     const joId = row.assignment.jobOrderId || '';
@@ -125,6 +151,9 @@ function buildGroups(
         workerIds: new Set(),
         scheduledHours: 0,
         actualHours: 0,
+        payDollars: 0,
+        billDollars: 0,
+        rowsMissingRates: 0,
       };
       accounts.set(accountKey, account);
     }
@@ -137,6 +166,9 @@ function buildGroups(
         workers: new Map(),
         scheduledHours: 0,
         actualHours: 0,
+        payDollars: 0,
+        billDollars: 0,
+        rowsMissingRates: 0,
       };
       account.jobOrders.set(joGroupKey, jo);
     }
@@ -168,16 +200,130 @@ function buildGroups(
     account.workerIds.add(workerId);
     account.scheduledHours += sched;
     account.actualHours += actual;
+
+    // Money: actual hours when an entry exists, scheduled otherwise —
+    // same preference the hours display uses. OT premium is deliberately
+    // NOT modeled per account: Greg bills OT at 1.5× exactly as it's
+    // paid at 1.5×, so straight-rate margin holds; OT is surfaced as a
+    // week-level hours estimate instead.
+    const moneyHours = row.kind === 'entry' && actual > 0 ? actual : sched;
+    const payRate = row.assignment.payRate;
+    const billRate = row.assignment.billRate;
+    if (moneyHours > 0 && (payRate <= 0 || billRate <= 0)) {
+      jo.rowsMissingRates += 1;
+      account.rowsMissingRates += 1;
+    }
+    jo.payDollars += moneyHours * payRate;
+    jo.billDollars += moneyHours * billRate;
+    account.payDollars += moneyHours * payRate;
+    account.billDollars += moneyHours * billRate;
+
+    if (moneyHours > 0) {
+      let days = workerDayHours.get(workerId);
+      if (!days) {
+        days = new Map();
+        workerDayHours.set(workerId, days);
+      }
+      days.set(row.workDate, (days.get(row.workDate) ?? 0) + moneyHours);
+    }
   }
-  return Array.from(accounts.values()).sort((a, b) =>
+
+  // OT estimate (CA approximation): per worker, the greater of daily
+  // hours beyond 8 and weekly hours beyond 40. Directional only — exact
+  // OT lives in payroll.
+  let workersOver40 = 0;
+  let estimatedOtHours = 0;
+  for (const days of Array.from(workerDayHours.values())) {
+    let weekTotal = 0;
+    let dailyOt = 0;
+    for (const h of Array.from(days.values())) {
+      weekTotal += h;
+      if (h > 8) dailyOt += h - 8;
+    }
+    const weeklyOt = Math.max(0, weekTotal - 40);
+    if (weekTotal > 40) workersOver40 += 1;
+    estimatedOtHours += Math.max(dailyOt, weeklyOt);
+  }
+
+  const groups = Array.from(accounts.values()).sort((a, b) =>
     b.scheduledHours + b.actualHours - (a.scheduledHours + a.actualHours),
   );
+  return { groups, ot: { workersOver40, estimatedOtHours } };
 }
 
 function fmtHours(h: number): string {
   if (h <= 0) return '—';
   const rounded = Math.round(h * 10) / 10;
   return `${rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1)} hrs`;
+}
+
+function fmtMoney(d: number): string {
+  if (d <= 0) return '—';
+  return d.toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  });
+}
+
+function marginPct(pay: number, bill: number): string {
+  if (bill <= 0) return '—';
+  return `${Math.round(((bill - pay) / bill) * 100)}%`;
+}
+
+const SHOW_MONEY_KEY = 'whosWorking.showMoney';
+
+/** Hours per row for people-math: actual when a timesheet entry exists,
+ *  scheduled otherwise. Shared by the money rollup and the full-time
+ *  tracker so both agree with the hours the report displays. */
+function hoursForRow(row: TimesheetGridRow): number {
+  if (row.kind !== 'entry' && row.kind !== 'empty') return 0;
+  const actual = row.kind === 'entry' ? actualHoursForRow(row) : 0;
+  return actual > 0 ? actual : scheduledHoursForRow(row);
+}
+
+function buildFullTimeRows(
+  rows: TimesheetGridRow[],
+  weeks: PeriodRange[],
+): FullTimeRow[] {
+  const byWorker = new Map<string, FullTimeRow>();
+  for (const row of rows) {
+    if (row.kind !== 'entry' && row.kind !== 'empty') continue;
+    const hrs = hoursForRow(row);
+    if (hrs <= 0) continue;
+    const weekIdx = weeks.findIndex(
+      (w) => row.workDate >= w.start && row.workDate <= w.end,
+    );
+    if (weekIdx < 0) continue;
+    const workerId = row.assignment.workerId || row.assignment.candidateId || row.key;
+    let ft = byWorker.get(workerId);
+    if (!ft) {
+      ft = {
+        workerId,
+        workerName: row.assignment.workerDisplayName || 'Worker',
+        weekHours: weeks.map(() => 0),
+        latestHours: 0,
+        trendingUp: false,
+      };
+      byWorker.set(workerId, ft);
+    } else if (ft.workerName === 'Worker' && row.assignment.workerDisplayName) {
+      ft.workerName = row.assignment.workerDisplayName;
+    }
+    ft.weekHours[weekIdx] += hrs;
+  }
+  const result: FullTimeRow[] = [];
+  for (const ft of Array.from(byWorker.values())) {
+    const n = ft.weekHours.length;
+    ft.latestHours = ft.weekHours[n - 1];
+    // "Growing": each of the last three weeks beat the one before it.
+    ft.trendingUp =
+      n >= 3 &&
+      ft.weekHours[n - 1] > ft.weekHours[n - 2] &&
+      ft.weekHours[n - 2] > ft.weekHours[n - 3] &&
+      ft.weekHours[n - 1] > 0;
+    result.push(ft);
+  }
+  return result.sort((a, b) => b.latestHours - a.latestHours);
 }
 
 /* -------------------------------------------------------------------------
@@ -191,7 +337,62 @@ const WhosWorkingPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [groups, setGroups] = useState<AccountGroup[]>([]);
+  const [ot, setOt] = useState<OtEstimate>({ workersOver40: 0, estimatedOtHours: 0 });
   const [rowCount, setRowCount] = useState(0);
+  const [showMoney, setShowMoney] = useState<boolean>(
+    () => localStorage.getItem(SHOW_MONEY_KEY) === '1',
+  );
+  const toggleMoney = useCallback(() => {
+    setShowMoney((prev) => {
+      localStorage.setItem(SHOW_MONEY_KEY, prev ? '0' : '1');
+      return !prev;
+    });
+  }, []);
+
+  // Full-time tracker (3c) — loads 4 weeks of data only when opened, so
+  // the default weekly view stays cheap.
+  const [ftOpen, setFtOpen] = useState(false);
+  const [ftLoading, setFtLoading] = useState(false);
+  const [ftRows, setFtRows] = useState<FullTimeRow[] | null>(null);
+  const ftWeeks = useMemo<PeriodRange[]>(
+    () => [-3, -2, -1, 0].map((delta) => shiftWeeklyPeriod(period, delta)),
+    [period],
+  );
+
+  const loadFullTime = useCallback(async () => {
+    if (!tenantId) return;
+    setFtLoading(true);
+    try {
+      const entitiesSnap = await getDocs(collection(db, 'tenants', tenantId, 'entities'));
+      const resolution = await resolveTimesheetGrid({
+        fdb: db,
+        tenantId,
+        filter: {
+          kind: 'tenant_period',
+          periodStart: ftWeeks[0].start,
+          periodEnd: ftWeeks[ftWeeks.length - 1].end,
+          hiringEntityIds: entitiesSnap.docs.map((d) => d.id),
+        },
+      });
+      setFtRows(buildFullTimeRows(resolution.rows, ftWeeks));
+    } catch {
+      setFtRows([]);
+    } finally {
+      setFtLoading(false);
+    }
+  }, [tenantId, ftWeeks]);
+
+  useEffect(() => {
+    // Period changed — 4-week window moved, so stale tracker data must
+    // reload on next open.
+    setFtRows(null);
+    setFtOpen(false);
+  }, [period]);
+
+  const openFullTime = useCallback(() => {
+    setFtOpen(true);
+    if (ftRows === null) void loadFullTime();
+  }, [ftRows, loadFullTime]);
 
   const isCurrentWeek = useMemo(() => {
     const now = currentWeeklyPeriod(0, 6);
@@ -249,7 +450,9 @@ const WhosWorkingPage: React.FC = () => {
         }),
       );
 
-      setGroups(buildGroups(resolution.rows, joNames));
+      const built = buildGroups(resolution.rows, joNames);
+      setGroups(built.groups);
+      setOt(built.ot);
       setRowCount(resolution.rows.length);
       if (resolution.errors.length > 0) {
         // Non-fatal resolver warnings — surface the first so data gaps
@@ -276,6 +479,9 @@ const WhosWorkingPage: React.FC = () => {
   }, [groups]);
   const totalScheduled = groups.reduce((s, g) => s + g.scheduledHours, 0);
   const totalActual = groups.reduce((s, g) => s + g.actualHours, 0);
+  const totalPay = groups.reduce((s, g) => s + g.payDollars, 0);
+  const totalBill = groups.reduce((s, g) => s + g.billDollars, 0);
+  const totalMissingRates = groups.reduce((s, g) => s + g.rowsMissingRates, 0);
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 1100, mx: 'auto' }}>
@@ -333,7 +539,49 @@ const WhosWorkingPage: React.FC = () => {
             <Typography variant="h6" fontWeight={700}>{groups.length}</Typography>
             <Typography variant="caption" color="text.secondary">accounts</Typography>
           </Box>
+          {showMoney && (
+            <>
+              <Box>
+                <Typography variant="h6" fontWeight={700}>{fmtMoney(totalPay)}</Typography>
+                <Typography variant="caption" color="text.secondary">worker pay</Typography>
+              </Box>
+              <Box>
+                <Typography variant="h6" fontWeight={700}>{fmtMoney(totalBill)}</Typography>
+                <Typography variant="caption" color="text.secondary">client billing</Typography>
+              </Box>
+              <Box>
+                <Typography variant="h6" fontWeight={700}>
+                  {fmtMoney(totalBill - totalPay)}{' '}
+                  <Typography component="span" variant="body2" color="text.secondary">
+                    ({marginPct(totalPay, totalBill)})
+                  </Typography>
+                </Typography>
+                <Typography variant="caption" color="text.secondary">margin</Typography>
+              </Box>
+              {ot.estimatedOtHours > 0 && (
+                <Box>
+                  <Typography variant="h6" fontWeight={700}>{fmtHours(ot.estimatedOtHours)}</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    overtime (est., {ot.workersOver40} over 40 hrs)
+                  </Typography>
+                </Box>
+              )}
+            </>
+          )}
+          <Box sx={{ ml: 'auto', alignSelf: 'center' }}>
+            <Button size="small" onClick={toggleMoney}>
+              {showMoney ? 'Hide money' : 'Show money'}
+            </Button>
+          </Box>
         </Stack>
+        {showMoney && (
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+            Estimates from assignment rates × hours. Overtime is billed at 1.5× just like it's
+            paid at 1.5×, so the margin % holds even with overtime.
+            {totalMissingRates > 0 &&
+              ` ${totalMissingRates} row${totalMissingRates === 1 ? '' : 's'} missing a pay or bill rate — those count as $0.`}
+          </Typography>
+        )}
       </Paper>
 
       {error && (
@@ -367,6 +615,9 @@ const WhosWorkingPage: React.FC = () => {
                   {isPastWeek && account.actualHours > 0
                     ? ` · ${fmtHours(account.actualHours)} worked`
                     : ''}
+                  {showMoney && account.billDollars > 0
+                    ? ` · ${fmtMoney(account.payDollars)} pay / ${fmtMoney(account.billDollars)} bill · ${marginPct(account.payDollars, account.billDollars)} margin`
+                    : ''}
                 </Typography>
               </Stack>
             </Box>
@@ -387,6 +638,9 @@ const WhosWorkingPage: React.FC = () => {
                   <Typography variant="caption" color="text.secondary">
                     {fmtHours(jo.scheduledHours)} scheduled
                     {isPastWeek && jo.actualHours > 0 ? ` · ${fmtHours(jo.actualHours)} worked` : ''}
+                    {showMoney && jo.billDollars > 0
+                      ? ` · ${fmtMoney(jo.payDollars)} pay / ${fmtMoney(jo.billDollars)} bill · ${marginPct(jo.payDollars, jo.billDollars)} margin`
+                      : ''}
                   </Typography>
                 </Stack>
                 <Box sx={{ mt: 1 }}>
@@ -434,6 +688,102 @@ const WhosWorkingPage: React.FC = () => {
           </Paper>
         ))
       )}
+
+      {/* Full-time tracker (3c) — who's at or near full-time hours */}
+      <Paper variant="outlined" sx={{ mt: 2, overflow: 'hidden' }}>
+        <Box sx={{ px: 2, py: 1.5, bgcolor: 'action.hover' }}>
+          <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
+            <Box>
+              <Typography variant="subtitle1" fontWeight={700}>Full-time watch</Typography>
+              <Typography variant="caption" color="text.secondary">
+                Hours per worker over the 4 weeks ending {formatWeekOfLabel(period)} — who's at
+                full-time, who's close, and who's growing.
+              </Typography>
+            </Box>
+            {!ftOpen && (
+              <Button size="small" variant="outlined" onClick={openFullTime}>
+                Show
+              </Button>
+            )}
+          </Stack>
+        </Box>
+        {ftOpen && (
+          <Box sx={{ px: 2, py: 1.5 }}>
+            {ftLoading ? (
+              <Stack alignItems="center" sx={{ py: 3 }}>
+                <CircularProgress size={28} />
+              </Stack>
+            ) : !ftRows || ftRows.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                No hours in this 4-week window.
+              </Typography>
+            ) : (
+              <>
+                <Stack direction="row" spacing={1} sx={{ mb: 1.5 }} flexWrap="wrap" useFlexGap>
+                  <Chip
+                    size="small"
+                    color="success"
+                    label={`${ftRows.filter((w) => w.latestHours >= 35).length} at full-time (35+)`}
+                  />
+                  <Chip
+                    size="small"
+                    color="warning"
+                    label={`${ftRows.filter((w) => w.latestHours >= 30 && w.latestHours < 35).length} close (30–35)`}
+                  />
+                  <Chip
+                    size="small"
+                    color="info"
+                    label={`${ftRows.filter((w) => w.trendingUp).length} growing week over week`}
+                  />
+                </Stack>
+                {ftRows.slice(0, 40).map((w) => (
+                  <Stack
+                    key={w.workerId}
+                    direction="row"
+                    alignItems="center"
+                    spacing={1}
+                    flexWrap="wrap"
+                    useFlexGap
+                    sx={{ py: 0.5, borderTop: 1, borderColor: 'divider' }}
+                  >
+                    <Typography variant="body2" sx={{ minWidth: 180 }}>{w.workerName}</Typography>
+                    <Stack direction="row" spacing={0.5}>
+                      {w.weekHours.map((h, i) => (
+                        <Chip
+                          key={ftWeeks[i].start}
+                          size="small"
+                          variant={i === w.weekHours.length - 1 ? 'filled' : 'outlined'}
+                          color={h >= 35 ? 'success' : h >= 30 ? 'warning' : 'default'}
+                          label={h > 0 ? `${Math.round(h)}h` : '·'}
+                          sx={{ minWidth: 48, opacity: h > 0 ? 1 : 0.4 }}
+                        />
+                      ))}
+                    </Stack>
+                    <Box sx={{ ml: 'auto' }}>
+                      {w.latestHours >= 35 ? (
+                        <Chip size="small" color="success" variant="outlined" label="Full-time" />
+                      ) : w.latestHours >= 30 ? (
+                        <Chip size="small" color="warning" variant="outlined" label="Close" />
+                      ) : w.trendingUp ? (
+                        <Chip size="small" color="info" variant="outlined" label="Growing" />
+                      ) : null}
+                    </Box>
+                  </Stack>
+                ))}
+                {ftRows.length > 40 && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                    Showing the top 40 of {ftRows.length} workers by latest-week hours.
+                  </Typography>
+                )}
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                  Oldest week first; the filled chip is {formatWeekOfLabel(period)}. Uses worked
+                  hours where timesheets exist, scheduled hours otherwise.
+                </Typography>
+              </>
+            )}
+          </Box>
+        )}
+      </Paper>
 
       {!loading && rowCount > 0 && (
         <Typography variant="caption" color="text.secondary" sx={{ mt: 2, display: 'block' }}>
