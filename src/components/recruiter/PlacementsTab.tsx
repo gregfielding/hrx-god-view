@@ -2433,9 +2433,14 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const assignWorkersToShift = async (
     workerIds: string[],
     dayOverride?: string,
-    options?: { allowOverlapping?: boolean },
+    options?: { allowOverlapping?: boolean; shiftOverride?: Shift },
   ) => {
-    if (!selectedShift || !tenantId || !jobOrderId || workerIds.length === 0) {
+    // One-step placement (Phase 2, 2026-07-19): drops hire onto the card
+    // they landed on, which may not be `selectedShift` yet (the auto-expand
+    // state update hasn't flushed). Same explicit-override-beats-stale-state
+    // pattern as `dayOverride` above.
+    const shiftForAssign = options?.shiftOverride ?? selectedShift;
+    if (!shiftForAssign || !tenantId || !jobOrderId || workerIds.length === 0) {
       setError('Missing required information to assign shift');
       return;
     }
@@ -2447,24 +2452,24 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       const jobTypeForAssign = String((jobOrder as any)?.jobType || '').toLowerCase();
       const isGigMultiDayForAssign =
         jobTypeForAssign === 'gig' &&
-        selectedShift &&
-        (selectedShift as any).dateSchedule &&
-        (selectedShift as any).endDate &&
-        (selectedShift as any).endDate !== (selectedShift as any).shiftDate;
+        shiftForAssign &&
+        (shiftForAssign as any).dateSchedule &&
+        (shiftForAssign as any).endDate &&
+        (shiftForAssign as any).endDate !== (shiftForAssign as any).shiftDate;
       // When a specific day is selected, create assignment for that day only (never send applyDates).
       const useSingleDay = Boolean(isIsoGigDay(effectiveDay));
       const bulkDates =
-        !useSingleDay && !effectiveDay && isGigMultiDayForAssign && selectedShift
+        !useSingleDay && !effectiveDay && isGigMultiDayForAssign && shiftForAssign
           ? getDateScheduleEntriesWithHours(
-              (selectedShift as any).dateSchedule,
-              (selectedShift as any).shiftDate,
-              (selectedShift as any).endDate,
+              (shiftForAssign as any).dateSchedule,
+              (shiftForAssign as any).shiftDate,
+              (shiftForAssign as any).endDate,
             ).map((d) => d.date)
           : [];
       const payload: Record<string, unknown> = {
         tenantId,
         jobOrderId,
-        shiftId: selectedShift.id,
+        shiftId: shiftForAssign.id,
         userIds: workerIds,
         sourceType: selectedWorkforce || 'manual',
         sourceId: selectedWorkforce.startsWith('group_') ? selectedWorkforce.replace('group_', '') : null,
@@ -2528,8 +2533,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           if (nm) nameById.set(w.id, nm);
         }
       }
-      const shiftLabel = selectedShift
-        ? String((selectedShift as any).title || (selectedShift as any).jobTitle || (selectedShift as any).name || 'this shift')
+      const shiftLabel = shiftForAssign
+        ? String((shiftForAssign as any).title || (shiftForAssign as any).jobTitle || (shiftForAssign as any).name || 'this shift')
         : 'this shift';
 
       if (skipped.length > 0) {
@@ -2615,8 +2620,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       const createdUserIds = created
         .map((c: { userId: string }) => c?.userId)
         .filter(Boolean) as string[];
-      if (createdUserIds.length > 0 && selectedShift?.id) {
-        clearDeclineMarkersForShift(createdUserIds, selectedShift.id).catch(() => {});
+      if (createdUserIds.length > 0 && shiftForAssign?.id) {
+        clearDeclineMarkersForShift(createdUserIds, shiftForAssign.id).catch(() => {});
       }
 
       // Return so callers (handleConfirmPlacement, bulk hire) can tell
@@ -3818,48 +3823,57 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const tryPlaceWorker = (worker: Worker, targetShiftId: string) => {
     const conflicts = sameDayConflictByUserId.get(worker.id);
     if (conflicts && conflicts.length > 0) {
-      // Stash the target shift so the confirm button creates the
-      // placement on the right shiftId (not selectedShiftId).
+      // Stash the target shift so the confirm button hires onto the
+      // right shiftId (not selectedShiftId).
       setPendingPlacementShiftId(targetShiftId);
       setDoubleBookConfirmWorker(worker);
       return;
     }
-    createPlacement(worker, targetShiftId);
+    void hireWorkerOnShift(worker, targetShiftId);
   };
 
-  const createPlacement = async (worker: Worker, targetShiftId?: string) => {
-    const shiftId = targetShiftId ?? pendingPlacementShiftId ?? selectedShiftId;
-    if (!tenantId || !shiftId || !jobOrderId || !user?.uid) {
-      setError('Missing required information to place worker');
-      return;
-    }
+  /**
+   * One-step placement (Phase 2, 2026-07-19): a drop hires immediately —
+   * no staging placement doc, no separate "Click to Hire" step to forget.
+   * Same optimistic bookkeeping as the legacy chip path
+   * (handleConfirmPlacement, kept for pre-existing "Placed" tiles), but
+   * targets the DROPPED shift explicitly via shiftOverride.
+   */
+  const hireWorkerOnShift = async (worker: Worker, targetShiftId: string) => {
     setDoubleBookConfirmWorker(null);
     setPendingPlacementShiftId(null);
-    const placementId = `${shiftId}__${worker.id}`;
+    const shift = shifts.find((s) => s.id === targetShiftId);
+    if (!shift || !tenantId || !jobOrderId || !user?.uid) {
+      setError('Missing required information to hire worker');
+      return;
+    }
+    if (pendingHireWorkerIds.has(worker.id)) return;
+    setConfirmingPlacementUserId(worker.id);
+    setPendingHireWorkerIds((prev) => new Set(prev).add(worker.id));
     try {
       setError(null);
-      pendingPlacementAddsRef.current.add(worker.id);
-      setPlacementUserIds((prev) => new Set([...prev, worker.id]));
-      const placementRef = doc(db, 'tenants', tenantId, 'placements', placementId);
-      await setDoc(placementRef, {
-        tenantId,
-        jobOrderId,
-        shiftId,
-        userId: worker.id,
-        createdBy: user.uid,
-        createdAt: serverTimestamp(),
-      });
+      const placementStartDate = placementStartDateByUserId.get(worker.id);
+      const dayOverride = placementStartDate || (selectedDay || undefined);
+      await assignWorkersToShift([worker.id], dayOverride, { shiftOverride: shift });
     } catch (err: any) {
-      console.error('Error placing worker:', err);
-      setError(err?.message || 'Failed to place worker');
-      pendingPlacementAddsRef.current.delete(worker.id);
-      setPlacementUserIds((prev) => {
+      console.error('Error hiring worker on drop:', err);
+      setError(err?.message || 'Failed to hire worker');
+      setPendingHireWorkerIds((prev) => {
+        if (!prev.has(worker.id)) return prev;
         const next = new Set(prev);
         next.delete(worker.id);
         return next;
       });
+    } finally {
+      setConfirmingPlacementUserId(null);
     }
   };
+
+  // (createPlacement — the two-stage "Placed, no message sent" staging
+  // write — was removed in Phase 2's one-step placement, 2026-07-19.
+  // Drops now hire directly via hireWorkerOnShift. deletePlacement stays:
+  // pre-existing staged tiles still need unplace + the cancel cascade
+  // still writes placement docs.)
 
   const deletePlacement = async (worker: Worker) => {
     if (!tenantId || !selectedShiftId) return;
@@ -5235,7 +5249,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
               ))}
             </Stack>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              Placing them on this shift as well may double-book them. Do you want to place anyway?
+              Hiring them on this shift as well may double-book them. Do you want to hire anyway?
             </Typography>
           </DialogContent>
           <DialogActions>
@@ -5245,8 +5259,15 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
               setDoubleBookConfirmWorker(null);
               setPendingPlacementShiftId(null);
             }}>Cancel</Button>
-            <Button variant="contained" onClick={() => doubleBookConfirmWorker && createPlacement(doubleBookConfirmWorker)}>
-              Place anyway
+            <Button
+              variant="contained"
+              onClick={() =>
+                doubleBookConfirmWorker &&
+                pendingPlacementShiftId &&
+                void hireWorkerOnShift(doubleBookConfirmWorker, pendingPlacementShiftId)
+              }
+            >
+              Hire anyway
             </Button>
           </DialogActions>
         </Dialog>

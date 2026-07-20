@@ -617,7 +617,7 @@ export function ShiftAssignmentCard({
           }}
         >
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-            Drag workers here to place them (no message sent). Click Placed chip to offer position.
+            Drop a worker here to hire them — the offer text goes out right away.
           </Typography>
           {!selectedShiftId ? (
             <Alert severity="info" sx={{ py: 2 }}>
