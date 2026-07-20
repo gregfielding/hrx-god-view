@@ -32,22 +32,18 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-export const indeedFlexApplyShiftRequest = onCall(
-  { region: 'us-central1', memory: '512MiB', timeoutSeconds: 120 },
-  async (request) => {
-    if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in required');
-    const tenantId = String(request.data?.tenantId ?? '').trim();
-    const requestId = String(request.data?.requestId ?? '').trim();
-    if (!tenantId || !requestId) {
-      throw new HttpsError('invalid-argument', 'tenantId and requestId are required');
-    }
-    // Canonical recruiter gate — same one placementsCancelAssignment uses,
-    // so the two cancel paths can never disagree on who is allowed
-    // (review fix 2026-07-17; the hand-rolled copy ignored roles/isHRX).
-    if (!(await canManageAssignments(request.auth, tenantId, request.auth.uid))) {
-      throw new HttpsError('permission-denied', 'Applying shift requests requires assignment-management access.');
-    }
-
+/**
+ * Shared apply core — the recruiter's "Apply in HRX" button and the
+ * nightly AI triage cron both execute portal rows through here. The
+ * CALLER is responsible for authorization; `actor` is stamped as
+ * appliedBy/canceledBy for the audit trail (uid or 'ai_triage_nightly').
+ * Throws HttpsError on precondition failures; the cron catches per-row.
+ */
+export async function applyShiftRequestCore(
+  tenantId: string,
+  requestId: string,
+  actor: string,
+): Promise<Record<string, unknown>> {
     const rowRef = db.doc(`tenants/${tenantId}/external_shift_requests/${requestId}`);
     const rowSnap = await rowRef.get();
     if (!rowSnap.exists) throw new HttpsError('not-found', 'Shift request not found');
@@ -68,10 +64,10 @@ export const indeedFlexApplyShiftRequest = onCall(
     }
 
     if (eventType === 'change_headcount' || eventType === 'change_time') {
-      return applyShiftUpdate({ tenantId, rowRef, row, eventType, uid: request.auth.uid });
+      return applyShiftUpdate({ tenantId, rowRef, row, eventType, uid: actor });
     }
     if (eventType === 'new_request') {
-      return applyNewRequest({ tenantId, rowRef, row, uid: request.auth.uid });
+      return applyNewRequest({ tenantId, rowRef, row, uid: actor });
     }
     if (eventType !== 'cancel_booking') {
       throw new HttpsError(
@@ -110,7 +106,7 @@ export const indeedFlexApplyShiftRequest = onCall(
       await aRef.update({
         status: 'cancelled',
         cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
-        canceledBy: request.auth.uid,
+        canceledBy: actor,
         cancellationReason: 'Indeed Flex booking removed (portal sync)',
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
@@ -122,7 +118,7 @@ export const indeedFlexApplyShiftRequest = onCall(
     await rowRef.update({
       status: 'applied',
       appliedAt: admin.firestore.FieldValue.serverTimestamp(),
-      appliedBy: request.auth.uid,
+      appliedBy: actor,
       appliedResult: {
         action: 'cancel_assignments',
         cancelledAssignmentIds: cancelled,
@@ -132,7 +128,7 @@ export const indeedFlexApplyShiftRequest = onCall(
     });
 
     logger.info('indeedFlexApplyShiftRequest applied', {
-      tenantId, requestId, cancelled: cancelled.length, skipped: skipped.length,
+      tenantId, requestId, actor, cancelled: cancelled.length, skipped: skipped.length,
     });
     return {
       ok: true,
@@ -141,6 +137,24 @@ export const indeedFlexApplyShiftRequest = onCall(
       skipped,
       summary: `Cancelled ${cancelled.length} assignment${cancelled.length === 1 ? '' : 's'}`,
     };
+}
+
+export const indeedFlexApplyShiftRequest = onCall(
+  { region: 'us-central1', memory: '512MiB', timeoutSeconds: 120 },
+  async (request) => {
+    if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in required');
+    const tenantId = String(request.data?.tenantId ?? '').trim();
+    const requestId = String(request.data?.requestId ?? '').trim();
+    if (!tenantId || !requestId) {
+      throw new HttpsError('invalid-argument', 'tenantId and requestId are required');
+    }
+    // Canonical recruiter gate — same one placementsCancelAssignment uses,
+    // so the two cancel paths can never disagree on who is allowed
+    // (review fix 2026-07-17; the hand-rolled copy ignored roles/isHRX).
+    if (!(await canManageAssignments(request.auth, tenantId, request.auth.uid))) {
+      throw new HttpsError('permission-denied', 'Applying shift requests requires assignment-management access.');
+    }
+    return applyShiftRequestCore(tenantId, requestId, request.auth.uid);
   },
 );
 

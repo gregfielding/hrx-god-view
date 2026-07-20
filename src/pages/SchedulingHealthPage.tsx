@@ -63,6 +63,14 @@ interface Snapshot {
   staleLiveAssignments: StaleRow[];
   coverageGaps: GapRow[];
   counts: { staleLive: number; coverageGaps: number; totalGapSeats: number };
+  /** Written by the nightly AI triage after it auto-handles the
+   *  unambiguous items — the "Handled overnight" card renders from this. */
+  triage?: {
+    autoCompletedStale: number;
+    autoAppliedCancels: number;
+    autoCancelledAssignments: number;
+    brief: string;
+  };
 }
 
 function friendlyDate(iso: string | null): string {
@@ -168,6 +176,37 @@ const SchedulingHealthPage: React.FC = () => {
             Checking today&apos;s schedules…
           </Typography>
         </Stack>
+      )}
+
+      {!loading && snapshot?.triage?.brief && (
+        <Paper
+          variant="outlined"
+          sx={{ p: 2.5, mb: 2.5, borderColor: 'success.light', bgcolor: 'success.50' }}
+        >
+          <Stack direction="row" alignItems="center" spacing={1.5} mb={1}>
+            <CheckCircleOutlineIcon color="success" />
+            <Typography variant="subtitle1" fontWeight={700} flex={1}>
+              Handled overnight
+            </Typography>
+            {snapshot.triage.autoCompletedStale > 0 && (
+              <Chip
+                size="small"
+                color="success"
+                variant="outlined"
+                label={`${snapshot.triage.autoCompletedStale} closed out`}
+              />
+            )}
+            {snapshot.triage.autoAppliedCancels > 0 && (
+              <Chip
+                size="small"
+                color="success"
+                variant="outlined"
+                label={`${snapshot.triage.autoAppliedCancels} cancellation${snapshot.triage.autoAppliedCancels === 1 ? '' : 's'} applied`}
+              />
+            )}
+          </Stack>
+          <Typography variant="body2">{snapshot.triage.brief}</Typography>
+        </Paper>
       )}
 
       {allClear && (
