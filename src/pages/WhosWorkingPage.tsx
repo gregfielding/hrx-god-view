@@ -787,7 +787,7 @@ const WhosWorkingPage: React.FC = () => {
       <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
         <Box>
           <Typography variant="h5" fontWeight={700}>
-            Who's Working
+            Active Assignments
           </Typography>
           <Typography variant="body2" color="text.secondary">
             {tab === 0
@@ -825,7 +825,7 @@ const WhosWorkingPage: React.FC = () => {
 
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mt: 1, borderBottom: 1, borderColor: 'divider' }}>
         <Tab label="Who's Working" />
-        <Tab label="Full-time workers" />
+        <Tab label="Full-time Workers" />
         <Tab label="Metrics" />
       </Tabs>
 

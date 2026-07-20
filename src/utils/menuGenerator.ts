@@ -184,12 +184,15 @@ export async function generateMenuItems(
           icon: 'people',
           requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
         },
-        {
-          text: 'Onboarding',
-          to: '/staff-onboarding',
-          icon: 'how_to_reg',
-          requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
-        },
+        // Onboarding hidden from the sidebar (Greg, 2026-07-20) — the page
+        // stays reachable at /staff-onboarding; its how_to_reg icon now
+        // fronts Active Assignments below.
+        // {
+        //   text: 'Onboarding',
+        //   to: '/staff-onboarding',
+        //   icon: 'how_to_reg',
+        //   requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
+        // },
       ] : []),
       // Only show Customers if HRX Customers module is enabled
       ...(customersModuleEnabled ? [{
@@ -278,18 +281,20 @@ export async function generateMenuItems(
         icon: 'speed',
         requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
       }] : []),
-      // Scheduling Health: the recruiter daily checklist (levels 5, 6, 7)
+      // Scheduling Health hidden from the sidebar for now (Greg, 2026-07-20)
+      // — the page stays reachable at /scheduling-health.
+      // ...([{
+      //   text: 'Scheduling Health',
+      //   to: '/scheduling-health',
+      //   icon: 'fact_check',
+      //   accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
+      // }]),
+      // Active Assignments (formerly Who's Working): weekly report +
+      // full-time workers + metrics. Wears Onboarding's old icon.
       ...([{
-        text: 'Scheduling Health',
-        to: '/scheduling-health',
-        icon: 'fact_check',
-        accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
-      }]),
-      // Who's Working: the weekly assignment report (levels 5, 6, 7)
-      ...([{
-        text: "Who's Working",
+        text: 'Active Assignments',
         to: '/whos-working',
-        icon: 'groups',
+        icon: 'how_to_reg',
         accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
       }]),
       // Finances & Budgeting: internal team (security levels 5, 6, 7)
